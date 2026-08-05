@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createMockListing } from "../lib/mock";
+import { removeUnsupportedPerformanceLanguage } from "../lib/listing-sanitizer";
 import { mergeOperatorEvidence } from "../lib/product-brief";
 import type { ListingInput } from "../lib/types";
 import { analyzeListing } from "../lib/validation";
@@ -197,4 +198,32 @@ test("validator flags quality modifiers that the operator did not supply", () =>
       ?.passed,
     false,
   );
+});
+
+test("sanitizer removes unsupported performance language without another AI pass", () => {
+  const listing = createMockListing(input);
+  listing.title = "Premium Quality Funny Nurse Mug, Durable Ceramic Gift";
+  listing.bullet_points[0] = "Durable ceramic construction with a comfortable handle for daily use.";
+
+  const sanitized = removeUnsupportedPerformanceLanguage(
+    listing,
+    ["comfortable", "durable", "premium quality"],
+    "Material: Ceramic",
+  );
+
+  assert.equal(sanitized.title, "Funny Nurse Mug, Ceramic Gift");
+  assert.equal(sanitized.bullet_points[0], "Ceramic construction with a handle for daily use.");
+});
+
+test("sanitizer preserves performance language explicitly supplied by the operator", () => {
+  const listing = createMockListing(input);
+  listing.bullet_points[0] = "Durable ceramic construction for everyday use.";
+
+  const sanitized = removeUnsupportedPerformanceLanguage(
+    listing,
+    ["durable", "premium quality"],
+    "Feature: Durable finish",
+  );
+
+  assert.equal(sanitized.bullet_points[0], listing.bullet_points[0]);
 });

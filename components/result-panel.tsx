@@ -16,7 +16,7 @@ import {
   WarningCircleIcon,
   XCircleIcon,
 } from "@phosphor-icons/react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ListingContent, ListingRevision, StoredListing } from "@/lib/types";
 
 interface ResultPanelProps {
@@ -74,13 +74,28 @@ function StatusBadge({ status }: { status: StoredListing["status"] }) {
 }
 
 function LoadingState() {
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  useEffect(() => {
+    const startedAt = Date.now();
+    const timer = window.setInterval(
+      () => setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1_000)),
+      1_000,
+    );
+    return () => window.clearInterval(timer);
+  }, []);
+  const stage =
+    elapsedSeconds < 5
+      ? "Đang chuẩn bị evidence..."
+      : elapsedSeconds < 20
+        ? "Đang đọc ảnh và viết draft..."
+        : "AI đang hoàn thiện draft. Kết quả chưa đạt sẽ được đưa vào Review, không retry âm thầm.";
   return (
     <div className="mx-auto w-full max-w-5xl p-6 lg:p-8" aria-label="Generating listing">
       <div className="mb-7 flex items-center gap-3 rounded-lg border border-[#ead7ce] bg-[#fff8f4] p-4">
         <MagicWandIcon className="text-[#b84f1d]" size={22} />
         <div>
-          <p className="text-sm font-bold text-[#60321d]">Đang tạo evidence brief và listing</p>
-          <p className="mt-0.5 text-xs text-[#79513e]">Hệ thống sẽ kiểm tra fact, policy và keyword trước khi lưu draft.</p>
+          <p className="text-sm font-bold text-[#60321d]">{stage}</p>
+          <p className="mt-0.5 text-xs text-[#79513e]">{elapsedSeconds}s - Hệ thống kiểm tra fact, policy và keyword trước khi lưu.</p>
         </div>
       </div>
       <div className="grid gap-6">

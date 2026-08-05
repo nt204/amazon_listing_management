@@ -1,7 +1,7 @@
 export const GEMINI_MODELS = [
-  { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", note: "Recommended for multimodal quality" },
+  { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite (Fast)", note: "Default for lower latency" },
+  { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash (Quality)", note: "Higher multimodal quality" },
   { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", note: "Strong general quality" },
-  { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite", note: "Lower cost and latency" },
   { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", note: "Deep reasoning" },
   { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", note: "Legacy compatible" },
 ] as const;

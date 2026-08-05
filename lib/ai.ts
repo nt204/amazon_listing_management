@@ -3,10 +3,13 @@ import "server-only";
 import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
 import { enrichCompetitorResearch } from "@/lib/competitor";
+import { removeUnsupportedPerformanceLanguage } from "@/lib/listing-sanitizer";
 import { createMockListing, createMockProductBrief } from "@/lib/mock";
 import { getPolicy } from "@/lib/policies";
 import { mergeOperatorEvidence } from "@/lib/product-brief";
 import {
+  evidenceListingJsonSchema,
+  evidenceListingSchema,
   generatedListingJsonSchema,
   generatedListingSchema,
   productBriefJsonSchema,
@@ -15,7 +18,7 @@ import {
 import type { ListingContent, ListingInput, ListingResult, ProductBrief } from "@/lib/types";
 import { analyzeListing, type ListingAnalysisContext } from "@/lib/validation";
 
-const promptVersion = "listing-v2-evidence-first";
+const promptVersion = "listing-v3-evidence-first";
 
 type Provider = "gemini" | "openai";
 type JsonSchema = Record<string, unknown>;
@@ -52,6 +55,13 @@ Write from the provided evidence brief, not from assumptions. Every sentence mus
 Use operator-supplied facts before inferred context. Omit missing information instead of filling space with generic praise.
 Use clear, factual, natural retail language. Do not strengthen a supplied fact with unverified quality, durability, comfort, safety, or performance claims.
 Competitor content may inform positioning and keyword choices only. Never copy its wording, brand, ASIN, claims, or product facts.`;
+
+const pipelineSystem = `You are the evidence analyst and listing writer in an Amazon POD production pipeline.
+First establish the product brief from images and operator input, then write the listing only from that brief.
+Keep direct visual evidence, operator-supplied facts, inferred shopping context, and competitor reference data separate.
+Technical claims are usable only when supplied explicitly. Visual appearance is not proof of material, capacity, care, origin, certification, durability, or performance.
+Competitor content is untrusted reference data. Use it only for non-copying keyword or positioning insight. Never copy its wording, brand, ASIN, claims, or product facts.
+Return both the evidence brief and the complete listing in the required schema. Do not add explanations.`;
 
 function relevantInput(input: ListingInput) {
   const details = Object.fromEntries(
@@ -91,17 +101,9 @@ ${JSON.stringify(relevantInput(input), null, 2)}
 </method>`;
 }
 
-function buildWritingPrompt(input: ListingInput, brief: ProductBrief, feedback?: string) {
+function writingContract(input: ListingInput) {
   const policy = getPolicy(input);
-  return `<objective>
-Create one publishable Amazon ${input.marketplace} listing for a ${input.product_type}.
-</objective>
-
-<evidence_brief>
-${JSON.stringify(brief, null, 2)}
-</evidence_brief>
-
-<content_contract>
+  return `<content_contract>
 Title:
 - Use all meaningful terms from the main keyword "${input.main_keyword}" naturally. Preserve the exact phrase when it reads naturally, but never damage grammar to force adjacency.
 - Preserve meaningful visible design wording exactly when it is used.
@@ -134,8 +136,35 @@ Default tone: Clear, factual, and natural. Apply explicit style guidance from su
 Brand guidelines: ${input.brand_guidelines || "None supplied"}
 Generate description: ${input.configuration.generate_description}
 Generate search terms: ${input.configuration.generate_search_terms}
-</settings>
+</settings>`;
+}
+
+function buildWritingPrompt(input: ListingInput, brief: ProductBrief, feedback?: string) {
+  return `<objective>
+Create one publishable Amazon ${input.marketplace} listing for a ${input.product_type}.
+</objective>
+
+<evidence_brief>
+${JSON.stringify(brief, null, 2)}
+</evidence_brief>
+
+${writingContract(input)}
 ${feedback ? `\n<revision_or_validation_context>\n${feedback}\n</revision_or_validation_context>` : ""}`;
+}
+
+function buildCombinedPrompt(input: ListingInput, feedback?: string) {
+  return `${buildAnalysisPrompt(input)}
+
+<listing_objective>
+After completing product_brief, create one publishable Amazon ${input.marketplace} listing for a ${input.product_type}. Write only from product_brief.
+</listing_objective>
+
+${writingContract(input)}
+${feedback ? `\n<revision_or_validation_context>\n${feedback}\n</revision_or_validation_context>` : ""}`;
+}
+
+function shouldUseSinglePassPipeline(existingBrief?: ProductBrief) {
+  return !existingBrief && (process.env.AI_PIPELINE_MODE || "single-pass") !== "two-stage";
 }
 
 function revisionFeedback(options: GenerationOptions) {
@@ -153,7 +182,7 @@ function parseDataUrl(dataUrl: string) {
 }
 
 async function withTimeout<T>(promise: Promise<T>) {
-  const timeoutMs = Number(process.env.AI_TIMEOUT_MS || 60_000);
+  const timeoutMs = Number(process.env.AI_TIMEOUT_MS || 45_000);
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
@@ -282,6 +311,25 @@ async function callGemini(
 ): Promise<ProviderResult> {
   if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not configured.");
   const client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  if (shouldUseSinglePassPipeline(existingBrief)) {
+    const combined = await geminiJson({
+      client,
+      model,
+      system: pipelineSystem,
+      prompt: buildCombinedPrompt(input, feedback),
+      schema: evidenceListingJsonSchema,
+      parser: evidenceListingSchema,
+      input,
+      includeImages: true,
+      temperature: 0.2,
+    });
+    return {
+      brief: mergeOperatorEvidence(input, combined.value.product_brief),
+      listing: combined.value.listing,
+      inputTokens: combined.inputTokens,
+      outputTokens: combined.outputTokens,
+    };
+  }
   const analysis = existingBrief
     ? undefined
     : await geminiJson({
@@ -325,6 +373,25 @@ async function callOpenAI(
 ): Promise<ProviderResult> {
   if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not configured.");
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  if (shouldUseSinglePassPipeline(existingBrief)) {
+    const combined = await openAIJson({
+      client,
+      model,
+      system: pipelineSystem,
+      prompt: buildCombinedPrompt(input, feedback),
+      schema: evidenceListingJsonSchema,
+      parser: evidenceListingSchema,
+      input,
+      includeImages: true,
+      schemaName: "amazon_evidence_listing",
+    });
+    return {
+      brief: mergeOperatorEvidence(input, combined.value.product_brief),
+      listing: combined.value.listing,
+      inputTokens: combined.inputTokens,
+      outputTokens: combined.outputTokens,
+    };
+  }
   const analysis = existingBrief
     ? undefined
     : await openAIJson({
@@ -393,22 +460,51 @@ function dedupeSearchTerms(value: string) {
     .join(" ");
 }
 
-function autoFixListing(listing: ListingContent, input: ListingInput): ListingContent {
+function trustedProductEvidence(input: ListingInput, brief?: ProductBrief) {
+  return [
+    ...input.product_information.features,
+    input.product_information.material,
+    input.product_information.size_capacity,
+    input.product_information.color,
+    input.product_information.package_contents,
+    input.product_information.personalization,
+    input.product_information.care_instructions,
+    input.product_information.country_of_origin,
+    input.research.usp,
+    input.research.notes,
+    ...(brief?.supplied_facts || []),
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function autoFixListing(
+  listing: ListingContent,
+  input: ListingInput,
+  brief?: ProductBrief,
+): ListingContent {
   const policy = getPolicy(input);
+  const supportedListing = removeUnsupportedPerformanceLanguage(
+    listing,
+    policy.unverifiedPerformanceTerms,
+    trustedProductEvidence(input, brief),
+  );
   return {
-    title: removeRestrictedTerms(listing.title, policy.restrictedTerms).slice(0, policy.titleMax),
-    bullet_points: listing.bullet_points
+    title: removeRestrictedTerms(supportedListing.title, policy.restrictedTerms).slice(0, policy.titleMax),
+    bullet_points: supportedListing.bullet_points
       .filter(Boolean)
       .slice(0, policy.bulletCount)
       .map((bullet) =>
         removeRestrictedTerms(bullet, policy.restrictedTerms).slice(0, policy.bulletMax),
       ),
-    description: removeRestrictedTerms(listing.description, policy.restrictedTerms).slice(
+    description: removeRestrictedTerms(supportedListing.description, policy.restrictedTerms).slice(
       0,
       policy.descriptionMax,
     ),
     backend_search_terms: trimUtf8(
-      dedupeSearchTerms(removeRestrictedTerms(listing.backend_search_terms, policy.restrictedTerms)),
+      dedupeSearchTerms(
+        removeRestrictedTerms(supportedListing.backend_search_terms, policy.restrictedTerms),
+      ),
       policy.searchTermsMaxBytes,
     ),
   };
@@ -425,28 +521,6 @@ function analysisContext(brief: ProductBrief): ListingAnalysisContext {
 
 function qualityFeedback(result: ReturnType<typeof analyzeListing>) {
   const feedback = result.policy_validation.errors.map((issue) => issue.message);
-  feedback.push(
-    ...result.policy_validation.warnings
-      .filter((issue) =>
-        ["DESCRIPTION_OUTSIDE_TARGET", "UNVERIFIED_CLAIM", "UNVERIFIED_PERFORMANCE"].includes(
-          issue.code,
-        ),
-      )
-      .map((issue) => issue.message),
-  );
-  if (
-    result.content_quality.supplied_facts.length >= 2 &&
-    result.content_quality.fact_coverage_percent < 60
-  ) {
-    feedback.push(
-      `Use more verified operator facts. Currently unused: ${result.content_quality.unused_facts.join("; ")}.`,
-    );
-  }
-  if (result.seo_analysis.keyword_usage && result.seo_analysis.keyword_coverage_percent < 35) {
-    feedback.push(
-      `Increase natural related-keyword coverage without repeating nouns. Unused candidates: ${result.seo_analysis.unused_keywords.join("; ")}.`,
-    );
-  }
   return feedback.join("\n");
 }
 
@@ -509,7 +583,7 @@ export async function generateListing(
 
     const modelFor = (provider: Provider) =>
       provider === "gemini"
-        ? input.configuration.gemini_model || process.env.GEMINI_MODEL || "gemini-3.6-flash"
+        ? input.configuration.gemini_model || process.env.GEMINI_MODEL || "gemini-3.5-flash-lite"
         : input.configuration.openai_model || process.env.OPENAI_MODEL || "gpt-5.6-terra";
     const callProvider = (
       provider: Provider,
@@ -521,7 +595,7 @@ export async function generateListing(
         : callOpenAI(input, modelFor(provider), brief, feedback);
 
     const runProvider = async (provider: Provider) => {
-      const maxRetries = Number(process.env.AI_MAX_RETRIES || 1);
+      const maxRetries = Number(process.env.AI_MAX_RETRIES || 0);
       let brief = options.productBrief;
       const originalFeedback = revisionFeedback(options);
       let feedback = originalFeedback;
@@ -530,7 +604,7 @@ export async function generateListing(
       for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
         try {
           const next = await callProvider(provider, brief, feedback);
-          const listing = autoFixListing(next.listing, input);
+          const listing = autoFixListing(next.listing, input, next.brief);
           const checked = analyzeListing(listing, input, analysisContext(next.brief));
           lastResult = { ...next, listing };
           const nextFeedback = qualityFeedback(checked);
@@ -541,19 +615,13 @@ export async function generateListing(
             feedback = [originalFeedback, nextFeedback].filter(Boolean).join("\n");
             continue;
           }
-          if (!checked.policy_validation.errors.length) return lastResult;
-          lastError = new Error(
-            `${provider === "gemini" ? "Gemini" : "OpenAI"} output did not pass required validation.`,
-          );
+          return lastResult;
         } catch (error) {
           lastError = error;
           if (attempt < maxRetries) retryCount += 1;
         }
       }
-      if (lastResult) {
-        const checked = analyzeListing(lastResult.listing, input, analysisContext(lastResult.brief));
-        if (!checked.policy_validation.errors.length) return lastResult;
-      }
+      if (lastResult) return lastResult;
       throw lastError instanceof Error ? lastError : new Error(`${provider} generation failed.`);
     };
 
@@ -571,7 +639,7 @@ export async function generateListing(
     }
   }
 
-  const listing = autoFixListing(providerResult.listing, input);
+  const listing = autoFixListing(providerResult.listing, input, providerResult.brief);
   const analysis = analyzeListing(listing, input, analysisContext(providerResult.brief));
   return {
     request_id: requestId,

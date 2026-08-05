@@ -25,6 +25,8 @@ OPENAI_API_KEY=your_openai_key
 
 Chỉ cần cấu hình một trong hai key. Nếu có key, app luôn dùng AI thật dù `AI_MOCK_MODE=true`; mock chỉ chạy khi không có key nào. Form cho phép chọn model từ các provider đang có key; provider được đổi tự động theo model.
 
+Mặc định dùng Gemini Flash-Lite cho draft nhanh. Có thể chọn Gemini Flash/Pro trong form khi cần ưu tiên chất lượng hơn latency.
+
 API key chỉ được đọc trong server routes. Frontend chỉ nhận trạng thái provider đã được cấu hình hay chưa.
 
 ## Workflow MVP
@@ -35,8 +37,9 @@ API key chỉ được đọc trong server routes. Frontend chỉ nhận trạng
 - Brand profile dùng chung tên brand và writing guidelines cho cả team.
 - Reference listing nhận URL hoặc ASIN Amazon và được crawl best-effort. Amazon và reader chạy song song trong một hard timeout, kết quả được cache theo URL/ASIN và giới hạn evidence để không làm chậm AI prompt.
 - Upload 1-10 ảnh JPG, PNG hoặc WEBP; ảnh được resize ở trình duyệt.
-- Evidence-first pipeline: AI đọc ảnh thành product brief có nguồn dữ liệu, sau đó writer mới tạo listing.
-- Generate bằng Gemini, validation-aware retry và OpenAI fallback.
+- Evidence-first pipeline: mặc định một multimodal call trả cả product brief và listing để giảm latency; đặt `AI_PIPELINE_MODE=two-stage` nếu muốn tách analyst/writer thành hai call.
+- Generate bằng Gemini hoặc OpenAI; fallback chỉ dùng khi provider thực sự lỗi.
+- Mặc định không retry vì lỗi chất lượng: draft được lưu vào Review cùng lỗi validator. Có thể bật retry có giới hạn qua `AI_MAX_RETRIES`.
 - Rule validator cho title, 5 bullet, description, search terms, keyword placement, fact coverage và prohibited claims.
 - Retry dùng lỗi của draft hiện tại làm feedback động; prompt nền không tích lũy lịch sử sửa lỗi.
 - Một ô reviewer command sửa toàn bộ listing bằng ngôn ngữ tự do; revision vẫn chạy lại fact và policy check.

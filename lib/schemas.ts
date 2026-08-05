@@ -130,6 +130,11 @@ export const generatedListingJsonSchema = {
   },
 } as const;
 
+export const evidenceListingSchema = z.object({
+  product_brief: productBriefSchema,
+  listing: generatedListingSchema,
+});
+
 const stringArray = (description: string, maxItems: number, minItems = 0) => ({
   type: "array",
   description,
@@ -176,5 +181,15 @@ export const productBriefJsonSchema = {
     },
     facts_to_avoid: stringArray("Claims explicitly forbidden by the operator or not supported by evidence.", 15),
     policy_risks: stringArray("Potential trademark, character, copyright, hate, medical, or restricted-language risks.", 10),
+  },
+} as const;
+
+export const evidenceListingJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["product_brief", "listing"],
+  properties: {
+    product_brief: productBriefJsonSchema,
+    listing: generatedListingJsonSchema,
   },
 } as const;
