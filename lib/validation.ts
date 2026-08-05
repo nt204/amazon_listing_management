@@ -12,6 +12,7 @@ export interface ListingAnalysisContext {
   suppliedFacts?: string[];
   factsToAvoid?: string[];
   policyRisks?: string[];
+  blockedTerms?: string[];
 }
 
 const normalize = (value: string) =>
@@ -239,6 +240,17 @@ export function analyzeListing(
   for (const risk of unique(context.policyRisks || [])) {
     warnings.push({ field: "listing", code: "AI_POLICY_RISK", message: risk });
   }
+  const blockedTerms = unique(context.blockedTerms || []).filter(
+    (term) => normalize(term) !== normalize(input.brand),
+  );
+  const leakedTerms = blockedTerms.filter((term) => includesPolicyTerm(allCopy, term));
+  if (leakedTerms.length) {
+    errors.push({
+      field: "listing",
+      code: "COMPETITOR_TERM_USED",
+      message: `Remove competitor identifiers: ${leakedTerms.join(", ")}.`,
+    });
+  }
 
   const positiveFacts = unique(context.suppliedFacts || [])
     .map((fact) => ({ fact, value: factValue(fact) }))
@@ -344,7 +356,7 @@ export function analyzeListing(
     },
     {
       name: "Competitor identifiers",
-      passed: !hasIssue(errors, ["ASIN_NOT_ALLOWED"]),
+      passed: !hasIssue(errors, ["ASIN_NOT_ALLOWED", "COMPETITOR_TERM_USED"]),
       detail: "ASIN and competitor identifier leakage",
     },
     {

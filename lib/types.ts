@@ -2,6 +2,42 @@ import type { AiProviderPreference } from "@/lib/models";
 
 export type Marketplace = "US" | "UK" | "DE";
 export type ListingStatus = "Draft" | "Review" | "Approved" | "Exported";
+export type EvidenceConfidence = "high" | "medium";
+export type OwnEvidenceStatus = "confirmed" | "missing";
+
+export interface CompetitorSignal {
+  value: string;
+  sources: string[];
+  confidence: EvidenceConfidence;
+}
+
+export interface CompetitorKeywordSignal extends CompetitorSignal {
+  usable_for_listing: boolean;
+  missing_own_facts: string[];
+}
+
+export interface CompetitorClaim extends CompetitorSignal {
+  category: "material" | "capacity" | "dimensions" | "care" | "performance" | "origin" | "color" | "other";
+  own_evidence: OwnEvidenceStatus;
+}
+
+export interface CompetitorReferenceProfile {
+  asin?: string;
+  url: string;
+  title?: string;
+  brand?: string;
+  attributes: Record<string, string>;
+}
+
+export interface CompetitorProfile {
+  references: CompetitorReferenceProfile[];
+  keyword_candidates: CompetitorKeywordSignal[];
+  claims: CompetitorClaim[];
+  audiences: CompetitorSignal[];
+  occasions: CompetitorSignal[];
+  blocked_terms: string[];
+  captured_at: string;
+}
 
 export interface ListingInput {
   marketplace: Marketplace;
@@ -31,6 +67,7 @@ export interface ListingInput {
     competitor_asins: string[];
     competitor_notes: string;
     notes: string;
+    competitor_profile?: CompetitorProfile;
   };
   images: Array<{
     name: string;
@@ -105,6 +142,7 @@ export interface ListingResult {
     observations: string[];
   };
   product_analysis?: ProductBrief;
+  competitor_profile?: CompetitorProfile;
   listing: ListingContent;
   seo_analysis: {
     main_keyword: string;

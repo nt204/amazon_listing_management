@@ -36,6 +36,7 @@ API key chỉ được đọc trong server routes. Frontend chỉ nhận trạng
 - Một ô tự do cho các thông tin AI không thể xác định chắc chắn từ ảnh.
 - Brand profile dùng chung tên brand và writing guidelines cho cả team.
 - Reference listing nhận tối đa 3 URL hoặc ASIN Amazon, mỗi dòng một reference. Tất cả reference, Amazon direct và reader được crawl song song trong một hard timeout; kết quả được cache và chia sẻ cùng giới hạn evidence để không làm chậm AI prompt.
+- Raw reference evidence được giới hạn 6.000 ký tự rồi chạy qua keyword, claim và audience extractors. Writer chỉ nhận Competitor Profile có source, confidence và trạng thái own-evidence; competitor brand, ASIN và claim chưa được xác nhận bị chặn bằng rule.
 - Upload 1-10 ảnh JPG, PNG hoặc WEBP; ảnh được resize ở trình duyệt.
 - Evidence-first pipeline: mặc định một multimodal call trả cả product brief và listing để giảm latency; đặt `AI_PIPELINE_MODE=two-stage` nếu muốn tách analyst/writer thành hai call.
 - Generate bằng Gemini hoặc OpenAI; fallback chỉ dùng khi provider thực sự lỗi.

@@ -67,3 +67,32 @@ export function mergeOperatorEvidence(input: ListingInput, brief: ProductBrief):
     facts_to_avoid: unique([...operator.factsToAvoid, ...modelAvoid]),
   };
 }
+
+export function mergeCompetitorProfile(input: ListingInput, brief: ProductBrief): ProductBrief {
+  const profile = input.research.competitor_profile;
+  if (!profile) return brief;
+  const usableKeywords = profile.keyword_candidates
+    .filter((keyword) => keyword.usable_for_listing)
+    .map((keyword) => keyword.value);
+  const unsupportedClaims = profile.claims
+    .filter((claim) => claim.own_evidence === "missing")
+    .filter((claim) => !["color", "other"].includes(claim.category))
+    .map((claim) => claim.value);
+  const insights = [
+    profile.audiences.length
+      ? `Reference audiences: ${profile.audiences.map((item) => item.value).join(", ")}`
+      : "",
+    profile.occasions.length
+      ? `Reference occasions: ${profile.occasions.map((item) => item.value).join(", ")}`
+      : "",
+    usableKeywords.length
+      ? `Source-backed keyword candidates: ${usableKeywords.join(", ")}`
+      : "",
+  ];
+  return {
+    ...brief,
+    related_keywords: unique([...brief.related_keywords, ...usableKeywords]).slice(0, 12),
+    competitor_insights: unique([...brief.competitor_insights, ...insights]).slice(0, 10),
+    facts_to_avoid: unique([...brief.facts_to_avoid, ...unsupportedClaims]).slice(0, 15),
+  };
+}

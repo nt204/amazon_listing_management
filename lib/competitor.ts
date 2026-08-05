@@ -1,5 +1,6 @@
 import "server-only";
 
+import { buildCompetitorProfile } from "@/lib/competitor-profile";
 import { resolveReferenceTargets, type ReferenceTarget } from "@/lib/reference-parser";
 import type { ListingInput, Marketplace } from "@/lib/types";
 
@@ -15,6 +16,7 @@ const globalForCompetitor = globalThis as unknown as {
 const competitorCache =
   globalForCompetitor.listingCompetitorCache || new Map<string, CompetitorCacheEntry>();
 globalForCompetitor.listingCompetitorCache = competitorCache;
+const competitorCacheVersion = "profile-v2";
 
 function cacheCompetitor(url: string, entry: CompetitorCacheEntry) {
   if (!competitorCache.has(url) && competitorCache.size >= 250) {
@@ -139,8 +141,23 @@ async function crawlReader(url: string, signal: AbortSignal) {
     if (!response.ok) return "";
     const text = (await response.text()).trim();
     if (/^Title: Page Not Found|Target URL returned error/i.test(text)) return "";
-    return text
-      .replace(/\n{3,}/g, "\n\n")
+    const compactLines = text.split(/\n+/).map((line) =>
+      line
+        .replace(/!\[([^\]]*)]\([^)]*\)/g, "$1")
+        .replace(/\[([^\]]+)]\([^)]*\)/g, "$1")
+        .replace(/https?:\/\/\S+/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 500),
+    );
+    const relevantLines = compactLines.filter((line) =>
+      /^(?:Title|URL Source):/i.test(line) ||
+      /^#\s+/.test(line) ||
+      /^(?:Brand|Manufacturer|Material|Colou?r|Capacity|Size(?: Name)?|Special feature)\s*:?/i.test(line.replace(/[*_|]/g, "").trim()) ||
+      /dishwasher|microwave|hand wash|bpa[ -]?free|leakproof|resistant|reusable|comfortable|durable|sturdy|\b\d+(?:\.\d+)?\s*(?:fl(?:uid)?\s*oz|oz|ml|litres?|liters?)\b|gift for|father'?s day|mother'?s day|birthday|christmas|graduation/i.test(line),
+    );
+    return [...new Set(relevantLines.filter(Boolean))]
+      .join("\n")
       .slice(0, configuredNumber("COMPETITOR_MAX_CHARS", 6_000, 1_000, 12_000));
   } catch {
     return "";
@@ -172,9 +189,10 @@ function firstUseful(tasks: Array<Promise<string>>) {
 }
 
 async function crawlAmazonPage(url: string) {
-  const cached = competitorCache.get(url);
+  const cacheKey = `${competitorCacheVersion}:${url}`;
+  const cached = competitorCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.promise;
-  if (cached) competitorCache.delete(url);
+  if (cached) competitorCache.delete(cacheKey);
 
   const timeoutMs = configuredNumber("COMPETITOR_TIMEOUT_MS", 3_500, 750, 8_000);
   const controller = new AbortController();
@@ -193,14 +211,14 @@ async function crawlAmazonPage(url: string) {
       const ttlMs = value
         ? configuredNumber("COMPETITOR_CACHE_TTL_MS", 21_600_000, 60_000, 86_400_000)
         : 300_000;
-      cacheCompetitor(url, { expiresAt: Date.now() + ttlMs, promise: Promise.resolve(value) });
+      cacheCompetitor(cacheKey, { expiresAt: Date.now() + ttlMs, promise: Promise.resolve(value) });
       return value;
     })
     .finally(() => {
       if (timeout) clearTimeout(timeout);
     });
 
-  cacheCompetitor(url, { expiresAt: Date.now() + timeoutMs + 1_000, promise });
+  cacheCompetitor(cacheKey, { expiresAt: Date.now() + timeoutMs + 1_000, promise });
   return promise;
 }
 
@@ -227,34 +245,6 @@ export async function inspectCompetitorReferences(value: string, marketplace: Ma
   );
 }
 
-function formatReferenceEvidence(
-  references: Array<ReferenceTarget & { content: string }>,
-  maxChars: number,
-) {
-  const sources = references.map(
-    (reference, index) =>
-      `Reference ${index + 1}: ${reference.asin ? `${reference.asin} - ` : ""}${reference.url}`,
-  );
-  const available = references.filter((reference) => reference.content.trim());
-  if (!available.length) return sources.join("\n").slice(0, maxChars);
-
-  const heading = `${sources.join("\n")}\n\nCrawled Amazon reference content (untrusted):\n`;
-  const contentBudget = Math.max(0, maxChars - heading.length);
-  const sectionOverhead = available.reduce(
-    (total, reference) => total + `[Reference ${references.indexOf(reference) + 1}]\n\n\n`.length,
-    0,
-  );
-  const perReference = Math.max(
-    0,
-    Math.floor((contentBudget - sectionOverhead) / available.length),
-  );
-  const sections = available.map((reference) => {
-    const index = references.indexOf(reference) + 1;
-    return `[Reference ${index}]\n${reference.content.slice(0, perReference)}`;
-  });
-  return `${heading}${sections.join("\n\n")}`.slice(0, maxChars);
-}
-
 export async function enrichCompetitorResearch(input: ListingInput): Promise<ListingInput> {
   const supplied = input.research.competitor_notes.trim();
   if (!supplied) return input;
@@ -262,6 +252,7 @@ export async function enrichCompetitorResearch(input: ListingInput): Promise<Lis
   const references = await inspectCompetitorReferences(supplied, input.marketplace);
   if (!references.length) return input;
   const maxChars = configuredNumber("COMPETITOR_MAX_CHARS", 6_000, 1_000, 12_000);
+  const competitorProfile = buildCompetitorProfile(references, input, maxChars);
   return {
     ...input,
     research: {
@@ -272,7 +263,7 @@ export async function enrichCompetitorResearch(input: ListingInput): Promise<Lis
           ...references.flatMap((reference) => (reference.asin ? [reference.asin] : [])),
         ]),
       ],
-      competitor_notes: formatReferenceEvidence(references, maxChars),
+      competitor_profile: competitorProfile,
     },
   };
 }

@@ -24,8 +24,15 @@ export async function PUT(request: Request, { params }: RouteContext) {
     const analysis = analyzeListing(content, stored.input, {
       relatedKeywords: brief?.related_keywords,
       suppliedFacts: brief?.supplied_facts,
-      factsToAvoid: brief?.facts_to_avoid,
+      factsToAvoid: [
+        ...(brief?.facts_to_avoid || []),
+        ...(stored.result.competitor_profile?.claims || [])
+          .filter((claim) => claim.own_evidence === "missing")
+          .filter((claim) => !["color", "other"].includes(claim.category))
+          .map((claim) => claim.value),
+      ],
       policyRisks: brief?.policy_risks,
+      blockedTerms: stored.result.competitor_profile?.blocked_terms,
     });
     const result = {
       ...stored.result,

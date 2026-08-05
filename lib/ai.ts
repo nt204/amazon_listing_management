@@ -6,7 +6,7 @@ import { enrichCompetitorResearch } from "@/lib/competitor";
 import { removeUnsupportedPerformanceLanguage } from "@/lib/listing-sanitizer";
 import { createMockListing, createMockProductBrief } from "@/lib/mock";
 import { getPolicy } from "@/lib/policies";
-import { mergeOperatorEvidence } from "@/lib/product-brief";
+import { mergeCompetitorProfile, mergeOperatorEvidence } from "@/lib/product-brief";
 import {
   evidenceListingJsonSchema,
   evidenceListingSchema,
@@ -18,7 +18,7 @@ import {
 import type { ListingContent, ListingInput, ListingResult, ProductBrief } from "@/lib/types";
 import { analyzeListing, type ListingAnalysisContext } from "@/lib/validation";
 
-const promptVersion = "listing-v3-evidence-first";
+const promptVersion = "listing-v4-competitor-profile";
 
 type Provider = "gemini" | "openai";
 type JsonSchema = Record<string, unknown>;
@@ -76,7 +76,10 @@ function relevantInput(input: ListingInput) {
     brand: input.brand || undefined,
     additional_product_details: input.research.notes || undefined,
     legacy_structured_details: Object.keys(details).length ? details : undefined,
-    reference_listing: input.research.competitor_notes || undefined,
+    competitor_profile: input.research.competitor_profile || undefined,
+    reference_note: input.research.competitor_profile
+      ? undefined
+      : input.research.competitor_notes || undefined,
     images: input.images.map(({ name, type }, index) => ({ index: index + 1, name, type })),
   };
 }
@@ -96,7 +99,7 @@ ${JSON.stringify(relevantInput(input), null, 2)}
 3. Convert explicit operator details into atomic supplied_facts. Preserve measurements and care claims exactly. Put exclusions such as "do not mention X" only in facts_to_avoid.
 4. Infer audiences and occasions as search context, never as physical product facts.
 5. Derive 5-12 natural related keyword phrases from the main keyword, product type, image evidence, and audience intent. Do not invent search volume.
-6. Use a reference listing only for non-copying positioning or keyword insights.
+6. Use competitor_profile only for non-copying positioning and keyword insights. A keyword marked usable_for_listing=false must not be used. A competitor claim is a fact about this product only when own_evidence=confirmed and the same fact exists in supplied_facts.
 7. Flag possible trademark, character, copyright, hate, medical, or restricted-language concerns in policy_risks. Empty arrays are valid when no evidence exists.
 </method>`;
 }
@@ -324,7 +327,10 @@ async function callGemini(
       temperature: 0.2,
     });
     return {
-      brief: mergeOperatorEvidence(input, combined.value.product_brief),
+      brief: mergeCompetitorProfile(
+        input,
+        mergeOperatorEvidence(input, combined.value.product_brief),
+      ),
       listing: combined.value.listing,
       inputTokens: combined.inputTokens,
       outputTokens: combined.outputTokens,
@@ -344,7 +350,9 @@ async function callGemini(
         temperature: 0.1,
       });
   const rawBrief = existingBrief || analysis?.value;
-  const brief = rawBrief ? mergeOperatorEvidence(input, rawBrief) : undefined;
+  const brief = rawBrief
+    ? mergeCompetitorProfile(input, mergeOperatorEvidence(input, rawBrief))
+    : undefined;
   if (!brief) throw new Error("Gemini did not produce a product brief.");
   const writing = await geminiJson({
     client,
@@ -386,7 +394,10 @@ async function callOpenAI(
       schemaName: "amazon_evidence_listing",
     });
     return {
-      brief: mergeOperatorEvidence(input, combined.value.product_brief),
+      brief: mergeCompetitorProfile(
+        input,
+        mergeOperatorEvidence(input, combined.value.product_brief),
+      ),
       listing: combined.value.listing,
       inputTokens: combined.inputTokens,
       outputTokens: combined.outputTokens,
@@ -406,7 +417,9 @@ async function callOpenAI(
         schemaName: "amazon_product_brief",
       });
   const rawBrief = existingBrief || analysis?.value;
-  const brief = rawBrief ? mergeOperatorEvidence(input, rawBrief) : undefined;
+  const brief = rawBrief
+    ? mergeCompetitorProfile(input, mergeOperatorEvidence(input, rawBrief))
+    : undefined;
   if (!brief) throw new Error("OpenAI did not produce a product brief.");
   const writing = await openAIJson({
     client,
@@ -478,44 +491,63 @@ function trustedProductEvidence(input: ListingInput, brief?: ProductBrief) {
     .join("\n");
 }
 
+function competitorClaimsToAvoid(input: ListingInput) {
+  return (input.research.competitor_profile?.claims || [])
+    .filter((claim) => claim.own_evidence === "missing")
+    .filter((claim) => !["color", "other"].includes(claim.category))
+    .map((claim) => claim.value);
+}
+
 function autoFixListing(
   listing: ListingContent,
   input: ListingInput,
   brief?: ProductBrief,
 ): ListingContent {
   const policy = getPolicy(input);
+  const restrictedTerms = [
+    ...policy.restrictedTerms,
+    ...(input.research.competitor_profile?.blocked_terms || []),
+    ...competitorClaimsToAvoid(input),
+    ...(brief?.facts_to_avoid || []).map((fact) =>
+      fact
+        .replace(/^[•*\-\s]+/, "")
+        .replace(/^(do not|don't|dont|never|avoid)\s+(mention|use|include|claim)?\s*/i, "")
+        .trim(),
+    ),
+  ].filter((term) => term.toLowerCase() !== input.brand.toLowerCase());
   const supportedListing = removeUnsupportedPerformanceLanguage(
     listing,
     policy.unverifiedPerformanceTerms,
     trustedProductEvidence(input, brief),
   );
   return {
-    title: removeRestrictedTerms(supportedListing.title, policy.restrictedTerms).slice(0, policy.titleMax),
+    title: removeRestrictedTerms(supportedListing.title, restrictedTerms).slice(0, policy.titleMax),
     bullet_points: supportedListing.bullet_points
       .filter(Boolean)
       .slice(0, policy.bulletCount)
       .map((bullet) =>
-        removeRestrictedTerms(bullet, policy.restrictedTerms).slice(0, policy.bulletMax),
+        removeRestrictedTerms(bullet, restrictedTerms).slice(0, policy.bulletMax),
       ),
-    description: removeRestrictedTerms(supportedListing.description, policy.restrictedTerms).slice(
+    description: removeRestrictedTerms(supportedListing.description, restrictedTerms).slice(
       0,
       policy.descriptionMax,
     ),
     backend_search_terms: trimUtf8(
       dedupeSearchTerms(
-        removeRestrictedTerms(supportedListing.backend_search_terms, policy.restrictedTerms),
+        removeRestrictedTerms(supportedListing.backend_search_terms, restrictedTerms),
       ),
       policy.searchTermsMaxBytes,
     ),
   };
 }
 
-function analysisContext(brief: ProductBrief): ListingAnalysisContext {
+function analysisContext(brief: ProductBrief, input: ListingInput): ListingAnalysisContext {
   return {
     relatedKeywords: brief.related_keywords,
     suppliedFacts: brief.supplied_facts,
-    factsToAvoid: brief.facts_to_avoid,
+    factsToAvoid: [...brief.facts_to_avoid, ...competitorClaimsToAvoid(input)],
     policyRisks: brief.policy_risks,
+    blockedTerms: input.research.competitor_profile?.blocked_terms,
   };
 }
 
@@ -553,7 +585,10 @@ export async function generateListing(
       mockListing.title = `${input.brand} ${mockListing.title}`;
     }
     providerResult = {
-      brief: mergeOperatorEvidence(input, options.productBrief || createMockProductBrief(input)),
+      brief: mergeCompetitorProfile(
+        input,
+        mergeOperatorEvidence(input, options.productBrief || createMockProductBrief(input)),
+      ),
       listing: mockListing,
     };
   } else {
@@ -605,7 +640,7 @@ export async function generateListing(
         try {
           const next = await callProvider(provider, brief, feedback);
           const listing = autoFixListing(next.listing, input, next.brief);
-          const checked = analyzeListing(listing, input, analysisContext(next.brief));
+          const checked = analyzeListing(listing, input, analysisContext(next.brief, input));
           lastResult = { ...next, listing };
           const nextFeedback = qualityFeedback(checked);
           if (!nextFeedback) return lastResult;
@@ -640,7 +675,7 @@ export async function generateListing(
   }
 
   const listing = autoFixListing(providerResult.listing, input, providerResult.brief);
-  const analysis = analyzeListing(listing, input, analysisContext(providerResult.brief));
+  const analysis = analyzeListing(listing, input, analysisContext(providerResult.brief, input));
   return {
     request_id: requestId,
     status: analysis.policy_validation.passed ? "success" : "needs_review",
@@ -654,6 +689,7 @@ export async function generateListing(
       observations: providerResult.brief.visual_facts,
     },
     product_analysis: providerResult.brief,
+    competitor_profile: input.research.competitor_profile,
     listing,
     ...analysis,
     metadata: {

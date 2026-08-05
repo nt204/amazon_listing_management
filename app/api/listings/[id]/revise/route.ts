@@ -26,6 +26,9 @@ export async function POST(request: Request, { params }: RouteContext) {
       stored.result.product_analysis,
       instruction,
     );
+    if (stored.result.competitor_profile) {
+      evidence.input.research.competitor_profile = stored.result.competitor_profile;
+    }
     const revised = await generateListing(evidence.input, {
       productBrief: evidence.brief,
       currentListing: stored.current_listing,

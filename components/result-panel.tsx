@@ -306,6 +306,7 @@ function QualitySidebar({ stored }: { stored: StoredListing }) {
   const result = stored.result;
   const validation = result.policy_validation;
   const productAnalysis = result.product_analysis;
+  const competitorProfile = result.competitor_profile;
   const quality = result.content_quality;
   const errors = validation?.errors || [];
   const warnings = validation?.warnings || [];
@@ -343,6 +344,23 @@ function QualitySidebar({ stored }: { stored: StoredListing }) {
         </div>
         {productAnalysis?.exact_text.length ? <div className="mt-4 border-t border-[#e5e8ea] pt-3"><p className="mb-1.5 text-[11px] font-bold text-[#65717c]">Detected text</p><p className="text-xs font-semibold leading-5 text-[#39444d]">{productAnalysis.exact_text.join(", ")}</p></div> : null}
         {productAnalysis?.competitor_insights.length ? <div className="mt-4 border-t border-[#e5e8ea] pt-3"><p className="mb-1.5 text-[11px] font-bold text-[#65717c]">Reference insights</p><div className="grid gap-1.5">{productAnalysis.competitor_insights.slice(0, 4).map((insight) => <p key={insight} className="text-xs leading-5 text-[#4b5660]">{insight}</p>)}</div></div> : null}
+        {competitorProfile ? (
+          <div className="mt-4 border-t border-[#e5e8ea] pt-3">
+            <p className="mb-1.5 text-[11px] font-bold text-[#65717c]">Competitor profile · {competitorProfile.references.length} refs</p>
+            <div className="grid gap-1.5">
+              {competitorProfile.keyword_candidates.filter((keyword) => keyword.usable_for_listing).slice(0, 4).map((keyword) => (
+                <p key={keyword.value} className="text-xs leading-5 text-[#4b5660]">
+                  {keyword.value} <span className="text-[10px] text-[#8a949c]">· {keyword.sources.length} source · {keyword.confidence}</span>
+                </p>
+              ))}
+            </div>
+            {competitorProfile.claims.some((claim) => claim.own_evidence === "missing") ? (
+              <p className="mt-2 text-[11px] leading-4 text-[#8b5810]">
+                {competitorProfile.claims.filter((claim) => claim.own_evidence === "missing").length} competitor claims bị chặn vì thiếu fact của sản phẩm.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       <section className="rounded-[10px] border border-[#dfe3e6] bg-white p-4 text-xs text-[#65717c]">

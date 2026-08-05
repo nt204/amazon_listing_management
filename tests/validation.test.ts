@@ -227,3 +227,15 @@ test("sanitizer preserves performance language explicitly supplied by the operat
 
   assert.equal(sanitized.bullet_points[0], listing.bullet_points[0]);
 });
+
+test("validator blocks competitor brands and ASINs from every listing field", () => {
+  const listing = createMockListing(input);
+  listing.bullet_points[0] = "A Stuff4-inspired nurse gift with ASIN B0GTQX2FLW.";
+  const result = analyzeListing(listing, input, {
+    blockedTerms: ["Stuff4", "B0GTQX2FLW"],
+  });
+
+  assert.ok(
+    result.policy_validation.errors.some((issue) => issue.code === "COMPETITOR_TERM_USED"),
+  );
+});
