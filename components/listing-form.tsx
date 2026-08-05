@@ -8,7 +8,7 @@ import {
   TrashIcon,
   UploadSimpleIcon,
 } from "@phosphor-icons/react";
-import { useRef, useState, type ChangeEvent, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type Dispatch, type SetStateAction } from "react";
 import { Field, Select, TextArea, TextInput } from "@/components/ui";
 import { resizeImage } from "@/lib/image-client";
 import type { AiOptions } from "@/lib/models";
@@ -17,6 +17,47 @@ import type { BrandProfile, ListingInput } from "@/lib/types";
 export interface FormIssue {
   field: string;
   message: string;
+}
+
+function splitKeywords(value: string) {
+  return [...new Set(value.split(/[\n,;]+/).map((term) => term.trim()).filter(Boolean))].slice(0, 50);
+}
+
+function KeywordTextArea({
+  id,
+  value,
+  onCommit,
+  placeholder,
+}: {
+  id: string;
+  value: string[];
+  onCommit: (keywords: string[]) => void;
+  placeholder: string;
+}) {
+  const [draft, setDraft] = useState(value.join("\n"));
+  const lastCommitted = useRef(value.join("\n"));
+  useEffect(() => {
+    const externalValue = value.join("\n");
+    if (externalValue !== lastCommitted.current) {
+      lastCommitted.current = externalValue;
+      setDraft(externalValue);
+    }
+  }, [value]);
+  return (
+    <TextArea
+      id={id}
+      rows={4}
+      value={draft}
+      onChange={(event) => {
+        const nextDraft = event.target.value;
+        const keywords = splitKeywords(nextDraft);
+        setDraft(nextDraft);
+        lastCommitted.current = keywords.join("\n");
+        onCommit(keywords);
+      }}
+      placeholder={placeholder}
+    />
+  );
 }
 
 interface ListingFormProps {
@@ -271,6 +312,11 @@ export function ListingForm({
           </div>
         ) : null}
 
+        <div className="border-t border-[#e5e8ea] pt-5">
+          <p className="text-xs font-bold text-[#222b32]">Chiến lược tìm kiếm</p>
+          <p className="mt-1 text-xs leading-5 text-[#65717c]">Cho AI biết cụm từ bắt buộc và các hướng tìm kiếm cần ưu tiên.</p>
+        </div>
+
         <Field label="Từ khóa chính" htmlFor="main_keyword" required error={issueFor("main_keyword")}>
           <TextInput
             id="main_keyword"
@@ -283,7 +329,80 @@ export function ListingForm({
           />
         </Field>
 
-        <Field label="Product Details (optional)" htmlFor="notes">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field
+            label="Từ khóa liên quan"
+            htmlFor="related_keywords"
+            hint="Một cụm mỗi dòng. Dùng cho title, bullet và description."
+          >
+            <KeywordTextArea
+              id="related_keywords"
+              value={value.related_keywords}
+              onCommit={(keywords) =>
+                onChange((current) => ({
+                  ...current,
+                  related_keywords: keywords,
+                }))
+              }
+              placeholder={"cat lover gift\npet dad coffee cup"}
+            />
+          </Field>
+          <Field
+            label="Backend ưu tiên"
+            htmlFor="backend_keywords"
+            hint="Từ đồng nghĩa hoặc intent chưa có trong nội dung visible."
+          >
+            <KeywordTextArea
+              id="backend_keywords"
+              value={value.backend_keywords}
+              onCommit={(keywords) =>
+                onChange((current) => ({
+                  ...current,
+                  backend_keywords: keywords,
+                }))
+              }
+              placeholder={"feline owner\npet parent\nhusband gift"}
+            />
+          </Field>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field
+            label="Đối tượng mua hoặc nhận"
+            htmlFor="target_customer"
+            hint="Shopping context, không được xem là product fact."
+          >
+            <TextInput
+              id="target_customer"
+              value={value.research.target_customer}
+              onChange={(event) => updateResearch("target_customer", event.target.value)}
+              placeholder="Cat dads, men who own cats"
+            />
+          </Field>
+          <Field
+            label="Dịp mua hoặc tặng"
+            htmlFor="occasions"
+            hint="Một dịp mỗi dòng; hệ thống sẽ mở rộng có kiểm soát."
+          >
+            <KeywordTextArea
+              id="occasions"
+              value={value.research.occasion}
+              onCommit={(occasions) =>
+                onChange((current) => ({
+                  ...current,
+                  research: { ...current.research, occasion: occasions },
+                }))
+              }
+              placeholder={"Father's Day\nBirthday\nChristmas"}
+            />
+          </Field>
+        </div>
+
+        <Field
+          label="Product facts (optional)"
+          htmlFor="notes"
+          hint="Chỉ nhập thông tin đã xác minh. Mỗi dòng một fact; dùng 'Do not mention...' để loại trừ."
+        >
           <TextArea
             id="notes"
             rows={6}
@@ -328,7 +447,7 @@ export function ListingForm({
         </div>
 
         <Field
-          label="Reference Listings (optional)"
+          label="Listing đối thủ (optional)"
           htmlFor="competitor_notes"
           hint={
             referenceState.status === "loading"
@@ -339,7 +458,7 @@ export function ListingForm({
                   ? referenceState.resolvedCount > 0
                     ? `Đã nhận ${referenceState.resolvedCount} reference nhưng Amazon không trả nội dung; generate vẫn tiếp tục.`
                     : "Không nhận diện được Amazon URL / ASIN."
-                  : undefined
+                  : "Tối đa 3 URL hoặc ASIN. Hệ thống chỉ lấy intent và vocabulary, không sao chép copy hay product claim."
           }
         >
             <TextArea

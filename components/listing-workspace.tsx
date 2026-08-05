@@ -5,6 +5,7 @@ import {
   CaretRightIcon,
   CheckSquareIcon,
   ListPlusIcon,
+  MagnifyingGlassIcon,
   PackageIcon,
   SquaresFourIcon,
   StackIcon,
@@ -130,6 +131,85 @@ function downloadCsv(csv: string, filename: string) {
 
 type QueueFilter = "all" | "review" | "missing" | "approved";
 
+interface QueuePanelProps {
+  className: string;
+  history: ListingSummary[];
+  metrics: WorkflowMetrics;
+  filter: QueueFilter;
+  onFilterChange: (filter: QueueFilter) => void;
+  query: string;
+  onQueryChange: (query: string) => void;
+  selectedIds: string[];
+  onSelectedIdsChange: (ids: string[]) => void;
+  activeId?: string;
+  action: string | null;
+  onOpenListing: (id: string) => void;
+  onExportSelected: () => void;
+  onClose?: () => void;
+}
+
+function QueuePanel({
+  className,
+  history,
+  metrics,
+  filter,
+  onFilterChange,
+  query,
+  onQueryChange,
+  selectedIds,
+  onSelectedIdsChange,
+  activeId,
+  action,
+  onOpenListing,
+  onExportSelected,
+  onClose,
+}: QueuePanelProps) {
+  return (
+    <aside className={className} aria-label="Hàng đợi listing">
+      <div className="border-b border-[#dfe3e6] p-3">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-sm font-bold text-[#39444d]"><SquaresFourIcon size={17} /> Hàng đợi chất lượng</div>
+          {onClose ? <button type="button" onClick={onClose} aria-label="Đóng hàng đợi" className="grid h-8 w-8 place-items-center rounded-lg text-[#65717c] hover:bg-white"><XIcon size={17} /></button> : null}
+        </div>
+        <div className="relative mb-3">
+          <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#7a858e]" size={15} />
+          <input value={query} onChange={(event) => onQueryChange(event.target.value)} className="field-control min-h-9 py-2 pl-9 text-xs" placeholder="Tìm theo tên, keyword, loại..." aria-label="Tìm listing" />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <button type="button" aria-pressed={filter === "review"} onClick={() => onFilterChange("review")} className={`rounded-lg p-2.5 text-left ${filter === "review" ? "bg-[#fff8f4] ring-1 ring-[#d99a7a]" : "bg-white"}`}><span className="block text-lg font-bold text-[#303b44]">{metrics.review}</span><span className="text-[10px] text-[#65717c]">Chờ review</span></button>
+          <button type="button" aria-pressed={filter === "missing"} onClick={() => onFilterChange("missing")} className={`rounded-lg p-2.5 text-left ${filter === "missing" ? "bg-[#fff8f4] ring-1 ring-[#d99a7a]" : "bg-white"}`}><span className="block text-lg font-bold text-[#303b44]">{metrics.missing_facts}</span><span className="text-[10px] text-[#65717c]">Thiếu fact</span></button>
+          <button type="button" aria-pressed={filter === "approved"} onClick={() => onFilterChange("approved")} className={`rounded-lg p-2.5 text-left ${filter === "approved" ? "bg-[#fff8f4] ring-1 ring-[#d99a7a]" : "bg-white"}`}><span className="block text-lg font-bold text-[#303b44]">{metrics.approved}</span><span className="text-[10px] text-[#65717c]">Đã duyệt</span></button>
+          <button type="button" aria-pressed={filter === "all"} onClick={() => onFilterChange("all")} className={`rounded-lg p-2.5 text-left ${filter === "all" ? "bg-[#fff8f4] ring-1 ring-[#d99a7a]" : "bg-white"}`}><span className="block text-lg font-bold text-[#303b44]">{metrics.total}</span><span className="text-[10px] text-[#65717c]">Tất cả</span></button>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between border-b border-[#dfe3e6] px-3 py-3">
+        <div className="flex items-center gap-2 text-xs font-bold text-[#59656e]"><ArchiveTrayIcon size={16} /> {history.length} listings</div>
+        {selectedIds.length ? <button type="button" onClick={onExportSelected} disabled={action === "batch-export"} className="text-[10px] font-bold text-[#983f18] hover:text-[#6f2c10]">Export {selectedIds.length}</button> : null}
+      </div>
+      <div className="thin-scrollbar flex-1 overflow-y-auto p-2.5">
+        {history.length ? (
+          <div className="grid gap-1.5">
+            {history.map((item) => (
+              <div key={item.id} className={`grid grid-cols-[24px_minmax(0,1fr)] rounded-lg border p-2.5 ${activeId === item.id ? "border-[#e1a587] bg-[#fff8f4]" : "border-transparent hover:border-[#d8dde1] hover:bg-white"}`}>
+                <label className="pt-0.5" title={item.status === "Approved" ? "Chọn để export" : "Chỉ listing Approved mới export được"}>
+                  <input type="checkbox" className="h-4 w-4 accent-[#b84f1d]" disabled={item.status !== "Approved"} checked={selectedIds.includes(item.id)} onChange={(event) => onSelectedIdsChange(event.target.checked ? [...selectedIds, item.id] : selectedIds.filter((id) => id !== item.id))} />
+                </label>
+                <button type="button" onClick={() => onOpenListing(item.id)} className="min-w-0 text-left">
+                  <div className="flex items-start gap-2"><PackageIcon className="mt-0.5 shrink-0 text-[#65717c]" size={15} /><span className="min-w-0 flex-1 truncate text-xs font-bold text-[#303b44]">{item.internal_name}</span><CaretRightIcon className="shrink-0 text-[#9aa2a9]" size={13} /></div>
+                  {item.main_keyword && item.main_keyword.trim().toLowerCase() !== item.internal_name.trim().toLowerCase() ? <p className="mt-1 truncate pl-6 text-[10px] font-medium text-[#8a5b43]" title={item.main_keyword}>{item.main_keyword}</p> : null}
+                  <div className="mt-2 flex items-center justify-between gap-2 pl-6 text-[10px] text-[#7a858e]"><span>{item.marketplace} / {item.product_type}</span><span>{item.status}</span></div>
+                  {item.error_count || item.missing_fact_count ? <div className="mt-1.5 pl-6 text-[10px] text-[#96511f]">{item.error_count ? `${item.error_count} lỗi` : ""}{item.error_count && item.missing_fact_count ? ", " : ""}{item.missing_fact_count ? `${item.missing_fact_count} fact chưa dùng` : ""}</div> : null}
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : <p className="px-2 py-6 text-center text-xs leading-5 text-[#7a858e]">Không tìm thấy listing phù hợp.</p>}
+      </div>
+    </aside>
+  );
+}
+
 export function ListingWorkspace() {
   const [input, setInput] = useState<ListingInput>(emptyInput);
   const [history, setHistory] = useState<ListingSummary[]>([]);
@@ -145,6 +225,8 @@ export function ListingWorkspace() {
   const [toast, setToast] = useState<string | null>(null);
   const [aiOptions, setAiOptions] = useState<AiOptions | null>(null);
   const [filter, setFilter] = useState<QueueFilter>("all");
+  const [queueQuery, setQueueQuery] = useState("");
+  const [queueOpen, setQueueOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [brandManagerOpen, setBrandManagerOpen] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
@@ -196,8 +278,15 @@ export function ListingWorkspace() {
         if (filter === "missing") return item.missing_fact_count > 0;
         if (filter === "approved") return item.status === "Approved";
         return true;
+      }).filter((item) => {
+        const term = queueQuery.trim().toLowerCase();
+        if (!term) return true;
+        return [item.internal_name, item.main_keyword, item.product_type, item.marketplace, item.status]
+          .join(" ")
+          .toLowerCase()
+          .includes(term);
       }),
-    [filter, history],
+    [filter, history, queueQuery],
   );
 
   const notify = (message: string) => {
@@ -409,55 +498,61 @@ export function ListingWorkspace() {
       <header className="flex h-16 items-center justify-between border-b border-[#d8dde1] bg-[#1f2931] px-4 text-white lg:px-5">
         <div className="flex items-center gap-3">
           <div className="grid h-8 w-8 place-items-center rounded-lg bg-[#b84f1d] text-white"><CheckSquareIcon size={18} weight="fill" /></div>
-          <div><p className="text-sm font-bold leading-4">Listing Desk</p><p className="mt-0.5 text-[10px] text-[#b8c0c6]">Workflow and quality control</p></div>
+          <div><p className="text-sm font-bold leading-4">Listing Desk</p><p className="mt-0.5 hidden text-[10px] text-[#b8c0c6] sm:block">Workflow and quality control</p></div>
         </div>
         <div className="flex items-center gap-2">
+          <button type="button" onClick={() => setQueueOpen(true)} className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-lg border border-[#59636b] bg-[#2a353e] px-3 text-xs font-semibold text-white hover:bg-[#34414b] xl:hidden"><ArchiveTrayIcon size={16} /><span className="hidden sm:inline">Listings</span><span className="rounded bg-[#3b4852] px-1.5 py-0.5 text-[10px]">{metrics.total}</span></button>
           <button type="button" onClick={() => setBrandManagerOpen(true)} className="hidden h-9 items-center gap-2 whitespace-nowrap rounded-lg border border-[#59636b] bg-[#2a353e] px-3 text-xs font-semibold text-white hover:bg-[#34414b] sm:inline-flex"><TagIcon size={16} /> Brands</button>
-          <button type="button" onClick={() => setBatchOpen(true)} className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-lg border border-[#59636b] bg-[#2a353e] px-3 text-xs font-semibold text-white hover:bg-[#34414b]"><StackIcon size={16} /> Batch</button>
-          <button type="button" onClick={createNew} className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-lg bg-[#b84f1d] px-3 text-xs font-bold text-white hover:bg-[#963f17] active:translate-y-px"><ListPlusIcon size={17} /> New</button>
+          <button type="button" onClick={() => setBatchOpen(true)} aria-label="Batch import" className="hidden h-9 items-center gap-2 whitespace-nowrap rounded-lg border border-[#59636b] bg-[#2a353e] px-3 text-xs font-semibold text-white hover:bg-[#34414b] sm:inline-flex"><StackIcon size={16} /> Batch</button>
+          <button type="button" onClick={createNew} aria-label="Tạo listing mới" className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-lg bg-[#b84f1d] px-2.5 text-xs font-bold text-white hover:bg-[#963f17] active:translate-y-px sm:px-3"><ListPlusIcon size={17} /><span className="hidden sm:inline">New</span></button>
         </div>
       </header>
 
       {error ? <div className="fixed left-1/2 top-20 z-[3] flex w-[min(92vw,620px)] -translate-x-1/2 items-start gap-3 rounded-[10px] border border-[#e7b9b4] bg-[#fff5f3] p-3.5 shadow-[0_12px_34px_rgba(76,32,26,0.16)]" role="alert"><WarningCircleIcon className="mt-0.5 shrink-0 text-[#b32921]" size={19} weight="fill" /><p className="flex-1 text-sm leading-5 text-[#73271f]">{error}</p><button type="button" aria-label="Dismiss error" onClick={() => setError(null)} className="text-[#73271f] hover:text-[#43130f]"><XIcon size={17} /></button></div> : null}
       {toast ? <div className="fixed bottom-5 left-1/2 z-[3] -translate-x-1/2 rounded-lg bg-[#263139] px-4 py-2.5 text-sm font-semibold text-white shadow-lg" role="status">{toast}</div> : null}
 
-      <div className="grid min-h-[calc(100dvh-64px)] grid-cols-[minmax(0,1fr)] lg:grid-cols-[420px_minmax(0,1fr)] xl:grid-cols-[270px_420px_minmax(0,1fr)]">
-        <aside className="thin-scrollbar hidden min-h-0 flex-col border-r border-[#dfe3e6] bg-[#f0f2f4] xl:flex xl:max-h-[calc(100dvh-64px)]">
-          <div className="border-b border-[#dfe3e6] p-3">
-            <div className="mb-3 flex items-center gap-2 text-sm font-bold text-[#39444d]"><SquaresFourIcon size={17} /> Hàng đợi chất lượng</div>
-            <div className="grid grid-cols-2 gap-2">
-              <button type="button" onClick={() => setFilter("review")} className={`rounded-lg p-2.5 text-left ${filter === "review" ? "bg-[#fff8f4] ring-1 ring-[#d99a7a]" : "bg-white"}`}><span className="block text-lg font-bold text-[#303b44]">{metrics.review}</span><span className="text-[10px] text-[#65717c]">Chờ review</span></button>
-              <button type="button" onClick={() => setFilter("missing")} className={`rounded-lg p-2.5 text-left ${filter === "missing" ? "bg-[#fff8f4] ring-1 ring-[#d99a7a]" : "bg-white"}`}><span className="block text-lg font-bold text-[#303b44]">{metrics.missing_facts}</span><span className="text-[10px] text-[#65717c]">Thiếu fact</span></button>
-              <button type="button" onClick={() => setFilter("approved")} className={`rounded-lg p-2.5 text-left ${filter === "approved" ? "bg-[#fff8f4] ring-1 ring-[#d99a7a]" : "bg-white"}`}><span className="block text-lg font-bold text-[#303b44]">{metrics.approved}</span><span className="text-[10px] text-[#65717c]">Đã duyệt</span></button>
-              <button type="button" onClick={() => setFilter("all")} className={`rounded-lg p-2.5 text-left ${filter === "all" ? "bg-[#fff8f4] ring-1 ring-[#d99a7a]" : "bg-white"}`}><span className="block text-lg font-bold text-[#303b44]">{metrics.total}</span><span className="text-[10px] text-[#65717c]">Tất cả</span></button>
-            </div>
-          </div>
+      {queueOpen ? (
+        <div className="fixed inset-0 z-[4] xl:hidden">
+          <button type="button" className="absolute inset-0 bg-[#172028]/45" onClick={() => setQueueOpen(false)} aria-label="Đóng hàng đợi listing" />
+          <QueuePanel
+            className="thin-scrollbar relative flex h-full w-[min(88vw,340px)] flex-col bg-[#f0f2f4] shadow-[18px_0_48px_rgba(24,31,36,0.2)]"
+            history={filteredHistory}
+            metrics={metrics}
+            filter={filter}
+            onFilterChange={setFilter}
+            query={queueQuery}
+            onQueryChange={setQueueQuery}
+            selectedIds={selectedIds}
+            onSelectedIdsChange={setSelectedIds}
+            activeId={stored?.id}
+            action={action}
+            onOpenListing={(id) => { setQueueOpen(false); void openListing(id); }}
+            onExportSelected={() => void exportSelected()}
+            onClose={() => setQueueOpen(false)}
+          />
+        </div>
+      ) : null}
 
-          <div className="flex items-center justify-between border-b border-[#dfe3e6] px-3 py-3">
-            <div className="flex items-center gap-2 text-xs font-bold text-[#59656e]"><ArchiveTrayIcon size={16} /> {filteredHistory.length} listings</div>
-            {selectedIds.length ? <button type="button" onClick={() => void exportSelected()} disabled={action === "batch-export"} className="text-[10px] font-bold text-[#983f18] hover:text-[#6f2c10]">Export {selectedIds.length}</button> : null}
-          </div>
-          <div className="thin-scrollbar flex-1 overflow-y-auto p-2.5">
-            {filteredHistory.length ? (
-              <div className="grid gap-1.5">
-                {filteredHistory.map((item) => (
-                  <div key={item.id} className={`grid grid-cols-[24px_minmax(0,1fr)] rounded-lg border p-2.5 ${stored?.id === item.id ? "border-[#e1a587] bg-[#fff8f4]" : "border-transparent hover:border-[#d8dde1] hover:bg-white"}`}>
-                    <label className="pt-0.5" title={item.status === "Approved" ? "Chọn để export" : "Chỉ listing Approved mới export được"}>
-                      <input type="checkbox" className="h-4 w-4 accent-[#b84f1d]" disabled={item.status !== "Approved"} checked={selectedIds.includes(item.id)} onChange={(event) => setSelectedIds((current) => event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id))} />
-                    </label>
-                    <button type="button" onClick={() => void openListing(item.id)} className="min-w-0 text-left">
-                      <div className="flex items-start gap-2"><PackageIcon className="mt-0.5 shrink-0 text-[#65717c]" size={15} /><span className="min-w-0 flex-1 truncate text-xs font-bold text-[#303b44]">{item.internal_name}</span><CaretRightIcon className="shrink-0 text-[#9aa2a9]" size={13} /></div>
-                      <div className="mt-2 flex items-center justify-between gap-2 pl-6 text-[10px] text-[#7a858e]"><span>{item.marketplace} / {item.product_type}</span><span>{item.status}</span></div>
-                      {item.error_count || item.missing_fact_count ? <div className="mt-1.5 pl-6 text-[10px] text-[#96511f]">{item.error_count ? `${item.error_count} errors` : ""}{item.error_count && item.missing_fact_count ? ", " : ""}{item.missing_fact_count ? `${item.missing_fact_count} facts unused` : ""}</div> : null}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : <p className="px-2 py-6 text-center text-xs leading-5 text-[#7a858e]">Không có listing trong filter này.</p>}
-          </div>
-        </aside>
+      <div className="grid min-h-[calc(100dvh-64px)] grid-cols-[minmax(0,1fr)] lg:grid-cols-[400px_minmax(0,1fr)] xl:grid-cols-[286px_400px_minmax(0,1fr)]">
+        <QueuePanel
+          className="thin-scrollbar hidden min-h-0 flex-col border-r border-[#dfe3e6] bg-[#f0f2f4] xl:flex xl:max-h-[calc(100dvh-64px)]"
+          history={filteredHistory}
+          metrics={metrics}
+          filter={filter}
+          onFilterChange={setFilter}
+          query={queueQuery}
+          onQueryChange={setQueueQuery}
+          selectedIds={selectedIds}
+          onSelectedIdsChange={setSelectedIds}
+          activeId={stored?.id}
+          action={action}
+          onOpenListing={(id) => void openListing(id)}
+          onExportSelected={() => void exportSelected()}
+        />
 
-        <ListingForm value={input} onChange={setInput} onSubmit={handleGenerate} onLoadSample={() => { setInput(sampleInput); setIssues([]); }} loading={loading} issues={issues} aiOptions={aiOptions} brands={brands} />
+        <div className={stored ? "hidden lg:contents" : "contents"}>
+          <ListingForm value={input} onChange={setInput} onSubmit={handleGenerate} onLoadSample={() => { setInput(sampleInput); setIssues([]); }} loading={loading} issues={issues} aiOptions={aiOptions} brands={brands} />
+        </div>
 
         <ResultPanel key={stored?.id || "empty"} stored={stored} content={content} editing={editing} loading={loading} action={action} onContentChange={setContent} onEdit={() => setEditing(true)} onCancelEdit={() => { setContent(stored?.current_listing || null); setEditing(false); }} onSave={save} onSubmitReview={submitReview} onApprove={approve} onExport={exportListing} onCopy={copy} onRevise={revise} />
       </div>

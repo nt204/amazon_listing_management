@@ -111,6 +111,48 @@ function extractAttributes(content: string) {
   return attributes;
 }
 
+const nonBrandTitleLeaders = new Set([
+  "best", "fun", "funny", "cute", "novelty", "unique", "personalized", "custom", "retro",
+  "ceramic", "steel", "stainless", "glass", "plastic", "wood", "wooden", "cotton", "white",
+  "black", "blue", "red", "pink", "green", "large", "small", "mini", "premium", "official",
+  "coffee", "tea", "travel", "birthday", "christmas", "fathers", "mothers",
+]);
+
+export function inferCompetitorBrandFromTitle(title: string, input: ListingInput) {
+  const cleaned = cleanText(title);
+  if (!cleaned) return "";
+  const lower = cleaned.toLowerCase();
+  const mainKeyword = cleanText(input.main_keyword).toLowerCase();
+  const exactMainIndex = mainKeyword ? lower.indexOf(mainKeyword) : -1;
+  if (exactMainIndex > 0) {
+    const prefix = cleanText(cleaned.slice(0, exactMainIndex).replace(/[|,;:\-]+$/g, ""));
+    const prefixWords = prefix.split(/\s+/).filter(Boolean);
+    const first = normalize(prefixWords[0] || "");
+    if (
+      prefixWords.length > 0 &&
+      prefixWords.length <= 3 &&
+      !nonBrandTitleLeaders.has(first)
+    ) {
+      return prefix;
+    }
+  }
+
+  const firstToken = cleaned.match(/^[\p{L}\p{N}][\p{L}\p{N}&'.-]*/u)?.[0] || "";
+  const first = normalize(firstToken);
+  const inputWords = new Set(wordsForBrandCheck(`${input.main_keyword} ${input.product_type}`));
+  if (!first || nonBrandTitleLeaders.has(first) || inputWords.has(first)) return "";
+  const titleWords = normalize(cleaned).split(" ").filter(Boolean);
+  const hasProductContext = titleWords.some((word) =>
+    /^(mug|cup|tumbler|shirt|tshirt|tee|hoodie|blanket|ornament|candle|poster|plaque|keychain|necklace|bracelet|bag|pillow|notebook|journal|card|sign|bottle)s?$/.test(word),
+  );
+  if (!hasProductContext || titleWords.length < 4) return "";
+  return firstToken;
+}
+
+function wordsForBrandCheck(value: string) {
+  return normalize(value).split(" ").filter(Boolean);
+}
+
 function extractAudiences(content: string, title: string) {
   const focused = [title, ...content.split(/\n+/).filter((line) => /gift|for\s|dad|mom|lover|owner|nurse|teacher/i.test(line)).slice(0, 30)].join(" ");
   const matches = focused.matchAll(
@@ -216,6 +258,8 @@ export function buildCompetitorProfile(
     const content = reference.content.slice(0, perReference);
     const title = extractTitle(content);
     const attributes = extractAttributes(content);
+    const detectedBrand = attributes.brand || inferCompetitorBrandFromTitle(title, input);
+    if (detectedBrand) attributes.brand = detectedBrand;
     const source = sourceId(reference);
     return {
       reference,

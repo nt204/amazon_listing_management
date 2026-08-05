@@ -3,6 +3,7 @@ import { z } from "zod";
 import { generateListing } from "@/lib/ai";
 import { getListing, updateListingContent } from "@/lib/db";
 import { analyzeListing } from "@/lib/validation";
+import { buildListingStrategy } from "@/lib/listing-strategy";
 
 export const runtime = "nodejs";
 export const maxDuration = 150;
@@ -30,7 +31,16 @@ export async function POST(request: Request, { params }: RouteContext) {
   if (!stored) return NextResponse.json({ error: "Listing not found." }, { status: 404 });
   try {
     const { field, instruction } = requestSchema.parse(await request.json());
-    const regenerated = await generateListing(stored.input, {
+    const enrichedInput = stored.result.competitor_profile
+      ? {
+          ...stored.input,
+          research: {
+            ...stored.input.research,
+            competitor_profile: stored.result.competitor_profile,
+          },
+        }
+      : stored.input;
+    const regenerated = await generateListing(enrichedInput, {
       productBrief: stored.result.product_analysis,
       writingFeedback: [fieldFeedback[field], instruction].filter(Boolean).join("\n"),
     });
@@ -39,11 +49,14 @@ export async function POST(request: Request, { params }: RouteContext) {
       [field]: regenerated.listing[field],
     };
     const brief = regenerated.product_analysis || stored.result.product_analysis;
-    const analysis = analyzeListing(content, stored.input, {
+    const analysis = analyzeListing(content, enrichedInput, {
       relatedKeywords: brief?.related_keywords,
       suppliedFacts: brief?.supplied_facts,
       factsToAvoid: brief?.facts_to_avoid,
       policyRisks: brief?.policy_risks,
+      blockedTerms: stored.result.competitor_profile?.blocked_terms,
+      competitorProfile: stored.result.competitor_profile,
+      listingStrategy: buildListingStrategy(enrichedInput, brief),
     });
     const result = {
       ...stored.result,

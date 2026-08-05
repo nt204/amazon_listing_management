@@ -1,17 +1,60 @@
 import { NextResponse } from "next/server";
 import { getListing, updateListingContent } from "@/lib/db";
 import { generatedListingSchema } from "@/lib/schemas";
+import { buildListingStrategy } from "@/lib/listing-strategy";
+import type { StoredListing } from "@/lib/types";
 import { analyzeListing } from "@/lib/validation";
 
 export const runtime = "nodejs";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
+function analysisContext(stored: StoredListing) {
+  const brief = stored.result.product_analysis;
+  return {
+    relatedKeywords: brief?.related_keywords,
+    suppliedFacts: brief?.supplied_facts,
+    factsToAvoid: [
+      ...(brief?.facts_to_avoid || []),
+      ...(stored.result.competitor_profile?.claims || [])
+        .filter((claim) => claim.own_evidence === "missing")
+        .filter((claim) => !["color", "other"].includes(claim.category))
+        .map((claim) => claim.value),
+    ],
+    policyRisks: brief?.policy_risks,
+    blockedTerms: stored.result.competitor_profile?.blocked_terms,
+    competitorProfile: stored.result.competitor_profile,
+    listingStrategy: buildListingStrategy(
+      {
+        ...stored.input,
+        research: {
+          ...stored.input.research,
+          competitor_profile: stored.result.competitor_profile,
+        },
+      },
+      brief,
+    ),
+  };
+}
+
+function withCurrentAnalysis(stored: StoredListing) {
+  const analysis = analyzeListing(stored.current_listing, stored.input, analysisContext(stored));
+  return {
+    ...stored,
+    result: {
+      ...stored.result,
+      status: analysis.policy_validation.passed ? ("success" as const) : ("needs_review" as const),
+      listing: stored.current_listing,
+      ...analysis,
+    },
+  };
+}
+
 export async function GET(_request: Request, { params }: RouteContext) {
   const { id } = await params;
   const listing = await getListing(id);
   if (!listing) return NextResponse.json({ error: "Listing not found." }, { status: 404 });
-  return NextResponse.json({ listing });
+  return NextResponse.json({ listing: withCurrentAnalysis(listing) });
 }
 
 export async function PUT(request: Request, { params }: RouteContext) {
@@ -20,20 +63,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   if (!stored) return NextResponse.json({ error: "Listing not found." }, { status: 404 });
   try {
     const content = generatedListingSchema.parse((await request.json()).listing);
-    const brief = stored.result.product_analysis;
-    const analysis = analyzeListing(content, stored.input, {
-      relatedKeywords: brief?.related_keywords,
-      suppliedFacts: brief?.supplied_facts,
-      factsToAvoid: [
-        ...(brief?.facts_to_avoid || []),
-        ...(stored.result.competitor_profile?.claims || [])
-          .filter((claim) => claim.own_evidence === "missing")
-          .filter((claim) => !["color", "other"].includes(claim.category))
-          .map((claim) => claim.value),
-      ],
-      policyRisks: brief?.policy_risks,
-      blockedTerms: stored.result.competitor_profile?.blocked_terms,
-    });
+    const analysis = analyzeListing(content, stored.input, analysisContext(stored));
     const result = {
       ...stored.result,
       status: analysis.policy_validation.passed ? ("success" as const) : ("needs_review" as const),

@@ -1,5 +1,20 @@
 import type { ListingContent } from "@/lib/types";
 
+export function trimDescriptionToTarget(value: string, minimum: number, maximum: number) {
+  const trimmed = value.trim();
+  if (trimmed.length <= maximum) return trimmed;
+  const clipped = trimmed.slice(0, maximum);
+  const sentenceEnd = Math.max(
+    clipped.lastIndexOf("."),
+    clipped.lastIndexOf("!"),
+    clipped.lastIndexOf("?"),
+  );
+  if (sentenceEnd + 1 >= minimum) return clipped.slice(0, sentenceEnd + 1).trim();
+  const wordBoundary = clipped.lastIndexOf(" ");
+  const shortened = clipped.slice(0, wordBoundary > minimum ? wordBoundary : maximum - 1).trimEnd();
+  return `${shortened.replace(/[,:;\-]+$/, "")}.`.slice(0, maximum);
+}
+
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

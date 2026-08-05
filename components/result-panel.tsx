@@ -9,6 +9,7 @@ import {
   FloppyDiskIcon,
   ImageSquareIcon,
   MagicWandIcon,
+  MagnifyingGlassIcon,
   PaperPlaneTiltIcon,
   PencilSimpleIcon,
   ShieldCheckIcon,
@@ -302,6 +303,169 @@ function RevisionView({ revisions }: { revisions: ListingRevision[] }) {
   );
 }
 
+const placementLabels = {
+  title: "Title",
+  bullets: "Bullets",
+  description: "Description",
+  backend_search_terms: "Backend",
+} as const;
+
+const sourceLabels = {
+  main: "Primary",
+  operator: "Operator",
+  competitor: "Competitor",
+  ai: "AI research",
+} as const;
+
+function ScoreCell({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return (
+    <div className="min-w-0 border-r border-[#e2e6e8] px-4 last:border-r-0">
+      <dt className="text-[11px] font-semibold text-[#65717c]">{label}</dt>
+      <dd className="mt-1 text-xl font-bold tracking-tight text-[#222b32]">{value}</dd>
+      <p className="mt-0.5 truncate text-[10px] text-[#879099]" title={detail}>{detail}</p>
+    </div>
+  );
+}
+
+function SeoEvidenceView({
+  stored,
+  onApplyBackend,
+}: {
+  stored: StoredListing;
+  onApplyBackend: (value: string) => void;
+}) {
+  const result = stored.result;
+  const seo = result.seo_analysis;
+  const backend = seo.backend_search_terms;
+  const quality = result.content_quality;
+  const keywords = seo.keyword_usage || [];
+  const profile = result.competitor_profile;
+  const usedFacts = new Set(quality.facts_used);
+  const overlapIssues = [
+    ...(result.policy_validation?.errors || []),
+    ...(result.policy_validation?.warnings || []),
+  ].filter((issue) =>
+    ["COMPETITOR_PHRASE_OVERLAP", "COMPETITOR_PHRASE_SIMILARITY"].includes(issue.code),
+  );
+
+  return (
+    <div className="grid gap-5">
+      <section className="rounded-[10px] border border-[#dfe3e6] bg-white py-4">
+        <div className="grid grid-cols-2 gap-y-4 sm:grid-cols-5 sm:gap-y-0">
+          <ScoreCell label="SEO coverage" value={`${seo.keyword_coverage_percent}%`} detail="Có trọng số theo nguồn và vị trí" />
+          <ScoreCell label="Marketing fit" value={`${seo.marketing_coverage_percent ?? 0}%`} detail={seo.purchase_strategy ? `${seo.purchase_strategy.mode}, ${seo.purchase_strategy.marketing_percent}/${seo.purchase_strategy.product_percent}` : "Chưa có purchase strategy"} />
+          <ScoreCell label="Backend efficiency" value={`${backend?.efficiency_percent ?? seo.backend_coverage_percent ?? 0}%`} detail="Từ mới, không trùng visible copy" />
+          <ScoreCell label="Verified facts" value={`${quality.fact_coverage_percent}%`} detail={`${quality.facts_used.length}/${quality.supplied_facts.length} facts đã dùng`} />
+          <ScoreCell label="Competitor refs" value={`${profile?.references.length || 0}`} detail="Chỉ dùng intent và vocabulary" />
+        </div>
+      </section>
+
+      <section className="overflow-hidden rounded-[10px] border border-[#dfe3e6] bg-white">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#e5e8ea] px-4 py-3.5">
+          <div>
+            <h2 className="text-sm font-bold text-[#222b32]">Keyword map</h2>
+            <p className="mt-1 text-xs text-[#65717c]">Nguồn, độ ưu tiên và nơi mỗi intent đang được dùng.</p>
+          </div>
+          <span className="text-xs font-semibold text-[#65717c]">{keywords.filter((item) => item.placements.length).length}/{keywords.filter((item) => item.usable !== false).length} used</span>
+        </div>
+        {keywords.length ? (
+          <div className="divide-y divide-[#e9ecee]">
+            {keywords.slice(0, 16).map((item) => (
+              <div key={`${item.source}-${item.keyword}`} className="grid gap-2 px-4 py-3 md:grid-cols-[minmax(180px,1fr)_110px_90px_minmax(170px,1fr)] md:items-center">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-[#303b44]" title={item.keyword}>{item.keyword}</p>
+                  {item.source === "competitor" ? <p className="mt-0.5 text-[10px] text-[#879099]">{item.source_count || 1} reference, {item.confidence || "medium"} confidence</p> : null}
+                </div>
+                <span className="w-fit rounded-md bg-[#f0f2f4] px-2 py-1 text-[10px] font-bold text-[#59656e]">{sourceLabels[item.source || (item.is_main ? "main" : "ai")]}</span>
+                <span className={`text-[11px] font-bold ${item.usable === false ? "text-[#a13f32]" : item.placements.length ? "text-[#237047]" : "text-[#9a6218]"}`}>
+                  {item.usable === false ? "Blocked" : item.placements.length ? "Used" : "Opportunity"}
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {item.placements.length ? item.placements.map((placement) => (
+                    <span key={placement} className="rounded-md border border-[#d9dfe2] bg-[#fafbfb] px-1.5 py-0.5 text-[10px] text-[#59656e]">{placementLabels[placement]}</span>
+                  )) : <span className="text-[11px] text-[#8a949c]">Chưa có trong listing</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : <p className="p-5 text-sm text-[#65717c]">Chưa có keyword map. Chạy một AI revision để phân tích lại listing cũ.</p>}
+      </section>
+
+      <section className="rounded-[10px] border border-[#dfe3e6] bg-white p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2"><MagnifyingGlassIcon size={18} className="text-[#a24419]" /><h2 className="text-sm font-bold text-[#222b32]">Backend search terms</h2></div>
+            <p className="mt-1 text-xs text-[#65717c]">Generic discovery terms, không lặp title, bullet, brand hoặc ASIN.</p>
+          </div>
+          <span className="rounded-md bg-[#f0f2f4] px-2 py-1 text-[11px] font-bold text-[#4d5962]">{backend?.bytes_used ?? new TextEncoder().encode(result.listing.backend_search_terms).length}/{backend?.byte_limit ?? 249} bytes</span>
+        </div>
+        <div className="mt-4 rounded-lg bg-[#f5f7f8] p-3 font-mono text-xs leading-6 text-[#35414a]">
+          {result.listing.backend_search_terms || "Chưa có backend search terms."}
+        </div>
+        {backend ? (
+          <>
+            <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+              <div><dt className="text-[#7a858e]">Từ trùng visible copy</dt><dd className="mt-0.5 font-semibold text-[#39444d]">{backend.redundant_visible_words.join(", ") || "Không có"}</dd></div>
+              <div><dt className="text-[#7a858e]">Từ bị cấm hoặc lãng phí</dt><dd className="mt-0.5 font-semibold text-[#39444d]">{[...backend.prohibited_terms, ...backend.stop_words, ...backend.repeated_words, ...(backend.low_intent_terms || [])].join(", ") || "Không có"}</dd></div>
+            </dl>
+            {backend.suggested_value && backend.suggested_value !== result.listing.backend_search_terms ? (
+              <div className="mt-4 border-t border-[#e5e8ea] pt-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-bold text-[#39444d]">Bản tối ưu, {backend.suggested_bytes} bytes</p>
+                  <button type="button" onClick={() => onApplyBackend(backend.suggested_value)} className="h-8 whitespace-nowrap rounded-lg border border-[#c96f44] bg-white px-3 text-xs font-bold text-[#943f19] hover:bg-[#fff7f2] active:translate-y-px">Đưa vào bản nháp</button>
+                </div>
+                <p className="mt-2 rounded-lg border border-[#ead7ce] bg-[#fffaf7] p-3 font-mono text-xs leading-6 text-[#5d4438]">{backend.suggested_value}</p>
+                {backend.opportunity_words.length ? <p className="mt-2 text-[11px] text-[#65717c]">Cơ hội mới: {backend.opportunity_words.join(", ")}</p> : null}
+              </div>
+            ) : null}
+          </>
+        ) : null}
+      </section>
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        <section className="rounded-[10px] border border-[#dfe3e6] bg-white p-4">
+          <h2 className="text-sm font-bold text-[#222b32]">Evidence coverage</h2>
+          <p className="mt-1 text-xs text-[#65717c]">Fact do operator xác nhận được tách khỏi suy luận từ ảnh và đối thủ.</p>
+          <div className="mt-4 grid gap-2">
+            {quality.supplied_facts.length ? quality.supplied_facts.map((fact) => (
+              <div key={fact} className="flex items-start justify-between gap-3 rounded-lg bg-[#f7f8f8] px-3 py-2">
+                <span className="text-xs leading-5 text-[#39444d]">{fact}</span>
+                <span className={`shrink-0 text-[10px] font-bold ${usedFacts.has(fact) ? "text-[#237047]" : "text-[#9a6218]"}`}>{usedFacts.has(fact) ? "Used" : "Unused"}</span>
+              </div>
+            )) : <p className="text-xs text-[#7a858e]">Chưa có fact do operator xác nhận.</p>}
+          </div>
+        </section>
+
+        <section className="rounded-[10px] border border-[#dfe3e6] bg-white p-4">
+          <h2 className="text-sm font-bold text-[#222b32]">Competitor intelligence</h2>
+          <p className="mt-1 text-xs text-[#65717c]">Tín hiệu được source, còn brand và claim thiếu evidence bị chặn.</p>
+          {overlapIssues.length ? (
+            <div className="mt-4 grid gap-2">
+              {overlapIssues.map((issue, index) => (
+                <div key={`${issue.code}-${index}`} className={`rounded-lg border p-3 ${issue.code === "COMPETITOR_PHRASE_OVERLAP" ? "border-[#e6b7ad] bg-[#fff5f2]" : "border-[#ead4a9] bg-[#fff9ec]"}`}>
+                  <p className={`text-xs font-semibold leading-5 ${issue.code === "COMPETITOR_PHRASE_OVERLAP" ? "text-[#8e3021]" : "text-[#7d5113]"}`}>{issue.message}</p>
+                  {issue.source_url ? <a href={issue.source_url} target="_blank" rel="noreferrer" className="mt-1.5 inline-block text-[11px] font-bold text-[#9b461f] underline decoration-[#d8a38b] underline-offset-2">Mở nguồn đối thủ</a> : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {profile?.references.length ? (
+            <div className="mt-4 grid gap-3">
+              {profile.references.map((reference, index) => (
+                <div key={`${reference.asin || reference.url}-${index}`} className="border-b border-[#e5e8ea] pb-3 last:border-0 last:pb-0">
+                  <p className="line-clamp-2 text-xs font-semibold leading-5 text-[#39444d]">{reference.title || reference.asin || `Reference ${index + 1}`}</p>
+                  <p className="mt-1 text-[10px] text-[#879099]">{reference.brand || "Brand not detected"}{reference.asin ? ` / ${reference.asin}` : ""}</p>
+                </div>
+              ))}
+              <p className="text-[11px] font-semibold text-[#8b5810]">{profile.claims.filter((claim) => claim.own_evidence === "missing").length} claim bị chặn vì thiếu fact của sản phẩm.</p>
+            </div>
+          ) : <p className="mt-4 text-xs text-[#7a858e]">Chưa có listing đối thủ được đọc thành công.</p>}
+        </section>
+      </div>
+    </div>
+  );
+}
+
 function QualitySidebar({ stored }: { stored: StoredListing }) {
   const result = stored.result;
   const validation = result.policy_validation;
@@ -318,8 +482,17 @@ function QualitySidebar({ stored }: { stored: StoredListing }) {
           {validation?.passed ? "Đã qua các kiểm tra bắt buộc" : `${errors.length} lỗi cần xử lý`}
         </div>
         <dl className="grid gap-2.5 text-xs">
-          <div className="flex justify-between gap-3"><dt className="text-[#65717c]">Fact coverage</dt><dd className="font-bold text-[#303b44]">{quality ? `${quality.fact_coverage_percent}%` : "—"}</dd></div>
-          <div className="flex justify-between gap-3"><dt className="text-[#65717c]">Keyword evidence</dt><dd className="font-bold text-[#303b44]">{result.seo_analysis?.keyword_coverage_percent === undefined ? "—" : `${result.seo_analysis.keyword_coverage_percent}%`}</dd></div>
+          <div className="flex justify-between gap-3"><dt className="text-[#65717c]">Fact đã xác minh</dt><dd className="font-bold text-[#303b44]">{quality ? `${quality.fact_coverage_percent}%` : "-"}</dd></div>
+          <div className="flex justify-between gap-3"><dt className="text-[#65717c]">SEO coverage</dt><dd className="font-bold text-[#303b44]">{result.seo_analysis?.keyword_coverage_percent === undefined ? "-" : `${result.seo_analysis.keyword_coverage_percent}%`}</dd></div>
+          {result.seo_analysis?.marketing_coverage_percent !== undefined ? (
+            <div className="flex justify-between gap-3"><dt className="text-[#65717c]">Marketing fit</dt><dd className="font-bold text-[#303b44]">{result.seo_analysis.marketing_coverage_percent}%</dd></div>
+          ) : null}
+          {result.seo_analysis?.backend_coverage_percent !== undefined ? (
+            <div className="flex justify-between gap-3"><dt className="text-[#65717c]">Backend efficiency</dt><dd className="font-bold text-[#303b44]">{result.seo_analysis.backend_coverage_percent}%</dd></div>
+          ) : null}
+          {quality?.reference_utilization_percent !== undefined ? (
+            <div className="flex justify-between gap-3"><dt className="text-[#65717c]">Reference utilization</dt><dd className="font-bold text-[#303b44]">{quality.reference_utilization_percent}%</dd></div>
+          ) : null}
           <div className="flex justify-between gap-3"><dt className="text-[#65717c]">Warnings</dt><dd className="font-bold text-[#303b44]">{warnings.length}</dd></div>
         </dl>
         {quality?.unused_facts?.length ? (
@@ -346,11 +519,11 @@ function QualitySidebar({ stored }: { stored: StoredListing }) {
         {productAnalysis?.competitor_insights.length ? <div className="mt-4 border-t border-[#e5e8ea] pt-3"><p className="mb-1.5 text-[11px] font-bold text-[#65717c]">Reference insights</p><div className="grid gap-1.5">{productAnalysis.competitor_insights.slice(0, 4).map((insight) => <p key={insight} className="text-xs leading-5 text-[#4b5660]">{insight}</p>)}</div></div> : null}
         {competitorProfile ? (
           <div className="mt-4 border-t border-[#e5e8ea] pt-3">
-            <p className="mb-1.5 text-[11px] font-bold text-[#65717c]">Competitor profile · {competitorProfile.references.length} refs</p>
+            <p className="mb-1.5 text-[11px] font-bold text-[#65717c]">Competitor profile / {competitorProfile.references.length} refs</p>
             <div className="grid gap-1.5">
               {competitorProfile.keyword_candidates.filter((keyword) => keyword.usable_for_listing).slice(0, 4).map((keyword) => (
                 <p key={keyword.value} className="text-xs leading-5 text-[#4b5660]">
-                  {keyword.value} <span className="text-[10px] text-[#8a949c]">· {keyword.sources.length} source · {keyword.confidence}</span>
+                  {keyword.value} <span className="text-[10px] text-[#8a949c]">/ {keyword.sources.length} source / {keyword.confidence}</span>
                 </p>
               ))}
             </div>
@@ -391,7 +564,7 @@ export function ResultPanel({
   onCopy,
   onRevise,
 }: ResultPanelProps) {
-  const [tab, setTab] = useState<"content" | "revisions">("content");
+  const [tab, setTab] = useState<"content" | "seo" | "revisions">("content");
   const [instruction, setInstruction] = useState("");
   const revisions = useMemo(() => stored?.revisions || [], [stored?.revisions]);
   if (loading) return <LoadingState />;
@@ -402,10 +575,21 @@ export function ResultPanel({
   const canReview = stored.status === "Draft";
   const canApprove = stored.status === "Review" && validation.passed;
   const canExport = stored.status === "Approved";
+  const missingFacts = stored.result.content_quality.unused_facts;
+  const issuePrompt = [
+    ...validation.errors.map((issue) => issue.message),
+    ...validation.warnings.map((issue) => issue.message),
+  ].join("\n");
 
   const revise = async () => {
     if (!instruction.trim()) return;
     if (await onRevise(instruction.trim())) setInstruction("");
+  };
+
+  const applySuggestedBackend = (value: string) => {
+    onContentChange({ ...content, backend_search_terms: value });
+    onEdit();
+    setTab("content");
   };
 
   return (
@@ -425,9 +609,10 @@ export function ResultPanel({
             {stored.status === "Approved" || stored.status === "Exported" ? <ActionButton onClick={onExport} disabled={busy || !canExport} primary><DownloadSimpleIcon size={15} /> {stored.status === "Exported" ? "Exported" : action === "export" ? "Exporting..." : "Export CSV"}</ActionButton> : null}
           </div>
         </div>
-        <div className="flex gap-1 px-5">
-          <button type="button" onClick={() => setTab("content")} className={`border-b-2 px-3 py-2 text-xs font-bold ${tab === "content" ? "border-[#b84f1d] text-[#8f3d17]" : "border-transparent text-[#65717c] hover:text-[#303b44]"}`}>Nội dung</button>
-          <button type="button" onClick={() => setTab("revisions")} className={`border-b-2 px-3 py-2 text-xs font-bold ${tab === "revisions" ? "border-[#b84f1d] text-[#8f3d17]" : "border-transparent text-[#65717c] hover:text-[#303b44]"}`}>Phiên bản ({revisions.length})</button>
+        <div className="flex gap-1 px-5" role="tablist" aria-label="Listing review">
+          <button type="button" role="tab" aria-selected={tab === "content"} onClick={() => setTab("content")} className={`border-b-2 px-3 py-2 text-xs font-bold ${tab === "content" ? "border-[#b84f1d] text-[#8f3d17]" : "border-transparent text-[#65717c] hover:text-[#303b44]"}`}>Nội dung</button>
+          <button type="button" role="tab" aria-selected={tab === "seo"} onClick={() => setTab("seo")} className={`border-b-2 px-3 py-2 text-xs font-bold ${tab === "seo" ? "border-[#b84f1d] text-[#8f3d17]" : "border-transparent text-[#65717c] hover:text-[#303b44]"}`}>SEO &amp; Evidence</button>
+          <button type="button" role="tab" aria-selected={tab === "revisions"} onClick={() => setTab("revisions")} className={`border-b-2 px-3 py-2 text-xs font-bold ${tab === "revisions" ? "border-[#b84f1d] text-[#8f3d17]" : "border-transparent text-[#65717c] hover:text-[#303b44]"}`}>Phiên bản ({revisions.length})</button>
         </div>
       </div>
 
@@ -435,16 +620,25 @@ export function ResultPanel({
         <section className="mb-5 rounded-[10px] border border-[#dfc8bc] bg-[#fffaf7] p-4">
           <label htmlFor="review_instruction" className="text-[13px] font-bold text-[#49372f]">Yêu cầu AI chỉnh sửa</label>
           <p className="mt-1 text-xs leading-5 text-[#786156]">Một câu lệnh cho toàn bộ listing. Hệ thống vẫn kiểm tra lại fact và policy sau khi sửa.</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {issuePrompt ? <button type="button" onClick={() => setInstruction(`Sửa toàn bộ lỗi và cảnh báo dưới đây, giữ nguyên các phần đang tốt và không thêm claim mới:\n${issuePrompt}`)} className="rounded-md border border-[#dbc8be] bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#76503d] hover:bg-[#fff7f2]">Sửa lỗi quality</button> : null}
+            <button type="button" onClick={() => setInstruction("Tối ưu SEO tự nhiên cho toàn bộ listing. Ưu tiên keyword do operator cung cấp và intent lặp lại ở đối thủ, không copy wording, không lặp noun để keyword stuffing, và dùng backend chỉ cho vocabulary chưa có trong title hoặc bullets.")} className="rounded-md border border-[#dbc8be] bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#76503d] hover:bg-[#fff7f2]">Tối ưu SEO</button>
+            {missingFacts.length ? <button type="button" onClick={() => setInstruction(`Tích hợp tự nhiên các fact đã xác minh còn thiếu sau đây, không thay đổi thông số:\n${missingFacts.join("\n")}`)} className="rounded-md border border-[#dbc8be] bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#76503d] hover:bg-[#fff7f2]">Dùng fact còn thiếu</button> : null}
+          </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
             <textarea id="review_instruction" className="field-control min-h-20 resize-y bg-white" value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="Dùng brand Limima, description khoảng 800 ký tự, factual hơn và giữ nguyên các thông số đã xác minh." />
             <button type="button" onClick={() => void revise()} disabled={busy || !instruction.trim()} className="inline-flex h-10 items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-[#b84f1d] px-4 text-sm font-bold text-white hover:bg-[#963f17] active:translate-y-px disabled:bg-[#c5c9cc]"><MagicWandIcon size={17} /> {action === "revise" ? "Đang sửa..." : "Áp dụng"}</button>
           </div>
         </section>
 
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_290px]">
-          {tab === "content" ? <ContentView content={content} editing={editing} onContentChange={onContentChange} /> : <RevisionView revisions={revisions} />}
-          <QualitySidebar stored={stored} />
-        </div>
+        {tab === "seo" ? (
+          <SeoEvidenceView stored={stored} onApplyBackend={applySuggestedBackend} />
+        ) : (
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_290px]">
+            {tab === "content" ? <ContentView content={content} editing={editing} onContentChange={onContentChange} /> : <RevisionView revisions={revisions} />}
+            <QualitySidebar stored={stored} />
+          </div>
+        )}
       </div>
     </section>
   );

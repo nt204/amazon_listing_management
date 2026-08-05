@@ -40,13 +40,17 @@ API key chỉ được đọc trong server routes. Frontend chỉ nhận trạng
 - Upload 1-10 ảnh JPG, PNG hoặc WEBP; ảnh được resize ở trình duyệt.
 - Evidence-first pipeline: mặc định một multimodal call trả cả product brief và listing để giảm latency; đặt `AI_PIPELINE_MODE=two-stage` nếu muốn tách analyst/writer thành hai call.
 - Generate bằng Gemini hoặc OpenAI; fallback chỉ dùng khi provider thực sự lỗi.
-- Mặc định không retry vì lỗi chất lượng: draft được lưu vào Review cùng lỗi validator. Có thể bật retry có giới hạn qua `AI_MAX_RETRIES`.
+- Mặc định retry đúng một lần khi draft còn hard error như title repetition hoặc unsupported claim; warning marketing vẫn được lưu để reviewer quyết định. Có thể đặt `AI_MAX_RETRIES=0` nếu cần ưu tiên latency.
 - Rule validator cho title, 5 bullet, description, search terms, keyword placement, fact coverage và prohibited claims.
+- Purchase strategy phân loại `gift-led`, `hybrid` hoặc `function-led` từ keyword, audience, occasion, product type và competitor signals. Buyer context được tách khỏi recipient identity để các vai trò như son/daughter không tạo ra audience expansion sai giới tính. Gift-led dùng content mix 70% purchase motivation / 30% product description; function-led vẫn ưu tiên outcome và fact.
+- Search-term planner chạy deterministic sau AI: chỉ dùng seed của operator, purchase strategy, vocabulary đối thủ đã lọc và keyword trong evidence; raw backend do AI viết không được tái sử dụng. Planner loại brand, ASIN, measurement, stop words, subjective terms, generic filler, từ lặp, biến thể số nhiều và từ đã có trong title/bullets; giữ dưới 250 bytes.
+- SEO & Evidence review hiển thị keyword map theo nguồn và placement, marketing fit, backend byte budget/efficiency, bản search terms đề xuất, fact coverage, competitor claims bị chặn và link nguồn khi phát hiện cụm câu trùng dài.
+- Marketing QC cảnh báo title thiếu purchase intent, audience expansion thấp, occasion coverage thấp, bullet thiên về mô tả feature và visual detail lấn át search intent; các cảnh báo này không biến shopping context thành product fact.
 - Retry dùng lỗi của draft hiện tại làm feedback động; prompt nền không tích lũy lịch sử sửa lỗi.
 - Một ô reviewer command sửa toàn bộ listing bằng ngôn ngữ tự do; revision vẫn chạy lại fact và policy check.
 - So sánh before/after, instruction và quality snapshot theo từng revision.
 - Trạng thái `Draft -> Review -> Approved -> Exported`; chỉ listing Approved mới được export.
-- Quality queue lọc listing chờ review, còn thiếu fact hoặc đã approved.
+- Quality queue tìm theo internal name, main keyword, loại sản phẩm, marketplace hoặc status; có filter chờ review/còn thiếu fact/đã approved và drawer dùng được trên màn hình nhỏ.
 - Batch CSV tối đa 10 sản phẩm, ghép ảnh theo filename và xử lý tối đa 2 listing cùng lúc.
 - Seller Central CSV cho một hoặc nhiều listing. Template là draft chung vì flat-file chính thức thay đổi theo category và marketplace.
 - Lưu input, evidence, output, metadata, trạng thái và revision history trong PostgreSQL.

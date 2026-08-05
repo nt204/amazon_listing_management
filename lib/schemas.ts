@@ -114,18 +114,18 @@ export const generatedListingJsonSchema = {
     },
     bullet_points: {
       type: "array",
-      description: "Exactly five distinct, evidence-based product bullets.",
+      description: "Exactly five distinct, benefit-led bullets grounded in evidence and the supplied purchase strategy.",
       items: { type: "string" },
       minItems: 5,
       maxItems: 5,
     },
     description: {
       type: "string",
-      description: "Concise factual product description without unsupported claims or generic filler.",
+      description: "Purchase-motivation-led description with supported product details, audience, recipient, occasion, and use-case coverage appropriate to the strategy.",
     },
     backend_search_terms: {
       type: "string",
-      description: "Space-separated high-relevance search terms with no punctuation or duplicate words.",
+      description: "Provisional space-separated search vocabulary; no brands, ASINs, measurements, visual filler, punctuation, stop words, subjective claims, or duplicate words. A deterministic planner rebuilds this field.",
     },
   },
 } as const;

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createMockListing } from "../lib/mock";
-import { removeUnsupportedPerformanceLanguage } from "../lib/listing-sanitizer";
+import {
+  removeUnsupportedPerformanceLanguage,
+  trimDescriptionToTarget,
+} from "../lib/listing-sanitizer";
 import { mergeOperatorEvidence } from "../lib/product-brief";
 import type { ListingInput } from "../lib/types";
 import { analyzeListing } from "../lib/validation";
@@ -68,11 +71,12 @@ test("validator accepts a compliant mock listing", () => {
 
 test("validator blocks missing keyword and restricted claims", () => {
   const listing = createMockListing(input);
-  listing.title = "BEST SELLER CERAMIC MUG";
+  listing.title = "BEST SELLER CERAMIC MUG!";
   const result = analyzeListing(listing, input);
   assert.equal(result.policy_validation.passed, false);
   assert.ok(result.policy_validation.errors.some((issue) => issue.code === "MAIN_KEYWORD_MISSING"));
   assert.ok(result.policy_validation.errors.some((issue) => issue.code === "PROMOTIONAL_CLAIM"));
+  assert.ok(result.policy_validation.errors.some((issue) => issue.code === "TITLE_SPECIAL_CHARACTERS"));
 });
 
 test("quality analysis catches repetitive titles and ignored operator facts", () => {
@@ -228,6 +232,15 @@ test("sanitizer preserves performance language explicitly supplied by the operat
   assert.equal(sanitized.bullet_points[0], listing.bullet_points[0]);
 });
 
+test("description sanitizer keeps generated copy inside the configured target", () => {
+  const description = `${"A useful sentence grounded in verified evidence. ".repeat(20)}Final copy.`;
+  const trimmed = trimDescriptionToTarget(description, 700, 900);
+
+  assert.ok(trimmed.length >= 700);
+  assert.ok(trimmed.length <= 900);
+  assert.match(trimmed, /[.!?]$/);
+});
+
 test("validator blocks competitor brands and ASINs from every listing field", () => {
   const listing = createMockListing(input);
   listing.bullet_points[0] = "A Stuff4-inspired nurse gift with ASIN B0GTQX2FLW.";
@@ -238,4 +251,187 @@ test("validator blocks competitor brands and ASINs from every listing field", ()
   assert.ok(
     result.policy_validation.errors.some((issue) => issue.code === "COMPETITOR_TERM_USED"),
   );
+});
+
+test("validator calculates rule-based weighted SEO coverage and flags missing brand / duplicate backend / short description", () => {
+  const listing = {
+    title: "Funny Nurse Mug 11 oz Ceramic Coffee Cup",
+    bullet_points: [
+      "GREAT GIFT - Funny nurse mug for healthcare workers.",
+      "CERAMIC MUG - 11 oz white ceramic coffee cup.",
+      "CARE - Hand wash recommended for long lasting print.",
+      "BEVERAGE - Enjoy favorite beverages every morning.",
+      "OCCASIONS - Suitable for Nurse Week, birthdays, or appreciation.",
+    ],
+    description: "Short description.",
+    backend_search_terms: "Funny Nurse Mug 11 oz Ceramic Coffee Cup",
+  };
+
+  const result = analyzeListing(listing, input, {
+    suppliedFacts: ["Material: Ceramic", "Capacity: 11 oz"],
+    relatedKeywords: ["nurse coffee mug", "registered nurse gift"],
+  });
+
+  assert.ok(result.seo_analysis.keyword_coverage_percent > 0);
+  assert.ok(result.seo_analysis.backend_coverage_percent !== undefined);
+  assert.ok(result.policy_validation.warnings.some((w) => w.code === "BRAND_MISSING_FROM_TITLE"));
+  assert.ok(result.policy_validation.warnings.some((w) => w.code === "DESCRIPTION_TOO_SHORT"));
+  assert.ok(result.policy_validation.warnings.some((w) => w.code === "BACKEND_DUPLICATION_HIGH"));
+});
+
+test("validator blocks long verbatim phrases copied from a sourced competitor title", () => {
+  const listing = createMockListing({ ...input, brand: "Selsorix", main_keyword: "cat dad mug" });
+  listing.title =
+    "Selsorix Best Cat Dad Ever Mug Funny Coffee Cup for Cat Lovers and Pet Owners";
+  const sourceUrl = "https://www.amazon.com/dp/B09RPZN45W";
+  const result = analyzeListing(listing, { ...input, brand: "Selsorix", main_keyword: "cat dad mug" }, {
+    competitorProfile: {
+      references: [{
+        asin: "B09RPZN45W",
+        url: sourceUrl,
+        title: "Stuff4 Best Cat Dad Ever Mug Funny Coffee Cup for Cat Lovers and Pet Owners",
+        brand: "Stuff4",
+        attributes: {},
+      }],
+      keyword_candidates: [],
+      claims: [],
+      audiences: [],
+      occasions: [],
+      blocked_terms: ["Stuff4", "B09RPZN45W"],
+      captured_at: new Date(0).toISOString(),
+    },
+  });
+
+  const issue = result.policy_validation.errors.find(
+    (item) => item.code === "COMPETITOR_PHRASE_OVERLAP",
+  );
+  assert.ok(issue);
+  assert.equal(issue.source_url, sourceUrl);
+  assert.equal(
+    result.policy_validation.checks?.find((check) => check.name === "Competitor wording overlap")
+      ?.passed,
+    false,
+  );
+});
+
+test("validator allows ordinary SEO vocabulary shared with competitor listings", () => {
+  const listing = createMockListing({ ...input, brand: "Selsorix", main_keyword: "cat dad mug" });
+  listing.title = "Selsorix Cat Dad Mug, 12 oz Ceramic Coffee Cup for Pet Owners";
+  const result = analyzeListing(listing, { ...input, brand: "Selsorix", main_keyword: "cat dad mug" }, {
+    competitorProfile: {
+      references: [{
+        asin: "B09RPZN45W",
+        url: "https://www.amazon.com/dp/B09RPZN45W",
+        title: "Stuff4 Best Cat Dad Ever Mug Funny Coffee Cup for Cat Lovers and Pet Owners",
+        brand: "Stuff4",
+        attributes: {},
+      }],
+      keyword_candidates: [],
+      claims: [],
+      audiences: [],
+      occasions: [],
+      blocked_terms: ["Stuff4", "B09RPZN45W"],
+      captured_at: new Date(0).toISOString(),
+    },
+  });
+
+  assert.ok(!result.policy_validation.errors.some(
+    (item) => item.code === "COMPETITOR_PHRASE_OVERLAP",
+  ));
+  assert.ok(!result.policy_validation.warnings.some(
+    (item) => item.code === "COMPETITOR_PHRASE_SIMILARITY",
+  ));
+});
+
+test("marketing QC catches image-description-first copy and weak gift coverage generally", () => {
+  const catInput: ListingInput = {
+    ...input,
+    brand: "Selsorix",
+    main_keyword: "cat dad mug",
+    related_keywords: ["cat lover gift"],
+    backend_keywords: [],
+    research: {
+      ...input.research,
+      target_customer: "Cat dads",
+      occasion: ["Father's Day"],
+    },
+  };
+  const listing = {
+    title: "Selsorix Cat Dad Mug 12 oz Novelty Coffee Cup Cute Tabby Cat Illustration Best Cat Dad Ever Artwork",
+    bullet_points: [
+      "Features an illustrated gray and white tabby cat graphic with bold typography.",
+      "Displays the phrase Best Cat Dad Ever for cat owners.",
+      "Provides a 12 oz capacity for coffee tea or cocoa.",
+      "Shows printed artwork on a white body with a rounded handle.",
+      "A novelty gifting choice for Father's Day birthdays or holidays for men.",
+    ],
+    description: "A white mug with a tabby illustration for a cat owner at home or the office.",
+    backend_search_terms: "stuff4 12oz gift holiday everyday use",
+  };
+  const result = analyzeListing(listing, catInput, {
+    competitorProfile: {
+      references: [{
+        url: "https://www.amazon.com/dp/B09RPZN45W",
+        title: "Stuff4 Best Cat Dad Ever Mug Funny Gift for Cat Lovers",
+        brand: "Stuff4",
+        attributes: {},
+      }],
+      keyword_candidates: [],
+      claims: [],
+      audiences: [],
+      occasions: [],
+      blocked_terms: ["Stuff4", "B09RPZN45W"],
+      captured_at: new Date(0).toISOString(),
+    },
+  });
+
+  assert.equal(result.seo_analysis.purchase_strategy?.mode, "gift-led");
+  assert.ok((result.seo_analysis.marketing_coverage_percent || 0) < 70);
+  assert.ok(result.policy_validation.warnings.some((issue) => issue.code === "PURCHASE_INTENT_MISSING_TITLE"));
+  assert.ok(result.policy_validation.warnings.some((issue) => issue.code === "AUDIENCE_EXPANSION_LOW"));
+  assert.ok(result.policy_validation.warnings.some((issue) => issue.code === "OCCASION_COVERAGE_LOW"));
+  assert.ok(result.policy_validation.warnings.some((issue) => issue.code === "VISUAL_DETAIL_OVERWEIGHT"));
+  assert.ok(result.policy_validation.warnings.some((issue) => issue.code === "BACKEND_LOW_INTENT"));
+  assert.ok(result.policy_validation.errors.some((issue) => issue.code === "BACKEND_PROHIBITED_TERMS"));
+});
+
+test("marketing QC rewards audience, recipient, occasion, benefit, and purchase-intent coverage", () => {
+  const catInput: ListingInput = {
+    ...input,
+    brand: "Selsorix",
+    main_keyword: "cat dad mug",
+    related_keywords: ["cat lover gift"],
+    backend_keywords: ["feline owner", "kitty parent"],
+    research: {
+      ...input.research,
+      target_customer: "Cat dads",
+      occasion: ["Father's Day"],
+    },
+  };
+  const listing = {
+    title: "Selsorix Cat Dad Mug, Funny Gift for Men and Feline Lovers, Birthday, Father's Day or Christmas Present",
+    bullet_points: [
+      "CELEBRATE HIS CAT-DAD PRIDE - A playful message that recognizes the bond between a man and his feline companion.",
+      "READY FOR GIFTING MOMENTS - A thoughtful option for Father's Day, birthdays, Christmas, or appreciation.",
+      "BRIGHTEN HIS ROUTINE - Adds personality to morning coffee, afternoon tea, and drink breaks at home or work.",
+      "MADE FOR PROUD PET PEOPLE - Relevant for husbands, boyfriends, fathers, grandfathers, friends, and coworkers.",
+      "SUPPORTED PRODUCT DETAIL - The supplied 11 oz capacity gives the recipient a practical cup for favorite drinks.",
+    ],
+    description: "Celebrate a proud cat dad with a useful gift that connects his daily coffee routine to the pet he loves. It is relevant for a husband, boyfriend, father, grandfather, friend, or coworker who treats a feline companion like family. Choose it for Father's Day, a birthday, Christmas, or a simple appreciation moment. The playful message supplies the personality, while the confirmed 11 oz capacity supports coffee, tea, and other everyday drinks without relying on unsupported material, care, or performance claims.",
+    backend_search_terms: "kitty owner pet parent animal father appreciation",
+  };
+  const result = analyzeListing(listing, catInput, {
+    suppliedFacts: ["Capacity: 11 oz"],
+  });
+
+  assert.equal(result.seo_analysis.purchase_strategy?.mode, "gift-led");
+  assert.ok((result.seo_analysis.marketing_coverage_percent || 0) >= 90);
+  assert.ok(!result.policy_validation.warnings.some((issue) => [
+    "PURCHASE_INTENT_MISSING_TITLE",
+    "AUDIENCE_MISSING_TITLE",
+    "AUDIENCE_EXPANSION_LOW",
+    "OCCASION_COVERAGE_LOW",
+    "BENEFIT_COVERAGE_LOW",
+    "VISUAL_DETAIL_OVERWEIGHT",
+  ].includes(issue.code)));
 });

@@ -171,6 +171,7 @@ export async function listListings(limit = 30): Promise<ListingSummary[]> {
     SELECT
       id::text,
       internal_name,
+      COALESCE(input_json->>'main_keyword', '') AS main_keyword,
       product_type,
       marketplace,
       status,

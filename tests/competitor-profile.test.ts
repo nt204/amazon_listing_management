@@ -129,3 +129,18 @@ test("competitor profile feeds only usable keywords and blocks unsupported claim
   assert.ok(!merged.related_keywords.some((keyword) => keyword.includes("ceramic")));
   assert.ok(merged.competitor_insights.some((insight) => insight.includes("Source-backed")));
 });
+
+test("competitor profile infers a leading brand when Amazon omits the Brand field", () => {
+  const profile = buildCompetitorProfile(
+    [{
+      asin: "B09RPZN45W",
+      url: "https://www.amazon.co.uk/dp/B09RPZN45W",
+      content: "Title: Stuff4 Best Cat Dad Ever Mug, Funny Gift for Cat Lovers, Birthday Present : Amazon.co.uk: Home & Kitchen",
+    }],
+    input,
+  );
+
+  assert.equal(profile.references[0].brand, "Stuff4");
+  assert.ok(profile.blocked_terms.includes("Stuff4"));
+  assert.ok(!profile.keyword_candidates.some((keyword) => /stuff4/i.test(keyword.value)));
+});

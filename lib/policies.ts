@@ -32,11 +32,16 @@ const unverifiedPerformanceTerms = [
   "comfortable",
   "durable",
   "fade resistant",
+  "generous",
   "heat resistant",
+  "ideal",
   "leakproof",
   "long lasting",
+  "perfect",
   "premium quality",
   "scratch resistant",
+  "ultimate",
+  "versatile",
 ];
 
 export function getPolicy(input: ListingInput) {
@@ -58,6 +63,6 @@ export function getPolicy(input: ListingInput) {
     restrictedTerms: [...promotionalTerms, ...medicalAndSafetyTerms],
     version: `amazon-${input.marketplace.toLowerCase()}-${input.product_type
       .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")}-v1`,
+      .replace(/[^a-z0-9]+/g, "-")}-v3`,
   };
 }

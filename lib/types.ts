@@ -115,6 +115,46 @@ export interface KeywordUsage {
   keyword: string;
   is_main: boolean;
   placements: Array<"title" | "bullets" | "description" | "backend_search_terms">;
+  source?: "main" | "operator" | "competitor" | "ai";
+  weight?: number;
+  source_count?: number;
+  confidence?: EvidenceConfidence;
+  usable?: boolean;
+  placement_score_percent?: number;
+}
+
+export interface BackendSearchTermAnalysis {
+  bytes_used: number;
+  byte_limit: number;
+  bytes_remaining: number;
+  unique_word_count: number;
+  efficiency_percent: number;
+  repeated_words: string[];
+  redundant_visible_words: string[];
+  stop_words: string[];
+  prohibited_terms: string[];
+  low_intent_terms: string[];
+  suggested_value: string;
+  suggested_bytes: number;
+  opportunity_words: string[];
+}
+
+export type PurchaseIntentMode = "gift-led" | "hybrid" | "function-led";
+
+export interface ListingStrategy {
+  mode: PurchaseIntentMode;
+  marketing_percent: number;
+  product_percent: number;
+  audience_terms: string[];
+  buyer_terms: string[];
+  recipient_terms: string[];
+  occasion_terms: string[];
+  priority_keywords: string[];
+  backend_candidates: string[];
+  benefit_angles: string[];
+  bullet_jobs: string[];
+  visual_terms: string[];
+  reasons: string[];
 }
 
 export interface PolicyCheck {
@@ -127,6 +167,7 @@ export interface ValidationIssue {
   field: string;
   code: string;
   message: string;
+  source_url?: string;
 }
 
 export interface ListingResult {
@@ -150,6 +191,12 @@ export interface ListingResult {
     related_keywords_used: string[];
     unused_keywords: string[];
     keyword_coverage_percent: number;
+    backend_coverage_percent?: number;
+    backend_search_terms?: BackendSearchTermAnalysis;
+    purchase_strategy?: ListingStrategy;
+    marketing_coverage_percent?: number;
+    audience_coverage_percent?: number;
+    occasion_coverage_percent?: number;
     keyword_stuffing_detected: boolean;
     keyword_usage?: KeywordUsage[];
   };
@@ -158,6 +205,7 @@ export interface ListingResult {
     facts_used: string[];
     unused_facts: string[];
     fact_coverage_percent: number;
+    reference_utilization_percent?: number;
     title_repetition_detected: boolean;
   };
   policy_validation: {
@@ -210,6 +258,7 @@ export interface ListingRevision {
 export interface ListingSummary {
   id: string;
   internal_name: string;
+  main_keyword: string;
   product_type: string;
   marketplace: Marketplace;
   status: ListingStatus;
