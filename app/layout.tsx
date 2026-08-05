@@ -3,12 +3,12 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Listing Desk",
-  description: "Internal Amazon listing generation and review workspace.",
+  description: "Amazon listing workflow and quality control workspace.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    <html lang="vi">
       <body>{children}</body>
     </html>
   );

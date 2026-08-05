@@ -8,10 +8,11 @@ import {
   TrashIcon,
   UploadSimpleIcon,
 } from "@phosphor-icons/react";
-import type { ChangeEvent, Dispatch, SetStateAction } from "react";
+import { useRef, useState, type ChangeEvent, type Dispatch, type SetStateAction } from "react";
 import { Field, Select, TextArea, TextInput } from "@/components/ui";
+import { resizeImage } from "@/lib/image-client";
 import type { AiOptions } from "@/lib/models";
-import type { ListingInput } from "@/lib/types";
+import type { BrandProfile, ListingInput } from "@/lib/types";
 
 export interface FormIssue {
   field: string;
@@ -26,35 +27,7 @@ interface ListingFormProps {
   loading: boolean;
   issues: FormIssue[];
   aiOptions: AiOptions | null;
-}
-
-async function resizeImage(file: File) {
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error(`Could not read ${file.name}.`));
-    reader.readAsDataURL(file);
-  });
-  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const element = new window.Image();
-    element.onload = () => resolve(element);
-    element.onerror = () => reject(new Error(`Could not process ${file.name}.`));
-    element.src = dataUrl;
-  });
-  const max = 1_600;
-  const ratio = Math.min(1, max / Math.max(image.width, image.height));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(image.width * ratio));
-  canvas.height = Math.max(1, Math.round(image.height * ratio));
-  const context = canvas.getContext("2d");
-  if (!context) return { name: file.name, type: file.type, data_url: dataUrl };
-  context.drawImage(image, 0, 0, canvas.width, canvas.height);
-  const outputType = file.type === "image/png" ? "image/png" : "image/jpeg";
-  return {
-    name: file.name,
-    type: outputType,
-    data_url: canvas.toDataURL(outputType, 0.82),
-  };
+  brands: BrandProfile[];
 }
 
 export function ListingForm({
@@ -65,7 +38,14 @@ export function ListingForm({
   loading,
   issues,
   aiOptions,
+  brands,
 }: ListingFormProps) {
+  const [referenceState, setReferenceState] = useState<
+    | { status: "idle" }
+    | { status: "loading" }
+    | { status: "ready"; contentAvailable: boolean; elapsedMs: number }
+  >({ status: "idle" });
+  const referenceRequest = useRef(0);
   const issueFor = (field: string) => issues.find((issue) => issue.field === field)?.message;
   const updateResearch = (field: keyof ListingInput["research"], next: string) =>
     onChange((current) => ({
@@ -118,6 +98,39 @@ export function ListingForm({
           : { openai_model: model.id }),
       },
     }));
+  };
+
+  const inspectReference = async () => {
+    const reference = value.research.competitor_notes.trim();
+    if (!reference) {
+      setReferenceState({ status: "idle" });
+      return;
+    }
+    const requestId = referenceRequest.current + 1;
+    referenceRequest.current = requestId;
+    setReferenceState({ status: "loading" });
+    try {
+      const response = await fetch("/api/references", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: reference, marketplace: value.marketplace }),
+      });
+      const data = (await response.json()) as {
+        content_available?: boolean;
+        elapsed_ms?: number;
+      };
+      if (referenceRequest.current === requestId) {
+        setReferenceState({
+          status: "ready",
+          contentAvailable: response.ok && Boolean(data.content_available),
+          elapsedMs: Number(data.elapsed_ms || 0),
+        });
+      }
+    } catch {
+      if (referenceRequest.current === requestId) {
+        setReferenceState({ status: "ready", contentAvailable: false, elapsedMs: 0 });
+      }
+    }
   };
 
   return (
@@ -269,25 +282,64 @@ export function ListingForm({
         </Field>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Brand (optional)" htmlFor="brand">
+          <Field label="Brand profile (optional)" htmlFor="brand_profile">
+            <Select
+              id="brand_profile"
+              value={value.brand_profile_id || ""}
+              onChange={(event) => {
+                const profile = brands.find((item) => item.id === event.target.value);
+                onChange((current) => ({
+                  ...current,
+                  brand_profile_id: profile?.id || "",
+                  brand: profile?.name || (current.brand_profile_id ? "" : current.brand),
+                  brand_guidelines: profile?.guidelines || "",
+                }));
+              }}
+            >
+              <option value="">Không dùng profile</option>
+              {brands.map((brand) => (
+                <option key={brand.id} value={brand.id}>{brand.name}</option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Brand dùng một lần" htmlFor="brand">
             <TextInput
               id="brand"
               value={value.brand}
+              disabled={Boolean(value.brand_profile_id)}
               onChange={(event) =>
                 onChange((current) => ({ ...current, brand: event.target.value }))
               }
-              placeholder="ABC"
-            />
-          </Field>
-          <Field label="Reference Listings (optional)" htmlFor="competitor_notes">
-            <TextInput
-              id="competitor_notes"
-              value={value.research.competitor_notes}
-              onChange={(event) => updateResearch("competitor_notes", event.target.value)}
-              placeholder="Amazon URL / ASIN"
+              placeholder={value.brand_profile_id ? "Đang dùng brand profile" : "Limima"}
             />
           </Field>
         </div>
+
+        <Field
+          label="Reference Listings (optional)"
+          htmlFor="competitor_notes"
+          hint={
+            referenceState.status === "loading"
+              ? "Đang đọc reference ở nền..."
+              : referenceState.status === "ready" && referenceState.contentAvailable
+                ? `Reference đã sẵn sàng (${(referenceState.elapsedMs / 1000).toFixed(1)}s).`
+                : referenceState.status === "ready"
+                  ? "Không lấy được nội dung reference; generate vẫn tiếp tục bình thường."
+                  : undefined
+          }
+        >
+            <TextInput
+              id="competitor_notes"
+              value={value.research.competitor_notes}
+              onChange={(event) => {
+                referenceRequest.current += 1;
+                updateResearch("competitor_notes", event.target.value);
+                setReferenceState({ status: "idle" });
+              }}
+              onBlur={() => void inspectReference()}
+              placeholder="Amazon URL / ASIN"
+            />
+        </Field>
       </div>
 
       <div className="border-t border-[#dfe3e6] bg-white p-4">

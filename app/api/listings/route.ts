@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
-import { listListings } from "@/lib/db";
+import { getWorkflowMetrics, listListings } from "@/lib/db";
 
 export const runtime = "nodejs";
 
 export async function GET() {
   try {
-    return NextResponse.json({ listings: await listListings() });
+    const [listings, metrics] = await Promise.all([listListings(100), getWorkflowMetrics()]);
+    return NextResponse.json({ listings, metrics });
   } catch (error) {
     console.error("List listings failed", error);
     return NextResponse.json(

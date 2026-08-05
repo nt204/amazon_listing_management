@@ -1,19 +1,15 @@
 import type { AiProviderPreference } from "@/lib/models";
 
 export type Marketplace = "US" | "UK" | "DE";
-export type ListingStatus =
-  | "Draft"
-  | "Generated"
-  | "Needs Review"
-  | "Approved"
-  | "Rejected"
-  | "Exported";
+export type ListingStatus = "Draft" | "Review" | "Approved" | "Exported";
 
 export interface ListingInput {
   marketplace: Marketplace;
   product_type: string;
   internal_name: string;
   brand: string;
+  brand_profile_id?: string;
+  brand_guidelines?: string;
   product_information: {
     material: string;
     size_capacity: string;
@@ -152,8 +148,25 @@ export interface StoredListing {
   input: ListingInput;
   result: ListingResult;
   current_listing: ListingContent;
+  revisions: ListingRevision[];
   created_at: string;
   updated_at: string;
+}
+
+export interface RevisionQualitySnapshot {
+  fact_coverage_percent: number;
+  keyword_coverage_percent: number;
+  error_count: number;
+  warning_count: number;
+}
+
+export interface ListingRevision {
+  id: string;
+  action: string;
+  instruction: string;
+  content: ListingContent;
+  quality: RevisionQualitySnapshot | null;
+  created_at: string;
 }
 
 export interface ListingSummary {
@@ -163,6 +176,29 @@ export interface ListingSummary {
   marketplace: Marketplace;
   status: ListingStatus;
   model_used: ListingResult["model_used"];
+  fact_coverage_percent: number;
+  keyword_coverage_percent: number;
+  error_count: number;
+  warning_count: number;
+  missing_fact_count: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface BrandProfile {
+  id: string;
+  name: string;
+  guidelines: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkflowMetrics {
+  total: number;
+  draft: number;
+  review: number;
+  approved: number;
+  exported: number;
+  with_errors: number;
+  missing_facts: number;
 }

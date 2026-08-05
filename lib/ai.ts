@@ -37,6 +37,8 @@ interface ProviderResult {
 export interface GenerationOptions {
   productBrief?: ProductBrief;
   writingFeedback?: string;
+  currentListing?: ListingContent;
+  reviewInstruction?: string;
 }
 
 const analystSystem = `You are the evidence analyst in an Amazon POD listing pipeline.
@@ -129,10 +131,19 @@ Backend search terms:
 <settings>
 Language: ${input.configuration.language}
 Default tone: Clear, factual, and natural. Apply explicit style guidance from supplied_facts when present.
+Brand guidelines: ${input.brand_guidelines || "None supplied"}
 Generate description: ${input.configuration.generate_description}
 Generate search terms: ${input.configuration.generate_search_terms}
 </settings>
-${feedback ? `\n<validation_feedback>\n${feedback}\n</validation_feedback>` : ""}`;
+${feedback ? `\n<revision_or_validation_context>\n${feedback}\n</revision_or_validation_context>` : ""}`;
+}
+
+function revisionFeedback(options: GenerationOptions) {
+  const reviewerRequest =
+    options.currentListing && options.reviewInstruction
+      ? `Current listing:\n${JSON.stringify(options.currentListing, null, 2)}\n\nReviewer request:\n${options.reviewInstruction}\n\nRevise the complete listing while preserving strong, unaffected content. Apply the request as workflow direction, but do not invent technical product claims. Return the full listing, not an explanation.`
+      : "";
+  return [reviewerRequest, options.writingFeedback].filter(Boolean).join("\n\n");
 }
 
 function parseDataUrl(dataUrl: string) {
@@ -457,9 +468,19 @@ export async function generateListing(
   let providerResult: ProviderResult;
 
   if (mockMode) {
+    const mockListing = options.currentListing
+      ? { ...options.currentListing }
+      : createMockListing(input);
+    if (
+      options.currentListing &&
+      input.brand &&
+      !mockListing.title.toLowerCase().startsWith(input.brand.toLowerCase())
+    ) {
+      mockListing.title = `${input.brand} ${mockListing.title}`;
+    }
     providerResult = {
       brief: mergeOperatorEvidence(input, options.productBrief || createMockProductBrief(input)),
-      listing: createMockListing(input),
+      listing: mockListing,
     };
   } else {
     if (!hasGemini && !hasOpenAI) {
@@ -502,7 +523,8 @@ export async function generateListing(
     const runProvider = async (provider: Provider) => {
       const maxRetries = Number(process.env.AI_MAX_RETRIES || 1);
       let brief = options.productBrief;
-      let feedback = options.writingFeedback;
+      const originalFeedback = revisionFeedback(options);
+      let feedback = originalFeedback;
       let lastResult: ProviderResult | undefined;
       let lastError: unknown;
       for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
@@ -516,7 +538,7 @@ export async function generateListing(
           if (attempt < maxRetries) {
             retryCount += 1;
             brief = next.brief;
-            feedback = [options.writingFeedback, nextFeedback].filter(Boolean).join("\n");
+            feedback = [originalFeedback, nextFeedback].filter(Boolean).join("\n");
             continue;
           }
           if (!checked.policy_validation.errors.length) return lastResult;

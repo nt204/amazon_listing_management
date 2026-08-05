@@ -33,7 +33,10 @@ export async function PUT(request: Request, { params }: RouteContext) {
       listing: content,
       ...analysis,
     };
-    const listing = await updateListingContent(id, content, result);
+    const listing = await updateListingContent(id, content, result, {
+      action: "manual_edit",
+      instruction: "Manual content edit",
+    });
     return NextResponse.json({ listing });
   } catch (error) {
     return NextResponse.json(

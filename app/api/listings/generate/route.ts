@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 import { generateListing } from "@/lib/ai";
-import { saveGeneratedListing } from "@/lib/db";
+import { getBrandProfile, saveGeneratedListing } from "@/lib/db";
 import { listingInputSchema } from "@/lib/schemas";
 
 export const runtime = "nodejs";
@@ -16,7 +16,18 @@ export async function POST(request: Request) {
         `${String(payload.product_type || "Product").trim()} listing`;
     }
     if (typeof payload.brand !== "string") payload.brand = "";
-    const input = listingInputSchema.parse(payload);
+    let input = listingInputSchema.parse(payload);
+    if (input.brand_profile_id) {
+      const profile = await getBrandProfile(input.brand_profile_id);
+      if (!profile) {
+        return NextResponse.json({ error: "Brand profile not found." }, { status: 400 });
+      }
+      input = {
+        ...input,
+        brand: profile.name,
+        brand_guidelines: profile.guidelines,
+      };
+    }
     const result = await generateListing(input);
     const stored = await saveGeneratedListing(input, result);
     return NextResponse.json({ listing: stored }, { status: 201 });

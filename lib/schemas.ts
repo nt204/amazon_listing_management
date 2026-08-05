@@ -7,6 +7,8 @@ export const listingInputSchema = z.object({
   product_type: cleanedString.min(1, "Hãy chọn loại sản phẩm."),
   internal_name: cleanedString.min(1, "Thiếu tên nội bộ của sản phẩm."),
   brand: cleanedString,
+  brand_profile_id: cleanedString.optional().default(""),
+  brand_guidelines: cleanedString.max(10_000).optional().default(""),
   product_information: z.object({
     material: cleanedString,
     size_capacity: cleanedString,
@@ -64,6 +66,25 @@ export const generatedListingSchema = z.object({
   bullet_points: z.array(z.string()).length(5),
   description: z.string(),
   backend_search_terms: z.string(),
+});
+
+export const reviewInstructionSchema = z.object({
+  instruction: cleanedString
+    .min(2, "Hãy nhập yêu cầu chỉnh sửa.")
+    .max(2_000, "Yêu cầu chỉnh sửa tối đa 2.000 ký tự."),
+});
+
+export const workflowStatusSchema = z.object({
+  status: z.enum(["Review"]),
+});
+
+export const batchListingSchema = z.object({
+  items: z.array(listingInputSchema).min(1).max(10),
+});
+
+export const brandProfileSchema = z.object({
+  name: cleanedString.min(1, "Hãy nhập tên brand.").max(120),
+  guidelines: cleanedString.max(10_000),
 });
 
 export const productBriefSchema = z.object({

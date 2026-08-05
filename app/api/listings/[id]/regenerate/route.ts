@@ -57,7 +57,10 @@ export async function POST(request: Request, { params }: RouteContext) {
       metadata: regenerated.metadata,
     };
     return NextResponse.json({
-      listing: await updateListingContent(id, content, result, `regenerated:${field}`),
+      listing: await updateListingContent(id, content, result, {
+        action: `regenerated:${field}`,
+        instruction: instruction || fieldFeedback[field],
+      }),
     });
   } catch (error) {
     return NextResponse.json(
