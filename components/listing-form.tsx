@@ -43,7 +43,12 @@ export function ListingForm({
   const [referenceState, setReferenceState] = useState<
     | { status: "idle" }
     | { status: "loading" }
-    | { status: "ready"; contentAvailable: boolean; elapsedMs: number }
+    | {
+        status: "ready";
+        contentCount: number;
+        resolvedCount: number;
+        elapsedMs: number;
+      }
   >({ status: "idle" });
   const referenceRequest = useRef(0);
   const issueFor = (field: string) => issues.find((issue) => issue.field === field)?.message;
@@ -116,19 +121,26 @@ export function ListingForm({
         body: JSON.stringify({ value: reference, marketplace: value.marketplace }),
       });
       const data = (await response.json()) as {
-        content_available?: boolean;
+        content_count?: number;
+        resolved_count?: number;
         elapsed_ms?: number;
       };
       if (referenceRequest.current === requestId) {
         setReferenceState({
           status: "ready",
-          contentAvailable: response.ok && Boolean(data.content_available),
+          contentCount: response.ok ? Number(data.content_count || 0) : 0,
+          resolvedCount: response.ok ? Number(data.resolved_count || 0) : 0,
           elapsedMs: Number(data.elapsed_ms || 0),
         });
       }
     } catch {
       if (referenceRequest.current === requestId) {
-        setReferenceState({ status: "ready", contentAvailable: false, elapsedMs: 0 });
+        setReferenceState({
+          status: "ready",
+          contentCount: 0,
+          resolvedCount: 0,
+          elapsedMs: 0,
+        });
       }
     }
   };
@@ -321,15 +333,18 @@ export function ListingForm({
           hint={
             referenceState.status === "loading"
               ? "Đang đọc reference ở nền..."
-              : referenceState.status === "ready" && referenceState.contentAvailable
-                ? `Reference đã sẵn sàng (${(referenceState.elapsedMs / 1000).toFixed(1)}s).`
-                : referenceState.status === "ready"
-                  ? "Không lấy được nội dung reference; generate vẫn tiếp tục bình thường."
+              : referenceState.status === "ready" && referenceState.contentCount > 0
+                ? `Đã đọc ${referenceState.contentCount}/${referenceState.resolvedCount} reference (${(referenceState.elapsedMs / 1000).toFixed(1)}s).`
+              : referenceState.status === "ready"
+                  ? referenceState.resolvedCount > 0
+                    ? `Đã nhận ${referenceState.resolvedCount} reference nhưng Amazon không trả nội dung; generate vẫn tiếp tục.`
+                    : "Không nhận diện được Amazon URL / ASIN."
                   : undefined
           }
         >
-            <TextInput
+            <TextArea
               id="competitor_notes"
+              rows={3}
               value={value.research.competitor_notes}
               onChange={(event) => {
                 referenceRequest.current += 1;
@@ -337,7 +352,7 @@ export function ListingForm({
                 setReferenceState({ status: "idle" });
               }}
               onBlur={() => void inspectReference()}
-              placeholder="Amazon URL / ASIN"
+              placeholder={"Mỗi dòng một Amazon URL / ASIN\nTối đa 3 reference"}
             />
         </Field>
       </div>

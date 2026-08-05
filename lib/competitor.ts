@@ -1,15 +1,7 @@
 import "server-only";
 
+import { resolveReferenceTargets, type ReferenceTarget } from "@/lib/reference-parser";
 import type { ListingInput, Marketplace } from "@/lib/types";
-
-const marketplaceDomain: Record<Marketplace, string> = {
-  US: "www.amazon.com",
-  UK: "www.amazon.co.uk",
-  DE: "www.amazon.de",
-};
-
-const asinPattern = /\b(?:B[A-Z0-9]{9}|[0-9]{9}[0-9X])\b/i;
-const urlPattern = /https?:\/\/[^\s<>"']+/i;
 
 interface CompetitorCacheEntry {
   expiresAt: number;
@@ -102,33 +94,8 @@ export function extractAmazonCompetitorData(html: string) {
     .slice(0, configuredNumber("COMPETITOR_MAX_CHARS", 6_000, 1_000, 12_000));
 }
 
-function isAmazonHostname(hostname: string) {
-  const normalized = hostname.toLowerCase();
-  return ["amazon.com", "amazon.co.uk", "amazon.de"].some(
-    (domain) => normalized === domain || normalized.endsWith(`.${domain}`),
-  );
-}
-
 export function resolveCompetitorUrl(value: string, marketplace: Marketplace) {
-  const asin = value.match(asinPattern)?.[0]?.toUpperCase();
-  if (asin) {
-    return {
-      asin,
-      url: `https://${marketplaceDomain[marketplace]}/dp/${asin}`,
-    };
-  }
-
-  const rawUrl = value.match(urlPattern)?.[0];
-  if (!rawUrl) return null;
-  try {
-    const url = new URL(rawUrl);
-    if (url.protocol !== "https:" || !isAmazonHostname(url.hostname)) return null;
-    url.search = "";
-    url.hash = "";
-    return { asin: undefined, url: url.toString() };
-  } catch {
-    return null;
-  }
+  return resolveReferenceTargets(value, marketplace, 1)[0] || null;
 }
 
 async function crawlDirect(url: string, signal: AbortSignal) {
@@ -250,25 +217,62 @@ export async function inspectCompetitorReference(value: string, marketplace: Mar
   };
 }
 
+export async function inspectCompetitorReferences(value: string, marketplace: Marketplace) {
+  const targets = resolveReferenceTargets(value.trim(), marketplace);
+  return Promise.all(
+    targets.map(async (target: ReferenceTarget) => ({
+      ...target,
+      content: await crawlAmazonPage(target.url),
+    })),
+  );
+}
+
+function formatReferenceEvidence(
+  references: Array<ReferenceTarget & { content: string }>,
+  maxChars: number,
+) {
+  const sources = references.map(
+    (reference, index) =>
+      `Reference ${index + 1}: ${reference.asin ? `${reference.asin} - ` : ""}${reference.url}`,
+  );
+  const available = references.filter((reference) => reference.content.trim());
+  if (!available.length) return sources.join("\n").slice(0, maxChars);
+
+  const heading = `${sources.join("\n")}\n\nCrawled Amazon reference content (untrusted):\n`;
+  const contentBudget = Math.max(0, maxChars - heading.length);
+  const sectionOverhead = available.reduce(
+    (total, reference) => total + `[Reference ${references.indexOf(reference) + 1}]\n\n\n`.length,
+    0,
+  );
+  const perReference = Math.max(
+    0,
+    Math.floor((contentBudget - sectionOverhead) / available.length),
+  );
+  const sections = available.map((reference) => {
+    const index = references.indexOf(reference) + 1;
+    return `[Reference ${index}]\n${reference.content.slice(0, perReference)}`;
+  });
+  return `${heading}${sections.join("\n\n")}`.slice(0, maxChars);
+}
+
 export async function enrichCompetitorResearch(input: ListingInput): Promise<ListingInput> {
   const supplied = input.research.competitor_notes.trim();
   if (!supplied) return input;
 
-  const reference = await inspectCompetitorReference(supplied, input.marketplace);
-  if (!reference.resolved) return input;
+  const references = await inspectCompetitorReferences(supplied, input.marketplace);
+  if (!references.length) return input;
+  const maxChars = configuredNumber("COMPETITOR_MAX_CHARS", 6_000, 1_000, 12_000);
   return {
     ...input,
     research: {
       ...input.research,
-      competitor_asins: reference.asin
-        ? [...new Set([...input.research.competitor_asins, reference.asin])]
-        : input.research.competitor_asins,
-      competitor_notes: reference.content
-        ? `${supplied}\n\nCrawled Amazon reference (untrusted content):\n${reference.content}`.slice(
-            0,
-            configuredNumber("COMPETITOR_MAX_CHARS", 6_000, 1_000, 12_000) + 500,
-          )
-        : supplied,
+      competitor_asins: [
+        ...new Set([
+          ...input.research.competitor_asins,
+          ...references.flatMap((reference) => (reference.asin ? [reference.asin] : [])),
+        ]),
+      ],
+      competitor_notes: formatReferenceEvidence(references, maxChars),
     },
   };
 }

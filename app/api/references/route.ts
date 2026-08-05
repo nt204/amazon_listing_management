@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { inspectCompetitorReference } from "@/lib/competitor";
+import { inspectCompetitorReferences } from "@/lib/competitor";
 
 export const runtime = "nodejs";
 export const maxDuration = 10;
@@ -14,11 +14,13 @@ export async function POST(request: Request) {
   try {
     const { value, marketplace } = requestSchema.parse(await request.json());
     const startedAt = Date.now();
-    const reference = await inspectCompetitorReference(value, marketplace);
+    const references = await inspectCompetitorReferences(value, marketplace);
+    const contentCount = references.filter((reference) => reference.content).length;
     return NextResponse.json({
-      resolved: reference.resolved,
-      asin: reference.asin,
-      content_available: Boolean(reference.content),
+      resolved: references.length > 0,
+      resolved_count: references.length,
+      content_count: contentCount,
+      content_available: contentCount > 0,
       elapsed_ms: Date.now() - startedAt,
     });
   } catch (error) {

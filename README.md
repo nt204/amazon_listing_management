@@ -35,7 +35,7 @@ API key chỉ được đọc trong server routes. Frontend chỉ nhận trạng
 - Form đơn lẻ chỉ cần marketplace, product type, ảnh và main keyword.
 - Một ô tự do cho các thông tin AI không thể xác định chắc chắn từ ảnh.
 - Brand profile dùng chung tên brand và writing guidelines cho cả team.
-- Reference listing nhận URL hoặc ASIN Amazon và được crawl best-effort. Amazon và reader chạy song song trong một hard timeout, kết quả được cache theo URL/ASIN và giới hạn evidence để không làm chậm AI prompt.
+- Reference listing nhận tối đa 3 URL hoặc ASIN Amazon, mỗi dòng một reference. Tất cả reference, Amazon direct và reader được crawl song song trong một hard timeout; kết quả được cache và chia sẻ cùng giới hạn evidence để không làm chậm AI prompt.
 - Upload 1-10 ảnh JPG, PNG hoặc WEBP; ảnh được resize ở trình duyệt.
 - Evidence-first pipeline: mặc định một multimodal call trả cả product brief và listing để giảm latency; đặt `AI_PIPELINE_MODE=two-stage` nếu muốn tách analyst/writer thành hai call.
 - Generate bằng Gemini hoặc OpenAI; fallback chỉ dùng khi provider thực sự lỗi.

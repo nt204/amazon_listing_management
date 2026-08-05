@@ -307,28 +307,30 @@ function QualitySidebar({ stored }: { stored: StoredListing }) {
   const validation = result.policy_validation;
   const productAnalysis = result.product_analysis;
   const quality = result.content_quality;
+  const errors = validation?.errors || [];
+  const warnings = validation?.warnings || [];
   return (
     <aside className="grid content-start gap-4">
       <section className="rounded-[10px] border border-[#dfe3e6] bg-white p-4">
-        <div className="mb-3 flex items-center gap-2"><ShieldCheckIcon className={validation.passed ? "text-[#287149]" : "text-[#a06412]"} size={19} /><h2 className="text-sm font-bold text-[#222b32]">Kiểm tra chất lượng</h2></div>
-        <div className={validation.passed ? "mb-3 rounded-lg bg-[#eef7f2] p-3 text-xs font-semibold text-[#276043]" : "mb-3 rounded-lg bg-[#fff4df] p-3 text-xs font-semibold text-[#7d5113]"}>
-          {validation.passed ? "Đã qua các kiểm tra bắt buộc" : `${validation.errors.length} lỗi cần xử lý`}
+        <div className="mb-3 flex items-center gap-2"><ShieldCheckIcon className={validation?.passed ? "text-[#287149]" : "text-[#a06412]"} size={19} /><h2 className="text-sm font-bold text-[#222b32]">Kiểm tra chất lượng</h2></div>
+        <div className={validation?.passed ? "mb-3 rounded-lg bg-[#eef7f2] p-3 text-xs font-semibold text-[#276043]" : "mb-3 rounded-lg bg-[#fff4df] p-3 text-xs font-semibold text-[#7d5113]"}>
+          {validation?.passed ? "Đã qua các kiểm tra bắt buộc" : `${errors.length} lỗi cần xử lý`}
         </div>
         <dl className="grid gap-2.5 text-xs">
-          <div className="flex justify-between gap-3"><dt className="text-[#65717c]">Fact coverage</dt><dd className="font-bold text-[#303b44]">{quality.fact_coverage_percent}%</dd></div>
-          <div className="flex justify-between gap-3"><dt className="text-[#65717c]">Keyword evidence</dt><dd className="font-bold text-[#303b44]">{result.seo_analysis.keyword_coverage_percent}%</dd></div>
-          <div className="flex justify-between gap-3"><dt className="text-[#65717c]">Warnings</dt><dd className="font-bold text-[#303b44]">{validation.warnings.length}</dd></div>
+          <div className="flex justify-between gap-3"><dt className="text-[#65717c]">Fact coverage</dt><dd className="font-bold text-[#303b44]">{quality ? `${quality.fact_coverage_percent}%` : "—"}</dd></div>
+          <div className="flex justify-between gap-3"><dt className="text-[#65717c]">Keyword evidence</dt><dd className="font-bold text-[#303b44]">{result.seo_analysis?.keyword_coverage_percent === undefined ? "—" : `${result.seo_analysis.keyword_coverage_percent}%`}</dd></div>
+          <div className="flex justify-between gap-3"><dt className="text-[#65717c]">Warnings</dt><dd className="font-bold text-[#303b44]">{warnings.length}</dd></div>
         </dl>
-        {quality.unused_facts.length ? (
+        {quality?.unused_facts?.length ? (
           <div className="mt-4 border-t border-[#e5e8ea] pt-3">
             <p className="text-[11px] font-bold text-[#8b5810]">Facts chưa dùng</p>
             <div className="mt-2 grid gap-1.5">{quality.unused_facts.map((fact) => <p key={fact} className="text-xs leading-5 text-[#5d6266]">{fact}</p>)}</div>
           </div>
         ) : null}
-        {validation.errors.length || validation.warnings.length ? (
+        {errors.length || warnings.length ? (
           <div className="mt-4 grid gap-2 border-t border-[#e5e8ea] pt-3">
-            {validation.errors.map((issue, index) => <div key={`error-${index}`} className="flex items-start gap-2 text-xs leading-5 text-[#8e3021]"><XCircleIcon className="mt-0.5 shrink-0" size={15} weight="fill" /><span>{issue.message}</span></div>)}
-            {validation.warnings.map((issue, index) => <div key={`warning-${index}`} className="flex items-start gap-2 text-xs leading-5 text-[#7d5113]"><WarningCircleIcon className="mt-0.5 shrink-0" size={15} weight="fill" /><span>{issue.message}</span></div>)}
+            {errors.map((issue, index) => <div key={`error-${index}`} className="flex items-start gap-2 text-xs leading-5 text-[#8e3021]"><XCircleIcon className="mt-0.5 shrink-0" size={15} weight="fill" /><span>{issue.message}</span></div>)}
+            {warnings.map((issue, index) => <div key={`warning-${index}`} className="flex items-start gap-2 text-xs leading-5 text-[#7d5113]"><WarningCircleIcon className="mt-0.5 shrink-0" size={15} weight="fill" /><span>{issue.message}</span></div>)}
           </div>
         ) : null}
       </section>
