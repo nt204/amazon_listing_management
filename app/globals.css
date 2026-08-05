@@ -1,0 +1,102 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f6f7f8;
+  --surface: #ffffff;
+  --surface-muted: #f0f2f4;
+  --text: #1d252c;
+  --text-muted: #65717c;
+  --line: #dfe3e6;
+  --accent: #b84f1d;
+  --accent-hover: #963f17;
+  --accent-soft: #fff0e8;
+  --focus: #d7652f;
+  --radius: 10px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--background);
+}
+
+body {
+  margin: 0;
+  color: var(--text);
+  background: var(--background);
+  font-family: "Avenir Next", Avenir, "Segoe UI", Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+::selection {
+  color: #fff8f4;
+  background: var(--accent);
+}
+
+:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--focus) 32%, transparent);
+  outline-offset: 2px;
+}
+
+.field-control {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  border: 1px solid #cfd5da;
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 14px;
+  line-height: 1.4;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.field-control::placeholder {
+  color: #7d8790;
+}
+
+.field-control:hover {
+  border-color: #aeb6bd;
+}
+
+.field-control:focus {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 14%, transparent);
+  outline: none;
+}
+
+.field-control[aria-invalid="true"] {
+  border-color: #c7352b;
+}
+
+.thin-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #c9ced2 transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
