@@ -86,7 +86,7 @@ function LoadingState() {
   }, []);
   const stage =
     elapsedSeconds < 5
-      ? "Đang chuẩn bị evidence..."
+      ? "Đang đọc OCR và reference..."
       : elapsedSeconds < 20
         ? "Đang đọc ảnh và viết draft..."
         : "AI đang hoàn thiện draft. Kết quả chưa đạt sẽ được đưa vào Review, không retry âm thầm.";
@@ -96,7 +96,7 @@ function LoadingState() {
         <MagicWandIcon className="text-[#b84f1d]" size={22} />
         <div>
           <p className="text-sm font-bold text-[#60321d]">{stage}</p>
-          <p className="mt-0.5 text-xs text-[#79513e]">{elapsedSeconds}s - Hệ thống kiểm tra fact, policy và keyword trước khi lưu.</p>
+          <p className="mt-0.5 text-xs text-[#79513e]">{elapsedSeconds}s - AI đang tạo title, bullets, description và search terms.</p>
         </div>
       </div>
       <div className="grid gap-6">
@@ -119,7 +119,7 @@ function EmptyState() {
           <ClipboardTextIcon size={28} />
         </div>
         <h2 className="mt-5 text-lg font-bold text-[#222b32]">Chọn listing hoặc tạo draft mới</h2>
-        <p className="mt-2 text-sm leading-6 text-[#65717c]">Evidence, nội dung, quality check và revision sẽ xuất hiện tại đây.</p>
+        <p className="mt-2 text-sm leading-6 text-[#65717c]">Nội dung, OCR, reference và lịch sử chỉnh sửa sẽ xuất hiện tại đây.</p>
       </div>
     </div>
   );
@@ -341,22 +341,17 @@ function SeoEvidenceView({
   const keywords = seo.keyword_usage || [];
   const profile = result.competitor_profile;
   const usedFacts = new Set(quality.facts_used);
-  const overlapIssues = [
-    ...(result.policy_validation?.errors || []),
-    ...(result.policy_validation?.warnings || []),
-  ].filter((issue) =>
-    ["COMPETITOR_PHRASE_OVERLAP", "COMPETITOR_PHRASE_SIMILARITY"].includes(issue.code),
-  );
+  const imageFacts = quality.image_facts || result.product_analysis?.image_facts || [];
+  const usedImageFacts = new Set(quality.image_facts_used || []);
 
   return (
     <div className="grid gap-5">
       <section className="rounded-[10px] border border-[#dfe3e6] bg-white py-4">
-        <div className="grid grid-cols-2 gap-y-4 sm:grid-cols-5 sm:gap-y-0">
-          <ScoreCell label="SEO coverage" value={`${seo.keyword_coverage_percent}%`} detail="Có trọng số theo nguồn và vị trí" />
-          <ScoreCell label="Marketing fit" value={`${seo.marketing_coverage_percent ?? 0}%`} detail={seo.purchase_strategy ? `${seo.purchase_strategy.mode}, ${seo.purchase_strategy.marketing_percent}/${seo.purchase_strategy.product_percent}` : "Chưa có purchase strategy"} />
-          <ScoreCell label="Backend efficiency" value={`${backend?.efficiency_percent ?? seo.backend_coverage_percent ?? 0}%`} detail="Từ mới, không trùng visible copy" />
-          <ScoreCell label="Verified facts" value={`${quality.fact_coverage_percent}%`} detail={`${quality.facts_used.length}/${quality.supplied_facts.length} facts đã dùng`} />
-          <ScoreCell label="Competitor refs" value={`${profile?.references.length || 0}`} detail="Chỉ dùng intent và vocabulary" />
+        <div className="grid grid-cols-2 gap-y-4 sm:grid-cols-4 sm:gap-y-0">
+          <ScoreCell label="SEO coverage" value={`${seo.keyword_coverage_percent}%`} detail="Keyword xuất hiện trong listing" />
+          <ScoreCell label="Backend quality" value={`${backend?.efficiency_percent ?? seo.backend_coverage_percent ?? 0}%`} detail="Từ duy nhất, không brand hoặc ASIN" />
+          <ScoreCell label="Product facts" value={`${quality.fact_coverage_percent}%`} detail={`${quality.facts_used.length}/${quality.supplied_facts.length} facts đã dùng`} />
+          <ScoreCell label="ASIN refs" value={`${profile?.references.length || 0}`} detail="Dùng làm bối cảnh nhẹ" />
         </div>
       </section>
 
@@ -395,7 +390,7 @@ function SeoEvidenceView({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-2"><MagnifyingGlassIcon size={18} className="text-[#a24419]" /><h2 className="text-sm font-bold text-[#222b32]">Backend search terms</h2></div>
-            <p className="mt-1 text-xs text-[#65717c]">Generic discovery terms, không lặp title, bullet, brand hoặc ASIN.</p>
+            <p className="mt-1 text-xs text-[#65717c]">Từ tìm kiếm do AI sinh, được bỏ từ lặp, stop word, brand và ASIN.</p>
           </div>
           <span className="rounded-md bg-[#f0f2f4] px-2 py-1 text-[11px] font-bold text-[#4d5962]">{backend?.bytes_used ?? new TextEncoder().encode(result.listing.backend_search_terms).length}/{backend?.byte_limit ?? 249} bytes</span>
         </div>
@@ -424,8 +419,8 @@ function SeoEvidenceView({
 
       <div className="grid gap-5 lg:grid-cols-2">
         <section className="rounded-[10px] border border-[#dfe3e6] bg-white p-4">
-          <h2 className="text-sm font-bold text-[#222b32]">Evidence coverage</h2>
-          <p className="mt-1 text-xs text-[#65717c]">Fact do operator xác nhận được tách khỏi suy luận từ ảnh và đối thủ.</p>
+          <h2 className="text-sm font-bold text-[#222b32]">Input usage</h2>
+          <p className="mt-1 text-xs text-[#65717c]">Thông tin operator và OCR đã được dùng trong nội dung.</p>
           <div className="mt-4 grid gap-2">
             {quality.supplied_facts.length ? quality.supplied_facts.map((fact) => (
               <div key={fact} className="flex items-start justify-between gap-3 rounded-lg bg-[#f7f8f8] px-3 py-2">
@@ -434,21 +429,24 @@ function SeoEvidenceView({
               </div>
             )) : <p className="text-xs text-[#7a858e]">Chưa có fact do operator xác nhận.</p>}
           </div>
+          {imageFacts.length ? (
+            <div className="mt-4 border-t border-[#e5e8ea] pt-4">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-[#65717c]">Thông tin từ ảnh / OCR</p>
+              <div className="mt-2 grid gap-2">
+                {imageFacts.map((fact) => (
+                  <div key={fact} className="flex items-start justify-between gap-3 rounded-lg bg-[#f7f8f8] px-3 py-2">
+                    <span className="text-xs leading-5 text-[#39444d]">{fact}</span>
+                    <span className={`shrink-0 text-[10px] font-bold ${usedImageFacts.has(fact) ? "text-[#237047]" : "text-[#9a6218]"}`}>{usedImageFacts.has(fact) ? "Used" : "Unused"}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </section>
 
         <section className="rounded-[10px] border border-[#dfe3e6] bg-white p-4">
           <h2 className="text-sm font-bold text-[#222b32]">Competitor intelligence</h2>
-          <p className="mt-1 text-xs text-[#65717c]">Tín hiệu được source, còn brand và claim thiếu evidence bị chặn.</p>
-          {overlapIssues.length ? (
-            <div className="mt-4 grid gap-2">
-              {overlapIssues.map((issue, index) => (
-                <div key={`${issue.code}-${index}`} className={`rounded-lg border p-3 ${issue.code === "COMPETITOR_PHRASE_OVERLAP" ? "border-[#e6b7ad] bg-[#fff5f2]" : "border-[#ead4a9] bg-[#fff9ec]"}`}>
-                  <p className={`text-xs font-semibold leading-5 ${issue.code === "COMPETITOR_PHRASE_OVERLAP" ? "text-[#8e3021]" : "text-[#7d5113]"}`}>{issue.message}</p>
-                  {issue.source_url ? <a href={issue.source_url} target="_blank" rel="noreferrer" className="mt-1.5 inline-block text-[11px] font-bold text-[#9b461f] underline decoration-[#d8a38b] underline-offset-2">Mở nguồn đối thủ</a> : null}
-                </div>
-              ))}
-            </div>
-          ) : null}
+          <p className="mt-1 text-xs text-[#65717c]">AI chỉ tham khảo bối cảnh, cách gọi sản phẩm và điểm còn thiếu; không sao chép nội dung.</p>
           {profile?.references.length ? (
             <div className="mt-4 grid gap-3">
               {profile.references.map((reference, index) => (
@@ -457,7 +455,7 @@ function SeoEvidenceView({
                   <p className="mt-1 text-[10px] text-[#879099]">{reference.brand || "Brand not detected"}{reference.asin ? ` / ${reference.asin}` : ""}</p>
                 </div>
               ))}
-              <p className="text-[11px] font-semibold text-[#8b5810]">{profile.claims.filter((claim) => claim.own_evidence === "missing").length} claim bị chặn vì thiếu fact của sản phẩm.</p>
+              <p className="text-[11px] font-semibold text-[#8b5810]">{profile.claims.filter((claim) => claim.own_evidence === "missing").length} thông tin đối thủ không có trong dữ liệu sản phẩm và chỉ dùng để nhận biết khoảng trống.</p>
             </div>
           ) : <p className="mt-4 text-xs text-[#7a858e]">Chưa có listing đối thủ được đọc thành công.</p>}
         </section>
@@ -482,18 +480,11 @@ function QualitySidebar({ stored }: { stored: StoredListing }) {
           {validation?.passed ? "Đã qua các kiểm tra bắt buộc" : `${errors.length} lỗi cần xử lý`}
         </div>
         <dl className="grid gap-2.5 text-xs">
-          <div className="flex justify-between gap-3"><dt className="text-[#65717c]">Fact đã xác minh</dt><dd className="font-bold text-[#303b44]">{quality ? `${quality.fact_coverage_percent}%` : "-"}</dd></div>
+          <div className="flex justify-between gap-3"><dt className="text-[#65717c]">Product facts đã dùng</dt><dd className="font-bold text-[#303b44]">{quality ? `${quality.fact_coverage_percent}%` : "-"}</dd></div>
           <div className="flex justify-between gap-3"><dt className="text-[#65717c]">SEO coverage</dt><dd className="font-bold text-[#303b44]">{result.seo_analysis?.keyword_coverage_percent === undefined ? "-" : `${result.seo_analysis.keyword_coverage_percent}%`}</dd></div>
-          {result.seo_analysis?.marketing_coverage_percent !== undefined ? (
-            <div className="flex justify-between gap-3"><dt className="text-[#65717c]">Marketing fit</dt><dd className="font-bold text-[#303b44]">{result.seo_analysis.marketing_coverage_percent}%</dd></div>
-          ) : null}
           {result.seo_analysis?.backend_coverage_percent !== undefined ? (
-            <div className="flex justify-between gap-3"><dt className="text-[#65717c]">Backend efficiency</dt><dd className="font-bold text-[#303b44]">{result.seo_analysis.backend_coverage_percent}%</dd></div>
+            <div className="flex justify-between gap-3"><dt className="text-[#65717c]">Backend quality</dt><dd className="font-bold text-[#303b44]">{result.seo_analysis.backend_coverage_percent}%</dd></div>
           ) : null}
-          {quality?.reference_utilization_percent !== undefined ? (
-            <div className="flex justify-between gap-3"><dt className="text-[#65717c]">Reference utilization</dt><dd className="font-bold text-[#303b44]">{quality.reference_utilization_percent}%</dd></div>
-          ) : null}
-          <div className="flex justify-between gap-3"><dt className="text-[#65717c]">Warnings</dt><dd className="font-bold text-[#303b44]">{warnings.length}</dd></div>
         </dl>
         {quality?.unused_facts?.length ? (
           <div className="mt-4 border-t border-[#e5e8ea] pt-3">
@@ -510,12 +501,16 @@ function QualitySidebar({ stored }: { stored: StoredListing }) {
       </section>
 
       <section className="rounded-[10px] border border-[#dfe3e6] bg-white p-4">
-        <div className="mb-3 flex items-center gap-2"><ImageSquareIcon className={result.image_analysis.analyzed ? "text-[#287149]" : "text-[#8b5810]"} size={19} /><h2 className="text-sm font-bold text-[#222b32]">Evidence brief</h2></div>
-        <p className="mb-3 text-xs leading-5 text-[#65717c]">{result.image_analysis.image_count} ảnh, {result.metadata.model_name}</p>
+        <div className="mb-3 flex items-center gap-2"><ImageSquareIcon className={result.image_analysis.analyzed ? "text-[#287149]" : "text-[#8b5810]"} size={19} /><h2 className="text-sm font-bold text-[#222b32]">OCR &amp; reference</h2></div>
+        <p className="mb-3 text-xs leading-5 text-[#65717c]">
+          {result.image_analysis.image_count} ảnh, {result.metadata.model_name}
+          {productAnalysis?.ocr ? ` · OCR ${productAnalysis.ocr.status}, ${productAnalysis.ocr.line_count} dòng` : ""}
+        </p>
         <div className="grid gap-2">
           {result.image_analysis.observations.slice(0, 5).map((observation, index) => <p key={`${observation}-${index}`} className="text-xs leading-5 text-[#4b5660]">{observation}</p>)}
         </div>
-        {productAnalysis?.exact_text.length ? <div className="mt-4 border-t border-[#e5e8ea] pt-3"><p className="mb-1.5 text-[11px] font-bold text-[#65717c]">Detected text</p><p className="text-xs font-semibold leading-5 text-[#39444d]">{productAnalysis.exact_text.join(", ")}</p></div> : null}
+        {productAnalysis?.exact_text.length ? <div className="mt-4 border-t border-[#e5e8ea] pt-3"><p className="mb-1.5 text-[11px] font-bold text-[#65717c]">Detected text / local OCR</p><p className="text-xs font-semibold leading-5 text-[#39444d]">{productAnalysis.exact_text.join(", ")}</p></div> : null}
+        {productAnalysis?.ocr?.warnings.length ? <div className="mt-2 grid gap-1">{productAnalysis.ocr.warnings.map((warning) => <p key={warning} className="text-[11px] leading-4 text-[#8b5810]">{warning}</p>)}</div> : null}
         {productAnalysis?.competitor_insights.length ? <div className="mt-4 border-t border-[#e5e8ea] pt-3"><p className="mb-1.5 text-[11px] font-bold text-[#65717c]">Reference insights</p><div className="grid gap-1.5">{productAnalysis.competitor_insights.slice(0, 4).map((insight) => <p key={insight} className="text-xs leading-5 text-[#4b5660]">{insight}</p>)}</div></div> : null}
         {competitorProfile ? (
           <div className="mt-4 border-t border-[#e5e8ea] pt-3">
@@ -529,7 +524,7 @@ function QualitySidebar({ stored }: { stored: StoredListing }) {
             </div>
             {competitorProfile.claims.some((claim) => claim.own_evidence === "missing") ? (
               <p className="mt-2 text-[11px] leading-4 text-[#8b5810]">
-                {competitorProfile.claims.filter((claim) => claim.own_evidence === "missing").length} competitor claims bị chặn vì thiếu fact của sản phẩm.
+                {competitorProfile.claims.filter((claim) => claim.own_evidence === "missing").length} thông tin chỉ có ở đối thủ, không dùng làm fact sản phẩm.
               </p>
             ) : null}
           </div>
@@ -541,7 +536,7 @@ function QualitySidebar({ stored }: { stored: StoredListing }) {
         <dl className="grid gap-2.5">
           <div className="flex justify-between gap-3"><dt>Processing</dt><dd className="font-semibold text-[#39444d]">{(result.metadata.processing_time_ms / 1000).toFixed(1)}s</dd></div>
           <div className="flex justify-between gap-3"><dt>Retries</dt><dd className="font-semibold text-[#39444d]">{result.metadata.retry_count}</dd></div>
-          <div className="flex justify-between gap-3"><dt>Policy</dt><dd className="max-w-36 truncate font-semibold text-[#39444d]" title={result.metadata.policy_version}>{result.metadata.policy_version}</dd></div>
+          <div className="flex justify-between gap-3"><dt>Rules</dt><dd className="max-w-36 truncate font-semibold text-[#39444d]" title={result.metadata.policy_version}>{result.metadata.policy_version}</dd></div>
         </dl>
       </section>
     </aside>
@@ -611,7 +606,7 @@ export function ResultPanel({
         </div>
         <div className="flex gap-1 px-5" role="tablist" aria-label="Listing review">
           <button type="button" role="tab" aria-selected={tab === "content"} onClick={() => setTab("content")} className={`border-b-2 px-3 py-2 text-xs font-bold ${tab === "content" ? "border-[#b84f1d] text-[#8f3d17]" : "border-transparent text-[#65717c] hover:text-[#303b44]"}`}>Nội dung</button>
-          <button type="button" role="tab" aria-selected={tab === "seo"} onClick={() => setTab("seo")} className={`border-b-2 px-3 py-2 text-xs font-bold ${tab === "seo" ? "border-[#b84f1d] text-[#8f3d17]" : "border-transparent text-[#65717c] hover:text-[#303b44]"}`}>SEO &amp; Evidence</button>
+          <button type="button" role="tab" aria-selected={tab === "seo"} onClick={() => setTab("seo")} className={`border-b-2 px-3 py-2 text-xs font-bold ${tab === "seo" ? "border-[#b84f1d] text-[#8f3d17]" : "border-transparent text-[#65717c] hover:text-[#303b44]"}`}>SEO &amp; Inputs</button>
           <button type="button" role="tab" aria-selected={tab === "revisions"} onClick={() => setTab("revisions")} className={`border-b-2 px-3 py-2 text-xs font-bold ${tab === "revisions" ? "border-[#b84f1d] text-[#8f3d17]" : "border-transparent text-[#65717c] hover:text-[#303b44]"}`}>Phiên bản ({revisions.length})</button>
         </div>
       </div>
@@ -619,7 +614,7 @@ export function ResultPanel({
       <div className="mx-auto w-full max-w-[1220px] p-5 lg:p-7">
         <section className="mb-5 rounded-[10px] border border-[#dfc8bc] bg-[#fffaf7] p-4">
           <label htmlFor="review_instruction" className="text-[13px] font-bold text-[#49372f]">Yêu cầu AI chỉnh sửa</label>
-          <p className="mt-1 text-xs leading-5 text-[#786156]">Một câu lệnh cho toàn bộ listing. Hệ thống vẫn kiểm tra lại fact và policy sau khi sửa.</p>
+          <p className="mt-1 text-xs leading-5 text-[#786156]">Một câu lệnh cho toàn bộ listing. Sau khi sửa, hệ thống chỉ kiểm tra lại định dạng Amazon cơ bản.</p>
           <div className="mt-3 flex flex-wrap gap-2">
             {issuePrompt ? <button type="button" onClick={() => setInstruction(`Sửa toàn bộ lỗi và cảnh báo dưới đây, giữ nguyên các phần đang tốt và không thêm claim mới:\n${issuePrompt}`)} className="rounded-md border border-[#dbc8be] bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#76503d] hover:bg-[#fff7f2]">Sửa lỗi quality</button> : null}
             <button type="button" onClick={() => setInstruction("Tối ưu SEO tự nhiên cho toàn bộ listing. Ưu tiên keyword do operator cung cấp và intent lặp lại ở đối thủ, không copy wording, không lặp noun để keyword stuffing, và dùng backend chỉ cho vocabulary chưa có trong title hoặc bullets.")} className="rounded-md border border-[#dbc8be] bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#76503d] hover:bg-[#fff7f2]">Tối ưu SEO</button>

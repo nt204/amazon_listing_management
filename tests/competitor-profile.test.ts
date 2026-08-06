@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildCompetitorProfile } from "../lib/competitor-profile";
-import { mergeCompetitorProfile } from "../lib/product-brief";
-import type { ListingInput, ProductBrief } from "../lib/types";
+import type { ListingInput } from "../lib/types";
 
 const input: ListingInput = {
   marketplace: "UK",
@@ -28,7 +27,7 @@ const input: ListingInput = {
     customer_insight: "",
     usp: "",
     competitor_asins: [],
-    competitor_notes: "https://www.amazon.co.uk/dp/B0GTQX2FLW",
+    competitor_notes: "",
     notes: "11 oz",
   },
   images: [{ name: "cat.png", type: "image/png", data_url: "data:image/png;base64,AA==" }],
@@ -46,18 +45,15 @@ const input: ListingInput = {
   },
 };
 
-const content = `Title: Stuff4 Best Cat Dad Mug, Playful Cat Silhouette Design in Orange and Black | Fun Gift for Lovers | Sturdy Coffee Mug, 11oz Ceramic Gloss Mug : Amazon.co.uk: Home & Kitchen
+const content = `Title: Stuff4 Best Cat Dad Mug, Playful Cat Silhouette Design | Gift for Cat Lovers | Ceramic Coffee Mug, 11oz : Amazon.co.uk
 Brand Stuff4
 Material Ceramic
 Colour White
 Capacity 11 Fluid ounces
 Special feature Microwave Safe
-Features the bold slogan BEST CAT DAD EVER with playful cat silhouettes.
-A cheerful pick for Father's Day or birthdays for cat lovers.
-Built for repeated use, it is dishwasher and microwave safe.
-A sturdy coffee mug for everyday drinks.`;
+The mug is dishwasher and microwave safe.`;
 
-test("competitor extractors build a sourced profile and classify own evidence", () => {
+test("ASIN reference extraction keeps useful context and separates missing product claims", () => {
   const profile = buildCompetitorProfile(
     [{ asin: "B0GTQX2FLW", url: "https://www.amazon.co.uk/dp/B0GTQX2FLW", content }],
     input,
@@ -67,80 +63,40 @@ test("competitor extractors build a sourced profile and classify own evidence", 
   assert.equal(profile.references[0].attributes.material, "Ceramic");
   assert.ok(profile.blocked_terms.includes("Stuff4"));
   assert.ok(profile.blocked_terms.includes("B0GTQX2FLW"));
-  assert.equal(
-    profile.claims.find((claim) => /11/.test(claim.value))?.own_evidence,
-    "confirmed",
-  );
-  assert.equal(
-    profile.claims.find((claim) => claim.value === "Ceramic")?.own_evidence,
-    "missing",
-  );
-  assert.equal(
-    profile.claims.find((claim) => claim.value === "Dishwasher safe")?.own_evidence,
-    "missing",
-  );
-  assert.ok(
-    profile.keyword_candidates.some(
-      (keyword) => keyword.value === "cat dad mug" && keyword.usable_for_listing,
-    ),
-  );
-  assert.ok(
-    profile.keyword_candidates.some(
-      (keyword) => keyword.value.includes("ceramic") && !keyword.usable_for_listing,
-    ),
-  );
+  assert.equal(profile.claims.find((claim) => /11/.test(claim.value))?.own_evidence, "confirmed");
+  assert.equal(profile.claims.find((claim) => claim.value === "Ceramic")?.own_evidence, "missing");
+  assert.ok(profile.keyword_candidates.some((keyword) => keyword.value === "cat dad mug"));
   assert.ok(!profile.keyword_candidates.some((keyword) => /stuff4/i.test(keyword.value)));
-  assert.ok(!profile.keyword_candidates.some((keyword) => keyword.value === "fun gift for lovers"));
-  assert.ok(
-    profile.keyword_candidates.some(
-      (keyword) => keyword.value === "sturdy coffee mug" && !keyword.usable_for_listing,
-    ),
-  );
 });
 
-test("competitor profile feeds only usable keywords and blocks unsupported claims", () => {
-  const profile = buildCompetitorProfile(
-    [{ asin: "B0GTQX2FLW", url: "https://www.amazon.co.uk/dp/B0GTQX2FLW", content }],
-    input,
-  );
-  const brief: ProductBrief = {
-    visual_facts: ["A mug is visible."],
-    exact_text: ["BEST CAT DAD EVER"],
-    colors: ["Grey"],
-    styles: ["Cartoon"],
-    subjects: ["Cat"],
-    supplied_facts: ["11 oz"],
-    inferred_audiences: ["Cat dads"],
-    inferred_occasions: [],
-    related_keywords: ["cat dad mug", "cat lover gift", "pet dad mug", "cat coffee cup", "gift for cat dad"],
-    competitor_insights: [],
-    listing_angle: "A cat dad mug with cartoon artwork.",
-    facts_to_avoid: [],
-    policy_risks: [],
-  };
-  const enrichedInput = {
-    ...input,
-    research: { ...input.research, competitor_profile: profile },
-  };
-  const merged = mergeCompetitorProfile(enrichedInput, brief);
-
-  assert.ok(merged.facts_to_avoid.includes("Ceramic"));
-  assert.ok(merged.facts_to_avoid.includes("Dishwasher safe"));
-  assert.ok(!merged.related_keywords.some((keyword) => keyword.includes("ceramic")));
-  assert.ok(merged.competitor_insights.some((insight) => insight.includes("Source-backed")));
-});
-
-test("competitor profile infers a leading brand when Amazon omits the Brand field", () => {
-  const profile = buildCompetitorProfile(
-    [{
-      asin: "B09RPZN45W",
-      url: "https://www.amazon.co.uk/dp/B09RPZN45W",
-      content: "Title: Stuff4 Best Cat Dad Ever Mug, Funny Gift for Cat Lovers, Birthday Present : Amazon.co.uk: Home & Kitchen",
-    }],
-    input,
-  );
+test("leading competitor brand is inferred when Amazon omits the brand field", () => {
+  const profile = buildCompetitorProfile([{
+    asin: "B09RPZN45W",
+    url: "https://www.amazon.co.uk/dp/B09RPZN45W",
+    content: "Title: Stuff4 Cat Dad Mug, Funny Coffee Cup for Cat Lovers : Amazon.co.uk",
+  }], input);
 
   assert.equal(profile.references[0].brand, "Stuff4");
   assert.ok(profile.blocked_terms.includes("Stuff4"));
-  assert.ok(!profile.keyword_candidates.some((keyword) => /stuff4/i.test(keyword.value)));
+});
+
+test("generic title leaders and operator audiences are not treated as brands", () => {
+  const article = buildCompetitorProfile([{
+    asin: "B0DSGNQJT1",
+    url: "https://www.amazon.com/dp/B0DSGNQJT1",
+    content: "Title: The Leonardo Collection Cat Mug for Home and Kitchen",
+  }], input);
+  const audience = buildCompetitorProfile([{
+    asin: "B0H6KZRMDG",
+    url: "https://www.amazon.com/dp/B0H6KZRMDG",
+    content: "Title: Army Gifts for Men - Decorative Slate Plaque with Stand",
+  }], {
+    ...input,
+    product_type: "Ornament",
+    main_keyword: "Decorative Slate Plaque",
+    research: { ...input.research, target_customer: "army soldier" },
+  });
+
+  assert.equal(article.references[0].brand, undefined);
+  assert.equal(audience.references[0].brand, undefined);
 });

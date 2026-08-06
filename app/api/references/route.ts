@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { inspectCompetitorReferences } from "@/lib/competitor";
+import { authorize, enforceRateLimit, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
 
 export const runtime = "nodejs";
 export const maxDuration = 10;
@@ -12,6 +13,9 @@ const requestSchema = z.object({
 
 export async function POST(request: Request) {
   try {
+    const actor = authorize(request, "write");
+    enforceRequestSize(request, 16_000);
+    await enforceRateLimit(actor, "reference-research", Number(process.env.REFERENCE_RATE_LIMIT_PER_MINUTE || 20));
     const { value, marketplace } = requestSchema.parse(await request.json());
     const startedAt = Date.now();
     const references = await inspectCompetitorReferences(value, marketplace);
@@ -24,9 +28,6 @@ export async function POST(request: Request) {
       elapsed_ms: Date.now() - startedAt,
     });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Could not inspect reference listing." },
-      { status: 400 },
-    );
+    return routeErrorResponse(error, "Could not inspect reference listing.");
   }
 }

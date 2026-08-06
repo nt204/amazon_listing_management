@@ -1,4 +1,7 @@
 import type { ListingContent, ListingInput, ProductBrief } from "@/lib/types";
+import { buildOperatorEvidenceItems } from "@/lib/evidence";
+import { trimAtWordBoundary } from "@/lib/listing-sanitizer";
+import { getPolicy } from "@/lib/policies";
 
 const sentence = (value: string) => value.trim().replace(/[.!?]+$/, "");
 
@@ -20,6 +23,10 @@ export function createMockProductBrief(input: ListingInput): ProductBrief {
   return {
     visual_facts: ["Mock mode does not inspect image content."],
     exact_text: [],
+    selected_ocr_line_ids: [],
+    ocr_selection_complete: false,
+    image_facts: [],
+    evidence_items: buildOperatorEvidenceItems(input),
     colors: info.color ? [info.color] : [],
     styles: [],
     subjects: [],
@@ -35,6 +42,16 @@ export function createMockProductBrief(input: ListingInput): ProductBrief {
       `unique ${product}`,
       `${product} for everyday use`,
     ],
+    backend_keywords: [
+      `${input.main_keyword} alternative`,
+      `${product} keepsake`,
+      `${product} present`,
+      `${product} accessory`,
+      `${product} idea`,
+      `${product} style`,
+      `${product} collection`,
+      `${product} decor`,
+    ],
     competitor_insights: [],
     listing_angle: `A fact-led ${product} listing centered on ${input.main_keyword}.`,
     facts_to_avoid: excludedFacts,
@@ -43,6 +60,7 @@ export function createMockProductBrief(input: ListingInput): ProductBrief {
 }
 
 export function createMockListing(input: ListingInput): ListingContent {
+  const policy = getPolicy(input);
   const info = input.product_information;
   const feature = info.features[0] || input.research.usp || "Made for everyday use";
   const audience = input.research.target_customer || "friends, family, and coworkers";
@@ -72,9 +90,10 @@ export function createMockListing(input: ListingInput): ListingContent {
   ];
 
   return {
-    title: `${brandPrefix}${input.main_keyword} - ${[info.material, info.size_capacity, input.research.usp]
-      .filter(Boolean)
-      .join(", ")} - Gift for ${audience}`.slice(0, input.configuration.title_length),
+    title: trimAtWordBoundary([
+      `${brandPrefix}${input.main_keyword}`.trim(),
+      ...[info.size_capacity, info.material, info.color].filter(Boolean),
+    ].join(", "), policy.titleMax),
     bullet_points: bulletCandidates
       .slice(0, input.configuration.bullet_count)
       .map((bullet) => bullet.slice(0, input.configuration.bullet_length)),

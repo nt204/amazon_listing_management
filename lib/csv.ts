@@ -109,7 +109,7 @@ function skuFromInput(input: ListingInput) {
   ).toUpperCase();
 }
 
-export function buildSellerCentralCsv(listings: StoredListing[]) {
+export function buildListingDeskCsv(listings: StoredListing[]) {
   const headers = [
     "seller-sku",
     "marketplace",
@@ -136,3 +136,6 @@ export function buildSellerCentralCsv(listings: StoredListing[]) {
   ]);
   return encodeCsv([headers, ...rows]);
 }
+
+/** @deprecated Use buildListingDeskCsv. Category-specific Seller Central adapters must be explicit. */
+export const buildSellerCentralCsv = buildListingDeskCsv;

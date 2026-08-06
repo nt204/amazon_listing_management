@@ -18,7 +18,7 @@ import { BatchImport } from "@/components/batch-import";
 import { BrandManager } from "@/components/brand-manager";
 import { ListingForm, type FormIssue } from "@/components/listing-form";
 import { ResultPanel } from "@/components/result-panel";
-import type { AiOptions } from "@/lib/models";
+import { DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_MODEL, type AiOptions } from "@/lib/models";
 import type {
   BrandProfile,
   ListingContent,
@@ -62,13 +62,14 @@ const emptyInput: ListingInput = {
   },
   images: [],
   configuration: {
+    rule_profile: "",
     ai_provider: "auto",
-    gemini_model: "gemini-3.5-flash-lite",
-    openai_model: "gpt-5.6-terra",
+    gemini_model: DEFAULT_GEMINI_MODEL,
+    openai_model: DEFAULT_OPENAI_MODEL,
     language: "English",
-    tone: "Clear, factual, and natural",
+    tone: "Persuasive, benefit-led, natural, and evidence-grounded",
     bullet_count: 5,
-    title_length: 180,
+    title_length: 200,
     bullet_length: 250,
     generate_description: true,
     generate_search_terms: true,
@@ -257,7 +258,21 @@ export function ListingWorkspace() {
     void fetch("/api/ai/options")
       .then((response) => getJson<AiOptions>(response))
       .then((data) => {
-        if (active) setAiOptions(data);
+        if (active) {
+          setAiOptions(data);
+          setInput((current) => ({
+            ...current,
+            configuration: {
+              ...current.configuration,
+              rule_profile: data.listing_defaults.rule_profile,
+              gemini_model: data.listing_defaults.gemini_model,
+              openai_model: data.listing_defaults.openai_model,
+              title_length: data.listing_defaults.title_length,
+              bullet_length: data.listing_defaults.bullet_length,
+              bullet_count: data.listing_defaults.bullet_count,
+            },
+          }));
+        }
       })
       .catch(() => undefined);
     void fetch("/api/brands")
@@ -312,7 +327,10 @@ export function ListingWorkspace() {
       const data = await getJson<{ listing: StoredListing }>(
         await fetch("/api/listings/generate", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": crypto.randomUUID(),
+          },
           body: JSON.stringify({
             ...input,
             internal_name: input.internal_name.trim() || input.main_keyword.trim() || `${input.product_type} listing`,
@@ -361,7 +379,7 @@ export function ListingWorkspace() {
       setContent(data.listing.current_listing);
       setEditing(false);
       await refreshHistory();
-      notify("Đã lưu revision và chạy lại quality check.");
+      notify("Đã lưu revision và kiểm tra lại định dạng.");
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Could not save changes.");
     } finally {
@@ -377,7 +395,10 @@ export function ListingWorkspace() {
       const data = await getJson<{ listing: StoredListing }>(
         await fetch(`/api/listings/${stored.id}/revise`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": crypto.randomUUID(),
+          },
           body: JSON.stringify({ instruction }),
         }),
       );
@@ -453,7 +474,7 @@ export function ListingWorkspace() {
       downloadCsv(data.csv, data.filename);
       setStored(data.listing);
       await refreshHistory();
-      notify("Đã xuất Seller Central CSV.");
+      notify("Đã xuất Listing Desk CSV.");
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Could not export this listing.");
     } finally {
@@ -476,7 +497,7 @@ export function ListingWorkspace() {
       downloadCsv(data.csv, data.filename);
       setSelectedIds([]);
       await refreshHistory();
-      notify("Đã xuất batch Seller Central CSV.");
+      notify("Đã xuất batch Listing Desk CSV.");
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Could not export selected listings.");
     } finally {

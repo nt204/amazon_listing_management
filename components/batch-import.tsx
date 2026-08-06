@@ -117,18 +117,27 @@ export function BatchImport({ open, baseInput, onClose, onComplete }: BatchImpor
         inputs.push({ ...blankInput(baseInput, row), images });
       }
 
-      setProgress(`Đang tạo ${inputs.length} listing, tối đa 2 listing cùng lúc`);
-      const data = await responseJson<{
-        results: Array<{ index: number; listing?: StoredListing | null; error?: string }>;
-      }>(
-        await fetch("/api/listings/batch", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ items: inputs }),
-        }),
-      );
-      const succeeded = data.results.flatMap((item) => (item.listing ? [item.listing] : []));
-      const failures = data.results.filter((item) => item.error);
+      const results: Array<{ index: number; listing?: StoredListing | null; error?: string }> = [];
+      const chunkSize = 4;
+      for (let start = 0; start < inputs.length; start += chunkSize) {
+        const chunk = inputs.slice(start, start + chunkSize);
+        setProgress(`Đang tạo ${start + 1}-${Math.min(start + chunk.length, inputs.length)}/${inputs.length}`);
+        const data = await responseJson<{
+          results: Array<{ index: number; listing?: StoredListing | null; error?: string }>;
+        }>(
+          await fetch("/api/listings/batch", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Idempotency-Key": crypto.randomUUID(),
+            },
+            body: JSON.stringify({ items: chunk }),
+          }),
+        );
+        results.push(...data.results.map((item) => ({ ...item, index: item.index + start })));
+      }
+      const succeeded = results.flatMap((item) => (item.listing ? [item.listing] : []));
+      const failures = results.filter((item) => item.error);
       if (!succeeded.length) throw new Error(failures[0]?.error || "Không listing nào được tạo.");
       onComplete(succeeded);
       if (failures.length) {

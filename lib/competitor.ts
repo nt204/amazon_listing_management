@@ -16,7 +16,7 @@ const globalForCompetitor = globalThis as unknown as {
 const competitorCache =
   globalForCompetitor.listingCompetitorCache || new Map<string, CompetitorCacheEntry>();
 globalForCompetitor.listingCompetitorCache = competitorCache;
-const competitorCacheVersion = "profile-v2";
+const competitorCacheVersion = "profile-v3-useful-content";
 
 function cacheCompetitor(url: string, entry: CompetitorCacheEntry) {
   if (!competitorCache.has(url) && competitorCache.size >= 250) {
@@ -96,6 +96,19 @@ export function extractAmazonCompetitorData(html: string) {
     .slice(0, configuredNumber("COMPETITOR_MAX_CHARS", 6_000, 1_000, 12_000));
 }
 
+export function hasUsefulCompetitorContent(value: string) {
+  const meaningful = value
+    .split(/\n+/)
+    .map((line) => line.replace(/^#+\s*/, "").trim())
+    .filter(Boolean)
+    .filter((line) => !/^URL Source:/i.test(line));
+  if (!meaningful.length) return false;
+  return meaningful.some((line) => {
+    const content = line.replace(/^Title:\s*/i, "").trim();
+    return content.length >= 12 && !/^Amazon(?:\.[a-z.]+)?(?:\s*[:|-].*)?$/i.test(content);
+  });
+}
+
 export function resolveCompetitorUrl(value: string, marketplace: Marketplace) {
   return resolveReferenceTargets(value, marketplace, 1)[0] || null;
 }
@@ -119,7 +132,7 @@ async function crawlDirect(url: string, signal: AbortSignal) {
       const blocked = /captcha|validateCaptcha|robot check/i.test(html);
       if (!blocked) {
         const directData = extractAmazonCompetitorData(html);
-        if (directData && directData !== "Title: Amazon.com") return directData;
+        if (hasUsefulCompetitorContent(directData)) return directData;
       }
     }
   } catch {
@@ -156,9 +169,10 @@ async function crawlReader(url: string, signal: AbortSignal) {
       /^(?:Brand|Manufacturer|Material|Colou?r|Capacity|Size(?: Name)?|Special feature)\s*:?/i.test(line.replace(/[*_|]/g, "").trim()) ||
       /dishwasher|microwave|hand wash|bpa[ -]?free|leakproof|resistant|reusable|comfortable|durable|sturdy|\b\d+(?:\.\d+)?\s*(?:fl(?:uid)?\s*oz|oz|ml|litres?|liters?)\b|gift for|father'?s day|mother'?s day|birthday|christmas|graduation/i.test(line),
     );
-    return [...new Set(relevantLines.filter(Boolean))]
+    const extracted = [...new Set(relevantLines.filter(Boolean))]
       .join("\n")
       .slice(0, configuredNumber("COMPETITOR_MAX_CHARS", 6_000, 1_000, 12_000));
+    return hasUsefulCompetitorContent(extracted) ? extracted : "";
   } catch {
     return "";
   }

@@ -1,26 +1,5 @@
 import type { ListingInput, ProductBrief } from "@/lib/types";
-
-const factLabels = [
-  "material",
-  "chất liệu",
-  "capacity",
-  "dung tích",
-  "size",
-  "kích thước",
-  "color",
-  "màu",
-  "care",
-  "wash",
-  "dishwasher",
-  "microwave",
-  "origin",
-  "xuất xứ",
-  "package",
-  "personalization",
-  "feature",
-  "brand",
-  "thương hiệu",
-];
+import { mergeOperatorEvidence } from "@/lib/product-brief";
 
 function unique(values: string[]) {
   return [...new Map(values.filter(Boolean).map((value) => [value.toLowerCase(), value])).values()];
@@ -40,22 +19,26 @@ function extractBrand(instruction: string) {
 }
 
 function isExplicitFact(value: string) {
-  const lower = value.toLowerCase();
-  const colonIndex = value.search(/[:：]/);
-  if (colonIndex > 0) {
-    const label = lower.slice(0, colonIndex).trim();
-    return factLabels.some((candidate) => label.includes(candidate));
-  }
-  return /^(dishwasher safe|microwave safe|hand wash|made in\b|printed on\b|bpa[ -]?free\b)/i.test(
-    value,
-  );
+  return /[:：]/.test(value) ||
+    /\b\d+(?:\.\d+)?\s*(?:inches?|in|cm|mm|ounces?|oz|ml|liters?|litres?|feet|ft|grams?|kg|lb)\b/iu.test(value) ||
+    /\b(?:made (?:of|from)|dishwasher|microwave|hand wash|package includes|comes with)\b/iu.test(value);
 }
 
 function exclusionValue(value: string) {
-  const match = value.match(
-    /^(?:do not|don't|dont|never|avoid|không|đừng|tránh)(?:\s+(?:mention|use|include|claim|đề cập|dùng|ghi))?\s+(.+)$/i,
+  const english = value.match(
+    /^(?:do not|don't|dont|never|avoid)(?:\s+(?:mention|use|include|claim))?\s+(.+)$/i,
   );
-  return match?.[1]?.trim() || "";
+  if (english?.[1]) return english[1].trim();
+
+  const explicitVietnamese = value.match(
+    /^(?:không|đừng)\s+(?:đề cập|dùng|ghi|nêu|sử dụng|thêm)\s+(.+)$/i,
+  );
+  if (explicitVietnamese?.[1]) return explicitVietnamese[1].trim();
+
+  const avoidVietnamese = value.match(
+    /^tránh(?:\s+(?:đề cập|dùng|ghi|nêu|sử dụng|thêm))?\s+(.+)$/i,
+  );
+  return avoidVietnamese?.[1]?.trim() || "";
 }
 
 export function mergeReviewEvidence(
@@ -77,13 +60,24 @@ export function mergeReviewEvidence(
   }
   if (brand) addedFacts.push(`Brand: ${brand}`);
 
-  return {
-    input: brand ? { ...input, brand } : input,
-    brief: {
-      ...brief,
-      supplied_facts: unique([...brief.supplied_facts, ...addedFacts]),
-      facts_to_avoid: unique([...brief.facts_to_avoid, ...addedExclusions]),
+  const existingNotes = input.research.notes.trim();
+  const updatedInput: ListingInput = {
+    ...input,
+    ...(brand ? { brand } : {}),
+    research: {
+      ...input.research,
+      notes: unique([existingNotes, ...addedFacts, ...addedExclusions]).filter(Boolean).join("\n"),
     },
+  };
+  const updatedBrief = mergeOperatorEvidence(updatedInput, {
+    ...brief,
+    evidence_items: (brief.evidence_items || []).filter((item) => item.source !== "operator"),
+    facts_to_avoid: unique([...brief.facts_to_avoid, ...addedExclusions]),
+  });
+
+  return {
+    input: updatedInput,
+    brief: updatedBrief,
     addedFacts,
     addedExclusions,
   };

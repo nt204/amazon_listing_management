@@ -1,4 +1,6 @@
 import { operatorEvidence } from "@/lib/product-brief";
+import { getRuleProfile } from "@/lib/rules";
+import { createHash } from "node:crypto";
 import type {
   CompetitorClaim,
   CompetitorKeywordSignal,
@@ -13,19 +15,12 @@ export interface CrawledReference {
   content: string;
 }
 
-const audienceNouns =
-  "dads?|fathers?|moms?|mothers?|parents?|grandmas?|grandpas?|wives|husbands|nurses?|teachers?|lovers?|owners?|friends?|coworkers?|men|women|kids?|boys?|girls?";
-const occasions = [
-  "Father's Day",
-  "Mother's Day",
-  "Valentine's Day",
-  "Nurse Week",
-  "Birthday",
-  "Christmas",
-  "Graduation",
-  "Anniversary",
-  "Retirement",
-];
+function configuredAudiencePattern(input: ListingInput) {
+  return getRuleProfile(input).competitor.role_words
+    .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .sort((left, right) => right.length - left.length)
+    .join("|");
+}
 const careAndPerformanceClaims = [
   ["Dishwasher safe", "care"],
   ["Microwave safe", "care"],
@@ -83,7 +78,8 @@ function extractTitle(content: string) {
     .replace(/[*_#]+/g, " ")
     .replace(/\s+/g, " ")
     .trim()
-    .replace(/\s*:\s*Amazon\.[^:]+(?::.*)?$/i, "");
+    .replace(/^Amazon\.[^:]+:\s*/i, "")
+    .replace(/\s+:(?:\s+Amazon\.[^:]+:)?\s+[^:]{2,80}$/i, "");
 }
 
 function extractAttributes(content: string) {
@@ -112,11 +108,28 @@ function extractAttributes(content: string) {
 }
 
 const nonBrandTitleLeaders = new Set([
+  "a", "an", "the",
   "best", "fun", "funny", "cute", "novelty", "unique", "personalized", "custom", "retro",
   "ceramic", "steel", "stainless", "glass", "plastic", "wood", "wooden", "cotton", "white",
   "black", "blue", "red", "pink", "green", "large", "small", "mini", "premium", "official",
   "coffee", "tea", "travel", "birthday", "christmas", "fathers", "mothers",
 ]);
+
+const invalidStandaloneBrands = new Set([
+  "a",
+  "an",
+  "amazon",
+  "brand",
+  "generic",
+  "official",
+  "store",
+  "the",
+]);
+
+function plausibleBrand(value: string) {
+  const normalized = normalize(value);
+  return Boolean(normalized) && !invalidStandaloneBrands.has(normalized);
+}
 
 export function inferCompetitorBrandFromTitle(title: string, input: ListingInput) {
   const cleaned = cleanText(title);
@@ -139,11 +152,20 @@ export function inferCompetitorBrandFromTitle(title: string, input: ListingInput
 
   const firstToken = cleaned.match(/^[\p{L}\p{N}][\p{L}\p{N}&'.-]*/u)?.[0] || "";
   const first = normalize(firstToken);
-  const inputWords = new Set(wordsForBrandCheck(`${input.main_keyword} ${input.product_type}`));
+  const profile = getRuleProfile(input);
+  const inputWords = new Set(wordsForBrandCheck([
+    input.main_keyword,
+    input.product_type,
+    ...input.related_keywords,
+    ...input.backend_keywords,
+    input.research.target_customer,
+    ...profile.competitor.role_words,
+    ...profile.competitor.product_words,
+  ].join(" ")));
   if (!first || nonBrandTitleLeaders.has(first) || inputWords.has(first)) return "";
   const titleWords = normalize(cleaned).split(" ").filter(Boolean);
   const hasProductContext = titleWords.some((word) =>
-    /^(mug|cup|tumbler|shirt|tshirt|tee|hoodie|blanket|ornament|candle|poster|plaque|keychain|necklace|bracelet|bag|pillow|notebook|journal|card|sign|bottle)s?$/.test(word),
+    /^(mug|cup|tumbler|shirt|tshirt|tee|hoodie|blanket|ornament|banner|tapestry|candle|poster|plaque|keychain|necklace|bracelet|bag|pillow|notebook|journal|card|sign|bottle)s?$/.test(word),
   );
   if (!hasProductContext || titleWords.length < 4) return "";
   return firstToken;
@@ -153,8 +175,9 @@ function wordsForBrandCheck(value: string) {
   return normalize(value).split(" ").filter(Boolean);
 }
 
-function extractAudiences(content: string, title: string) {
+function extractAudiences(content: string, title: string, input: ListingInput) {
   const focused = [title, ...content.split(/\n+/).filter((line) => /gift|for\s|dad|mom|lover|owner|nurse|teacher/i.test(line)).slice(0, 30)].join(" ");
+  const audienceNouns = configuredAudiencePattern(input);
   const matches = focused.matchAll(
     new RegExp(`\\b([a-z][a-z'-]*(?:\\s+[a-z][a-z'-]*){0,2}\\s+(?:${audienceNouns}))\\b`, "gi"),
   );
@@ -165,9 +188,9 @@ function extractAudiences(content: string, title: string) {
   ).slice(0, 10);
 }
 
-function extractOccasions(content: string) {
-  return occasions.filter((occasion) =>
-    new RegExp(`\\b${occasion.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}s?\\b`, "i").test(content),
+function extractOccasions(title: string, input: ListingInput) {
+  return getRuleProfile(input).competitor.occasions.filter((occasion) =>
+    new RegExp(`\\b${occasion.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}s?\\b`, "i").test(title),
   );
 }
 
@@ -176,18 +199,30 @@ function extractKeywordCandidates(
   brand: string,
   input: ListingInput,
 ) {
+  const audienceNouns = configuredAudiencePattern(input);
+  const profile = getRuleProfile(input);
+  const productWords = new Set(profile.competitor.product_words.map(normalize));
+  const maximumWords = profile.limits.competitor_keyword_max_words;
   const withoutBrand = brand
     ? title.replace(new RegExp(`^${brand.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+`, "i"), "")
     : title;
   const chunks = withoutBrand
     .split(/\s+[|–—-]\s+|[,;]+/)
     .map((chunk) => cleanText(chunk).toLowerCase())
+    .flatMap((chunk) => {
+      const words = chunk.split(/\s+/).filter(Boolean);
+      if (words.length <= maximumWords) return [chunk];
+      return [
+        words.slice(0, maximumWords).join(" "),
+        words.slice(-maximumWords).join(" "),
+      ];
+    })
     .filter((chunk) => {
       const words = chunk.split(/\s+/);
-      const hasProduct = /\b(mug|cup|tumbler|shirt|t-shirt|blanket|ornament)\b/i.test(chunk);
+      const hasProduct = normalize(chunk).split(" ").some((word) => productWords.has(word));
       const hasAudienceGift = /\bgift\b/i.test(chunk) && new RegExp(`\\b(?:${audienceNouns})\\b`, "i").test(chunk);
       const genericGift = /^(?:fun|great|perfect|unique)?\s*gift for (?:lovers|men|women|him|her)$/i.test(chunk);
-      return words.length >= 2 && words.length <= 9 && !genericGift && (hasProduct || hasAudienceGift);
+      return words.length >= 2 && words.length <= maximumWords && !genericGift && (hasProduct || hasAudienceGift);
     });
   if (normalize(title).includes(normalize(input.main_keyword))) chunks.unshift(input.main_keyword);
   return unique(chunks).slice(0, 12);
@@ -258,8 +293,10 @@ export function buildCompetitorProfile(
     const content = reference.content.slice(0, perReference);
     const title = extractTitle(content);
     const attributes = extractAttributes(content);
-    const detectedBrand = attributes.brand || inferCompetitorBrandFromTitle(title, input);
+    const brandCandidate = attributes.brand || inferCompetitorBrandFromTitle(title, input);
+    const detectedBrand = plausibleBrand(brandCandidate) ? brandCandidate : "";
     if (detectedBrand) attributes.brand = detectedBrand;
+    else delete attributes.brand;
     const source = sourceId(reference);
     return {
       reference,
@@ -268,8 +305,10 @@ export function buildCompetitorProfile(
       attributes,
       keywords: extractKeywordCandidates(title, attributes.brand || "", input),
       claims: extractClaims(content, attributes),
-      audiences: extractAudiences(content, title),
-      occasions: extractOccasions(content),
+      audiences: extractAudiences(content, title, input),
+      occasions: extractOccasions(title, input),
+      contentHash: createHash("sha256").update(content).digest("hex"),
+      capturedCharacters: content.length,
     };
   });
 
@@ -309,12 +348,14 @@ export function buildCompetitorProfile(
   );
 
   return {
-    references: extracted.map(({ reference, title, attributes }) => ({
+    references: extracted.map(({ reference, title, attributes, contentHash, capturedCharacters }) => ({
       asin: reference.asin,
       url: reference.url,
       title: title || undefined,
       brand: attributes.brand || undefined,
       attributes,
+      content_hash: contentHash,
+      captured_characters: capturedCharacters,
     })),
     keyword_candidates: safeKeywordCandidates.slice(0, 20),
     claims: claims.slice(0, 25),

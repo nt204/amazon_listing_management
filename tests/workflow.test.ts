@@ -78,6 +78,18 @@ test("review instructions add explicit evidence without treating length requests
   assert.ok(merged.brief.facts_to_avoid.includes("Do not mention microwave safe"));
 });
 
+test("Vietnamese workflow direction is not misclassified as a product exclusion", () => {
+  const merged = mergeReviewEvidence(
+    input,
+    brief,
+    "Tích hợp các fact còn thiếu, không thay đổi thông số:\nCapacity: 11 oz\nKhông đề cập microwave safe",
+  );
+
+  assert.ok(!merged.brief.facts_to_avoid.some((fact) => fact.includes("thay đổi thông số")));
+  assert.ok(merged.brief.facts_to_avoid.includes("Do not mention microwave safe"));
+  assert.ok(merged.brief.supplied_facts.includes("Capacity: 11 oz"));
+});
+
 test("CSV parser preserves commas, quotes and product detail line breaks", () => {
   const encoded = encodeCsv([
     ["marketplace", "product_type", "internal_name", "main_keyword", "product_details", "brand", "reference_listing", "image_files"],

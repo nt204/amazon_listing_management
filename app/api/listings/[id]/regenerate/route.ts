@@ -1,9 +1,18 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { generateListing } from "@/lib/ai";
-import { getListing, updateListingContent } from "@/lib/db";
+import {
+  claimIdempotency,
+  completeIdempotency,
+  getListing,
+  releaseIdempotency,
+  updateListingContent,
+  type DataScope,
+} from "@/lib/db";
 import { analyzeListing } from "@/lib/validation";
-import { buildListingStrategy } from "@/lib/listing-strategy";
+import { buildAnalysisContext } from "@/lib/listing-analysis";
+import { getRuleProfile } from "@/lib/rules";
+import { authorize, dataScope, enforceRateLimit, enforceRequestSize, idempotencyKey, routeErrorResponse } from "@/lib/api-guard";
 
 export const runtime = "nodejs";
 export const maxDuration = 150;
@@ -14,23 +23,32 @@ const requestSchema = z.object({
   instruction: z.string().trim().max(500).optional(),
 });
 
-const fieldFeedback = {
-  title:
-    "Write a substantially new title. Improve natural keyword placement, preserve relevant exact artwork text, and remove redundant words.",
-  bullet_points:
-    "Write five substantially new bullets. Lead with verified technical facts and visible design evidence, with one distinct purpose per bullet.",
-  description:
-    "Write a substantially new concise description. Keep it factual, specific, and within the target length without repeating the bullets.",
-  backend_search_terms:
-    "Write substantially new backend search terms. Expand relevant synonym coverage beyond the title without duplicate words.",
-} as const;
-
 export async function POST(request: Request, { params }: RouteContext) {
-  const { id } = await params;
-  const stored = await getListing(id);
-  if (!stored) return NextResponse.json({ error: "Listing not found." }, { status: 404 });
+  let scope: DataScope | undefined;
+  let endpoint = "";
+  let requestKey = "";
+  let claimed = false;
   try {
+    const actor = authorize(request, "write");
+    scope = dataScope(actor);
+    enforceRequestSize(request, 16_000);
+    await enforceRateLimit(actor, "ai-regeneration");
+    const { id } = await params;
+    endpoint = `/api/listings/${id}/regenerate`;
+    requestKey = idempotencyKey(request);
+    const idempotency = await claimIdempotency(scope, endpoint, requestKey);
+    if (idempotency.state === "pending") {
+      return NextResponse.json({ error: "A regeneration with this Idempotency-Key is still processing." }, { status: 409 });
+    }
+    if (idempotency.state === "complete") {
+      const listing = await getListing(scope, String(idempotency.response.listing_id || id));
+      return NextResponse.json({ listing }, { headers: { "Idempotent-Replayed": "true" } });
+    }
+    claimed = true;
+    const stored = await getListing(scope, id);
+    if (!stored) return NextResponse.json({ error: "Listing not found." }, { status: 404 });
     const { field, instruction } = requestSchema.parse(await request.json());
+    const fieldFeedback = getRuleProfile(stored.input).generation.field_revision_rules;
     const enrichedInput = stored.result.competitor_profile
       ? {
           ...stored.input,
@@ -43,21 +61,17 @@ export async function POST(request: Request, { params }: RouteContext) {
     const regenerated = await generateListing(enrichedInput, {
       productBrief: stored.result.product_analysis,
       writingFeedback: [fieldFeedback[field], instruction].filter(Boolean).join("\n"),
+      signal: request.signal,
     });
     const content = {
       ...stored.current_listing,
       [field]: regenerated.listing[field],
     };
     const brief = regenerated.product_analysis || stored.result.product_analysis;
-    const analysis = analyzeListing(content, enrichedInput, {
-      relatedKeywords: brief?.related_keywords,
-      suppliedFacts: brief?.supplied_facts,
-      factsToAvoid: brief?.facts_to_avoid,
-      policyRisks: brief?.policy_risks,
-      blockedTerms: stored.result.competitor_profile?.blocked_terms,
-      competitorProfile: stored.result.competitor_profile,
-      listingStrategy: buildListingStrategy(enrichedInput, brief),
-    });
+    const analysis = analyzeListing(content, enrichedInput, buildAnalysisContext(enrichedInput, {
+      product_analysis: brief,
+      competitor_profile: stored.result.competitor_profile,
+    }));
     const result = {
       ...stored.result,
       model_used: regenerated.model_used,
@@ -69,16 +83,17 @@ export async function POST(request: Request, { params }: RouteContext) {
       ...analysis,
       metadata: regenerated.metadata,
     };
-    return NextResponse.json({
-      listing: await updateListingContent(id, content, result, {
+    const listing = await updateListingContent(scope, id, content, result, {
         action: `regenerated:${field}`,
         instruction: instruction || fieldFeedback[field],
-      }),
-    });
+        input: enrichedInput,
+      });
+    await completeIdempotency(scope, endpoint, requestKey, { listing_id: id }, 200);
+    return NextResponse.json({ listing });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Could not regenerate field." },
-      { status: 400 },
-    );
+    if (claimed && scope && endpoint && requestKey) {
+      await releaseIdempotency(scope, endpoint, requestKey).catch(() => undefined);
+    }
+    return routeErrorResponse(error, "Could not regenerate field.");
   }
 }

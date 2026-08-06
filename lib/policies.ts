@@ -1,68 +1,23 @@
+import { getRuleProfile, getRuleRegistry } from "@/lib/rules";
 import type { ListingInput } from "@/lib/types";
 
-const promotionalTerms = [
-  "#1",
-  "best seller",
-  "guaranteed",
-  "free shipping",
-  "limited time",
-];
-
-const medicalAndSafetyTerms = [
-  "cure",
-  "cures",
-  "treats disease",
-  "prevents disease",
-  "heals",
-  "therapeutic",
-  "100% safe",
-];
-
-const intellectualPropertyTerms = [
-  "barbie",
-  "disney",
-  "harry potter",
-  "hello kitty",
-  "marvel",
-  "pokemon",
-  "star wars",
-];
-
-const unverifiedPerformanceTerms = [
-  "comfortable",
-  "durable",
-  "fade resistant",
-  "generous",
-  "heat resistant",
-  "ideal",
-  "leakproof",
-  "long lasting",
-  "perfect",
-  "premium quality",
-  "scratch resistant",
-  "ultimate",
-  "versatile",
-];
-
 export function getPolicy(input: ListingInput) {
+  const registry = getRuleRegistry();
+  const profile = getRuleProfile(input);
+  const limits = profile.limits;
   const configuredTitleLimit = input.configuration.title_length;
-  const marketplaceTitleLimit = input.marketplace === "US" ? 200 : 200;
 
   return {
-    titleMax: Math.min(configuredTitleLimit, marketplaceTitleLimit),
-    bulletMax: input.configuration.bullet_length,
-    bulletCount: 5,
-    descriptionMax: 2_000,
-    descriptionTargetMin: 700,
-    descriptionTargetMax: 900,
-    searchTermsMaxBytes: 249,
-    promotionalTerms,
-    medicalAndSafetyTerms,
-    intellectualPropertyTerms,
-    unverifiedPerformanceTerms,
-    restrictedTerms: [...promotionalTerms, ...medicalAndSafetyTerms],
-    version: `amazon-${input.marketplace.toLowerCase()}-${input.product_type
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")}-v3`,
+    titleMax: Math.min(configuredTitleLimit, limits.title_max),
+    bulletMax: Math.min(input.configuration.bullet_length, limits.bullet_max),
+    bulletTargetMin: limits.bullet_target_min,
+    bulletTargetMax: limits.bullet_target_max,
+    bulletCount: limits.bullet_count,
+    descriptionMax: limits.description_max,
+    descriptionTargetMin: limits.description_target_min,
+    descriptionTargetMax: limits.description_target_max,
+    searchTermsMaxBytes: limits.search_terms_max_bytes,
+    backendUsefulWordTarget: limits.backend_useful_word_target,
+    version: `${registry.version}:${input.configuration.rule_profile || registry.default_profile}:${input.marketplace}`,
   };
 }

@@ -4,6 +4,39 @@ export type Marketplace = "US" | "UK" | "DE";
 export type ListingStatus = "Draft" | "Review" | "Approved" | "Exported";
 export type EvidenceConfidence = "high" | "medium";
 export type OwnEvidenceStatus = "confirmed" | "missing";
+export type ProductEvidenceSource = "operator" | "image_ocr" | "image_visual";
+export type ProductEvidenceConfidence = "high" | "medium" | "low";
+export type ProductEvidenceVerification = "verified" | "needs_review" | "rejected";
+export type ProductEvidenceCategory =
+  | "material"
+  | "dimensions"
+  | "capacity"
+  | "care"
+  | "origin"
+  | "package"
+  | "safety"
+  | "performance"
+  | "color"
+  | "design"
+  | "subject"
+  | "construction"
+  | "text"
+  | "other";
+
+export interface ProductEvidenceItem {
+  id: string;
+  value: string;
+  category: ProductEvidenceCategory;
+  source: ProductEvidenceSource;
+  source_image: number | null;
+  source_text: string;
+  source_field: string;
+  confidence: ProductEvidenceConfidence;
+  publishable: boolean;
+  verification: ProductEvidenceVerification;
+  reason: string;
+  selected_for_product?: boolean;
+}
 
 export interface CompetitorSignal {
   value: string;
@@ -27,6 +60,8 @@ export interface CompetitorReferenceProfile {
   title?: string;
   brand?: string;
   attributes: Record<string, string>;
+  content_hash?: string;
+  captured_characters?: number;
 }
 
 export interface CompetitorProfile {
@@ -73,8 +108,11 @@ export interface ListingInput {
     name: string;
     type: string;
     data_url: string;
+    storage_key?: string;
+    sha256?: string;
   }>;
   configuration: {
+    rule_profile?: string;
     ai_provider: AiProviderPreference;
     gemini_model: string;
     openai_model: string;
@@ -98,6 +136,10 @@ export interface ListingContent {
 export interface ProductBrief {
   visual_facts: string[];
   exact_text: string[];
+  selected_ocr_line_ids?: string[];
+  ocr_selection_complete?: boolean;
+  image_facts?: string[];
+  evidence_items?: ProductEvidenceItem[];
   colors: string[];
   styles: string[];
   subjects: string[];
@@ -105,10 +147,21 @@ export interface ProductBrief {
   inferred_audiences: string[];
   inferred_occasions: string[];
   related_keywords: string[];
+  backend_keywords?: string[];
   competitor_insights: string[];
   listing_angle: string;
   facts_to_avoid: string[];
   policy_risks: string[];
+  ocr?: {
+    engine: "tesseract";
+    language: string;
+    status: "success" | "partial" | "failed" | "disabled";
+    images_processed: number;
+    line_count: number;
+    selected_line_count: number;
+    selection: "model" | "fallback" | "direct";
+    warnings: string[];
+  };
 }
 
 export interface KeywordUsage {
@@ -128,33 +181,18 @@ export interface BackendSearchTermAnalysis {
   byte_limit: number;
   bytes_remaining: number;
   unique_word_count: number;
+  useful_word_count: number;
+  available_word_count: number;
   efficiency_percent: number;
   repeated_words: string[];
   redundant_visible_words: string[];
   stop_words: string[];
   prohibited_terms: string[];
   low_intent_terms: string[];
+  irrelevant_terms: string[];
   suggested_value: string;
   suggested_bytes: number;
   opportunity_words: string[];
-}
-
-export type PurchaseIntentMode = "gift-led" | "hybrid" | "function-led";
-
-export interface ListingStrategy {
-  mode: PurchaseIntentMode;
-  marketing_percent: number;
-  product_percent: number;
-  audience_terms: string[];
-  buyer_terms: string[];
-  recipient_terms: string[];
-  occasion_terms: string[];
-  priority_keywords: string[];
-  backend_candidates: string[];
-  benefit_angles: string[];
-  bullet_jobs: string[];
-  visual_terms: string[];
-  reasons: string[];
 }
 
 export interface PolicyCheck {
@@ -193,10 +231,6 @@ export interface ListingResult {
     keyword_coverage_percent: number;
     backend_coverage_percent?: number;
     backend_search_terms?: BackendSearchTermAnalysis;
-    purchase_strategy?: ListingStrategy;
-    marketing_coverage_percent?: number;
-    audience_coverage_percent?: number;
-    occasion_coverage_percent?: number;
     keyword_stuffing_detected: boolean;
     keyword_usage?: KeywordUsage[];
   };
@@ -204,6 +238,9 @@ export interface ListingResult {
     supplied_facts: string[];
     facts_used: string[];
     unused_facts: string[];
+    image_facts?: string[];
+    image_facts_used?: string[];
+    unused_image_facts?: string[];
     fact_coverage_percent: number;
     reference_utilization_percent?: number;
     title_repetition_detected: boolean;
@@ -219,6 +256,8 @@ export interface ListingResult {
     retry_count: number;
     prompt_version: string;
     policy_version: string;
+    evidence_version?: string;
+    rule_profile?: string;
     created_at: string;
     model_name: string;
     fallback_reason?: string;

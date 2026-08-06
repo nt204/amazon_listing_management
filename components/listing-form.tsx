@@ -230,11 +230,9 @@ export function ListingForm({
               }
             >
               <option value="">Chọn loại</option>
-              <option value="Mug">Mug / Ly sứ</option>
-              <option value="T-shirt">T-shirt / Áo thun</option>
-              <option value="Tumbler">Tumbler / Bình giữ nhiệt</option>
-              <option value="Ornament">Ornament / Đồ trang trí</option>
-              <option value="Blanket">Blanket / Chăn</option>
+              {(aiOptions?.product_types || []).map((productType) => (
+                <option key={productType.value} value={productType.value}>{productType.label}</option>
+              ))}
             </Select>
           </Field>
         </div>
@@ -344,7 +342,7 @@ export function ListingForm({
                   related_keywords: keywords,
                 }))
               }
-              placeholder={"cat lover gift\npet dad coffee cup"}
+              placeholder={"nurse coffee mug\nregistered nurse gift"}
             />
           </Field>
           <Field
@@ -361,7 +359,7 @@ export function ListingForm({
                   backend_keywords: keywords,
                 }))
               }
-              placeholder={"feline owner\npet parent\nhusband gift"}
+              placeholder={"healthcare worker\nrn coworker\nnursing student"}
             />
           </Field>
         </div>
@@ -376,7 +374,7 @@ export function ListingForm({
               id="target_customer"
               value={value.research.target_customer}
               onChange={(event) => updateResearch("target_customer", event.target.value)}
-              placeholder="Cat dads, men who own cats"
+              placeholder="Registered nurses and nursing students"
             />
           </Field>
           <Field
@@ -393,7 +391,7 @@ export function ListingForm({
                   research: { ...current.research, occasion: occasions },
                 }))
               }
-              placeholder={"Father's Day\nBirthday\nChristmas"}
+              placeholder={"Nurse Week\nGraduation\nBirthday"}
             />
           </Field>
         </div>

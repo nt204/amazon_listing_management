@@ -1,6 +1,6 @@
 # Listing Desk
 
-Workflow & Quality Control nội bộ cho Amazon Listing. AI draft chỉ là một service trong quy trình evidence, review, approve và export cho cả sản phẩm đơn lẻ lẫn batch.
+Workflow nội bộ để tạo, review và export Amazon Listing.
 
 ## Chạy local
 
@@ -10,87 +10,91 @@ cp .env.example .env
 npm run dev
 ```
 
-`npm run dev` tự khởi động PostgreSQL trước khi chạy Next.js. Docker Desktop cần đang mở.
+`npm run dev` khởi động PostgreSQL, chạy migration có checksum rồi mới chạy Next.js. Docker Desktop cần đang mở. Truy cập [http://localhost:3000](http://localhost:3000).
 
-Mở [http://localhost:3000](http://localhost:3000). Mặc định `AI_MOCK_MODE=true`, vì vậy có thể bấm **Sample** rồi **Generate listing** để thử toàn bộ luồng mà không tốn API.
-
-## Bật AI thật
-
-Cập nhật `.env`:
+Mặc định `AI_MOCK_MODE=true`. Để chạy AI thật, thêm ít nhất một trong hai key:
 
 ```env
-GEMINI_API_KEY=your_gemini_key
-OPENAI_API_KEY=your_openai_key
+GEMINI_API_KEY=...
+OPENAI_API_KEY=...
 ```
 
-Chỉ cần cấu hình một trong hai key. Nếu có key, app luôn dùng AI thật dù `AI_MOCK_MODE=true`; mock chỉ chạy khi không có key nào. Form cho phép chọn model từ các provider đang có key; provider được đổi tự động theo model.
+Nếu có API key, app dùng AI thật. Mock chỉ chạy khi không có provider nào. Key chỉ được đọc ở server.
 
-Mặc định dùng Gemini Flash-Lite cho draft nhanh. Có thể chọn Gemini Flash/Pro trong form khi cần ưu tiên chất lượng hơn latency.
+## Pipeline sinh listing
 
-API key chỉ được đọc trong server routes. Frontend chỉ nhận trạng thái provider đã được cấu hình hay chưa.
+1. Đọc dữ liệu operator đã điền.
+2. Chạy Tesseract OCR cục bộ và đưa nguyên văn các dòng đọc được cho AI.
+3. Đọc tối đa 3 ASIN để lấy title, cách gọi sản phẩm và các thuộc tính đối thủ. Đây chỉ là bối cảnh tham khảo, không phải fact của sản phẩm.
+4. Gọi một AI writer duy nhất với input, OCR, ảnh nguồn và tóm tắt reference để sinh SEO title, đúng 5 bullet points, description và backend search terms.
+5. Server chỉ làm sạch định dạng cơ bản: giới hạn ký tự/byte, bỏ brand, ASIN, stop word và từ trùng trong backend terms.
+6. Nếu provider chính lỗi, hệ thống chỉ chuyển sang provider fallback đã cấu hình; không có analyst pass, keyword-planner pass hoặc quality retry.
+
+## Rule profile, không hardcode theo team
+
+Rule mặc định nằm tại [`config/listing-rules.json`](config/listing-rules.json) và có version. Profile chỉ chứa:
+
+- product types và marketplace stop words;
+- giới hạn title, bullet, description và search terms;
+- stop words và các từ không cho vào backend;
+- cấu hình OCR;
+- vocabulary tối thiểu để đọc reference đối thủ;
+- hướng dẫn ngắn khi regenerate từng field.
+
+Chọn profile bằng `LISTING_RULE_PROFILE`; có thể cung cấp một registry đầy đủ qua `LISTING_RULES_JSON`. Model catalog có thể thay bằng `GEMINI_MODELS_JSON` và `OPENAI_MODELS_JSON`, không cần sửa source.
 
 ## Workflow MVP
 
-- Luồng chuẩn: `Product facts + Images + Keywords -> AI draft -> Fact/Policy check -> Review -> Approve -> Export`.
-- Form đơn lẻ chỉ cần marketplace, product type, ảnh và main keyword.
-- Một ô tự do cho các thông tin AI không thể xác định chắc chắn từ ảnh.
-- Brand profile dùng chung tên brand và writing guidelines cho cả team.
-- Reference listing nhận tối đa 3 URL hoặc ASIN Amazon, mỗi dòng một reference. Tất cả reference, Amazon direct và reader được crawl song song trong một hard timeout; kết quả được cache và chia sẻ cùng giới hạn evidence để không làm chậm AI prompt.
-- Raw reference evidence được giới hạn 6.000 ký tự rồi chạy qua keyword, claim và audience extractors. Writer chỉ nhận Competitor Profile có source, confidence và trạng thái own-evidence; competitor brand, ASIN và claim chưa được xác nhận bị chặn bằng rule.
-- Upload 1-10 ảnh JPG, PNG hoặc WEBP; ảnh được resize ở trình duyệt.
-- Evidence-first pipeline: mặc định một multimodal call trả cả product brief và listing để giảm latency; đặt `AI_PIPELINE_MODE=two-stage` nếu muốn tách analyst/writer thành hai call.
-- Generate bằng Gemini hoặc OpenAI; fallback chỉ dùng khi provider thực sự lỗi.
-- Mặc định retry đúng một lần khi draft còn hard error như title repetition hoặc unsupported claim; warning marketing vẫn được lưu để reviewer quyết định. Có thể đặt `AI_MAX_RETRIES=0` nếu cần ưu tiên latency.
-- Rule validator cho title, 5 bullet, description, search terms, keyword placement, fact coverage và prohibited claims.
-- Purchase strategy phân loại `gift-led`, `hybrid` hoặc `function-led` từ keyword, audience, occasion, product type và competitor signals. Buyer context được tách khỏi recipient identity để các vai trò như son/daughter không tạo ra audience expansion sai giới tính. Gift-led dùng content mix 70% purchase motivation / 30% product description; function-led vẫn ưu tiên outcome và fact.
-- Search-term planner chạy deterministic sau AI: chỉ dùng seed của operator, purchase strategy, vocabulary đối thủ đã lọc và keyword trong evidence; raw backend do AI viết không được tái sử dụng. Planner loại brand, ASIN, measurement, stop words, subjective terms, generic filler, từ lặp, biến thể số nhiều và từ đã có trong title/bullets; giữ dưới 250 bytes.
-- SEO & Evidence review hiển thị keyword map theo nguồn và placement, marketing fit, backend byte budget/efficiency, bản search terms đề xuất, fact coverage, competitor claims bị chặn và link nguồn khi phát hiện cụm câu trùng dài.
-- Marketing QC cảnh báo title thiếu purchase intent, audience expansion thấp, occasion coverage thấp, bullet thiên về mô tả feature và visual detail lấn át search intent; các cảnh báo này không biến shopping context thành product fact.
-- Retry dùng lỗi của draft hiện tại làm feedback động; prompt nền không tích lũy lịch sử sửa lỗi.
-- Một ô reviewer command sửa toàn bộ listing bằng ngôn ngữ tự do; revision vẫn chạy lại fact và policy check.
-- So sánh before/after, instruction và quality snapshot theo từng revision.
-- Trạng thái `Draft -> Review -> Approved -> Exported`; chỉ listing Approved mới được export.
-- Quality queue tìm theo internal name, main keyword, loại sản phẩm, marketplace hoặc status; có filter chờ review/còn thiếu fact/đã approved và drawer dùng được trên màn hình nhỏ.
-- Batch CSV tối đa 10 sản phẩm, ghép ảnh theo filename và xử lý tối đa 2 listing cùng lúc.
-- Seller Central CSV cho một hoặc nhiều listing. Template là draft chung vì flat-file chính thức thay đổi theo category và marketplace.
-- Lưu input, evidence, output, metadata, trạng thái và revision history trong PostgreSQL.
-- Mock mode để demo và phát triển không cần API key.
+- `Draft -> Review -> Approved -> Exported`; chỉ Approved mới export.
+- Reviewer command gửi listing hiện tại cùng yêu cầu mới cho cùng AI writer rồi kiểm tra lại định dạng.
+- Reference Amazon tối đa 3 URL/ASIN; reference chỉ là nguồn vocabulary/positioning, không phải fact của sản phẩm.
+- Batch CSV được chia thành chunk nhỏ; API có request limit, rate limit, timeout và idempotency.
+- Ảnh được lưu riêng trong `listing_images`; `input_json` chỉ giữ metadata và hash.
+- Mỗi mutation có revision và audit event; truy vấn được scope theo workspace/team.
+- File export là `Listing Desk CSV`, chưa phải category flat-file có thể upload thẳng vào Seller Central.
 
-CSV mở và lưu được bằng Excel. Native XLSX chưa được bật trong MVP để tránh đưa dependency có security advisory vào bundle; adapter này có thể bổ sung riêng sau.
+Auth đang để `disabled` cho MVP nội bộ theo mặc định. Ở chế độ này chỉ nên deploy sau VPN/private ingress hoặc trên máy nội bộ. Cơ chế team token/session có thể bật sau bằng `LISTING_DESK_AUTH_MODE=required`; xem `.env.example`.
 
-## API
+## Database và release
 
+```bash
+npm run db:start
+npm run db:migrate
+npm run db:backfill-images   # chỉ cần cho dữ liệu cũ còn inline image
+npm run db:revalidate        # chạy sau khi đổi rule/policy version
+npm run ocr:eval -- <listing-id>  # xem OCR của listing; bỏ ID để dùng listing mới nhất
+npm run ai:eval -- <listing-id>   # chạy pipeline thật nhưng không ghi listing mới vào DB
+```
+
+Production release phải chạy `npm run db:migrate` trước `npm run start`. Migration đã áp dụng được bảo vệ bằng checksum; không sửa file migration cũ, hãy thêm migration mới.
+
+## API chính
+
+- `GET /api/health`
 - `GET /api/listings`
 - `POST /api/listings/generate`
 - `POST /api/listings/batch`
 - `POST /api/listings/export`
-- `GET /api/listings/:id`
-- `PUT /api/listings/:id`
+- `GET|PUT /api/listings/:id`
 - `POST /api/listings/:id/revise`
 - `POST /api/listings/:id/workflow`
 - `POST /api/listings/:id/approve`
 - `POST /api/listings/:id/export`
-- `GET /api/brands`
-- `POST /api/brands`
+- `GET|POST /api/brands`
 - `POST /api/references`
 
-## Kiểm tra
+Các mutation tốn AI yêu cầu `Idempotency-Key`. Frontend đã tự tạo key cho generate, batch và revise.
+
+## Kiểm tra trước release
 
 ```bash
 npm run typecheck
 npm run lint
 npm test
 npm run build
+npm audit --omit=dev
 ```
 
-Nếu môi trường sandbox không cho Turbopack mở process nội bộ để xử lý CSS, dùng `npx next build --webpack` để kiểm tra production build.
+`npm run build` dùng Webpack production path để CI/sandbox không phụ thuộc việc Turbopack có được phép mở local worker port hay không. Có thể chạy thêm `npm run build:turbo` ở môi trường hỗ trợ đầy đủ.
 
-Kết nối PostgreSQL được cấu hình qua `DATABASE_URL` trong `.env`. App tự tạo bảng và index ở lần gọi API đầu tiên.
-
-PostgreSQL local trong `compose.yaml` dùng:
-
-```env
-DATABASE_URL=postgresql://listing_desk:listing_desk@localhost:5432/listing_desk
-```
-
-Dùng `npm run db:start` hoặc `npm run db:stop` để điều khiển PostgreSQL riêng. Dữ liệu được giữ trong volume `listing_desk_postgres`.
+Sau khi đổi rule, chạy thêm `npm run db:revalidate`. Production MVP chỉ đạt điều kiện deploy nội bộ khi migration, test, lint, build và revalidation đều thành công; auth disabled không phù hợp để public internet.

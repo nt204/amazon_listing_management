@@ -1,6 +1,7 @@
 import "server-only";
 
 import postgres from "postgres";
+import { createHash } from "node:crypto";
 import type {
   BrandProfile,
   ListingContent,
@@ -14,6 +15,7 @@ import type {
 } from "@/lib/types";
 
 type PostgresClient = ReturnType<typeof postgres>;
+export interface DataScope { teamId: string; actorId: string }
 
 const globalForDatabase = globalThis as unknown as {
   listingPostgres?: PostgresClient;
@@ -40,66 +42,33 @@ function getDatabase() {
 async function ensureSchema() {
   if (!globalForDatabase.listingPostgresSchema) {
     const sql = getDatabase();
-    globalForDatabase.listingPostgresSchema = sql
-      .unsafe(`
-        CREATE TABLE IF NOT EXISTS listings (
-          id UUID PRIMARY KEY,
-          internal_name TEXT NOT NULL,
-          product_type TEXT NOT NULL,
-          marketplace TEXT NOT NULL,
-          status TEXT NOT NULL,
-          model_used TEXT NOT NULL,
-          input_json JSONB NOT NULL,
-          result_json JSONB NOT NULL,
-          current_listing_json JSONB NOT NULL,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        );
-
-        CREATE TABLE IF NOT EXISTS listing_revisions (
-          id BIGSERIAL PRIMARY KEY,
-          listing_id UUID NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
-          action TEXT NOT NULL,
-          instruction TEXT NOT NULL DEFAULT '',
-          content_json JSONB NOT NULL,
-          quality_json JSONB,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        );
-
-        ALTER TABLE listing_revisions
-          ADD COLUMN IF NOT EXISTS instruction TEXT NOT NULL DEFAULT '';
-
-        ALTER TABLE listing_revisions
-          ADD COLUMN IF NOT EXISTS quality_json JSONB;
-
-        CREATE TABLE IF NOT EXISTS brand_profiles (
-          id UUID PRIMARY KEY,
-          name TEXT NOT NULL UNIQUE,
-          guidelines TEXT NOT NULL DEFAULT '',
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        );
-
-        UPDATE listings SET status = 'Draft' WHERE status = 'Generated';
-        UPDATE listings SET status = 'Review' WHERE status IN ('Needs Review', 'Rejected');
-
-        CREATE INDEX IF NOT EXISTS listing_updated_at_idx
-          ON listings(updated_at DESC);
-
-        CREATE INDEX IF NOT EXISTS listing_revisions_listing_id_idx
-          ON listing_revisions(listing_id, created_at DESC);
-      `)
+    globalForDatabase.listingPostgresSchema = sql<{ name: string }[]>`
+        SELECT name FROM schema_migrations
+        WHERE name = '003_image_storage.sql'
+        LIMIT 1
+      `
+      .then((rows) => {
+        if (!rows.length) throw new Error("Database migrations are not current. Run `npm run db:migrate`.");
+      })
       .then(() => undefined)
       .catch((error: unknown) => {
         globalForDatabase.listingPostgresSchema = undefined;
         throw new Error(
-          "Cannot connect to PostgreSQL. Start it with `npm run db:start` and try again.",
+          error instanceof Error && error.message.includes("migrations")
+            ? error.message
+            : "Cannot connect to PostgreSQL. Start it with `npm run db:start`, run `npm run db:migrate`, and try again.",
           { cause: error },
         );
       });
   }
 
   await globalForDatabase.listingPostgresSchema;
+}
+
+export async function checkDatabaseHealth() {
+  await ensureSchema();
+  const sql = getDatabase();
+  await sql`SELECT 1`;
 }
 
 interface ListingRow {
@@ -137,34 +106,75 @@ function toStoredListing(row: ListingRow): StoredListing {
   };
 }
 
-export async function saveGeneratedListing(input: ListingInput, result: ListingResult) {
+export async function saveGeneratedListing(scope: DataScope, input: ListingInput, result: ListingResult) {
   await ensureSchema();
   const sql = getDatabase();
   const status: ListingStatus = result.policy_validation.passed
     ? "Draft"
     : "Review";
 
-  await sql`
-    INSERT INTO listings (
-      id, internal_name, product_type, marketplace, status, model_used,
-      input_json, result_json, current_listing_json
-    ) VALUES (
-      ${result.request_id},
-      ${input.internal_name},
-      ${input.product_type},
-      ${input.marketplace},
-      ${status},
-      ${result.model_used},
-      ${sql.json(toJson(input))},
-      ${sql.json(toJson(result))},
-      ${sql.json(toJson(result.listing))}
-    )
-  `;
-  await addRevision(result.request_id, "generated", result.listing, result);
-  return getListing(result.request_id);
+  const storedInputBase = result.competitor_profile
+    ? { ...input, research: { ...input.research, competitor_profile: result.competitor_profile } }
+    : input;
+  const images = input.images.map((image, imageIndex) => {
+    const payload = image.data_url.slice(image.data_url.indexOf(",") + 1);
+    const bytes = Buffer.from(payload, "base64");
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    return { ...image, imageIndex, bytes, sha256, id: crypto.randomUUID() };
+  });
+  const storedInput: ListingInput = {
+    ...storedInputBase,
+    images: images.map((image) => ({
+      name: image.name,
+      type: image.type,
+      data_url: "",
+      storage_key: `db:${result.request_id}:${image.imageIndex}`,
+      sha256: image.sha256,
+    })),
+  };
+  await sql.begin(async (transaction) => {
+    await transaction`
+      INSERT INTO listings (
+        id, team_id, internal_name, product_type, marketplace, status, model_used,
+        input_json, result_json, current_listing_json
+      ) VALUES (
+        ${result.request_id}, ${scope.teamId}, ${input.internal_name}, ${input.product_type},
+        ${input.marketplace}, ${status}, ${result.model_used}, ${transaction.json(toJson(storedInput))},
+        ${transaction.json(toJson(result))}, ${transaction.json(toJson(result.listing))}
+      )
+    `;
+    for (const image of images) {
+      await transaction`
+        INSERT INTO listing_images (
+          id, listing_id, team_id, image_index, name, mime_type, sha256, image_bytes
+        ) VALUES (
+          ${image.id}, ${result.request_id}, ${scope.teamId}, ${image.imageIndex},
+          ${image.name}, ${image.type}, ${image.sha256}, ${image.bytes}
+        )
+      `;
+    }
+    await transaction`
+      INSERT INTO listing_revisions (
+        listing_id, team_id, actor_id, action, instruction, content_json, quality_json
+      ) VALUES (
+        ${result.request_id}, ${scope.teamId}, ${scope.actorId}, 'generated', '',
+        ${transaction.json(toJson(result.listing))},
+        ${transaction.json(toJson(qualitySnapshot(result)))}
+      )
+    `;
+    await transaction`
+      INSERT INTO audit_events (
+        team_id, actor_id, action, resource_type, resource_id, metadata_json
+      ) VALUES (
+        ${scope.teamId}, ${scope.actorId}, 'listing.generated', 'listing', ${result.request_id},
+        ${transaction.json(toJson({ model: result.metadata.model_name }))}
+      )
+    `;
+  });
+  return getListing(scope, result.request_id);
 }
 
-export async function listListings(limit = 30): Promise<ListingSummary[]> {
+export async function listListings(scope: DataScope, limit = 30): Promise<ListingSummary[]> {
   await ensureSchema();
   const sql = getDatabase();
   const rows = await sql<ListingSummary[]>`
@@ -184,13 +194,14 @@ export async function listListings(limit = 30): Promise<ListingSummary[]> {
       created_at::text,
       updated_at::text
     FROM listings
+    WHERE team_id = ${scope.teamId}
     ORDER BY updated_at DESC
     LIMIT ${limit}
   `;
   return [...rows];
 }
 
-export async function getListing(id: string): Promise<StoredListing | null> {
+export async function getListing(scope: DataScope, id: string): Promise<StoredListing | null> {
   await ensureSchema();
   const sql = getDatabase();
   const rows = await sql<ListingRow[]>`
@@ -207,16 +218,17 @@ export async function getListing(id: string): Promise<StoredListing | null> {
       created_at::text,
       updated_at::text
     FROM listings
-    WHERE id = ${id}
+    WHERE id = ${id} AND team_id = ${scope.teamId}
     LIMIT 1
   `;
   if (!rows[0]) return null;
   const listing = toStoredListing(rows[0]);
-  listing.revisions = await listRevisions(id);
+  listing.revisions = await listRevisions(scope, id);
   return listing;
 }
 
 export async function updateListingContent(
+  scope: DataScope,
   id: string,
   listing: ListingContent,
   result: ListingResult,
@@ -240,7 +252,7 @@ export async function updateListingContent(
           result_json = ${sql.json(toJson(result))},
           current_listing_json = ${sql.json(toJson(listing))},
           updated_at = NOW()
-        WHERE id = ${id}
+        WHERE id = ${id} AND team_id = ${scope.teamId}
         RETURNING id::text
       `
     : await sql<{ id: string }[]>`
@@ -250,21 +262,23 @@ export async function updateListingContent(
           result_json = ${sql.json(toJson(result))},
           current_listing_json = ${sql.json(toJson(listing))},
           updated_at = NOW()
-        WHERE id = ${id}
+        WHERE id = ${id} AND team_id = ${scope.teamId}
         RETURNING id::text
       `;
   if (!changed.length) return null;
   await addRevision(
+    scope,
     id,
     options.action || "manual_edit",
     listing,
     result,
     options.instruction,
   );
-  return getListing(id);
+  await recordAuditEvent(scope, `listing.${options.action || "manual_edit"}`, "listing", id);
+  return getListing(scope, id);
 }
 
-export async function setListingStatus(id: string, status: ListingStatus) {
+export async function setListingStatus(scope: DataScope, id: string, status: ListingStatus) {
   await ensureSchema();
   const sql = getDatabase();
   const changed = await sql<
@@ -272,17 +286,57 @@ export async function setListingStatus(id: string, status: ListingStatus) {
   >`
     UPDATE listings
     SET status = ${status}, updated_at = NOW()
-    WHERE id = ${id}
+    WHERE id = ${id} AND team_id = ${scope.teamId} AND status = 'Draft'
     RETURNING id::text, current_listing_json, result_json
   `;
   if (!changed.length) return null;
   await addRevision(
+    scope,
     id,
     status === "Review" ? "submitted_for_review" : status.toLowerCase(),
     parseJson(changed[0].current_listing_json),
     parseJson(changed[0].result_json),
   );
-  return getListing(id);
+  await recordAuditEvent(scope, `listing.status.${status.toLowerCase()}`, "listing", id);
+  return getListing(scope, id);
+}
+
+export async function setListingStatusWithValidation(
+  scope: DataScope,
+  id: string,
+  status: ListingStatus,
+  input: ListingInput,
+  result: ListingResult,
+) {
+  await ensureSchema();
+  const sql = getDatabase();
+  const expectedStatus = status === "Approved" ? "Review" : status === "Exported" ? "Approved" : "";
+  const changed = await sql<
+    { id: string; current_listing_json: ListingContent | string }[]
+  >`
+    UPDATE listings
+    SET
+      status = ${status},
+      input_json = ${sql.json(toJson(input))},
+      result_json = ${sql.json(toJson(result))},
+      updated_at = NOW()
+    WHERE id = ${id} AND team_id = ${scope.teamId}
+      AND (${expectedStatus} = '' OR status = ${expectedStatus})
+    RETURNING id::text, current_listing_json
+  `;
+  if (!changed.length) return null;
+  await addRevision(
+    scope,
+    id,
+    status === "Approved" ? "approved_after_revalidation" : status.toLowerCase(),
+    parseJson(changed[0].current_listing_json),
+    result,
+  );
+  await recordAuditEvent(scope, `listing.status.${status.toLowerCase()}`, "listing", id, {
+    policy_version: result.metadata.policy_version,
+    error_count: result.policy_validation.errors.length,
+  });
+  return getListing(scope, id);
 }
 
 function qualitySnapshot(result: ListingResult) {
@@ -295,6 +349,7 @@ function qualitySnapshot(result: ListingResult) {
 }
 
 async function addRevision(
+  scope: DataScope,
   id: string,
   action: string,
   content: ListingContent,
@@ -303,9 +358,11 @@ async function addRevision(
 ) {
   const sql = getDatabase();
   await sql`
-    INSERT INTO listing_revisions (listing_id, action, instruction, content_json, quality_json)
+    INSERT INTO listing_revisions (listing_id, team_id, actor_id, action, instruction, content_json, quality_json)
     VALUES (
       ${id},
+      ${scope.teamId},
+      ${scope.actorId},
       ${action},
       ${instruction},
       ${sql.json(toJson(content))},
@@ -323,14 +380,14 @@ interface RevisionRow {
   created_at: string;
 }
 
-export async function listRevisions(id: string, limit = 30): Promise<ListingRevision[]> {
+export async function listRevisions(scope: DataScope, id: string, limit = 30): Promise<ListingRevision[]> {
   await ensureSchema();
   const sql = getDatabase();
   const rows = await sql<RevisionRow[]>`
     SELECT * FROM (
       SELECT id::text, action, instruction, content_json, quality_json, created_at::text
       FROM listing_revisions
-      WHERE listing_id = ${id}
+      WHERE listing_id = ${id} AND team_id = ${scope.teamId}
         AND content_json ? 'title'
         AND content_json ? 'bullet_points'
       ORDER BY created_at DESC, id DESC
@@ -348,7 +405,7 @@ export async function listRevisions(id: string, limit = 30): Promise<ListingRevi
   }));
 }
 
-export async function getWorkflowMetrics(): Promise<WorkflowMetrics> {
+export async function getWorkflowMetrics(scope: DataScope): Promise<WorkflowMetrics> {
   await ensureSchema();
   const sql = getDatabase();
   const rows = await sql<WorkflowMetrics[]>`
@@ -365,6 +422,7 @@ export async function getWorkflowMetrics(): Promise<WorkflowMetrics> {
         WHERE COALESCE(jsonb_array_length(result_json->'content_quality'->'unused_facts'), 0) > 0
       )::int AS missing_facts
     FROM listings
+    WHERE team_id = ${scope.teamId}
   `;
   return rows[0] || {
     total: 0,
@@ -377,39 +435,147 @@ export async function getWorkflowMetrics(): Promise<WorkflowMetrics> {
   };
 }
 
-export async function listBrandProfiles(): Promise<BrandProfile[]> {
+export async function listBrandProfiles(scope: DataScope): Promise<BrandProfile[]> {
   await ensureSchema();
   const sql = getDatabase();
   const rows = await sql<BrandProfile[]>`
     SELECT id::text, name, guidelines, created_at::text, updated_at::text
     FROM brand_profiles
+    WHERE team_id = ${scope.teamId}
     ORDER BY name ASC
   `;
   return [...rows];
 }
 
-export async function getBrandProfile(id: string): Promise<BrandProfile | null> {
+export async function getBrandProfile(scope: DataScope, id: string): Promise<BrandProfile | null> {
   await ensureSchema();
   const sql = getDatabase();
   const rows = await sql<BrandProfile[]>`
     SELECT id::text, name, guidelines, created_at::text, updated_at::text
     FROM brand_profiles
-    WHERE id = ${id}
+    WHERE id = ${id} AND team_id = ${scope.teamId}
     LIMIT 1
   `;
   return rows[0] || null;
 }
 
-export async function saveBrandProfile(name: string, guidelines: string): Promise<BrandProfile> {
+export async function saveBrandProfile(scope: DataScope, name: string, guidelines: string): Promise<BrandProfile> {
   await ensureSchema();
   const sql = getDatabase();
   const id = crypto.randomUUID();
   const rows = await sql<BrandProfile[]>`
-    INSERT INTO brand_profiles (id, name, guidelines)
-    VALUES (${id}, ${name}, ${guidelines})
-    ON CONFLICT (name) DO UPDATE
+    INSERT INTO brand_profiles (id, team_id, name, guidelines)
+    VALUES (${id}, ${scope.teamId}, ${name}, ${guidelines})
+    ON CONFLICT (team_id, name) DO UPDATE
     SET guidelines = EXCLUDED.guidelines, updated_at = NOW()
     RETURNING id::text, name, guidelines, created_at::text, updated_at::text
   `;
+  await recordAuditEvent(scope, "brand.saved", "brand_profile", rows[0].id);
   return rows[0];
+}
+
+export async function consumeRateLimit(
+  scope: DataScope,
+  name: string,
+  limit: number,
+  windowSeconds: number,
+) {
+  await ensureSchema();
+  const sql = getDatabase();
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const bucket = Math.floor(nowSeconds / windowSeconds);
+  await sql`
+    DELETE FROM api_rate_limits
+    WHERE team_id = ${scope.teamId} AND scope = ${name} AND bucket < ${bucket - 2}
+  `;
+  const rows = await sql<{ request_count: number }[]>`
+    INSERT INTO api_rate_limits (team_id, scope, bucket, request_count)
+    VALUES (${scope.teamId}, ${name}, ${bucket}, 1)
+    ON CONFLICT (team_id, scope, bucket) DO UPDATE
+    SET request_count = api_rate_limits.request_count + 1, updated_at = NOW()
+    RETURNING request_count
+  `;
+  return {
+    allowed: rows[0].request_count <= limit,
+    remaining: Math.max(0, limit - rows[0].request_count),
+    retryAfterSeconds: Math.max(1, (bucket + 1) * windowSeconds - nowSeconds),
+  };
+}
+
+export async function claimIdempotency(
+  scope: DataScope,
+  endpoint: string,
+  key: string,
+) {
+  await ensureSchema();
+  const sql = getDatabase();
+  const retentionHours = Math.min(168, Math.max(1, Number(process.env.IDEMPOTENCY_RETENTION_HOURS || 24)));
+  await sql`
+    DELETE FROM api_idempotency
+    WHERE team_id = ${scope.teamId}
+      AND created_at < NOW() - (${retentionHours} * INTERVAL '1 hour')
+  `;
+  const inserted = await sql<{ idempotency_key: string }[]>`
+    INSERT INTO api_idempotency (team_id, endpoint, idempotency_key)
+    VALUES (${scope.teamId}, ${endpoint}, ${key})
+    ON CONFLICT DO NOTHING
+    RETURNING idempotency_key
+  `;
+  if (inserted.length) return { state: "claimed" as const };
+  const existing = await sql<{ response_json: Record<string, unknown> | string | null; status_code: number | null }[]>`
+    SELECT response_json, status_code
+    FROM api_idempotency
+    WHERE team_id = ${scope.teamId} AND endpoint = ${endpoint} AND idempotency_key = ${key}
+    LIMIT 1
+  `;
+  if (!existing[0]?.response_json) return { state: "pending" as const };
+  return {
+    state: "complete" as const,
+    response: parseJson(existing[0].response_json),
+    statusCode: existing[0].status_code || 200,
+  };
+}
+
+export async function completeIdempotency(
+  scope: DataScope,
+  endpoint: string,
+  key: string,
+  response: Record<string, unknown>,
+  statusCode: number,
+) {
+  await ensureSchema();
+  const sql = getDatabase();
+  await sql`
+    UPDATE api_idempotency
+    SET response_json = ${sql.json(toJson(response))}, status_code = ${statusCode}
+    WHERE team_id = ${scope.teamId} AND endpoint = ${endpoint} AND idempotency_key = ${key}
+  `;
+}
+
+export async function releaseIdempotency(scope: DataScope, endpoint: string, key: string) {
+  await ensureSchema();
+  const sql = getDatabase();
+  await sql`
+    DELETE FROM api_idempotency
+    WHERE team_id = ${scope.teamId} AND endpoint = ${endpoint} AND idempotency_key = ${key}
+      AND response_json IS NULL
+  `;
+}
+
+export async function recordAuditEvent(
+  scope: DataScope,
+  action: string,
+  resourceType: string,
+  resourceId: string,
+  metadata: Record<string, unknown> = {},
+) {
+  await ensureSchema();
+  const sql = getDatabase();
+  await sql`
+    INSERT INTO audit_events (team_id, actor_id, action, resource_type, resource_id, metadata_json)
+    VALUES (
+      ${scope.teamId}, ${scope.actorId}, ${action}, ${resourceType}, ${resourceId},
+      ${sql.json(toJson(metadata))}
+    )
+  `;
 }

@@ -1,6 +1,34 @@
 import { z } from "zod";
+import { getGeminiModels, getOpenAIModels } from "@/lib/models";
 
 const cleanedString = z.string().trim();
+
+function configuredBytes(name: string, fallback: number) {
+  const parsed = Number(process.env[name] || fallback);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function decodedBase64Bytes(value: string) {
+  const payload = value.slice(value.indexOf(",") + 1);
+  const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
+  return Math.floor((payload.length * 3) / 4) - padding;
+}
+
+const imageInputSchema = z.object({
+  name: cleanedString.max(255),
+  type: z.enum(["image/jpeg", "image/png", "image/webp"]),
+  data_url: z.string(),
+}).superRefine((image, context) => {
+  const match = image.data_url.match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/);
+  if (!match || match[1] !== image.type) {
+    context.addIssue({ code: "custom", path: ["data_url"], message: "Invalid image data or MIME type." });
+    return;
+  }
+  const maxBytes = configuredBytes("MAX_IMAGE_BYTES", 5_000_000);
+  if (decodedBase64Bytes(image.data_url) > maxBytes) {
+    context.addIssue({ code: "custom", path: ["data_url"], message: `Image exceeds ${maxBytes} bytes.` });
+  }
+});
 
 export const listingInputSchema = z.object({
   marketplace: z.enum(["US", "UK", "DE"]),
@@ -31,30 +59,29 @@ export const listingInputSchema = z.object({
     competitor_notes: cleanedString.max(20_000).default(""),
     notes: cleanedString.max(20_000),
   }),
-  images: z
-    .array(
-      z.object({
-        name: cleanedString,
-        type: z.enum(["image/jpeg", "image/png", "image/webp"]),
-        data_url: z.string().startsWith("data:image/"),
-      }),
-    )
+  images: z.array(imageInputSchema)
     .min(1, "Hãy tải ít nhất một ảnh sản phẩm.")
-    .max(10, "Chỉ được tải tối đa 10 ảnh."),
+    .max(10, "Chỉ được tải tối đa 10 ảnh.")
+    .superRefine((images, context) => {
+      const total = images.reduce((sum, image) => sum + decodedBase64Bytes(image.data_url), 0);
+      const maxTotal = configuredBytes("MAX_TOTAL_IMAGE_BYTES", 20_000_000);
+      if (total > maxTotal) context.addIssue({ code: "custom", message: `Total image payload exceeds ${maxTotal} bytes.` });
+    }),
   configuration: z.object({
+    rule_profile: cleanedString.max(120).optional().default(""),
     ai_provider: z.enum(["auto", "gemini", "openai"]),
-    gemini_model: z.enum([
-      "gemini-3.6-flash",
-      "gemini-3.5-flash",
-      "gemini-3.5-flash-lite",
-      "gemini-2.5-pro",
-      "gemini-2.5-flash",
-    ]),
-    openai_model: z.enum(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]),
+    gemini_model: cleanedString.refine(
+      (value) => getGeminiModels().some((model) => model.id === value),
+      "Gemini model is not in the configured model catalog.",
+    ),
+    openai_model: cleanedString.refine(
+      (value) => getOpenAIModels().some((model) => model.id === value),
+      "OpenAI model is not in the configured model catalog.",
+    ),
     language: cleanedString.min(1),
     tone: cleanedString.min(1),
     bullet_count: z.number().int().min(3).max(7),
-    title_length: z.number().int().min(80).max(200),
+    title_length: z.number().int().min(40).max(200),
     bullet_length: z.number().int().min(100).max(500),
     generate_description: z.boolean(),
     generate_search_terms: z.boolean(),
@@ -68,128 +95,32 @@ export const generatedListingSchema = z.object({
   backend_search_terms: z.string(),
 });
 
-export const reviewInstructionSchema = z.object({
-  instruction: cleanedString
-    .min(2, "Hãy nhập yêu cầu chỉnh sửa.")
-    .max(2_000, "Yêu cầu chỉnh sửa tối đa 2.000 ký tự."),
-});
-
-export const workflowStatusSchema = z.object({
-  status: z.enum(["Review"]),
-});
-
-export const batchListingSchema = z.object({
-  items: z.array(listingInputSchema).min(1).max(10),
-});
-
-export const brandProfileSchema = z.object({
-  name: cleanedString.min(1, "Hãy nhập tên brand.").max(120),
-  guidelines: cleanedString.max(10_000),
-});
-
-export const productBriefSchema = z.object({
-  visual_facts: z.array(z.string().trim().min(1)).max(20),
-  exact_text: z.array(z.string().trim().min(1)).max(20),
-  colors: z.array(z.string().trim().min(1)).max(12),
-  styles: z.array(z.string().trim().min(1)).max(10),
-  subjects: z.array(z.string().trim().min(1)).max(15),
-  supplied_facts: z.array(z.string().trim().min(1)).max(25),
-  inferred_audiences: z.array(z.string().trim().min(1)).max(10),
-  inferred_occasions: z.array(z.string().trim().min(1)).max(10),
-  related_keywords: z.array(z.string().trim().min(1)).min(5).max(12),
-  competitor_insights: z.array(z.string().trim().min(1)).max(10),
-  listing_angle: z.string().trim().min(1),
-  facts_to_avoid: z.array(z.string().trim().min(1)).max(15),
-  policy_risks: z.array(z.string().trim().min(1)).max(10),
-});
-
 export const generatedListingJsonSchema = {
   type: "object",
   additionalProperties: false,
   required: ["title", "bullet_points", "description", "backend_search_terms"],
   properties: {
-    title: {
-      type: "string",
-      description: "Natural Amazon title using all meaningful main-keyword terms without redundant words.",
-    },
+    title: { type: "string", description: "Natural Amazon SEO title." },
     bullet_points: {
       type: "array",
-      description: "Exactly five distinct, benefit-led bullets grounded in evidence and the supplied purchase strategy.",
+      description: "Exactly five clear feature-and-benefit bullet points.",
       items: { type: "string" },
-      minItems: 5,
-      maxItems: 5,
     },
-    description: {
-      type: "string",
-      description: "Purchase-motivation-led description with supported product details, audience, recipient, occasion, and use-case coverage appropriate to the strategy.",
-    },
+    description: { type: "string", description: "Factual product description." },
     backend_search_terms: {
       type: "string",
-      description: "Provisional space-separated search vocabulary; no brands, ASINs, measurements, visual filler, punctuation, stop words, subjective claims, or duplicate words. A deterministic planner rebuilds this field.",
+      description: "Relevant space-separated Amazon backend search terms without punctuation.",
     },
   },
 } as const;
 
-export const evidenceListingSchema = z.object({
-  product_brief: productBriefSchema,
-  listing: generatedListingSchema,
+export const reviewInstructionSchema = z.object({
+  instruction: cleanedString.min(2, "Hãy nhập yêu cầu chỉnh sửa.").max(2_000),
 });
 
-const stringArray = (description: string, maxItems: number, minItems = 0) => ({
-  type: "array",
-  description,
-  items: { type: "string" },
-  minItems,
-  maxItems,
+export const workflowStatusSchema = z.object({ status: z.enum(["Review"]) });
+export const batchListingSchema = z.object({ items: z.array(listingInputSchema).min(1).max(10) });
+export const brandProfileSchema = z.object({
+  name: cleanedString.min(1, "Hãy nhập tên brand.").max(120),
+  guidelines: cleanedString.max(10_000),
 });
-
-export const productBriefJsonSchema = {
-  type: "object",
-  additionalProperties: false,
-  required: [
-    "visual_facts",
-    "exact_text",
-    "colors",
-    "styles",
-    "subjects",
-    "supplied_facts",
-    "inferred_audiences",
-    "inferred_occasions",
-    "related_keywords",
-    "competitor_insights",
-    "listing_angle",
-    "facts_to_avoid",
-    "policy_risks",
-  ],
-  properties: {
-    visual_facts: stringArray("Facts directly visible in the supplied product images.", 20),
-    exact_text: stringArray("Verbatim text visible in the artwork or product images.", 20),
-    colors: stringArray("Prominent colors directly visible in the product design.", 12),
-    styles: stringArray("Visual design styles supported by the images.", 10),
-    subjects: stringArray("Objects, characters, icons, or motifs visible in the images.", 15),
-    supplied_facts: stringArray(
-      "Atomic product facts explicitly supplied by the operator, preferably formatted as Label: value.",
-      25,
-    ),
-    inferred_audiences: stringArray("Likely audiences inferred from the keyword and design, not product facts.", 10),
-    inferred_occasions: stringArray("Likely shopping or gifting occasions inferred from context.", 10),
-    related_keywords: stringArray("Natural high-relevance search phrases derived from the main keyword and evidence.", 12, 5),
-    competitor_insights: stringArray("Positioning or keyword insights from reference listings without copied wording.", 10),
-    listing_angle: {
-      type: "string",
-      description: "One concise positioning direction grounded in the strongest evidence.",
-    },
-    facts_to_avoid: stringArray("Claims explicitly forbidden by the operator or not supported by evidence.", 15),
-    policy_risks: stringArray("Potential trademark, character, copyright, hate, medical, or restricted-language risks.", 10),
-  },
-} as const;
-
-export const evidenceListingJsonSchema = {
-  type: "object",
-  additionalProperties: false,
-  required: ["product_brief", "listing"],
-  properties: {
-    product_brief: productBriefJsonSchema,
-    listing: generatedListingJsonSchema,
-  },
-} as const;
