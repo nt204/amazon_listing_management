@@ -72,6 +72,16 @@ test("validator keeps the complete brand and main keyword inside the first 70 ch
   );
 });
 
+test("validator rejects quotation marks in titles", () => {
+  const listing = createMockListing(input);
+  listing.title = `${input.brand} ${input.main_keyword}, ${input.related_keywords[0]}, "THANK YOU NURSES", Nurse Week Gift`;
+
+  const result = analyzeListing(listing, input);
+  assert.ok(
+    result.policy_validation.errors.some((issue) => issue.code === "TITLE_QUOTES_NOT_ALLOWED"),
+  );
+});
+
 test("validator enforces title, bullet, description, and search-term limits", () => {
   const listing = createMockListing(input);
   listing.title = `${listing.title} ${"extra ".repeat(40)}`;

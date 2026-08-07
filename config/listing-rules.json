@@ -1,6 +1,6 @@
 {
-  "version": "2026-08-07.title-structure.2",
-  "prompt_version": "structured-title-v3",
+  "version": "2026-08-07.title-structure.4",
+  "prompt_version": "structured-title-v5",
   "default_profile": "amazon-pod",
   "profiles": {
     "amazon-pod": {

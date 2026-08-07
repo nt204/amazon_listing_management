@@ -82,6 +82,13 @@ export function analyzeListing(
   if (!includesKeyword(listing.title, input.main_keyword)) {
     errors.push({ field: "title", code: "MAIN_KEYWORD_MISSING", message: "Title must include the main keyword." });
   }
+  if (/["“”]/u.test(listing.title)) {
+    errors.push({
+      field: "title",
+      code: "TITLE_QUOTES_NOT_ALLOWED",
+      message: "Title must not contain straight or curly quotation marks.",
+    });
+  }
   const titleBlueprint = buildTitleBlueprint(input);
   const primaryIdentity = [titleBlueprint.brand, titleBlueprint.coreKeyword1.keyword]
     .filter(Boolean)

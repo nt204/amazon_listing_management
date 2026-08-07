@@ -28,7 +28,7 @@ Nếu có API key, app dùng AI thật. Mock chỉ chạy khi không có provide
 3. Chạy Tesseract OCR cục bộ và đưa nguyên văn các dòng đọc được cho AI.
 4. Đọc tối đa 3 ASIN để lấy title, cách gọi sản phẩm và các thuộc tính đối thủ. Đây chỉ là bối cảnh tham khảo, không phải fact của sản phẩm.
 5. Gọi một AI writer duy nhất với input, OCR, ảnh nguồn, keyword research và tóm tắt reference để sinh SEO title, đúng 5 bullet points, description và backend search terms.
-6. Title dùng thứ tự `Brand + KW lõi 1 + KW lõi 2 + Event + người nhận + người tặng + sản phẩm`, trong đó KW lõi 2 luôn là cụm đầu tiên của trường `Từ khóa liên quan`. Độ dài lý tưởng là 120-150 ký tự, tối đa 200 ký tự và mỗi từ không quá 2 lần. `Brand + KW lõi 1` phải nằm trọn trong 70 ký tự đầu.
+6. Title dùng thứ tự `Brand + KW lõi 1 + KW lõi 2 + Event + người nhận + người tặng + sản phẩm`, trong đó KW lõi 2 luôn là cụm đầu tiên của trường `Từ khóa liên quan`. Brand và tên sản phẩm dùng cách viết hoa chuẩn. Text thật trên thiết kế/OCR nếu được dùng phải viết IN HOA nhưng không đặt trong dấu ngoặc kép, ví dụ `THANK YOU VETERANS`. Độ dài lý tưởng là 120-150 ký tự, tối đa 200 ký tự và mỗi từ không quá 2 lần. `Brand + KW lõi 1` phải nằm trọn trong 70 ký tự đầu.
 7. Server giữ nguyên cách AI viết title, chỉ chuẩn hóa khoảng trắng và cắt ở giới hạn ký tự; không tự chèn, xóa hay sắp xếp lại keyword. Backend terms vẫn được làm sạch riêng.
 8. Nếu provider chính lỗi, hệ thống chỉ chuyển sang provider fallback đã cấu hình; không có quality retry.
 
