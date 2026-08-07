@@ -12,6 +12,7 @@ import { useState } from "react";
 import { buildBatchTemplateCsv, parseBatchCsv, type BatchImportRow } from "@/lib/csv";
 import { resizeImage } from "@/lib/image-client";
 import type { ListingInput, StoredListing } from "@/lib/types";
+import { generateUUID } from "@/lib/uuid-client";
 
 interface BatchImportProps {
   open: boolean;
@@ -130,7 +131,7 @@ export function BatchImport({ open, baseInput, onClose, onComplete }: BatchImpor
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              "Idempotency-Key": crypto.randomUUID(),
+              "Idempotency-Key": generateUUID(),
             },
             body: JSON.stringify({ items: chunk }),
           }),

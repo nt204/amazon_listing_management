@@ -14,6 +14,7 @@ import {
   XIcon,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { generateUUID } from "@/lib/uuid-client";
 import { BatchImport } from "@/components/batch-import";
 import { BrandManager } from "@/components/brand-manager";
 import { ListingForm, type FormIssue } from "@/components/listing-form";
@@ -331,7 +332,7 @@ export function ListingWorkspace() {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Idempotency-Key": crypto.randomUUID(),
+            "Idempotency-Key": generateUUID(),
           },
           body: JSON.stringify({
             ...input,
@@ -399,7 +400,7 @@ export function ListingWorkspace() {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Idempotency-Key": crypto.randomUUID(),
+            "Idempotency-Key": generateUUID(),
           },
           body: JSON.stringify({ instruction }),
         }),
