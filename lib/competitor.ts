@@ -259,6 +259,56 @@ export async function inspectCompetitorReferences(value: string, marketplace: Ma
   );
 }
 
+export async function discoverCompetitorAsins(
+  keyword: string,
+  marketplace: Marketplace,
+  limit = 5,
+) {
+  const domain = {
+    US: "www.amazon.com",
+    UK: "www.amazon.co.uk",
+    DE: "www.amazon.de",
+  }[marketplace];
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    configuredNumber("COMPETITOR_TIMEOUT_MS", 3_500, 750, 8_000),
+  );
+  try {
+    const response = await fetch(
+      `https://${domain}/s?k=${encodeURIComponent(keyword.trim())}`,
+      {
+        cache: "no-store",
+        signal: controller.signal,
+        headers: {
+          Accept: "text/html,application/xhtml+xml",
+          "Accept-Language": marketplace === "DE" ? "de-DE,de;q=0.9" : "en-US,en;q=0.9",
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126.0 Safari/537.36",
+        },
+      },
+    );
+    if (!response.ok) return [];
+    const html = (await response.text()).slice(0, 2_000_000);
+    const asins = new Set<string>();
+    const patterns = [
+      /data-asin=["'](B[A-Z0-9]{9})["']/gi,
+      /\/dp\/(B[A-Z0-9]{9})(?:[/?"'])/gi,
+    ];
+    for (const pattern of patterns) {
+      for (const match of html.matchAll(pattern)) {
+        asins.add(match[1].toUpperCase());
+        if (asins.size >= limit) return [...asins];
+      }
+    }
+    return [...asins];
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function enrichCompetitorResearch(input: ListingInput): Promise<ListingInput> {
   const supplied = input.research.competitor_notes.trim();
   if (!supplied) return input;

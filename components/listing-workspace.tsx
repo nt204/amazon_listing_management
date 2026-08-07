@@ -53,6 +53,7 @@ const emptyInput: ListingInput = {
   backend_keywords: [],
   research: {
     target_customer: "",
+    gift_giver: "",
     occasion: [],
     customer_insight: "",
     usp: "",
@@ -95,6 +96,7 @@ const sampleInput: ListingInput = {
   backend_keywords: ["healthcare worker appreciation", "rn coworker present"],
   research: {
     target_customer: "Registered nurses and nursing students",
+    gift_giver: "Coworkers, friends, and family",
     occasion: ["Birthday", "Nurse Week", "Graduation"],
     customer_insight: "Customers prefer humorous, practical, and giftable designs.",
     usp: "Original retro typography design",

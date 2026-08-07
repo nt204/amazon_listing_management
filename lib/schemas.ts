@@ -3,6 +3,58 @@ import { getGeminiModels, getOpenAIModels } from "@/lib/models";
 
 const cleanedString = z.string().trim();
 
+const productInformationSchema = z.object({
+  material: cleanedString,
+  size_capacity: cleanedString,
+  color: cleanedString,
+  package_contents: cleanedString,
+  features: z.array(cleanedString).max(20),
+  personalization: cleanedString,
+  care_instructions: cleanedString,
+  country_of_origin: cleanedString,
+});
+
+const keywordResearchCategorySchema = z.enum([
+  "core",
+  "long_tail",
+  "occasion",
+  "audience",
+  "attribute",
+  "other",
+]);
+
+const nullableMetric = z.number().nonnegative().nullable();
+
+const keywordResearchTermSchema = z.object({
+  keyword: cleanedString.min(1).max(200),
+  search_volume: nullableMetric,
+  cpc: nullableMetric,
+  iq_score: nullableMetric,
+  organic_rank: nullableMetric,
+  sponsored_rank: nullableMetric,
+  competitor_asins: z.array(cleanedString).max(20),
+  competitor_count: z.number().int().nonnegative(),
+  category: keywordResearchCategorySchema,
+  relevance_score: z.number().min(0).max(100),
+  opportunity_score: z.number().min(0).max(100),
+  selected: z.boolean(),
+  exclusion_reason: cleanedString.max(500).optional(),
+});
+
+const keywordResearchSnapshotSchema = z.object({
+  source: z.enum(["helium10", "mock"]),
+  seed_keyword: cleanedString.min(1).max(200),
+  marketplace: z.enum(["US", "UK", "DE"]),
+  competitor_asins: z.array(cleanedString).max(20),
+  terms: z.array(keywordResearchTermSchema).max(1_000),
+  generic_keywords: z.array(cleanedString).max(100),
+  search_terms: cleanedString.max(500),
+  top_core_keywords: z.array(cleanedString).max(2),
+  minimum_attribute_search_volume: z.number().nonnegative(),
+  captured_at: cleanedString,
+  warnings: z.array(cleanedString.max(1_000)).max(50),
+});
+
 function configuredBytes(name: string, fallback: number) {
   const parsed = Number(process.env[name] || fallback);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -37,27 +89,20 @@ export const listingInputSchema = z.object({
   brand: cleanedString,
   brand_profile_id: cleanedString.optional().default(""),
   brand_guidelines: cleanedString.max(10_000).optional().default(""),
-  product_information: z.object({
-    material: cleanedString,
-    size_capacity: cleanedString,
-    color: cleanedString,
-    package_contents: cleanedString,
-    features: z.array(cleanedString).max(20),
-    personalization: cleanedString,
-    care_instructions: cleanedString,
-    country_of_origin: cleanedString,
-  }),
+  product_information: productInformationSchema,
   main_keyword: cleanedString.min(1, "Hãy nhập từ khóa chính."),
   related_keywords: z.array(cleanedString).max(50),
   backend_keywords: z.array(cleanedString).max(50),
   research: z.object({
     target_customer: cleanedString,
+    gift_giver: cleanedString.optional().default(""),
     occasion: z.array(cleanedString).max(20),
     customer_insight: cleanedString,
     usp: cleanedString,
     competitor_asins: z.array(cleanedString).max(20),
     competitor_notes: cleanedString.max(20_000).default(""),
     notes: cleanedString.max(20_000),
+    keyword_research: keywordResearchSnapshotSchema.optional(),
   }),
   images: z.array(imageInputSchema)
     .min(1, "Hãy tải ít nhất một ảnh sản phẩm.")
@@ -86,6 +131,17 @@ export const listingInputSchema = z.object({
     generate_description: z.boolean(),
     generate_search_terms: z.boolean(),
   }),
+});
+
+export const keywordResearchRequestSchema = z.object({
+  marketplace: z.enum(["US", "UK", "DE"]),
+  main_keyword: cleanedString.min(1, "Hãy nhập từ khóa chính."),
+  product_type: cleanedString.min(1, "Hãy chọn loại sản phẩm."),
+  brand: cleanedString,
+  product_information: productInformationSchema,
+  target_customer: cleanedString,
+  occasion: z.array(cleanedString).max(20),
+  rule_profile: cleanedString.max(120).optional().default(""),
 });
 
 export const generatedListingSchema = z.object({

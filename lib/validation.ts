@@ -1,4 +1,6 @@
 import { getPolicy } from "@/lib/policies";
+import { repeatedTitleWords } from "@/lib/listing-sanitizer";
+import { buildTitleBlueprint } from "@/lib/title-strategy";
 import { analyzeBackendSearchTerms } from "@/lib/search-terms";
 import type {
   CompetitorProfile,
@@ -67,8 +69,51 @@ export function analyzeListing(
   } else if (listing.title.length > policy.titleMax) {
     errors.push({ field: "title", code: "TITLE_TOO_LONG", message: `Title exceeds ${policy.titleMax} characters.` });
   }
+  if (
+    listing.title.trim() &&
+    (listing.title.length < policy.titleTargetMin || listing.title.length > policy.titleTargetMax)
+  ) {
+    warnings.push({
+      field: "title",
+      code: "TITLE_LENGTH_NOT_IDEAL",
+      message: `Title should ideally contain ${policy.titleTargetMin}-${policy.titleTargetMax} characters.`,
+    });
+  }
   if (!includesKeyword(listing.title, input.main_keyword)) {
     errors.push({ field: "title", code: "MAIN_KEYWORD_MISSING", message: "Title must include the main keyword." });
+  }
+  const titleBlueprint = buildTitleBlueprint(input);
+  const primaryIdentity = [titleBlueprint.brand, titleBlueprint.coreKeyword1.keyword]
+    .filter(Boolean)
+    .join(" ");
+  const primaryStart = listing.title.toLocaleLowerCase().indexOf(primaryIdentity.toLocaleLowerCase());
+  if (
+    primaryIdentity &&
+    (primaryStart < 0 || primaryStart + primaryIdentity.length > policy.titlePrimaryWindow)
+  ) {
+    errors.push({
+      field: "title",
+      code: "TITLE_PRIMARY_KEYWORD_AFTER_70",
+      message: `Brand and Core KW 1 must appear completely within the first ${policy.titlePrimaryWindow} characters.`,
+    });
+  }
+  if (
+    titleBlueprint.coreKeyword2 &&
+    !includesKeyword(listing.title, titleBlueprint.coreKeyword2.keyword)
+  ) {
+    errors.push({
+      field: "title",
+      code: "CORE_KEYWORD_2_MISSING",
+      message: "Title must include the selected Core KW 2 expansion.",
+    });
+  }
+  const repeatedWords = repeatedTitleWords(listing.title);
+  if (repeatedWords.length) {
+    errors.push({
+      field: "title",
+      code: "TITLE_WORD_REPETITION",
+      message: `Title repeats these words more than twice: ${repeatedWords.join(", ")}.`,
+    });
   }
   if (listing.bullet_points.length !== policy.bulletCount) {
     errors.push({ field: "bullet_points", code: "BULLET_COUNT", message: `Exactly ${policy.bulletCount} bullet points are required.` });

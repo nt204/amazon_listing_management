@@ -58,6 +58,7 @@ function blankInput(base: ListingInput, row: BatchImportRow): ListingInput {
     backend_keywords: [],
     research: {
       target_customer: "",
+      gift_giver: "",
       occasion: [],
       customer_insight: "",
       usp: "",

@@ -364,17 +364,29 @@ export function ListingForm({
           </Field>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Field
-            label="Đối tượng mua hoặc nhận"
+            label="Đối tượng được tặng"
             htmlFor="target_customer"
-            hint="Shopping context, không được xem là product fact."
+            hint="Người nhận phù hợp với sản phẩm."
           >
             <TextInput
               id="target_customer"
               value={value.research.target_customer}
               onChange={(event) => updateResearch("target_customer", event.target.value)}
-              placeholder="Registered nurses and nursing students"
+              placeholder="Nurses, RNs, nursing students"
+            />
+          </Field>
+          <Field
+            label="Đối tượng tặng"
+            htmlFor="gift_giver"
+            hint="Người mua hoặc người trao quà."
+          >
+            <TextInput
+              id="gift_giver"
+              value={value.research.gift_giver || ""}
+              onChange={(event) => updateResearch("gift_giver", event.target.value)}
+              placeholder="Coworkers, friends, family"
             />
           </Field>
           <Field

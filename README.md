@@ -24,11 +24,15 @@ Nếu có API key, app dùng AI thật. Mock chỉ chạy khi không có provide
 ## Pipeline sinh listing
 
 1. Đọc dữ liệu operator đã điền.
-2. Chạy Tesseract OCR cục bộ và đưa nguyên văn các dòng đọc được cho AI.
-3. Đọc tối đa 3 ASIN để lấy title, cách gọi sản phẩm và các thuộc tính đối thủ. Đây chỉ là bối cảnh tham khảo, không phải fact của sản phẩm.
-4. Gọi một AI writer duy nhất với input, OCR, ảnh nguồn và tóm tắt reference để sinh SEO title, đúng 5 bullet points, description và backend search terms.
-5. Server chỉ làm sạch định dạng cơ bản: giới hạn ký tự/byte, bỏ brand, ASIN, stop word và từ trùng trong backend terms.
-6. Nếu provider chính lỗi, hệ thống chỉ chuyển sang provider fallback đã cấu hình; không có analyst pass, keyword-planner pass hoặc quality retry.
+2. Nếu Helium 10 được cấu hình, lấy Search Volume và chọn KW lõi 1/2 cùng các keyword Event, người nhận và người tặng có liên quan.
+3. Chạy Tesseract OCR cục bộ và đưa nguyên văn các dòng đọc được cho AI.
+4. Đọc tối đa 3 ASIN để lấy title, cách gọi sản phẩm và các thuộc tính đối thủ. Đây chỉ là bối cảnh tham khảo, không phải fact của sản phẩm.
+5. Gọi một AI writer duy nhất với input, OCR, ảnh nguồn, keyword research và tóm tắt reference để sinh SEO title, đúng 5 bullet points, description và backend search terms.
+6. Title dùng thứ tự `Brand + KW lõi 1 + KW lõi 2 + Event + người nhận + người tặng + sản phẩm`, lý tưởng 120-150 ký tự, tối đa 200 ký tự và mỗi từ không quá 2 lần. `Brand + KW lõi 1` phải nằm trọn trong 70 ký tự đầu.
+7. Server kiểm tra lại title, giới hạn ký tự/byte và làm sạch backend terms.
+8. Nếu provider chính lỗi, hệ thống chỉ chuyển sang provider fallback đã cấu hình; không có quality retry.
+
+Để dùng Search Volume thật, cấu hình `HELIUM10_MCP_ACCESS_TOKEN`. Nếu không có token, hệ thống vẫn sinh listing từ keyword operator đã nhập và không tự gán Search Volume giả.
 
 ## Rule profile, không hardcode theo team
 
@@ -73,6 +77,7 @@ Production release phải chạy `npm run db:migrate` trước `npm run start`. 
 - `GET /api/health`
 - `GET /api/listings`
 - `POST /api/listings/generate`
+- `POST /api/keywords/research`
 - `POST /api/listings/batch`
 - `POST /api/listings/export`
 - `GET|PUT /api/listings/:id`

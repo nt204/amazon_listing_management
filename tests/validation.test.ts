@@ -51,7 +51,7 @@ test("a complete listing passes the basic Amazon format checks", () => {
 
   assert.equal(result.policy_validation.passed, true, JSON.stringify(result.policy_validation.errors));
   assert.equal(result.seo_analysis.main_keyword_used, true);
-  assert.equal(result.policy_validation.warnings.length, 0);
+  assert.ok(result.policy_validation.warnings.some((issue) => issue.code === "TITLE_LENGTH_NOT_IDEAL"));
 });
 
 test("validator requires the main keyword in the title", () => {
@@ -60,6 +60,16 @@ test("validator requires the main keyword in the title", () => {
 
   const result = analyzeListing(listing, input);
   assert.ok(result.policy_validation.errors.some((issue) => issue.code === "MAIN_KEYWORD_MISSING"));
+});
+
+test("validator keeps the complete brand and main keyword inside the first 70 characters", () => {
+  const listing = createMockListing(input);
+  listing.title = `Handmade ceramic keepsake with a cheerful retro design for daily use, ${input.brand} ${input.main_keyword}`;
+
+  const result = analyzeListing(listing, input);
+  assert.ok(
+    result.policy_validation.errors.some((issue) => issue.code === "TITLE_PRIMARY_KEYWORD_AFTER_70"),
+  );
 });
 
 test("validator enforces title, bullet, description, and search-term limits", () => {

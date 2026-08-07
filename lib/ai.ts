@@ -4,14 +4,16 @@ import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
 import { enrichCompetitorResearch } from "@/lib/competitor";
 import { buildOperatorEvidenceItems, inferEvidenceCategory } from "@/lib/evidence";
+import { enrichListingKeywordResearch } from "@/lib/helium10";
 import { extractLocalOcr } from "@/lib/local-ocr";
-import { normalizeRequiredTitle, trimAtWordBoundary, trimDescriptionToTarget } from "@/lib/listing-sanitizer";
+import { finalizeStructuredTitle, trimAtWordBoundary, trimDescriptionToTarget } from "@/lib/listing-sanitizer";
 import { createMockListing } from "@/lib/mock";
 import { getGeminiModels, getOpenAIModels } from "@/lib/models";
 import { getPolicy } from "@/lib/policies";
 import { getRuleRegistry } from "@/lib/rules";
 import { generatedListingJsonSchema, generatedListingSchema } from "@/lib/schemas";
 import { optimizeBackendSearchTerms } from "@/lib/search-terms";
+import { buildTitleBlueprint, type TitleBlueprint } from "@/lib/title-strategy";
 import { analyzeListing } from "@/lib/validation";
 import type {
   ListingContent,
@@ -123,6 +125,7 @@ function operatorInput(input: ListingInput) {
     related_keywords: input.related_keywords,
     preferred_backend_keywords: input.backend_keywords,
     target_customer: input.research.target_customer || undefined,
+    gift_giver: input.research.gift_giver || undefined,
     occasions: input.research.occasion,
     customer_insight: input.research.customer_insight || undefined,
     usp: input.research.usp || undefined,
@@ -152,12 +155,22 @@ function buildPrompt(
   input: ListingInput,
   ocr: LocalOcrResult | undefined,
   options: GenerationOptions,
+  titleBlueprint: TitleBlueprint,
 ) {
   const policy = getPolicy(input);
   return `Create one Amazon ${input.marketplace} listing.
 
 Requirements:
-- Title: start naturally with the brand and exact main keyword; max ${policy.titleMax} characters; no keyword stuffing.
+- Title: use this exact group order: Brand + Core KW 1 + Core KW 2 + gift occasions + gift recipients + gift givers + product.
+- Write one coherent, shopper-readable title. Use natural English connectors and punctuation instead of concatenating raw keyword labels.
+- Keep Core KW 1 and Core KW 2 verbatim. Core KW 1 is the main keyword. Core KW 2 is its measured expansion with the highest available Search Volume.
+- Put the complete Brand + Core KW 1 combination within the first ${titleBlueprint.primaryKeywordWindow} characters so it remains visible on mobile.
+- Use only relevant events from title_blueprint.events. Use up to 3-4 events when they fit. Put upcoming dated events first in ascending daysUntil order, followed by year-round events. Never add a past or distant event.
+- Choose recipient and giver synonyms that fit the product. Prefer title_blueprint.audienceKeywords in descending Search Volume order. In recipient or giver synonym groups, use hyphens instead of the word "and", for example "for Dad-Father-Daddy".
+- End the title with a concise product segment containing a supported advantage and the product name. If the product word already appears twice in the core keywords, use a natural supported synonym in the final segment.
+- No normalized word may appear more than twice anywhere in the title. Do not keyword-stuff.
+- Aim for ${titleBlueprint.idealMinimumCharacters}-${titleBlueprint.idealMaximumCharacters} characters, including spaces and punctuation. Prefer concise natural wording over filling unused space.
+- The hard title limit is ${Math.min(policy.titleMax, titleBlueprint.maxCharacters)} characters. Do not approach this limit merely to add more keywords.
 - Bullets: exactly 5 complete English sentences, roughly 120-200 characters each; use concrete product details and shopper benefits.
 - Description: ${input.configuration.generate_description ? "about 700-1000 characters" : "empty string"}; factual and easy to read.
 - Backend search terms: ${input.configuration.generate_search_terms ? "space-separated relevant shopper terms, ideally 120-220 bytes; generate useful alternate shopper wording that is not already prominent in the visible copy" : "empty string"}; no punctuation, brands, ASINs, filler, or repeated words.
@@ -168,6 +181,7 @@ Requirements:
 
 INPUT:
 ${JSON.stringify({
+    title_blueprint: titleBlueprint,
     operator: operatorInput(input),
     product_image_ocr: ocrInput(ocr, options.productBrief),
     competitor_reference: simpleCompetitorReference(input),
@@ -308,10 +322,20 @@ async function callOpenAI(
   };
 }
 
-function cleanListing(listing: ListingContent, input: ListingInput, brief: ProductBrief) {
+function cleanListing(
+  listing: ListingContent,
+  input: ListingInput,
+  brief: ProductBrief,
+  titleBlueprint: TitleBlueprint,
+) {
   const policy = getPolicy(input);
   const title = trimAtWordBoundary(
-    normalizeRequiredTitle(listing.title, input.brand, input.main_keyword),
+    finalizeStructuredTitle({
+      title: listing.title,
+      brand: titleBlueprint.brand,
+      coreKeyword1: titleBlueprint.coreKeyword1.keyword,
+      coreKeyword2: titleBlueprint.coreKeyword2?.keyword,
+    }),
     policy.titleMax,
   );
   const bulletPoints = listing.bullet_points.slice(0, 5).map((bullet) =>
@@ -344,10 +368,16 @@ export async function generateListing(
   options: GenerationOptions = {},
 ): Promise<ListingResult> {
   const startedAt = Date.now();
-  const input = options.productBrief ? sourceInput : await enrichCompetitorResearch(sourceInput);
+  const keywordInput = options.productBrief
+    ? sourceInput
+    : await enrichListingKeywordResearch(sourceInput, options.signal);
+  const input = options.productBrief
+    ? keywordInput
+    : await enrichCompetitorResearch(keywordInput);
   const ocr = options.productBrief ? undefined : await extractLocalOcr(input, options.signal);
   const brief = simpleBrief(input, ocr, options.productBrief);
-  const prompt = buildPrompt(input, ocr, options);
+  const titleBlueprint = buildTitleBlueprint(input);
+  const prompt = buildPrompt(input, ocr, options, titleBlueprint);
   const hasGemini = Boolean(process.env.GEMINI_API_KEY?.trim());
   const hasOpenAI = Boolean(process.env.OPENAI_API_KEY?.trim());
   const mock = !hasGemini && !hasOpenAI && process.env.AI_MOCK_MODE === "true";
@@ -398,7 +428,7 @@ export async function generateListing(
     }
   }
 
-  const listing = cleanListing(providerOutput.listing, input, brief);
+  const listing = cleanListing(providerOutput.listing, input, brief, titleBlueprint);
   const analysis = analyzeListing(listing, input, {
     relatedKeywords: brief.related_keywords,
     suppliedFacts: brief.supplied_facts,

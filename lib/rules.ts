@@ -22,6 +22,9 @@ interface RuleProfile {
   product_types: Array<{ value: string; label: string }>;
   limits: {
     title_max: number;
+    title_target_min: number;
+    title_target_max: number;
+    title_primary_window: number;
     bullet_max: number;
     bullet_target_min: number;
     bullet_target_max: number;
@@ -35,7 +38,13 @@ interface RuleProfile {
   };
   marketplace_overrides: Record<Marketplace, { language: string; stop_words: string[] }>;
   ocr: OcrRules;
-  search: { prohibited_words: string[] };
+  search: {
+    prohibited_words: string[];
+    competitor_count: number;
+    minimum_attribute_search_volume: number;
+    maximum_generic_keywords: number;
+    minimum_relevance_score: number;
+  };
   competitor: {
     role_words: string[];
     product_words: string[];
@@ -66,6 +75,13 @@ function parseRegistry(value: unknown): ListingRuleRegistry {
     }
     if (Object.values(profile.limits).some((value) => !Number.isFinite(value) || value <= 0)) {
       throw new Error(`Rule profile '${name}' has invalid limits.`);
+    }
+    if (
+      profile.limits.title_target_min > profile.limits.title_target_max ||
+      profile.limits.title_target_max > profile.limits.title_max ||
+      profile.limits.title_primary_window > profile.limits.title_max
+    ) {
+      throw new Error(`Rule profile '${name}' has inconsistent title limits.`);
     }
     for (const marketplace of ["US", "UK", "DE"] as Marketplace[]) {
       const rules = profile.marketplace_overrides?.[marketplace];

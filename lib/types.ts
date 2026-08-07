@@ -2,6 +2,44 @@ import type { AiProviderPreference } from "@/lib/models";
 
 export type Marketplace = "US" | "UK" | "DE";
 export type ListingStatus = "Draft" | "Review" | "Approved" | "Exported";
+export type KeywordResearchCategory =
+  | "core"
+  | "long_tail"
+  | "occasion"
+  | "audience"
+  | "attribute"
+  | "other";
+
+export interface KeywordResearchTerm {
+  keyword: string;
+  search_volume: number | null;
+  cpc: number | null;
+  iq_score: number | null;
+  organic_rank: number | null;
+  sponsored_rank: number | null;
+  competitor_asins: string[];
+  competitor_count: number;
+  category: KeywordResearchCategory;
+  relevance_score: number;
+  opportunity_score: number;
+  selected: boolean;
+  exclusion_reason?: string;
+}
+
+export interface KeywordResearchSnapshot {
+  source: "helium10" | "mock";
+  seed_keyword: string;
+  marketplace: Marketplace;
+  competitor_asins: string[];
+  terms: KeywordResearchTerm[];
+  generic_keywords: string[];
+  search_terms: string;
+  top_core_keywords: string[];
+  minimum_attribute_search_volume: number;
+  captured_at: string;
+  warnings: string[];
+}
+
 export type EvidenceConfidence = "high" | "medium";
 export type OwnEvidenceStatus = "confirmed" | "missing";
 export type ProductEvidenceSource = "operator" | "image_ocr" | "image_visual";
@@ -96,6 +134,7 @@ export interface ListingInput {
   backend_keywords: string[];
   research: {
     target_customer: string;
+    gift_giver?: string;
     occasion: string[];
     customer_insight: string;
     usp: string;
@@ -103,6 +142,7 @@ export interface ListingInput {
     competitor_notes: string;
     notes: string;
     competitor_profile?: CompetitorProfile;
+    keyword_research?: KeywordResearchSnapshot;
   };
   images: Array<{
     name: string;

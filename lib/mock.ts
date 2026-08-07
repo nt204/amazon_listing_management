@@ -1,7 +1,9 @@
 import type { ListingContent, ListingInput, ProductBrief } from "@/lib/types";
 import { buildOperatorEvidenceItems } from "@/lib/evidence";
-import { trimAtWordBoundary } from "@/lib/listing-sanitizer";
+import { normalizeKeyword } from "@/lib/keyword-research";
+import { finalizeStructuredTitle, trimAtWordBoundary } from "@/lib/listing-sanitizer";
 import { getPolicy } from "@/lib/policies";
+import { buildTitleBlueprint } from "@/lib/title-strategy";
 
 const sentence = (value: string) => value.trim().replace(/[.!?]+$/, "");
 
@@ -61,15 +63,34 @@ export function createMockProductBrief(input: ListingInput): ProductBrief {
 
 export function createMockListing(input: ListingInput): ListingContent {
   const policy = getPolicy(input);
+  const titleBlueprint = buildTitleBlueprint(input);
   const info = input.product_information;
   const feature = info.features[0] || input.research.usp || "Made for everyday use";
   const audience = input.research.target_customer || "friends, family, and coworkers";
   const occasion = input.research.occasion[0] || "birthdays and everyday gifting";
   const productLabel = input.product_type.toLowerCase();
   const brand = input.brand.trim();
-  const brandPrefix = brand ? `${brand} ` : "";
   const details = [info.material, info.size_capacity, info.color].filter(Boolean).join(", ");
   const related = input.related_keywords.slice(0, 3);
+  const requestedEvents = new Set(input.research.occasion.map(normalizeKeyword));
+  const events = titleBlueprint.events
+    .filter((event) => requestedEvents.has(normalizeKeyword(event.keyword)))
+    .slice(0, 4)
+    .map((event) => event.keyword)
+    .join("-");
+  const audienceGroup = (value: string) => value
+    .split(/\s*(?:,|;|\band\b|&)\s*/i)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .join("-");
+  const titleCandidate = [
+    `${titleBlueprint.brand} ${titleBlueprint.coreKeyword1.keyword}`.trim(),
+    titleBlueprint.coreKeyword2?.keyword,
+    events,
+    titleBlueprint.recipientSeed ? `for ${audienceGroup(titleBlueprint.recipientSeed)}` : "",
+    titleBlueprint.giverSeed ? `from ${audienceGroup(titleBlueprint.giverSeed)}` : "",
+    [titleBlueprint.productAdvantages[0], titleBlueprint.productName].filter(Boolean).join(" "),
+  ].filter(Boolean).join(", ");
 
   const bulletCandidates = [
     `${sentence(feature)} - A practical ${productLabel} created for ${audience}.`,
@@ -90,10 +111,12 @@ export function createMockListing(input: ListingInput): ListingContent {
   ];
 
   return {
-    title: trimAtWordBoundary([
-      `${brandPrefix}${input.main_keyword}`.trim(),
-      ...[info.size_capacity, info.material, info.color].filter(Boolean),
-    ].join(", "), policy.titleMax),
+    title: trimAtWordBoundary(finalizeStructuredTitle({
+      title: titleCandidate,
+      brand,
+      coreKeyword1: titleBlueprint.coreKeyword1.keyword,
+      coreKeyword2: titleBlueprint.coreKeyword2?.keyword,
+    }), policy.titleMax),
     bullet_points: bulletCandidates
       .slice(0, input.configuration.bullet_count)
       .map((bullet) => bullet.slice(0, input.configuration.bullet_length)),
