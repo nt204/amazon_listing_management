@@ -331,7 +331,7 @@ export function ListingForm({
           <Field
             label="Từ khóa liên quan"
             htmlFor="related_keywords"
-            hint="Một cụm mỗi dòng. Dùng cho title, bullet và description."
+            hint="Một cụm mỗi dòng. Cụm đầu tiên được dùng làm KW lõi 2 trong title."
           >
             <KeywordTextArea
               id="related_keywords"

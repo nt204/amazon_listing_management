@@ -96,11 +96,11 @@ const input: ListingInput = {
   },
 };
 
-test("title blueprint keeps the main keyword first and selects the highest-volume expansion", () => {
+test("title blueprint uses the first related-keyword phrase as Core KW 2", () => {
   const blueprint = buildTitleBlueprint(input, new Date("2026-08-07T00:00:00.000Z"));
 
   assert.deepEqual(blueprint.coreKeyword1, { keyword: "cat dad mug", searchVolume: 3_000 });
-  assert.deepEqual(blueprint.coreKeyword2, { keyword: "cat dad gift mug", searchVolume: 2_200 });
+  assert.deepEqual(blueprint.coreKeyword2, { keyword: "funny cat dad mug", searchVolume: 1_400 });
   assert.deepEqual(blueprint.audienceKeywords.slice(0, 2), [
     { keyword: "gift for father", searchVolume: 1_100 },
     { keyword: "gift from daughter", searchVolume: 800 },
@@ -111,21 +111,18 @@ test("title blueprint keeps the main keyword first and selects the highest-volum
   assert.equal(blueprint.maxCharacters, 200);
 });
 
-test("event candidates exclude passed or distant events and put year-round events last", () => {
+test("event candidates expose a neutral reference list with operator and research evidence", () => {
   const blueprint = buildTitleBlueprint(input, new Date("2026-08-07T00:00:00.000Z"));
-  const eventNames = blueprint.events.map((event) => event.keyword);
+  const events = new Map(blueprint.events.map((event) => [event.keyword, event]));
 
-  assert.deepEqual(eventNames.slice(0, 6), [
-    "Homecoming",
-    "Halloween",
-    "Veterans Day",
-    "Thanksgiving",
-    "Christmas",
-    "New Year",
-  ]);
-  assert.ok(!eventNames.includes("Father's Day"));
-  assert.ok(!eventNames.includes("Mother's Day"));
-  assert.deepEqual(eventNames.slice(-3), ["Birthday", "Anniversary", "Retirement"]);
+  assert.equal(events.get("Christmas")?.operatorSelected, true);
+  assert.equal(events.get("Christmas")?.keywordResearchSupported, true);
+  assert.equal(events.get("Father's Day")?.operatorSelected, true);
+  assert.ok((events.get("Father's Day")?.daysUntil || 0) > 180);
+  assert.ok(events.has("Memorial Day"));
+  assert.ok(events.has("Independence Day"));
+  assert.equal(events.get("Halloween")?.operatorSelected, false);
+  assert.equal(events.get("Halloween")?.keywordResearchSupported, false);
 });
 
 test("final title uses hyphens for audience groups and limits every word to two uses", () => {

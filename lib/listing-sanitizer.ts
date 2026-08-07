@@ -6,6 +6,15 @@ function cleanCopy(value: string) {
     .trim();
 }
 
+/** Preserve the AI-written title while cleaning whitespace and punctuation spacing only. */
+export function cleanGeneratedTitle(value: string) {
+  return value
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .replace(/([,.;:!?])(?!\s|$)/g, "$1 ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

@@ -68,7 +68,7 @@
       "competitor": {
         "role_words": ["dad", "father", "mom", "mother", "man", "men", "woman", "women", "husband", "wife", "boyfriend", "girlfriend", "grandpa", "grandfather", "grandma", "grandmother", "son", "daughter", "brother", "sister", "uncle", "aunt", "friend", "coworker", "owner", "lover", "parent", "nurse", "teacher", "student", "coach", "boss", "employee", "kid", "boy", "girl", "baby", "couple", "partner", "soldier", "veteran"],
         "product_words": ["mug", "cup", "tumbler", "shirt", "tshirt", "tee", "hoodie", "sweatshirt", "blanket", "ornament", "candle", "poster", "print", "plaque", "keychain", "necklace", "bracelet", "tote", "bag", "pillow", "notebook", "journal", "card", "sign", "banner", "tapestry", "glass", "bottle", "drinkware", "coffee", "tea", "decor", "decoration", "keepsake", "accessory"],
-        "occasions": ["Father's Day", "Mother's Day", "Valentine's Day", "Nurse Week", "Birthday", "Christmas", "Graduation", "Anniversary", "Retirement", "Veterans Day", "Homecoming", "Halloween", "Thanksgiving", "New Year"]
+        "occasions": ["Father's Day", "Mother's Day", "Valentine's Day", "Nurse Week", "Birthday", "Christmas", "Graduation", "Anniversary", "Retirement", "Veterans Day", "Memorial Day", "Independence Day", "Homecoming", "Halloween", "Thanksgiving", "New Year"]
       },
       "generation": {
         "field_revision_rules": {

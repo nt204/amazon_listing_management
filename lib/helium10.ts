@@ -460,8 +460,10 @@ export async function enrichListingKeywordResearch(input: ListingInput, signal?:
     return {
       ...input,
       related_keywords: [...new Set([
-        ...research.generic_keywords.map(titleCaseKeyword),
         ...input.related_keywords,
+        ...research.generic_keywords
+          .filter((keyword) => normalizeKeyword(keyword) !== normalizeKeyword(input.main_keyword))
+          .map(titleCaseKeyword),
       ])].slice(0, 50),
       backend_keywords: [...new Set([...research.search_terms.split(" "), ...input.backend_keywords])].slice(0, 50),
       research: {

@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeRequiredTitle, trimAtWordBoundary, trimDescriptionToTarget } from "../lib/listing-sanitizer";
+import {
+  cleanGeneratedTitle,
+  normalizeRequiredTitle,
+  trimAtWordBoundary,
+  trimDescriptionToTarget,
+} from "../lib/listing-sanitizer";
 
 test("required title identity is placed once without duplicate keyword fragments", () => {
   assert.equal(
@@ -30,4 +35,13 @@ test("long copy is trimmed cleanly at a word or sentence boundary", () => {
   const trimmed = trimDescriptionToTarget(description, 650, 800);
   assert.ok(trimmed.length >= 650 && trimmed.length <= 800);
   assert.match(trimmed, /[.!?]$/);
+});
+
+test("AI-written title is preserved without deleting words or rewriting connectors", () => {
+  const title = "Limima Thank You Veterans Garden Flag,  Patriotic Garden Flag, Memorial Day-Retirement Gifts for Hero-Soldier by Daughter-Son, Double-Sided Yard Banner";
+
+  assert.equal(
+    cleanGeneratedTitle(title),
+    "Limima Thank You Veterans Garden Flag, Patriotic Garden Flag, Memorial Day-Retirement Gifts for Hero-Soldier by Daughter-Son, Double-Sided Yard Banner",
+  );
 });

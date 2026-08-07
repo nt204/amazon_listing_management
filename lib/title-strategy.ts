@@ -1,9 +1,8 @@
-import { isKeywordExpansion, normalizeKeyword } from "@/lib/keyword-research";
+import { normalizeKeyword } from "@/lib/keyword-research";
 import { getPolicy } from "@/lib/policies";
 import type { KeywordResearchTerm, ListingInput } from "@/lib/types";
 
 const DAY_MS = 86_400_000;
-const EVENT_LOOKAHEAD_DAYS = 180;
 
 interface EventDefinition {
   name: string;
@@ -19,6 +18,8 @@ export interface RankedTitleKeyword {
 export interface TitleEventCandidate extends RankedTitleKeyword {
   daysUntil: number | null;
   yearRound: boolean;
+  operatorSelected: boolean;
+  keywordResearchSupported: boolean;
 }
 
 export interface TitleBlueprint {
@@ -48,13 +49,21 @@ function nthWeekday(year: number, month: number, weekday: number, occurrence: nu
   return utcDate(year, month, 1 + offset + (occurrence - 1) * 7);
 }
 
+function lastWeekday(year: number, month: number, weekday: number) {
+  const last = utcDate(year, month + 1, 0);
+  const offset = (last.getUTCDay() - weekday + 7) % 7;
+  return utcDate(year, month, last.getUTCDate() - offset);
+}
+
 const eventDefinitions: EventDefinition[] = [
   { name: "New Year", aliases: ["new year", "new year's day"], nextDate: (year) => utcDate(year, 1, 1) },
   { name: "Valentine's Day", aliases: ["valentine's day", "valentines day", "valentine"], nextDate: (year) => utcDate(year, 2, 14) },
   { name: "Nurse Week", aliases: ["nurse week", "nurses week"], nextDate: (year) => utcDate(year, 5, 6) },
   { name: "Mother's Day", aliases: ["mother's day", "mothers day"], nextDate: (year) => nthWeekday(year, 5, 0, 2) },
   { name: "Graduation", aliases: ["graduation", "graduate"], nextDate: (year) => utcDate(year, 5, 15) },
+  { name: "Memorial Day", aliases: ["memorial day"], nextDate: (year) => lastWeekday(year, 5, 1) },
   { name: "Father's Day", aliases: ["father's day", "fathers day"], nextDate: (year) => nthWeekday(year, 6, 0, 3) },
+  { name: "Independence Day", aliases: ["independence day", "fourth of july", "4th of july", "july 4th"], nextDate: (year) => utcDate(year, 7, 4) },
   { name: "Homecoming", aliases: ["homecoming"], nextDate: (year) => utcDate(year, 9, 15) },
   { name: "Halloween", aliases: ["halloween"], nextDate: (year) => utcDate(year, 10, 31) },
   { name: "Veterans Day", aliases: ["veterans day", "veteran's day"], nextDate: (year) => utcDate(year, 11, 11) },
@@ -104,24 +113,12 @@ function rankedTerms(terms: KeywordResearchTerm[], categories: KeywordResearchTe
 }
 
 function selectCoreKeyword2(input: ListingInput, terms: KeywordResearchTerm[]) {
-  const mainKeyword = normalizeKeyword(input.main_keyword);
-  const mainKeywordVolume = metricForKeyword(terms, mainKeyword);
-  const measuredExpansion = rankedTerms(terms, ["core", "long_tail"])
-    .find((term) =>
-      isKeywordExpansion(term.keyword, mainKeyword) &&
-      (mainKeywordVolume === null || term.search_volume === null || term.search_volume <= mainKeywordVolume),
-    );
-  if (measuredExpansion) {
-    return {
-      keyword: measuredExpansion.keyword,
-      searchVolume: measuredExpansion.search_volume,
-    };
-  }
-  const operatorExpansion = input.related_keywords.find((keyword) =>
-    isKeywordExpansion(keyword, mainKeyword),
-  );
-  return operatorExpansion
-    ? { keyword: operatorExpansion, searchVolume: metricForKeyword(terms, operatorExpansion) }
+  const firstRelatedKeyword = input.related_keywords[0]?.trim();
+  return firstRelatedKeyword
+    ? {
+        keyword: firstRelatedKeyword,
+        searchVolume: metricForKeyword(terms, firstRelatedKeyword),
+      }
     : null;
 }
 
@@ -148,23 +145,22 @@ function buildEventCandidates(input: ListingInput, terms: KeywordResearchTerm[],
       const daysUntil = eventDate
         ? Math.max(0, Math.round((eventDate.getTime() - normalizedDay(now).getTime()) / DAY_MS))
         : null;
-      if (daysUntil !== null && daysUntil > EVENT_LOOKAHEAD_DAYS) return null;
       return {
         keyword: definition.name,
         searchVolume: measuredVolume.get(definition.name) ?? null,
         daysUntil,
         yearRound: daysUntil === null,
+        operatorSelected: explicitlyRequested.has(definition.name),
+        keywordResearchSupported: measuredVolume.has(definition.name),
       };
     })
     .filter((event): event is TitleEventCandidate => Boolean(event))
     .sort((left, right) => {
-      const leftRequested = explicitlyRequested.has(left.keyword) ? 1 : 0;
-      const rightRequested = explicitlyRequested.has(right.keyword) ? 1 : 0;
       return (
-        Number(left.yearRound) - Number(right.yearRound) ||
-        (left.daysUntil ?? Number.POSITIVE_INFINITY) - (right.daysUntil ?? Number.POSITIVE_INFINITY) ||
-        rightRequested - leftRequested ||
-        (right.searchVolume || 0) - (left.searchVolume || 0)
+        Number(right.operatorSelected) - Number(left.operatorSelected) ||
+        Number(right.keywordResearchSupported) - Number(left.keywordResearchSupported) ||
+        (right.searchVolume || 0) - (left.searchVolume || 0) ||
+        left.keyword.localeCompare(right.keyword)
       );
     });
 }

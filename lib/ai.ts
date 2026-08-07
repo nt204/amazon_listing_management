@@ -6,7 +6,7 @@ import { enrichCompetitorResearch } from "@/lib/competitor";
 import { buildOperatorEvidenceItems, inferEvidenceCategory } from "@/lib/evidence";
 import { enrichListingKeywordResearch } from "@/lib/helium10";
 import { extractLocalOcr } from "@/lib/local-ocr";
-import { finalizeStructuredTitle, trimAtWordBoundary, trimDescriptionToTarget } from "@/lib/listing-sanitizer";
+import { cleanGeneratedTitle, trimAtWordBoundary, trimDescriptionToTarget } from "@/lib/listing-sanitizer";
 import { createMockListing } from "@/lib/mock";
 import { getGeminiModels, getOpenAIModels } from "@/lib/models";
 import { getPolicy } from "@/lib/policies";
@@ -163,14 +163,17 @@ function buildPrompt(
 Requirements:
 - Title: use this exact group order: Brand + Core KW 1 + Core KW 2 + gift occasions + gift recipients + gift givers + product.
 - Write one coherent, shopper-readable title. Use natural English connectors and punctuation instead of concatenating raw keyword labels.
-- Keep Core KW 1 and Core KW 2 verbatim. Core KW 1 is the main keyword. Core KW 2 is its measured expansion with the highest available Search Volume.
+- Keep Core KW 1 and Core KW 2 verbatim. Core KW 1 is operator.main_keyword. Core KW 2 is exactly the first phrase in operator.related_keywords. Never replace Core KW 2 with another research term.
 - Put the complete Brand + Core KW 1 combination within the first ${titleBlueprint.primaryKeywordWindow} characters so it remains visible on mobile.
-- Use only relevant events from title_blueprint.events. Use up to 3-4 events when they fit. Put upcoming dated events first in ascending daysUntil order, followed by year-round events. Never add a past or distant event.
+- Treat title_blueprint.events only as a reference list, never as a list of events that must appear. Select 0-4 events only when the product theme, visible artwork or OCR text, operator occasions, or measured occasion keywords strongly support them.
+- Product relevance outranks calendar proximity. Never choose an event merely because its daysUntil value is small or because it appears early in the candidate list. A strongly theme-matched annual event may be used even when its next occurrence is farther away.
+- Prefer events marked operatorSelected or keywordResearchSupported when they also match the product. After selecting relevant events, order timely dated events before year-round occasions. Do not carry an event from current_listing unless the current evidence still supports it.
 - Choose recipient and giver synonyms that fit the product. Prefer title_blueprint.audienceKeywords in descending Search Volume order. In recipient or giver synonym groups, use hyphens instead of the word "and", for example "for Dad-Father-Daddy".
 - End the title with a concise product segment containing a supported advantage and the product name. If the product word already appears twice in the core keywords, use a natural supported synonym in the final segment.
 - No normalized word may appear more than twice anywhere in the title. Do not keyword-stuff.
 - Aim for ${titleBlueprint.idealMinimumCharacters}-${titleBlueprint.idealMaximumCharacters} characters, including spaces and punctuation. Prefer concise natural wording over filling unused space.
 - The hard title limit is ${Math.min(policy.titleMax, titleBlueprint.maxCharacters)} characters. Do not approach this limit merely to add more keywords.
+- Return the final polished title yourself. The server will not reorder its segments, inject keywords, replace connectors, or delete repeated words after generation.
 - Bullets: exactly 5 complete English sentences, roughly 120-200 characters each; use concrete product details and shopper benefits.
 - Description: ${input.configuration.generate_description ? "about 700-1000 characters" : "empty string"}; factual and easy to read.
 - Backend search terms: ${input.configuration.generate_search_terms ? "space-separated relevant shopper terms, ideally 120-220 bytes; generate useful alternate shopper wording that is not already prominent in the visible copy" : "empty string"}; no punctuation, brands, ASINs, filler, or repeated words.
@@ -326,16 +329,10 @@ function cleanListing(
   listing: ListingContent,
   input: ListingInput,
   brief: ProductBrief,
-  titleBlueprint: TitleBlueprint,
 ) {
   const policy = getPolicy(input);
   const title = trimAtWordBoundary(
-    finalizeStructuredTitle({
-      title: listing.title,
-      brand: titleBlueprint.brand,
-      coreKeyword1: titleBlueprint.coreKeyword1.keyword,
-      coreKeyword2: titleBlueprint.coreKeyword2?.keyword,
-    }),
+    cleanGeneratedTitle(listing.title),
     policy.titleMax,
   );
   const bulletPoints = listing.bullet_points.slice(0, 5).map((bullet) =>
@@ -428,7 +425,7 @@ export async function generateListing(
     }
   }
 
-  const listing = cleanListing(providerOutput.listing, input, brief, titleBlueprint);
+  const listing = cleanListing(providerOutput.listing, input, brief);
   const analysis = analyzeListing(listing, input, {
     relatedKeywords: brief.related_keywords,
     suppliedFacts: brief.supplied_facts,
