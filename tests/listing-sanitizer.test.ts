@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   cleanGeneratedTitle,
+  formatGeneratedTitleCase,
   normalizeRequiredTitle,
   trimAtWordBoundary,
   trimDescriptionToTarget,
@@ -43,5 +44,26 @@ test("AI-written title is preserved without deleting words or rewriting connecto
   assert.equal(
     cleanGeneratedTitle(title),
     "Limima Thank You Veterans Garden Flag, Patriotic Garden Flag, Memorial Day-Retirement Gifts for Hero-Soldier by Daughter-Son, Double-Sided Yard Banner",
+  );
+});
+
+test("generated title uses Title Case while minor words stay lowercase", () => {
+  const title = "limima thank you veterans garden flag for memorial day and independence day, gift for hero-soldier by daughter and son, double-sided yard banner";
+
+  assert.equal(
+    formatGeneratedTitleCase(title, { brand: "limima" }),
+    "Limima Thank You Veterans Garden Flag for Memorial Day and Independence Day, Gift for Hero-Soldier by Daughter and Son, Double-Sided Yard Banner",
+  );
+});
+
+test("visible artwork wording stays uppercase without adding quotation marks", () => {
+  const title = "Limima thank you veterans garden flag for heroes";
+
+  assert.equal(
+    formatGeneratedTitleCase(title, {
+      brand: "Limima",
+      uppercasePhrases: ["Thank You Veterans"],
+    }),
+    "Limima THANK YOU VETERANS Garden Flag for Heroes",
   );
 });

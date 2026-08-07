@@ -1,6 +1,6 @@
 {
-  "version": "2026-08-07.title-structure.4",
-  "prompt_version": "structured-title-v5",
+  "version": "2026-08-07.title-structure.5",
+  "prompt_version": "structured-title-v6",
   "default_profile": "amazon-pod",
   "profiles": {
     "amazon-pod": {
@@ -72,7 +72,7 @@
       },
       "generation": {
         "field_revision_rules": {
-          "title": "Rewrite only the title using Brand + Core KW 1 + Core KW 2 + gift occasions + recipients + givers + product, in that order.",
+          "title": "Rewrite only the title using Brand + Core KW 1 + Core KW 2 + gift occasions + recipients + givers + product, in that order. Use Title Case for important words while keeping articles, conjunctions, and short prepositions lowercase.",
           "bullet_points": "Rewrite the five bullet points with concrete product details and shopper benefits.",
           "description": "Rewrite the product description clearly and factually.",
           "backend_search_terms": "Rewrite the backend search terms with relevant alternate shopper vocabulary."

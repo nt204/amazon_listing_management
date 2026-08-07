@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "npm run db:start && npm run db:migrate && next dev",
-    "dev:app": "next dev",
+    "dev": "npm run db:start && npm run db:migrate && next dev --hostname 0.0.0.0",
+    "dev:app": "next dev --hostname 0.0.0.0",
     "db:start": "docker compose up -d db",
     "db:stop": "docker compose stop db",
     "db:migrate": "node --env-file-if-exists=.env --import tsx scripts/migrate.ts",

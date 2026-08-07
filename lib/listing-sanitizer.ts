@@ -15,6 +15,112 @@ export function cleanGeneratedTitle(value: string) {
     .trim();
 }
 
+const titleMinorWords = new Set([
+  "a",
+  "an",
+  "and",
+  "as",
+  "at",
+  "but",
+  "by",
+  "down",
+  "for",
+  "from",
+  "in",
+  "into",
+  "like",
+  "near",
+  "nor",
+  "of",
+  "off",
+  "on",
+  "onto",
+  "or",
+  "over",
+  "past",
+  "per",
+  "plus",
+  "save",
+  "so",
+  "than",
+  "the",
+  "till",
+  "to",
+  "up",
+  "upon",
+  "via",
+  "with",
+  "yet",
+]);
+
+const titleAcronyms = new Set([
+  "bbq",
+  "bpa",
+  "cna",
+  "diy",
+  "icu",
+  "led",
+  "lpn",
+  "mdf",
+  "pvc",
+  "rn",
+  "uk",
+  "us",
+  "usa",
+  "uv",
+]);
+
+function capitalizeTitleWord(word: string) {
+  const lower = word.toLocaleLowerCase();
+  if (titleMinorWords.has(lower)) return lower;
+  if (titleAcronyms.has(lower)) return lower.toLocaleUpperCase();
+  if (/\p{Ll}.*\p{Lu}/u.test(word)) return word;
+  const [first = "", ...remainder] = [...lower];
+  return `${first.toLocaleUpperCase()}${remainder.join("")}`;
+}
+
+function restorePhraseCasing(value: string, phrase: string, replacement: string) {
+  const expression = escapeRegExp(phrase.trim()).replace(/\s+/g, "\\s+");
+  if (!expression) return value;
+  return value.replace(
+    new RegExp(`(?<![\\p{L}\\p{N}])${expression}(?![\\p{L}\\p{N}])`, "giu"),
+    replacement,
+  );
+}
+
+/**
+ * Apply shopper-friendly Title Case without changing title words or structure.
+ * Articles, conjunctions, and short prepositions stay lowercase. Exact artwork
+ * wording can be restored in uppercase after casing the surrounding title.
+ */
+export function formatGeneratedTitleCase(
+  value: string,
+  options: { brand?: string; uppercasePhrases?: string[] } = {},
+) {
+  let formatted = value.replace(
+    /[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu,
+    (word) => capitalizeTitleWord(word),
+  );
+
+  const brand = options.brand?.trim();
+  if (brand) {
+    const displayBrand = /\p{Lu}/u.test(brand)
+      ? brand
+      : brand.replace(
+        /[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu,
+        (word) => capitalizeTitleWord(word),
+      );
+    formatted = restorePhraseCasing(formatted, brand, displayBrand);
+  }
+
+  for (const phrase of options.uppercasePhrases || []) {
+    const trimmed = phrase.trim();
+    if (trimmed) formatted = restorePhraseCasing(formatted, trimmed, trimmed.toLocaleUpperCase());
+  }
+
+  return formatted;
+}
+
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

@@ -6,7 +6,13 @@ import { enrichCompetitorResearch } from "@/lib/competitor";
 import { buildOperatorEvidenceItems, inferEvidenceCategory } from "@/lib/evidence";
 import { enrichListingKeywordResearch } from "@/lib/helium10";
 import { extractLocalOcr } from "@/lib/local-ocr";
-import { cleanGeneratedTitle, trimAtWordBoundary, trimDescriptionToTarget } from "@/lib/listing-sanitizer";
+import {
+  cleanGeneratedTitle,
+  formatGeneratedTitleCase,
+  finalizeStructuredTitle,
+  trimAtWordBoundary,
+  trimDescriptionToTarget,
+} from "@/lib/listing-sanitizer";
 import { createMockListing } from "@/lib/mock";
 import { getGeminiModels, getOpenAIModels } from "@/lib/models";
 import { getPolicy } from "@/lib/policies";
@@ -71,7 +77,7 @@ function listingResponseSchema(input: ListingInput) {
 const systemInstruction = `Create clear Amazon listing copy from the supplied product input.
 Operator facts and supplied product-image OCR are the source of truth. Use raw images only to understand visible appearance and confirm the supplied OCR.
 Competitor data is light inspiration for search intent, strengths, and gaps. Never copy its wording, brand, ASIN, or unsupported product claims.
-Use proper capitalization for brand and product names. In titles, preserve visible product artwork wording in uppercase without quotation marks.
+Use natural English Title Case in titles: capitalize important words, but keep articles, conjunctions, and short prepositions lowercase. Preserve visible product artwork wording in uppercase without quotation marks.
 Return only the requested JSON.`;
 
 function parseDataUrl(dataUrl: string) {
@@ -164,10 +170,11 @@ function buildPrompt(
 Requirements:
 - Title: use this exact group order: Brand + Core KW 1 + Core KW 2 + gift occasions + gift recipients + gift givers + product.
 - Write one coherent, shopper-readable title. Use natural English connectors and punctuation instead of concatenating raw keyword labels.
-- Write the brand and product name with proper capitalization. Use the official brand styling when supplied; otherwise use Title Case. Never leave the brand or product name in generic lowercase.
+- Use natural English Title Case throughout the title. Capitalize important nouns, verbs, adjectives, adverbs, brand words, and product-name words; keep articles, conjunctions, and short prepositions lowercase, including a, an, the, and, but, or, for, at, by, from, in, of, on, to, and with.
+- Use the official brand styling when supplied; otherwise write the brand in Title Case. Never leave the brand or product name in generic lowercase.
 - If the title uses exact wording visibly printed on the product or confirmed by OCR, write that wording in uppercase without quotation marks, for example THANK YOU VETERANS.
 - Never use straight or curly quotation marks anywhere in the title.
-- Keep Core KW 1 and Core KW 2 verbatim. Core KW 1 is operator.main_keyword. Core KW 2 is exactly the first phrase in operator.related_keywords. Never replace Core KW 2 with another research term.
+- Keep the words and word order of Core KW 1 and Core KW 2 unchanged, while adjusting their letter casing to match the title rule. Core KW 1 is operator.main_keyword. Core KW 2 is exactly the first phrase in operator.related_keywords. Never replace Core KW 2 with another research term.
 - Put the complete Brand + Core KW 1 combination within the first ${titleBlueprint.primaryKeywordWindow} characters so it remains visible on mobile.
 - Treat title_blueprint.events only as a reference list, never as a list of events that must appear. Select 0-4 events only when the product theme, visible artwork or OCR text, operator occasions, or measured occasion keywords strongly support them.
 - Product relevance outranks calendar proximity. Never choose an event merely because its daysUntil value is small or because it appears early in the candidate list. A strongly theme-matched annual event may be used even when its next occurrence is farther away.
@@ -333,10 +340,22 @@ function cleanListing(
   listing: ListingContent,
   input: ListingInput,
   brief: ProductBrief,
+  titleBlueprint: TitleBlueprint,
 ) {
   const policy = getPolicy(input);
   const title = trimAtWordBoundary(
-    cleanGeneratedTitle(listing.title),
+    formatGeneratedTitleCase(
+      finalizeStructuredTitle({
+        title: listing.title,
+        brand: titleBlueprint.brand,
+        coreKeyword1: titleBlueprint.coreKeyword1.keyword,
+        coreKeyword2: titleBlueprint.coreKeyword2?.keyword,
+      }),
+      {
+        brand: input.brand,
+        uppercasePhrases: brief.exact_text,
+      }
+    ),
     policy.titleMax,
   );
   const bulletPoints = listing.bullet_points.slice(0, 5).map((bullet) =>
@@ -429,7 +448,7 @@ export async function generateListing(
     }
   }
 
-  const listing = cleanListing(providerOutput.listing, input, brief);
+  const listing = cleanListing(providerOutput.listing, input, brief, titleBlueprint);
   const analysis = analyzeListing(listing, input, {
     relatedKeywords: brief.related_keywords,
     suppliedFacts: brief.supplied_facts,

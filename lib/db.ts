@@ -224,6 +224,25 @@ export async function getListing(scope: DataScope, id: string): Promise<StoredLi
   if (!rows[0]) return null;
   const listing = toStoredListing(rows[0]);
   listing.revisions = await listRevisions(scope, id);
+
+  const imageRows = await sql<{ image_index: number; mime_type: string; image_bytes: Buffer }[]>`
+    SELECT image_index, mime_type, image_bytes
+    FROM listing_images
+    WHERE listing_id = ${id} AND team_id = ${scope.teamId}
+    ORDER BY image_index ASC
+  `;
+  const imageMap = new Map<number, string>();
+  for (const imgRow of imageRows) {
+    const base64 = imgRow.image_bytes.toString("base64");
+    imageMap.set(imgRow.image_index, `data:${imgRow.mime_type};base64,${base64}`);
+  }
+  if (listing.input && Array.isArray(listing.input.images)) {
+    listing.input.images = listing.input.images.map((image, index) => ({
+      ...image,
+      data_url: imageMap.get(index) || image.data_url || "",
+    }));
+  }
+
   return listing;
 }
 

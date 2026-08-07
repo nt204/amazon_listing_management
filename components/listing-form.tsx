@@ -92,6 +92,7 @@ export function ListingForm({
       }
   >({ status: "idle" });
   const referenceRequest = useRef(0);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const issueFor = (field: string) => issues.find((issue) => issue.field === field)?.message;
   const updateResearch = (field: keyof ListingInput["research"], next: string) =>
     onChange((current) => ({
@@ -221,39 +222,57 @@ export function ListingForm({
             </Select>
           </Field>
           <Field label="Loại sản phẩm" htmlFor="product_type" required error={issueFor("product_type")}>
-            <Select
+            <TextInput
               id="product_type"
+              list="product_types_list"
               value={value.product_type}
               aria-invalid={Boolean(issueFor("product_type"))}
               onChange={(event) =>
                 onChange((current) => ({ ...current, product_type: event.target.value }))
               }
-            >
-              <option value="">Chọn loại</option>
+              placeholder="Chọn hoặc nhập loại..."
+            />
+            <datalist id="product_types_list">
               {(aiOptions?.product_types || []).map((productType) => (
-                <option key={productType.value} value={productType.value}>{productType.label}</option>
+                <option key={productType.value} value={productType.value}>
+                  {productType.label}
+                </option>
               ))}
-            </Select>
+            </datalist>
           </Field>
         </div>
 
-        <Field label="Model AI" htmlFor="ai_model">
-          <Select
-            id="ai_model"
-            value={selectedModel}
-            disabled={!availableModels.length}
-            onChange={(event) => selectModel(event.target.value)}
+        <div className="border-t border-[#e5e8ea] pt-4">
+          <button
+            type="button"
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            className="flex items-center gap-1.5 text-xs font-bold text-[#b84f1d] hover:text-[#963f17]"
           >
-            {!availableModels.length ? (
-              <option value="">{aiOptions ? "Chưa có API key" : "Đang tải..."}</option>
-            ) : null}
-            {availableModels.map((model) => (
-              <option key={`${model.provider}-${model.id}`} value={model.id}>
-                {model.label}
-              </option>
-            ))}
-          </Select>
-        </Field>
+            {showAdvanced ? "▼ Thu gọn cấu hình nâng cao" : "▶ Cấu hình nâng cao"}
+          </button>
+          
+          {showAdvanced && (
+            <div className="mt-3 grid gap-4 rounded-lg border border-[#dfe3e6] bg-[#fafbfb] p-4">
+              <Field label="Model AI" htmlFor="ai_model">
+                <Select
+                  id="ai_model"
+                  value={selectedModel}
+                  disabled={!availableModels.length}
+                  onChange={(event) => selectModel(event.target.value)}
+                >
+                  {!availableModels.length ? (
+                    <option value="">{aiOptions ? "Chưa có API key" : "Đang tải..."}</option>
+                  ) : null}
+                  {availableModels.map((model) => (
+                    <option key={`${model.provider}-${model.id}`} value={model.id}>
+                      {model.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+          )}
+        </div>
 
         <Field
           label="Ảnh sản phẩm"
@@ -368,7 +387,6 @@ export function ListingForm({
           <Field
             label="Đối tượng được tặng"
             htmlFor="target_customer"
-            hint="Người nhận phù hợp với sản phẩm."
           >
             <TextInput
               id="target_customer"
@@ -380,7 +398,6 @@ export function ListingForm({
           <Field
             label="Đối tượng tặng"
             htmlFor="gift_giver"
-            hint="Người mua hoặc người trao quà."
           >
             <TextInput
               id="gift_giver"
@@ -392,7 +409,6 @@ export function ListingForm({
           <Field
             label="Dịp mua hoặc tặng"
             htmlFor="occasions"
-            hint="Một dịp mỗi dòng; hệ thống sẽ mở rộng có kiểm soát."
           >
             <KeywordTextArea
               id="occasions"
