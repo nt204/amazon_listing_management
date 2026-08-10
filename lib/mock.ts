@@ -1,8 +1,8 @@
 import type { ListingContent, ListingInput, ProductBrief } from "@/lib/types";
 import { buildOperatorEvidenceItems } from "@/lib/evidence";
-import { normalizeKeyword } from "@/lib/keyword-research";
-import { finalizeStructuredTitle, trimAtWordBoundary } from "@/lib/listing-sanitizer";
+import { cleanGeneratedTitle, trimAtWordBoundary } from "@/lib/listing-sanitizer";
 import { getPolicy } from "@/lib/policies";
+import { optimizeBackendSearchTerms } from "@/lib/search-terms";
 import { buildTitleBlueprint } from "@/lib/title-strategy";
 
 const sentence = (value: string) => value.trim().replace(/[.!?]+$/, "");
@@ -72,24 +72,23 @@ export function createMockListing(input: ListingInput): ListingContent {
   const brand = input.brand.trim();
   const details = [info.material, info.size_capacity, info.color].filter(Boolean).join(", ");
   const related = input.related_keywords.slice(0, 3);
-  const requestedEvents = new Set(input.research.occasion.map(normalizeKeyword));
-  const events = titleBlueprint.events
-    .filter((event) => requestedEvents.has(normalizeKeyword(event.keyword)))
-    .slice(0, 4)
-    .map((event) => event.keyword)
-    .join("-");
-  const audienceGroup = (value: string) => value
-    .split(/\s*(?:,|;|\band\b|&)\s*/i)
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .join("-");
+  const designTheme = titleBlueprint.designThemeCandidates[0] || "";
+  const searchPhrase = titleBlueprint.highIntentKeywordCandidates[0]?.keyword || input.main_keyword;
+  const styleUse = titleBlueprint.styleUseCandidates.find(
+    (candidate) => candidate.toLocaleLowerCase() !== designTheme.toLocaleLowerCase(),
+  ) || "";
+  const keyFeature = titleBlueprint.keyFeatureCandidates.find((candidate) =>
+    ![designTheme, styleUse].some(
+      (used) => used && used.toLocaleLowerCase() === candidate.toLocaleLowerCase(),
+    ),
+  ) || "";
   const titleCandidate = [
-    `${titleBlueprint.brand} ${titleBlueprint.coreKeyword1.keyword}`.trim(),
-    titleBlueprint.coreKeyword2?.keyword,
-    events,
-    titleBlueprint.recipientSeed ? `for ${audienceGroup(titleBlueprint.recipientSeed)}` : "",
-    titleBlueprint.giverSeed ? `from ${audienceGroup(titleBlueprint.giverSeed)}` : "",
-    [titleBlueprint.productAdvantages[0], titleBlueprint.productName].filter(Boolean).join(" "),
+    [titleBlueprint.brand, input.product_type].filter(Boolean).join(" "),
+    [designTheme, searchPhrase, titleBlueprint.recipient ? `for ${titleBlueprint.recipient}` : ""]
+      .filter(Boolean)
+      .join(" "),
+    [styleUse, keyFeature].filter(Boolean).join(" "),
+    titleBlueprint.size,
   ].filter(Boolean).join(", ");
 
   const bulletCandidates = [
@@ -108,16 +107,11 @@ export function createMockListing(input: ListingInput): ListingContent {
     `THOUGHTFUL GIFT IDEA: Created for ${audience}, this ${productLabel} makes a thoughtful choice for ${occasion}, celebrations, or everyday appreciation.`,
   ];
 
-  return {
-    title: trimAtWordBoundary(finalizeStructuredTitle({
-      title: titleCandidate,
-      brand,
-      coreKeyword1: titleBlueprint.coreKeyword1.keyword,
-      coreKeyword2: titleBlueprint.coreKeyword2?.keyword,
-    }), policy.titleMax),
+  const listing: ListingContent = {
+    title: trimAtWordBoundary(cleanGeneratedTitle(titleCandidate), policy.titleMax),
     bullet_points: bulletCandidates
       .slice(0, input.configuration.bullet_count)
-      .map((bullet) => bullet.slice(0, input.configuration.bullet_length)),
+      .map((bullet) => bullet.slice(0, policy.bulletMax)),
     description: input.configuration.generate_description
       ? `Make gifting simple with this ${input.main_keyword}${brand ? ` from ${brand}` : ""}. ${sentence(feature)}. ${
           details ? `Product details include ${details}. ` : ""
@@ -134,5 +128,14 @@ export function createMockListing(input: ListingInput): ListingContent {
           .trim()
           .slice(0, 249)
       : "",
+  };
+  return {
+    ...listing,
+    backend_search_terms: optimizeBackendSearchTerms({
+      listing,
+      input,
+      currentValue: listing.backend_search_terms,
+      maxBytes: policy.searchTermsMaxBytes,
+    }),
   };
 }

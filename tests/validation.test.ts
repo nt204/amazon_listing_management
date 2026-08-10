@@ -47,11 +47,12 @@ const input: ListingInput = {
 };
 
 test("a complete listing passes the basic Amazon format checks", () => {
-  const result = analyzeListing(createMockListing(input), input);
+  const listing = createMockListing(input);
+  const result = analyzeListing(listing, input);
 
   assert.equal(result.policy_validation.passed, true, JSON.stringify(result.policy_validation.errors));
   assert.equal(result.seo_analysis.main_keyword_used, true);
-  assert.ok(result.policy_validation.warnings.some((issue) => issue.code === "TITLE_LENGTH_NOT_IDEAL"));
+  assert.match(listing.title, /^North Pine Gifts Mug,/);
 });
 
 test("mock bullets follow the benefit-led Amazon format", () => {
@@ -60,21 +61,21 @@ test("mock bullets follow the benefit-led Amazon format", () => {
   assert.ok(listing.bullet_points.every((bullet) => /^[A-Z][A-Z ]+: [A-Z]/.test(bullet)));
 });
 
-test("validator requires the main keyword in the title", () => {
+test("validator requires the exact main keyword phrase in the title", () => {
   const listing = createMockListing(input);
-  listing.title = "North Pine Gifts Ceramic Coffee Cup";
+  listing.title = listing.title.replace(input.main_keyword, "nurse coffee mug");
 
   const result = analyzeListing(listing, input);
   assert.ok(result.policy_validation.errors.some((issue) => issue.code === "MAIN_KEYWORD_MISSING"));
 });
 
-test("validator keeps the complete brand and main keyword inside the first 70 characters", () => {
+test("validator requires the supplied brand at the start of the title", () => {
   const listing = createMockListing(input);
   listing.title = `Handmade ceramic keepsake with a cheerful retro design for daily use, ${input.brand} ${input.main_keyword}`;
 
   const result = analyzeListing(listing, input);
   assert.ok(
-    result.policy_validation.errors.some((issue) => issue.code === "TITLE_PRIMARY_KEYWORD_AFTER_70"),
+    result.policy_validation.errors.some((issue) => issue.code === "TITLE_BRAND_OPENING"),
   );
 });
 
@@ -86,6 +87,30 @@ test("validator rejects quotation marks in titles", () => {
   assert.ok(
     result.policy_validation.errors.some((issue) => issue.code === "TITLE_QUOTES_NOT_ALLOWED"),
   );
+});
+
+test("validator rejects prohibited title characters outside the exact brand", () => {
+  const listing = createMockListing(input);
+  listing.title = `${input.brand} Mug! Nurse Gift, 11 oz`;
+
+  const result = analyzeListing(listing, input);
+  assert.ok(result.policy_validation.errors.some((issue) => issue.code === "TITLE_PROHIBITED_CHARACTERS"));
+});
+
+test("validator exempts grammar words from title repetition", () => {
+  const listing = createMockListing(input);
+  listing.title = `${input.brand} Mug for Nurses for Work for Home, 11 oz`;
+
+  const result = analyzeListing(listing, input);
+  assert.ok(!result.policy_validation.errors.some((issue) => issue.code === "TITLE_WORD_REPETITION"));
+});
+
+test("validator rejects a meaningful title word used more than twice", () => {
+  const listing = createMockListing(input);
+  listing.title = `${input.brand} Mug, Nurse Mug for Mug Lovers`;
+
+  const result = analyzeListing(listing, input);
+  assert.ok(result.policy_validation.errors.some((issue) => issue.code === "TITLE_WORD_REPETITION"));
 });
 
 test("validator enforces title, bullet, description, and search-term limits", () => {
@@ -109,6 +134,17 @@ test("validator removes ASINs from publishable backend terms", () => {
 
   const result = analyzeListing(listing, input);
   assert.ok(result.policy_validation.errors.some((issue) => issue.code === "ASIN_NOT_ALLOWED"));
+});
+
+test("validator rejects punctuation, duplicate words, and brands in backend terms", () => {
+  const listing = createMockListing(input);
+  listing.backend_search_terms = "North Pine Gifts nurse nurse gift!";
+
+  const result = analyzeListing(listing, input);
+  const codes = result.policy_validation.errors.map((issue) => issue.code);
+  assert.ok(codes.includes("SEARCH_TERMS_PUNCTUATION"));
+  assert.ok(codes.includes("SEARCH_TERMS_DUPLICATE"));
+  assert.ok(codes.includes("SEARCH_TERMS_BRAND"));
 });
 
 test("quality summary reports keyword and supplied fact usage without blocking publishing", () => {

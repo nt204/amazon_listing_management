@@ -352,7 +352,7 @@ export function ListingForm({
                   />
                 </Field>
                 <Field
-                  label="Backend ưu tiên"
+                  label="Generic keywords ưu tiên"
                   htmlFor="backend_keywords"
                   hint="Từ đồng nghĩa hoặc intent chưa có trong nội dung visible."
                 >

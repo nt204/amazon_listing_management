@@ -36,7 +36,7 @@ export async function POST(request: Request) {
         language: "",
         tone: "",
         bullet_count: 5,
-        title_length: 200,
+        title_length: profile.limits.title_max,
         bullet_length: 250,
         generate_description: true,
         generate_search_terms: true,

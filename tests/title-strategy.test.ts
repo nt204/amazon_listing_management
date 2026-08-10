@@ -1,10 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  finalizeStructuredTitle,
-  repeatedTitleWords,
-  trimAtWordBoundary,
-} from "../lib/listing-sanitizer";
 import { buildTitleBlueprint } from "../lib/title-strategy";
 import type { KeywordResearchTerm, ListingInput } from "../lib/types";
 
@@ -96,46 +91,22 @@ const input: ListingInput = {
   },
 };
 
-test("title blueprint uses the first related-keyword phrase as Core KW 2", () => {
-  const blueprint = buildTitleBlueprint(input, new Date("2026-08-07T00:00:00.000Z"));
+test("title blueprint maps verified input to the requested title template", () => {
+  const blueprint = buildTitleBlueprint(input);
 
-  assert.deepEqual(blueprint.coreKeyword1, { keyword: "cat dad mug", searchVolume: 3_000 });
-  assert.deepEqual(blueprint.coreKeyword2, { keyword: "funny cat dad mug", searchVolume: 1_400 });
-  assert.deepEqual(blueprint.audienceKeywords.slice(0, 2), [
-    { keyword: "gift for father", searchVolume: 1_100 },
-    { keyword: "gift from daughter", searchVolume: 800 },
+  assert.equal(blueprint.brand, "North Pine");
+  assert.equal(blueprint.productType, "Coffee Mug");
+  assert.deepEqual(blueprint.designThemeCandidates, ["Printed on both sides", "White"]);
+  assert.deepEqual(blueprint.highIntentKeywordCandidates, [
+    { keyword: "cat dad mug", searchVolume: 3_000 },
+    { keyword: "cat dad gift mug", searchVolume: 2_200 },
+    { keyword: "funny cat dad mug", searchVolume: 1_400 },
   ]);
-  assert.equal(blueprint.idealMinimumCharacters, 120);
-  assert.equal(blueprint.idealMaximumCharacters, 150);
-  assert.equal(blueprint.primaryKeywordWindow, 70);
+  assert.equal(blueprint.recipient, "Dad, Father, Daddy");
+  assert.deepEqual(blueprint.styleUseCandidates, ["Printed on both sides"]);
+  assert.deepEqual(blueprint.keyFeatureCandidates, ["Printed on both sides", "Ceramic"]);
+  assert.equal(blueprint.size, "11 oz");
+  assert.equal(blueprint.idealMinimumCharacters, 150);
+  assert.equal(blueprint.idealMaximumCharacters, 190);
   assert.equal(blueprint.maxCharacters, 200);
-});
-
-test("event candidates expose a neutral reference list with operator and research evidence", () => {
-  const blueprint = buildTitleBlueprint(input, new Date("2026-08-07T00:00:00.000Z"));
-  const events = new Map(blueprint.events.map((event) => [event.keyword, event]));
-
-  assert.equal(events.get("Christmas")?.operatorSelected, true);
-  assert.equal(events.get("Christmas")?.keywordResearchSupported, true);
-  assert.equal(events.get("Father's Day")?.operatorSelected, true);
-  assert.ok((events.get("Father's Day")?.daysUntil || 0) > 180);
-  assert.ok(events.has("Memorial Day"));
-  assert.ok(events.has("Independence Day"));
-  assert.equal(events.get("Halloween")?.operatorSelected, false);
-  assert.equal(events.get("Halloween")?.keywordResearchSupported, false);
-});
-
-test("final title uses hyphens for audience groups and limits every word to two uses", () => {
-  const finalized = finalizeStructuredTitle({
-    title: "North Pine Cat Dad Mug, Cat Dad Gift Mug, Christmas and Birthday Gifts for Dad and Father and Daddy from Daughter and Son, Printed Ceramic Coffee Cup",
-    brand: "North Pine",
-    coreKeyword1: "cat dad mug",
-    coreKeyword2: "cat dad gift mug",
-  });
-  const title = trimAtWordBoundary(finalized, 200);
-
-  assert.match(title, /^North Pine cat dad mug, cat dad gift mug,/i);
-  assert.doesNotMatch(title, /\band\b/i);
-  assert.deepEqual(repeatedTitleWords(title), []);
-  assert.ok(title.length <= 200);
 });

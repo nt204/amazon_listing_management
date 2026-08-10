@@ -5,14 +5,12 @@ export function getPolicy(input: ListingInput) {
   const registry = getRuleRegistry();
   const profile = getRuleProfile(input);
   const limits = profile.limits;
-  const configuredTitleLimit = input.configuration.title_length;
 
   return {
-    titleMax: Math.min(configuredTitleLimit, limits.title_max),
-    titleTargetMin: Math.min(limits.title_target_min, configuredTitleLimit),
-    titleTargetMax: Math.min(limits.title_target_max, configuredTitleLimit),
-    titlePrimaryWindow: Math.min(limits.title_primary_window, configuredTitleLimit),
-    bulletMax: Math.min(input.configuration.bullet_length, limits.bullet_max),
+    titleMax: limits.title_max,
+    titleTargetMin: limits.title_target_min,
+    titleTargetMax: limits.title_target_max,
+    bulletMax: limits.bullet_max,
     bulletTargetMin: limits.bullet_target_min,
     bulletTargetMax: limits.bullet_target_max,
     bulletCount: limits.bullet_count,

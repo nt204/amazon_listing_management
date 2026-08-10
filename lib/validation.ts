@@ -1,6 +1,6 @@
 import { getPolicy } from "@/lib/policies";
 import { repeatedTitleWords } from "@/lib/listing-sanitizer";
-import { buildTitleBlueprint } from "@/lib/title-strategy";
+import { getMarketplaceRules } from "@/lib/rules";
 import { analyzeBackendSearchTerms } from "@/lib/search-terms";
 import type {
   CompetitorProfile,
@@ -41,6 +41,11 @@ function includesKeyword(value: string, keyword: string) {
   return required.length > 0 && required.every((word) => available.has(word));
 }
 
+function includesPhrase(value: string, phrase: string) {
+  const normalizedPhrase = normalize(phrase);
+  return Boolean(normalizedPhrase) && ` ${normalize(value)} `.includes(` ${normalizedPhrase} `);
+}
+
 function factValue(value: string) {
   const separator = value.search(/[:：]/);
   return (separator >= 0 ? value.slice(separator + 1) : value).trim();
@@ -79,9 +84,6 @@ export function analyzeListing(
       message: `Title should ideally contain ${policy.titleTargetMin}-${policy.titleTargetMax} characters.`,
     });
   }
-  if (!includesKeyword(listing.title, input.main_keyword)) {
-    errors.push({ field: "title", code: "MAIN_KEYWORD_MISSING", message: "Title must include the main keyword." });
-  }
   if (/["“”]/u.test(listing.title)) {
     errors.push({
       field: "title",
@@ -89,32 +91,40 @@ export function analyzeListing(
       message: "Title must not contain straight or curly quotation marks.",
     });
   }
-  const titleBlueprint = buildTitleBlueprint(input);
-  const primaryIdentity = [titleBlueprint.brand, titleBlueprint.coreKeyword1.keyword]
-    .filter(Boolean)
-    .join(" ");
-  const primaryStart = listing.title.toLocaleLowerCase().indexOf(primaryIdentity.toLocaleLowerCase());
+  const titleOutsideExactBrand = input.brand.trim() && listing.title.startsWith(input.brand.trim())
+    ? listing.title.slice(input.brand.trim().length)
+    : listing.title;
+  const prohibitedTitleCharacters = titleOutsideExactBrand.match(/[!$?_{}^¬¦]/gu) || [];
+  if (prohibitedTitleCharacters.length) {
+    errors.push({
+      field: "title",
+      code: "TITLE_PROHIBITED_CHARACTERS",
+      message: `Title contains prohibited characters: ${unique(prohibitedTitleCharacters).join(" ")}.`,
+    });
+  }
+  const requiredOpening = input.brand.trim();
   if (
-    primaryIdentity &&
-    (primaryStart < 0 || primaryStart + primaryIdentity.length > policy.titlePrimaryWindow)
+    requiredOpening &&
+    !listing.title.toLocaleLowerCase().startsWith(requiredOpening.toLocaleLowerCase())
   ) {
     errors.push({
       field: "title",
-      code: "TITLE_PRIMARY_KEYWORD_AFTER_70",
-      message: `Brand and Core KW 1 must appear completely within the first ${policy.titlePrimaryWindow} characters.`,
+      code: "TITLE_BRAND_OPENING",
+      message: "Title must begin with the supplied brand.",
     });
   }
-  if (
-    titleBlueprint.coreKeyword2 &&
-    !includesKeyword(listing.title, titleBlueprint.coreKeyword2.keyword)
-  ) {
+  if (!includesPhrase(listing.title, input.main_keyword)) {
     errors.push({
       field: "title",
-      code: "CORE_KEYWORD_2_MISSING",
-      message: "Title must include the selected Core KW 2 expansion.",
+      code: "MAIN_KEYWORD_MISSING",
+      message: "Title must contain the main keyword using the same words in the same order.",
     });
   }
-  const repeatedWords = repeatedTitleWords(listing.title);
+  const repeatedWords = repeatedTitleWords(
+    listing.title,
+    2,
+    getMarketplaceRules(input).stop_words,
+  );
   if (repeatedWords.length) {
     errors.push({
       field: "title",
@@ -131,6 +141,12 @@ export function analyzeListing(
     } else if (bullet.length > policy.bulletMax) {
       errors.push({ field: `bullet_points[${index}]`, code: "BULLET_TOO_LONG", message: `Bullet ${index + 1} exceeds ${policy.bulletMax} characters.` });
     }
+    if (bullet.trim() && !/^[\p{Lu}\p{N}][\p{Lu}\p{N} '&/+-]{1,60}:\s+\S/u.test(bullet)) {
+      errors.push({ field: `bullet_points[${index}]`, code: "BULLET_FORMAT", message: `Bullet ${index + 1} must use UPPERCASE BENEFIT HEADER: natural sentence.` });
+    }
+    if (/(?:https?:\/\/|www\.|\b(?:refund|money[- ]back|guarantee|free shipping|discount|sale price)\b|[\p{Extended_Pictographic}])/iu.test(bullet)) {
+      errors.push({ field: `bullet_points[${index}]`, code: "BULLET_PROHIBITED_CONTENT", message: `Bullet ${index + 1} contains promotional, guarantee, link, or emoji content.` });
+    }
   });
   if (input.configuration.generate_description && !listing.description.trim()) {
     errors.push({ field: "description", code: "DESCRIPTION_MISSING", message: "Description is required." });
@@ -139,10 +155,20 @@ export function analyzeListing(
   }
   const backendBytes = new TextEncoder().encode(listing.backend_search_terms).length;
   if (backendBytes > policy.searchTermsMaxBytes) {
-    errors.push({ field: "backend_search_terms", code: "SEARCH_TERMS_TOO_LONG", message: `Search terms exceed ${policy.searchTermsMaxBytes} bytes.` });
+    errors.push({ field: "backend_search_terms", code: "SEARCH_TERMS_TOO_LONG", message: `Generic keywords exceed ${policy.searchTermsMaxBytes} bytes.` });
   }
   if (/\bB0[A-Z0-9]{8}\b/i.test(listing.backend_search_terms)) {
-    errors.push({ field: "backend_search_terms", code: "ASIN_NOT_ALLOWED", message: "Remove ASINs from backend search terms." });
+    errors.push({ field: "backend_search_terms", code: "ASIN_NOT_ALLOWED", message: "Remove ASINs from Generic keywords." });
+  }
+  if (/[^\p{L}\p{N}\s]/u.test(listing.backend_search_terms)) {
+    errors.push({ field: "backend_search_terms", code: "SEARCH_TERMS_PUNCTUATION", message: "Generic keywords must be space-separated without punctuation." });
+  }
+  const backendWords = normalize(listing.backend_search_terms).split(" ").filter(Boolean);
+  if (new Set(backendWords).size !== backendWords.length) {
+    errors.push({ field: "backend_search_terms", code: "SEARCH_TERMS_DUPLICATE", message: "Remove duplicate words from Generic keywords." });
+  }
+  if (input.brand.trim() && includesKeyword(listing.backend_search_terms, input.brand)) {
+    errors.push({ field: "backend_search_terms", code: "SEARCH_TERMS_BRAND", message: "Remove brand names from Generic keywords." });
   }
 
   const keywords = unique([
@@ -177,10 +203,7 @@ export function analyzeListing(
     competitorProfile: context.competitorProfile,
     maxBytes: policy.searchTermsMaxBytes,
   });
-  const titleWords = normalize(listing.title).split(" ").filter((word) => word.length >= 3);
-  const titleCounts = new Map<string, number>();
-  titleWords.forEach((word) => titleCounts.set(word, (titleCounts.get(word) || 0) + 1));
-  const titleRepetition = [...titleCounts.values()].some((count) => count > 2);
+  const titleRepetition = repeatedWords.length > 0;
 
   return {
     seo_analysis: {
@@ -213,7 +236,7 @@ export function analyzeListing(
       warnings,
       checks: [
         { name: "Amazon format", passed: errors.length === 0, detail: "Required fields and marketplace length limits" },
-        { name: "Backend search terms", passed: !errors.some((error) => ["SEARCH_TERMS_TOO_LONG", "ASIN_NOT_ALLOWED"].includes(error.code)), detail: "Byte limit and ASIN removal" },
+        { name: "Generic keywords", passed: !errors.some((error) => error.field === "backend_search_terms"), detail: "Byte limit, clean formatting, and prohibited-term removal" },
       ],
     },
   };

@@ -198,11 +198,11 @@ function ContentView({
         )}
       </ListingField>
 
-      <ListingField label="Backend search terms" count={`${new TextEncoder().encode(content.backend_search_terms).length} bytes`}>
+      <ListingField label="Generic keywords" count={`${new TextEncoder().encode(content.backend_search_terms).length} bytes`}>
         {editing ? (
           <textarea className="field-control min-h-24 resize-y leading-6" value={content.backend_search_terms} onChange={(event) => onContentChange({ ...content, backend_search_terms: event.target.value })} />
         ) : (
-          <p className="text-sm leading-6 text-[#4b5660]">{content.backend_search_terms || "Search term generation is disabled."}</p>
+          <p className="text-sm leading-6 text-[#4b5660]">{content.backend_search_terms || "Generic keyword generation is disabled."}</p>
         )}
       </ListingField>
     </div>
@@ -240,7 +240,7 @@ function RevisionView({ revisions }: { revisions: ListingRevision[] }) {
     { key: "title", label: "Title" },
     { key: "bullet_points", label: "Bullet points" },
     { key: "description", label: "Description" },
-    { key: "backend_search_terms", label: "Backend search terms" },
+    { key: "backend_search_terms", label: "Generic keywords" },
   ];
   const changed = previous
     ? fields.filter(({ key }) => revisionValue(previous.content, key) !== revisionValue(selected.content, key))
@@ -307,7 +307,7 @@ const placementLabels = {
   title: "Title",
   bullets: "Bullets",
   description: "Description",
-  backend_search_terms: "Backend",
+  backend_search_terms: "Generic keywords",
 } as const;
 
 const sourceLabels = {
@@ -349,7 +349,7 @@ function SeoEvidenceView({
       <section className="rounded-[10px] border border-[#dfe3e6] bg-white py-4">
         <div className="grid grid-cols-2 gap-y-4 sm:grid-cols-4 sm:gap-y-0">
           <ScoreCell label="SEO coverage" value={`${seo.keyword_coverage_percent}%`} detail="Keyword xuất hiện trong listing" />
-          <ScoreCell label="Backend quality" value={`${backend?.efficiency_percent ?? seo.backend_coverage_percent ?? 0}%`} detail="Từ duy nhất, không brand hoặc ASIN" />
+          <ScoreCell label="Generic keyword quality" value={`${backend?.efficiency_percent ?? seo.backend_coverage_percent ?? 0}%`} detail="Từ duy nhất, không brand hoặc ASIN" />
           <ScoreCell label="Product facts" value={`${quality.fact_coverage_percent}%`} detail={`${quality.facts_used.length}/${quality.supplied_facts.length} facts đã dùng`} />
           <ScoreCell label="ASIN refs" value={`${profile?.references.length || 0}`} detail="Dùng làm bối cảnh nhẹ" />
         </div>
@@ -389,13 +389,13 @@ function SeoEvidenceView({
       <section className="rounded-[10px] border border-[#dfe3e6] bg-white p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2"><MagnifyingGlassIcon size={18} className="text-[#a24419]" /><h2 className="text-sm font-bold text-[#222b32]">Backend search terms</h2></div>
+            <div className="flex items-center gap-2"><MagnifyingGlassIcon size={18} className="text-[#a24419]" /><h2 className="text-sm font-bold text-[#222b32]">Generic keywords</h2></div>
             <p className="mt-1 text-xs text-[#65717c]">Từ tìm kiếm do AI sinh, được bỏ từ lặp, stop word, brand và ASIN.</p>
           </div>
           <span className="rounded-md bg-[#f0f2f4] px-2 py-1 text-[11px] font-bold text-[#4d5962]">{backend?.bytes_used ?? new TextEncoder().encode(result.listing.backend_search_terms).length}/{backend?.byte_limit ?? 249} bytes</span>
         </div>
         <div className="mt-4 rounded-lg bg-[#f5f7f8] p-3 font-mono text-xs leading-6 text-[#35414a]">
-          {result.listing.backend_search_terms || "Chưa có backend search terms."}
+          {result.listing.backend_search_terms || "Chưa có Generic keywords."}
         </div>
         {backend ? (
           <>
@@ -483,7 +483,7 @@ function QualitySidebar({ stored }: { stored: StoredListing }) {
           <div className="flex justify-between gap-3"><dt className="text-[#65717c]">Product facts đã dùng</dt><dd className="font-bold text-[#303b44]">{quality ? `${quality.fact_coverage_percent}%` : "-"}</dd></div>
           <div className="flex justify-between gap-3"><dt className="text-[#65717c]">SEO coverage</dt><dd className="font-bold text-[#303b44]">{result.seo_analysis?.keyword_coverage_percent === undefined ? "-" : `${result.seo_analysis.keyword_coverage_percent}%`}</dd></div>
           {result.seo_analysis?.backend_coverage_percent !== undefined ? (
-            <div className="flex justify-between gap-3"><dt className="text-[#65717c]">Backend quality</dt><dd className="font-bold text-[#303b44]">{result.seo_analysis.backend_coverage_percent}%</dd></div>
+            <div className="flex justify-between gap-3"><dt className="text-[#65717c]">Generic keyword quality</dt><dd className="font-bold text-[#303b44]">{result.seo_analysis.backend_coverage_percent}%</dd></div>
           ) : null}
         </dl>
         {quality?.unused_facts?.length ? (
@@ -617,7 +617,7 @@ export function ResultPanel({
           <p className="mt-1 text-xs leading-5 text-[#786156]">Một câu lệnh cho toàn bộ listing. Sau khi sửa, hệ thống chỉ kiểm tra lại định dạng Amazon cơ bản.</p>
           <div className="mt-3 flex flex-wrap gap-2">
             {issuePrompt ? <button type="button" onClick={() => setInstruction(`Sửa toàn bộ lỗi và cảnh báo dưới đây, giữ nguyên các phần đang tốt và không thêm claim mới:\n${issuePrompt}`)} className="rounded-md border border-[#dbc8be] bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#76503d] hover:bg-[#fff7f2]">Sửa lỗi quality</button> : null}
-            <button type="button" onClick={() => setInstruction("Tối ưu SEO tự nhiên cho toàn bộ listing. Ưu tiên keyword do operator cung cấp và intent lặp lại ở đối thủ, không copy wording, không lặp noun để keyword stuffing, và dùng backend chỉ cho vocabulary chưa có trong title hoặc bullets.")} className="rounded-md border border-[#dbc8be] bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#76503d] hover:bg-[#fff7f2]">Tối ưu SEO</button>
+            <button type="button" onClick={() => setInstruction("Tối ưu SEO tự nhiên cho toàn bộ listing. Ưu tiên keyword do operator cung cấp và intent lặp lại ở đối thủ, không copy wording, không lặp noun để keyword stuffing, và dùng Generic keywords cho vocabulary chưa có trong title hoặc bullets.")} className="rounded-md border border-[#dbc8be] bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#76503d] hover:bg-[#fff7f2]">Tối ưu SEO</button>
             {missingFacts.length ? <button type="button" onClick={() => setInstruction(`Tích hợp tự nhiên các fact đã xác minh còn thiếu sau đây, không thay đổi thông số:\n${missingFacts.join("\n")}`)} className="rounded-md border border-[#dbc8be] bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#76503d] hover:bg-[#fff7f2]">Dùng fact còn thiếu</button> : null}
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">

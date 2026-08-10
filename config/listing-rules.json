@@ -1,6 +1,6 @@
 {
-  "version": "2026-08-10.benefit-bullets.1",
-  "prompt_version": "structured-title-v7-benefit-bullets",
+  "version": "2026-08-10.content-rich-draft.4",
+  "prompt_version": "amazon-content-rich-v17-generic-keywords",
   "default_profile": "amazon-pod",
   "profiles": {
     "amazon-pod": {
@@ -14,16 +14,15 @@
       ],
       "limits": {
         "title_max": 200,
-        "title_target_min": 120,
-        "title_target_max": 150,
-        "title_primary_window": 70,
-        "bullet_max": 250,
-        "bullet_target_min": 110,
-        "bullet_target_max": 200,
+        "title_target_min": 150,
+        "title_target_max": 190,
+        "bullet_max": 300,
+        "bullet_target_min": 180,
+        "bullet_target_max": 260,
         "bullet_count": 5,
         "description_max": 2000,
-        "description_target_min": 700,
-        "description_target_max": 1000,
+        "description_target_min": 1000,
+        "description_target_max": 1200,
         "search_terms_max_bytes": 249,
         "backend_useful_word_target": 14,
         "competitor_keyword_max_words": 6
@@ -72,10 +71,10 @@
       },
       "generation": {
         "field_revision_rules": {
-          "title": "Rewrite only the title using Brand + Core KW 1 + Core KW 2 + gift occasions + recipients + givers + product, in that order. Use Title Case for important words while keeping articles, conjunctions, and short prepositions lowercase.",
+          "title": "Rewrite the title in this exact slot order: BRAND + CORE PRODUCT TYPE, THEME OR DESIGN + PRIMARY SEARCH INTENT for RECIPIENT, KEY ATTRIBUTE OR USE + FEATURE, SIZE OR COUNT. PRIMARY SEARCH INTENT must contain the exact main keyword. Keep supported slots in order, omit unsupported slots cleanly, and aim for 150-190 useful characters without filler or invented facts.",
           "bullet_points": "Rewrite all five bullets as BENEFIT-LED HEADER IN CAPS: natural sentence. Follow hook, verified feature, customer benefit, and a relevant use case; use natural keywords and never invent details.",
           "description": "Rewrite the product description clearly and factually.",
-          "backend_search_terms": "Rewrite the backend search terms with relevant alternate shopper vocabulary."
+          "backend_search_terms": "Rewrite Generic keywords with relevant alternate shopper vocabulary not already well covered in visible copy."
         }
       }
     }

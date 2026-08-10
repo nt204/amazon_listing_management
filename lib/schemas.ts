@@ -151,21 +151,31 @@ export const generatedListingSchema = z.object({
   backend_search_terms: z.string(),
 });
 
+export const aiGeneratedListingSchema = z.object({
+  title: z.string(),
+  bullet_points: z.array(z.string()).length(5),
+  description: z.string(),
+  generic_keywords: z.string(),
+});
+
 export const generatedListingJsonSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["title", "bullet_points", "description", "backend_search_terms"],
+  required: ["title", "bullet_points", "description", "generic_keywords"],
   properties: {
-    title: { type: "string", description: "Natural Amazon SEO title." },
+    title: {
+      type: "string",
+      description: "Information-rich Amazon title ordered as brand and core product type, theme or design and required primary search intent for recipient, key attribute or use and feature, then verified size or count.",
+    },
     bullet_points: {
       type: "array",
       description: "Exactly five Amazon-style benefit-led bullets formatted as UPPERCASE HEADER: natural sentence.",
       items: { type: "string" },
     },
     description: { type: "string", description: "Factual product description." },
-    backend_search_terms: {
+    generic_keywords: {
       type: "string",
-      description: "Relevant space-separated Amazon backend search terms without punctuation.",
+      description: "Relevant space-separated Amazon Generic keywords without punctuation.",
     },
   },
 } as const;

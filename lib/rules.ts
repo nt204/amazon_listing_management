@@ -24,7 +24,6 @@ interface RuleProfile {
     title_max: number;
     title_target_min: number;
     title_target_max: number;
-    title_primary_window: number;
     bullet_max: number;
     bullet_target_min: number;
     bullet_target_max: number;
@@ -78,8 +77,7 @@ function parseRegistry(value: unknown): ListingRuleRegistry {
     }
     if (
       profile.limits.title_target_min > profile.limits.title_target_max ||
-      profile.limits.title_target_max > profile.limits.title_max ||
-      profile.limits.title_primary_window > profile.limits.title_max
+      profile.limits.title_target_max > profile.limits.title_max
     ) {
       throw new Error(`Rule profile '${name}' has inconsistent title limits.`);
     }

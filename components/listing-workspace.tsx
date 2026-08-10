@@ -72,7 +72,7 @@ const emptyInput: ListingInput = {
     tone: "Persuasive, benefit-led, natural, and evidence-grounded",
     bullet_count: 5,
     title_length: 200,
-    bullet_length: 250,
+    bullet_length: 300,
     generate_description: true,
     generate_search_terms: true,
   },
@@ -461,7 +461,7 @@ export function ListingWorkspace() {
 
   const copy = async () => {
     if (!content) return;
-    const formatted = [content.title, "", ...content.bullet_points.map((bullet, index) => `${index + 1}. ${bullet}`), "", content.description, "", `Backend search terms: ${content.backend_search_terms}`].join("\n");
+    const formatted = [content.title, "", ...content.bullet_points.map((bullet, index) => `${index + 1}. ${bullet}`), "", content.description, "", `Generic keywords: ${content.backend_search_terms}`].join("\n");
     await navigator.clipboard.writeText(formatted);
     notify("Đã copy listing.");
   };

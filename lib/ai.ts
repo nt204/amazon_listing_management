@@ -8,8 +8,6 @@ import { enrichListingKeywordResearch } from "@/lib/helium10";
 import { extractLocalOcr } from "@/lib/local-ocr";
 import {
   cleanGeneratedTitle,
-  formatGeneratedTitleCase,
-  finalizeStructuredTitle,
   trimAtWordBoundary,
   trimDescriptionToTarget,
 } from "@/lib/listing-sanitizer";
@@ -17,7 +15,10 @@ import { createMockListing } from "@/lib/mock";
 import { getGeminiModels, getOpenAIModels } from "@/lib/models";
 import { getPolicy } from "@/lib/policies";
 import { getRuleRegistry } from "@/lib/rules";
-import { generatedListingJsonSchema, generatedListingSchema } from "@/lib/schemas";
+import {
+  aiGeneratedListingSchema,
+  generatedListingJsonSchema,
+} from "@/lib/schemas";
 import { optimizeBackendSearchTerms } from "@/lib/search-terms";
 import { buildTitleBlueprint, type TitleBlueprint } from "@/lib/title-strategy";
 import { analyzeListing } from "@/lib/validation";
@@ -67,7 +68,7 @@ function listingResponseSchema(input: ListingInput) {
       },
       description: {
         ...generatedListingJsonSchema.properties.description,
-        minLength: input.configuration.generate_description ? 650 : 0,
+        minLength: input.configuration.generate_description ? policy.descriptionTargetMin : 0,
         maxLength: input.configuration.generate_description ? policy.descriptionTargetMax : 0,
       },
     },
@@ -75,9 +76,9 @@ function listingResponseSchema(input: ListingInput) {
 }
 
 const systemInstruction = `Create clear Amazon listing copy from the supplied product input.
-Operator facts and supplied product-image OCR are the source of truth. Use raw images only to understand visible appearance and confirm the supplied OCR.
+Operator facts, supplied product-image OCR, and directly visible product attributes are the source of truth. Use raw images to identify product form, design/theme, intended setting, visible hardware, and clearly readable specification text. Numeric specifications and non-visible claims require operator data, OCR, or clearly readable image text.
 Competitor data is light inspiration for search intent, strengths, and gaps. Never copy its wording, brand, ASIN, or unsupported product claims.
-Use natural English Title Case in titles: capitalize important words, but keep articles, conjunctions, and short prepositions lowercase. Preserve visible product artwork wording in uppercase without quotation marks.
+Use natural English Title Case in titles: capitalize important words, but keep articles, conjunctions, and short prepositions lowercase. Write visible artwork wording in readable Title Case without quotation marks.
 Return only the requested JSON.`;
 
 function parseDataUrl(dataUrl: string) {
@@ -126,10 +127,10 @@ function simpleCompetitorReference(input: ListingInput) {
 function operatorInput(input: ListingInput) {
   return {
     marketplace: input.marketplace,
-    product_type: input.product_type,
+    product_type_hint: input.product_type,
     brand: input.brand || undefined,
     main_keyword: input.main_keyword,
-    related_keywords: input.related_keywords,
+    keyword_candidates: input.related_keywords,
     preferred_backend_keywords: input.backend_keywords,
     target_customer: input.research.target_customer || undefined,
     gift_giver: input.research.gift_giver || undefined,
@@ -168,33 +169,26 @@ function buildPrompt(
   return `Create one Amazon ${input.marketplace} listing.
 
 Requirements:
-- Title: use this exact group order: Brand + Core KW 1 + Core KW 2 + gift occasions + gift recipients + gift givers + product.
-- Write one coherent, shopper-readable title. Use natural English connectors and punctuation instead of concatenating raw keyword labels.
-- Use natural English Title Case throughout the title. Capitalize important nouns, verbs, adjectives, adverbs, brand words, and product-name words; keep articles, conjunctions, and short prepositions lowercase, including a, an, the, and, but, or, for, at, by, from, in, of, on, to, and with.
-- Use the official brand styling when supplied; otherwise write the brand in Title Case. Never leave the brand or product name in generic lowercase.
-- If the title uses exact wording visibly printed on the product or confirmed by OCR, write that wording in uppercase without quotation marks, for example THANK YOU VETERANS.
-- Never use straight or curly quotation marks anywhere in the title.
-- Keep the words and word order of Core KW 1 and Core KW 2 unchanged, while adjusting their letter casing to match the title rule. Core KW 1 is operator.main_keyword. Core KW 2 is exactly the first phrase in operator.related_keywords. Never replace Core KW 2 with another research term.
-- Put the complete Brand + Core KW 1 combination within the first ${titleBlueprint.primaryKeywordWindow} characters so it remains visible on mobile.
-- Treat title_blueprint.events only as a reference list, never as a list of events that must appear. Select 0-4 events only when the product theme, visible artwork or OCR text, operator occasions, or measured occasion keywords strongly support them.
-- Product relevance outranks calendar proximity. Never choose an event merely because its daysUntil value is small or because it appears early in the candidate list. A strongly theme-matched annual event may be used even when its next occurrence is farther away.
-- Prefer events marked operatorSelected or keywordResearchSupported when they also match the product. After selecting relevant events, order timely dated events before year-round occasions. Do not carry an event from current_listing unless the current evidence still supports it.
-- Choose recipient and giver synonyms that fit the product. Prefer title_blueprint.audienceKeywords in descending Search Volume order. In recipient or giver synonym groups, use hyphens instead of the word "and", for example "for Dad-Father-Daddy".
-- End the title with a concise product segment containing a supported advantage and the product name. If the product word already appears twice in the core keywords, use a natural supported synonym in the final segment.
-- No normalized word may appear more than twice anywhere in the title. Do not keyword-stuff.
-- Aim for ${titleBlueprint.idealMinimumCharacters}-${titleBlueprint.idealMaximumCharacters} characters, including spaces and punctuation. Prefer concise natural wording over filling unused space.
-- The hard title limit is ${Math.min(policy.titleMax, titleBlueprint.maxCharacters)} characters. Do not approach this limit merely to add more keywords.
-- Return the final polished title yourself. The server will not reorder its segments, inject keywords, replace connectors, or delete repeated words after generation.
-- Bullets: write exactly 5 Amazon-style benefit-led bullets, roughly 120-200 characters each, as plain text in this exact format: BENEFIT-LED HEADER IN CAPS: Natural sentence.
+- Title: follow this exact slot order: [BRAND] [CORE PRODUCT TYPE], [THEME/DESIGN] [PRIMARY SEARCH INTENT] for [RECIPIENT], [KEY ATTRIBUTE/USE] [FEATURE], [SIZE/COUNT]. Keep every supported slot in this order. Do not output brackets or plus signs.
+- Use the exact supplied brand. CORE PRODUCT TYPE must clearly identify what the item physically is in specific shopper-facing language; operator.product_type_hint is a category hint, not wording that must be copied.
+- PRIMARY SEARCH INTENT must contain operator.main_keyword using the same words in the same order; letter casing may change for natural Title Case. This is required in every title. A distinct relevant measured or related keyword may supplement the main keyword but must never replace it.
+- Relevance outranks search volume. Never use a keyword that changes the product type, placement, recipient, or use. Gift intent must not replace the core product type.
+- RECIPIENT must be a person or audience, never a location, occasion, decor phrase, or product keyword. KEY ATTRIBUTE/USE describes a supported material, construction detail, display context, or use. FEATURE is the strongest supported differentiator. SIZE/COUNT must be exact and verified.
+- Fill every supported slot with distinct information. Omit unsupported slots and their separators; never invent content merely to complete the formula.
+- Write natural Title Case with ordinary punctuation. Do not use quotation marks or the characters ! $ ? _ { } ^ ¬ ¦ unless one appears in the exact supplied brand. Avoid synonym stacking and do not repeat a meaningful word more than twice; grammar words are exempt.
+- Aim for ${titleBlueprint.idealMinimumCharacters}-${titleBlueprint.idealMaximumCharacters} useful characters. The hard limit is ${Math.min(policy.titleMax, titleBlueprint.maxCharacters)} characters. Use the available space for supported shopper information and relevant long-tail intent, but never add filler or redundant phrases to reach the target.
+- Return the final polished title yourself. The server only cleans spacing and enforces the hard length limit.
+- Bullets: write exactly 5 detailed, information-rich Amazon bullets of about ${policy.bulletTargetMin}-${Math.min(policy.bulletTargetMax, policy.bulletMax)} characters each, as plain text in this exact format: BENEFIT-LED HEADER IN CAPS: Natural sentence.
 - Build each bullet as hook or key benefit + verified feature + customer benefit + relevant use case. Add relevant keywords naturally without keyword stuffing.
 - Cover these angles in order: primary message or benefit; design or style; verified size, material, capacity, or other useful detail; ease of use, care, or display; recipient and gift occasion.
-- If an angle lacks verified evidence, replace it with another supported benefit. Never invent a detail. Do not use numbering, bullet symbols, brackets, or Markdown in the bullet text.
-- Description: ${input.configuration.generate_description ? "about 700-1000 characters" : "empty string"}; factual and easy to read.
-- Backend search terms: ${input.configuration.generate_search_terms ? "space-separated relevant shopper terms, ideally 120-220 bytes; generate useful alternate shopper wording that is not already prominent in the visible copy" : "empty string"}; no punctuation, brands, ASINs, filler, or repeated words.
+- If an angle lacks verified evidence, replace it with another supported benefit. Keep every bullet distinct. Do not use numbering, bullet symbols, brackets, Markdown, emojis, price or shipping information, seller details, promotions, guarantees, refunds, or calls to action.
+- Description: ${input.configuration.generate_description ? `about ${policy.descriptionTargetMin}-${policy.descriptionTargetMax} characters` : "empty string"}; create a detailed product narrative that opens with the primary purpose, then explains supported design, physical details, use context, audience, and occasions in natural paragraphs. Expand on the product instead of repeating the five bullets sentence-for-sentence. Do not include promotional, pricing, shipping, contact, or seller information.
+- Generic keywords: ${input.configuration.generate_search_terms ? `return one space-separated string in generic_keywords within ${policy.searchTermsMaxBytes} bytes, prioritizing relevant synonyms, alternate shopper wording, audience, and occasion terms not already well covered in visible copy` : "return an empty generic_keywords string"}; no punctuation, brands, competitor names, ASINs, filler, subjective claims, or duplicate words.
 - Use operator data and OCR that clearly belongs to the product. Ignore OCR noise and do not complete missing text.
-- Numbers, material, package contents, manufacturing method, weight, care, personalization, origin, safety, and performance may be stated only when the exact detail appears in operator data or supplied OCR, never from a competitor or visual inference.
+- Numbers, material, package contents, manufacturing method, weight, care, personalization, origin, safety, and performance may be stated only when the exact detail appears in operator data, supplied OCR, or clearly readable product-image text, never from a competitor or visual inference.
 - Do not add unsupported quality adjectives such as premium, high-quality, durable, genuine, sturdy, or heavy.
 - Generate the copy and search vocabulary yourself. Use competitor information only to understand context, useful choices, and gaps; do not copy it.
+- Before returning JSON, silently verify the product type, factual support, title length and characters, distinct bullet content, and backend-term relevance. When choosing between shorter and longer copy, prefer the longer version only when every added phrase contributes verified product information, a customer benefit, useful context, recipient or occasion intent, or relevant search vocabulary.
 
 INPUT:
 ${JSON.stringify({
@@ -294,8 +288,14 @@ async function callGemini(
     const reason = response.candidates?.[0]?.finishReason || "unknown";
     throw new Error(`Gemini returned an empty response (finish_reason=${reason}).`);
   }
+  const generated = aiGeneratedListingSchema.parse(JSON.parse(response.text));
   return {
-    listing: generatedListingSchema.parse(JSON.parse(response.text)),
+    listing: {
+      title: generated.title,
+      bullet_points: generated.bullet_points,
+      description: generated.description,
+      backend_search_terms: generated.generic_keywords,
+    },
     inputTokens: response.usageMetadata?.promptTokenCount,
     outputTokens: response.usageMetadata?.candidatesTokenCount,
   };
@@ -332,8 +332,14 @@ async function callOpenAI(
     },
   }, { signal: requestSignal, maxRetries: 0, timeout: Number(process.env.AI_TIMEOUT_MS || 45_000) }), signal);
   if (!response.output_text) throw new Error("OpenAI returned an empty response.");
+  const generated = aiGeneratedListingSchema.parse(JSON.parse(response.output_text));
   return {
-    listing: generatedListingSchema.parse(JSON.parse(response.output_text)),
+    listing: {
+      title: generated.title,
+      bullet_points: generated.bullet_points,
+      description: generated.description,
+      backend_search_terms: generated.generic_keywords,
+    },
     inputTokens: response.usage?.input_tokens,
     outputTokens: response.usage?.output_tokens,
   };
@@ -343,22 +349,10 @@ function cleanListing(
   listing: ListingContent,
   input: ListingInput,
   brief: ProductBrief,
-  titleBlueprint: TitleBlueprint,
 ) {
   const policy = getPolicy(input);
   const title = trimAtWordBoundary(
-    formatGeneratedTitleCase(
-      finalizeStructuredTitle({
-        title: listing.title,
-        brand: titleBlueprint.brand,
-        coreKeyword1: titleBlueprint.coreKeyword1.keyword,
-        coreKeyword2: titleBlueprint.coreKeyword2?.keyword,
-      }),
-      {
-        brand: input.brand,
-        uppercasePhrases: brief.exact_text,
-      }
-    ),
+    cleanGeneratedTitle(listing.title),
     policy.titleMax,
   );
   const bulletPoints = listing.bullet_points.slice(0, 5).map((bullet) =>
@@ -451,7 +445,7 @@ export async function generateListing(
     }
   }
 
-  const listing = cleanListing(providerOutput.listing, input, brief, titleBlueprint);
+  const listing = cleanListing(providerOutput.listing, input, brief);
   const analysis = analyzeListing(listing, input, {
     relatedKeywords: brief.related_keywords,
     suppliedFacts: brief.supplied_facts,
