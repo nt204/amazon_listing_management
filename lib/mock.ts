@@ -93,21 +93,19 @@ export function createMockListing(input: ListingInput): ListingContent {
   ].filter(Boolean).join(", ");
 
   const bulletCandidates = [
-    `${sentence(feature)} - A practical ${productLabel} created for ${audience}.`,
+    `PRACTICAL EVERYDAY BENEFIT: The supported feature (${sentence(feature)}) makes this ${productLabel} a useful choice for ${audience}.`,
     details
-      ? `PRODUCT DETAILS - ${details}. Review the product images for design and size information.`
-      : `THOUGHTFUL DESIGN - Clear product details and a gift-ready look for everyday use.`,
-    `${sentence(input.research.usp || "Original giftable style")} - An easy choice for ${occasion}.`,
-    info.package_contents
-      ? `WHAT IS INCLUDED - ${sentence(info.package_contents)}.`
-      : `READY TO GIFT - A useful choice for celebrations, appreciation, or a personal treat.`,
+      ? `DISTINCTIVE PRODUCT DESIGN: ${sentence(input.research.usp || feature)}, together with verified details such as ${details}, helps shoppers picture this ${productLabel}.`
+      : `DISTINCTIVE PRODUCT DESIGN: ${sentence(input.research.usp || feature)} gives shoppers a clear reason to consider this ${productLabel} for ${audience}.`,
+    details
+      ? `VERIFIED DETAILS FOR EASY CHOOSING: Specifications include ${details}, helping shoppers compare the product and choose the right option before ordering.`
+      : `VERIFIED DETAILS FOR EASY CHOOSING: Supplied product facts help shoppers understand this ${productLabel} and choose the right option before ordering.`,
     info.care_instructions
-      ? `CARE INSTRUCTIONS - ${sentence(info.care_instructions)}.`
-      : `EASY TO ENJOY - Please follow the care details shown in the product information.`,
-    info.personalization
-      ? `PERSONALIZATION - ${sentence(info.personalization)}.`
-      : `VERSATILE GIFT - Suitable for home, work, and special occasions.`,
-    `SHOP WITH CONFIDENCE - Check the product images and supplied details before ordering.`,
+      ? `EASY TO CARE FOR: ${sentence(info.care_instructions)}, providing a clear care routine for keeping this ${productLabel} ready for regular use.`
+      : info.package_contents
+        ? `READY FOR THE INTENDED USE: The package includes ${sentence(info.package_contents)}, helping shoppers understand what arrives before placing an order.`
+        : `EASY TO PLAN FOR: Supplied product facts help shoppers understand how this ${productLabel} fits the intended setting before placing an order.`,
+    `THOUGHTFUL GIFT IDEA: Created for ${audience}, this ${productLabel} makes a thoughtful choice for ${occasion}, celebrations, or everyday appreciation.`,
   ];
 
   return {

@@ -54,6 +54,12 @@ test("a complete listing passes the basic Amazon format checks", () => {
   assert.ok(result.policy_validation.warnings.some((issue) => issue.code === "TITLE_LENGTH_NOT_IDEAL"));
 });
 
+test("mock bullets follow the benefit-led Amazon format", () => {
+  const listing = createMockListing(input);
+
+  assert.ok(listing.bullet_points.every((bullet) => /^[A-Z][A-Z ]+: [A-Z]/.test(bullet)));
+});
+
 test("validator requires the main keyword in the title", () => {
   const listing = createMockListing(input);
   listing.title = "North Pine Gifts Ceramic Coffee Cup";

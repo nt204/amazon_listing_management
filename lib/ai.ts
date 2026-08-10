@@ -185,7 +185,10 @@ Requirements:
 - Aim for ${titleBlueprint.idealMinimumCharacters}-${titleBlueprint.idealMaximumCharacters} characters, including spaces and punctuation. Prefer concise natural wording over filling unused space.
 - The hard title limit is ${Math.min(policy.titleMax, titleBlueprint.maxCharacters)} characters. Do not approach this limit merely to add more keywords.
 - Return the final polished title yourself. The server will not reorder its segments, inject keywords, replace connectors, or delete repeated words after generation.
-- Bullets: exactly 5 complete English sentences, roughly 120-200 characters each; use concrete product details and shopper benefits.
+- Bullets: write exactly 5 Amazon-style benefit-led bullets, roughly 120-200 characters each, as plain text in this exact format: BENEFIT-LED HEADER IN CAPS: Natural sentence.
+- Build each bullet as hook or key benefit + verified feature + customer benefit + relevant use case. Add relevant keywords naturally without keyword stuffing.
+- Cover these angles in order: primary message or benefit; design or style; verified size, material, capacity, or other useful detail; ease of use, care, or display; recipient and gift occasion.
+- If an angle lacks verified evidence, replace it with another supported benefit. Never invent a detail. Do not use numbering, bullet symbols, brackets, or Markdown in the bullet text.
 - Description: ${input.configuration.generate_description ? "about 700-1000 characters" : "empty string"}; factual and easy to read.
 - Backend search terms: ${input.configuration.generate_search_terms ? "space-separated relevant shopper terms, ideally 120-220 bytes; generate useful alternate shopper wording that is not already prominent in the visible copy" : "empty string"}; no punctuation, brands, ASINs, filler, or repeated words.
 - Use operator data and OCR that clearly belongs to the product. Ignore OCR noise and do not complete missing text.

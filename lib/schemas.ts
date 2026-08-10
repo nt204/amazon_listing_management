@@ -159,7 +159,7 @@ export const generatedListingJsonSchema = {
     title: { type: "string", description: "Natural Amazon SEO title." },
     bullet_points: {
       type: "array",
-      description: "Exactly five clear feature-and-benefit bullet points.",
+      description: "Exactly five Amazon-style benefit-led bullets formatted as UPPERCASE HEADER: natural sentence.",
       items: { type: "string" },
     },
     description: { type: "string", description: "Factual product description." },

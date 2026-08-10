@@ -205,21 +205,16 @@ export function ListingForm({
 
       <div className="thin-scrollbar grid flex-1 content-start gap-5 overflow-y-auto px-5 py-5">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Thị trường" htmlFor="marketplace" required>
-            <Select
-              id="marketplace"
-              value={value.marketplace}
+          <Field label="Brand" htmlFor="brand">
+            <TextInput
+              id="brand"
+              value={value.brand}
+              disabled={Boolean(value.brand_profile_id)}
               onChange={(event) =>
-                onChange((current) => ({
-                  ...current,
-                  marketplace: event.target.value as ListingInput["marketplace"],
-                }))
+                onChange((current) => ({ ...current, brand: event.target.value }))
               }
-            >
-              <option value="US">Amazon US</option>
-              <option value="UK">Amazon UK</option>
-              <option value="DE">Amazon DE</option>
-            </Select>
+              placeholder={value.brand_profile_id ? "Đang dùng brand profile" : "Limima"}
+            />
           </Field>
           <Field label="Loại sản phẩm" htmlFor="product_type" required error={issueFor("product_type")}>
             <TextInput
@@ -240,38 +235,6 @@ export function ListingForm({
               ))}
             </datalist>
           </Field>
-        </div>
-
-        <div className="border-t border-[#e5e8ea] pt-4">
-          <button
-            type="button"
-            onClick={() => setShowAdvanced(!showAdvanced)}
-            className="flex items-center gap-1.5 text-xs font-bold text-[#b84f1d] hover:text-[#963f17]"
-          >
-            {showAdvanced ? "▼ Thu gọn cấu hình nâng cao" : "▶ Cấu hình nâng cao"}
-          </button>
-          
-          {showAdvanced && (
-            <div className="mt-3 grid gap-4 rounded-lg border border-[#dfe3e6] bg-[#fafbfb] p-4">
-              <Field label="Model AI" htmlFor="ai_model">
-                <Select
-                  id="ai_model"
-                  value={selectedModel}
-                  disabled={!availableModels.length}
-                  onChange={(event) => selectModel(event.target.value)}
-                >
-                  {!availableModels.length ? (
-                    <option value="">{aiOptions ? "Chưa có API key" : "Đang tải..."}</option>
-                  ) : null}
-                  {availableModels.map((model) => (
-                    <option key={`${model.provider}-${model.id}`} value={model.id}>
-                      {model.label}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            </div>
-          )}
         </div>
 
         <Field
@@ -329,11 +292,6 @@ export function ListingForm({
           </div>
         ) : null}
 
-        <div className="border-t border-[#e5e8ea] pt-5">
-          <p className="text-xs font-bold text-[#222b32]">Chiến lược tìm kiếm</p>
-          <p className="mt-1 text-xs leading-5 text-[#65717c]">Cho AI biết cụm từ bắt buộc và các hướng tìm kiếm cần ưu tiên.</p>
-        </div>
-
         <Field label="Từ khóa chính" htmlFor="main_keyword" required error={issueFor("main_keyword")}>
           <TextInput
             id="main_keyword"
@@ -346,134 +304,172 @@ export function ListingForm({
           />
         </Field>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field
-            label="Từ khóa liên quan"
-            htmlFor="related_keywords"
-            hint="Một cụm mỗi dòng. Cụm đầu tiên được dùng làm KW lõi 2 trong title."
+        <div className="border-t border-[#e5e8ea] pt-4">
+          <button
+            type="button"
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            className="flex items-center gap-1.5 text-xs font-bold text-[#b84f1d] hover:text-[#963f17]"
           >
-            <KeywordTextArea
-              id="related_keywords"
-              value={value.related_keywords}
-              onCommit={(keywords) =>
-                onChange((current) => ({
-                  ...current,
-                  related_keywords: keywords,
-                }))
-              }
-              placeholder={"nurse coffee mug\nregistered nurse gift"}
-            />
-          </Field>
-          <Field
-            label="Backend ưu tiên"
-            htmlFor="backend_keywords"
-            hint="Từ đồng nghĩa hoặc intent chưa có trong nội dung visible."
-          >
-            <KeywordTextArea
-              id="backend_keywords"
-              value={value.backend_keywords}
-              onCommit={(keywords) =>
-                onChange((current) => ({
-                  ...current,
-                  backend_keywords: keywords,
-                }))
-              }
-              placeholder={"healthcare worker\nrn coworker\nnursing student"}
-            />
-          </Field>
-        </div>
+            {showAdvanced ? "▼ Thu gọn cấu hình nâng cao" : "▶ Cấu hình nâng cao"}
+          </button>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <Field
-            label="Đối tượng được tặng"
-            htmlFor="target_customer"
-          >
-            <TextInput
-              id="target_customer"
-              value={value.research.target_customer}
-              onChange={(event) => updateResearch("target_customer", event.target.value)}
-              placeholder="Nurses, RNs, nursing students"
-            />
-          </Field>
-          <Field
-            label="Đối tượng tặng"
-            htmlFor="gift_giver"
-          >
-            <TextInput
-              id="gift_giver"
-              value={value.research.gift_giver || ""}
-              onChange={(event) => updateResearch("gift_giver", event.target.value)}
-              placeholder="Coworkers, friends, family"
-            />
-          </Field>
-          <Field
-            label="Dịp mua hoặc tặng"
-            htmlFor="occasions"
-          >
-            <KeywordTextArea
-              id="occasions"
-              value={value.research.occasion}
-              onCommit={(occasions) =>
-                onChange((current) => ({
-                  ...current,
-                  research: { ...current.research, occasion: occasions },
-                }))
-              }
-              placeholder={"Nurse Week\nGraduation\nBirthday"}
-            />
-          </Field>
+          {showAdvanced && (
+            <div className="mt-3 grid gap-5 rounded-lg border border-[#dfe3e6] bg-[#fafbfb] p-4">
+              <Field label="Model AI" htmlFor="ai_model">
+                <Select
+                  id="ai_model"
+                  value={selectedModel}
+                  disabled={!availableModels.length}
+                  onChange={(event) => selectModel(event.target.value)}
+                >
+                  {!availableModels.length ? (
+                    <option value="">{aiOptions ? "Chưa có API key" : "Đang tải..."}</option>
+                  ) : null}
+                  {availableModels.map((model) => (
+                    <option key={`${model.provider}-${model.id}`} value={model.id}>
+                      {model.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Field
+                  label="Từ khóa liên quan"
+                  htmlFor="related_keywords"
+                  hint="Một cụm mỗi dòng. Cụm đầu tiên được dùng làm KW lõi 2 trong title."
+                >
+                  <KeywordTextArea
+                    id="related_keywords"
+                    value={value.related_keywords}
+                    onCommit={(keywords) =>
+                      onChange((current) => ({
+                        ...current,
+                        related_keywords: keywords,
+                      }))
+                    }
+                    placeholder={"nurse coffee mug\nregistered nurse gift"}
+                  />
+                </Field>
+                <Field
+                  label="Backend ưu tiên"
+                  htmlFor="backend_keywords"
+                  hint="Từ đồng nghĩa hoặc intent chưa có trong nội dung visible."
+                >
+                  <KeywordTextArea
+                    id="backend_keywords"
+                    value={value.backend_keywords}
+                    onCommit={(keywords) =>
+                      onChange((current) => ({
+                        ...current,
+                        backend_keywords: keywords,
+                      }))
+                    }
+                    placeholder={"healthcare worker\nrn coworker\nnursing student"}
+                  />
+                </Field>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <Field
+                  label="Đối tượng được tặng"
+                  htmlFor="target_customer"
+                >
+                  <TextInput
+                    id="target_customer"
+                    value={value.research.target_customer}
+                    onChange={(event) => updateResearch("target_customer", event.target.value)}
+                    placeholder="Nurses, RNs, nursing students"
+                  />
+                </Field>
+                <Field
+                  label="Đối tượng tặng"
+                  htmlFor="gift_giver"
+                >
+                  <TextInput
+                    id="gift_giver"
+                    value={value.research.gift_giver || ""}
+                    onChange={(event) => updateResearch("gift_giver", event.target.value)}
+                    placeholder="Coworkers, friends, family"
+                  />
+                </Field>
+                <Field
+                  label="Dịp mua hoặc tặng"
+                  htmlFor="occasions"
+                >
+                  <KeywordTextArea
+                    id="occasions"
+                    value={value.research.occasion}
+                    onCommit={(occasions) =>
+                      onChange((current) => ({
+                        ...current,
+                        research: { ...current.research, occasion: occasions },
+                      }))
+                    }
+                    placeholder={"Nurse Week\nGraduation\nBirthday"}
+                  />
+                </Field>
+              </div>
+
+              <Field
+                label="Product facts"
+                htmlFor="notes"
+                hint="Chỉ nhập thông tin đã xác minh. Mỗi dòng một fact; dùng 'Do not mention...' để loại trừ."
+              >
+                <TextArea
+                  id="notes"
+                  rows={6}
+                  value={value.research.notes}
+                  onChange={(event) => updateResearch("notes", event.target.value)}
+                  placeholder={"Material: Ceramic\nCapacity: 11 oz\nDishwasher safe"}
+                />
+              </Field>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Field label="Thị trường" htmlFor="marketplace">
+                  <Select
+                    id="marketplace"
+                    value={value.marketplace}
+                    onChange={(event) =>
+                      onChange((current) => ({
+                        ...current,
+                        marketplace: event.target.value as ListingInput["marketplace"],
+                      }))
+                    }
+                  >
+                    <option value="US">Amazon US</option>
+                    <option value="UK">Amazon UK</option>
+                    <option value="DE">Amazon DE</option>
+                  </Select>
+                </Field>
+                <Field label="Brand profile" htmlFor="brand_profile">
+                  <Select
+                    id="brand_profile"
+                    value={value.brand_profile_id || ""}
+                    onChange={(event) => {
+                      const profile = brands.find((item) => item.id === event.target.value);
+                      onChange((current) => ({
+                        ...current,
+                        brand_profile_id: profile?.id || "",
+                        brand: profile?.name || (current.brand_profile_id ? "" : current.brand),
+                        brand_guidelines: profile?.guidelines || "",
+                      }));
+                    }}
+                  >
+                    <option value="">Không dùng profile</option>
+                    {brands.map((brand) => (
+                      <option key={brand.id} value={brand.id}>{brand.name}</option>
+                    ))}
+                  </Select>
+                </Field>
+              </div>
+
+            </div>
+          )}
         </div>
 
         <Field
-          label="Product facts (optional)"
-          htmlFor="notes"
-          hint="Chỉ nhập thông tin đã xác minh. Mỗi dòng một fact; dùng 'Do not mention...' để loại trừ."
-        >
-          <TextArea
-            id="notes"
-            rows={6}
-            value={value.research.notes}
-            onChange={(event) => updateResearch("notes", event.target.value)}
-            placeholder={"Material: Ceramic\nCapacity: 11 oz\nDishwasher safe"}
-          />
-        </Field>
-
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Brand profile (optional)" htmlFor="brand_profile">
-            <Select
-              id="brand_profile"
-              value={value.brand_profile_id || ""}
-              onChange={(event) => {
-                const profile = brands.find((item) => item.id === event.target.value);
-                onChange((current) => ({
-                  ...current,
-                  brand_profile_id: profile?.id || "",
-                  brand: profile?.name || (current.brand_profile_id ? "" : current.brand),
-                  brand_guidelines: profile?.guidelines || "",
-                }));
-              }}
-            >
-              <option value="">Không dùng profile</option>
-              {brands.map((brand) => (
-                <option key={brand.id} value={brand.id}>{brand.name}</option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Brand dùng một lần" htmlFor="brand">
-            <TextInput
-              id="brand"
-              value={value.brand}
-              disabled={Boolean(value.brand_profile_id)}
-              onChange={(event) =>
-                onChange((current) => ({ ...current, brand: event.target.value }))
-              }
-              placeholder={value.brand_profile_id ? "Đang dùng brand profile" : "Limima"}
-            />
-          </Field>
-        </div>
-
-        <Field
-          label="Listing đối thủ (optional)"
+          label="Listing đối thủ"
           htmlFor="competitor_notes"
           hint={
             referenceState.status === "loading"
