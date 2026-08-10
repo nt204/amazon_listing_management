@@ -28,3 +28,10 @@ test("AI-written title is preserved without deleting words or rewriting connecto
     "Limima Garden Flag, Patriotic Thank You Veterans Decor for Veterans, Outdoor Display with Double-Sided Print, 12 x 18 Inches",
   );
 });
+
+test("title cleanup preserves decimal dimensions", () => {
+  assert.equal(
+    cleanGeneratedTitle("Acrylic Ornament, 3.5 x 3.5 Inches.Compact Display"),
+    "Acrylic Ornament, 3.5 x 3.5 Inches. Compact Display",
+  );
+});

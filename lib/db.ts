@@ -10,6 +10,8 @@ import type {
   ListingResult,
   ListingStatus,
   ListingSummary,
+  ListingTemplateMetadata,
+  ListingTemplateSummary,
   StoredListing,
   WorkflowMetrics,
 } from "@/lib/types";
@@ -44,7 +46,7 @@ async function ensureSchema() {
     const sql = getDatabase();
     globalForDatabase.listingPostgresSchema = sql<{ name: string }[]>`
         SELECT name FROM schema_migrations
-        WHERE name = '003_image_storage.sql'
+        WHERE name = '004_listing_templates.sql'
         LIMIT 1
       `
       .then((rows) => {
@@ -491,6 +493,90 @@ export async function saveBrandProfile(scope: DataScope, name: string, guideline
   `;
   await recordAuditEvent(scope, "brand.saved", "brand_profile", rows[0].id);
   return rows[0];
+}
+
+interface ListingTemplateRow extends ListingTemplateSummary {
+  metadata_json: ListingTemplateMetadata | string;
+  workbook_bytes?: Buffer;
+}
+
+function toListingTemplateSummary(row: ListingTemplateRow): ListingTemplateSummary {
+  return {
+    id: row.id,
+    name: row.name,
+    original_filename: row.original_filename,
+    file_extension: row.file_extension,
+    product_type: row.product_type,
+    metadata: parseJson(row.metadata_json),
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+export async function listListingTemplates(scope: DataScope): Promise<ListingTemplateSummary[]> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const rows = await sql<ListingTemplateRow[]>`
+    SELECT id::text, name, original_filename, file_extension, product_type,
+      metadata_json, created_at::text, updated_at::text
+    FROM listing_templates
+    WHERE team_id = ${scope.teamId}
+    ORDER BY name ASC
+  `;
+  return rows.map(toListingTemplateSummary);
+}
+
+export async function getListingTemplate(scope: DataScope, id: string) {
+  await ensureSchema();
+  const sql = getDatabase();
+  const rows = await sql<ListingTemplateRow[]>`
+    SELECT id::text, name, original_filename, file_extension, product_type,
+      metadata_json, workbook_bytes, created_at::text, updated_at::text
+    FROM listing_templates
+    WHERE id = ${id} AND team_id = ${scope.teamId}
+    LIMIT 1
+  `;
+  if (!rows[0]?.workbook_bytes) return null;
+  return { ...toListingTemplateSummary(rows[0]), workbook: rows[0].workbook_bytes };
+}
+
+export async function saveListingTemplate(
+  scope: DataScope,
+  input: {
+    name: string;
+    originalFilename: string;
+    fileExtension: string;
+    productType: string;
+    metadata: ListingTemplateMetadata;
+    workbook: Buffer;
+  },
+) {
+  await ensureSchema();
+  const sql = getDatabase();
+  const id = crypto.randomUUID();
+  const rows = await sql<ListingTemplateRow[]>`
+    INSERT INTO listing_templates (
+      id, team_id, name, original_filename, file_extension, product_type,
+      metadata_json, workbook_bytes
+    ) VALUES (
+      ${id}, ${scope.teamId}, ${input.name}, ${input.originalFilename}, ${input.fileExtension},
+      ${input.productType}, ${sql.json(toJson(input.metadata))}, ${input.workbook}
+    )
+    ON CONFLICT (team_id, LOWER(name)) DO UPDATE SET
+      original_filename = EXCLUDED.original_filename,
+      file_extension = EXCLUDED.file_extension,
+      product_type = EXCLUDED.product_type,
+      metadata_json = EXCLUDED.metadata_json,
+      workbook_bytes = EXCLUDED.workbook_bytes,
+      updated_at = NOW()
+    RETURNING id::text, name, original_filename, file_extension, product_type,
+      metadata_json, created_at::text, updated_at::text
+  `;
+  await recordAuditEvent(scope, "template.saved", "listing_template", rows[0].id, {
+    filename: input.originalFilename,
+    columns: input.metadata.column_count,
+  });
+  return toListingTemplateSummary(rows[0]);
 }
 
 export async function consumeRateLimit(

@@ -10,7 +10,7 @@ function cleanCopy(value: string) {
 export function cleanGeneratedTitle(value: string) {
   return value
     .replace(/\s+([,.;:!?])/g, "$1")
-    .replace(/([,.;:!?])(?!\s|$)/g, "$1 ")
+    .replace(/([,;:!?]|\.(?!\d))(?!\s|$)/g, "$1 ")
     .replace(/\s{2,}/g, " ")
     .trim();
 }

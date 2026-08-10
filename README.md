@@ -6,6 +6,7 @@ Workflow nội bộ để tạo, review và export Amazon Listing.
 
 ```bash
 npm install
+python3 -m pip install -r requirements.txt
 cp .env.example .env
 npm run dev
 ```
@@ -27,9 +28,9 @@ Nếu có API key, app dùng AI thật. Mock chỉ chạy khi không có provide
 2. Nếu Helium 10 được cấu hình, lấy Search Volume và chọn KW lõi 1/2 cùng các keyword Event, người nhận và người tặng có liên quan.
 3. Chạy Tesseract OCR cục bộ và đưa nguyên văn các dòng đọc được cho AI.
 4. Đọc tối đa 3 ASIN để lấy title, cách gọi sản phẩm và các thuộc tính đối thủ. Đây chỉ là bối cảnh tham khảo, không phải fact của sản phẩm.
-5. Gọi một AI writer duy nhất với input, OCR, ảnh nguồn, keyword research và tóm tắt reference để sinh SEO title, đúng 5 bullet points, description và backend search terms.
-6. Title dùng thứ tự `Brand + KW lõi 1 + KW lõi 2 + Event + người nhận + người tặng + sản phẩm`, trong đó KW lõi 2 luôn là cụm đầu tiên của trường `Từ khóa liên quan`. Title viết theo Title Case: viết hoa từ quan trọng, giữ thường mạo từ, liên từ và giới từ ngắn. Text thật trên thiết kế/OCR nếu được dùng phải viết IN HOA nhưng không đặt trong dấu ngoặc kép, ví dụ `THANK YOU VETERANS`. Độ dài lý tưởng là 120-150 ký tự, tối đa 200 ký tự và mỗi từ không quá 2 lần. `Brand + KW lõi 1` phải nằm trọn trong 70 ký tự đầu.
-7. Server chỉ chuẩn hóa chữ hoa/thường theo Title Case, khoảng trắng và cắt ở giới hạn ký tự; không tự chèn, xóa hay sắp xếp lại keyword. Backend terms vẫn được làm sạch riêng.
+5. Gọi một AI writer duy nhất với input, OCR, ảnh nguồn, keyword research và tóm tắt reference để sinh SEO title, đúng 5 bullet points, description và Generic Keywords.
+6. Title theo thứ tự `Brand + Core Product Type, Theme/Design + Primary Search Intent for Recipient, Key Attribute/Use + Feature, Size/Count`. Main Keyword phải xuất hiện nguyên cụm trong title. Mục tiêu 150-190 ký tự, tối đa 200 ký tự.
+7. Bullet dùng format `BENEFIT-LED HEADER IN CAPS: Feature + customer benefit + use case`, mục tiêu 180-260 ký tự mỗi bullet. Description mục tiêu 1.000-1.200 ký tự. Generic Keywords được làm sạch riêng trước khi xuất.
 8. Nếu provider chính lỗi, hệ thống chỉ chuyển sang provider fallback đã cấu hình; không có quality retry.
 
 Để dùng Search Volume thật, cấu hình `HELIUM10_MCP_ACCESS_TOKEN`. Nếu không có token, hệ thống vẫn sinh listing từ keyword operator đã nhập và không tự gán Search Volume giả.
@@ -52,10 +53,25 @@ Chọn profile bằng `LISTING_RULE_PROFILE`; có thể cung cấp một registr
 - `Draft -> Review -> Approved -> Exported`; chỉ Approved mới export.
 - Reviewer command gửi listing hiện tại cùng yêu cầu mới cho cùng AI writer rồi kiểm tra lại định dạng.
 - Reference Amazon tối đa 3 URL/ASIN; reference chỉ là nguồn vocabulary/positioning, không phải fact của sản phẩm.
-- Batch CSV được chia thành chunk nhỏ; API có request limit, rate limit, timeout và idempotency.
+- Batch Excel được chia thành chunk nhỏ; API có request limit, rate limit, timeout và idempotency.
 - Ảnh được lưu riêng trong `listing_images`; `input_json` chỉ giữ metadata và hash.
 - Mỗi mutation có revision và audit event; truy vấn được scope theo workspace/team.
-- File export là `Listing Desk CSV`, chưa phải category flat-file có thể upload thẳng vào Seller Central.
+- Batch Excel tự điền template Amazon đã chọn, giữ nguyên cấu trúc parent + child và các thuộc tính category để tiếp tục kiểm tra hoặc upload Seller Central.
+
+## Tự động hóa Excel theo SKU
+
+Mở **Batch**, chọn template đã lưu rồi tải file input `.xlsx` hoặc `.xlsm`. Hệ thống tự nhận diện bốn cột sau, không phụ thuộc thứ tự cột:
+
+- `SKU`
+- `Link ảnh (Trello)` — nhiều URL có thể ngăn cách bằng xuống dòng, `|` hoặc `;`
+- `Tên sản phẩm (Main Keyword)`
+- `Generic Keywords`
+
+Brand được chọn ngay trong modal Batch từ Brand profile đã lưu hoặc nhập thủ công. Brand nhập thủ công có thể lưu ngay tại đây để tái sử dụng cho các batch sau. Hệ thống tải ảnh Trello, nén ảnh cho AI, tạo listing theo prompt/rule hiện tại, sau đó tải về category workbook đã có parent, child, variation và các thuộc tính tĩnh từ template.
+
+Trong modal Batch, upload template Amazon một lần và đặt tên dễ chọn như `Hanging Ornament` hoặc `Glass Ornament`. Hệ thống lưu workbook theo workspace, tự dò dòng technical headers và ghi nhớ vị trí thực tế của Title, Description, Bullet Points, Generic Keywords và ảnh. Các lần sau chỉ cần chọn template đã lưu rồi upload file input SKU.
+
+Nút **Tải file đầu vào mẫu** tạo sẵn workbook bốn cột. Không có tọa độ cột content nào được cấu hình cố định; cùng một trường `generic_keyword[...]` có thể nằm ở AP, CG hoặc cột khác tùy template.
 
 Auth đang để `disabled` cho MVP nội bộ theo mặc định. Ở chế độ này chỉ nên deploy sau VPN/private ingress hoặc trên máy nội bộ. Cơ chế team token/session có thể bật sau bằng `LISTING_DESK_AUTH_MODE=required`; xem `.env.example`.
 
@@ -79,6 +95,10 @@ Production release phải chạy `npm run db:migrate` trước `npm run start`. 
 - `POST /api/listings/generate`
 - `POST /api/keywords/research`
 - `POST /api/listings/batch`
+- `GET|POST /api/import/sku-workbook`
+- `GET /api/import/trello-image`
+- `POST /api/import/amazon-template`
+- `GET|POST /api/templates`
 - `POST /api/listings/export`
 - `GET|PUT /api/listings/:id`
 - `POST /api/listings/:id/revise`

@@ -582,7 +582,7 @@ export function ListingWorkspace() {
       </div>
 
       <BrandManager open={brandManagerOpen} brands={brands} onClose={() => setBrandManagerOpen(false)} onSaved={(brand) => { setBrands((current) => [...current.filter((item) => item.id !== brand.id), brand].sort((a, b) => a.name.localeCompare(b.name))); notify("Brand profile đã được lưu."); }} />
-      <BatchImport open={batchOpen} baseInput={input} onClose={() => setBatchOpen(false)} onComplete={(listings) => { const first = listings[0]; setStored(first); setContent(first.current_listing); void refreshHistory(); notify(`${listings.length} listing đã được tạo.`); }} />
+      {batchOpen ? <BatchImport open baseInput={input} brands={brands} onBrandSaved={(brand) => { setBrands((current) => [...current.filter((item) => item.id !== brand.id), brand].sort((a, b) => a.name.localeCompare(b.name))); notify(`Đã lưu Brand ${brand.name}.`); }} onClose={() => setBatchOpen(false)} onComplete={(listings) => { const first = listings[0]; setStored(first); setContent(first.current_listing); void refreshHistory(); notify(`${listings.length} listing đã được tạo.`); }} /> : null}
     </main>
   );
 }

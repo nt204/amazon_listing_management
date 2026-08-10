@@ -359,6 +359,44 @@ export interface BrandProfile {
   updated_at: string;
 }
 
+export interface ListingTemplateMetadata {
+  sheet_name: string;
+  attribute_row: number;
+  label_row: number;
+  data_row: number;
+  column_count: number;
+  last_column: string;
+  source_parent_row: number;
+  source_child_row: number;
+  content_columns: {
+    sku: string;
+    title: string;
+    description: string;
+    bullet_points: string[];
+    generic_keywords: string;
+    main_image: string;
+  };
+  defaults: {
+    material: string;
+    size_capacity: string;
+    color: string;
+    package_contents: string;
+    features: string[];
+    country_of_origin: string;
+  };
+}
+
+export interface ListingTemplateSummary {
+  id: string;
+  name: string;
+  original_filename: string;
+  file_extension: string;
+  product_type: string;
+  metadata: ListingTemplateMetadata;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface WorkflowMetrics {
   total: number;
   draft: number;

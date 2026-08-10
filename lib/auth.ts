@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 export type TeamRole = "editor" | "reviewer" | "admin";
-export type Permission = "read" | "write" | "approve" | "export" | "manage_brands";
+export type Permission = "read" | "write" | "approve" | "export" | "manage_brands" | "manage_templates";
 
 export interface RequestActor {
   teamId: string;
@@ -34,7 +34,7 @@ const cookieName = "listing_desk_session";
 const rolePermissions: Record<TeamRole, Set<Permission>> = {
   editor: new Set(["read", "write"]),
   reviewer: new Set(["read", "write", "approve", "export"]),
-  admin: new Set(["read", "write", "approve", "export", "manage_brands"]),
+  admin: new Set(["read", "write", "approve", "export", "manage_brands", "manage_templates"]),
 };
 
 function authMode() {

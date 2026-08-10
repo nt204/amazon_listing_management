@@ -19,11 +19,15 @@ export async function resizeImage(file: File): Promise<ListingInput["images"][nu
   canvas.width = Math.max(1, Math.round(image.width * ratio));
   canvas.height = Math.max(1, Math.round(image.height * ratio));
   const context = canvas.getContext("2d");
-  if (!context) return { name: file.name, type: file.type, data_url: dataUrl };
+  if (!context) throw new Error(`Could not resize ${file.name}.`);
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
   context.drawImage(image, 0, 0, canvas.width, canvas.height);
-  const outputType = file.type === "image/png" ? "image/png" : "image/jpeg";
+  // Trello mockups are commonly large PNG files. JPEG keeps the AI input clear
+  // while preventing a resized image from exceeding the API's 5 MB limit.
+  const outputType = "image/jpeg";
   return {
-    name: file.name,
+    name: file.name.replace(/\.[A-Za-z0-9]+$/, "") + ".jpg",
     type: outputType,
     data_url: canvas.toDataURL(outputType, 0.82),
   };
