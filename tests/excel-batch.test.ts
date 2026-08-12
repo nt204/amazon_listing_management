@@ -110,6 +110,7 @@ test("Excel import builds a self-contained Hanging Ornament input", () => {
   assert.equal(input.product_type, "Hanging Ornament");
   assert.equal(input.main_keyword, row.main_keyword);
   assert.equal(input.product_information.material, "Acrylic");
+  assert.equal(input.product_information.color, "");
   assert.match(input.product_information.size_capacity, /3\.5 x 3\.5 x 0\.05 Inches/);
   assert.deepEqual(input.backend_keywords, splitGenericKeywords(row.generic_keywords));
   assert.equal(input.research.target_customer, "");
@@ -136,5 +137,6 @@ test("Amazon template export keeps original Trello URLs and generated content", 
     image_urls: row.image_urls,
     brand: "Celsorix",
     listing: listing.current_listing,
+    product_information: listing.input.product_information,
   });
 });

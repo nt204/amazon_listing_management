@@ -97,3 +97,41 @@ export async function createAmazonTemplate(
     return { workbook: await readFile(outputPath), extension };
   });
 }
+
+export async function createStandardListingExcel(items: AmazonTemplateItem[]) {
+  return withTempDirectory(async (directory) => {
+    const payloadPath = join(directory, "payload.json");
+    const outputPath = join(directory, "amazon-listing.xlsx");
+    await writeFile(payloadPath, JSON.stringify({ items }), "utf8");
+    await runPython(["build_excel", payloadPath, outputPath]);
+    return { workbook: await readFile(outputPath), extension: ".xlsx" };
+  });
+}
+
+export async function optimizeImageForAi(
+  imageBuffer: Buffer,
+  maxDim = 1600,
+  quality = 82,
+): Promise<{ dataUrl: string; mimeType: string; bytes: number }> {
+  return withTempDirectory(async (directory) => {
+    const inputPath = join(directory, "raw_image");
+    const outputPath = join(directory, "optimized.jpg");
+    await writeFile(inputPath, imageBuffer);
+    await runPython([
+      "resize_image",
+      inputPath,
+      outputPath,
+      "--max-dim",
+      String(maxDim),
+      "--quality",
+      String(quality),
+    ]);
+    const optimizedBuffer = await readFile(outputPath);
+    const mimeType = "image/jpeg";
+    return {
+      dataUrl: `data:${mimeType};base64,${optimizedBuffer.toString("base64")}`,
+      mimeType,
+      bytes: optimizedBuffer.length,
+    };
+  });
+}

@@ -6,12 +6,14 @@ function cleanCopy(value: string) {
     .trim();
 }
 
-/** Preserve the AI-written title while cleaning whitespace and punctuation spacing only. */
 export function cleanGeneratedTitle(value: string) {
   return value
+    .replace(/\bfor\s+(gift\s+)?(buyers?|shoppers?|customers?|recipients?)\b/gi, "")
     .replace(/\s+([,.;:!?])/g, "$1")
     .replace(/([,;:!?]|\.(?!\d))(?!\s|$)/g, "$1 ")
     .replace(/\s{2,}/g, " ")
+    .replace(/\s*,\s*,/g, ",")
+    .replace(/^[\s,;:\-–—]+|[\s,;:\-–—]+$/g, "")
     .trim();
 }
 

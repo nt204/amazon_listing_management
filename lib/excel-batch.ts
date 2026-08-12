@@ -20,6 +20,7 @@ export interface AmazonTemplateItem {
   image_urls: string[];
   brand: string;
   listing: StoredListing["current_listing"];
+  product_information?: ListingInput["product_information"];
 }
 
 export function splitGenericKeywords(value: string) {
@@ -48,7 +49,7 @@ export function buildExcelListingInput(
     product_information: {
       material: defaults.material,
       size_capacity: defaults.size_capacity,
-      color: defaults.color || "As shown in the product images",
+      color: defaults.color,
       package_contents: defaults.package_contents,
       features: [...defaults.features],
       personalization: "",
@@ -93,5 +94,6 @@ export function toAmazonTemplateItem(
     image_urls: row.image_urls,
     brand: listing.input.brand,
     listing: listing.current_listing,
+    product_information: listing.input.product_information,
   };
 }

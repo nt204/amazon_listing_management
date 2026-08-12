@@ -82,9 +82,12 @@ export function createMockListing(input: ListingInput): ListingContent {
       (used) => used && used.toLocaleLowerCase() === candidate.toLocaleLowerCase(),
     ),
   ) || "";
+  const validRecipient = titleBlueprint.recipient && !/^(buyers?|shoppers?|customers?|recipients?)$/i.test(titleBlueprint.recipient.trim())
+    ? `for ${titleBlueprint.recipient}`
+    : "";
   const titleCandidate = [
     [titleBlueprint.brand, input.product_type].filter(Boolean).join(" "),
-    [designTheme, searchPhrase, titleBlueprint.recipient ? `for ${titleBlueprint.recipient}` : ""]
+    [designTheme, searchPhrase, validRecipient]
       .filter(Boolean)
       .join(" "),
     [styleUse, keyFeature].filter(Boolean).join(" "),

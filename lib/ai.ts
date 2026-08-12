@@ -169,11 +169,11 @@ function buildPrompt(
   return `Create one Amazon ${input.marketplace} listing.
 
 Requirements:
-- Title: follow this exact slot order: [BRAND] [CORE PRODUCT TYPE], [THEME/DESIGN] [PRIMARY SEARCH INTENT] for [RECIPIENT], [KEY ATTRIBUTE/USE] [FEATURE], [SIZE/COUNT]. Keep every supported slot in this order. Do not output brackets or plus signs.
+- Title: follow this slot order: [BRAND] [CORE PRODUCT TYPE], [THEME/DESIGN] [PRIMARY SEARCH INTENT] [RECIPIENT], [KEY ATTRIBUTE/USE] [FEATURE], [SIZE/COUNT]. Keep supported slots in this order. Do not output brackets or plus signs.
 - Use the exact supplied brand. CORE PRODUCT TYPE must clearly identify what the item physically is in specific shopper-facing language; operator.product_type_hint is a category hint, not wording that must be copied.
 - PRIMARY SEARCH INTENT must contain operator.main_keyword using the same words in the same order; letter casing may change for natural Title Case. This is required in every title. A distinct relevant measured or related keyword may supplement the main keyword but must never replace it.
 - Relevance outranks search volume. Never use a keyword that changes the product type, placement, recipient, or use. Gift intent must not replace the core product type.
-- RECIPIENT must be a person or audience, never a location, occasion, decor phrase, or product keyword. KEY ATTRIBUTE/USE describes a supported material, construction detail, display context, or use. FEATURE is the strongest supported differentiator. SIZE/COUNT must be exact and verified.
+- RECIPIENT must be a specific target person or relationship (e.g. "for Mom", "for Men", "for Teachers") ONLY when explicitly supported by input data. NEVER write generic filler phrases like "for buyers", "for gift buyers", "for shoppers", "for customers", or "for recipient". If no specific target recipient is specified, omit the recipient slot completely.
 - Fill every supported slot with distinct information. Omit unsupported slots and their separators; never invent content merely to complete the formula.
 - Write natural Title Case with ordinary punctuation. Do not use quotation marks or the characters ! $ ? _ { } ^ ¬ ¦ unless one appears in the exact supplied brand. Avoid synonym stacking and do not repeat a meaningful word more than twice; grammar words are exempt.
 - Aim for ${titleBlueprint.idealMinimumCharacters}-${titleBlueprint.idealMaximumCharacters} useful characters. The hard limit is ${Math.min(policy.titleMax, titleBlueprint.maxCharacters)} characters. Use the available space for supported shopper information and relevant long-tail intent, but never add filler or redundant phrases to reach the target.

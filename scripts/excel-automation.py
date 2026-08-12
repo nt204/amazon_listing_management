@@ -456,11 +456,14 @@ def inspect_template(template_path: Path) -> dict[str, Any]:
             raise ValueError(f"Template thiếu Bullet Point #{occurrence}.")
         bullet_columns.append(get_column_letter(matching[0]))
     parent_row, child_row = source_template_rows(worksheet, columns, data_row)
+    parent_sku = cell_text(worksheet.cell(parent_row, find_column(columns, prefix="contribution_sku")).value)
     child_sku = cell_text(worksheet.cell(child_row, find_column(columns, prefix="contribution_sku")).value)
+    main_sku = (child_sku or parent_sku).replace("_MAIN", "").strip()
     color = first_value_with_prefix(worksheet, child_row, columns, "color[")
     if color.casefold() == child_sku.casefold():
         color = ""
     return {
+        "main_sku": main_sku,
         "sheet_name": worksheet.title,
         "attribute_row": attribute_row,
         "label_row": label_row,
@@ -516,6 +519,26 @@ def set_optional_value(
     column_index = optional_column(columns, prefix)
     if column_index is not None:
         worksheet.cell(row_index, column_index).value = value
+
+
+def set_image_locator_value(
+    worksheet: Any,
+    row_index: int,
+    columns: dict[str, int],
+    value: str,
+    prefix: str,
+    required: bool = False,
+) -> None:
+    column_index = (
+        find_column(columns, prefix=prefix)
+        if required
+        else optional_column(columns, prefix)
+    )
+    if column_index is None:
+        return
+    cell = worksheet.cell(row_index, column_index)
+    cell.value = value
+    cell.hyperlink = value or None
 
 
 def set_value(
@@ -582,10 +605,23 @@ def fill_listing_fields(
         prefix="generic_keyword",
     )
 
-    set_value(worksheet, row_index, columns, "", prefix="main_product_image_locator")
-    set_optional_value(worksheet, row_index, columns, "", prefix="swatch_product_image_locator")
+    set_image_locator_value(
+        worksheet,
+        row_index,
+        columns,
+        "",
+        prefix="main_product_image_locator",
+        required=True,
+    )
+    set_image_locator_value(
+        worksheet,
+        row_index,
+        columns,
+        "",
+        prefix="swatch_product_image_locator",
+    )
     for image_index in range(1, 9):
-        set_optional_value(
+        set_image_locator_value(
             worksheet,
             row_index,
             columns,
@@ -594,10 +630,23 @@ def fill_listing_fields(
         )
     image_urls = list(item.get("image_urls", []))[:9]
     if image_urls:
-        set_value(worksheet, row_index, columns, image_urls[0], prefix="main_product_image_locator")
-        set_optional_value(worksheet, row_index, columns, image_urls[0], prefix="swatch_product_image_locator")
+        set_image_locator_value(
+            worksheet,
+            row_index,
+            columns,
+            image_urls[0],
+            prefix="main_product_image_locator",
+            required=True,
+        )
+        set_image_locator_value(
+            worksheet,
+            row_index,
+            columns,
+            image_urls[0],
+            prefix="swatch_product_image_locator",
+        )
     for image_index, image_url in enumerate(image_urls[1:9], start=1):
-        set_optional_value(
+        set_image_locator_value(
             worksheet,
             row_index,
             columns,
@@ -617,6 +666,24 @@ def replace_source_identifier(value: Any, source_sku: str, target_sku: str) -> A
     if source_suffix and text.endswith(source_suffix):
         return f"{text[:-len(source_suffix)]}{target_suffix}"
     return value
+
+
+def sanitize_restored_row(
+    worksheet: Any,
+    row_index: int,
+    source_skus: list[str],
+    target_sku: str,
+) -> None:
+    for col_index in range(1, worksheet.max_column + 1):
+        cell = worksheet.cell(row_index, col_index)
+        text = cell_text(cell.value)
+        if text:
+            for s_sku in source_skus:
+                if s_sku and s_sku in text:
+                    text = text.replace(s_sku, target_sku)
+            if "ABC123" in text:
+                text = text.replace("ABC123", target_sku)
+            cell.value = text
 
 
 def fill_template(template_path: Path, payload_path: Path, output_path: Path) -> None:
@@ -647,8 +714,10 @@ def fill_template(template_path: Path, payload_path: Path, output_path: Path) ->
     source_parent_color = worksheet.cell(source_parent_row, color_column).value if color_column else None
     source_child_color = worksheet.cell(source_child_row, color_column).value if color_column else None
 
-    target_data_row = min(source_parent_row, source_child_row)
-    for row_index in range(target_data_row, worksheet.max_row + 1):
+    target_data_row = data_row or min(source_parent_row, source_child_row)
+    if target_data_row <= attribute_row:
+        raise ValueError("Dòng bắt đầu dữ liệu của template Amazon không hợp lệ.")
+    for row_index in range(attribute_row + 1, worksheet.max_row + 1):
         for column_index in range(1, worksheet.max_column + 1):
             cell = worksheet.cell(row_index, column_index)
             if not isinstance(cell, MergedCell):
@@ -656,42 +725,142 @@ def fill_template(template_path: Path, payload_path: Path, output_path: Path) ->
                 cell.hyperlink = None
                 cell.comment = None
 
-    first_sku = cell_text(items[0].get("sku"))
-    parent_sku = f"{first_sku}_MAIN"
-    parent_brand = cell_text(items[0].get("brand")) or "Generic"
-    parent_row = target_data_row
-    restore_row(worksheet, parent_row, parent_snapshot)
-    worksheet.row_dimensions[parent_row].height = parent_height
-    set_value(worksheet, parent_row, columns, parent_sku, prefix="contribution_sku")
-    set_value(worksheet, parent_row, columns, "Parent", prefix="parentage_level[")
-    set_value(worksheet, parent_row, columns, "", prefix="child_parent_sku_relationship[")
-    set_optional_value(worksheet, parent_row, columns, parent_brand, prefix="brand[")
-    set_optional_value(worksheet, parent_row, columns, parent_brand, prefix="manufacturer[")
-    set_optional_value(worksheet, parent_row, columns, replace_source_identifier(source_parent_model, source_parent_sku, parent_sku), prefix="model_number")
-    set_optional_value(worksheet, parent_row, columns, replace_source_identifier(source_parent_part, source_parent_sku, parent_sku), prefix="part_number")
-    parent_color = first_sku if cell_text(source_parent_color).casefold() in {source_child_sku.casefold(), source_parent_sku.casefold()} else source_parent_color
-    set_optional_value(worksheet, parent_row, columns, parent_color, prefix="color[")
-    fill_listing_fields(worksheet, parent_row, columns, items[0])
+    parentage_col = optional_column(columns, "parentage_level[")
+    has_parent_structure = source_parent_row != source_child_row and parentage_col is not None
 
-    for offset, item in enumerate(items, start=1):
-        row_index = target_data_row + offset
-        sku = cell_text(item.get("sku"))
-        brand = cell_text(item.get("brand")) or parent_brand
-        restore_row(worksheet, row_index, child_snapshot)
-        worksheet.row_dimensions[row_index].height = child_height
-        set_value(worksheet, row_index, columns, sku, prefix="contribution_sku")
-        set_value(worksheet, row_index, columns, "Child", prefix="parentage_level[")
-        set_value(worksheet, row_index, columns, parent_sku, prefix="child_parent_sku_relationship[")
-        set_optional_value(worksheet, row_index, columns, brand, prefix="brand[")
-        set_optional_value(worksheet, row_index, columns, brand, prefix="manufacturer[")
-        set_optional_value(worksheet, row_index, columns, replace_source_identifier(source_child_model, source_child_sku, sku), prefix="model_number")
-        set_optional_value(worksheet, row_index, columns, replace_source_identifier(source_child_part, source_child_sku, sku), prefix="part_number")
-        child_color = sku if cell_text(source_child_color).casefold() == source_child_sku.casefold() else source_child_color
-        set_optional_value(worksheet, row_index, columns, child_color, prefix="color[")
-        fill_listing_fields(worksheet, row_index, columns, item)
+    if has_parent_structure:
+        first_sku = cell_text(items[0].get("sku"))
+        parent_sku = f"{first_sku}_MAIN"
+        parent_brand = cell_text(items[0].get("brand")) or "Generic"
+        parent_row = target_data_row
+        restore_row(worksheet, parent_row, parent_snapshot)
+        sanitize_restored_row(worksheet, parent_row, [source_parent_sku, source_child_sku], parent_sku)
+        worksheet.row_dimensions[parent_row].height = parent_height
+        set_value(worksheet, parent_row, columns, parent_sku, prefix="contribution_sku")
+        set_value(worksheet, parent_row, columns, "Parent", prefix="parentage_level[")
+        set_value(worksheet, parent_row, columns, "", prefix="child_parent_sku_relationship[")
+        set_optional_value(worksheet, parent_row, columns, parent_brand, prefix="brand[")
+        set_optional_value(worksheet, parent_row, columns, parent_brand, prefix="manufacturer[")
+        set_optional_value(worksheet, parent_row, columns, replace_source_identifier(source_parent_model, source_parent_sku, parent_sku), prefix="model_number")
+        set_optional_value(worksheet, parent_row, columns, replace_source_identifier(source_parent_part, source_parent_sku, parent_sku), prefix="part_number")
+        parent_color = first_sku if cell_text(source_parent_color).casefold() in {source_child_sku.casefold(), source_parent_sku.casefold()} else source_parent_color
+        set_optional_value(worksheet, parent_row, columns, parent_color, prefix="color[")
+        fill_listing_fields(worksheet, parent_row, columns, items[0])
+
+        for offset, item in enumerate(items, start=1):
+            row_index = target_data_row + offset
+            sku = cell_text(item.get("sku"))
+            brand = cell_text(item.get("brand")) or parent_brand
+            restore_row(worksheet, row_index, child_snapshot)
+            sanitize_restored_row(worksheet, row_index, [source_parent_sku, source_child_sku], sku)
+            worksheet.row_dimensions[row_index].height = child_height
+            set_value(worksheet, row_index, columns, sku, prefix="contribution_sku")
+            set_value(worksheet, row_index, columns, "Child", prefix="parentage_level[")
+            set_value(worksheet, row_index, columns, parent_sku, prefix="child_parent_sku_relationship[")
+            set_optional_value(worksheet, row_index, columns, brand, prefix="brand[")
+            set_optional_value(worksheet, row_index, columns, brand, prefix="manufacturer[")
+            set_optional_value(worksheet, row_index, columns, replace_source_identifier(source_child_model, source_child_sku, sku), prefix="model_number")
+            set_optional_value(worksheet, row_index, columns, replace_source_identifier(source_child_part, source_child_sku, sku), prefix="part_number")
+            child_color = sku if cell_text(source_child_color).casefold() == source_child_sku.casefold() else source_child_color
+            set_optional_value(worksheet, row_index, columns, child_color, prefix="color[")
+            fill_listing_fields(worksheet, row_index, columns, item)
+    else:
+        for offset, item in enumerate(items):
+            row_index = target_data_row + offset
+            sku = cell_text(item.get("sku"))
+            brand = cell_text(item.get("brand")) or "Generic"
+            restore_row(worksheet, row_index, child_snapshot)
+            sanitize_restored_row(worksheet, row_index, [source_parent_sku, source_child_sku], sku)
+            worksheet.row_dimensions[row_index].height = child_height
+            set_value(worksheet, row_index, columns, sku, prefix="contribution_sku")
+            set_optional_value(worksheet, row_index, columns, brand, prefix="brand[")
+            set_optional_value(worksheet, row_index, columns, brand, prefix="manufacturer[")
+            set_optional_value(worksheet, row_index, columns, replace_source_identifier(source_child_model, source_child_sku, sku), prefix="model_number")
+            set_optional_value(worksheet, row_index, columns, replace_source_identifier(source_child_part, source_child_sku, sku), prefix="part_number")
+            child_color = sku if cell_text(source_child_color).casefold() == source_child_sku.casefold() else source_child_color
+            set_optional_value(worksheet, row_index, columns, child_color, prefix="color[")
+            fill_listing_fields(worksheet, row_index, columns, item)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(output_path)
+
+
+def create_standard_listing_excel(payload_path: Path, output_path: Path) -> None:
+    data = json.loads(payload_path.read_text(encoding="utf-8"))
+    items = data.get("items", [])
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Amazon Listings"
+
+    headers = [
+        "seller-sku",
+        "marketplace",
+        "product-type",
+        "item-name",
+        "brand-name",
+        "bullet-point1",
+        "bullet-point2",
+        "bullet-point3",
+        "bullet-point4",
+        "bullet-point5",
+        "product-description",
+        "generic-keywords",
+        "main-image-url",
+        "other-image-url1",
+        "other-image-url2",
+        "other-image-url3",
+    ]
+    worksheet.append(headers)
+
+    for item in items:
+        sku = item.get("sku", "")
+        listing = item.get("listing", {})
+        brand = item.get("brand", "")
+        image_urls = item.get("image_urls", [])
+
+        bullets = listing.get("bullet_points", [])
+        while len(bullets) < 5:
+            bullets.append("")
+
+        row = [
+            sku,
+            "US",
+            "Listing Desk",
+            listing.get("title", ""),
+            brand,
+            bullets[0],
+            bullets[1],
+            bullets[2],
+            bullets[3],
+            bullets[4],
+            listing.get("description", ""),
+            listing.get("backend_search_terms", ""),
+            image_urls[0] if len(image_urls) > 0 else "",
+            image_urls[1] if len(image_urls) > 1 else "",
+            image_urls[2] if len(image_urls) > 2 else "",
+            image_urls[3] if len(image_urls) > 3 else "",
+        ]
+        worksheet.append(row)
+
+def resize_image_for_ai(input_path: Path, output_path: Path, max_dim: int = 1600, quality: int = 82) -> dict[str, Any]:
+    from PIL import Image, ImageOps
+    with Image.open(input_path) as img:
+        img = ImageOps.exif_transpose(img)
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        width, height = img.size
+        if max(width, height) > max_dim:
+            if width >= height:
+                new_w = max_dim
+                new_h = int(height * (max_dim / width))
+            else:
+                new_h = max_dim
+                new_w = int(width * (max_dim / height))
+            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        img.save(output_path, format="JPEG", quality=quality, optimize=True)
+    return {"status": "ok", "bytes": output_path.stat().st_size}
 
 
 def main() -> None:
@@ -712,6 +881,16 @@ def main() -> None:
     fill_parser.add_argument("payload")
     fill_parser.add_argument("output")
 
+    build_excel_parser = subparsers.add_parser("build_excel")
+    build_excel_parser.add_argument("payload")
+    build_excel_parser.add_argument("output")
+
+    resize_parser = subparsers.add_parser("resize_image")
+    resize_parser.add_argument("source")
+    resize_parser.add_argument("output")
+    resize_parser.add_argument("--max-dim", type=int, default=1600)
+    resize_parser.add_argument("--quality", type=int, default=82)
+
     args = parser.parse_args()
     if args.command == "parse":
         print(json.dumps(parse_workbook(Path(args.source)), ensure_ascii=False))
@@ -721,6 +900,10 @@ def main() -> None:
         create_sample(Path(args.output))
     elif args.command == "fill":
         fill_template(Path(args.template), Path(args.payload), Path(args.output))
+    elif args.command == "build_excel":
+        create_standard_listing_excel(Path(args.payload), Path(args.output))
+    elif args.command == "resize_image":
+        print(json.dumps(resize_image_for_ai(Path(args.source), Path(args.output), args.max_dim, args.quality), ensure_ascii=False))
 
 
 if __name__ == "__main__":

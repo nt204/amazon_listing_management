@@ -2,7 +2,7 @@ import { z } from "zod";
 import { createAmazonTemplate } from "@/lib/excel-automation";
 import { getListingTemplate } from "@/lib/db";
 import { ApiError, authorize, dataScope, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
-import { generatedListingSchema } from "@/lib/schemas";
+import { generatedListingSchema, productInformationSchema } from "@/lib/schemas";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -15,6 +15,7 @@ const exportSchema = z.object({
       image_urls: z.array(z.url()).min(1).max(10),
       brand: z.string().trim().max(120),
       listing: generatedListingSchema,
+      product_information: productInformationSchema.optional(),
     }),
   ).min(1).max(100),
 });

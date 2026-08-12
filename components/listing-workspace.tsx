@@ -10,6 +10,7 @@ import {
   SquaresFourIcon,
   StackIcon,
   TagIcon,
+  KanbanIcon,
   WarningCircleIcon,
   XIcon,
 } from "@phosphor-icons/react";
@@ -19,6 +20,8 @@ import { BatchImport } from "@/components/batch-import";
 import { BrandManager } from "@/components/brand-manager";
 import { ListingForm, type FormIssue } from "@/components/listing-form";
 import { ResultPanel } from "@/components/result-panel";
+import { TrelloBoardView } from "@/components/trello-board-view";
+import { TrelloWorkspace } from "@/components/trello-workspace";
 import { DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_MODEL, type AiOptions } from "@/lib/models";
 import type {
   BrandProfile,
@@ -234,6 +237,8 @@ export function ListingWorkspace() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [brandManagerOpen, setBrandManagerOpen] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
+  const [trelloOpen, setTrelloOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<"trello" | "workspace">("trello");
 
   const refreshHistory = useCallback(async () => {
     try {
@@ -520,10 +525,41 @@ export function ListingWorkspace() {
   return (
     <main className="min-h-[100dvh] bg-[#f6f7f8]">
       <header className="flex h-16 items-center justify-between border-b border-[#d8dde1] bg-[#1f2931] px-4 text-white lg:px-5">
-        <div className="flex items-center gap-3">
-          <div className="grid h-8 w-8 place-items-center rounded-lg bg-[#b84f1d] text-white"><CheckSquareIcon size={18} weight="fill" /></div>
-          <div><p className="text-sm font-bold leading-4">Listing Desk</p><p className="mt-0.5 hidden text-[10px] text-[#b8c0c6] sm:block">Workflow and quality control</p></div>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            <div className="grid h-8 w-8 place-items-center rounded-lg bg-[#b84f1d] text-white"><CheckSquareIcon size={18} weight="fill" /></div>
+            <div><p className="text-sm font-bold leading-4">Listing Desk</p><p className="mt-0.5 hidden text-[10px] text-[#b8c0c6] sm:block">Workflow & Trello Automation</p></div>
+          </div>
+
+          {/* Mode Switcher Tabs */}
+          <div className="flex items-center gap-1 rounded-lg bg-[#141c22] p-1 border border-[#3b4852]">
+            <button
+              type="button"
+              onClick={() => setViewMode("trello")}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold transition ${
+                viewMode === "trello"
+                  ? "bg-blue-600 text-white shadow-sm"
+                  : "text-[#b8c0c6] hover:bg-[#253039] hover:text-white"
+              }`}
+            >
+              <KanbanIcon size={15} />
+              <span>📌 Bảng Trello Kanban</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("workspace")}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold transition ${
+                viewMode === "workspace"
+                  ? "bg-[#b84f1d] text-white shadow-sm"
+                  : "text-[#b8c0c6] hover:bg-[#253039] hover:text-white"
+              }`}
+            >
+              <ListPlusIcon size={15} />
+              <span>📝 Soạn Listing Thủ Công</span>
+            </button>
+          </div>
         </div>
+
         <div className="flex items-center gap-2">
           <button type="button" onClick={() => setQueueOpen(true)} className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-lg border border-[#59636b] bg-[#2a353e] px-3 text-xs font-semibold text-white hover:bg-[#34414b] xl:hidden"><ArchiveTrayIcon size={16} /><span className="hidden sm:inline">Listings</span><span className="rounded bg-[#3b4852] px-1.5 py-0.5 text-[10px]">{metrics.total}</span></button>
           <button type="button" onClick={() => setBrandManagerOpen(true)} className="hidden h-9 items-center gap-2 whitespace-nowrap rounded-lg border border-[#59636b] bg-[#2a353e] px-3 text-xs font-semibold text-white hover:bg-[#34414b] sm:inline-flex"><TagIcon size={16} /> Brands</button>
@@ -550,39 +586,58 @@ export function ListingWorkspace() {
             onSelectedIdsChange={setSelectedIds}
             activeId={stored?.id}
             action={action}
-            onOpenListing={(id) => { setQueueOpen(false); void openListing(id); }}
+            onOpenListing={(id) => { setQueueOpen(false); void openListing(id); setViewMode("workspace"); }}
             onExportSelected={() => void exportSelected()}
             onClose={() => setQueueOpen(false)}
           />
         </div>
       ) : null}
 
-      <div className="grid min-h-[calc(100dvh-64px)] grid-cols-[minmax(0,1fr)] lg:grid-cols-[400px_minmax(0,1fr)] xl:grid-cols-[286px_400px_minmax(0,1fr)]">
-        <QueuePanel
-          className="thin-scrollbar hidden min-h-0 flex-col border-r border-[#dfe3e6] bg-[#f0f2f4] xl:flex xl:max-h-[calc(100dvh-64px)]"
-          history={filteredHistory}
-          metrics={metrics}
-          filter={filter}
-          onFilterChange={setFilter}
-          query={queueQuery}
-          onQueryChange={setQueueQuery}
-          selectedIds={selectedIds}
-          onSelectedIdsChange={setSelectedIds}
-          activeId={stored?.id}
-          action={action}
-          onOpenListing={(id) => void openListing(id)}
-          onExportSelected={() => void exportSelected()}
-        />
-
-        <div className={stored ? "hidden lg:contents" : "contents"}>
-          <ListingForm value={input} onChange={setInput} onSubmit={handleGenerate} onLoadSample={() => { setInput(sampleInput); setIssues([]); }} loading={loading} issues={issues} aiOptions={aiOptions} brands={brands} />
+      {viewMode === "trello" ? (
+        <div className="h-[calc(100dvh-64px)] w-full">
+          <TrelloBoardView
+            brands={brands}
+            onListingCreated={(listing) => {
+              setStored(listing);
+              setContent(listing.current_listing);
+              void refreshHistory();
+              notify(`Listing cho SKU ${listing.input.internal_name} đã được tạo.`);
+            }}
+            onSelectListing={(listing) => {
+              setStored(listing);
+              setContent(listing.current_listing);
+            }}
+          />
         </div>
+      ) : (
+        <div className="grid min-h-[calc(100dvh-64px)] grid-cols-[minmax(0,1fr)] lg:grid-cols-[400px_minmax(0,1fr)] xl:grid-cols-[286px_400px_minmax(0,1fr)]">
+          <QueuePanel
+            className="thin-scrollbar hidden min-h-0 flex-col border-r border-[#dfe3e6] bg-[#f0f2f4] xl:flex xl:max-h-[calc(100dvh-64px)]"
+            history={filteredHistory}
+            metrics={metrics}
+            filter={filter}
+            onFilterChange={setFilter}
+            query={queueQuery}
+            onQueryChange={setQueueQuery}
+            selectedIds={selectedIds}
+            onSelectedIdsChange={setSelectedIds}
+            activeId={stored?.id}
+            action={action}
+            onOpenListing={(id) => { void openListing(id); setViewMode("workspace"); }}
+            onExportSelected={() => void exportSelected()}
+          />
 
-        <ResultPanel key={stored?.id || "empty"} stored={stored} content={content} editing={editing} loading={loading} action={action} onContentChange={setContent} onEdit={() => setEditing(true)} onCancelEdit={() => { setContent(stored?.current_listing || null); setEditing(false); }} onSave={save} onSubmitReview={submitReview} onApprove={approve} onExport={exportListing} onCopy={copy} onRevise={revise} />
-      </div>
+          <div className={stored ? "hidden lg:contents" : "contents"}>
+            <ListingForm value={input} onChange={setInput} onSubmit={handleGenerate} onLoadSample={() => { setInput(sampleInput); setIssues([]); }} loading={loading} issues={issues} aiOptions={aiOptions} brands={brands} />
+          </div>
+
+          <ResultPanel key={stored?.id || "empty"} stored={stored} content={content} editing={editing} loading={loading} action={action} onContentChange={setContent} onEdit={() => setEditing(true)} onCancelEdit={() => { setContent(stored?.current_listing || null); setEditing(false); }} onSave={save} onSubmitReview={submitReview} onApprove={approve} onExport={exportListing} onCopy={copy} onRevise={revise} />
+        </div>
+      )}
 
       <BrandManager open={brandManagerOpen} brands={brands} onClose={() => setBrandManagerOpen(false)} onSaved={(brand) => { setBrands((current) => [...current.filter((item) => item.id !== brand.id), brand].sort((a, b) => a.name.localeCompare(b.name))); notify("Brand profile đã được lưu."); }} />
       {batchOpen ? <BatchImport open baseInput={input} brands={brands} onBrandSaved={(brand) => { setBrands((current) => [...current.filter((item) => item.id !== brand.id), brand].sort((a, b) => a.name.localeCompare(b.name))); notify(`Đã lưu Brand ${brand.name}.`); }} onClose={() => setBatchOpen(false)} onComplete={(listings) => { const first = listings[0]; setStored(first); setContent(first.current_listing); void refreshHistory(); notify(`${listings.length} listing đã được tạo.`); }} /> : null}
+      <TrelloWorkspace open={trelloOpen} brands={brands} onClose={() => setTrelloOpen(false)} onListingCreated={(listing) => { setStored(listing); setContent(listing.current_listing); void refreshHistory(); notify(`Listing cho SKU ${listing.input.internal_name} đã được tạo.`); }} />
     </main>
   );
 }

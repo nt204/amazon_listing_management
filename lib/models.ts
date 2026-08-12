@@ -7,6 +7,8 @@ const DEFAULT_GEMINI_MODELS = [
 ] as const;
 
 const DEFAULT_OPENAI_MODELS = [
+  { id: "gpt-4o", label: "GPT-4o (Standard)", note: "High quality multimodal model" },
+  { id: "gpt-4o-mini", label: "GPT-4o Mini (Fast & Low Cost)", note: "Fastest response" },
   { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", note: "Highest quality" },
   { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", note: "Balanced quality and cost" },
   { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", note: "Lowest cost and latency" },

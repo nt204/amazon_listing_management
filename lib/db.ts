@@ -495,6 +495,21 @@ export async function saveBrandProfile(scope: DataScope, name: string, guideline
   return rows[0];
 }
 
+export async function deleteBrandProfile(scope: DataScope, id: string): Promise<boolean> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const deleted = await sql`
+    DELETE FROM brand_profiles
+    WHERE id = ${id} AND team_id = ${scope.teamId}
+    RETURNING id
+  `;
+  if (deleted.length > 0) {
+    await recordAuditEvent(scope, "brand.deleted", "brand_profile", id);
+    return true;
+  }
+  return false;
+}
+
 interface ListingTemplateRow extends ListingTemplateSummary {
   metadata_json: ListingTemplateMetadata | string;
   workbook_bytes?: Buffer;
@@ -577,6 +592,21 @@ export async function saveListingTemplate(
     columns: input.metadata.column_count,
   });
   return toListingTemplateSummary(rows[0]);
+}
+
+export async function deleteListingTemplate(scope: DataScope, id: string): Promise<boolean> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const deleted = await sql`
+    DELETE FROM listing_templates
+    WHERE id = ${id} AND team_id = ${scope.teamId}
+    RETURNING id
+  `;
+  if (deleted.length > 0) {
+    await recordAuditEvent(scope, "template.deleted", "listing_template", id);
+    return true;
+  }
+  return false;
 }
 
 export async function consumeRateLimit(

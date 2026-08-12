@@ -1,6 +1,19 @@
 import { extname } from "node:path";
 import { inspectListingTemplate } from "@/lib/excel-automation";
-import { listListingTemplates, saveListingTemplate } from "@/lib/db";
+import { deleteListingTemplate, listListingTemplates, saveListingTemplate } from "@/lib/db";
+
+export async function DELETE(request: Request) {
+  try {
+    const scope = dataScope(authorize(request, "manage_templates"));
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get("id");
+    if (!id) return Response.json({ error: "Thiếu ID template" }, { status: 400 });
+    const success = await deleteListingTemplate(scope, id);
+    return Response.json({ success });
+  } catch (error) {
+    return routeErrorResponse(error, "Không thể xóa template.");
+  }
+}
 import { ApiError, authorize, dataScope, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
 
 export const runtime = "nodejs";

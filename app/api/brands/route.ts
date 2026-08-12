@@ -1,5 +1,18 @@
 import { NextResponse } from "next/server";
-import { listBrandProfiles, saveBrandProfile } from "@/lib/db";
+import { deleteBrandProfile, listBrandProfiles, saveBrandProfile } from "@/lib/db";
+
+export async function DELETE(request: Request) {
+  try {
+    const scope = dataScope(authorize(request, "manage_brands"));
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get("id");
+    if (!id) return NextResponse.json({ error: "Thiếu ID thương hiệu" }, { status: 400 });
+    const success = await deleteBrandProfile(scope, id);
+    return NextResponse.json({ success });
+  } catch (error) {
+    return routeErrorResponse(error, "Không thể xóa thương hiệu.");
+  }
+}
 import { brandProfileSchema } from "@/lib/schemas";
 import { authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 

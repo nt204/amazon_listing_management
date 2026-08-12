@@ -59,7 +59,9 @@ export function buildTitleBlueprint(input: ListingInput): TitleBlueprint {
       info.color,
     ]),
     highIntentKeywordCandidates,
-    recipient: input.research.target_customer.trim(),
+    recipient: /^(buyers?|gift buyers?|shoppers?|customers?|recipients?)$/i.test(input.research.target_customer.trim())
+      ? ""
+      : input.research.target_customer.trim(),
     styleUseCandidates: unique([
       ...info.features,
       info.care_instructions,

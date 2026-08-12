@@ -3,7 +3,7 @@ import { getGeminiModels, getOpenAIModels } from "@/lib/models";
 
 const cleanedString = z.string().trim();
 
-const productInformationSchema = z.object({
+export const productInformationSchema = z.object({
   material: cleanedString,
   size_capacity: cleanedString,
   color: cleanedString,
@@ -76,7 +76,7 @@ const imageInputSchema = z.object({
     context.addIssue({ code: "custom", path: ["data_url"], message: "Invalid image data or MIME type." });
     return;
   }
-  const maxBytes = configuredBytes("MAX_IMAGE_BYTES", 5_000_000);
+  const maxBytes = configuredBytes("MAX_IMAGE_BYTES", 15_000_000);
   if (decodedBase64Bytes(image.data_url) > maxBytes) {
     context.addIssue({ code: "custom", path: ["data_url"], message: `Image exceeds ${maxBytes} bytes.` });
   }
@@ -109,7 +109,7 @@ export const listingInputSchema = z.object({
     .max(10, "Chỉ được tải tối đa 10 ảnh.")
     .superRefine((images, context) => {
       const total = images.reduce((sum, image) => sum + decodedBase64Bytes(image.data_url), 0);
-      const maxTotal = configuredBytes("MAX_TOTAL_IMAGE_BYTES", 20_000_000);
+      const maxTotal = configuredBytes("MAX_TOTAL_IMAGE_BYTES", 50_000_000);
       if (total > maxTotal) context.addIssue({ code: "custom", message: `Total image payload exceeds ${maxTotal} bytes.` });
     }),
   configuration: z.object({
