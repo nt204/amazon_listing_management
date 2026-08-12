@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import {
   ArrowRightIcon,
   CheckCircleIcon,
@@ -612,6 +613,48 @@ export function ResultPanel({
       </div>
 
       <div className="mx-auto w-full max-w-[1220px] p-5 lg:p-7">
+        {stored.input.images.length ? (
+          <section className="mb-5 rounded-[10px] border border-[#dfe3e6] bg-white p-4">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <div className="flex items-center gap-2">
+                  <ImageSquareIcon size={18} className="text-[#a24419]" />
+                  <h2 className="text-sm font-bold text-[#222b32]">Ảnh sản phẩm</h2>
+                </div>
+                <p className="mt-1 text-xs text-[#65717c]">
+                  Màn hình dùng bản preview nhẹ; nút tải luôn trả về đúng byte ảnh gốc.
+                </p>
+              </div>
+              <span className="text-xs font-semibold text-[#65717c]">
+                {stored.input.images.length} ảnh
+              </span>
+            </div>
+            <div className="mt-3 flex gap-3 overflow-x-auto pb-1">
+              {stored.input.images.map((image, index) => (
+                <div key={`${image.storage_key || image.name}-${index}`} className="w-28 shrink-0">
+                  <div className="relative aspect-square overflow-hidden rounded-lg border border-[#dfe3e6] bg-[#f5f7f8]">
+                    <Image
+                      src={image.data_url}
+                      alt={`Ảnh sản phẩm ${index + 1}`}
+                      fill
+                      sizes="112px"
+                      unoptimized
+                      className="h-full w-full object-cover"
+                    />
+                  </div>
+                  <a
+                    href={image.download_url || image.data_url}
+                    download={image.name}
+                    className="mt-1.5 flex items-center justify-center gap-1 rounded-md border border-[#cfd5da] bg-white px-2 py-1.5 text-[10px] font-bold text-[#39444d] hover:bg-[#f5f6f7]"
+                  >
+                    <DownloadSimpleIcon size={13} /> Tải ảnh gốc
+                  </a>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
         <section className="mb-5 rounded-[10px] border border-[#dfc8bc] bg-[#fffaf7] p-4">
           <label htmlFor="review_instruction" className="text-[13px] font-bold text-[#49372f]">Yêu cầu AI chỉnh sửa</label>
           <p className="mt-1 text-xs leading-5 text-[#786156]">Một câu lệnh cho toàn bộ listing. Sau khi sửa, hệ thống chỉ kiểm tra lại định dạng Amazon cơ bản.</p>

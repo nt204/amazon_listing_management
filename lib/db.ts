@@ -2,6 +2,10 @@ import "server-only";
 
 import postgres from "postgres";
 import { createHash } from "node:crypto";
+import {
+  createStoredImageDerivatives,
+  IMAGE_DERIVATIVE_VERSION,
+} from "@/lib/image-processing";
 import type {
   BrandProfile,
   ListingContent,
@@ -46,7 +50,7 @@ async function ensureSchema() {
     const sql = getDatabase();
     globalForDatabase.listingPostgresSchema = sql<{ name: string }[]>`
         SELECT name FROM schema_migrations
-        WHERE name = '004_listing_templates.sql'
+        WHERE name = '005_image_derivatives.sql'
         LIMIT 1
       `
       .then((rows) => {
@@ -108,6 +112,22 @@ function toStoredListing(row: ListingRow): StoredListing {
   };
 }
 
+function storedInputReferences(input: ListingInput, listingId: string): ListingInput {
+  return {
+    ...input,
+    images: input.images.map((image, imageIndex) => ({
+      name: image.name,
+      type: image.type,
+      data_url: "",
+      storage_key: image.storage_key || `db:${listingId}:${imageIndex}`,
+      sha256: image.sha256,
+      width: image.width,
+      height: image.height,
+      bytes: image.bytes,
+    })),
+  };
+}
+
 export async function saveGeneratedListing(scope: DataScope, input: ListingInput, result: ListingResult) {
   await ensureSchema();
   const sql = getDatabase();
@@ -118,20 +138,30 @@ export async function saveGeneratedListing(scope: DataScope, input: ListingInput
   const storedInputBase = result.competitor_profile
     ? { ...input, research: { ...input.research, competitor_profile: result.competitor_profile } }
     : input;
-  const images = input.images.map((image, imageIndex) => {
-    const payload = image.data_url.slice(image.data_url.indexOf(",") + 1);
-    const bytes = Buffer.from(payload, "base64");
-    const sha256 = createHash("sha256").update(bytes).digest("hex");
-    return { ...image, imageIndex, bytes, sha256, id: crypto.randomUUID() };
-  });
+  const images = await Promise.all(input.images.map(async (image, imageIndex) => {
+    const derivatives = await createStoredImageDerivatives(image);
+    const sha256 = createHash("sha256")
+      .update(derivatives.originalBytes)
+      .digest("hex");
+    return {
+      ...image,
+      ...derivatives,
+      imageIndex,
+      sha256,
+      id: crypto.randomUUID(),
+    };
+  }));
   const storedInput: ListingInput = {
     ...storedInputBase,
     images: images.map((image) => ({
-      name: image.name,
-      type: image.type,
+      name: image.originalName,
+      type: image.originalMimeType,
       data_url: "",
       storage_key: `db:${result.request_id}:${image.imageIndex}`,
       sha256: image.sha256,
+      width: image.width || undefined,
+      height: image.height || undefined,
+      bytes: image.originalBytes.byteLength,
     })),
   };
   await sql.begin(async (transaction) => {
@@ -148,10 +178,15 @@ export async function saveGeneratedListing(scope: DataScope, input: ListingInput
     for (const image of images) {
       await transaction`
         INSERT INTO listing_images (
-          id, listing_id, team_id, image_index, name, mime_type, sha256, image_bytes
+          id, listing_id, team_id, image_index, name, mime_type, sha256, image_bytes,
+          width, height, ai_mime_type, ai_image_bytes, preview_mime_type,
+          preview_image_bytes, preview_width, preview_height
         ) VALUES (
           ${image.id}, ${result.request_id}, ${scope.teamId}, ${image.imageIndex},
-          ${image.name}, ${image.type}, ${image.sha256}, ${image.bytes}
+          ${image.originalName}, ${image.originalMimeType}, ${image.sha256},
+          ${image.originalBytes}, ${image.width}, ${image.height},
+          ${image.aiMimeType}, ${image.aiBytes}, ${image.previewMimeType},
+          ${image.previewBytes}, ${image.previewWidth}, ${image.previewHeight}
         )
       `;
     }
@@ -227,25 +262,116 @@ export async function getListing(scope: DataScope, id: string): Promise<StoredLi
   const listing = toStoredListing(rows[0]);
   listing.revisions = await listRevisions(scope, id);
 
-  const imageRows = await sql<{ image_index: number; mime_type: string; image_bytes: Buffer }[]>`
-    SELECT image_index, mime_type, image_bytes
+  const imageRows = await sql<{
+    image_index: number;
+    name: string;
+    mime_type: string;
+    sha256: string;
+    byte_size: number;
+    width: number | null;
+    height: number | null;
+  }[]>`
+    SELECT
+      image_index,
+      name,
+      mime_type,
+      sha256,
+      OCTET_LENGTH(image_bytes)::int AS byte_size,
+      width,
+      height
     FROM listing_images
     WHERE listing_id = ${id} AND team_id = ${scope.teamId}
     ORDER BY image_index ASC
   `;
-  const imageMap = new Map<number, string>();
-  for (const imgRow of imageRows) {
-    const base64 = imgRow.image_bytes.toString("base64");
-    imageMap.set(imgRow.image_index, `data:${imgRow.mime_type};base64,${base64}`);
-  }
+  const imageMap = new Map(imageRows.map((image) => [image.image_index, image]));
   if (listing.input && Array.isArray(listing.input.images)) {
-    listing.input.images = listing.input.images.map((image, index) => ({
-      ...image,
-      data_url: imageMap.get(index) || image.data_url || "",
-    }));
+    listing.input.images = listing.input.images.map((image, index) => {
+      const storedImage = imageMap.get(index);
+      if (!storedImage) return image;
+      const version = storedImage.sha256.slice(0, 16);
+      const baseUrl = `/api/listings/${encodeURIComponent(id)}/images/${index}`;
+      return {
+        name: storedImage.name,
+        type: storedImage.mime_type,
+        data_url: `${baseUrl}?variant=preview&v=${version}&dv=${IMAGE_DERIVATIVE_VERSION}`,
+        download_url: `${baseUrl}?download=1&v=${version}`,
+        storage_key: image.storage_key || `db:${id}:${index}`,
+        sha256: storedImage.sha256,
+        width: storedImage.width || undefined,
+        height: storedImage.height || undefined,
+        bytes: storedImage.byte_size,
+      };
+    });
   }
 
   return listing;
+}
+
+export async function getListingWithAiImages(
+  scope: DataScope,
+  id: string,
+): Promise<StoredListing | null> {
+  const listing = await getListing(scope, id);
+  if (!listing) return null;
+  const sql = getDatabase();
+  const imageRows = await sql<{
+    image_index: number;
+    mime_type: string;
+    image_bytes: Buffer;
+  }[]>`
+    SELECT
+      image_index,
+      COALESCE(ai_mime_type, mime_type) AS mime_type,
+      COALESCE(ai_image_bytes, image_bytes) AS image_bytes
+    FROM listing_images
+    WHERE listing_id = ${id} AND team_id = ${scope.teamId}
+    ORDER BY image_index ASC
+  `;
+  const imageMap = new Map(imageRows.map((image) => [image.image_index, image]));
+  listing.input.images = listing.input.images.map((image, index) => {
+    const storedImage = imageMap.get(index);
+    if (!storedImage) return image;
+    return {
+      ...image,
+      type: storedImage.mime_type,
+      data_url: `data:${storedImage.mime_type};base64,${storedImage.image_bytes.toString("base64")}`,
+    };
+  });
+  return listing;
+}
+
+export async function getListingImage(
+  scope: DataScope,
+  listingId: string,
+  imageIndex: number,
+  variant: "original" | "preview",
+) {
+  await ensureSchema();
+  const sql = getDatabase();
+  const rows = await sql<{
+    name: string;
+    mime_type: string;
+    sha256: string;
+    image_bytes: Buffer;
+  }[]>`
+    SELECT
+      name,
+      CASE
+        WHEN ${variant} = 'preview' THEN COALESCE(preview_mime_type, mime_type)
+        ELSE mime_type
+      END AS mime_type,
+      sha256,
+      CASE
+        WHEN ${variant} = 'preview' THEN COALESCE(preview_image_bytes, image_bytes)
+        ELSE image_bytes
+      END AS image_bytes
+    FROM listing_images
+    WHERE listing_id = ${listingId}
+      AND team_id = ${scope.teamId}
+      AND image_index = ${imageIndex}
+    LIMIT 1
+  `;
+  return rows[0] || null;
 }
 
 export async function updateListingContent(
@@ -269,7 +395,7 @@ export async function updateListingContent(
         UPDATE listings
         SET
           status = ${status},
-          input_json = ${sql.json(toJson(options.input))},
+          input_json = ${sql.json(toJson(storedInputReferences(options.input, id)))},
           result_json = ${sql.json(toJson(result))},
           current_listing_json = ${sql.json(toJson(listing))},
           updated_at = NOW()
@@ -338,7 +464,7 @@ export async function setListingStatusWithValidation(
     UPDATE listings
     SET
       status = ${status},
-      input_json = ${sql.json(toJson(input))},
+      input_json = ${sql.json(toJson(storedInputReferences(input, id)))},
       result_json = ${sql.json(toJson(result))},
       updated_at = NOW()
     WHERE id = ${id} AND team_id = ${scope.teamId}

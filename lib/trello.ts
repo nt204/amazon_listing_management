@@ -14,6 +14,14 @@ export interface TrelloAttachment {
   bytes: number;
   isUpload: boolean;
   date?: string;
+  previewUrl?: string;
+  previews?: Array<{
+    url: string;
+    width: number;
+    height: number;
+    bytes?: number;
+    scaled?: boolean;
+  }>;
 }
 
 const IMAGE_ATTACHMENT_PATTERN = /\.(png|jpe?g|webp)$/i;
@@ -42,6 +50,26 @@ export function selectTrelloImageAttachments(card: Pick<TrelloCard, "id" | "atta
       isTrelloImageAttachment(attachment) &&
       attachmentBelongsToCard(attachment, card.id),
   );
+}
+
+function preferredAttachmentPreview(attachment: TrelloAttachment) {
+  const previews = (attachment.previews || [])
+    .filter((preview) => preview.url && preview.width > 0)
+    .sort((first, second) => first.width - second.width);
+  return (
+    previews.find((preview) => preview.width >= 320) ||
+    previews[previews.length - 1]
+  )?.url;
+}
+
+function withAttachmentPreview(card: TrelloCard): TrelloCard {
+  return {
+    ...card,
+    attachments: card.attachments?.map((attachment) => ({
+      ...attachment,
+      previewUrl: preferredAttachmentPreview(attachment),
+    })),
+  };
 }
 
 const WORKBOOK_ATTACHMENT_PATTERN = /\.(xlsx|xlsm|csv)$/i;
@@ -245,7 +273,7 @@ export async function fetchTrelloLists(boardId: string, apiKey: string, token: s
 
 export async function fetchTrelloCards(listId: string, apiKey: string, token: string): Promise<TrelloCard[]> {
   const response = await fetch(
-    buildUrl(`/lists/${listId}/cards`, apiKey, token, { attachments: "true", attachment_fields: "name,url,mimeType,bytes,isUpload,date" }),
+    buildUrl(`/lists/${listId}/cards`, apiKey, token, { attachments: "true", attachment_fields: "name,url,mimeType,bytes,isUpload,date,previews" }),
     { cache: "no-store" },
   );
   if (!response.ok) {
@@ -253,15 +281,15 @@ export async function fetchTrelloCards(listId: string, apiKey: string, token: st
     throw new Error(`Không thể lấy thẻ Trello trong danh sách (${response.status}): ${errText}`);
   }
   const cards = (await response.json()) as TrelloCard[];
-  return cards.map((card) => ({
-    ...card,
-    parsed: parseTrelloCardTitle(card.name),
+  return cards.map((sourceCard) => ({
+    ...withAttachmentPreview(sourceCard),
+    parsed: parseTrelloCardTitle(sourceCard.name),
   }));
 }
 
 export async function fetchTrelloCardDetail(cardId: string, apiKey: string, token: string): Promise<TrelloCard> {
   const response = await fetch(
-    buildUrl(`/cards/${cardId}`, apiKey, token, { attachments: "true", attachment_fields: "name,url,mimeType,bytes,isUpload,date" }),
+    buildUrl(`/cards/${cardId}`, apiKey, token, { attachments: "true", attachment_fields: "name,url,mimeType,bytes,isUpload,date,previews" }),
     { cache: "no-store" },
   );
   if (!response.ok) {
@@ -270,7 +298,7 @@ export async function fetchTrelloCardDetail(cardId: string, apiKey: string, toke
   }
   const card = (await response.json()) as TrelloCard;
   return {
-    ...card,
+    ...withAttachmentPreview(card),
     parsed: parseTrelloCardTitle(card.name),
   };
 }
@@ -324,23 +352,58 @@ export async function attachFileToTrelloCard(
   return (await response.json()) as TrelloAttachment;
 }
 
-export async function downloadTrelloAttachment(url: string, apiKey: string, token: string): Promise<Buffer> {
+export function assertTrelloAttachmentUrl(value: string) {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("Link đính kèm Trello không hợp lệ.");
+  }
+  const hostname = url.hostname.toLowerCase();
+  if (
+    url.protocol !== "https:" ||
+    (url.port && url.port !== "443") ||
+    !(hostname === "trello.com" || hostname.endsWith(".trello.com"))
+  ) {
+    throw new Error("Chỉ chấp nhận link đính kèm HTTPS thuộc Trello.");
+  }
+  return url.toString();
+}
+
+async function responseBuffer(response: Response, maxBytes: number) {
+  const declaredLength = Number(response.headers.get("content-length") || 0);
+  if (declaredLength > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error(`Đính kèm Trello vượt quá ${Math.round(maxBytes / 1_000_000)} MB.`);
+  }
+  const result = Buffer.from(await response.arrayBuffer());
+  if (result.byteLength > maxBytes) {
+    throw new Error(`Đính kèm Trello vượt quá ${Math.round(maxBytes / 1_000_000)} MB.`);
+  }
+  return result;
+}
+
+export async function downloadTrelloAttachment(
+  url: string,
+  apiKey: string,
+  token: string,
+  maxBytes = 50_000_000,
+): Promise<Buffer> {
+  const trustedUrl = assertTrelloAttachmentUrl(url);
   const headers: Record<string, string> = {
     Authorization: `OAuth oauth_consumer_key="${apiKey}", oauth_token="${token}"`,
     "User-Agent": "Mozilla/5.0 ListingDesk/1.0",
   };
 
-  const response = await fetch(url, { headers });
+  const response = await fetch(trustedUrl, { headers });
   if (!response.ok) {
-    const fallbackResponse = await fetch(url);
+    const fallbackResponse = await fetch(trustedUrl);
     if (!fallbackResponse.ok) {
       throw new Error(`Không thể tải đính kèm từ Trello HTTP ${response.status}`);
     }
-    const arrayBuffer = await fallbackResponse.arrayBuffer();
-    return Buffer.from(arrayBuffer);
+    return responseBuffer(fallbackResponse, maxBytes);
   }
-  const arrayBuffer = await response.arrayBuffer();
-  return Buffer.from(arrayBuffer);
+  return responseBuffer(response, maxBytes);
 }
 
 export async function createTrelloList(

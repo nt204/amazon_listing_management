@@ -17,8 +17,10 @@ import {
   ArrowRightIcon,
   ArrowsClockwiseIcon,
   StopIcon,
+  DownloadSimpleIcon,
 } from "@phosphor-icons/react";
 import { parseCardDimensions, type Dimensions3D } from "@/lib/trello";
+import { downloadOriginalTrelloImage } from "@/lib/trello-image-client";
 
 interface TrelloCard {
   id: string;
@@ -31,6 +33,7 @@ interface TrelloCard {
     name: string;
     url: string;
     mimeType: string;
+    previewUrl?: string;
   }>;
   parsed?: {
     sku: string;
@@ -71,6 +74,9 @@ type MockupStreamEvent =
       step: number;
       status: "processing" | "success" | "error";
       message: string;
+      attachmentUrl?: string;
+      attachmentId?: string;
+      name?: string;
     }
   | { type: "complete"; data: MockupGenerationResponse }
   | { type: "error"; error: string }
@@ -114,12 +120,10 @@ export function AutoMockupGenerator({
   const [designCards, setDesignCards] = useState<TrelloCard[]>([]);
   const [mockupCards, setMockupCards] = useState<TrelloCard[]>([]);
 
-  const [selectedModel, setSelectedModel] = useState<string>(
-    "gemini-3.1-flash-image",
-  );
+  const [selectedModel, setSelectedModel] = useState<string>("gpt-image-2");
   const [selectedQuality, setSelectedQuality] = useState<
     "low" | "medium" | "high"
-  >("medium");
+  >("high");
   const [loadingLists, setLoadingLists] = useState<boolean>(false);
   const [loadingCards, setLoadingCards] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>("");
@@ -141,7 +145,8 @@ export function AutoMockupGenerator({
   >({});
   const [generationStatusText, setGenerationStatusText] = useState<string>("");
   const [generationResult, setGenerationResult] = useState<string | null>(null);
-  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
+  const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null);
+  const [downloadingImage, setDownloadingImage] = useState(false);
 
   const [draggedCardId, setDraggedCardId] = useState<string | null>(null);
   const [draggedFromColumn, setDraggedFromColumn] = useState<"design" | "mockup" | null>(null);
@@ -303,6 +308,13 @@ export function AutoMockupGenerator({
     setErrorMsg("");
     setGenerationStatusText("Đang chuẩn bị ảnh thiết kế...");
 
+    // Immediately move card from DESIGN column to MOCKUP column in local UI state!
+    setDesignCards((prev) => prev.filter((c) => c.id !== card.id));
+    setMockupCards((prev) => {
+      if (prev.some((c) => c.id === card.id)) return prev;
+      return [{ ...card, idList: mockupListId }, ...prev];
+    });
+
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
@@ -351,6 +363,33 @@ export function AutoMockupGenerator({
             ...previous,
             [event.step]: event.status,
           }));
+
+          // When an image is ready & attached on Trello, display it on the MOCKUP card real-time!
+          if (event.status === "success" && event.attachmentUrl) {
+            const newAtt = {
+              id: event.attachmentId || String(Date.now()),
+              name: event.name || `Mockup ${event.step}`,
+              url: event.attachmentUrl,
+              mimeType: "image/png",
+            };
+            setMockupCards((prev) =>
+              prev.map((c) => {
+                if (c.id !== card.id) return c;
+                const existingAtts = c.attachments || [];
+                if (existingAtts.some((a) => a.url === newAtt.url || a.id === newAtt.id)) {
+                  return c;
+                }
+                return {
+                  ...c,
+                  attachments: [...existingAtts, newAtt],
+                };
+              }),
+            );
+            setPreviewImage({
+              url: event.attachmentUrl,
+              name: event.name || `Mockup ${event.step}`,
+            });
+          }
         } else if (event.type === "complete") {
           streamResult.data = event.data;
         } else if (event.type === "error") {
@@ -393,10 +432,6 @@ export function AutoMockupGenerator({
       });
       setGenerationProgress(finalProgress);
 
-      const modelLabel =
-        data.model === "gpt-image-2"
-          ? "ChatGPT Image (GPT Image 2)"
-          : data.model;
       const failedUploads = data.attachments.filter(
         (attachment) => attachment.status === "failed",
       );
@@ -410,7 +445,7 @@ export function AutoMockupGenerator({
       } else {
         setGenerationStatusText("Đã hoàn tất 1 ảnh gốc + 6 ảnh mockup AI.");
         setGenerationResult(
-          `🎉 Đã giữ 1 ảnh gốc và tạo ${data.generatedMockupsCount || 6} ảnh mockup cho SKU "${data.sku}" bằng ${modelLabel} — tổng cộng 7 ảnh${data.movedToTargetList ? " — rồi chuyển thẻ sang cột MOCKUP" : ""}!`,
+          `🎉 Đã giữ 1 ảnh gốc và tạo ${data.generatedMockupsCount || 6} ảnh mockup cho SKU "${data.sku}" — tổng cộng 7 ảnh${data.movedToTargetList ? " — rồi chuyển thẻ sang cột MOCKUP" : ""}!`,
         );
       }
       await syncAllColumns();
@@ -462,17 +497,39 @@ export function AutoMockupGenerator({
   return (
     <div className="space-y-6 text-slate-800 font-sans">
       {/* Lightbox Preview Modal */}
-      {previewImageUrl && (
+      {previewImage && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 p-4 backdrop-blur-xs">
           <div className="relative max-h-[90vh] max-w-[90vw] overflow-hidden rounded-2xl bg-white p-2 shadow-2xl">
             <button
-              onClick={() => setPreviewImageUrl(null)}
+              onClick={async () => {
+                setDownloadingImage(true);
+                try {
+                  await downloadOriginalTrelloImage({ ...previewImage, apiKey, token });
+                } catch (error) {
+                  setErrorMsg(error instanceof Error ? error.message : "Không thể tải ảnh gốc.");
+                } finally {
+                  setDownloadingImage(false);
+                }
+              }}
+              disabled={downloadingImage}
+              className="absolute right-16 top-4 flex items-center gap-1.5 rounded-full bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-60"
+              title="Tải đúng file ảnh gốc, không nén lại"
+            >
+              {downloadingImage ? (
+                <SpinnerIcon className="h-4 w-4 animate-spin" />
+              ) : (
+                <DownloadSimpleIcon className="h-4 w-4" />
+              )}
+              Tải ảnh gốc
+            </button>
+            <button
+              onClick={() => setPreviewImage(null)}
               className="absolute right-4 top-4 rounded-full bg-black/60 p-2 text-white hover:bg-black transition"
             >
               <XIcon className="h-5 w-5" />
             </button>
             <img
-              src={previewImageUrl}
+              src={previewImage.url}
               alt="Mockup Preview"
               className="max-h-[85vh] w-auto rounded-xl object-contain"
             />
@@ -553,34 +610,35 @@ export function AutoMockupGenerator({
 
           <div className="flex flex-wrap items-center gap-3">
             {/* AI Model Selector */}
-            <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-white p-2 shadow-2xs">
-              <SparkleIcon className="h-4 w-4 text-purple-600 shrink-0 ml-1" />
+            <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-white px-3 py-1.5 shadow-2xs">
+              <SparkleIcon className="h-4 w-4 text-purple-600 shrink-0" />
               <span className="text-xs font-bold text-slate-600">Model:</span>
               <select
                 value={selectedModel}
                 onChange={(e) => setSelectedModel(e.target.value)}
-                className="bg-transparent text-xs font-bold text-slate-900 outline-none cursor-pointer pr-2"
+                className="bg-transparent text-xs font-extrabold text-slate-900 outline-none cursor-pointer pr-1"
               >
-                <option value="gemini-3.1-flash-image">
-                  🎨 Gemini 3.1 Flash Image (Đang hoạt động)
-                </option>
                 <option value="gpt-image-2">
-                  🤖 ChatGPT Image — GPT Image 2 (Cần OpenAI credit)
+                  🤖 GPT Image 2 (Mặc định)
+                </option>
+                <option value="gpt-image-1.5">
+                  🤖 GPT Image 1.5 (Legacy)
+                </option>
+                <option value="gemini-3.1-flash-image">
+                  🎨 Gemini 3.1 Flash Image
                 </option>
                 <option value="gemini-3-pro-image">
-                  🎨 AI Gemini 3 Pro Image (Nano Banana Pro)
+                  🎨 Gemini 3 Pro Image
                 </option>
                 <option value="fast-graphic">
-                  ⚡ Listing Desk Fast Engine (Siêu nhanh 1s)
+                  ⚡ Fast Graphic Engine
                 </option>
               </select>
             </div>
 
-            {selectedModel === "gpt-image-2" && (
-              <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-white p-2 shadow-2xs">
-                <span className="text-xs font-bold text-slate-600">
-                  Chất lượng:
-                </span>
+            {(selectedModel === "gpt-image-2" || selectedModel === "gpt-image-1.5") && (
+              <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-white px-3 py-1.5 shadow-2xs">
+                <span className="text-xs font-bold text-slate-600">Chất lượng:</span>
                 <select
                   value={selectedQuality}
                   onChange={(event) =>
@@ -588,10 +646,10 @@ export function AutoMockupGenerator({
                       event.target.value as "low" | "medium" | "high",
                     )
                   }
-                  className="bg-transparent pr-2 text-xs font-bold text-slate-900 outline-none cursor-pointer"
+                  className="bg-transparent text-xs font-extrabold text-slate-900 outline-none cursor-pointer pr-1"
                 >
                   <option value="low">Nhanh / bản nháp</option>
-                  <option value="medium">Cân bằng (khuyên dùng)</option>
+                  <option value="medium">Cân bằng</option>
                   <option value="high">Cao / bản cuối</option>
                 </select>
               </div>
@@ -804,11 +862,11 @@ export function AutoMockupGenerator({
                           {imageAttachments.map((att) => (
                             <div
                               key={att.id}
-                              onClick={() => setPreviewImageUrl(att.url)}
+                              onClick={() => setPreviewImage({ url: att.url, name: att.name })}
                               className="group relative h-16 w-16 cursor-pointer overflow-hidden rounded-xl border border-slate-200 bg-slate-100 shadow-xs hover:border-indigo-500 hover:shadow-md transition shrink-0"
                             >
                               <img
-                                src={att.url}
+                                src={att.previewUrl || att.url}
                                 alt={att.name}
                                 className="h-full w-full object-cover transition group-hover:scale-105"
                               />
@@ -971,12 +1029,12 @@ export function AutoMockupGenerator({
                         {imageAttachments.map((att, idx) => (
                           <div
                             key={att.id}
-                            onClick={() => setPreviewImageUrl(att.url)}
+                            onClick={() => setPreviewImage({ url: att.url, name: att.name })}
                             className="group relative h-16 w-16 cursor-pointer overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs hover:border-emerald-500 hover:shadow-md transition shrink-0"
                             title={`Mockup ${idx + 1}: ${att.name}`}
                           >
                             <img
-                              src={att.url}
+                              src={att.previewUrl || att.url}
                               alt={att.name}
                               className="h-full w-full object-cover transition group-hover:scale-105"
                             />

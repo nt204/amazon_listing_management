@@ -3,6 +3,10 @@ import { join } from "node:path";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { generateListing } from "@/lib/ai";
+import {
+  detectRasterImageMimeType,
+  prepareListingImagesForAi,
+} from "@/lib/image-processing";
 import { authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { getBrandProfile, getListingTemplate, listListingTemplates, saveGeneratedListing } from "@/lib/db";
 import { DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_MODEL } from "@/lib/models";
@@ -69,27 +73,16 @@ export async function POST(request: Request) {
     const imageAttachments = selectTrelloImageAttachments(card);
 
     const loadedImages: Array<{ name: string; type: string; data_url: string }> = [];
-    const { optimizeImageForAi } = await import("@/lib/excel-automation");
 
     for (let index = 0; index < Math.min(imageAttachments.length, 5); index += 1) {
       const att = imageAttachments[index];
       try {
         const buffer = await downloadTrelloAttachment(att.url, apiKey, token);
-        let dataUrl: string;
-        let mimeType: string;
-        try {
-          const opt = await optimizeImageForAi(buffer, 1600, 82);
-          dataUrl = opt.dataUrl;
-          mimeType = opt.mimeType;
-        } catch (optErr) {
-          console.warn("Lỗi khi tối ưu ảnh với Python PIL, dùng buffer gốc:", optErr);
-          mimeType = att.mimeType || (att.name.endsWith(".png") ? "image/png" : "image/jpeg");
-          dataUrl = `data:${mimeType};base64,${buffer.toString("base64")}`;
-        }
+        const mimeType = detectRasterImageMimeType(buffer);
         loadedImages.push({
-          name: (att.name || `${sku}-mockup-${index + 1}`).replace(/\.[A-Za-z0-9]+$/, "") + ".jpg",
+          name: att.name || `${sku}-mockup-${index + 1}`,
           type: mimeType,
-          data_url: dataUrl,
+          data_url: `data:${mimeType};base64,${buffer.toString("base64")}`,
         });
       } catch (err) {
         console.warn(`Lỗi khi tải ảnh mockup Trello ${att.name}:`, err);
@@ -212,7 +205,9 @@ export async function POST(request: Request) {
       },
     };
 
-    const input = listingInputSchema.parse(rawInputPayload);
+    const input = await prepareListingImagesForAi(
+      listingInputSchema.parse(rawInputPayload),
+    );
 
     // 6. Generate AI Listing
     const result = await generateListing(input, { signal: request.signal });

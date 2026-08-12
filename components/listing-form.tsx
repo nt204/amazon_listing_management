@@ -10,7 +10,7 @@ import {
 } from "@phosphor-icons/react";
 import { useEffect, useRef, useState, type ChangeEvent, type Dispatch, type SetStateAction } from "react";
 import { Field, Select, TextArea, TextInput } from "@/components/ui";
-import { resizeImage } from "@/lib/image-client";
+import { prepareImageUpload } from "@/lib/image-client";
 import type { AiOptions } from "@/lib/models";
 import type { BrandProfile, ListingInput } from "@/lib/types";
 
@@ -105,7 +105,7 @@ export function ListingForm({
     const supported = files.filter((file) =>
       ["image/jpeg", "image/png", "image/webp"].includes(file.type),
     );
-    const converted = await Promise.all(supported.map(resizeImage));
+    const converted = await Promise.all(supported.map(prepareImageUpload));
     onChange((current) => ({
       ...current,
       images: [...current.images, ...converted].slice(0, 10),

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type OpenAI from "openai";
 import type { GoogleGenAI } from "@google/genai";
+import sharp from "sharp";
 import { parseCardDimensions } from "../lib/trello";
 import {
   buildMockupPrompt,
@@ -107,6 +108,91 @@ test("GPT Image mockups use the edit API with the source artwork", async () => {
     );
     assert.match(String(call.body.prompt), /Preserve the printed face exactly as shown/i);
     assert.equal(call.options?.maxRetries, 0);
+  }
+});
+
+test("GPT Image 1.5 is forwarded to the same image edit pipeline", async () => {
+  const models: unknown[] = [];
+  const fakeClient = {
+    images: {
+      edit: async (body: Record<string, unknown>) => {
+        models.push(body.model);
+        return { data: [{ b64_json: SAMPLE_PNG.toString("base64") }] };
+      },
+    },
+  } as unknown as OpenAI;
+
+  const mockups = await generateAllMockups({
+    sku: "TESTSKU15",
+    itemName: "Test Glass Ornament",
+    dimensions: {
+      length: '3.1"',
+      width: '3.1"',
+      thickness: '0.15"',
+      formatted: '3.1" x 3.1" x 0.15"',
+    },
+    inputDesignBuffer: SAMPLE_PNG,
+    inputMimeType: "image/png",
+    model: "gpt-image-1.5",
+    quality: "high",
+    openaiClient: fakeClient,
+  });
+
+  assert.equal(mockups.length, 7);
+  assert.deepEqual(models, Array(6).fill("gpt-image-1.5"));
+});
+
+test("generated JPEG mockups retain provider bytes without another lossy encode", async () => {
+  const providerJpeg = await sharp({
+    create: {
+      width: 32,
+      height: 32,
+      channels: 3,
+      background: { r: 20, g: 80, b: 160 },
+    },
+  })
+    .jpeg({ quality: 91 })
+    .toBuffer();
+  const fakeClient = {
+    models: {
+      generateContent: async () => ({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  inlineData: {
+                    data: providerJpeg.toString("base64"),
+                    mimeType: "image/jpeg",
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    },
+  } as unknown as GoogleGenAI;
+
+  const mockups = await generateAllMockups({
+    sku: "TESTSKU01",
+    itemName: "Test Glass Ornament",
+    dimensions: {
+      length: '3.1"',
+      width: '3.1"',
+      thickness: '0.15"',
+      formatted: '3.1" x 3.1" x 0.15"',
+    },
+    inputDesignBuffer: SAMPLE_PNG,
+    inputMimeType: "image/png",
+    model: "gemini-3.1-flash-image",
+    geminiClient: fakeClient,
+  });
+
+  for (const mockup of mockups.slice(1)) {
+    assert.equal(mockup.mimeType, "image/jpeg");
+    assert.match(mockup.type, /\.jpg$/);
+    assert.deepEqual(mockup.buffer, providerJpeg);
   }
 });
 

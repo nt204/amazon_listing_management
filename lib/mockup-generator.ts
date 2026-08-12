@@ -2,9 +2,11 @@ import OpenAI, { toFile } from "openai";
 import { GoogleGenAI } from "@google/genai";
 import sharp from "sharp";
 import type { Dimensions3D } from "./trello";
+import { detectRasterImageMimeType } from "./image-processing";
 
 export type MockupModel =
   | "gpt-image-2"
+  | "gpt-image-1.5"
   | "gemini-3.1-flash-image"
   | "gemini-3-pro-image"
   | "fast-graphic";
@@ -47,6 +49,10 @@ export type MockupProgressCallback = (
 const DEFAULT_IMAGE_MODEL: MockupModel = "gemini-3.1-flash-image";
 const OPENAI_IMAGE_SIZE = "1024x1024";
 const OPENAI_INPUT_LIMIT_BYTES = 50 * 1024 * 1024;
+
+export function isOpenAIImageModel(model: MockupModel) {
+  return model === "gpt-image-2" || model === "gpt-image-1.5";
+}
 
 const MOCKUP_TYPES = [
   {
@@ -140,7 +146,7 @@ export async function generateAllMockups(
 
   let openaiClient = options.openaiClient || null;
   let openaiInput: Awaited<ReturnType<typeof toFile>> | null = null;
-  if (model === "gpt-image-2") {
+  if (isOpenAIImageModel(model)) {
     if (!openaiClient) {
       if (!openaiApiKey?.trim()) {
         throw new Error(
@@ -178,11 +184,11 @@ export async function generateAllMockups(
 
       let mockupBuffer: Buffer;
 
-      if (model === "gpt-image-2" && openaiClient && openaiInput) {
+      if (isOpenAIImageModel(model) && openaiClient && openaiInput) {
         const prompt = buildMockupPrompt(meta.promptKey, itemName, dimensions);
         const response = await openaiClient.images.edit(
           {
-            model: "gpt-image-2",
+            model,
             image: openaiInput,
             prompt,
             n: 1,
@@ -242,10 +248,7 @@ export async function generateAllMockups(
         });
       }
 
-      const result = mockupResult(
-        meta,
-        await normalizeGeneratedMockup(mockupBuffer),
-      );
+      const result = mockupResult(meta, await validateGeneratedMockup(mockupBuffer));
       progressCallback?.(meta.index, meta.name, "success");
       await options.onMockupReady?.(result);
       return result;
@@ -306,14 +309,14 @@ LIGHTING: soft late-afternoon daylight through the windshield, realistic cabin c
 
 function mockupResult(
   meta: (typeof MOCKUP_TYPES)[number],
-  buffer: Buffer,
+  image: { buffer: Buffer; mimeType: string; extension: string },
 ): MockupResult {
   return {
     index: meta.index,
     name: meta.name,
-    type: meta.fileName,
-    buffer,
-    mimeType: "image/png",
+    type: meta.fileName.replace(/\.[A-Za-z0-9]+$/, image.extension),
+    buffer: image.buffer,
+    mimeType: image.mimeType,
     description: meta.description,
   };
 }
@@ -346,12 +349,26 @@ async function normalizeDesignImage(input: Buffer): Promise<Buffer> {
   return normalized;
 }
 
-async function normalizeGeneratedMockup(input: Buffer): Promise<Buffer> {
+async function validateGeneratedMockup(input: Buffer): Promise<{
+  buffer: Buffer;
+  mimeType: string;
+  extension: string;
+}> {
   try {
-    // Gemini commonly returns JPEG bytes even when the uploaded Trello filename
-    // is PNG. Normalize every provider response so the bytes, MIME type and
-    // filename always agree.
-    return await sharp(input).rotate().png().toBuffer();
+    // Validate the provider payload, then retain those exact bytes. Re-encoding
+    // an already generated image cannot add detail and may lose quality.
+    await sharp(input, { failOn: "warning" }).metadata();
+    const mimeType = detectRasterImageMimeType(input);
+    return {
+      buffer: input,
+      mimeType,
+      extension:
+        mimeType === "image/png"
+          ? ".png"
+          : mimeType === "image/webp"
+            ? ".webp"
+            : ".jpg",
+    };
   } catch (error) {
     throw new Error("Model AI trả về dữ liệu không phải là ảnh hợp lệ.", {
       cause: error,
@@ -474,7 +491,7 @@ function safeFileStem(value: string) {
 
 function configuredImageQuality(): MockupImageQuality {
   const configured = process.env.OPENAI_IMAGE_QUALITY?.trim().toLowerCase();
-  return configured === "low" || configured === "high" ? configured : "medium";
+  return configured === "low" || configured === "medium" ? configured : "high";
 }
 
 function configuredOpenAITimeout() {

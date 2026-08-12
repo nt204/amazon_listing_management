@@ -13,6 +13,7 @@ import {
 import {
   classifyMockupGenerationError,
   generateAllMockups,
+  isOpenAIImageModel,
   mockupIndexFromAttachmentName,
 } from "@/lib/mockup-generator";
 
@@ -21,6 +22,7 @@ export const maxDuration = 300;
 
 const mockupModelSchema = z.enum([
   "gpt-image-2",
+  "gpt-image-1.5",
   "gemini-3.1-flash-image",
   "gemini-3-pro-image",
   "fast-graphic",
@@ -45,6 +47,8 @@ type ProgressReporter = (event: {
   status: "processing" | "success" | "error";
   phase: "generation" | "upload";
   message: string;
+  attachmentUrl?: string;
+  attachmentId?: string;
 }) => void;
 
 export async function POST(request: Request) {
@@ -91,9 +95,9 @@ async function runMockupGeneration(
     model ||
     (configuredModel.success ? configuredModel.data : "gemini-3.1-flash-image");
   const selectedQuality =
-    quality || (configuredQuality.success ? configuredQuality.data : "medium");
+    quality || (configuredQuality.success ? configuredQuality.data : "high");
 
-  if (selectedModel === "gpt-image-2" && !process.env.OPENAI_API_KEY?.trim()) {
+  if (isOpenAIImageModel(selectedModel) && !process.env.OPENAI_API_KEY?.trim()) {
     throw new ApiError("OPENAI_API_KEY chưa được cấu hình trên server.", 503);
   }
 
@@ -240,6 +244,8 @@ async function runMockupGeneration(
             status: "success",
             phase: "upload",
             message: `Đã tải ${mockup.name} lên Trello.`,
+            attachmentUrl: attachment.url,
+            attachmentId: attachment.id,
           });
         } catch (err: unknown) {
           const errorMsg = err instanceof Error ? err.message : String(err);
@@ -317,7 +323,7 @@ async function runMockupGeneration(
     itemName: parsedTitle.itemName,
     dimensions,
     model: selectedModel,
-    quality: selectedModel === "gpt-image-2" ? selectedQuality : null,
+    quality: isOpenAIImageModel(selectedModel) ? selectedQuality : null,
     sourceImagesCount: 1,
     generatedMockupsCount: 6,
     newlyGeneratedMockupsCount: mockups.length - 1,

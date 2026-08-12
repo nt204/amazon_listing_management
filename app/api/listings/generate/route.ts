@@ -11,6 +11,8 @@ import {
   type DataScope,
 } from "@/lib/db";
 import { listingInputSchema } from "@/lib/schemas";
+import { prepareListingImagesForAi } from "@/lib/image-processing";
+import type { ListingInput } from "@/lib/types";
 import {
   authorize,
   dataScope,
@@ -51,7 +53,7 @@ export async function POST(request: Request) {
         `${String(payload.product_type || "Product").trim()} listing`;
     }
     if (typeof payload.brand !== "string") payload.brand = "";
-    let input = listingInputSchema.parse(payload);
+    let input: ListingInput = listingInputSchema.parse(payload);
     if (actor.ruleProfile) {
       input = { ...input, configuration: { ...input.configuration, rule_profile: actor.ruleProfile } };
     }
@@ -66,6 +68,7 @@ export async function POST(request: Request) {
         brand_guidelines: profile.guidelines,
       };
     }
+    input = await prepareListingImagesForAi(input);
     const result = await generateListing(input, { signal: request.signal });
     const stored = await saveGeneratedListing(scope, input, result);
     if (!stored) throw new Error("Generated listing could not be stored.");

@@ -22,14 +22,14 @@ export function authorize(request: Request, permission: Permission) {
   return authenticateRequest(request, permission);
 }
 
-export function enforceRequestSize(request: Request, maxBytes = Number(process.env.MAX_REQUEST_BYTES || 30_000_000)) {
+export function enforceRequestSize(request: Request, maxBytes = Number(process.env.MAX_REQUEST_BYTES || 75_000_000)) {
   const contentLength = Number(request.headers.get("content-length") || 0);
   if (Number.isFinite(contentLength) && contentLength > maxBytes) {
     throw new ApiError(`Request body exceeds ${maxBytes} bytes.`, 413);
   }
 }
 
-export async function readJsonBody(request: Request, maxBytes = Number(process.env.MAX_REQUEST_BYTES || 30_000_000)) {
+export async function readJsonBody(request: Request, maxBytes = Number(process.env.MAX_REQUEST_BYTES || 75_000_000)) {
   enforceRequestSize(request, maxBytes);
   if (!request.body) throw new ApiError("Request body is required.", 400);
   const reader = request.body.getReader();

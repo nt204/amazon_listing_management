@@ -148,8 +148,14 @@ export interface ListingInput {
     name: string;
     type: string;
     data_url: string;
+    /** Exact source upload, retained only until the server persists the master image. */
+    original_data_url?: string;
     storage_key?: string;
     sha256?: string;
+    download_url?: string;
+    width?: number;
+    height?: number;
+    bytes?: number;
   }>;
   configuration: {
     rule_profile?: string;

@@ -9,6 +9,7 @@ import {
   saveGeneratedListing,
 } from "@/lib/db";
 import { batchListingSchema } from "@/lib/schemas";
+import { prepareListingImagesForAi } from "@/lib/image-processing";
 import type { ListingInput, StoredListing } from "@/lib/types";
 import { ApiError, authorize, dataScope, enforceRateLimit, idempotencyKey, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
 import type { DataScope } from "@/lib/db";
@@ -69,7 +70,9 @@ export async function POST(request: Request) {
         const index = cursor;
         cursor += 1;
         try {
-          const input = await resolveBrandProfile(activeScope, items[index]);
+          const input = await prepareListingImagesForAi(
+            await resolveBrandProfile(activeScope, items[index]),
+          );
           const generated = await generateListing(input, { signal: request.signal });
           results[index] = { index, listing: await saveGeneratedListing(activeScope, input, generated) };
         } catch (error) {

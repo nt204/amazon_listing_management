@@ -1,5 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import postgres from "postgres";
+import {
+  createAiImageDerivative,
+  createStoredImageDerivatives,
+} from "../lib/image-processing";
 
 interface StoredImage {
   name: string;
@@ -15,11 +19,19 @@ interface ListingRow {
   input_json: { images?: StoredImage[] } | string;
 }
 
+interface ImageRow {
+  id: string;
+  name: string;
+  mime_type: string;
+  image_bytes: Buffer;
+}
+
 async function main() {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error("DATABASE_URL is not configured.");
   const sql = postgres(connectionString, { max: 1 });
   let migrated = 0;
+  let derived = 0;
   try {
     const rows = await sql<ListingRow[]>`
       SELECT id::text, team_id, input_json
@@ -62,7 +74,42 @@ async function main() {
       });
       migrated += 1;
     }
-    process.stdout.write(`Migrated images for ${migrated} listing(s).\n`);
+
+    const imageRows = await sql<ImageRow[]>`
+      SELECT id::text, name, mime_type, image_bytes
+      FROM listing_images
+      WHERE
+        ai_image_bytes IS NULL OR
+        preview_image_bytes IS NULL OR
+        ai_image_bytes = image_bytes
+      ORDER BY created_at ASC
+    `;
+    for (const image of imageRows) {
+      const dataUrl = `data:${image.mime_type};base64,${image.image_bytes.toString("base64")}`;
+      const derivatives = await createStoredImageDerivatives({
+        name: image.name,
+        type: image.mime_type,
+        data_url: dataUrl,
+      });
+      const ai = await createAiImageDerivative(image.image_bytes);
+      await sql`
+        UPDATE listing_images
+        SET
+          width = ${derivatives.width},
+          height = ${derivatives.height},
+          ai_mime_type = ${ai.mimeType},
+          ai_image_bytes = ${ai.bytes},
+          preview_mime_type = ${derivatives.previewMimeType},
+          preview_image_bytes = ${derivatives.previewBytes},
+          preview_width = ${derivatives.previewWidth},
+          preview_height = ${derivatives.previewHeight}
+        WHERE id = ${image.id}
+      `;
+      derived += 1;
+    }
+    process.stdout.write(
+      `Migrated images for ${migrated} listing(s); generated derivatives for ${derived} image(s).\n`,
+    );
   } finally {
     await sql.end();
   }

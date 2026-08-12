@@ -28,6 +28,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { BrandProfile, ListingTemplateSummary, StoredListing } from "@/lib/types";
 import { extractTrelloBoardId } from "@/lib/trello";
 import { AutoMockupGenerator } from "@/components/auto-mockup-generator";
+import { downloadOriginalTrelloImage } from "@/lib/trello-image-client";
 
 interface TrelloBoardViewProps {
   brands: BrandProfile[];
@@ -46,6 +47,7 @@ interface TrelloAttachment {
   name: string;
   url: string;
   mimeType: string;
+  previewUrl?: string;
 }
 
 interface TrelloCard {
@@ -98,7 +100,8 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
   const [showConfig, setShowConfig] = useState(false);
-  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
+  const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null);
+  const [downloadingImage, setDownloadingImage] = useState(false);
   const [draggedCardId, setDraggedCardId] = useState<string | null>(null);
   const [processedCardsMap, setProcessedCardsMap] = useState<Record<string, { attachmentUrl?: string; name?: string }>>({});
 
@@ -731,16 +734,38 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
       )}
 
       {/* Image Preview Lightbox Modal */}
-      {previewImageUrl && (
+      {previewImage && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 p-4 backdrop-blur-sm">
           <div className="relative max-h-[90vh] max-w-[90vw] overflow-hidden rounded-2xl bg-white p-2 shadow-2xl">
             <button
-              onClick={() => setPreviewImageUrl(null)}
+              onClick={async () => {
+                setDownloadingImage(true);
+                try {
+                  await downloadOriginalTrelloImage({ ...previewImage, apiKey, token });
+                } catch (requestError) {
+                  setError(requestError instanceof Error ? requestError.message : "Không thể tải ảnh gốc.");
+                } finally {
+                  setDownloadingImage(false);
+                }
+              }}
+              disabled={downloadingImage}
+              className="absolute right-16 top-4 flex items-center gap-1.5 rounded-full bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-60"
+              title="Tải đúng file ảnh gốc, không nén lại"
+            >
+              {downloadingImage ? (
+                <SpinnerIcon className="h-4 w-4 animate-spin" />
+              ) : (
+                <DownloadSimpleIcon className="h-4 w-4" />
+              )}
+              Tải ảnh gốc
+            </button>
+            <button
+              onClick={() => setPreviewImage(null)}
               className="absolute right-4 top-4 rounded-full bg-black/60 p-2 text-white hover:bg-black"
             >
               <XIcon className="h-6 w-6" />
             </button>
-            <img src={previewImageUrl} alt="Mockup Preview" className="max-h-[85vh] w-auto rounded-xl object-contain" />
+            <img src={previewImage.url} alt="Mockup Preview" className="max-h-[85vh] w-auto rounded-xl object-contain" />
           </div>
         </div>
       )}
@@ -946,12 +971,12 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
                           {imageAttachments.map((img, idx) => (
                             <div
                               key={img.id || idx}
-                              onClick={() => setPreviewImageUrl(img.url)}
+                              onClick={() => setPreviewImage({ url: img.url, name: img.name })}
                               className="relative h-16 w-16 shrink-0 cursor-pointer overflow-hidden rounded-xl border border-slate-200 bg-slate-50 shadow-2xs group/img hover:border-blue-400 transition"
                               title="Click để phóng to ảnh mockup"
                             >
                               <img
-                                src={img.url}
+                                src={img.previewUrl || img.url}
                                 alt={img.name}
                                 className="h-full w-full object-cover transition group-hover/img:scale-105"
                               />

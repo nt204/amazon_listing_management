@@ -5,6 +5,7 @@ import {
   claimIdempotency,
   completeIdempotency,
   getListing,
+  getListingWithAiImages,
   releaseIdempotency,
   updateListingContent,
   type DataScope,
@@ -45,7 +46,7 @@ export async function POST(request: Request, { params }: RouteContext) {
       return NextResponse.json({ listing }, { headers: { "Idempotent-Replayed": "true" } });
     }
     claimed = true;
-    const stored = await getListing(scope, id);
+    const stored = await getListingWithAiImages(scope, id);
     if (!stored) return NextResponse.json({ error: "Listing not found." }, { status: 404 });
     const { field, instruction } = requestSchema.parse(await request.json());
     const fieldFeedback = getRuleProfile(stored.input).generation.field_revision_rules;
