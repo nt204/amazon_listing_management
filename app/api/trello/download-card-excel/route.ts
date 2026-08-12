@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { NextResponse } from "next/server";
 import { authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { createAmazonTemplate, createStandardListingExcel } from "@/lib/excel-automation";
-import { getListingTemplate, listListingTemplates } from "@/lib/db";
+import { getListingTemplate } from "@/lib/db";
 import {
   downloadTrelloAttachment,
   fetchTrelloCardDetail,

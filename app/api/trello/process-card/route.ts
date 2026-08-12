@@ -4,7 +4,6 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { generateListing } from "@/lib/ai";
 import { authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
-import { buildListingDeskCsv } from "@/lib/csv";
 import { getBrandProfile, getListingTemplate, listListingTemplates, saveGeneratedListing } from "@/lib/db";
 import { DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_MODEL } from "@/lib/models";
 import { listingInputSchema } from "@/lib/schemas";

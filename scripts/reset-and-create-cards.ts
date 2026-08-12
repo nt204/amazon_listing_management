@@ -19,7 +19,6 @@ function trelloUrl(path: string, params: Record<string, string> = {}) {
 const mock1a = "/Users/macbook/.gemini/antigravity-ide/brain/eab92aab-919d-49d8-86dd-983c8603de80/cowgirl_glass_ornament_mockup_1786373290179.png";
 const mock1b = "/Users/macbook/.gemini/antigravity-ide/brain/eab92aab-919d-49d8-86dd-983c8603de80/cowgirl_glass_ornament_detail_mockup_1786373729311.png";
 
-const mock2a = "/Users/macbook/.gemini/antigravity-ide/brain/eab92aab-919d-49d8-86dd-983c8603de80/nurse_mug_mockup_1786374880.png"; // fallback below
 const mock2aReal = "/Users/macbook/.gemini/antigravity-ide/brain/eab92aab-919d-49d8-86dd-983c8603de80/nurse_mug_mockup_1786373484880.png";
 const mock2b = "/Users/macbook/.gemini/antigravity-ide/brain/eab92aab-919d-49d8-86dd-983c8603de80/nurse_mug_gift_mockup_1786373752202.png";
 

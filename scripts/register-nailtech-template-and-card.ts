@@ -25,19 +25,19 @@ async function run() {
   const buffer = readFileSync(templatePath);
   const metadata = await inspectListingTemplate(buffer, "GlassOrnament-ONVT0607NT01_TEST.xlsm");
 
-  const isDbHealthy = await checkDatabaseHealth();
-  if (!isDbHealthy) {
-    console.warn("⚠️ PostgreSQL database không thể kết nối. Tiến hành tạo thẻ Trello trực tiếp.");
-  } else {
-    const savedTemplate = await saveListingTemplate(
-      "default",
-      "ONVT0607NT01: Nail Tech Ornament Template",
-      metadata.product_type,
-      "GlassOrnament-ONVT0607NT01_TEST.xlsm",
-      buffer,
+  try {
+    await checkDatabaseHealth();
+    const savedTemplate = await saveListingTemplate({ teamId: "default", actorId: "system" }, {
+      name: "ONVT0607NT01: Nail Tech Ornament Template",
+      originalFilename: "GlassOrnament-ONVT0607NT01_TEST.xlsm",
+      fileExtension: "xlsm",
+      productType: metadata.product_type,
       metadata,
-    );
+      workbook: buffer,
+    });
     console.log("✅ Đã đăng ký Template thành công vào CSDL:", savedTemplate.id, savedTemplate.name);
+  } catch {
+    console.warn("⚠️ PostgreSQL database không thể kết nối. Tiến hành tạo thẻ Trello trực tiếp.");
   }
 
   // 2. Connect to Trello Board & List

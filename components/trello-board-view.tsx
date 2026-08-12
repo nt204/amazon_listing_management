@@ -1,44 +1,38 @@
 "use client";
 
 import {
-  ArrowRightIcon,
+  ArrowsDownUpIcon,
   CheckCircleIcon,
   CheckSquareIcon,
   CopyIcon,
-  FileCsvIcon,
+  DotsThreeIcon,
+  DotsThreeVerticalIcon,
+  DownloadSimpleIcon,
   FileXlsIcon,
+  FunnelIcon,
   GearIcon,
-  GlobeIcon,
-  ImageSquareIcon,
+  KanbanIcon,
   LightningIcon,
-  ListNumbersIcon,
-  MapPinIcon,
-  PathIcon,
+  MagnifyingGlassIcon,
+  RowsIcon,
   SparkleIcon,
   SpinnerIcon,
   SquareIcon,
+  SquaresFourIcon,
   TagIcon,
-  KanbanIcon,
   WarningCircleIcon,
   XIcon,
-  EyeIcon,
   CheckIcon,
-  DownloadSimpleIcon,
 } from "@phosphor-icons/react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { BrandProfile, ListingTemplateSummary, StoredListing } from "@/lib/types";
 import { extractTrelloBoardId } from "@/lib/trello";
+import { AutoMockupGenerator } from "@/components/auto-mockup-generator";
 
 interface TrelloBoardViewProps {
   brands: BrandProfile[];
+  activeTab?: "listing" | "mockups";
   onListingCreated?: (listing: StoredListing) => void;
-  onSelectListing?: (listing: StoredListing) => void;
-}
-
-interface TrelloBoard {
-  id: string;
-  name: string;
-  url: string;
 }
 
 interface TrelloList {
@@ -80,7 +74,7 @@ function getTemplateDisplayName(template: ListingTemplateSummary) {
   return isSkuPrefix ? name.slice(separatorIndex + 1).trim() || name : name;
 }
 
-export function TrelloBoardView({ brands, onListingCreated, onSelectListing }: TrelloBoardViewProps) {
+export function TrelloBoardView({ brands, activeTab = "listing", onListingCreated }: TrelloBoardViewProps) {
   const [apiKey, setApiKey] = useState("");
   const [token, setToken] = useState("");
   const [boardId, setBoardId] = useState("");
@@ -88,10 +82,7 @@ export function TrelloBoardView({ brands, onListingCreated, onSelectListing }: T
   const [listingListName, setListingListName] = useState("Listing");
   const [brandProfileId, setBrandProfileId] = useState("");
   const [templateId, setTemplateId] = useState("");
-  const [marketplace, setMarketplace] = useState<"US" | "UK" | "DE">("US");
-
-  const [boards, setBoards] = useState<TrelloBoard[]>([]);
-  const [lists, setLists] = useState<TrelloList[]>([]);
+  const marketplace = "US" as const;
   const [templates, setTemplates] = useState<ListingTemplateSummary[]>([]);
   const [reviewList, setReviewList] = useState<TrelloList | null>(null);
   const [listingList, setListingList] = useState<TrelloList | null>(null);
@@ -116,7 +107,15 @@ export function TrelloBoardView({ brands, onListingCreated, onSelectListing }: T
   const [copied, setCopied] = useState(false);
 
   const [selectedModel, setSelectedModel] = useState("gemini-3.6-flash");
-  const [localBrands, setLocalBrands] = useState<BrandProfile[]>(brands);
+  const [addedBrands, setAddedBrands] = useState<BrandProfile[]>([]);
+  const [deletedBrandIds, setDeletedBrandIds] = useState<Set<string>>(new Set());
+  const localBrands = useMemo(() => {
+    const byId = new Map<string, BrandProfile>();
+    for (const brand of [...addedBrands, ...brands]) {
+      if (!deletedBrandIds.has(brand.id) && !byId.has(brand.id)) byId.set(brand.id, brand);
+    }
+    return [...byId.values()];
+  }, [addedBrands, brands, deletedBrandIds]);
   const [showAddBrandModal, setShowAddBrandModal] = useState(false);
   const [newBrandName, setNewBrandName] = useState("");
   const [newBrandGuidelines, setNewBrandGuidelines] = useState("");
@@ -126,15 +125,6 @@ export function TrelloBoardView({ brands, onListingCreated, onSelectListing }: T
   const [newTemplateName, setNewTemplateName] = useState("");
   const [newTemplateFile, setNewTemplateFile] = useState<File | null>(null);
   const [addingTemplate, setAddingTemplate] = useState(false);
-
-  useEffect(() => {
-    setLocalBrands(brands);
-  }, [brands]);
-
-  useEffect(() => {
-    fetchConfig();
-    fetchTemplates();
-  }, []);
 
   const handleAddBrand = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -149,7 +139,7 @@ export function TrelloBoardView({ brands, onListingCreated, onSelectListing }: T
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không thể tạo thương hiệu.");
       if (data.brand) {
-        setLocalBrands((prev) => [data.brand, ...prev]);
+        setAddedBrands((current) => [data.brand, ...current.filter((brand) => brand.id !== data.brand.id)]);
         setBrandProfileId(data.brand.id);
       }
       setNewBrandName("");
@@ -193,7 +183,7 @@ export function TrelloBoardView({ brands, onListingCreated, onSelectListing }: T
     }
   };
 
-  const fetchTemplates = async () => {
+  const fetchTemplates = useCallback(async () => {
     try {
       const res = await fetch("/api/templates");
       if (res.ok) {
@@ -203,7 +193,7 @@ export function TrelloBoardView({ brands, onListingCreated, onSelectListing }: T
     } catch (err) {
       console.error(err);
     }
-  };
+  }, []);
 
   const saveLocalConfig = (key: string, tok: string, bId: string, rName: string, lName: string) => {
     try {
@@ -220,9 +210,42 @@ export function TrelloBoardView({ brands, onListingCreated, onSelectListing }: T
     }
   };
 
-  const fetchConfig = async () => {
-    try {
+  const loadCards = useCallback(
+    async (key: string, tok: string, bId: string, rName: string, lName: string) => {
+      const cleanId = extractTrelloBoardId(bId);
+      if (!key || !tok || !cleanId) {
+        setShowConfig(true);
+        return;
+      }
+      setLoading(true);
       setError("");
+      try {
+        const query = new URLSearchParams({
+          apiKey: key,
+          token: tok,
+          boardId: cleanId,
+          internalReviewListName: rName,
+          listingListName: lName,
+        });
+        const res = await fetch(`/api/trello/cards?${query.toString()}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Không thể tải thẻ Trello.");
+        setReviewList(data.internalReviewList);
+        setListingList(data.listingList);
+        setReviewCards(data.reviewCards || []);
+        setListingCards(data.listingCards || []);
+        setSelectedCardIds(new Set());
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Đã xảy ra lỗi khi tải Trello.");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
+
+  const fetchConfig = useCallback(async () => {
+    try {
       const localApiKey = typeof window !== "undefined" ? localStorage.getItem("trello_api_key") : null;
       const localToken = typeof window !== "undefined" ? localStorage.getItem("trello_token") : null;
       const localBoardId = typeof window !== "undefined" ? localStorage.getItem("trello_board_id") : null;
@@ -246,7 +269,7 @@ export function TrelloBoardView({ brands, onListingCreated, onSelectListing }: T
         if (finalListingName) setListingListName(finalListingName);
 
         if (finalApiKey && finalToken && finalBoardId) {
-          loadCards(finalApiKey, finalToken, finalBoardId, finalReviewName, finalListingName);
+          await loadCards(finalApiKey, finalToken, finalBoardId, finalReviewName, finalListingName);
         } else {
           setShowConfig(true);
         }
@@ -254,44 +277,15 @@ export function TrelloBoardView({ brands, onListingCreated, onSelectListing }: T
     } catch (err) {
       console.error(err);
     }
-  };
+  }, [loadCards]);
 
-  const loadCards = useCallback(
-    async (key = apiKey, tok = token, bId = boardId, rName = reviewListName, lName = listingListName) => {
-      const cleanId = extractTrelloBoardId(bId);
-      if (!key || !tok || !cleanId) {
-        setShowConfig(true);
-        return;
-      }
-      setLoading(true);
-      setError("");
-      try {
-        const query = new URLSearchParams({
-          apiKey: key,
-          token: tok,
-          boardId: cleanId,
-          internalReviewListName: rName,
-          listingListName: lName,
-        });
-        const res = await fetch(`/api/trello/cards?${query.toString()}`);
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.error || "Không thể tải thẻ Trello.");
-        }
-        setLists(data.lists || []);
-        setReviewList(data.internalReviewList);
-        setListingList(data.listingList);
-        setReviewCards(data.reviewCards || []);
-        setListingCards(data.listingCards || []);
-        setSelectedCardIds(new Set());
-      } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : "Đã xảy ra lỗi khi tải Trello.");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [apiKey, token, boardId, reviewListName, listingListName],
-  );
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void fetchConfig();
+      void fetchTemplates();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [fetchConfig, fetchTemplates]);
 
   const testAndFetchBoards = async () => {
     if (!apiKey || !token) {
@@ -309,8 +303,6 @@ export function TrelloBoardView({ brands, onListingCreated, onSelectListing }: T
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không thể kết nối Trello.");
-      setBoards(data.boards || []);
-      if (data.lists) setLists(data.lists);
       setSuccessMsg("Kết nối Trello thành công!");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Lỗi kết nối Trello.");
@@ -355,7 +347,7 @@ export function TrelloBoardView({ brands, onListingCreated, onSelectListing }: T
         setInspectListing(data.listing);
       }
 
-      await loadCards();
+      await loadCards(apiKey, token, boardId, reviewListName, listingListName);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Đã xảy ra lỗi khi tạo Listing từ thẻ Trello.");
     } finally {
@@ -372,7 +364,8 @@ export function TrelloBoardView({ brands, onListingCreated, onSelectListing }: T
     try {
       const res = await fetch(`/api/brands?id=${idToDelete}`, { method: "DELETE" });
       if (res.ok) {
-        setLocalBrands((prev) => prev.filter((b) => b.id !== idToDelete));
+        setAddedBrands((current) => current.filter((brand) => brand.id !== idToDelete));
+        setDeletedBrandIds((current) => new Set(current).add(idToDelete));
         if (brandProfileId === idToDelete) setBrandProfileId("");
         setSuccessMsg(`Đã xóa thương hiệu "${brandName}" thành công.`);
         setError("");
@@ -473,7 +466,7 @@ export function TrelloBoardView({ brands, onListingCreated, onSelectListing }: T
     if (batchErrors.length > 0) {
       setError(`Lỗi khi tạo Listing: ${batchErrors.join("; ")}`);
     }
-    await loadCards();
+    await loadCards(apiKey, token, boardId, reviewListName, listingListName);
   };
 
   const copyListingText = async (listing: StoredListing) => {
@@ -494,165 +487,113 @@ export function TrelloBoardView({ brands, onListingCreated, onSelectListing }: T
 
   return (
     <div className="relative flex h-full w-full flex-col bg-slate-100 text-slate-800 font-sans">
-      {/* Prominent Ocean Blue Toolbar & Configuration */}
-      <div className="flex flex-wrap items-center justify-between border-b border-sky-200 bg-white px-6 py-4 shadow-sm">
-        <div className="flex items-center gap-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-600 text-white shadow-md shadow-sky-500/20">
-            <KanbanIcon className="h-7 w-7" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2.5">
-              <h2 className="text-lg font-extrabold text-slate-900">Bảng Trello Kanban</h2>
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-50 px-3 py-1 text-xs font-bold text-sky-800 border border-sky-200 shadow-xs">
-                <span className="h-2 w-2 rounded-full bg-sky-500 animate-pulse"></span>
-                Board: Tri Test
-              </span>
-              <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-bold text-slate-700 border border-slate-200">
-                Thị trường: US 🇺🇸 (Mặc định)
-              </span>
+      {/* Prominent Header Control Cards Panel */}
+      <div className="flex flex-col border-b border-slate-200 bg-white p-5 shadow-2xs gap-4 shrink-0">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          {/* Title Section */}
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-600 text-white shadow-xs shadow-blue-500/20">
+              <KanbanIcon className="h-6 w-6" />
             </div>
-            <p className="text-xs font-medium text-slate-500 mt-0.5">
-              Tự động lấy SKU, Ảnh Mockup, Keywords ➔ Điền trực tiếp vào Amazon Excel Template đính kèm Trello
-            </p>
-          </div>
-        </div>
-
-        {/* Large Prominent Control Panel */}
-        <div className="flex flex-wrap items-center gap-3">
-          {/* AI Model Selector */}
-          <div className="flex items-center gap-2 rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-2 shadow-xs hover:border-purple-400 transition">
-            <SparkleIcon className="h-5 w-5 text-purple-600 shrink-0" />
             <div>
-              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">AI Model</label>
-              <select
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                className="bg-transparent text-xs font-bold text-slate-900 outline-none cursor-pointer"
-              >
-                <option value="gemini-3.6-flash">Gemini 3.6 Flash (Mặc định)</option>
-                <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite (Fast)</option>
-                <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
-                <option value="gemini-2.5-pro">Gemini 2.5 Pro (Deep Reasoning)</option>
-                <option value="gpt-4o">GPT-4o (Chất lượng cao)</option>
-                <option value="gpt-4o-mini">GPT-4o Mini (Nhanh & Tối ưu)</option>
-                <option value="gpt-5.6-sol">GPT-5.6 Sol</option>
-                <option value="gpt-5.6-terra">GPT-5.6 Terra</option>
-                <option value="gpt-5.6-luna">GPT-5.6 Luna</option>
-              </select>
+              <h2 className="text-base font-extrabold text-slate-900">Bảng Trello Kanban</h2>
+              <p className="text-xs font-medium text-slate-500">Quản lý quy trình tạo và xuất listing</p>
             </div>
           </div>
 
-          {/* Brand Profile Selector */}
-          <div className="flex items-center gap-2 rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-2 shadow-xs hover:border-sky-400 transition">
-            <TagIcon className="h-5 w-5 text-sky-600 shrink-0" />
-            <div className="flex items-center gap-1.5">
+          {/* Control Cards Row */}
+          <div className="flex flex-wrap items-center gap-3">
+            {/* AI Model Card */}
+            <div className="flex items-center gap-2.5 rounded-2xl border border-slate-200 bg-slate-50/80 px-3.5 py-2 hover:border-slate-300 transition">
+              <SparkleIcon className="h-5 w-5 text-purple-600 shrink-0" />
               <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Thương hiệu</label>
+                <label className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-wider">AI MODEL</label>
                 <select
-                  value={brandProfileId}
-                  onChange={(e) => {
-                    if (e.target.value === "__ADD_NEW__") {
-                      setShowAddBrandModal(true);
-                    } else {
-                      setBrandProfileId(e.target.value);
-                    }
-                  }}
-                  className="bg-transparent text-xs font-bold text-slate-900 outline-none cursor-pointer"
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  className="bg-transparent text-xs font-bold text-slate-900 outline-none cursor-pointer pr-1"
                 >
-                  <option value="">Limima (Mặc định)</option>
-                  {localBrands.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name}
-                    </option>
-                  ))}
-                  <option value="__ADD_NEW__" className="font-semibold text-sky-600">+ Thêm mới...</option>
+                  <option value="gemini-3.6-flash">Gemini 3.6 Flash (Mặc định)</option>
+                  <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite (Fast)</option>
+                  <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+                  <option value="gemini-2.5-pro">Gemini 2.5 Pro (Deep Reasoning)</option>
+                  <option value="gpt-4o">GPT-4o (Chất lượng cao)</option>
+                  <option value="gpt-4o-mini">GPT-4o Mini (Nhanh & Tối ưu)</option>
                 </select>
               </div>
-              <button
-                type="button"
-                onClick={() => setShowAddBrandModal(true)}
-                title="Thêm thương hiệu mới"
-                className="flex h-6 w-6 items-center justify-center rounded-lg bg-sky-100 text-sky-700 hover:bg-sky-200 text-xs font-bold transition shrink-0"
-              >
-                +
-              </button>
-              {brandProfileId && (
+            </div>
+
+            {/* Brand Card */}
+            <div className="flex items-center gap-2.5 rounded-2xl border border-slate-200 bg-slate-50/80 px-3.5 py-2 hover:border-slate-300 transition">
+              <TagIcon className="h-5 w-5 text-blue-600 shrink-0" />
+              <div className="flex items-center gap-1.5">
+                <div>
+                  <label className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-wider">THƯƠNG HIỆU</label>
+                  <select
+                    value={brandProfileId}
+                    onChange={(e) => {
+                      if (e.target.value === "__ADD_NEW__") setShowAddBrandModal(true);
+                      else setBrandProfileId(e.target.value);
+                    }}
+                    className="bg-transparent text-xs font-bold text-slate-900 outline-none cursor-pointer pr-1"
+                  >
+                    <option value="">Limima (Mặc định)</option>
+                    {localBrands.map((b) => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                    <option value="__ADD_NEW__" className="font-semibold text-blue-600">+ Thêm mới...</option>
+                  </select>
+                </div>
                 <button
                   type="button"
-                  onClick={() => handleDeleteBrand()}
-                  title="Xóa thương hiệu đang chọn"
-                  className="flex h-6 w-6 items-center justify-center rounded-lg bg-rose-100 text-rose-600 hover:bg-rose-200 text-xs font-bold transition shrink-0"
+                  onClick={() => setShowAddBrandModal(true)}
+                  className="flex h-5 w-5 items-center justify-center rounded-md bg-blue-100 text-blue-700 hover:bg-blue-200 text-xs font-bold transition shrink-0"
                 >
-                  ✕
+                  +
                 </button>
-              )}
-            </div>
-          </div>
-
-          {/* Excel Template Selector */}
-          <div className="flex items-center gap-2 rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-2 shadow-xs hover:border-emerald-400 transition">
-            <FileXlsIcon className="h-5 w-5 text-emerald-600 shrink-0" />
-            <div className="flex items-center gap-1.5">
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Amazon Excel Template</label>
-                <select
-                  value={templateId}
-                  onChange={(e) => {
-                    if (e.target.value === "__ADD_NEW__") {
-                      setShowAddTemplateModal(true);
-                    } else {
-                      setTemplateId(e.target.value);
-                    }
-                  }}
-                  className="bg-transparent text-xs font-bold text-slate-900 outline-none cursor-pointer"
-                >
-                  <option value="">Amazon Flat File Mẫu (Tương Ứng Ngành Hàng)</option>
-                  {templates.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {getTemplateDisplayName(t)}
-                    </option>
-                  ))}
-                  <option value="__ADD_NEW__" className="font-semibold text-emerald-600">+ Thêm mới...</option>
-                </select>
               </div>
-              <button
-                type="button"
-                onClick={() => setShowAddTemplateModal(true)}
-                title="Thêm Amazon Excel Template mới"
-                className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700 hover:bg-emerald-200 text-xs font-bold transition shrink-0"
-              >
-                +
-              </button>
-              {templateId && (
+            </div>
+
+            {/* Excel Template Card */}
+            <div className="flex items-center gap-2.5 rounded-2xl border border-slate-200 bg-slate-50/80 px-3.5 py-2 hover:border-slate-300 transition">
+              <FileXlsIcon className="h-5 w-5 text-emerald-600 shrink-0" />
+              <div className="flex items-center gap-1.5">
+                <div>
+                  <label className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-wider">EXCEL TEMPLATE</label>
+                  <select
+                    value={templateId}
+                    onChange={(e) => {
+                      if (e.target.value === "__ADD_NEW__") setShowAddTemplateModal(true);
+                      else setTemplateId(e.target.value);
+                    }}
+                    className="bg-transparent text-xs font-bold text-slate-900 outline-none cursor-pointer pr-1 max-w-[220px] truncate"
+                  >
+                    <option value="">Amazon Flat File Mẫu (Tương Ứng Ngành Hàng)</option>
+                    {templates.map((t) => (
+                      <option key={t.id} value={t.id}>{getTemplateDisplayName(t)}</option>
+                    ))}
+                    <option value="__ADD_NEW__" className="font-semibold text-emerald-600">+ Thêm mới...</option>
+                  </select>
+                </div>
                 <button
                   type="button"
-                  onClick={() => handleDeleteTemplate()}
-                  title="Xóa Amazon Excel Template đang chọn"
-                  className="flex h-6 w-6 items-center justify-center rounded-lg bg-rose-100 text-rose-600 hover:bg-rose-200 text-xs font-bold transition shrink-0"
+                  onClick={() => setShowAddTemplateModal(true)}
+                  className="flex h-5 w-5 items-center justify-center rounded-md bg-emerald-100 text-emerald-700 hover:bg-emerald-200 text-xs font-bold transition shrink-0"
                 >
-                  ✕
+                  +
                 </button>
-              )}
+              </div>
             </div>
+
+            {/* Config Trello API Button */}
+            <button
+              onClick={() => setShowConfig(!showConfig)}
+              className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-slate-300 transition"
+            >
+              <GearIcon className="h-4 w-4 text-slate-600" />
+              <span>Cấu Hình Trello API</span>
+            </button>
           </div>
-
-          {/* Config Key Button */}
-          <button
-            onClick={() => setShowConfig(!showConfig)}
-            className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-700 shadow-xs hover:bg-slate-50 hover:border-slate-400 transition"
-          >
-            <GearIcon className="h-5 w-5 text-slate-600" />
-            <span>Cấu Hình Trello API</span>
-          </button>
-
-          {/* Refresh Button */}
-          <button
-            onClick={() => loadCards()}
-            disabled={loading || batchProcessing}
-            className="flex items-center gap-2 rounded-xl bg-sky-600 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-sky-600/20 hover:bg-sky-700 transition disabled:opacity-50"
-          >
-            {loading ? <SpinnerIcon className="h-5 w-5 animate-spin" /> : "Làm Mới Bảng Trello"}
-          </button>
         </div>
       </div>
 
@@ -876,126 +817,137 @@ export function TrelloBoardView({ brands, onListingCreated, onSelectListing }: T
           </div>
         </div>
       )}
+      {/* Main Content Area: Mockup Generator or Kanban Board */}
 
-      {/* Main Kanban Columns Container */}
-      <div className="flex flex-1 overflow-x-auto p-6 gap-6 bg-slate-100">
-        {/* Column 1: TEAM DUYỆT NỘI BỘ */}
-        <div className="flex w-1/2 flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          {/* Column Header */}
-          <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-3">
-            <div className="flex items-center gap-2.5">
-              <button
-                onClick={toggleSelectAll}
-                className="text-slate-400 hover:text-sky-600"
-                title="Chọn/Bỏ chọn tất cả"
-              >
-                {selectedCardIds.size > 0 && selectedCardIds.size === reviewCards.length ? (
-                  <CheckSquareIcon className="h-5 w-5 text-sky-600" weight="fill" />
-                ) : (
-                  <SquareIcon className="h-5 w-5" />
-                )}
-              </button>
+      {activeTab === "mockups" ? (
+        <div className="flex-1 overflow-y-auto p-6 bg-slate-100">
+          <AutoMockupGenerator apiKey={apiKey} token={token} boardId={boardId} />
+        </div>
+      ) : (
+        /* Main Kanban Columns Container */
+        <div className="flex flex-1 overflow-x-auto p-6 gap-6 bg-slate-100 min-h-0">
+          {/* Column 1: TEAM DUYỆT NỘI BỘ */}
+          <div className="flex w-1/2 flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-2xs">
+            {/* Column Header */}
+            <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <button
+                  onClick={toggleSelectAll}
+                  className="text-slate-400 hover:text-blue-600 transition"
+                  title="Chọn/Bỏ chọn tất cả"
+                >
+                  {selectedCardIds.size > 0 && selectedCardIds.size === reviewCards.length ? (
+                    <CheckSquareIcon className="h-5 w-5 text-blue-600" weight="fill" />
+                  ) : (
+                    <SquareIcon className="h-5 w-5" />
+                  )}
+                </button>
 
-              <span className="h-3.5 w-3.5 rounded-full bg-amber-500 shadow-sm"></span>
-              <h3 className="text-base font-bold text-slate-900">
-                {reviewList ? reviewList.name : reviewListName}
-              </h3>
-              <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-bold text-amber-700 border border-amber-200">
-                {reviewCards.length} thẻ
-              </span>
-            </div>
-            <span className="text-xs font-medium text-slate-400">Cột Chờ Tạo Listing</span>
-          </div>
-
-          {/* Cards List */}
-          <div className="flex-1 overflow-y-auto space-y-4 pr-1 thin-scrollbar">
-            {reviewCards.length === 0 ? (
-              <div className="flex h-48 flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 p-6 text-center">
-                <p className="text-xs text-slate-400">Không có thẻ nào trong danh sách duyệt nội bộ</p>
+                <span className="h-3 w-3 rounded-full bg-amber-500 shadow-2xs"></span>
+                <h3 className="text-sm font-extrabold text-slate-900 uppercase tracking-wide">
+                  {reviewList ? reviewList.name : reviewListName}
+                </h3>
+                <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-bold text-amber-700 border border-amber-200">
+                  {reviewCards.length} thẻ
+                </span>
               </div>
-            ) : (
-              reviewCards.map((card) => {
-                const isSelected = selectedCardIds.has(card.id);
-                const isProcessing = processingCardId === card.id;
-                const imageAttachments = (card.attachments || []).filter(
-                  (a) => a.mimeType?.startsWith("image/") || /\.(png|jpe?g|webp)$/i.test(a.url),
-                );
 
-                const keywordsList = (() => {
-                  const raw = (card.desc || "").trim();
-                  const genericLine = raw.split(/\r?\n/).find((l) => /(?:generic|backend)?\s*keywords?\s*:/i.test(l));
-                  if (!genericLine) return [];
-                  const text = genericLine.replace(/^.*?(?:generic|backend)?\s*keywords?\s*:\s*/i, "");
-                  return text
-                    .split(/[,;]/)
-                    .map((k) => k.trim())
-                    .filter((k) => k.length > 1 && !/^#?\[?https?:\/\//i.test(k) && !k.includes("drive.google.com"))
-                    .map((k) => k.replace(/^[#\s]+/, ""))
-                    .slice(0, 5);
-                })();
+              {/* Header controls: Sort & View Toggle */}
+              <div className="flex items-center gap-2">
+                <button className="flex items-center gap-1.5 text-xs font-bold text-slate-600 border border-slate-200 rounded-xl px-3 py-1.5 hover:bg-slate-50 transition shadow-2xs">
+                  <ArrowsDownUpIcon className="h-3.5 w-3.5" />
+                  <span>Sắp xếp</span>
+                </button>
+                <div className="flex items-center rounded-xl border border-slate-200 p-1 bg-slate-50">
+                  <button className="p-1 rounded-lg bg-white text-slate-800 shadow-2xs">
+                    <SquaresFourIcon className="h-3.5 w-3.5" />
+                  </button>
+                  <button className="p-1 rounded-lg text-slate-400 hover:text-slate-700">
+                    <RowsIcon className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
 
-                return (
-                  <div
-                    key={card.id}
-                    draggable={!loading && !batchProcessing && !isProcessing}
-                    onDragStart={(e) => {
-                      setDraggedCardId(card.id);
-                      e.dataTransfer.setData("text/plain", card.id);
-                    }}
-                    onDragEnd={() => setDraggedCardId(null)}
-                    className={`group rounded-xl border p-4 transition shadow-sm hover:shadow-md cursor-grab active:cursor-grabbing ${
-                      isSelected
-                        ? "border-sky-500 bg-sky-50/40 ring-2 ring-sky-400/30"
-                        : "border-slate-200 bg-white hover:border-sky-300"
-                    } ${isProcessing ? "opacity-60 pointer-events-none" : ""}`}
-                  >
-                    {/* Card Header & Checkbox */}
-                    <div className="mb-3 flex items-start gap-3">
-                      <button
-                        onClick={() => toggleSelectCard(card.id)}
-                        className="mt-0.5 shrink-0 text-slate-400 hover:text-sky-600"
-                      >
-                        {isSelected ? (
-                          <CheckSquareIcon className="h-5 w-5 text-sky-600" weight="fill" />
-                        ) : (
-                          <SquareIcon className="h-5 w-5" />
-                        )}
-                      </button>
+            {/* Cards List */}
+            <div className="flex-1 overflow-y-auto space-y-4 pr-1 thin-scrollbar">
+              {reviewCards.length === 0 ? (
+                <div className="flex h-48 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 p-6 text-center">
+                  <p className="text-xs font-semibold text-slate-400">Không có thẻ nào trong danh sách duyệt nội bộ</p>
+                </div>
+              ) : (
+                reviewCards.map((card) => {
+                  const isSelected = selectedCardIds.has(card.id);
+                  const isProcessing = processingCardId === card.id;
+                  const imageAttachments = (card.attachments || []).filter(
+                    (a) => a.mimeType?.startsWith("image/") || /\.(png|jpe?g|webp)$/i.test(a.url),
+                  );
 
-                      <div className="flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          {/* SKU Tag Badge */}
-                          <span className="inline-flex items-center gap-1 rounded-md bg-sky-100 px-2.5 py-0.5 text-[11px] font-bold text-sky-800 border border-sky-200">
+                  const keywordsList = (() => {
+                    const raw = (card.desc || "").trim();
+                    const genericLine = raw.split(/\r?\n/).find((l) => /(?:generic|backend)?\s*keywords?\s*:/i.test(l));
+                    if (!genericLine) return [];
+                    const text = genericLine.replace(/^.*?(?:generic|backend)?\s*keywords?\s*:\s*/i, "");
+                    return text
+                      .split(/[,;]/)
+                      .map((k) => k.trim())
+                      .filter((k) => k.length > 1 && !/^#?\[?https?:\/\//i.test(k) && !k.includes("drive.google.com"))
+                      .map((k) => k.replace(/^[#\s]+/, ""))
+                      .slice(0, 5);
+                  })();
+
+                  return (
+                    <div
+                      key={card.id}
+                      draggable={!loading && !batchProcessing && !isProcessing}
+                      onDragStart={(e) => {
+                        setDraggedCardId(card.id);
+                        e.dataTransfer.setData("text/plain", card.id);
+                      }}
+                      onDragEnd={() => setDraggedCardId(null)}
+                      className={`group rounded-2xl border p-4 transition shadow-2xs hover:shadow-xs cursor-grab active:cursor-grabbing ${
+                        isSelected
+                          ? "border-blue-500 bg-blue-50/40 ring-2 ring-blue-400/30"
+                          : "border-slate-200 bg-white hover:border-blue-300"
+                      } ${isProcessing ? "opacity-60 pointer-events-none" : ""}`}
+                    >
+                      {/* Card Header: Checkbox | SKU Badge | Country Flag | Menu */}
+                      <div className="mb-2.5 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => toggleSelectCard(card.id)}
+                            className="shrink-0 text-slate-400 hover:text-blue-600 transition"
+                          >
+                            {isSelected ? (
+                              <CheckSquareIcon className="h-5 w-5 text-blue-600" weight="fill" />
+                            ) : (
+                              <SquareIcon className="h-5 w-5" />
+                            )}
+                          </button>
+
+                          <span className="rounded-md bg-blue-50 px-2.5 py-1 text-xs font-extrabold text-blue-700 border border-blue-100 font-mono">
                             SKU: {card.parsed?.sku || "N/A"}
                           </span>
-
-                          {/* Marketplace Tag */}
-                          <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">
-                            {marketplace} 🇺🇸
-                          </span>
                         </div>
 
-                        <h4 className="mt-1.5 text-sm font-bold text-slate-900 leading-snug">
-                          {card.parsed?.itemName || card.name}
-                        </h4>
+                        <button className="text-slate-400 hover:text-slate-600 transition p-1">
+                          <DotsThreeIcon className="h-5 w-5" />
+                        </button>
                       </div>
-                    </div>
 
-                    {/* Image Mockups Preview Gallery */}
-                    {imageAttachments.length > 0 && (
-                      <div className="mb-3">
-                        <div className="mb-1 flex items-center justify-between text-[11px] font-semibold text-slate-500">
-                          <span className="flex items-center gap-1">
-                            <ImageSquareIcon className="h-3.5 w-3.5 text-sky-600" />
-                            Ảnh Mockups đính kèm ({imageAttachments.length} ảnh)
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 overflow-x-auto pb-1 thin-scrollbar">
+                      {/* Item Title */}
+                      <h4 className="text-base font-extrabold text-slate-900 leading-snug mb-2.5">
+                        {card.parsed?.itemName || card.name}
+                      </h4>
+
+                      {/* Image Mockups Preview Gallery */}
+                      {imageAttachments.length > 0 && (
+                        <div className="flex items-center gap-2 overflow-x-auto pb-1 mb-3 thin-scrollbar">
                           {imageAttachments.map((img, idx) => (
                             <div
                               key={img.id || idx}
                               onClick={() => setPreviewImageUrl(img.url)}
-                              className="relative h-16 w-16 shrink-0 cursor-pointer overflow-hidden rounded-lg border border-slate-200 bg-slate-50 shadow-inner group/img hover:border-sky-400"
+                              className="relative h-16 w-16 shrink-0 cursor-pointer overflow-hidden rounded-xl border border-slate-200 bg-slate-50 shadow-2xs group/img hover:border-blue-400 transition"
                               title="Click để phóng to ảnh mockup"
                             >
                               <img
@@ -1003,177 +955,241 @@ export function TrelloBoardView({ brands, onListingCreated, onSelectListing }: T
                                 alt={img.name}
                                 className="h-full w-full object-cover transition group-hover/img:scale-105"
                               />
-                              <span className="absolute bottom-0.5 right-0.5 rounded bg-slate-900/80 px-1 py-0.2 text-[9px] font-bold text-white">
+                              <span className="absolute bottom-0.5 right-0.5 rounded bg-slate-900/80 px-1 py-0.2 text-[10px] font-bold text-white">
                                 #{idx + 1}
                               </span>
                             </div>
                           ))}
                         </div>
-                      </div>
-                    )}
+                      )}
 
-                    {/* Generic Keywords Pill Tags */}
-                    {keywordsList.length > 0 && (
-                      <div className="mb-3.5 flex flex-wrap gap-1">
-                        {keywordsList.map((kw, i) => (
-                          <span
-                            key={i}
-                            className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 border border-slate-200"
-                          >
-                            #{kw}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Action Bar */}
-                    <div className="flex items-center justify-between border-t border-slate-100 pt-3">
-                      <a
-                        href={card.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-[11px] font-semibold text-slate-400 hover:text-sky-600 hover:underline"
-                      >
-                        Xem trên Trello ↗
-                      </a>
-
-                      <button
-                        onClick={() => processCardToListing(card)}
-                        disabled={isProcessing || loading || batchProcessing}
-                        className="flex items-center gap-1.5 rounded-lg bg-sky-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-sky-700 transition disabled:opacity-50"
-                      >
-                        {isProcessing ? (
-                          <>
-                            <SpinnerIcon className="h-3.5 w-3.5 animate-spin" />
-                            <span>Đang xử lý...</span>
-                          </>
-                        ) : (
-                          <>
-                            <LightningIcon className="h-3.5 w-3.5 fill-current" />
-                            <span>Tạo Listing & Đính Kèm</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-
-        {/* Column 2: LISTING */}
-        <div
-          onDragOver={(e) => {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = "move";
-          }}
-          onDrop={(e) => {
-            e.preventDefault();
-            const cardId = e.dataTransfer.getData("text/plain") || draggedCardId;
-            if (cardId) {
-              const cardToProcess = reviewCards.find((c) => c.id === cardId);
-              if (cardToProcess) {
-                processCardToListing(cardToProcess);
-              }
-            }
-            setDraggedCardId(null);
-          }}
-          className={`flex w-1/2 flex-col rounded-2xl border p-5 shadow-sm transition ${
-            draggedCardId
-              ? "border-emerald-500 bg-emerald-50/20 ring-4 ring-emerald-400/20"
-              : "border-slate-200 bg-white"
-          }`}
-        >
-          {/* Column Header */}
-          <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-3">
-            <div className="flex items-center gap-2.5">
-              <span className="h-3.5 w-3.5 rounded-full bg-emerald-500 shadow-sm"></span>
-              <h3 className="text-base font-bold text-slate-900">
-                {listingList ? listingList.name : listingListName}
-              </h3>
-              <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-bold text-emerald-700 border border-emerald-200">
-                {listingCards.length} thẻ
-              </span>
-            </div>
-            <span className="text-xs font-medium text-slate-400">Đã Tạo Listing & Đính Kèm CSV</span>
-          </div>
-
-          {/* Cards List */}
-          <div className="flex-1 overflow-y-auto space-y-4 pr-1 thin-scrollbar">
-            {listingCards.length === 0 ? (
-              <div className={`flex h-48 flex-col items-center justify-center rounded-xl border border-dashed p-6 text-center transition ${
-                draggedCardId
-                  ? "border-emerald-400 bg-emerald-50/50 text-emerald-800"
-                  : "border-slate-200 text-slate-400"
-              }`}>
-                <p className="text-xs font-bold">
-                  {draggedCardId
-                    ? "✨ Thả thẻ vào đây để tự động tạo Listing & Đính kèm Excel!"
-                    : "Chưa có thẻ nào trong cột Listing (Kéo thẻ từ cột Duyệt Nội Bộ thả vào đây để tự động xử lý)"}
-                </p>
-              </div>
-            ) : (
-              listingCards.map((card) => {
-                const csvAttachment = (card.attachments || []).find(
-                  (a) => a.name.endsWith(".csv") || a.name.endsWith(".xlsx") || a.mimeType === "text/csv",
-                );
-                const localAttachment = processedCardsMap[card.id];
-                const fileUrl =
-                  csvAttachment?.url ||
-                  localAttachment?.attachmentUrl ||
-                  `/api/trello/download-card-excel?cardId=${card.id}&apiKey=${encodeURIComponent(apiKey)}&token=${encodeURIComponent(token)}&templateId=${encodeURIComponent(templateId)}`;
-                const fileName =
-                  csvAttachment?.name ||
-                  localAttachment?.name ||
-                  `${(card.parsed?.sku || "listing").toLowerCase()}-amazon-listing.xlsx`;
-
-                return (
-                  <div
-                    key={card.id}
-                    className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-emerald-300"
-                  >
-                    <div className="mb-2 flex items-start justify-between gap-2">
-                      <div>
-                        <span className="inline-block rounded-md bg-emerald-100 px-2.5 py-0.5 text-[11px] font-bold text-emerald-800 border border-emerald-200">
-                          SKU: {card.parsed?.sku || "N/A"}
-                        </span>
-                        <h4 className="mt-1.5 text-sm font-bold text-slate-900 leading-snug">
-                          {card.parsed?.itemName || card.name}
-                        </h4>
-                      </div>
-                    </div>
-
-                    <div className="mt-3 flex items-center justify-between gap-3 rounded-xl bg-emerald-50 p-3 border border-emerald-200 text-xs font-medium text-emerald-900">
-                      <div className="flex items-center gap-2.5 truncate">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-600 text-white shrink-0 shadow-sm">
-                          <FileXlsIcon className="h-5 w-5" />
+                      {/* Generic Keywords Pill Tags */}
+                      {keywordsList.length > 0 && (
+                        <div className="mb-3.5 flex flex-wrap gap-1.5">
+                          {keywordsList.map((kw, i) => (
+                            <span
+                              key={i}
+                              className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700 border border-slate-200"
+                            >
+                              #{kw}
+                            </span>
+                          ))}
                         </div>
-                        <div className="truncate">
-                          <p className="truncate font-bold text-slate-900">{fileName}</p>
-                          <p className="text-[11px] font-bold text-emerald-700">Đầu Ra Amazon Flat File Excel (.xlsx)</p>
-                        </div>
-                      </div>
+                      )}
 
-                      <div className="flex items-center gap-2 shrink-0">
+                      {/* Action Bar */}
+                      <div className="flex items-center justify-between border-t border-slate-100 pt-3 mt-1">
                         <a
-                          href={fileUrl}
+                          href={card.url}
                           target="_blank"
                           rel="noreferrer"
-                          className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-emerald-700 shadow-md transition"
+                          className="text-sm font-extrabold text-blue-600 hover:underline flex items-center gap-1"
                         >
-                          <DownloadSimpleIcon className="h-4 w-4" />
-                          <span>Tải File Excel</span>
+                          <span>Xem trên Trello</span>
+                          <span className="text-xs">↗</span>
                         </a>
+
+                        <button
+                          onClick={() => processCardToListing(card)}
+                          disabled={isProcessing || loading || batchProcessing}
+                          className="flex items-center gap-2 rounded-xl bg-blue-600 px-4.5 py-2.5 text-sm font-extrabold text-white shadow-xs hover:bg-blue-700 transition disabled:opacity-50"
+                        >
+                          {isProcessing ? (
+                            <>
+                              <SpinnerIcon className="h-4 w-4 animate-spin" />
+                              <span>Đang xử lý...</span>
+                            </>
+                          ) : (
+                            <>
+                              <LightningIcon className="h-4 w-4 fill-current" />
+                              <span>Tạo Listing & Đính Kèm</span>
+                            </>
+                          )}
+                        </button>
                       </div>
                     </div>
-                  </div>
-                );
-              })
-            )}
+                  );
+                })
+              )}
+            </div>
+
+            {/* Column Pagination Footer */}
+            <div className="mt-4 flex items-center justify-between text-xs text-slate-500 font-medium border-t border-slate-100 pt-3 shrink-0">
+              <span>Hiển thị {reviewCards.length} thẻ</span>
+              <div className="flex items-center gap-1">
+                <button className="h-7 w-7 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-slate-50 font-bold">
+                  &lt;
+                </button>
+                <span className="h-7 w-7 rounded-lg bg-blue-600 text-white font-bold flex items-center justify-center text-xs shadow-2xs">
+                  1
+                </span>
+                <button className="h-7 w-7 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-slate-50 font-bold">
+                  &gt;
+                </button>
+              </div>
+              <select className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs font-bold text-slate-700 outline-none cursor-pointer">
+                <option>10 / trang</option>
+                <option>20 / trang</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Column 2: LISTING */}
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              const cardId = e.dataTransfer.getData("text/plain") || draggedCardId;
+              if (cardId) {
+                const cardToProcess = reviewCards.find((c) => c.id === cardId);
+                if (cardToProcess) {
+                  processCardToListing(cardToProcess);
+                }
+              }
+              setDraggedCardId(null);
+            }}
+            className={`flex w-1/2 flex-col rounded-2xl border p-5 shadow-2xs transition ${
+              draggedCardId
+                ? "border-emerald-500 bg-emerald-50/20 ring-4 ring-emerald-400/20"
+                : "border-slate-200 bg-white"
+            }`}
+          >
+            {/* Column Header */}
+            <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <span className="h-3.5 w-3.5 rounded-full bg-emerald-500 shadow-2xs"></span>
+                <h3 className="text-base font-black text-slate-900 uppercase tracking-wide">
+                  {listingList ? listingList.name : listingListName}
+                </h3>
+                <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-extrabold text-emerald-700 border border-emerald-200">
+                  {listingCards.length} thẻ
+                </span>
+              </div>
+
+              {/* Search Box & Filter Button */}
+              <div className="flex items-center gap-2">
+                <div className="relative">
+                  <MagnifyingGlassIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 h-4 w-4" />
+                  <input
+                    type="text"
+                    placeholder="Tìm theo SKU hoặc tên sản phẩm"
+                    className="w-56 rounded-xl border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-xs font-semibold outline-none focus:bg-white focus:border-blue-500 transition"
+                  />
+                </div>
+                <button className="p-1.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition shadow-2xs">
+                  <FunnelIcon className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Cards List */}
+            <div className="flex-1 overflow-y-auto space-y-3 pr-1 thin-scrollbar">
+              {listingCards.length === 0 ? (
+                <div className={`flex h-48 flex-col items-center justify-center rounded-2xl border border-dashed p-6 text-center transition ${
+                  draggedCardId
+                    ? "border-emerald-400 bg-emerald-50/50 text-emerald-800"
+                    : "border-slate-200 text-slate-400"
+                }`}>
+                  <p className="text-xs font-bold">
+                    {draggedCardId
+                      ? "✨ Thả thẻ vào đây để tự động tạo Listing & Đính kèm Excel!"
+                      : "Chưa có thẻ nào trong cột Listing (Kéo thẻ từ cột Duyệt Nội Bộ thả vào đây để tự động xử lý)"}
+                  </p>
+                </div>
+              ) : (
+                listingCards.map((card) => {
+                  const csvAttachment = (card.attachments || []).find(
+                    (a) => a.name.endsWith(".csv") || a.name.endsWith(".xlsx") || a.mimeType === "text/csv",
+                  );
+                  const localAttachment = processedCardsMap[card.id];
+                  const fileUrl =
+                    csvAttachment?.url ||
+                    localAttachment?.attachmentUrl ||
+                    `/api/trello/download-card-excel?cardId=${card.id}&apiKey=${encodeURIComponent(apiKey)}&token=${encodeURIComponent(token)}&templateId=${encodeURIComponent(templateId)}`;
+                  const fileName =
+                    csvAttachment?.name ||
+                    localAttachment?.name ||
+                    `${(card.parsed?.sku || "listing").toLowerCase()}-amazon-listing.xlsx`;
+
+                  return (
+                    <div
+                      key={card.id}
+                      className="rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs transition hover:border-emerald-300 flex items-center justify-between gap-4"
+                    >
+                      {/* Left Side: Checkbox + SKU + Title + Small Timestamp underneath */}
+                      <div className="flex items-start gap-3 min-w-0 flex-1">
+                        <input type="checkbox" className="mt-1 h-4 w-4 rounded accent-emerald-600 shrink-0 cursor-pointer" />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="inline-block rounded-md bg-emerald-50 px-2.5 py-0.5 text-xs font-extrabold text-emerald-700 border border-emerald-100 font-mono">
+                              SKU: {card.parsed?.sku || "N/A"}
+                            </span>
+                          </div>
+                          <h4 className="text-sm font-extrabold text-slate-900 truncate leading-tight">
+                            {card.parsed?.itemName || card.name}
+                          </h4>
+                          <p className="text-xs text-slate-400 font-semibold mt-1">
+                            Cập nhật: 12/06/2026 10:30
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Middle: Excel file badge - Fixed Width for Perfect Alignment */}
+                      <a
+                        href={fileUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-3 bg-emerald-50 border border-emerald-200 rounded-xl px-3.5 py-2 w-64 shrink-0 hover:bg-emerald-100/60 transition group cursor-pointer"
+                        title="Tải File Excel Flat File"
+                      >
+                        <div className="h-8 w-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-black text-xs shrink-0 shadow-2xs group-hover:bg-emerald-700">
+                          XLS
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-extrabold text-slate-900 truncate">
+                            {fileName}
+                          </p>
+                          <p className="text-xs text-emerald-700 font-bold truncate">Đầu Ra Amazon Flat File Excel (.xlsx)</p>
+                        </div>
+                      </a>
+
+                      {/* Right Side: Action Menu Button */}
+                      <div className="shrink-0">
+                        <button className="text-slate-400 hover:text-slate-600 transition p-1 rounded-lg hover:bg-slate-50">
+                          <DotsThreeVerticalIcon className="h-5 w-5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Column Pagination Footer */}
+            <div className="mt-4 flex items-center justify-between text-xs text-slate-500 font-medium border-t border-slate-100 pt-3 shrink-0">
+              <span>Hiển thị {listingCards.length} thẻ</span>
+              <div className="flex items-center gap-1">
+                <button className="h-7 w-7 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-slate-50 font-bold">
+                  &lt;
+                </button>
+                <span className="h-7 w-7 rounded-lg bg-blue-600 text-white font-bold flex items-center justify-center text-xs shadow-2xs">
+                  1
+                </span>
+                <button className="h-7 w-7 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-slate-50 font-bold">
+                  &gt;
+                </button>
+              </div>
+              <select className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs font-bold text-slate-700 outline-none cursor-pointer">
+                <option>10 / trang</option>
+                <option>20 / trang</option>
+              </select>
+            </div>
           </div>
         </div>
-      </div>
+      )}
       {/* Quick Add Brand Modal */}
       {showAddBrandModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">

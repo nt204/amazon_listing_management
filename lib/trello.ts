@@ -39,7 +39,6 @@ function attachmentBelongsToCard(attachment: TrelloAttachment, cardId: string) {
 export function selectTrelloImageAttachments(card: Pick<TrelloCard, "id" | "attachments">) {
   return (card.attachments || []).filter(
     (attachment) =>
-      attachment.isUpload === true &&
       isTrelloImageAttachment(attachment) &&
       attachmentBelongsToCard(attachment, card.id),
   );
@@ -103,7 +102,6 @@ export interface TrelloCard {
     itemName: string;
   };
 }
-
 export interface TrelloList {
   id: string;
   name: string;
@@ -343,4 +341,77 @@ export async function downloadTrelloAttachment(url: string, apiKey: string, toke
   }
   const arrayBuffer = await response.arrayBuffer();
   return Buffer.from(arrayBuffer);
+}
+
+export async function createTrelloList(
+  boardId: string,
+  name: string,
+  apiKey: string,
+  token: string,
+): Promise<TrelloList> {
+  const cleanBoardId = extractTrelloBoardId(boardId);
+  const response = await fetch(buildUrl("/lists", apiKey, token, { name, idBoard: cleanBoardId, pos: "bottom" }), {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const errText = await response.text().catch(() => "");
+    throw new Error(`Không thể tạo danh sách Trello mới (${response.status}): ${errText}`);
+  }
+  return (await response.json()) as TrelloList;
+}
+
+export async function createTrelloCard(
+  listId: string,
+  name: string,
+  desc: string,
+  apiKey: string,
+  token: string,
+): Promise<TrelloCard> {
+  const response = await fetch(buildUrl("/cards", apiKey, token, { idList: listId, name, desc, pos: "bottom" }), {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const errText = await response.text().catch(() => "");
+    throw new Error(`Không thể tạo thẻ Trello mới (${response.status}): ${errText}`);
+  }
+  const card = (await response.json()) as TrelloCard;
+  return {
+    ...card,
+    parsed: parseTrelloCardTitle(card.name),
+  };
+}
+
+export interface Dimensions3D {
+  length: string;
+  width: string;
+  thickness: string;
+  formatted: string;
+}
+
+export function parseCardDimensions(desc: string): Dimensions3D {
+  if (!desc) {
+    return { length: '3.1"', width: '3.1"', thickness: '0.15"', formatted: '3.1" x 3.1" x 0.15"' };
+  }
+
+  // Regex to match patterns like 3.1" x 3.1" x 0.15" or 8cm x 8cm x 0.4cm
+  const dimMatch = desc.match(/(\d+(?:\.\d+)?\s*(?:"|in|inch|cm|mm)?)\s*x\s*(\d+(?:\.\d+)?\s*(?:"|in|inch|cm|mm)?)\s*x\s*(\d+(?:\.\d+)?\s*(?:"|in|inch|cm|mm)?)/i);
+  if (dimMatch) {
+    const length = dimMatch[1].trim();
+    const width = dimMatch[2].trim();
+    const thickness = dimMatch[3].trim();
+    return {
+      length,
+      width,
+      thickness,
+      formatted: `${length} x ${width} x ${thickness}`,
+    };
+  }
+
+  // Fallback defaults for ornament if unspecified
+  return {
+    length: '3.1"',
+    width: '3.1"',
+    thickness: '0.15"',
+    formatted: '3.1" x 3.1" x 0.15"',
+  };
 }

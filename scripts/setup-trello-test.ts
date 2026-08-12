@@ -1,5 +1,4 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+export {};
 
 const apiKey = process.env.TRELLO_API_KEY || "";
 const token = process.env.TRELLO_TOKEN || "";

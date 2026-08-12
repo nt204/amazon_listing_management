@@ -22,6 +22,22 @@ OPENAI_API_KEY=...
 
 Nếu có API key, app dùng AI thật. Mock chỉ chạy khi không có provider nào. Key chỉ được đọc ở server.
 
+## Tạo mockup bằng AI Image
+
+Tab **Auto Mockup Generator** mặc định dùng `gemini-3.1-flash-image`; có thể đổi sang `gpt-image-2` khi tài khoản OpenAI còn API credit. Mỗi bộ gồm **1 ảnh thiết kế gốc + 6 ảnh mockup do AI tạo = tổng 7 ảnh**. Ảnh thiết kế gốc trên thẻ Trello được gửi làm reference cho cả 6 lần tạo để giữ artwork, logo, chữ và màu sắc. Tùy chọn chất lượng `low`, `medium` hoặc `high` áp dụng khi dùng OpenAI.
+
+```env
+MOCKUP_IMAGE_MODEL=gemini-3.1-flash-image
+OPENAI_IMAGE_QUALITY=medium
+OPENAI_IMAGE_TIMEOUT_MS=120000
+GEMINI_IMAGE_TIMEOUT_MS=90000
+GEMINI_IMAGE_RETRY_ATTEMPTS=2
+GEMINI_IMAGE_CONCURRENCY=1
+IMAGE_GENERATION_CONCURRENCY=3
+```
+
+Model và API key chỉ được gọi trong Route Handler phía server. Mỗi lần tạo một bộ mockup có thể phát sinh chi phí của provider cho 6 ảnh AI được sinh.
+
 ## Pipeline sinh listing
 
 1. Đọc dữ liệu operator đã điền.

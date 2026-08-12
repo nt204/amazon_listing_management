@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from "node:fs";
+export {};
 
 const apiKey = process.env.TRELLO_API_KEY || "";
 const token = process.env.TRELLO_TOKEN || "";
