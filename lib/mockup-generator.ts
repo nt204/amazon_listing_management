@@ -259,10 +259,10 @@ export async function generateAllMockups(
           usesCheapKeyAI
             ? "high"
             : model === "gpt-image-1.5"
-            ? quality === "low"
-              ? "low"
-              : "high"
-            : null;
+              ? quality === "low"
+                ? "low"
+                : "high"
+              : null;
         console.info(
           "[Image API edit attempt]",
           JSON.stringify({
@@ -278,7 +278,8 @@ export async function generateAllMockups(
           }),
         );
         const upstreamModel = usesCheapKeyAI
-          ? process.env.CHEAPKEYAI_UPSTREAM_MODEL?.trim() || model
+          ? process.env.CHEAPKEYAI_UPSTREAM_MODEL?.trim() ||
+            (model === "gemini-3-pro-image-c" ? "gemini-3-pro-image" : model)
           : model;
         const response = await openaiClient.images.edit(
           {
@@ -322,13 +323,13 @@ export async function generateAllMockups(
             ? CHEAPKEYAI_GPT_IMAGE_2_PRICE_USD
             : usage
               ? Number(
-                  (
-                    (inputTextTokens * 5 +
-                      inputImageTokens * 8 +
-                      outputTokens * (model === "gpt-image-2" ? 30 : 32)) /
-                    1_000_000
-                  ).toFixed(6),
-                )
+                (
+                  (inputTextTokens * 5 +
+                    inputImageTokens * 8 +
+                    outputTokens * (model === "gpt-image-2" ? 30 : 32)) /
+                  1_000_000
+                ).toFixed(6),
+              )
               : null,
           usage: usage
             ? {
@@ -621,9 +622,8 @@ export function classifyMockupGenerationError(
   ) {
     const requestId = rawMessage.match(/request id:\s*([^\s)]+)/i)?.[1];
     return {
-      message: `CheapKeyAI chưa có channel khả dụng cho gpt-image-2 trong group của API key này. Hãy đổi/tạo key ở đúng group hoặc gửi${
-        requestId ? ` request ID ${requestId}` : " request ID trong log"
-      } cho CheapKeyAI support; hệ thống không fallback sang model khác.`,
+      message: `CheapKeyAI chưa có channel khả dụng cho gpt-image-2 trong group của API key này. Hãy đổi/tạo key ở đúng group hoặc gửi${requestId ? ` request ID ${requestId}` : " request ID trong log"
+        } cho CheapKeyAI support; hệ thống không fallback sang model khác.`,
       status: 503,
     };
   }
@@ -697,12 +697,11 @@ export function classifyMockupGenerationError(
   if (
     status === 404 ||
     searchable.includes("not_found") ||
-    searchable.includes("model not found") ||
-    searchable.includes("has no access to model")
+    searchable.includes("model not found")
   ) {
     return {
       message:
-        "Model tạo ảnh không tồn tại hoặc API key CheapKeyAI chưa được mở quyền cho model này (chọn All Models khi tạo key).",
+        "Model tạo ảnh không tồn tại hoặc key hiện tại chưa thuộc đúng nhóm model.",
       status: 404,
     };
   }

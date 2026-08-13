@@ -190,7 +190,7 @@ test("gpt-image-2-c is routed through the CheapKeyAI image edit provider", async
   });
 
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].model, "gpt-image-2");
+  assert.equal(calls[0].model, "gpt-image-2-c");
   assert.equal(calls[0].quality, "low");
   assert.equal(calls[0].input_fidelity, "high");
   assert.equal(calls[0].response_format, undefined);
@@ -280,7 +280,7 @@ test("CheapKeyAI client uses its own key and the image edits endpoint", async ()
 
   assert.equal(requestUrl, "https://cheapkeyai.shop/v1/images/edits");
   assert.equal(authorization, "Bearer sk-cheapkeyai-test-only");
-  assert.equal(upstreamModel, "gpt-image-2");
+  assert.equal(upstreamModel, "gpt-image-2-c");
   assert.equal(inputFidelity, "high");
   assert.equal(responseFormat, null);
 });

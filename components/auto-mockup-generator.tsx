@@ -91,14 +91,14 @@ interface MockupGenerationResponse {
 
 type MockupStreamEvent =
   | {
-      type: "progress";
-      step: number;
-      status: "processing" | "success" | "error";
-      message: string;
-      attachmentUrl?: string;
-      attachmentId?: string;
-      name?: string;
-    }
+    type: "progress";
+    step: number;
+    status: "processing" | "success" | "error";
+    message: string;
+    attachmentUrl?: string;
+    attachmentId?: string;
+    name?: string;
+  }
   | { type: "complete"; data: MockupGenerationResponse }
   | { type: "error"; error: string }
   | { type: "heartbeat" };
@@ -129,7 +129,7 @@ const MOCKUP_STEPS = [
   },
 ];
 
-const DEFAULT_MOCKUP_MODEL = "gpt-image-1.5";
+const DEFAULT_MOCKUP_MODEL = "gpt-image-2-c";
 const DEFAULT_MOCKUP_QUALITY = "low" as const;
 
 export function AutoMockupGenerator({
@@ -773,23 +773,23 @@ export function AutoMockupGenerator({
             {(selectedModel === "gpt-image-2" ||
               selectedModel === "gpt-image-2-c" ||
               selectedModel === "gpt-image-1.5") && (
-              <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-white px-3 py-1.5 shadow-2xs">
-                <span className="text-xs font-bold text-slate-600">Chất lượng:</span>
-                <select
-                  value={selectedQuality}
-                  onChange={(event) =>
-                    setSelectedQuality(
-                      event.target.value as "low" | "medium" | "high",
-                    )
-                  }
-                  className="bg-transparent text-xs font-extrabold text-slate-900 outline-none cursor-pointer pr-1"
-                >
-                  <option value="low">low (Nhanh / bản nháp)</option>
-                  <option value="medium">medium (Cân bằng)</option>
-                  <option value="high">high (Cao / bản cuối)</option>
-                </select>
-              </div>
-            )}
+                <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-white px-3 py-1.5 shadow-2xs">
+                  <span className="text-xs font-bold text-slate-600">Chất lượng:</span>
+                  <select
+                    value={selectedQuality}
+                    onChange={(event) =>
+                      setSelectedQuality(
+                        event.target.value as "low" | "medium" | "high",
+                      )
+                    }
+                    className="bg-transparent text-xs font-extrabold text-slate-900 outline-none cursor-pointer pr-1"
+                  >
+                    <option value="low">low (Nhanh / bản nháp)</option>
+                    <option value="medium">medium (Cân bằng)</option>
+                    <option value="high">high (Cao / bản cuối)</option>
+                  </select>
+                </div>
+              )}
 
             {/* Sync / Refresh Button */}
             <button
@@ -877,11 +877,10 @@ export function AutoMockupGenerator({
             {mockupContents.map((content) => (
               <label
                 key={content.id}
-                className={`flex items-center gap-2 rounded-xl border p-2 text-xs font-bold cursor-pointer transition select-none ${
-                  content.checked
+                className={`flex items-center gap-2 rounded-xl border p-2 text-xs font-bold cursor-pointer transition select-none ${content.checked
                     ? "border-indigo-500 bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-400/20"
                     : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"
-                }`}
+                  }`}
               >
                 <input
                   type="checkbox"
@@ -969,11 +968,10 @@ export function AutoMockupGenerator({
             setDraggedCardId(null);
             setDraggedFromColumn(null);
           }}
-          className={`flex w-full md:w-1/2 flex-col rounded-2xl border p-5 shadow-sm space-y-4 transition ${
-            draggedFromColumn === "mockup"
+          className={`flex w-full md:w-1/2 flex-col rounded-2xl border p-5 shadow-sm space-y-4 transition ${draggedFromColumn === "mockup"
               ? "border-amber-400 bg-amber-50/20 ring-4 ring-amber-400/20"
               : "border-slate-200 bg-white"
-          }`}
+            }`}
         >
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2.5">
@@ -983,7 +981,7 @@ export function AutoMockupGenerator({
                 title="Chọn / Bỏ chọn tất cả"
               >
                 {selectedCardIds.size > 0 &&
-                selectedCardIds.size === designCards.length ? (
+                  selectedCardIds.size === designCards.length ? (
                   <CheckSquareIcon
                     className="h-5 w-5 text-indigo-600"
                     weight="fill"
@@ -1034,11 +1032,10 @@ export function AutoMockupGenerator({
                       setDraggedCardId(null);
                       setDraggedFromColumn(null);
                     }}
-                    className={`group rounded-2xl border p-4 transition shadow-xs hover:shadow-md cursor-grab active:cursor-grabbing ${
-                      isSelected
+                    className={`group rounded-2xl border p-4 transition shadow-xs hover:shadow-md cursor-grab active:cursor-grabbing ${isSelected
                         ? "border-indigo-500 bg-indigo-50/30 ring-2 ring-indigo-400/20"
                         : "border-slate-200 bg-white hover:border-indigo-300"
-                    } ${isGenerating ? "opacity-60 pointer-events-none" : ""}`}
+                      } ${isGenerating ? "opacity-60 pointer-events-none" : ""}`}
                   >
                     <div className="mb-3 flex items-start gap-3">
                       <button
@@ -1169,11 +1166,10 @@ export function AutoMockupGenerator({
             setDraggedCardId(null);
             setDraggedFromColumn(null);
           }}
-          className={`flex w-full md:w-1/2 flex-col rounded-2xl border p-5 shadow-sm space-y-4 transition ${
-            draggedFromColumn === "design"
+          className={`flex w-full md:w-1/2 flex-col rounded-2xl border p-5 shadow-sm space-y-4 transition ${draggedFromColumn === "design"
               ? "border-emerald-400 bg-emerald-50/20 ring-4 ring-emerald-400/20"
               : "border-slate-200 bg-white"
-          }`}
+            }`}
         >
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2.5">
@@ -1331,15 +1327,14 @@ export function AutoMockupGenerator({
               return (
                 <div
                   key={step.id}
-                  className={`flex items-center justify-between rounded-xl p-3 text-xs font-medium border ${
-                    status === "success"
+                  className={`flex items-center justify-between rounded-xl p-3 text-xs font-medium border ${status === "success"
                       ? "border-emerald-200 bg-emerald-50/80 text-emerald-900"
                       : status === "processing"
                         ? "border-indigo-300 bg-indigo-50/90 text-indigo-900 animate-pulse"
                         : status === "error"
                           ? "border-rose-200 bg-rose-50 text-rose-800"
                           : "border-slate-100 bg-slate-50 text-slate-500"
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center gap-2">
                     <span className="text-base">{step.icon}</span>

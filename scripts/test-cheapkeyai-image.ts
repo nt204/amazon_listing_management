@@ -9,21 +9,22 @@ const SOURCE_PATH = "public/samples/nail_tech_glass_ornament.jpg";
 const UPSTREAM_MODEL = "gpt-image-2";
 
 async function assertModelIsVisible(baseUrl: string, apiKey: string) {
-  try {
-    const response = await fetch(`${baseUrl}/models`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
-    const body = (await response.json()) as {
-      data?: Array<{ id?: string }>;
-      error?: { message?: string };
-    };
-    if (response.ok && body.data?.some((model) => model.id === UPSTREAM_MODEL)) {
-      process.stdout.write(`Model ${UPSTREAM_MODEL} confirmed in /models endpoint.\n`);
-    } else {
-      process.stdout.write(`Warning: /models did not explicitly list ${UPSTREAM_MODEL}, proceeding to test image generation endpoint directly...\n`);
-    }
-  } catch {
-    process.stdout.write(`Warning: /models check skipped, testing image endpoint...\n`);
+  const response = await fetch(`${baseUrl}/models`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  const body = (await response.json()) as {
+    data?: Array<{ id?: string }>;
+    error?: { message?: string };
+  };
+  if (!response.ok) {
+    throw new Error(
+      `CheapKeyAI /models trả HTTP ${response.status}: ${body.error?.message || "unknown error"}`,
+    );
+  }
+  if (!body.data?.some((model) => model.id === UPSTREAM_MODEL)) {
+    throw new Error(
+      `API key hiện không nhìn thấy model ${UPSTREAM_MODEL}; hãy tạo key ở đúng group.`,
+    );
   }
 }
 
