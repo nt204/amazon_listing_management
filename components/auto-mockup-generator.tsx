@@ -65,13 +65,13 @@ interface MockupGenerationResponse {
   requestedMockupsCount: number;
   providerResponseCount: number;
   providerResponses: Array<{
-    provider: "openai";
+    provider: "openai" | "cheapkeyai";
     requestId: string | null;
     model: string;
     quality: "low" | "medium" | "high";
     size: string;
     imageCount: 1;
-    inputFidelity: "low" | null;
+    inputFidelity: "low" | "high" | null;
     estimatedCostUsd: number | null;
     usage: {
       inputTokens: number;
@@ -563,7 +563,7 @@ export function AutoMockupGenerator({
           `Đã tạo ${data.newlyGeneratedMockupsCount} ảnh mới bằng ${data.model}/${data.quality || "auto"}.`,
         );
         setGenerationResult(
-          `🎉 Đã tạo ${data.newlyGeneratedMockupsCount} mockup mới cho SKU "${data.sku}" bằng ${data.model}/${data.quality || "auto"}${providerAudit ? ` — ${data.providerResponseCount} phản hồi OpenAI: ${providerAudit}` : ""}${locationText}.`,
+          `🎉 Đã tạo ${data.newlyGeneratedMockupsCount} mockup mới cho SKU "${data.sku}" bằng ${data.model}/${data.quality || "auto"}${providerAudit ? ` — ${data.providerResponseCount} phản hồi provider: ${providerAudit}` : ""}${locationText}.`,
         );
       }
       await syncAllColumns();
@@ -740,6 +740,9 @@ export function AutoMockupGenerator({
                 <option value="gpt-image-2">
                   🤖 GPT Image 2
                 </option>
+                <option value="gpt-image-2-c">
+                  💸 GPT Image 2 C (CheapKeyAI)
+                </option>
                 <option value="gpt-image-1.5">
                   🤖 GPT Image 1.5 (Mặc định / Legacy)
                 </option>
@@ -765,7 +768,9 @@ export function AutoMockupGenerator({
               </div>
             )}
 
-            {(selectedModel === "gpt-image-2" || selectedModel === "gpt-image-1.5") && (
+            {(selectedModel === "gpt-image-2" ||
+              selectedModel === "gpt-image-2-c" ||
+              selectedModel === "gpt-image-1.5") && (
               <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-white px-3 py-1.5 shadow-2xs">
                 <span className="text-xs font-bold text-slate-600">Chất lượng:</span>
                 <select

@@ -24,7 +24,7 @@ Nếu có API key, app dùng AI thật. Mock chỉ chạy khi không có provide
 
 ## Tạo mockup bằng AI Image
 
-Tab **Auto Mockup Generator** mặc định dùng `gpt-image-1.5` với chất lượng `low`; có thể đổi model hoặc chất lượng ngay trên giao diện. Mỗi bộ gồm **1 ảnh thiết kế gốc + 6 ảnh mockup do AI tạo = tổng 7 ảnh**. Ảnh thiết kế gốc trên thẻ Trello được gửi làm reference cho cả 6 lần tạo để giữ artwork, logo, chữ và màu sắc. Tùy chọn chất lượng `low`, `medium` hoặc `high` áp dụng khi dùng OpenAI.
+Tab **Auto Mockup Generator** mặc định dùng `gpt-image-1.5` với chất lượng `low`; có thể đổi model hoặc chất lượng ngay trên giao diện. Mỗi bộ gồm **1 ảnh thiết kế gốc + 6 ảnh mockup do AI tạo = tổng 7 ảnh**. Ảnh thiết kế gốc trên thẻ Trello được gửi làm reference cho cả 6 lần tạo để giữ artwork, logo, chữ và màu sắc. Tùy chọn chất lượng `low`, `medium` hoặc `high` áp dụng cho OpenAI và gateway CheapKeyAI.
 
 ```env
 MOCKUP_IMAGE_MODEL=gpt-image-1.5
@@ -37,6 +37,30 @@ IMAGE_GENERATION_CONCURRENCY=3
 ```
 
 Model và API key chỉ được gọi trong Route Handler phía server. Mỗi lần tạo một bộ mockup có thể phát sinh chi phí của provider cho 6 ảnh AI được sinh.
+
+Để dùng lựa chọn **GPT Image 2 C (CheapKeyAI)**:
+
+1. Đăng ký hoặc đăng nhập CheapKeyAI và nạp ví.
+2. Kiểm tra dashboard/key group có quyền dùng đúng model ID
+   `gpt-image-2-c`. Nếu không thấy model này, hỏi support trước khi mua key.
+3. Mở [`cheapkeyai.shop/keys`](https://cheapkeyai.shop/keys), tạo một API key
+   riêng cho ứng dụng và sao chép key.
+4. Dán key vào `.env.local` ở thư mục gốc của project:
+
+```env
+CHEAPKEYAI_API_KEY=sk-your-cheapkeyai-key
+CHEAPKEYAI_BASE_URL=https://cheapkeyai.shop/v1
+```
+
+5. Khởi động lại dev server rồi chọn **GPT Image 2 C (CheapKeyAI)** trong Auto
+   Mockup Generator.
+
+Ứng dụng gửi model ID `gpt-image-2-c` tới endpoint tương thích OpenAI của
+CheapKeyAI. Key này không thay thế `OPENAI_API_KEY`. Gói CheapKeyAI của bạn phải
+hỗ trợ image edit/reference images; nếu không, gateway sẽ trả lỗi model hoặc
+endpoint không khả dụng. Không đặt key trong biến `NEXT_PUBLIC_*`, trình duyệt,
+chat hoặc source code; nên dùng key riêng có thể thu hồi. Khi chọn provider này,
+ảnh thiết kế tham chiếu sẽ được gửi qua máy chủ CheapKeyAI.
 
 ## Pipeline sinh listing
 

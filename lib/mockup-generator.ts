@@ -7,6 +7,7 @@ import { generateChatGPTWebImage } from "./chatgpt-web-automation";
 
 export type MockupModel =
   | "gpt-image-2"
+  | "gpt-image-2-c"
   | "gpt-image-1.5"
   | "gemini-3.1-flash-image"
   | "gemini-3-pro-image"
@@ -23,7 +24,7 @@ export interface MockupResult {
   mimeType: string;
   description: string;
   providerTrace?: {
-    provider: "openai";
+    provider: "openai" | "cheapkeyai";
     requestId: string | null;
     model: MockupModel;
     quality: MockupImageQuality;
@@ -50,7 +51,7 @@ export interface GenerateMockupsOptions {
   inputMimeType: string;
   model?: MockupModel;
   quality?: MockupImageQuality;
-  /** Test seam; production creates the client from OPENAI_API_KEY. */
+  /** Test seam; production creates the client from the selected image provider key. */
   openaiClient?: OpenAI;
   /** Test seam; production creates the client from GEMINI_API_KEY. */
   geminiClient?: GoogleGenAI;
@@ -74,6 +75,14 @@ const OPENAI_INPUT_LIMIT_BYTES = 50 * 1024 * 1024;
 
 export function isOpenAIImageModel(model: MockupModel) {
   return model === "gpt-image-2" || model === "gpt-image-1.5";
+}
+
+export function isCheapKeyAIImageModel(model: MockupModel) {
+  return model === "gpt-image-2-c";
+}
+
+export function isImageApiModel(model: MockupModel) {
+  return isOpenAIImageModel(model) || isCheapKeyAIImageModel(model);
 }
 
 export function isChatGPTWebModel(model: MockupModel) {
@@ -168,18 +177,30 @@ export async function generateAllMockups(
   progressCallback?.(1, MOCKUP_TYPES[0].name, "success");
 
   const openaiApiKey = process.env.OPENAI_API_KEY;
+  const cheapKeyAIApiKey = process.env.CHEAPKEYAI_API_KEY;
   const geminiApiKey = process.env.GEMINI_API_KEY;
 
   let openaiClient = options.openaiClient || null;
   let openaiInput: Awaited<ReturnType<typeof toFile>> | null = null;
-  if (isOpenAIImageModel(model)) {
+  if (isImageApiModel(model)) {
     if (!openaiClient) {
-      if (!openaiApiKey?.trim()) {
+      if (isCheapKeyAIImageModel(model)) {
+        if (!cheapKeyAIApiKey?.trim()) {
+          throw new Error(
+            "CHEAPKEYAI_API_KEY chưa được cấu hình để tạo mockup bằng gpt-image-2-c.",
+          );
+        }
+        openaiClient = new OpenAI({
+          apiKey: cheapKeyAIApiKey,
+          baseURL: configuredCheapKeyAIBaseUrl(),
+        });
+      } else if (!openaiApiKey?.trim()) {
         throw new Error(
           "OPENAI_API_KEY chưa được cấu hình để tạo mockup bằng ChatGPT Image.",
         );
+      } else {
+        openaiClient = new OpenAI({ apiKey: openaiApiKey });
       }
-      openaiClient = new OpenAI({ apiKey: openaiApiKey });
     }
     openaiInput = await toFile(
       normalizedDesignBuffer,
@@ -221,7 +242,7 @@ export async function generateAllMockups(
       let mockupBuffer: Buffer;
       let providerTrace: MockupResult["providerTrace"];
 
-      if (isOpenAIImageModel(model) && openaiClient && openaiInput) {
+      if (isImageApiModel(model) && openaiClient && openaiInput) {
         const prompt = buildMockupPrompt(meta.promptKey, itemName, dimensions);
         // GPT Image 1.5 only accepts low/high input fidelity. Keep the cheap
         // draft behavior for low quality, and preserve source details more
@@ -233,9 +254,12 @@ export async function generateAllMockups(
               : "high"
             : null;
         console.info(
-          "[OpenAI image edit attempt]",
+          "[Image API edit attempt]",
           JSON.stringify({
             mockupIndex: meta.index,
+            provider: isCheapKeyAIImageModel(model)
+              ? "cheapkeyai"
+              : "openai",
             model,
             quality,
             size: OPENAI_IMAGE_SIZE,
@@ -243,9 +267,10 @@ export async function generateAllMockups(
             inputFidelity,
           }),
         );
+        const upstreamModel = isCheapKeyAIImageModel(model) ? "gpt-image-2" : model;
         const response = await openaiClient.images.edit(
           {
-            model,
+            model: upstreamModel,
             image: openaiInput,
             prompt,
             n: 1,
@@ -262,7 +287,9 @@ export async function generateAllMockups(
         );
         const b64 = response?.data?.[0]?.b64_json;
         if (!b64) {
-          throw new Error(`OpenAI không trả về dữ liệu ảnh cho ${meta.name}.`);
+          throw new Error(
+            `Provider tạo ảnh không trả về dữ liệu ảnh cho ${meta.name}.`,
+          );
         }
         const usage = response.usage;
         const inputImageTokens = usage?.input_tokens_details?.image_tokens || 0;
@@ -272,35 +299,35 @@ export async function generateAllMockups(
           : 0;
         const outputTokens = usage?.output_tokens || 0;
         providerTrace = {
-          provider: "openai",
-          requestId: response._request_id || null,
+          provider: isCheapKeyAIImageModel(model) ? "cheapkeyai" : "openai",
+          requestId: response?._request_id || null,
           model,
           quality,
-          size: response.size || OPENAI_IMAGE_SIZE,
+          size: response?.size || OPENAI_IMAGE_SIZE,
           imageCount: 1,
           inputFidelity,
-          estimatedCostUsd: usage
+          estimatedCostUsd: usage && !isCheapKeyAIImageModel(model)
             ? Number(
-                (
-                  (inputTextTokens * 5 +
-                    inputImageTokens * 8 +
-                    outputTokens * 32) /
-                  1_000_000
-                ).toFixed(6),
-              )
+              (
+                (inputTextTokens * 5 +
+                  inputImageTokens * 8 +
+                  outputTokens * (model === "gpt-image-2" ? 30 : 32)) /
+                1_000_000
+              ).toFixed(6),
+            )
             : null,
           usage: usage
             ? {
-                inputTokens: usage.input_tokens,
-                inputImageTokens,
-                inputTextTokens,
-                outputTokens,
-                totalTokens: usage.total_tokens,
-              }
+              inputTokens: usage.input_tokens,
+              inputImageTokens,
+              inputTextTokens,
+              outputTokens,
+              totalTokens: usage.total_tokens,
+            }
             : null,
         };
         console.info(
-          "[OpenAI image edit]",
+          "[Image API edit]",
           JSON.stringify({
             mockupIndex: meta.index,
             ...providerTrace,
@@ -384,20 +411,22 @@ export function buildMockupPrompt(
       concept = "Ảnh infographic kích thước sản phẩm.";
       break;
     case "gift_box":
-      concept = "Sản phẩm nằm trong hộp quà màu đỏ đơn giản đang mở.";
+      concept =
+        "Sản phẩm nằm bên trong một HỘP QUÀ MÀU ĐỎ SANG TRỌNG đang mở (open RED GIFT BOX), lót vải lụa trắng satin sáng bóng (soft white satin lining).";
       break;
     case "tree_view1":
-      concept = "Sản phẩm treo trên nhánh cây thông.";
+      concept = "Sản phẩm treo trên nhánh cây thông xanh tươi.";
       break;
     case "tree_view2":
       concept =
-        "Sản phẩm treo trên cây thông trong phòng khách tươi sáng.";
+        "Sản phẩm treo trên cây thông trong phòng khách tươi sáng, nền trắng và xanh tươi.";
       break;
     case "gifting_hands":
-      concept = "Hai người trao tặng sản phẩm cho nhau.";
+      concept = "Hai người trao tặng sản phẩm cho nhau trong không gian sáng, sạch.";
       break;
     case "car_mirror":
-      concept = "Sản phẩm treo trên gương chiếu hậu của ô tô.";
+      concept =
+        "Sản phẩm treo trên gương chiếu hậu của ô tô vào ban ngày, ngoài cửa kính là cây xanh và bầu trời sáng.";
       break;
     default:
       concept = "Ảnh mockup sản phẩm.";
@@ -408,7 +437,6 @@ export function buildMockupPrompt(
       ? `\n\nKích thước 3 chiều: ${dimensions.formatted}.`
       : "";
 
-  // return `Sinh ảnh mockup sản phẩm "${itemName}" này.Sử dụng tông màu chân thực, sang trọng.${dimensionsLine}\n\nConcept: ${concept}`;
   return `Sử dụng Ảnh 1 làm ảnh tham chiếu cho sản phẩm "${itemName}".
 
 Quan sát Ảnh 1 để nhận diện chính xác:
@@ -419,17 +447,19 @@ Quan sát Ảnh 1 để nhận diện chính xác:
 - màu sắc của CÁC CHI TIẾT ĐƯỢC IN
 - lỗ treo và dây treo
 
-QUAN TRỌNG VỀ CHẤT LIỆU:
-Sản phẩm được làm từ acrylic/crystal trong suốt, không màu, có độ trong quang học cao (water-clear optical acrylic).
+QUAN TRỌNG VỀ CHẤT LIỆU VÀ ĐỘ TRONG SUỐT (100% WATER-CLEAR GLASS):
+Sản phẩm được làm từ acrylic / glass 100% TRONG SUỐT, KHÔNG MÀU, có độ trong quang học cao như pha lê (water-clear optical crystal).
 
-Không được hiểu màu của background nhìn xuyên qua sản phẩm trong Ảnh 1 là màu của acrylic.
-Không tạo acrylic màu nâu, vàng, beige, amber, smoky hoặc tinted.
-Không tạo một mặt đĩa màu nâu hoặc màu đặc phía sau thiết kế.
-Chỉ các chi tiết thực sự được in mới có màu.
+LƯU Ý NGUYÊN TẮC QUAN TRỌNG:
+- Màu nâu, vàng, cam hoặc bất kỳ màu đĩa nền nào trong Ảnh 1 KHÔNG PHẢI MÀU CỦA IN và TUYỆT ĐỐI KHÔNG ĐƯỢC GIỮ LẠI.
+- Loại bỏ hoàn toàn mảng đĩa tròn màu nâu phía sau.
+- Tất cả các vùng không được in PHẢI HOÀN TOÀN TRONG SUỐT, NHÌN XUYÊN THỦNG QUA MÔI TRƯỜNG BACKGROUND MỚI.
+- Phải thấy rõ background mới (Hộp quà màu đỏ / Cây thông xanh / Phòng khách) hiện lên trực tiếp phía sau đĩa sản phẩm trong suốt.
+- Chỉ các chữ, nét vẽ và chi tiết thiết kế thực sự mới có màu in trên bề mặt kính.
 
 Các vùng không được in phải:
 - trong suốt, không màu và rất trong trẻo
-- nhìn rõ môi trường mới xuyên qua
+- nhìn rõ BACKGROUND MỚI xuyên qua
 - có cảm giác giống crystal/glass cao cấp
 - có độ sâu và khúc xạ ánh sáng tự nhiên
 - không bị đục, mờ, matte hoặc smoky
@@ -443,14 +473,17 @@ Các cạnh có thể tạo subtle rainbow/prismatic reflections khi bắt sáng
 
 ÁNH SÁNG:
 Sử dụng phong cách chụp sản phẩm high-key, sáng và sạch.
-Có soft backlight chiếu xuyên qua acrylic và bright rim lighting quanh cạnh sản phẩm.
+Có soft white backlight chiếu xuyên qua acrylic và bright clean rim lighting quanh cạnh sản phẩm.
 Có những điểm specular highlight trắng sáng và crisp trên bề mặt và cạnh.
 Sản phẩm phải có cảm giác luminous, glossy, sparkling và crystal-clear.
-Không dùng ánh sáng tối, muddy hoặc phủ màu nâu lên toàn bộ sản phẩm.
+Không dùng ánh sáng vàng, amber, orange, muddy hoặc phủ màu nâu lên toàn bộ sản phẩm.
 
 BACKGROUND:
 Bối cảnh phía sau sản phẩm phải sáng, mềm và có shallow depth of field.
-Ưu tiên vùng background sáng hoặc warm bokeh nằm trực tiếp phía sau phần acrylic trong suốt để làm nổi bật độ trong.
+Ưu tiên clean white, neutral white và fresh natural green.
+Ưu tiên vùng background trắng sáng hoặc xanh lá sáng nằm trực tiếp phía sau phần acrylic trong suốt để làm nổi bật độ trong.
+Bokeh nên là soft white bokeh hoặc light green bokeh.
+Không dùng warm bokeh, yellow bokeh, orange bokeh hoặc amber glow.
 Không đặt một mảng cây tối hoặc vật thể tối phủ kín ngay phía sau toàn bộ sản phẩm.
 Cành cây có thể xuất hiện xung quanh sản phẩm nhưng không làm phần acrylic trung tâm trở nên tối hoặc đục.
 
@@ -459,19 +492,20 @@ Không tự ý thay đổi nội dung chữ, hình minh họa hoặc bố cục 
 
 Mục tiêu hình ảnh:
 premium commercial product photography,
-water-clear crystal acrylic,
+water-clear colorless acrylic,
 high optical clarity,
 polished faceted edges,
-strong clean specular highlights,
-bright rim light,
+strong clean white specular highlights,
+bright white rim light,
 realistic light refraction,
 subtle prismatic reflections,
 sparkling crystal appearance,
-bright soft bokeh background,
+bright white and fresh green bokeh background,
 luxurious glossy finish.
 
 Concept: ${concept}${dimensionsLine}`;
 }
+
 
 function mockupResult(
   meta: (typeof MOCKUP_TYPES)[number],
@@ -511,7 +545,7 @@ async function normalizeDesignImage(input: Buffer): Promise<Buffer> {
 
   if (normalized.byteLength > OPENAI_INPUT_LIMIT_BYTES) {
     throw new Error(
-      "Ảnh thiết kế vượt quá giới hạn 50 MB của OpenAI Image API.",
+      "Ảnh thiết kế vượt quá giới hạn 50 MB của Image API.",
     );
   }
   return normalized;
@@ -581,6 +615,18 @@ export function classifyMockupGenerationError(
   }
 
   if (
+    status === 402 ||
+    searchable.includes("insufficient balance") ||
+    searchable.includes("insufficient credit")
+  ) {
+    return {
+      message:
+        "Tài khoản API provider đã hết số dư. Hãy nạp thêm credit cho đúng tài khoản/key rồi thử lại.",
+      status: 402,
+    };
+  }
+
+  if (
     searchable.includes("api_key_invalid") ||
     searchable.includes("invalid api key") ||
     status === 401
@@ -612,10 +658,14 @@ export function classifyMockupGenerationError(
     };
   }
 
-  if (status === 404 || searchable.includes("not_found")) {
+  if (
+    status === 404 ||
+    searchable.includes("not_found") ||
+    searchable.includes("model not found")
+  ) {
     return {
       message:
-        "Model tạo ảnh không tồn tại hoặc chưa khả dụng với API key hiện tại.",
+        "Model tạo ảnh không tồn tại hoặc key hiện tại chưa thuộc đúng nhóm model.",
       status: 404,
     };
   }
@@ -667,6 +717,13 @@ function configuredOpenAITimeout() {
   return Number.isFinite(parsed)
     ? Math.min(240_000, Math.max(30_000, Math.round(parsed)))
     : 120_000;
+}
+
+function configuredCheapKeyAIBaseUrl() {
+  return (
+    process.env.CHEAPKEYAI_BASE_URL?.trim().replace(/\/+$/, "") ||
+    "https://cheapkeyai.shop/v1"
+  );
 }
 
 function configuredGeminiTimeout() {
@@ -823,9 +880,8 @@ async function renderGraphicMockup(
     <!-- Subtle Material-Neutral Edge Accent -->
     <circle cx="512" cy="480" r="280" fill="none" stroke="url(#glow)" stroke-width="20" opacity="0.6"/>
 
-    ${
-      promptKey === "dimensions_3d"
-        ? `
+    ${promptKey === "dimensions_3d"
+      ? `
       <!-- Dimension Overlay Arrows & Callouts -->
       <line x1="200" y1="800" x2="824" y2="800" stroke="#38bdf8" stroke-width="3" stroke-dasharray="6 6"/>
       <line x1="200" y1="785" x2="200" y2="815" stroke="#38bdf8" stroke-width="3"/>
@@ -842,7 +898,7 @@ async function renderGraphicMockup(
       <rect x="50" y="456" width="140" height="48" rx="8" fill="#0f172a" stroke="#f43f5e" stroke-width="2"/>
       <text x="120" y="486" text-anchor="middle" fill="#f43f5e" font-family="system-ui, sans-serif" font-size="18" font-weight="700">Dày: ${escapeXml(dimensions.thickness)}</text>
     `
-        : ""
+      : ""
     }
 
     <!-- Bottom Description Footer -->

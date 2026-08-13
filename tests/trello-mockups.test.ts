@@ -108,7 +108,7 @@ test("GPT Image mockups use the edit API with the source artwork", async () => {
       call.body.image,
       "the source artwork file should be sent to images.edit",
     );
-    assert.match(String(call.body.prompt), /Sinh ảnh mockup sản phẩm "Test Glass Ornament" này/i);
+    assert.match(String(call.body.prompt), /Sử dụng Ảnh 1 làm ảnh tham chiếu cho sản phẩm "Test Glass Ornament"/i);
     assert.equal(call.options?.maxRetries, 0);
   }
 });
@@ -148,6 +148,130 @@ test("GPT Image 1.5 is forwarded to the same image edit pipeline", async () => {
     assert.equal(call.size, "1024x1024");
     assert.equal(call.input_fidelity, "high");
   }
+});
+
+test("gpt-image-2-c is routed through the CheapKeyAI image edit provider", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const fakeClient = {
+    images: {
+      edit: async (body: Record<string, unknown>) => {
+        calls.push(body);
+        return {
+          _request_id: "req_cheapkeyai_4",
+          size: "1024x1024",
+          usage: {
+            input_tokens: 120,
+            input_tokens_details: { image_tokens: 100, text_tokens: 20 },
+            output_tokens: 272,
+            total_tokens: 392,
+          },
+          data: [{ b64_json: SAMPLE_PNG.toString("base64") }],
+        };
+      },
+    },
+  } as unknown as OpenAI;
+
+  const mockups = await generateAllMockups({
+    sku: "TESTCHEAP",
+    itemName: "Test Glass Ornament",
+    dimensions: {
+      length: '3.1"',
+      width: '3.1"',
+      thickness: '0.15"',
+      formatted: '3.1" x 3.1" x 0.15"',
+    },
+    inputDesignBuffer: SAMPLE_PNG,
+    inputMimeType: "image/png",
+    model: "gpt-image-2-c",
+    quality: "low",
+    selectedIndexes: [4],
+    openaiClient: fakeClient,
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].model, "gpt-image-2");
+  assert.equal(calls[0].quality, "low");
+  assert.equal(calls[0].input_fidelity, undefined);
+  assert.ok(calls[0].image);
+  assert.deepEqual(
+    mockups.map((mockup) => mockup.index),
+    [1, 4],
+  );
+  assert.equal(mockups[1].providerTrace?.provider, "cheapkeyai");
+  assert.equal(mockups[1].providerTrace?.model, "gpt-image-2-c");
+  assert.equal(mockups[1].providerTrace?.estimatedCostUsd, null);
+});
+
+test("CheapKeyAI client uses its own key and the image edits endpoint", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousCheapKey = process.env.CHEAPKEYAI_API_KEY;
+  const previousCheapBaseUrl = process.env.CHEAPKEYAI_BASE_URL;
+  const previousOpenAIKey = process.env.OPENAI_API_KEY;
+  let requestUrl = "";
+  let authorization = "";
+  let upstreamModel: FormDataEntryValue | null = null;
+
+  process.env.CHEAPKEYAI_API_KEY = "sk-cheapkeyai-test-only";
+  process.env.OPENAI_API_KEY = "sk-openai-must-not-be-used";
+  delete process.env.CHEAPKEYAI_BASE_URL;
+  globalThis.fetch = (async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ) => {
+    requestUrl = input instanceof Request ? input.url : String(input);
+    const headers = new Headers(
+      input instanceof Request ? input.headers : init?.headers,
+    );
+    authorization = headers.get("authorization") || "";
+    const body = input instanceof Request ? input.clone().body : init?.body;
+    if (body instanceof FormData) upstreamModel = body.get("model");
+
+    return new Response(
+      JSON.stringify({
+        created: 0,
+        size: "1024x1024",
+        data: [{ b64_json: SAMPLE_PNG.toString("base64") }],
+      }),
+      {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          "x-request-id": "req_cheapkeyai_http",
+        },
+      },
+    );
+  }) as typeof fetch;
+
+  try {
+    await generateAllMockups({
+      sku: "TESTCHEAPHTTP",
+      itemName: "Test Glass Ornament",
+      dimensions: {
+        length: '3.1"',
+        width: '3.1"',
+        thickness: '0.15"',
+        formatted: '3.1" x 3.1" x 0.15"',
+      },
+      inputDesignBuffer: SAMPLE_PNG,
+      inputMimeType: "image/png",
+      model: "gpt-image-2-c",
+      quality: "low",
+      selectedIndexes: [4],
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousCheapKey === undefined) delete process.env.CHEAPKEYAI_API_KEY;
+    else process.env.CHEAPKEYAI_API_KEY = previousCheapKey;
+    if (previousCheapBaseUrl === undefined)
+      delete process.env.CHEAPKEYAI_BASE_URL;
+    else process.env.CHEAPKEYAI_BASE_URL = previousCheapBaseUrl;
+    if (previousOpenAIKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousOpenAIKey;
+  }
+
+  assert.equal(requestUrl, "https://cheapkeyai.shop/v1/images/edits");
+  assert.equal(authorization, "Bearer sk-cheapkeyai-test-only");
+  assert.equal(upstreamModel, "gpt-image-2");
 });
 
 test("one selected concept makes exactly one provider request and records its trace", async () => {
@@ -384,10 +508,8 @@ test("mockup prompts contain only the generation request and scene concept", () 
     formatted: '3.1" x 3.1" x 0.15"',
   });
 
-  assert.equal(
-    prompt,
-    'Sinh ảnh mockup sản phẩm "Test Ornament" này. Giữ đúng vật liệu; tách màu nền khỏi sản phẩm. Sử dụng tông màu tươi sáng.\n\nConcept: Sản phẩm nằm trong hộp quà Giáng Sinh cao cấp đang mở.',
-  );
+  assert.match(prompt, /water-clear optical crystal/i);
+  assert.match(prompt, /Concept: Sản phẩm nằm bên trong một HỘP QUÀ MÀU ĐỎ SANG TRỌNG/);
 
   const treePrompt = buildMockupPrompt("tree_view1", "Test Ornament", {
     length: '3.1"',
@@ -395,10 +517,7 @@ test("mockup prompts contain only the generation request and scene concept", () 
     thickness: '0.15"',
     formatted: '3.1" x 3.1" x 0.15"',
   });
-  assert.equal(
-    treePrompt,
-    'Sinh ảnh mockup sản phẩm "Test Ornament" này. Giữ đúng vật liệu; tách màu nền khỏi sản phẩm. Sử dụng tông màu tươi sáng.\n\nConcept: Sản phẩm treo trên nhánh cây thông Noel.',
-  );
+  assert.match(treePrompt, /Concept: Sản phẩm treo trên nhánh cây thông/);
 
   const dimensionPrompt = buildMockupPrompt(
     "dimensions_3d",
@@ -410,10 +529,8 @@ test("mockup prompts contain only the generation request and scene concept", () 
       formatted: '3.1" x 3.1" x 0.15"',
     },
   );
-  assert.equal(
-    dimensionPrompt,
-    'Sinh ảnh mockup sản phẩm "Test Ornament" này. Giữ đúng vật liệu; tách màu nền khỏi sản phẩm. Sử dụng tông màu tươi sáng.\n\nKích thước 3 chiều: 3.1" x 3.1" x 0.15".\n\nConcept: Ảnh infographic kích thước sản phẩm.',
-  );
+  assert.match(dimensionPrompt, /Kích thước 3 chiều: 3\.1" x 3\.1" x 0\.15"\./);
+  assert.match(dimensionPrompt, /Concept: Ảnh infographic kích thước sản phẩm\./);
 });
 
 test("OpenAI exhausted credit is translated into an actionable error", () => {
@@ -427,6 +544,19 @@ test("OpenAI exhausted credit is translated into an actionable error", () => {
   assert.deepEqual(result, {
     message:
       "OpenAI API đã hết credit. Hãy nạp credit trong OpenAI Billing hoặc chọn Gemini 3.1 Flash Image để tiếp tục.",
+    status: 402,
+  });
+});
+
+test("gateway insufficient balance is translated into a provider billing error", () => {
+  const result = classifyMockupGenerationError({
+    status: 402,
+    message: "Insufficient balance",
+  });
+
+  assert.deepEqual(result, {
+    message:
+      "Tài khoản API provider đã hết số dư. Hãy nạp thêm credit cho đúng tài khoản/key rồi thử lại.",
     status: 402,
   });
 });

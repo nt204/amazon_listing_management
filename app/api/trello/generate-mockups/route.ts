@@ -13,6 +13,8 @@ import {
 import {
   classifyMockupGenerationError,
   generateAllMockups,
+  isCheapKeyAIImageModel,
+  isImageApiModel,
   isOpenAIImageModel,
   mockupIndexFromAttachmentName,
 } from "@/lib/mockup-generator";
@@ -22,6 +24,7 @@ export const maxDuration = 300;
 
 const mockupModelSchema = z.enum([
   "gpt-image-2",
+  "gpt-image-2-c",
   "gpt-image-1.5",
   "gemini-3.1-flash-image",
   "gemini-3-pro-image",
@@ -127,6 +130,16 @@ async function executeMockupGeneration(
   }
 
   if (
+    isCheapKeyAIImageModel(selectedModel) &&
+    !process.env.CHEAPKEYAI_API_KEY?.trim()
+  ) {
+    throw new ApiError(
+      "CHEAPKEYAI_API_KEY chưa được cấu hình trên server.",
+      503,
+    );
+  }
+
+  if (
     (selectedModel === "gemini-3.1-flash-image" ||
       selectedModel === "gemini-3-pro-image") &&
     !process.env.GEMINI_API_KEY?.trim()
@@ -184,25 +197,25 @@ async function executeMockupGeneration(
     error?: string;
     existing?: boolean;
   }> = [
-    {
-      index: 1,
-      name: "Mockup 1 - Full Design (Ảnh Gốc Đầu Vào)",
-      attachmentId: sourceAttachment?.id,
-      url: sourceAttachment?.url,
-      status: "success",
-      existing: true,
-    },
-    ...Array.from(existingGeneratedAttachments.entries()).map(
-      ([index, attachment]) => ({
-        index,
-        name: attachment.name,
-        attachmentId: attachment.id,
-        url: attachment.url,
-        status: "success" as const,
+      {
+        index: 1,
+        name: "Mockup 1 - Full Design (Ảnh Gốc Đầu Vào)",
+        attachmentId: sourceAttachment?.id,
+        url: sourceAttachment?.url,
+        status: "success",
         existing: true,
-      }),
-    ),
-  ];
+      },
+      ...Array.from(existingGeneratedAttachments.entries()).map(
+        ([index, attachment]) => ({
+          index,
+          name: attachment.name,
+          attachmentId: attachment.id,
+          url: attachment.url,
+          status: "success" as const,
+          existing: true,
+        }),
+      ),
+    ];
 
   report?.({
     type: "progress",
@@ -358,7 +371,7 @@ async function executeMockupGeneration(
     itemName: parsedTitle.itemName,
     dimensions,
     model: selectedModel,
-    quality: isOpenAIImageModel(selectedModel) ? selectedQuality : null,
+    quality: isImageApiModel(selectedModel) ? selectedQuality : null,
     sourceImagesCount: 1,
     generatedMockupsCount: successfulIndexes.size - 1,
     newlyGeneratedMockupsCount: mockups.length - 1,
