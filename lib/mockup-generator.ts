@@ -384,7 +384,7 @@ export function buildMockupPrompt(
       concept = "Ảnh infographic kích thước sản phẩm.";
       break;
     case "gift_box":
-      concept = "Sản phẩm nằm trong hộp quà đơn giản đang mở.";
+      concept = "Sản phẩm nằm trong hộp quà màu đỏ đơn giản đang mở.";
       break;
     case "tree_view1":
       concept = "Sản phẩm treo trên nhánh cây thông.";
