@@ -752,8 +752,18 @@ export function AutoMockupGenerator({
                 <option value="fast-graphic">
                   ⚡ Fast Graphic Engine
                 </option>
+                <option value="chatgpt-web-automation">
+                  🌐 ChatGPT Web Automation (Playwright)
+                </option>
               </select>
             </div>
+
+            {selectedModel === "chatgpt-web-automation" && (
+              <div className="flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900 font-medium">
+                <span className="font-bold">🌐 Note:</span>
+                <span>Cần cấu hình Cookie session (`CHATGPT_WEB_COOKIES`) trong .env</span>
+              </div>
+            )}
 
             {(selectedModel === "gpt-image-2" || selectedModel === "gpt-image-1.5") && (
               <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-white px-3 py-1.5 shadow-2xs">

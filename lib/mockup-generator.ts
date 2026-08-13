@@ -3,13 +3,15 @@ import { GoogleGenAI } from "@google/genai";
 import sharp from "sharp";
 import type { Dimensions3D } from "./trello";
 import { detectRasterImageMimeType } from "./image-processing";
+import { generateChatGPTWebImage } from "./chatgpt-web-automation";
 
 export type MockupModel =
   | "gpt-image-2"
   | "gpt-image-1.5"
   | "gemini-3.1-flash-image"
   | "gemini-3-pro-image"
-  | "fast-graphic";
+  | "fast-graphic"
+  | "chatgpt-web-automation";
 
 export type MockupImageQuality = "low" | "medium" | "high";
 
@@ -27,7 +29,7 @@ export interface MockupResult {
     quality: MockupImageQuality;
     size: string;
     imageCount: 1;
-    inputFidelity: "low" | null;
+    inputFidelity: "low" | "high" | null;
     /** Approximate USD from response usage and the documented per-token rates. */
     estimatedCostUsd: number | null;
     usage: {
@@ -72,6 +74,10 @@ const OPENAI_INPUT_LIMIT_BYTES = 50 * 1024 * 1024;
 
 export function isOpenAIImageModel(model: MockupModel) {
   return model === "gpt-image-2" || model === "gpt-image-1.5";
+}
+
+export function isChatGPTWebModel(model: MockupModel) {
+  return model === "chatgpt-web-automation";
 }
 
 const MOCKUP_TYPES = [
@@ -217,7 +223,15 @@ export async function generateAllMockups(
 
       if (isOpenAIImageModel(model) && openaiClient && openaiInput) {
         const prompt = buildMockupPrompt(meta.promptKey, itemName, dimensions);
-        const inputFidelity = model === "gpt-image-1.5" ? "low" : null;
+        // GPT Image 1.5 only accepts low/high input fidelity. Keep the cheap
+        // draft behavior for low quality, and preserve source details more
+        // strongly when the user selects medium or high output quality.
+        const inputFidelity =
+          model === "gpt-image-1.5"
+            ? quality === "low"
+              ? "low"
+              : "high"
+            : null;
         console.info(
           "[OpenAI image edit attempt]",
           JSON.stringify({
@@ -325,6 +339,10 @@ export async function generateAllMockups(
           throw new Error(`Gemini không trả về dữ liệu ảnh cho ${meta.name}.`);
         }
         mockupBuffer = Buffer.from(imagePart.inlineData.data, "base64");
+      } else if (isChatGPTWebModel(model)) {
+        const prompt = buildMockupPrompt(meta.promptKey, itemName, dimensions);
+        console.info(`[ChatGPT Web Automation] Generating ${meta.name} with prompt: ${prompt.substring(0, 100)}...`);
+        mockupBuffer = await generateChatGPTWebImage(prompt, { inputImageBuffer: normalizedDesignBuffer });
       } else {
         mockupBuffer = await renderGraphicMockup(meta.promptKey, {
           sku,
@@ -360,47 +378,99 @@ export function buildMockupPrompt(
   itemName: string,
   dimensions: Dimensions3D,
 ): string {
-  const baseSpec = `Use Image 1 as the product reference for "${itemName}". It already shows the finished circular ornament and ribbon. Remove its old background completely and place that same complete ornament into the requested scene.
-PRODUCT FIDELITY: preserve the printed face exactly as shown—same words, symbols, artwork, colors, spacing, and orientation; keep it flat, front-facing, and readable. Do not redraw or curve the print; do not restyle, obscure, or add glitter over it. Photograph at believable ${dimensions.formatted} scale with natural gravity and a grounded contact shadow where appropriate.
-ART DIRECTION: create an irresistible luxury Christmas advertising hero photograph, not a neutral catalog shot. The ornament is the unmistakable visual focal point: clean, crisp, glamorous, and more eye-catching than every prop and background element. It must look exquisitely styled, warm, celebratory, cozy, and visually dazzling while still being a real professional product photograph.
-MATERIAL, COLOR, AND LIGHT: faithfully preserve the ornament's actual material, opacity, texture, thickness, surface finish, and edge profile from Image 1. Never assume that it is glass or make it transparent. If the reference is glass, retain realistic refraction and clear polished highlights; if it is acrylic, ceramic, wood, metal, fabric, or another material, render the correct material response instead. Place 3–6 small, physically realistic pinpoint starburst catchlights only on suitable non-printed reflective edges or hardware. Use a rich cinematic holiday color grade: saturated ruby and burgundy, vibrant emerald, and champagne-gold accents; warm 2700 K practical lights; deep clean shadows on the product; controlled highlight roll-off; and abundant luminous golden bokeh. The printed face must remain evenly lit, high-contrast, sharp, saturated, and readable. Use a bright, color-rich, mid-tone holiday background with enough tonal separation for the product to pop—never a dark, moody, or underexposed background.
-QUALITY GUARDRAILS: create sparkle with real material-appropriate reflections and defocused lights, never painted-on digital glitter, a foggy glow, a fantasy halo, or blown-out material detail. Avoid pale low-contrast whites, washed-out pastel color, flat gray lighting, cold clinical lighting, muddy brown color, haze, clipped highlights, watermark, added text, or a rectangular copy of the input image. The result must look like a professionally photographed real product, not CGI or a poster.`;
-
+  let concept: string;
   switch (promptKey) {
     case "dimensions_3d":
-      return `${baseSpec}
-SCENE: a glamorous premium Christmas product studio with a seamless luminous emerald background fading into a rich burgundy vignette, a polished dark walnut tabletop, and a refined cluster of radiant warm-golden fairy-light bokeh far behind the product. Add subtle champagne-gold seasonal accents in the distant background. The background must be bright, colorful, festive, and visibly different from the white source image—not dark, black, or underexposed. The ornament stands upright on a discreet clear acrylic support.
-COMPOSITION: straight-on product photo, 50 mm lens look, entire ornament and ribbon visible, ornament occupies about 55% of the square frame with generous margins.
-LIGHTING: a warm directional key light, clean soft frontal fill on the printed face, two narrow amber rim lights that create bright material-appropriate sparkle points around the outer edge, and a broad warm background light. Give the ornament a luminous premium presence without changing its material; keep the emerald and burgundy background bright, saturated, and clearly visible while every printed detail stays exposed.
-INFOGRAPHIC OVERLAY: add only three clean warm-ivory measurement lines with subtle gold endpoints outside the product, using the exact labels "Length: ${dimensions.length}", "Width: ${dimensions.width}", and "Thickness: ${dimensions.thickness}". Keep arrows outside the printed face and do not cover the ornament. Do not use a white, off-white, pale gray, or empty background.`;
+      concept = "Ảnh infographic kích thước sản phẩm.";
+      break;
     case "gift_box":
-      return `${baseSpec}
-SCENE: a high-end Christmas gift reveal: an open, richly saturated burgundy velvet jewelry-style gift box with an ivory velvet insert on a polished dark-walnut table. Surround it with carefully spaced vibrant evergreen tips, tiny champagne-gold baubles, and a bright field of rich warm-golden fairy-light bokeh in the distance. The ornament rests flat inside the fitted insert; the ribbon lies loosely beside it. Keep the tabletop and festive background well lit, colorful, and visible rather than dark.
-COMPOSITION: polished three-quarter overhead luxury-product composition with a natural 50 mm perspective. Show the whole box, lid, ornament, and some richly styled tabletop. The ornament occupies 40-45% of the frame with clear margins and remains the brightest visual attraction.
-LIGHTING: a warm amber key light, clean soft frontal fill, a broad bright ambient fill, and narrow golden rim lights create material-appropriate edge highlights and several bright realistic sparkle points. Make the velvet look plush and lustrous; keep burgundy and evergreen saturated, luxurious, clean, and brightly exposed. Preserve the pale insert as a bright separation around the ornament so its red design never merges into the box.`;
+      concept = "Sản phẩm nằm trong hộp quà đơn giản đang mở.";
+      break;
     case "tree_view1":
-      return `${baseSpec}
-SCENE: the ornament hangs as the hero decoration from a sturdy vibrant emerald pine branch on a richly decorated, brightly lit real Christmas tree with saturated burgundy and champagne-gold accents. The attached ribbon bends naturally around the branch under the ornament's weight. Many warm golden fairy lights and a few distant glossy baubles appear well behind the product as layered sparkling bokeh, never overlapping its printed face. The tree and background should be visibly luminous, colorful, and festive—not a dark green blur.
-COMPOSITION: eye-level medium close-up with a 50 mm lens look. Entire ornament and ribbon visible; ornament occupies about 40% of the square frame. Include nearby needles and branch texture for scale, but keep the ornament unmistakably sharper and more luminous than the tree.
-LIGHTING: strong warm ambient fill plus amber edge lighting and bright tree-light fill. Expose the ornament face clearly and create multiple crisp pinpoint reflections and small star-like specular sparkles along its material-appropriate outer rim or hardware for a festive premium finish. Keep the emerald branches and burgundy-gold background bright and saturated without clipped whites, a fantasy halo, or glitter painted over the printed artwork.`;
+      concept = "Sản phẩm treo trên nhánh cây thông.";
+      break;
     case "tree_view2":
-      return `${baseSpec}
-SCENE: the ornament hangs from a lightly snow-dusted vibrant emerald pine branch in a sumptuous, cozy Christmas living room staged like a luxury holiday campaign. A brightly glowing fireplace, burgundy velvet textiles, evergreen garlands, champagne-gold decorations, and abundant warm fairy lights sit far enough behind to become bright, colorful, layered bokeh. The ribbon is taut at the branch and the product hangs vertically under gravity. The room must feel warmly illuminated and richly visible, never shadowy or dark.
-COMPOSITION: realistic 85 mm close-up, entire ornament visible without cropping, ornament occupies about 55% of the square frame. Shallow depth of field affects only the background; the complete printed face remains tack-sharp and the ornament is the visual star.
-LIGHTING: bright clean soft frontal fill, broad warm room fill, strong fireplace bounce, and a precise golden rim light. Keep the exposure polished with a bright festive background, rich open shadows only on the product, multiple brilliant warm highlights, and several physically realistic sparkle points on suitable reflective edges, without glitter painted over the product or blown highlights.`;
+      concept =
+        "Sản phẩm treo trên cây thông trong phòng khách tươi sáng.";
+      break;
     case "gifting_hands":
-      return `${baseSpec}
-SCENE: an editorial Christmas-gifting moment: two adults in elegant cream and deep-burgundy knit sleeves naturally hand the ornament to one another in a richly decorated, brightly lit Christmas living room. A glowing fireplace, vivid evergreen garland, red-and-gold decorations, and numerous warm fairy lights form bright colorful bokeh behind them. One hand supports the lower outer edge while the other gently holds the ribbon; fingers never cover the printed face.
-COMPOSITION: magazine-quality documentary-style waist-level close-up with a 50 mm lens look. Both hands are anatomically natural and relaxed. The entire ${dimensions.length} ornament is visible at believable hand scale and occupies about 35% of the square frame. Keep faces out of frame; the ornament—not the hands—is the principal focus.
-LIGHTING: warm diffused key light with clean soft frontal fill, a broad warm room fill, a golden edge light shaped by the ornament's actual material, natural skin texture, and clearly visible bright sparkling holiday-light bokeh. Make the ornament gleam like a precious gift while keeping the scene colorful, intimate, luminous, and premium without haze, fantasy glow, or clipped highlights.`;
+      concept = "Hai người trao tặng sản phẩm cho nhau.";
+      break;
     case "car_mirror":
-      return `${baseSpec}
-SCENE: the ornament hangs from the rear-view mirror inside a clean, premium modern car at golden hour, styled for a luxury holiday lifestyle campaign. The ribbon loops realistically around the mirror stem and the ornament hangs vertically without touching the dashboard. Beyond the windshield, a brightly lit Christmas street with vibrant emerald garland, burgundy details, and abundant warm lights becomes saturated festive bokeh. Show part of the mirror, windshield, and softly focused cabin to establish believable scale. Keep the outside scene and cabin pleasantly bright and visible.
-COMPOSITION: photographed from the front passenger seat with a natural 50 mm lens perspective. Entire ornament visible and facing the camera, occupying about 25-30% of the square frame; it must be the crisp, radiant focal point against the softly glowing street.
-LIGHTING: clear warm late-afternoon light through the windshield with clean soft dashboard fill, bright cabin ambient fill, an amber rim light, refined cabin contrast, multiple small realistic sun sparkles along suitable reflective edges or hardware, and luminous festive bokeh outside. Keep the ornament face bright, saturated, and readable; avoid a dark interior, haze, strong lens flare, or blown highlights.`;
+      concept = "Sản phẩm treo trên gương chiếu hậu của ô tô.";
+      break;
     default:
-      return baseSpec;
+      concept = "Ảnh mockup sản phẩm.";
   }
+
+  const dimensionsLine =
+    promptKey === "dimensions_3d"
+      ? `\n\nKích thước 3 chiều: ${dimensions.formatted}.`
+      : "";
+
+  // return `Sinh ảnh mockup sản phẩm "${itemName}" này.Sử dụng tông màu chân thực, sang trọng.${dimensionsLine}\n\nConcept: ${concept}`;
+  return `Sử dụng Ảnh 1 làm ảnh tham chiếu cho sản phẩm "${itemName}".
+
+Quan sát Ảnh 1 để nhận diện chính xác:
+- hình dáng và tỷ lệ sản phẩm
+- thiết kế in
+- chữ và typography
+- các hình minh họa
+- màu sắc của CÁC CHI TIẾT ĐƯỢC IN
+- lỗ treo và dây treo
+
+QUAN TRỌNG VỀ CHẤT LIỆU:
+Sản phẩm được làm từ acrylic/crystal trong suốt, không màu, có độ trong quang học cao (water-clear optical acrylic).
+
+Không được hiểu màu của background nhìn xuyên qua sản phẩm trong Ảnh 1 là màu của acrylic.
+Không tạo acrylic màu nâu, vàng, beige, amber, smoky hoặc tinted.
+Không tạo một mặt đĩa màu nâu hoặc màu đặc phía sau thiết kế.
+Chỉ các chi tiết thực sự được in mới có màu.
+
+Các vùng không được in phải:
+- trong suốt, không màu và rất trong trẻo
+- nhìn rõ môi trường mới xuyên qua
+- có cảm giác giống crystal/glass cao cấp
+- có độ sâu và khúc xạ ánh sáng tự nhiên
+- không bị đục, mờ, matte hoặc smoky
+
+CẠNH SẢN PHẨM:
+Tạo cạnh acrylic dày, trong suốt và được đánh bóng cao.
+Cạnh vát/faceted bevel phải bắt sáng mạnh như crystal.
+Tạo các highlight trắng sắc nét trên cạnh.
+Có refraction, specular reflections và các điểm lóe sáng nhỏ tự nhiên.
+Các cạnh có thể tạo subtle rainbow/prismatic reflections khi bắt sáng.
+
+ÁNH SÁNG:
+Sử dụng phong cách chụp sản phẩm high-key, sáng và sạch.
+Có soft backlight chiếu xuyên qua acrylic và bright rim lighting quanh cạnh sản phẩm.
+Có những điểm specular highlight trắng sáng và crisp trên bề mặt và cạnh.
+Sản phẩm phải có cảm giác luminous, glossy, sparkling và crystal-clear.
+Không dùng ánh sáng tối, muddy hoặc phủ màu nâu lên toàn bộ sản phẩm.
+
+BACKGROUND:
+Bối cảnh phía sau sản phẩm phải sáng, mềm và có shallow depth of field.
+Ưu tiên vùng background sáng hoặc warm bokeh nằm trực tiếp phía sau phần acrylic trong suốt để làm nổi bật độ trong.
+Không đặt một mảng cây tối hoặc vật thể tối phủ kín ngay phía sau toàn bộ sản phẩm.
+Cành cây có thể xuất hiện xung quanh sản phẩm nhưng không làm phần acrylic trung tâm trở nên tối hoặc đục.
+
+Giữ thiết kế in rõ nét và trung thành với ảnh tham chiếu.
+Không tự ý thay đổi nội dung chữ, hình minh họa hoặc bố cục thiết kế.
+
+Mục tiêu hình ảnh:
+premium commercial product photography,
+water-clear crystal acrylic,
+high optical clarity,
+polished faceted edges,
+strong clean specular highlights,
+bright rim light,
+realistic light refraction,
+subtle prismatic reflections,
+sparkling crystal appearance,
+bright soft bokeh background,
+luxurious glossy finish.
+
+Concept: ${concept}${dimensionsLine}`;
 }
 
 function mockupResult(
@@ -614,6 +684,7 @@ function configuredGeminiRetryAttempts() {
 }
 
 function configuredConcurrency(model: MockupModel) {
+  if (model === "chatgpt-web-automation") return 1;
   const isGeminiImage =
     model === "gemini-3.1-flash-image" || model === "gemini-3-pro-image";
   const configured = isGeminiImage

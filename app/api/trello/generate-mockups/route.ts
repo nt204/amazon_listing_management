@@ -26,6 +26,7 @@ const mockupModelSchema = z.enum([
   "gemini-3.1-flash-image",
   "gemini-3-pro-image",
   "fast-graphic",
+  "chatgpt-web-automation",
 ]);
 const imageQualitySchema = z.enum(["low", "medium", "high"]);
 

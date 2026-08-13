@@ -108,7 +108,7 @@ test("GPT Image mockups use the edit API with the source artwork", async () => {
       call.body.image,
       "the source artwork file should be sent to images.edit",
     );
-    assert.match(String(call.body.prompt), /Preserve the printed face exactly as shown/i);
+    assert.match(String(call.body.prompt), /Sinh ảnh mockup sản phẩm "Test Glass Ornament" này/i);
     assert.equal(call.options?.maxRetries, 0);
   }
 });
@@ -146,7 +146,7 @@ test("GPT Image 1.5 is forwarded to the same image edit pipeline", async () => {
     assert.equal(call.model, "gpt-image-1.5");
     assert.equal(call.quality, "high");
     assert.equal(call.size, "1024x1024");
-    assert.equal(call.input_fidelity, "low");
+    assert.equal(call.input_fidelity, "high");
   }
 });
 
@@ -376,7 +376,7 @@ test("generated JPEG mockups retain provider bytes without another lossy encode"
   }
 });
 
-test("mockup prompts explicitly protect source artwork", () => {
+test("mockup prompts contain only the generation request and scene concept", () => {
   const prompt = buildMockupPrompt("gift_box", "Test Ornament", {
     length: '3.1"',
     width: '3.1"',
@@ -384,18 +384,10 @@ test("mockup prompts explicitly protect source artwork", () => {
     formatted: '3.1" x 3.1" x 0.15"',
   });
 
-  assert.match(prompt, /already shows the finished circular ornament/i);
-  assert.match(prompt, /Do not redraw or curve the print/i);
-  assert.match(prompt, /gift box/i);
-  assert.match(prompt, /40-45% of the frame/i);
-  assert.match(prompt, /not CGI or a poster/i);
-  assert.match(prompt, /luxury Christmas advertising hero photograph/i);
-  assert.match(prompt, /Never assume that it is glass/i);
-  assert.match(prompt, /3–6 small, physically realistic pinpoint starburst catchlights/i);
-  assert.match(prompt, /visually dazzling/i);
-  assert.match(prompt, /material-appropriate edge highlights/i);
-  assert.match(prompt, /brightest visual attraction/i);
-  assert.doesNotMatch(prompt, /subdued reflections/i);
+  assert.equal(
+    prompt,
+    'Sinh ảnh mockup sản phẩm "Test Ornament" này. Giữ đúng vật liệu; tách màu nền khỏi sản phẩm. Sử dụng tông màu tươi sáng.\n\nConcept: Sản phẩm nằm trong hộp quà Giáng Sinh cao cấp đang mở.',
+  );
 
   const treePrompt = buildMockupPrompt("tree_view1", "Test Ornament", {
     length: '3.1"',
@@ -403,9 +395,10 @@ test("mockup prompts explicitly protect source artwork", () => {
     thickness: '0.15"',
     formatted: '3.1" x 3.1" x 0.15"',
   });
-  assert.match(treePrompt, /vibrant emerald pine branch/i);
-  assert.match(treePrompt, /hero decoration/i);
-  assert.match(treePrompt, /multiple crisp pinpoint reflections/i);
+  assert.equal(
+    treePrompt,
+    'Sinh ảnh mockup sản phẩm "Test Ornament" này. Giữ đúng vật liệu; tách màu nền khỏi sản phẩm. Sử dụng tông màu tươi sáng.\n\nConcept: Sản phẩm treo trên nhánh cây thông Noel.',
+  );
 
   const dimensionPrompt = buildMockupPrompt(
     "dimensions_3d",
@@ -417,12 +410,10 @@ test("mockup prompts explicitly protect source artwork", () => {
       formatted: '3.1" x 3.1" x 0.15"',
     },
   );
-  assert.match(dimensionPrompt, /luminous emerald background/i);
-  assert.match(dimensionPrompt, /rich burgundy vignette/i);
-  assert.match(dimensionPrompt, /dark walnut tabletop/i);
-  assert.match(dimensionPrompt, /must be bright, colorful, festive/i);
-  assert.match(dimensionPrompt, /warm-ivory measurement lines/i);
-  assert.match(dimensionPrompt, /Do not use a white, off-white, pale gray/i);
+  assert.equal(
+    dimensionPrompt,
+    'Sinh ảnh mockup sản phẩm "Test Ornament" này. Giữ đúng vật liệu; tách màu nền khỏi sản phẩm. Sử dụng tông màu tươi sáng.\n\nKích thước 3 chiều: 3.1" x 3.1" x 0.15".\n\nConcept: Ảnh infographic kích thước sản phẩm.',
+  );
 });
 
 test("OpenAI exhausted credit is translated into an actionable error", () => {
@@ -652,4 +643,31 @@ test("resume skips mockups already identified on Trello", async () => {
   assert.deepEqual(savedIndexes, [5, 6, 7]);
   assert.equal(mockupIndexFromAttachmentName("Mockup4_ChristmasTree_View1.png"), 4);
   assert.equal(mockupIndexFromAttachmentName("ONVT0607NT01_FullDesign.jpg"), null);
+});
+
+test("isChatGPTWebModel and parseChatGPTCookies handle web automation configuration", async () => {
+  const { isChatGPTWebModel } = await import("../lib/mockup-generator");
+  const { parseChatGPTCookies } = await import("../lib/chatgpt-web-automation");
+
+  assert.equal(isChatGPTWebModel("chatgpt-web-automation"), true);
+  assert.equal(isChatGPTWebModel("gpt-image-1.5"), false);
+
+  const headerCookies = parseChatGPTCookies("session_id=12345; cf_clearance=abc", "my-session-token");
+  assert.equal(headerCookies.length, 3);
+  assert.equal(headerCookies[0].name, "session_id");
+  assert.equal(headerCookies[0].value, "12345");
+  assert.equal(headerCookies[2].name, "__Secure-next-auth.session-token");
+  assert.equal(headerCookies[2].value, "my-session-token");
+
+  const jsonCookies = parseChatGPTCookies(JSON.stringify([{ name: "test_cookie", value: "xyz" }]));
+  assert.equal(jsonCookies.length, 1);
+  assert.equal(jsonCookies[0].name, "test_cookie");
+  assert.equal(jsonCookies[0].value, "xyz");
+
+  const commaCookies = parseChatGPTCookies("val0_abc,val1_xyz");
+  assert.equal(commaCookies.length, 2);
+  assert.equal(commaCookies[0].name, "__Secure-next-auth.session-token.0");
+  assert.equal(commaCookies[0].value, "val0_abc");
+  assert.equal(commaCookies[1].name, "__Secure-next-auth.session-token.1");
+  assert.equal(commaCookies[1].value, "val1_xyz");
 });
