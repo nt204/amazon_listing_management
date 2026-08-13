@@ -24,11 +24,11 @@ Nếu có API key, app dùng AI thật. Mock chỉ chạy khi không có provide
 
 ## Tạo mockup bằng AI Image
 
-Tab **Auto Mockup Generator** mặc định dùng `gemini-3.1-flash-image`; có thể đổi sang `gpt-image-2` khi tài khoản OpenAI còn API credit. Mỗi bộ gồm **1 ảnh thiết kế gốc + 6 ảnh mockup do AI tạo = tổng 7 ảnh**. Ảnh thiết kế gốc trên thẻ Trello được gửi làm reference cho cả 6 lần tạo để giữ artwork, logo, chữ và màu sắc. Tùy chọn chất lượng `low`, `medium` hoặc `high` áp dụng khi dùng OpenAI.
+Tab **Auto Mockup Generator** mặc định dùng `gpt-image-1.5` với chất lượng `low`; có thể đổi model hoặc chất lượng ngay trên giao diện. Mỗi bộ gồm **1 ảnh thiết kế gốc + 6 ảnh mockup do AI tạo = tổng 7 ảnh**. Ảnh thiết kế gốc trên thẻ Trello được gửi làm reference cho cả 6 lần tạo để giữ artwork, logo, chữ và màu sắc. Tùy chọn chất lượng `low`, `medium` hoặc `high` áp dụng khi dùng OpenAI.
 
 ```env
-MOCKUP_IMAGE_MODEL=gemini-3.1-flash-image
-OPENAI_IMAGE_QUALITY=medium
+MOCKUP_IMAGE_MODEL=gpt-image-1.5
+OPENAI_IMAGE_QUALITY=low
 OPENAI_IMAGE_TIMEOUT_MS=120000
 GEMINI_IMAGE_TIMEOUT_MS=90000
 GEMINI_IMAGE_RETRY_ATTEMPTS=2

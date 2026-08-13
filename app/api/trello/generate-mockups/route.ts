@@ -36,6 +36,10 @@ const generateMockupsSchema = z.object({
   token: z.string().optional(),
   model: mockupModelSchema.optional(),
   quality: imageQualitySchema.optional(),
+  selectedSteps: z
+    .array(z.number().int().min(2).max(7))
+    .min(1, "Hãy chọn ít nhất một concept mockup từ Content 2 đến Content 7.")
+    .optional(),
   stream: z.boolean().optional(),
 });
 
@@ -50,6 +54,8 @@ type ProgressReporter = (event: {
   attachmentUrl?: string;
   attachmentId?: string;
 }) => void;
+
+const activeCardGenerations = new Set<string>();
 
 export async function POST(request: Request) {
   try {
@@ -73,6 +79,24 @@ async function runMockupGeneration(
   input: GenerateMockupsInput,
   report?: ProgressReporter,
 ) {
+  if (activeCardGenerations.has(input.cardId)) {
+    throw new ApiError(
+      "Thẻ này đang có một lượt tạo mockup khác chạy. Hệ thống đã chặn request trùng để tránh phát sinh thêm chi phí.",
+      409,
+    );
+  }
+  activeCardGenerations.add(input.cardId);
+  try {
+    return await executeMockupGeneration(input, report);
+  } finally {
+    activeCardGenerations.delete(input.cardId);
+  }
+}
+
+async function executeMockupGeneration(
+  input: GenerateMockupsInput,
+  report?: ProgressReporter,
+) {
   const { cardId, targetListId, model, quality } = input;
 
   const apiKey = input.apiKey || process.env.TRELLO_API_KEY || "";
@@ -93,9 +117,9 @@ async function runMockupGeneration(
   );
   const selectedModel =
     model ||
-    (configuredModel.success ? configuredModel.data : "gemini-3.1-flash-image");
+    (configuredModel.success ? configuredModel.data : "gpt-image-1.5");
   const selectedQuality =
-    quality || (configuredQuality.success ? configuredQuality.data : "high");
+    quality || (configuredQuality.success ? configuredQuality.data : "low");
 
   if (isOpenAIImageModel(selectedModel) && !process.env.OPENAI_API_KEY?.trim()) {
     throw new ApiError("OPENAI_API_KEY chưa được cấu hình trên server.", 503);
@@ -212,6 +236,7 @@ async function runMockupGeneration(
       model: selectedModel,
       quality: selectedQuality,
       skipIndexes: Array.from(existingGeneratedAttachments.keys()),
+      selectedIndexes: input.selectedSteps,
       onMockupReady: async (mockup) => {
         report?.({
           type: "progress",
@@ -299,6 +324,15 @@ async function runMockupGeneration(
     { length: 7 },
     (_, index) => index + 1,
   ).every((index) => successfulIndexes.has(index));
+  const requestedMockupIndexes = Array.from(
+    new Set(input.selectedSteps || [2, 3, 4, 5, 6, 7]),
+  );
+  const requestedUploadsSucceeded = requestedMockupIndexes.every((index) =>
+    successfulIndexes.has(index),
+  );
+  const providerResponses = mockups.flatMap((mockup) =>
+    mockup.providerTrace ? [mockup.providerTrace] : [],
+  );
   let movedToTargetList = false;
   if (targetListId && allUploadsSucceeded) {
     try {
@@ -316,7 +350,7 @@ async function runMockupGeneration(
   }
 
   return {
-    success: allUploadsSucceeded,
+    success: requestedUploadsSucceeded,
     cardId: card.id,
     cardName: card.name,
     sku: parsedTitle.sku,
@@ -325,8 +359,11 @@ async function runMockupGeneration(
     model: selectedModel,
     quality: isOpenAIImageModel(selectedModel) ? selectedQuality : null,
     sourceImagesCount: 1,
-    generatedMockupsCount: 6,
+    generatedMockupsCount: successfulIndexes.size - 1,
     newlyGeneratedMockupsCount: mockups.length - 1,
+    requestedMockupsCount: requestedMockupIndexes.length,
+    providerResponseCount: providerResponses.length,
+    providerResponses,
     mockupsCount: 7,
     attachments: uploadedAttachments.sort((a, b) => a.index - b.index),
     movedToTargetList,

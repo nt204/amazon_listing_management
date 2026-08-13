@@ -101,6 +101,8 @@ test("GPT Image mockups use the edit API with the source artwork", async () => {
   for (const call of calls) {
     assert.equal(call.body.model, "gpt-image-2");
     assert.equal(call.body.quality, "low");
+    assert.equal(call.body.size, "1024x1024");
+    assert.equal(call.body.input_fidelity, undefined);
     assert.equal(call.body.output_format, "png");
     assert.ok(
       call.body.image,
@@ -112,11 +114,11 @@ test("GPT Image mockups use the edit API with the source artwork", async () => {
 });
 
 test("GPT Image 1.5 is forwarded to the same image edit pipeline", async () => {
-  const models: unknown[] = [];
+  const calls: Array<Record<string, unknown>> = [];
   const fakeClient = {
     images: {
       edit: async (body: Record<string, unknown>) => {
-        models.push(body.model);
+        calls.push(body);
         return { data: [{ b64_json: SAMPLE_PNG.toString("base64") }] };
       },
     },
@@ -139,7 +141,185 @@ test("GPT Image 1.5 is forwarded to the same image edit pipeline", async () => {
   });
 
   assert.equal(mockups.length, 7);
-  assert.deepEqual(models, Array(6).fill("gpt-image-1.5"));
+  assert.equal(calls.length, 6);
+  for (const call of calls) {
+    assert.equal(call.model, "gpt-image-1.5");
+    assert.equal(call.quality, "high");
+    assert.equal(call.size, "1024x1024");
+    assert.equal(call.input_fidelity, "low");
+  }
+});
+
+test("one selected concept makes exactly one provider request and records its trace", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const fakeClient = {
+    images: {
+      edit: async (body: Record<string, unknown>) => {
+        calls.push(body);
+        return {
+          _request_id: "req_mockup_2",
+          size: "1024x1024",
+          usage: {
+            input_tokens: 120,
+            input_tokens_details: { image_tokens: 100, text_tokens: 20 },
+            output_tokens: 272,
+            total_tokens: 392,
+          },
+          data: [{ b64_json: SAMPLE_PNG.toString("base64") }],
+        };
+      },
+    },
+  } as unknown as OpenAI;
+
+  const mockups = await generateAllMockups({
+    sku: "TESTONE",
+    itemName: "Test Glass Ornament",
+    dimensions: {
+      length: '3.1"',
+      width: '3.1"',
+      thickness: '0.15"',
+      formatted: '3.1" x 3.1" x 0.15"',
+    },
+    inputDesignBuffer: SAMPLE_PNG,
+    inputMimeType: "image/png",
+    model: "gpt-image-1.5",
+    quality: "low",
+    selectedIndexes: [2],
+    openaiClient: fakeClient,
+  });
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(
+    mockups.map((mockup) => mockup.index),
+    [1, 2],
+  );
+  assert.deepEqual(mockups[1].providerTrace, {
+    provider: "openai",
+    requestId: "req_mockup_2",
+    model: "gpt-image-1.5",
+    quality: "low",
+    size: "1024x1024",
+    imageCount: 1,
+    inputFidelity: "low",
+    estimatedCostUsd: 0.009604,
+    usage: {
+      inputTokens: 120,
+      inputImageTokens: 100,
+      inputTextTokens: 20,
+      outputTokens: 272,
+      totalTokens: 392,
+    },
+  });
+});
+
+test("a provider failure waits for started image edits before releasing generation", async () => {
+  let calls = 0;
+  let rejectFirstCall: ((reason?: unknown) => void) | undefined;
+  let resolveInitialWindow: (() => void) | undefined;
+  const initialWindowStarted = new Promise<void>((resolve) => {
+    resolveInitialWindow = resolve;
+  });
+  const pendingResolvers: Array<() => void> = [];
+  const fakeClient = {
+    images: {
+      edit: async () => {
+        calls += 1;
+        if (calls === 3) resolveInitialWindow?.();
+        if (calls === 1) {
+          await new Promise<never>((_resolve, reject) => {
+            rejectFirstCall = reject;
+          });
+        }
+        await new Promise<void>((resolve) => pendingResolvers.push(resolve));
+        return { data: [{ b64_json: SAMPLE_PNG.toString("base64") }] };
+      },
+    },
+  } as unknown as OpenAI;
+
+  const generation = generateAllMockups({
+    sku: "TESTLOCK",
+    itemName: "Test Glass Ornament",
+    dimensions: {
+      length: '3.1"',
+      width: '3.1"',
+      thickness: '0.15"',
+      formatted: '3.1" x 3.1" x 0.15"',
+    },
+    inputDesignBuffer: SAMPLE_PNG,
+    inputMimeType: "image/png",
+    model: "gpt-image-1.5",
+    quality: "low",
+    openaiClient: fakeClient,
+  });
+
+  let startupTimeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      initialWindowStarted,
+      new Promise<void>((_resolve, reject) => {
+        startupTimeout = setTimeout(
+          () => reject(new Error("initial concurrency window did not start")),
+          1_000,
+        );
+      }),
+    ]);
+  } finally {
+    if (startupTimeout) clearTimeout(startupTimeout);
+  }
+  assert.equal(calls, 3, "only the initial concurrency window may start");
+
+  let settled = false;
+  void generation.catch(() => {
+    settled = true;
+  });
+  rejectFirstCall?.(new Error("provider failed"));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(settled, false, "generation must await in-flight edits");
+
+  for (const resolve of pendingResolvers) resolve();
+  await assert.rejects(generation, /provider failed/);
+  assert.equal(calls, 3, "no later concept starts after a provider failure");
+});
+
+test("mockup generation defaults to GPT Image 1.5 with low output and input fidelity", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const fakeClient = {
+    images: {
+      edit: async (body: Record<string, unknown>) => {
+        calls.push(body);
+        return { data: [{ b64_json: SAMPLE_PNG.toString("base64") }] };
+      },
+    },
+  } as unknown as OpenAI;
+
+  const previousQuality = process.env.OPENAI_IMAGE_QUALITY;
+  delete process.env.OPENAI_IMAGE_QUALITY;
+  try {
+    await generateAllMockups({
+      sku: "TESTDEFAULT",
+      itemName: "Test Glass Ornament",
+      dimensions: {
+        length: '3.1"',
+        width: '3.1"',
+        thickness: '0.15"',
+        formatted: '3.1" x 3.1" x 0.15"',
+      },
+      inputDesignBuffer: SAMPLE_PNG,
+      inputMimeType: "image/png",
+      openaiClient: fakeClient,
+    });
+  } finally {
+    if (previousQuality === undefined) delete process.env.OPENAI_IMAGE_QUALITY;
+    else process.env.OPENAI_IMAGE_QUALITY = previousQuality;
+  }
+
+  assert.equal(calls.length, 6);
+  for (const call of calls) {
+    assert.equal(call.model, "gpt-image-1.5");
+    assert.equal(call.quality, "low");
+    assert.equal(call.size, "1024x1024");
+    assert.equal(call.input_fidelity, "low");
+  }
 });
 
 test("generated JPEG mockups retain provider bytes without another lossy encode", async () => {
@@ -204,11 +384,45 @@ test("mockup prompts explicitly protect source artwork", () => {
     formatted: '3.1" x 3.1" x 0.15"',
   });
 
-  assert.match(prompt, /already shows the finished circular glass ornament/i);
+  assert.match(prompt, /already shows the finished circular ornament/i);
   assert.match(prompt, /Do not redraw or curve the print/i);
   assert.match(prompt, /gift box/i);
   assert.match(prompt, /40-45% of the frame/i);
   assert.match(prompt, /not CGI or a poster/i);
+  assert.match(prompt, /luxury Christmas advertising hero photograph/i);
+  assert.match(prompt, /Never assume that it is glass/i);
+  assert.match(prompt, /3–6 small, physically realistic pinpoint starburst catchlights/i);
+  assert.match(prompt, /visually dazzling/i);
+  assert.match(prompt, /material-appropriate edge highlights/i);
+  assert.match(prompt, /brightest visual attraction/i);
+  assert.doesNotMatch(prompt, /subdued reflections/i);
+
+  const treePrompt = buildMockupPrompt("tree_view1", "Test Ornament", {
+    length: '3.1"',
+    width: '3.1"',
+    thickness: '0.15"',
+    formatted: '3.1" x 3.1" x 0.15"',
+  });
+  assert.match(treePrompt, /vibrant emerald pine branch/i);
+  assert.match(treePrompt, /hero decoration/i);
+  assert.match(treePrompt, /multiple crisp pinpoint reflections/i);
+
+  const dimensionPrompt = buildMockupPrompt(
+    "dimensions_3d",
+    "Test Ornament",
+    {
+      length: '3.1"',
+      width: '3.1"',
+      thickness: '0.15"',
+      formatted: '3.1" x 3.1" x 0.15"',
+    },
+  );
+  assert.match(dimensionPrompt, /luminous emerald background/i);
+  assert.match(dimensionPrompt, /rich burgundy vignette/i);
+  assert.match(dimensionPrompt, /dark walnut tabletop/i);
+  assert.match(dimensionPrompt, /must be bright, colorful, festive/i);
+  assert.match(dimensionPrompt, /warm-ivory measurement lines/i);
+  assert.match(dimensionPrompt, /Do not use a white, off-white, pale gray/i);
 });
 
 test("OpenAI exhausted credit is translated into an actionable error", () => {

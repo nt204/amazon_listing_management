@@ -59,7 +59,28 @@ interface MockupGenerationResponse {
   success: boolean;
   sku: string;
   model: string;
+  quality: "low" | "medium" | "high" | null;
   generatedMockupsCount: number;
+  newlyGeneratedMockupsCount: number;
+  requestedMockupsCount: number;
+  providerResponseCount: number;
+  providerResponses: Array<{
+    provider: "openai";
+    requestId: string | null;
+    model: string;
+    quality: "low" | "medium" | "high";
+    size: string;
+    imageCount: 1;
+    inputFidelity: "low" | null;
+    estimatedCostUsd: number | null;
+    usage: {
+      inputTokens: number;
+      inputImageTokens: number;
+      inputTextTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+    } | null;
+  }>;
   movedToTargetList: boolean;
   attachments: Array<{
     index: number;
@@ -108,6 +129,9 @@ const MOCKUP_STEPS = [
   },
 ];
 
+const DEFAULT_MOCKUP_MODEL = "gpt-image-1.5";
+const DEFAULT_MOCKUP_QUALITY = "low" as const;
+
 export function AutoMockupGenerator({
   apiKey,
   token,
@@ -120,10 +144,71 @@ export function AutoMockupGenerator({
   const [designCards, setDesignCards] = useState<TrelloCard[]>([]);
   const [mockupCards, setMockupCards] = useState<TrelloCard[]>([]);
 
-  const [selectedModel, setSelectedModel] = useState<string>("gpt-image-2");
+  const [selectedModel, setSelectedModel] = useState<string>(
+    DEFAULT_MOCKUP_MODEL,
+  );
   const [selectedQuality, setSelectedQuality] = useState<
     "low" | "medium" | "high"
-  >("high");
+  >(DEFAULT_MOCKUP_QUALITY);
+
+  const [mockupContents, setMockupContents] = useState<
+    Array<{ id: number; label: string; checked: boolean }>
+  >([
+    { id: 1, label: "Content 1: Full Design", checked: true },
+    { id: 2, label: "Content 2: Dimension 3D", checked: true },
+    { id: 3, label: "Content 3: Gift Box", checked: true },
+    { id: 4, label: "Content 4: Tree View 1", checked: true },
+    { id: 5, label: "Content 5: Tree View 2", checked: true },
+    { id: 6, label: "Content 6: Gifting Hands", checked: true },
+    { id: 7, label: "Content 7: Car Mirror", checked: true },
+  ]);
+
+  const [showAddContentModal, setShowAddContentModal] = useState(false);
+  const [newContentLabel, setNewContentLabel] = useState("");
+  const selectedAiMockupCount = mockupContents.filter(
+    (content) => content.checked && content.id >= 2 && content.id <= 7,
+  ).length;
+
+  useEffect(() => {
+    // Fast Refresh preserves old React state. Reset once on mount so a page that
+    // previously held GPT Image 2/high cannot silently keep the expensive pair.
+    const resetId = window.setTimeout(() => {
+      setSelectedModel(DEFAULT_MOCKUP_MODEL);
+      setSelectedQuality(DEFAULT_MOCKUP_QUALITY);
+    }, 0);
+    return () => window.clearTimeout(resetId);
+  }, []);
+
+  const toggleContentCheck = (id: number) => {
+    setMockupContents((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, checked: !item.checked } : item,
+      ),
+    );
+  };
+
+  const toggleSelectAllContents = () => {
+    const allChecked = mockupContents.every((item) => item.checked);
+    setMockupContents((prev) =>
+      prev.map((item) => ({ ...item, checked: !allChecked })),
+    );
+  };
+
+  const handleAddCustomContent = () => {
+    if (!newContentLabel.trim()) return;
+    const newId = mockupContents.length + 1;
+    setMockupContents((prev) => [
+      ...prev,
+      {
+        id: newId,
+        label: `Content ${newId}: ${newContentLabel.trim()}`,
+        checked: true,
+      },
+    ]);
+    setNewContentLabel("");
+    setShowAddContentModal(false);
+  };
+
   const [loadingLists, setLoadingLists] = useState<boolean>(false);
   const [loadingCards, setLoadingCards] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>("");
@@ -290,6 +375,7 @@ export function AutoMockupGenerator({
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const isAbortingRef = useRef<boolean>(false);
+  const generationInFlightRef = useRef<boolean>(false);
 
   const cancelGeneration = async () => {
     isAbortingRef.current = true;
@@ -303,17 +389,25 @@ export function AutoMockupGenerator({
   };
 
   const handleGenerateMockupsSingle = async (card: TrelloCard) => {
+    if (generationInFlightRef.current) {
+      setErrorMsg(
+        "Đang có một lượt tạo mockup chạy. Request bấm trùng đã được chặn để không phát sinh thêm chi phí.",
+      );
+      return;
+    }
+    const selectedAiSteps = mockupContents
+      .filter((content) => content.checked && content.id >= 2 && content.id <= 7)
+      .map((content) => content.id);
+    if (selectedAiSteps.length === 0) {
+      setErrorMsg("Hãy chọn ít nhất một concept mockup từ Content 2 đến Content 7.");
+      return;
+    }
+    generationInFlightRef.current = true;
+    isAbortingRef.current = false;
     setActiveGeneratingCardId(card.id);
     setGenerationResult(null);
     setErrorMsg("");
     setGenerationStatusText("Đang chuẩn bị ảnh thiết kế...");
-
-    // Immediately move card from DESIGN column to MOCKUP column in local UI state!
-    setDesignCards((prev) => prev.filter((c) => c.id !== card.id));
-    setMockupCards((prev) => {
-      if (prev.some((c) => c.id === card.id)) return prev;
-      return [{ ...card, idList: mockupListId }, ...prev];
-    });
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -336,6 +430,7 @@ export function AutoMockupGenerator({
           token,
           model: selectedModel,
           quality: selectedQuality,
+          selectedSteps: selectedAiSteps,
           stream: true,
         }),
       });
@@ -427,8 +522,13 @@ export function AutoMockupGenerator({
         const attachment = data?.attachments.find(
           (item) => item.index === step.id,
         );
-        finalProgress[step.id] =
-          attachment?.status === "success" ? "success" : "error";
+        const wasRequested =
+          step.id === 1 || selectedAiSteps.includes(step.id);
+        finalProgress[step.id] = !wasRequested
+          ? "pending"
+          : attachment?.status === "success"
+            ? "success"
+            : "error";
       });
       setGenerationProgress(finalProgress);
 
@@ -440,12 +540,30 @@ export function AutoMockupGenerator({
           `Hoàn tất tạo ảnh nhưng ${failedUploads.length} ảnh upload thất bại.`,
         );
         setErrorMsg(
-          `Đã tạo đủ ảnh nhưng ${failedUploads.length}/7 ảnh không tải được lên Trello. Thẻ vẫn ở cột DESIGN để bạn thử lại.`,
+          `Đã tạo xong nhưng ${failedUploads.length}/${data.requestedMockupsCount} concept đã chọn không tải được lên Trello. Thẻ vẫn ở cột DESIGN để bạn thử lại.`,
         );
       } else {
-        setGenerationStatusText("Đã hoàn tất 1 ảnh gốc + 6 ảnh mockup AI.");
+        const providerAudit = (data.providerResponses || [])
+          .map((response) => {
+            const requestId = response.requestId || "không có request ID";
+            const usage = response.usage
+              ? ` · ${response.usage.totalTokens} token`
+              : "";
+            const estimatedCost =
+              response.estimatedCostUsd === null
+                ? ""
+                : ` · ước tính $${response.estimatedCostUsd.toFixed(4)}`;
+            return `${requestId}${usage}${estimatedCost}`;
+          })
+          .join("; ");
+        const locationText = data.movedToTargetList
+          ? " — rồi chuyển thẻ sang cột MOCKUP"
+          : " — thẻ vẫn ở cột DESIGN để bạn tạo các concept còn lại";
+        setGenerationStatusText(
+          `Đã tạo ${data.newlyGeneratedMockupsCount} ảnh mới bằng ${data.model}/${data.quality || "auto"}.`,
+        );
         setGenerationResult(
-          `🎉 Đã giữ 1 ảnh gốc và tạo ${data.generatedMockupsCount || 6} ảnh mockup cho SKU "${data.sku}" — tổng cộng 7 ảnh${data.movedToTargetList ? " — rồi chuyển thẻ sang cột MOCKUP" : ""}!`,
+          `🎉 Đã tạo ${data.newlyGeneratedMockupsCount} mockup mới cho SKU "${data.sku}" bằng ${data.model}/${data.quality || "auto"}${providerAudit ? ` — ${data.providerResponseCount} phản hồi OpenAI: ${providerAudit}` : ""}${locationText}.`,
         );
       }
       await syncAllColumns();
@@ -470,6 +588,7 @@ export function AutoMockupGenerator({
       setErrorMsg(`Lỗi khi tạo Mockup: ${msg}`);
       setGenerationStatusText(msg);
     } finally {
+      generationInFlightRef.current = false;
       setActiveGeneratingCardId(null);
       abortControllerRef.current = null;
     }
@@ -575,12 +694,12 @@ export function AutoMockupGenerator({
             ) : (
               <button
                 onClick={handleBatchGenerateMockups}
-                disabled={batchProcessing}
+                disabled={batchProcessing || selectedAiMockupCount === 0}
                 className="flex items-center gap-1.5 rounded-xl bg-amber-400 px-4 py-2 text-xs font-bold text-slate-900 shadow hover:bg-amber-300 transition disabled:opacity-50"
               >
                 <SparkleIcon className="h-4 w-4 fill-current text-slate-900" />
                 <span>
-                  ⚡ Batch: 1 ảnh gốc + 6 mockup AI ({selectedCardIds.size}{" "}
+                  ⚡ Batch: {selectedAiMockupCount} mockup AI/thẻ ({selectedCardIds.size}{" "}
                   thẻ)
                 </span>
               </button>
@@ -619,10 +738,10 @@ export function AutoMockupGenerator({
                 className="bg-transparent text-xs font-extrabold text-slate-900 outline-none cursor-pointer pr-1"
               >
                 <option value="gpt-image-2">
-                  🤖 GPT Image 2 (Mặc định)
+                  🤖 GPT Image 2
                 </option>
                 <option value="gpt-image-1.5">
-                  🤖 GPT Image 1.5 (Legacy)
+                  🤖 GPT Image 1.5 (Mặc định / Legacy)
                 </option>
                 <option value="gemini-3.1-flash-image">
                   🎨 Gemini 3.1 Flash Image
@@ -648,9 +767,9 @@ export function AutoMockupGenerator({
                   }
                   className="bg-transparent text-xs font-extrabold text-slate-900 outline-none cursor-pointer pr-1"
                 >
-                  <option value="low">Nhanh / bản nháp</option>
-                  <option value="medium">Cân bằng</option>
-                  <option value="high">Cao / bản cuối</option>
+                  <option value="low">low (Nhanh / bản nháp)</option>
+                  <option value="medium">medium (Cân bằng)</option>
+                  <option value="high">high (Cao / bản cuối)</option>
                 </select>
               </div>
             )}
@@ -709,7 +828,105 @@ export function AutoMockupGenerator({
             </select>
           </div>
         </div>
+
+        {/* Mockup Content Checkbox Option Section */}
+        <div className="mt-4 border-t border-indigo-100/80 pt-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-black text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
+                <ImageSquareIcon className="h-4 w-4 text-indigo-600" />
+                MOCKUP CONTENT ({mockupContents.filter((c) => c.checked).length}/{mockupContents.length} ĐÃ CHỌN):
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={toggleSelectAllContents}
+                className="text-xs font-bold text-indigo-600 hover:text-indigo-800 underline"
+              >
+                {mockupContents.every((c) => c.checked) ? "Bỏ chọn tất cả" : "Chọn tất cả"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowAddContentModal(true)}
+                className="flex items-center gap-1 rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-extrabold text-white shadow-2xs hover:bg-indigo-700 transition"
+              >
+                <span>+ Thêm Content Mới</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2">
+            {mockupContents.map((content) => (
+              <label
+                key={content.id}
+                className={`flex items-center gap-2 rounded-xl border p-2 text-xs font-bold cursor-pointer transition select-none ${
+                  content.checked
+                    ? "border-indigo-500 bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-400/20"
+                    : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={content.checked}
+                  onChange={() => toggleContentCheck(content.id)}
+                  className="h-4 w-4 rounded accent-indigo-600 cursor-pointer shrink-0"
+                />
+                <span className="truncate">{content.label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
       </div>
+
+      {/* Add Custom Mockup Content Modal */}
+      {showAddContentModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-sm font-extrabold text-slate-900">
+                Thêm Mockup Content Mới
+              </h3>
+              <button
+                onClick={() => setShowAddContentModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <XIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Tên bối cảnh Mockup (VD: Living Room Table / Garden View)
+              </label>
+              <input
+                type="text"
+                value={newContentLabel}
+                onChange={(e) => setNewContentLabel(e.target.value)}
+                placeholder="Nhập tên content mockup mới..."
+                className="w-full rounded-xl border border-slate-300 p-2.5 text-xs font-semibold outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowAddContentModal(false)}
+                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={handleAddCustomContent}
+                className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-extrabold text-white shadow-md hover:bg-indigo-700"
+              >
+                Lưu Content Mới
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {errorMsg && (
         <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3.5 text-xs font-semibold text-rose-700">
@@ -899,11 +1116,15 @@ export function AutoMockupGenerator({
                     ) : (
                       <button
                         onClick={() => handleGenerateMockupsSingle(card)}
-                        disabled={Boolean(activeGeneratingCardId) || batchProcessing}
+                        disabled={
+                          Boolean(activeGeneratingCardId) ||
+                          batchProcessing ||
+                          selectedAiMockupCount === 0
+                        }
                         className="w-full flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-extrabold text-white shadow-md shadow-indigo-600/20 hover:bg-indigo-700 active:scale-[0.98] disabled:opacity-50 transition"
                       >
                         <SparkleIcon className="h-4.5 w-4.5 text-amber-300" />
-                        <span>⚡ Tạo 6 Mockups AI + 1 Ảnh Gốc</span>
+                        <span>⚡ Tạo {selectedAiMockupCount} Mockup AI</span>
                       </button>
                     )}
                   </div>
@@ -1045,7 +1266,10 @@ export function AutoMockupGenerator({
 
                     <button
                       onClick={() => handleGenerateMockupsSingle(card)}
-                      disabled={isGenerating}
+                      disabled={
+                        Boolean(activeGeneratingCardId) ||
+                        selectedAiMockupCount === 0
+                      }
                       className="w-full flex items-center justify-center gap-2 rounded-xl bg-slate-800 px-4 py-2.5 text-xs font-bold text-white shadow hover:bg-slate-900 active:scale-[0.98] disabled:opacity-50 transition"
                     >
                       {isGenerating ? (
@@ -1056,7 +1280,7 @@ export function AutoMockupGenerator({
                       ) : (
                         <>
                           <LightningIcon className="h-4 w-4 text-amber-400" />
-                          <span>Tạo Lại 6 Mockups AI + Giữ 1 Ảnh Gốc</span>
+                          <span>Tạo {selectedAiMockupCount} Mockup AI Đã Chọn</span>
                         </>
                       )}
                     </button>
@@ -1073,8 +1297,8 @@ export function AutoMockupGenerator({
         <div className="rounded-2xl border border-indigo-200 bg-white p-5 shadow-xl space-y-4">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-              <SparkleIcon className="h-4 w-4 text-indigo-600" /> Tiến Trình: 1
-              Ảnh Gốc + 6 Mockups AI
+              <SparkleIcon className="h-4 w-4 text-indigo-600" /> Tiến Trình:{" "}
+              {selectedAiMockupCount} Mockup AI Đã Chọn
             </h4>
             <button
               onClick={() => setActiveGeneratingCardId(null)}
