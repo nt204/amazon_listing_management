@@ -178,7 +178,7 @@ async function executeMockupGeneration(
       mimeType = sourceAttachment.mimeType || "image/jpeg";
     } catch (err) {
       console.warn(
-        "[API generate-mockups] Lỗi khi tải ảnh đính kèm Trello, dùng ảnh fallback:",
+        "[API generate-mockups] Không tải được ảnh đính kèm Trello; lần chạy sẽ dừng vì không có ảnh fallback:",
         err,
       );
     }

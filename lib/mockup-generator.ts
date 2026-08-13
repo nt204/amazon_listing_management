@@ -31,7 +31,7 @@ export interface MockupResult {
     size: string;
     imageCount: 1;
     inputFidelity: "low" | "high" | null;
-    /** Approximate USD from response usage and the documented per-token rates. */
+    /** Fixed provider price or an estimate from response usage, in USD. */
     estimatedCostUsd: number | null;
     usage: {
       inputTokens: number;
@@ -72,6 +72,7 @@ export type MockupProgressCallback = (
 const DEFAULT_IMAGE_MODEL: MockupModel = "gpt-image-1.5";
 const OPENAI_IMAGE_SIZE = "1024x1024";
 const OPENAI_INPUT_LIMIT_BYTES = 50 * 1024 * 1024;
+const CHEAPKEYAI_GPT_IMAGE_2_PRICE_USD = 0.005;
 
 export function isOpenAIImageModel(model: MockupModel) {
   return model === "gpt-image-2" || model === "gpt-image-1.5";
@@ -143,7 +144,7 @@ const MOCKUP_TYPES = [
     fileName: "Mockup7_Car_Mirror.png",
     promptKey: "car_mirror",
     description:
-      "Ảnh sản phẩm treo trang trí trên gương chiếu hậu kính ô tô sang trọng.",
+      "Ảnh sản phẩm treo trang trí trên gương chiếu hậu kính ô Tô sang trọng.",
   },
 ];
 
@@ -164,13 +165,19 @@ export async function generateAllMockups(
   const normalizedDesignBuffer = await normalizeDesignImage(inputDesignBuffer);
   const base64Design = normalizedDesignBuffer.toString("base64");
 
-  // Mockup 1: Original input design
+  // Mockup 1: 3D Dimensions Graphic with thickness callout
   progressCallback?.(1, MOCKUP_TYPES[0].name, "processing");
+  const mockup1Buffer = await renderGraphicMockup("dimensions_3d", {
+    sku,
+    itemName,
+    dimensions,
+    base64Design,
+  });
   const mockup1: MockupResult = {
     index: 1,
     name: MOCKUP_TYPES[0].name,
     type: MOCKUP_TYPES[0].fileName,
-    buffer: normalizedDesignBuffer,
+    buffer: mockup1Buffer,
     mimeType: "image/png",
     description: MOCKUP_TYPES[0].description,
   };
@@ -244,11 +251,14 @@ export async function generateAllMockups(
 
       if (isImageApiModel(model) && openaiClient && openaiInput) {
         const prompt = buildMockupPrompt(meta.promptKey, itemName, dimensions);
-        // GPT Image 1.5 only accepts low/high input fidelity. Keep the cheap
-        // draft behavior for low quality, and preserve source details more
-        // strongly when the user selects medium or high output quality.
+        const usesCheapKeyAI = isCheapKeyAIImageModel(model);
+        // Output quality and source fidelity are independent. CheapKeyAI bills
+        // GPT Image 2 per image, so preserve the uploaded artwork at high
+        // fidelity even when the requested output quality is low.
         const inputFidelity =
-          model === "gpt-image-1.5"
+          usesCheapKeyAI
+            ? "high"
+            : model === "gpt-image-1.5"
             ? quality === "low"
               ? "low"
               : "high"
@@ -267,7 +277,9 @@ export async function generateAllMockups(
             inputFidelity,
           }),
         );
-        const upstreamModel = isCheapKeyAIImageModel(model) ? "gpt-image-2" : model;
+        const upstreamModel = usesCheapKeyAI
+          ? process.env.CHEAPKEYAI_UPSTREAM_MODEL?.trim() || model
+          : model;
         const response = await openaiClient.images.edit(
           {
             model: upstreamModel,
@@ -306,16 +318,18 @@ export async function generateAllMockups(
           size: response?.size || OPENAI_IMAGE_SIZE,
           imageCount: 1,
           inputFidelity,
-          estimatedCostUsd: usage && !isCheapKeyAIImageModel(model)
-            ? Number(
-              (
-                (inputTextTokens * 5 +
-                  inputImageTokens * 8 +
-                  outputTokens * (model === "gpt-image-2" ? 30 : 32)) /
-                1_000_000
-              ).toFixed(6),
-            )
-            : null,
+          estimatedCostUsd: usesCheapKeyAI
+            ? CHEAPKEYAI_GPT_IMAGE_2_PRICE_USD
+            : usage
+              ? Number(
+                  (
+                    (inputTextTokens * 5 +
+                      inputImageTokens * 8 +
+                      outputTokens * (model === "gpt-image-2" ? 30 : 32)) /
+                    1_000_000
+                  ).toFixed(6),
+                )
+              : null,
           usage: usage
             ? {
               inputTokens: usage.input_tokens,
@@ -408,7 +422,13 @@ export function buildMockupPrompt(
   let concept: string;
   switch (promptKey) {
     case "dimensions_3d":
-      concept = "Ảnh infographic kích thước sản phẩm.";
+      concept = `Product Size & Thickness Infographic Photography.
+- Hand holding white satin ribbon hanging loop at top against warm golden holiday bokeh background.
+- Water-clear transparent crystal glass disc ornament.
+- Vertical dashed white dimension line on the right side labeled "${dimensions.length}".
+- Horizontal dashed white dimension line at the bottom labeled "${dimensions.width}".
+- Callout pointer box at top right corner pointing to thick faceted bevel edge labeled "Thickness ${dimensions.thickness}".
+- Bold white serif text at bottom center reading "PRODUCT SIZE".`;
       break;
     case "gift_box":
       concept =
@@ -480,10 +500,7 @@ Không dùng ánh sáng vàng, amber, orange, muddy hoặc phủ màu nâu lên 
 
 BACKGROUND:
 Bối cảnh phía sau sản phẩm phải sáng, mềm và có shallow depth of field.
-Ưu tiên clean white, neutral white và fresh natural green.
-Ưu tiên vùng background trắng sáng hoặc xanh lá sáng nằm trực tiếp phía sau phần acrylic trong suốt để làm nổi bật độ trong.
 Bokeh nên là soft white bokeh hoặc light green bokeh.
-Không dùng warm bokeh, yellow bokeh, orange bokeh hoặc amber glow.
 Không đặt một mảng cây tối hoặc vật thể tối phủ kín ngay phía sau toàn bộ sản phẩm.
 Cành cây có thể xuất hiện xung quanh sản phẩm nhưng không làm phần acrylic trung tâm trở nên tối hoặc đục.
 
@@ -589,8 +606,27 @@ export function classifyMockupGenerationError(
   const code = typeof record.code === "string" ? record.code : "";
   const type = typeof record.type === "string" ? record.type : "";
   const rawMessage =
-    error instanceof Error ? error.message : String(error || "");
+    error instanceof Error
+      ? error.message
+      : typeof record.message === "string"
+        ? record.message
+        : String(error || "");
   const searchable = `${code} ${type} ${rawMessage}`.toLowerCase();
+
+  if (
+    code === "get_channel_failed" ||
+    searchable.includes("no available channel") ||
+    searchable.includes("可用渠道不存在") ||
+    searchable.includes("无可用渠道")
+  ) {
+    const requestId = rawMessage.match(/request id:\s*([^\s)]+)/i)?.[1];
+    return {
+      message: `CheapKeyAI chưa có channel khả dụng cho gpt-image-2 trong group của API key này. Hãy đổi/tạo key ở đúng group hoặc gửi${
+        requestId ? ` request ID ${requestId}` : " request ID trong log"
+      } cho CheapKeyAI support; hệ thống không fallback sang model khác.`,
+      status: 503,
+    };
+  }
 
   if (
     searchable.includes("prepayment credits are depleted") ||
@@ -661,11 +697,12 @@ export function classifyMockupGenerationError(
   if (
     status === 404 ||
     searchable.includes("not_found") ||
-    searchable.includes("model not found")
+    searchable.includes("model not found") ||
+    searchable.includes("has no access to model")
   ) {
     return {
       message:
-        "Model tạo ảnh không tồn tại hoặc key hiện tại chưa thuộc đúng nhóm model.",
+        "Model tạo ảnh không tồn tại hoặc API key CheapKeyAI chưa được mở quyền cho model này (chọn All Models khi tạo key).",
       status: 404,
     };
   }
@@ -787,7 +824,7 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-async function renderGraphicMockup(
+export async function renderGraphicMockup(
   promptKey: string,
   params: {
     sku: string;
@@ -803,9 +840,9 @@ async function renderGraphicMockup(
   let sceneDesc = `Dimensions: ${dimensions.formatted}`;
 
   if (promptKey === "dimensions_3d") {
-    bgGradient = "linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%)";
-    titleBadge = "INSPECTION & 3D DIMENSIONS";
-    sceneDesc = `Length: ${dimensions.length} | Width: ${dimensions.width} | Thickness: ${dimensions.thickness}`;
+    bgGradient = "linear-gradient(135deg, #1c150c 0%, #3d2612 50%, #170d06 100%)";
+    titleBadge = "PRODUCT SIZE INFOGRAPHIC";
+    sceneDesc = `Product Dimensions: ${dimensions.formatted}`;
   } else if (promptKey === "gift_box") {
     bgGradient = "linear-gradient(135deg, #450a0a 0%, #881337 100%)";
     titleBadge = "PREMIUM GIFT BOX MOCKUP";
@@ -851,11 +888,13 @@ async function renderGraphicMockup(
     <rect width="1024" height="1024" fill="url(#bg)"/>
     <circle cx="512" cy="480" r="400" fill="url(#glow)"/>
 
-    <!-- Decorative Bokeh -->
-    <circle cx="200" cy="200" r="40" fill="#fef08a" opacity="0.2"/>
-    <circle cx="800" cy="250" r="60" fill="#fef08a" opacity="0.15"/>
-    <circle cx="850" cy="700" r="50" fill="#fef08a" opacity="0.2"/>
-    <circle cx="150" cy="750" r="45" fill="#fef08a" opacity="0.1"/>
+    <!-- Decorative Warm Golden Bokeh (Matching Sample Image 1) -->
+    <circle cx="240" cy="220" r="55" fill="#f97316" opacity="0.35"/>
+    <circle cx="310" cy="180" r="45" fill="#eab308" opacity="0.4"/>
+    <circle cx="730" cy="190" r="60" fill="#f97316" opacity="0.35"/>
+    <circle cx="820" cy="240" r="50" fill="#eab308" opacity="0.3"/>
+    <circle cx="120" cy="740" r="65" fill="#f97316" opacity="0.4"/>
+    <circle cx="860" cy="720" r="70" fill="#eab308" opacity="0.35"/>
 
     <!-- Header Badge -->
     <rect x="262" y="50" width="500" height="44" rx="22" fill="#38bdf8" opacity="0.15"/>
@@ -880,31 +919,34 @@ async function renderGraphicMockup(
     <!-- Subtle Material-Neutral Edge Accent -->
     <circle cx="512" cy="480" r="280" fill="none" stroke="url(#glow)" stroke-width="20" opacity="0.6"/>
 
+    <!-- PRODUCT SIZE Title at Bottom -->
+    <text x="512" y="940" text-anchor="middle" fill="#ffffff" font-family="'Times New Roman', Georgia, serif" font-size="44" font-weight="900" letter-spacing="4">PRODUCT SIZE</text>
+
     ${promptKey === "dimensions_3d"
       ? `
-      <!-- Dimension Overlay Arrows & Callouts -->
-      <line x1="200" y1="800" x2="824" y2="800" stroke="#38bdf8" stroke-width="3" stroke-dasharray="6 6"/>
-      <line x1="200" y1="785" x2="200" y2="815" stroke="#38bdf8" stroke-width="3"/>
-      <line x1="824" y1="785" x2="824" y2="815" stroke="#38bdf8" stroke-width="3"/>
-      <rect x="412" y="776" width="200" height="48" rx="8" fill="#0f172a" stroke="#38bdf8" stroke-width="2"/>
-      <text x="512" y="806" text-anchor="middle" fill="#38bdf8" font-family="system-ui, sans-serif" font-size="20" font-weight="700">W: ${escapeXml(dimensions.width)}</text>
+      <!-- Horizontal Width Dimension Line (Bottom) -->
+      <line x1="210" y1="810" x2="814" y2="810" stroke="#ffffff" stroke-width="3" stroke-dasharray="8 6"/>
+      <line x1="210" y1="795" x2="210" y2="825" stroke="#ffffff" stroke-width="4"/>
+      <line x1="814" y1="795" x2="814" y2="825" stroke="#ffffff" stroke-width="4"/>
+      <rect x="100" y="786" width="100" height="48" rx="8" fill="#0f172a" opacity="0.8" stroke="#ffffff" stroke-width="1.5"/>
+      <text x="150" y="818" text-anchor="middle" fill="#ffffff" font-family="system-ui, sans-serif" font-size="24" font-weight="800">${escapeXml(dimensions.width)}</text>
 
-      <line x1="860" y1="190" x2="860" y2="770" stroke="#38bdf8" stroke-width="3" stroke-dasharray="6 6"/>
-      <line x1="845" y1="190" x2="875" y2="190" stroke="#38bdf8" stroke-width="3"/>
-      <line x1="845" y1="770" x2="875" y2="770" stroke="#38bdf8" stroke-width="3"/>
-      <rect x="880" y="456" width="120" height="48" rx="8" fill="#0f172a" stroke="#38bdf8" stroke-width="2"/>
-      <text x="940" y="486" text-anchor="middle" fill="#38bdf8" font-family="system-ui, sans-serif" font-size="18" font-weight="700">H: ${escapeXml(dimensions.length)}</text>
+      <!-- Vertical Height Dimension Line (Right) -->
+      <line x1="850" y1="210" x2="850" y2="760" stroke="#ffffff" stroke-width="3" stroke-dasharray="8 6"/>
+      <line x1="835" y1="210" x2="865" y2="210" stroke="#ffffff" stroke-width="4"/>
+      <line x1="835" y1="760" x2="865" y2="760" stroke="#ffffff" stroke-width="4"/>
+      <rect x="872" y="320" width="100" height="48" rx="8" fill="#0f172a" opacity="0.8" stroke="#ffffff" stroke-width="1.5"/>
+      <text x="922" y="352" text-anchor="middle" fill="#ffffff" font-family="system-ui, sans-serif" font-size="24" font-weight="800">${escapeXml(dimensions.length)}</text>
 
-      <rect x="50" y="456" width="140" height="48" rx="8" fill="#0f172a" stroke="#f43f5e" stroke-width="2"/>
-      <text x="120" y="486" text-anchor="middle" fill="#f43f5e" font-family="system-ui, sans-serif" font-size="18" font-weight="700">Dày: ${escapeXml(dimensions.thickness)}</text>
+      <!-- Top Right Corner Thickness Callout Box -->
+      <line x1="770" y1="230" x2="710" y2="280" stroke="#ef4444" stroke-width="3"/>
+      <circle cx="710" cy="280" r="6" fill="#ef4444"/>
+      <rect x="755" y="170" width="200" height="65" rx="12" fill="#0f172a" stroke="#ef4444" stroke-width="2.5" filter="url(#shadow)"/>
+      <text x="855" y="196" text-anchor="middle" fill="#94a3b8" font-family="'Times New Roman', Georgia, serif" font-size="16" font-weight="700">Thickness</text>
+      <text x="855" y="224" text-anchor="middle" fill="#ef4444" font-family="system-ui, sans-serif" font-size="20" font-weight="800">${escapeXml(dimensions.thickness)}</text>
     `
       : ""
     }
-
-    <!-- Bottom Description Footer -->
-    <rect x="112" y="900" width="800" height="70" rx="16" fill="#090d16" opacity="0.8" stroke="#334155" stroke-width="1.5"/>
-    <text x="512" y="932" text-anchor="middle" fill="#f1f5f9" font-family="system-ui, sans-serif" font-size="20" font-weight="700">${escapeXml(sceneDesc)}</text>
-    <text x="512" y="955" text-anchor="middle" fill="#64748b" font-family="system-ui, sans-serif" font-size="14">AI Auto Mockup Generator • Listing Desk Platform</text>
   </svg>
   `;
 

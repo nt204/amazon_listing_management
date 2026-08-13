@@ -12,6 +12,7 @@
     "db:revalidate": "node --env-file-if-exists=.env --import tsx scripts/revalidate-listings.ts",
     "ocr:eval": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/eval-ocr.ts",
     "ai:eval": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/eval-generation.ts",
+    "mockup:cheapkeyai:smoke": "node --import tsx scripts/test-cheapkeyai-image.ts",
     "build": "next build --webpack",
     "build:turbo": "next build",
     "start": "next start",

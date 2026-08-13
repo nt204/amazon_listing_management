@@ -104,6 +104,7 @@ test("GPT Image mockups use the edit API with the source artwork", async () => {
     assert.equal(call.body.size, "1024x1024");
     assert.equal(call.body.input_fidelity, undefined);
     assert.equal(call.body.output_format, "png");
+    assert.equal(call.body.response_format, undefined);
     assert.ok(
       call.body.image,
       "the source artwork file should be sent to images.edit",
@@ -191,7 +192,8 @@ test("gpt-image-2-c is routed through the CheapKeyAI image edit provider", async
   assert.equal(calls.length, 1);
   assert.equal(calls[0].model, "gpt-image-2");
   assert.equal(calls[0].quality, "low");
-  assert.equal(calls[0].input_fidelity, undefined);
+  assert.equal(calls[0].input_fidelity, "high");
+  assert.equal(calls[0].response_format, undefined);
   assert.ok(calls[0].image);
   assert.deepEqual(
     mockups.map((mockup) => mockup.index),
@@ -199,7 +201,8 @@ test("gpt-image-2-c is routed through the CheapKeyAI image edit provider", async
   );
   assert.equal(mockups[1].providerTrace?.provider, "cheapkeyai");
   assert.equal(mockups[1].providerTrace?.model, "gpt-image-2-c");
-  assert.equal(mockups[1].providerTrace?.estimatedCostUsd, null);
+  assert.equal(mockups[1].providerTrace?.inputFidelity, "high");
+  assert.equal(mockups[1].providerTrace?.estimatedCostUsd, 0.005);
 });
 
 test("CheapKeyAI client uses its own key and the image edits endpoint", async () => {
@@ -210,6 +213,8 @@ test("CheapKeyAI client uses its own key and the image edits endpoint", async ()
   let requestUrl = "";
   let authorization = "";
   let upstreamModel: FormDataEntryValue | null = null;
+  let inputFidelity: FormDataEntryValue | null = null;
+  let responseFormat: FormDataEntryValue | null = null;
 
   process.env.CHEAPKEYAI_API_KEY = "sk-cheapkeyai-test-only";
   process.env.OPENAI_API_KEY = "sk-openai-must-not-be-used";
@@ -224,7 +229,11 @@ test("CheapKeyAI client uses its own key and the image edits endpoint", async ()
     );
     authorization = headers.get("authorization") || "";
     const body = input instanceof Request ? input.clone().body : init?.body;
-    if (body instanceof FormData) upstreamModel = body.get("model");
+    if (body instanceof FormData) {
+      upstreamModel = body.get("model");
+      inputFidelity = body.get("input_fidelity");
+      responseFormat = body.get("response_format");
+    }
 
     return new Response(
       JSON.stringify({
@@ -272,6 +281,8 @@ test("CheapKeyAI client uses its own key and the image edits endpoint", async ()
   assert.equal(requestUrl, "https://cheapkeyai.shop/v1/images/edits");
   assert.equal(authorization, "Bearer sk-cheapkeyai-test-only");
   assert.equal(upstreamModel, "gpt-image-2");
+  assert.equal(inputFidelity, "high");
+  assert.equal(responseFormat, null);
 });
 
 test("one selected concept makes exactly one provider request and records its trace", async () => {
@@ -530,7 +541,7 @@ test("mockup prompts contain only the generation request and scene concept", () 
     },
   );
   assert.match(dimensionPrompt, /Kích thước 3 chiều: 3\.1" x 3\.1" x 0\.15"\./);
-  assert.match(dimensionPrompt, /Concept: Ảnh infographic kích thước sản phẩm\./);
+  assert.match(dimensionPrompt, /Concept: Product Size & Thickness Infographic Photography/);
 });
 
 test("OpenAI exhausted credit is translated into an actionable error", () => {
@@ -558,6 +569,37 @@ test("gateway insufficient balance is translated into a provider billing error",
     message:
       "Tài khoản API provider đã hết số dư. Hãy nạp thêm credit cho đúng tài khoản/key rồi thử lại.",
     status: 402,
+  });
+});
+
+test("CheapKeyAI channel routing failures do not suggest a fallback", () => {
+  const result = classifyMockupGenerationError({
+    status: 500,
+    code: "get_channel_failed",
+    type: "new_api_error",
+    message:
+      "分组 default 下模型 gpt-image-2 的可用渠道不存在（retry）",
+  });
+
+  assert.deepEqual(result, {
+    message:
+      "CheapKeyAI chưa có channel khả dụng cho gpt-image-2 trong group của API key này. Hãy đổi/tạo key ở đúng group hoặc gửi request ID trong log cho CheapKeyAI support; hệ thống không fallback sang model khác.",
+    status: 503,
+  });
+});
+
+test("CheapKeyAI channel errors surface the provider request ID", () => {
+  const result = classifyMockupGenerationError({
+    status: 500,
+    code: "get_channel_failed",
+    message:
+      "分组 default 下模型 gpt-image-2 的可用渠道不存在（retry） (request id: req_image_channel_123)",
+  });
+
+  assert.deepEqual(result, {
+    message:
+      "CheapKeyAI chưa có channel khả dụng cho gpt-image-2 trong group của API key này. Hãy đổi/tạo key ở đúng group hoặc gửi request ID req_image_channel_123 cho CheapKeyAI support; hệ thống không fallback sang model khác.",
+    status: 503,
   });
 });
 

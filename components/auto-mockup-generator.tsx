@@ -552,7 +552,9 @@ export function AutoMockupGenerator({
             const estimatedCost =
               response.estimatedCostUsd === null
                 ? ""
-                : ` · ước tính $${response.estimatedCostUsd.toFixed(4)}`;
+                : response.provider === "cheapkeyai"
+                  ? ` · giá cố định $${response.estimatedCostUsd.toFixed(3)}`
+                  : ` · ước tính $${response.estimatedCostUsd.toFixed(4)}`;
             return `${requestId}${usage}${estimatedCost}`;
           })
           .join("; ");
@@ -741,7 +743,7 @@ export function AutoMockupGenerator({
                   🤖 GPT Image 2
                 </option>
                 <option value="gpt-image-2-c">
-                  💸 GPT Image 2 C (CheapKeyAI)
+                  💸 GPT Image 2 C (CheapKeyAI · $0.005/ảnh)
                 </option>
                 <option value="gpt-image-1.5">
                   🤖 GPT Image 1.5 (Mặc định / Legacy)

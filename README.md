@@ -41,8 +41,8 @@ Model và API key chỉ được gọi trong Route Handler phía server. Mỗi l
 Để dùng lựa chọn **GPT Image 2 C (CheapKeyAI)**:
 
 1. Đăng ký hoặc đăng nhập CheapKeyAI và nạp ví.
-2. Kiểm tra dashboard/key group có quyền dùng đúng model ID
-   `gpt-image-2-c`. Nếu không thấy model này, hỏi support trước khi mua key.
+2. Kiểm tra dashboard/key group có quyền dùng model ID `gpt-image-2`. Tên
+   `gpt-image-2-c` chỉ là nhãn cục bộ để phân biệt provider trong ứng dụng.
 3. Mở [`cheapkeyai.shop/keys`](https://cheapkeyai.shop/keys), tạo một API key
    riêng cho ứng dụng và sao chép key.
 4. Dán key vào `.env.local` ở thư mục gốc của project:
@@ -55,12 +55,30 @@ CHEAPKEYAI_BASE_URL=https://cheapkeyai.shop/v1
 5. Khởi động lại dev server rồi chọn **GPT Image 2 C (CheapKeyAI)** trong Auto
    Mockup Generator.
 
-Ứng dụng gửi model ID `gpt-image-2-c` tới endpoint tương thích OpenAI của
-CheapKeyAI. Key này không thay thế `OPENAI_API_KEY`. Gói CheapKeyAI của bạn phải
-hỗ trợ image edit/reference images; nếu không, gateway sẽ trả lỗi model hoặc
-endpoint không khả dụng. Không đặt key trong biến `NEXT_PUBLIC_*`, trình duyệt,
-chat hoặc source code; nên dùng key riêng có thể thu hồi. Khi chọn provider này,
-ảnh thiết kế tham chiếu sẽ được gửi qua máy chủ CheapKeyAI.
+`gpt-image-2-c` là tên lựa chọn cục bộ; ứng dụng gửi model ID `gpt-image-2` tới
+endpoint tương thích OpenAI của CheapKeyAI. Giá được ghi nhận cố định
+**$0.005/ảnh AI**, không phụ thuộc token hoặc quality; 6 mockup AI là **$0.03**.
+Request không gửi trường `response_format`; gateway trả base64 mặc định và ứng
+dụng đọc dữ liệu từ `b64_json`. Không dùng định dạng URL. Ứng dụng gửi
+`input_fidelity=high` để giữ màu sắc, chữ và chi tiết artwork gốc; output vẫn là
+quality đã chọn (kể cả `low`) và giá ghi nhận vẫn là $0.005/ảnh.
+
+Key này không thay thế `OPENAI_API_KEY`. Gói CheapKeyAI của bạn phải hỗ trợ image
+edit/reference images; nếu không, gateway sẽ trả lỗi model hoặc endpoint không
+khả dụng. Không đặt key trong biến `NEXT_PUBLIC_*`, trình duyệt, chat hoặc source
+code; nên dùng key riêng có thể thu hồi. Khi chọn provider này, ảnh thiết kế tham
+chiếu sẽ được gửi qua máy chủ CheapKeyAI.
+
+Smoke test một ảnh thật (có thể tính **$0.005**, không fallback):
+
+```bash
+CHEAPKEYAI_LIVE_TEST=1 npm run mockup:cheapkeyai:smoke
+```
+
+Test chỉ thành công khi response giải mã được thành ảnh và provider trace là
+`cheapkeyai`; ảnh kiểm tra được lưu trong `output/cheapkeyai-gpt-image-2-live.*`.
+Nếu lỗi `get_channel_failed`, key đang ở group không có channel ảnh hoạt động;
+đổi group của key trong dashboard hoặc gửi request ID cho CheapKeyAI support.
 
 ## Pipeline sinh listing
 
