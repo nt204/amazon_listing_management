@@ -118,8 +118,8 @@ const MOCKUP_STEPS = [
   },
   {
     id: 5,
-    label: "Mockup 5: Christmas Tree View 2 (Treo Cây Thông 2)",
-    icon: "❄️",
+    label: "Mockup 5: Pine Branch & Bokeh (Treo Cành Thông & Đèn Bokeh)",
+    icon: "🎄",
   },
   {
     id: 6,
@@ -156,7 +156,7 @@ const DEFAULT_SYSTEM_MOCKUP_CONTENTS = [
   { id: 2, label: "Content 2: Dimension 3D", checked: true },
   { id: 3, label: "Content 3: Gift Box", checked: true },
   { id: 4, label: "Content 4: Tree View 1", checked: true },
-  { id: 5, label: "Content 5: Tree View 2", checked: true },
+  { id: 5, label: "Content 5: Pine Branch & Bokeh", checked: true },
   { id: 6, label: "Content 6: Gifting Hands", checked: true },
   { id: 7, label: "Content 7: Car Mirror", checked: true },
   { id: 8, label: "Content 8: Sunlit Glass Refraction", checked: false },
@@ -512,6 +512,12 @@ export function AutoMockupGenerator({
       );
       return;
     }
+    if ((card.attachments?.length || 0) >= 7) {
+      setErrorMsg(
+        `Thẻ "${card.parsed?.itemName || card.name}" đã có đủ ${card.attachments?.length}/7 ảnh đính kèm trên Trello. Giữ nguyên 7 ảnh chuẩn, không tạo thêm ảnh thứ 8.`,
+      );
+      return;
+    }
     const selectedAiSteps = mockupContents
       .filter((content) => content.checked && content.id >= 2)
       .map((content) => content.id);
@@ -549,7 +555,7 @@ export function AutoMockupGenerator({
           quality: selectedQuality,
           selectedSteps: selectedAiSteps,
           customContents: mockupContents
-            .filter((content) => content.id >= 8)
+            .filter((content) => content.id >= 11)
             .map((content) => ({ id: content.id, label: content.label })),
           stream: true,
         }),
@@ -1424,7 +1430,9 @@ export function AutoMockupGenerator({
                           </span>
                           <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700">
                             <CheckCircleIcon className="h-4 w-4 text-emerald-600" />{" "}
-                            {imageAttachments.length} Ảnh Đính Kèm
+                            {imageAttachments.length >= 7
+                              ? "✨ Đã đủ 7/7 Ảnh Chuẩn"
+                              : `${imageAttachments.length} Ảnh Đính Kèm`}
                           </span>
                         </div>
                         <h5 className="mt-1.5 text-base font-extrabold text-slate-900 line-clamp-1">

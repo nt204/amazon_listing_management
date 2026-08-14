@@ -622,16 +622,48 @@ test("custom content is generated and can be recognized for resume", async () =>
     inputDesignBuffer: SAMPLE_PNG,
     inputMimeType: "image/png",
     model: "gpt-image-1.5",
-    selectedIndexes: [8],
-    customMockups: [{ id: 8, label: "Content 8: Minimalist Shelf" }],
+    selectedIndexes: [11],
+    customMockups: [{ id: 11, label: "Content 11: Minimalist Shelf" }],
     openaiClient: fakeClient,
   });
 
   assert.equal(calls.length, 1);
-  assert.deepEqual(mockups.map((mockup) => mockup.index), [1, 8]);
-  assert.match(mockups[1].type, /^Mockup8_Content-8-Minimalist-Shelf\./);
+  assert.deepEqual(mockups.map((mockup) => mockup.index), [1, 11]);
+  assert.match(mockups[1].type, /^Mockup11_Content-11-Minimalist-Shelf\./);
   assert.match(String(calls[0].prompt), /Minimalist Shelf/i);
-  assert.equal(mockupIndexFromAttachmentName(mockups[1].type), 8);
+  assert.equal(mockupIndexFromAttachmentName(mockups[1].type), 11);
+});
+
+test("system mockups are not duplicated when repeated as custom content", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const fakeClient = {
+    images: {
+      edit: async (body: Record<string, unknown>) => {
+        calls.push(body);
+        return { data: [{ b64_json: SAMPLE_PNG.toString("base64") }] };
+      },
+    },
+  } as unknown as OpenAI;
+
+  const mockups = await generateAllMockups({
+    sku: "NO-DUPLICATES",
+    itemName: "Test Ornament",
+    dimensions: {
+      length: '3.1"',
+      width: '3.1"',
+      thickness: '0.15"',
+      formatted: '3.1" x 3.1" x 0.15"',
+    },
+    inputDesignBuffer: SAMPLE_PNG,
+    inputMimeType: "image/png",
+    model: "gpt-image-1.5",
+    selectedIndexes: [2, 9],
+    customMockups: [{ id: 9, label: "Duplicate Content 9" }],
+    openaiClient: fakeClient,
+  });
+
+  assert.equal(calls.length, 2);
+  assert.deepEqual(mockups.map((mockup) => mockup.index), [1, 2, 9]);
 });
 
 test("OpenAI exhausted credit is translated into an actionable error", () => {

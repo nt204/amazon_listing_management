@@ -47,7 +47,7 @@ const generateMockupsSchema = z.object({
   customContents: z
     .array(
       z.object({
-        id: z.number().int().min(8).max(20),
+        id: z.number().int().min(11).max(20),
         label: z.string().trim().min(1).max(200),
       }),
     )
@@ -245,8 +245,44 @@ async function executeMockupGeneration(
     });
   }
 
+  if (imageAttachments.length >= 7) {
+    console.log(
+      `[API generate-mockups] Thẻ "${card.name}" đã có ${imageAttachments.length}/7 ảnh đính kèm. Đã dừng sinh thêm ảnh thứ 8.`,
+    );
+    let movedToTargetList = false;
+    if (targetListId) {
+      try {
+        console.log(
+          `[API generate-mockups] Thẻ đã đủ 7 ảnh, đang tự động chuyển sang cột MOCKUP: ${targetListId}`,
+        );
+        await moveTrelloCard(card.id, targetListId, apiKey, token);
+        movedToTargetList = true;
+      } catch (err) {
+        console.warn("[API generate-mockups] Không thể chuyển thẻ Trello:", err);
+      }
+    }
+    report?.({
+      type: "progress",
+      step: 1,
+      name: "Đã có đủ 7 ảnh",
+      status: "success",
+      phase: "upload",
+      message: `Thẻ đã có đủ ${imageAttachments.length}/7 ảnh đính kèm trên Trello. Đã tự động chuyển thẻ sang cột MOCKUP.`,
+    });
+    return {
+      success: true,
+      cardId: card.id,
+      cardName: card.name,
+      sku: parsedTitle.sku,
+      uploadedCount: uploadedAttachments.length,
+      attachments: uploadedAttachments,
+      movedToTargetList,
+      message: `Thẻ đã có đủ ${imageAttachments.length}/7 ảnh đính kèm trên Trello, đã chuyển sang cột MOCKUP.`,
+    };
+  }
+
   console.log(
-    `[API generate-mockups] SKU "${parsedTitle.sku}": đã có ${existingGeneratedAttachments.size}/6 ảnh AI, đang tạo các ảnh còn thiếu...`,
+    `[API generate-mockups] SKU "${parsedTitle.sku}": đã có ${existingGeneratedAttachments.size}/6 ảnh AI, đang tạo các ảnh còn thiếu (tối đa tổng 7 ảnh)...`,
   );
 
   const mockups = await generateAllMockups(
@@ -358,17 +394,21 @@ async function executeMockupGeneration(
   const providerResponses = mockups.flatMap((mockup) =>
     mockup.providerTrace ? [mockup.providerTrace] : [],
   );
+  const totalSuccessCount = uploadedAttachments.filter(
+    (attachment) => attachment.status === "success",
+  ).length;
+
   let movedToTargetList = false;
-  if (targetListId && allUploadsSucceeded) {
+  if (targetListId && totalSuccessCount >= 7) {
     try {
       console.log(
-        `[API generate-mockups] Đang chuyển thẻ Trello ${card.id} sang cột MOCKUP: ${targetListId}`,
+        `[API generate-mockups] Thẻ đã có ${totalSuccessCount}/7 ảnh. Đang chuyển thẻ Trello ${card.id} sang cột MOCKUP: ${targetListId}`,
       );
       await moveTrelloCard(card.id, targetListId, apiKey, token);
       movedToTargetList = true;
     } catch (err) {
       console.warn(
-        "[API generate-mockups] Cảnh báo không thể chuyển thẻ Trello:",
+        "[API generate-mockups] Cảnh báo không thể chuyển thẻ Trello sang cột MOCKUP:",
         err,
       );
     }

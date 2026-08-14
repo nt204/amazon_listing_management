@@ -61,7 +61,7 @@ export interface GenerateMockupsOptions {
   skipIndexes?: readonly number[];
   /** Specific mockup indexes selected by user to generate. */
   selectedIndexes?: readonly number[];
-  /** User-defined scene concepts, beginning at index 8. */
+  /** User-defined scene concepts, beginning at index 11. */
   customMockups?: readonly { id: number; label: string }[];
   /** Called immediately after each AI image is ready, before the next image starts. */
   onMockupReady?: (mockup: MockupResult) => Promise<void> | void;
@@ -128,11 +128,11 @@ const MOCKUP_TYPES = [
   },
   {
     index: 5,
-    name: "Mockup 5 - Christmas Tree View 2 (Ảnh Treo Cây Thông 2)",
-    fileName: "Mockup5_ChristmasTree_View2.png",
+    name: "Mockup 5 - Pine Branch & Bokeh (Ảnh Treo Cành Thông & Đèn Bokeh)",
+    fileName: "Mockup5_Pine_Branch_Bokeh.png",
     promptKey: "tree_view2",
     description:
-      "Ảnh cận cảnh (Macro shot) treo trên nhánh thông có tuyết nhẹ và ánh lửa lò sưởi.",
+      "Ảnh cận cảnh treo trên cành thông xanh tươi với dây đay, quả thông, quả mọng đỏ và nền đèn bokeh Giáng sinh lung linh.",
   },
   {
     index: 6,
@@ -190,13 +190,16 @@ export async function generateAllMockups(
     quality = configuredImageQuality(),
   } = options;
   const skippedIndexes = new Set(options.skipIndexes || []);
-  const customMockupTypes = (options.customMockups || []).map((custom) => ({
-    index: custom.id,
-    name: custom.label,
-    fileName: `Mockup${custom.id}_${safeFileStem(custom.label)}.png`,
-    promptKey: `custom:${custom.label}`,
-    description: `Ảnh mockup tùy chỉnh: ${custom.label}`,
-  }));
+  const systemMockupIndexes = new Set(MOCKUP_TYPES.map((mockup) => mockup.index));
+  const customMockupTypes = (options.customMockups || [])
+    .filter((custom) => !systemMockupIndexes.has(custom.id))
+    .map((custom) => ({
+      index: custom.id,
+      name: custom.label,
+      fileName: `Mockup${custom.id}_${safeFileStem(custom.label)}.png`,
+      promptKey: `custom:${custom.label}`,
+      description: `Ảnh mockup tùy chỉnh: ${custom.label}`,
+    }));
   const effectiveMockupTypes = [...MOCKUP_TYPES, ...customMockupTypes];
 
   const normalizedDesignBuffer = await normalizeDesignImage(inputDesignBuffer);
@@ -477,7 +480,7 @@ export function buildMockupPrompt(
   switch (promptKey) {
     case "dimensions_3d":
       concept = `Product Size & Thickness Infographic Photography.
-- Hand holding white satin ribbon hanging loop at top against warm golden holiday bokeh background.
+- Hand holding the top hanging lanyard / ribbon / string (matching the exact ribbon color, string material, and loop style from Image 1) against warm golden holiday bokeh background.
 - Render the product with the exact material, opacity, surface finish, shape and edge construction supported by the product information and reference image.
 - Vertical dashed white dimension line on the right side labeled "${dimensions.length}".
 - Horizontal dashed white dimension line at the bottom labeled "${dimensions.width}".
@@ -489,7 +492,7 @@ export function buildMockupPrompt(
 - Square 1:1 image, clean top-down product photography on a warm ivory or pale neutral tabletop.
 - Place one open square red gift-box base in the left/lower area. Its interior is black velvet or black foam with a thin red rim.
 - Lay exactly one complete ornament on top of the open box base. Keep the ornament fully visible, centered, correctly scaled and unobstructed; preserve its exact shape, material, printed artwork, text and colors from Image 1.
-- Show the included hanging cord/lanyard attached to the ornament and draped naturally near the top. Its color may complement the ornament; do not cover important artwork or lettering.
+- Show the included hanging cord/lanyard attached to the ornament (copying the exact ribbon/string color and style from Image 1) and draped naturally near the top. Do not cover important artwork or lettering.
 - Place the matching closed red textured gift-box lid separately in the upper-right area, rotated slightly and overlapping only the corner of the open box. The lid must not cover the ornament.
 - Use soft diffused studio lighting, realistic contact shadows and a premium e-commerce catalog finish. No hands, Christmas tree, lifestyle scene or decorative clutter.
 - Reserve a clean area across the bottom for centered black typography. Render this exact package list clearly and spell it correctly:
@@ -500,34 +503,34 @@ export function buildMockupPrompt(
 - Do not add extra products, duplicate ornaments, extra accessories, logos or additional text.`;
       break;
     case "tree_view1":
-      concept = "Sản phẩm treo trên nhánh cây thông xanh tươi.";
+      concept = "Sản phẩm treo trên nhánh cây thông xanh tươi. Giữ nguyên màu sắc và kiểu dây treo gốc từ Ảnh 1.";
       break;
     case "tree_view2":
-      concept =
-        "Sản phẩm treo trên cây thông trong phòng khách tươi sáng, nền trắng và xanh tươi.";
+      concept = `BRIGHT & CLEAN PINE BRANCH WITH SOFT BOKEH LIGHTS product photography, matching this composition:
+- Square 1:1 close-up holiday product photograph featuring the EXACT ornament from Image 1 hanging vertically from a fresh green pine / fir tree branch in the upper-right area.
+- Top hanging ribbon / string / cord (copying the exact ribbon color, string material, and attachment holes from Image 1) draped naturally from the sturdy pine branch.
+- Lush vibrant green pine needles, small pinecones, and subtle red winter holly berries adorning the foreground branch.
+- LIGHTING & COLOR BALANCE: Bright, clean, luminous natural daylight exposure with neutral white balance. High-key soft studio illumination.
+- DO NOT apply a heavy yellow, orange, amber, or brown color cast. White and neutral background areas must remain crisp white and bright neutral.
+- In the softly blurred background: a clean Christmas tree filled with sparkling soft white fairy lights and subtle pastel bokeh circles.
+- Sharp photographic focus on the ornament and foreground pine branch, with a smooth cinematic shallow depth of field.
+- CRITICAL MATERIAL & SHAPE FIDELITY: Preserve the exact outer shape, contour silhouette, opacity, material texture, glass bevels (only if Image 1 is glass), printed artwork, text, and original colors from Image 1.`;
       break;
     case "gifting_hands":
-      concept = `PERFECT GIFT IDEA hand-to-hand gifting scene, matching this composition:
-- Square 1:1 close-up lifestyle product photograph with exactly two realistic human hands exchanging the ornament by its hanging ribbon or lanyard.
-- One hand enters from the upper-right and gently holds the top of the ribbon; the receiving hand enters from the upper-left/left side and reaches naturally toward the ribbon. The gesture must clearly communicate giving and receiving.
-- Show anatomically correct hands with natural fingers, nails and skin texture. No fused, duplicated, missing or deformed fingers; no jewelry unless subtle and realistic.
-- Place exactly one complete ornament large and centered in the foreground, hanging vertically beneath the hands. Keep it fully visible and unobstructed, occupying roughly 55-65% of the image width.
-- Preserve the ornament's exact shape, material, opacity, edge construction, printed artwork, original lettering and colors from Image 1. Do not turn it into glass unless Image 1 supports glass.
-- The ribbon must pass correctly through the ornament's hanging hole and respond naturally to gravity. The hands must hold the ribbon, not cover the ornament artwork.
-- Match this exact visual mood and color direction: bright, clean, softly exposed lifestyle photography with neutral color balance. Keep the hands, ornament and main center-right area luminous and clear, while using only a restrained deep neutral green shadow area at the far left for contrast.
-- Use a soft light beige/greige blurred indoor background with clean cream highlights and a few subtle neutral bokeh circles. Do not apply a yellow, orange, amber, sepia or brown color cast; white and neutral surfaces must remain visually neutral.
-- Render skin in natural light peach-beige tones with accurate highlights, not orange or heavily warmed. Use a clean deep-red satin ribbon as the small color accent. Preserve the ornament artwork's original colors without tinting the product.
-- Keep the ornament crisp and bright with realistic edge highlights appropriate to its actual material. Use shallow depth of field and smooth photographic blur, not a dark moody exposure, heavy vignette, flat gradient or artificial repeating bokeh.
-- This gifting-scene bright neutral palette overrides any general instruction elsewhere asking for warm golden, amber, brown or low-key cinematic lighting.
-- Reserve a clean area near the bottom for one centered luxury calligraphic headline. Render exactly: "PERFECT GIFT IDEA".
-- Typography style: elegant white handwritten calligraphy matching the reference aesthetic, with very thin hairlines, long graceful entry and exit swashes, tall flowing capital letters, restrained thin-and-thick contrast and airy spacing. Use clean warm-white lettering with no colored fill; add only a faint soft shadow when needed for readability over the dark background.
-- Keep every letter fully legible and correctly spelled. Use consistent baseline, generous breathing room and premium editorial composition. Do not use a generic system font, chunky bold lettering, cartoon lettering, heavy outline, neon glow, metallic 3D extrusion or excessive flourishes that cross other letters.
-- Do not render any other caption, subtitle, material name, product description, logo or promotional text. In particular, do not add "GLASS ORNAMENT" or "ONE SIDE PRINTED DESIGN".
-- Do not add a gift box, Christmas tree branches, duplicate ornaments or extra hands.`;
+      concept = `PERFECT GIFT HAND-TO-HAND ORNAMENT PRESENTATION, matching this exact composition:
+- Square 1:1 close-up holiday lifestyle photography featuring TWO realistic female hands presenting the ornament:
+  1) Upper hand entering from upper-right holding the top hanging ribbon / lanyard (COPYING THE EXACT RIBBON COLOR, STRING MATERIAL, AND HOLE ATTACHMENT FROM IMAGE 1, e.g. red satin ribbon if Image 1 has red ribbon; do not change ribbon color).
+  2) Lower receiving hand wearing a cozy white knit sweater sleeve, entering from lower-left with fingers and palm gently cupping and supporting beneath the bottom edge of the ornament.
+- MATERIAL FIDELITY (PRESERVE EXACT MATERIAL FROM IMAGE 1):
+  * If Image 1 is transparent glass: render ultra crystal clear 100% transparent glass with sparkling diamond-cut beveled facets.
+  * If Image 1 is opaque wood / plywood / ceramic / resin / metal (like a wooden suncatcher / ornament): PRESERVE 100% OPAQUE WOODEN EDGE, DARK WOOD GRAIN TEXTURE, AND SURFACE OPACITY FROM IMAGE 1. DO NOT TURN OPAQUE WOOD INTO GLASS OR ACRYLIC! DO NOT ADD GLASS BEVELS OR METAL CHAINS!
+- VIVID & RICH COLOR CONTRAST (NOT PALE OR WASHED OUT): Rich vibrant color saturation and crisp photographic contrast. Deep rich crimson red gift box with a bold red ribbon bow on the lower-right white tabletop. Fresh vibrant green Christmas tree pine needles and warm golden-white glowing fairy light bokeh circles in the left background.
+- SKIN TONES & LIGHTING: Natural warm peach-beige skin tones with realistic fingers and nails. Soft, luminous, high-contrast studio lighting highlighting the printed design artwork, lettering, and actual product material vividly.
+- Preserve exact printed artwork, text, graphics, and original vibrant colors from Image 1 centered on the ornament.`;
       break;
     case "car_mirror":
       concept =
-        "Sản phẩm treo trên gương chiếu hậu của ô tô vào ban ngày, ngoài cửa kính là cây xanh và bầu trời sáng.";
+        "Sản phẩm treo trên gương chiếu hậu của ô tô vào ban ngày (giữ đúng loại và màu dây treo gốc từ Ảnh 1), ngoài cửa kính là cây xanh và bầu trời sáng.";
       break;
     case "glass_sunburst":
       concept = `SUNLIT LIGHT REFRACTION product photography, matching this composition:
@@ -535,16 +538,16 @@ export function buildMockupPrompt(
 - Bright golden sunburst light ray hitting the ornament from the background or angle, creating soft specular highlights, edge sheen, and warm luminous light flares.
 - CRITICAL SHAPE & MATERIAL FIDELITY: Maintain the EXACT outer shape, silhouette, and material of the product from Image 1. If Image 1 is a die-cut custom shaped ornament (such as a house, star, tree, heart, acrylic cut, wood piece, or ceramic shape), keep ONLY that exact custom outer contour shape. Do NOT enclose or surround the product in an artificial circular glass disc, outer glass frame, or extra glass circle.
 - Soft warm blurred background with golden sunlight bokeh circles, subtle sunbeams, and realistic tabletop contact shadows.
-- Red hanging ribbon passing cleanly through the top loop. Preserve exact design artwork, lettering, and original colors from Image 1.`;
+- Hanging ribbon/string (copying exact color and material from Image 1) passing cleanly through the top loop. Preserve exact design artwork, lettering, and original colors from Image 1.`;
       break;
     case "glass_thickness_callout":
       concept = `PRODUCT EDGE THICKNESS CALLOUT product photography, matching this composition:
-- Macro 3D angled product photograph with the ornament from Image 1 standing vertically at a 45-degree angle on a dark polished reflective surface.
-- Luxury soft draped dusty rose / pink champagne satin silk fabric backdrop in the soft-focus background.
-- Focus closely on the thick edge profile of the product on the left side.
-- Render a precise red indicator callout line pointing to the product edge with clean white text labeling "Thickness ${dimensions.thickness || "6mm"}".
-- CRITICAL SHAPE FIDELITY: Maintain the exact outer contour, silhouette, and material from Image 1. Do NOT turn a custom shaped non-glass product into an artificial round glass disc.
-- Highlighting edge construction, red hanging satin ribbon at top, and crisp mirror reflection on the dark surface below. Preserve exact printed artwork and lettering from Image 1.`;
+- Macro 3D angled product photograph with the ornament from Image 1 standing vertically at a 45-degree angle on a dark polished reflective surface or luxury dusty rose / champagne satin silk fabric.
+- Focus closely on the thick edge profile of the product on the right side.
+- Render a single precise indicator callout bubble pointing to the thick edge labeled "Thickness ${dimensions.thickness || "6mm"}".
+- DO NOT add front height/width dimension arrows or "PRODUCT SIZE" footer text (those belong exclusively to Content 2).
+- CRITICAL SHAPE FIDELITY: Maintain the exact outer contour, silhouette, edge material, and texture from Image 1. Do NOT turn a custom shaped non-glass product into an artificial round glass disc.
+- Highlighting edge construction, top hanging satin ribbon/string (copying exact ribbon color from Image 1), and crisp mirror reflection on the surface below. Preserve exact printed artwork and lettering from Image 1.`;
       break;
     case "wood_flatlay_pine":
       concept = `NATURAL WOOD TABLETOP FLAT-LAY WITH PINE BRANCH product photography, matching this composition:
@@ -553,7 +556,7 @@ export function buildMockupPrompt(
 - CRITICAL SHAPE & MATERIAL FIDELITY: Maintain the exact outer shape, silhouette, edge contour, and material of the product from Image 1.
 - If Image 1 is a die-cut custom shaped ornament (such as a house, star, tree, heart, acrylic cut, wood piece, or ceramic shape), keep ONLY that exact custom outer contour shape. Do NOT enclose or surround the product in an artificial circular glass disc, outer glass frame, or extra glass circle.
 - If Image 1 is a transparent glass ornament, preserve its glass translucency and bevel cuts. If Image 1 is opaque (resin, wood, ceramic), preserve its opaque material and surface texture faithfully.
-- Red hanging ribbon attached to top loop and drapes naturally upwards. Preserve exact artwork, text, and colors from Image 1.`;
+- Top hanging ribbon/string (copying exact ribbon color and material from Image 1) attached to top loop and drapes naturally upwards. Preserve exact artwork, text, and colors from Image 1.`;
       break;
     default:
       concept = promptKey.startsWith("custom:")
@@ -579,14 +582,31 @@ Quan sát Ảnh 1 để nhận diện chính xác:
 - chữ và typography
 - các hình minh họa
 - màu sắc của CÁC CHI TIẾT ĐƯỢC IN
-- lỗ treo và dây treo
+- lỗ treo và thiết kế dây treo (loại dây, màu dây, chất liệu dây, số lượng lỗ treo)
+
+CỐ ĐỊNH DÂY TREO VÀ LỖ TREO TỪ ẢNH 1 (EXACT HANGING STRING / RIBBON FIDELITY):
+- QUAN SÁT KỸ DÂY TREO TRONG ẢNH 1: Copy chính xác 100% màu sắc dây (ruy-băng đỏ, ruy-băng trắng, dây thừng đay nâu, dây kim loại...), chất liệu dây (satin, đay, xích...) và kiểu xỏ lỗ (1 lỗ, 2 lỗ ở đỉnh...) từ Ảnh 1.
+- TUYỆT ĐỐI KHÔNG TỰ Ý ĐỔI MÀU DÂY TREO HAY THAY THẾ BẰNG XÍCH KIM LOẠI: Ví dụ nếu Ảnh 1 dùng dây ruy-băng đỏ, bắt buộc giữ nguyên dây ruy-băng đỏ, KHÔNG được tự ý chuyển thành dây trắng hay xích kim loại!
 
 CỐ ĐỊNH HÌNH DÁNG SẢN PHẨM & TUYỆT ĐỐI KHÔNG TỰ THÊM ĐĨA KÍNH TRÒN:
 - Giữ CHÍNH XÁC hình dạng đường viền ngoài (contour silhouette) của sản phẩm trong Ảnh 1.
-- Nếu Ảnh 1 là sản phẩm cắt theo khuôn riêng (die-cut shape như hình ngôi nhà, hình ngôi sao, hình cây thông, hình áo, hình trái tim...), chỉ tái hiện đúng hình dạng cắt die-cut đó.
+- Nếu Ảnh 1 là sản phẩm cắt theo khuôn riêng (die-cut shape như hình ngôi nhà, hình bản đồ bang, hình ngôi sao, hình cây thông, hình áo, hình trái tim...), chỉ tái hiện đúng hình dạng cắt die-cut đó.
 - TUYỆT ĐỐI KHÔNG tự động bọc thêm một đĩa kính tròn (circular glass disc), khung kính ngoài, hay vòng kính bao quanh sản phẩm nếu Ảnh 1 không phải là hình đĩa kính tròn.
 
-QUAN TRỌNG VỀ CHẤT LIỆU:
+BẢO TỒN CHẤT LIỆU VẬT LÝ GỐC CỦA SẢN PHẨM (STRICT MATERIAL FIDELITY):
+1. NẾU SẢN PHẨM TRONG ẢNH 1 LÀ KÍNH / THỦY TINH / PHA LÊ / ACRYLIC TRONG SUỐT (GLASS ORNAMENT):
+   - ĐĨA KÍNH TRẮNG TRONG SUỐT TUYỆT ĐỐI (ULTRA BRIGHT WHITE CRYSTAL GLASS):
+     Đĩa kính PHẢI LÀ KÍNH TRẮNG TRONG SUỐT SIÊU SÁNG, TINH KHIẾT NHƯ PHA LÊ CAO CẤP (ultra bright pristine white crystal glass, high-key white studio backlight, 100% luminous transparency).
+   - TUYỆT ĐỐI KHÔNG CÓ SƯƠNG MỜ, KHÔNG XÁM ĐỤC, KHÔNG NÂU MỜ (ZERO GREY HAZE, ZERO FOG OPACITY, NO BROWN OR GREY SHADOW INSIDE GLASS BODY). Vùng kính không in phải xuyên sáng tinh khiết với ánh sáng trắng tươi từ bối cảnh.
+   - ĐƯỜNG VÁT CẠNH KÍNH LẮP LÁNH SẮC NÉT (SPARKLING PRISMATIC BEVELED EDGE): Viền đĩa kính tròn có các vạt vát kim cương lấp lánh (diamond-cut beveled glass facets, bright white specular edge highlights, crystal rim light) rõ nét, cực kỳ sang trọng y hệt ảnh mẫu chuẩn.
+   - MÀU SẮC TƯƠI TẮN & ĐỘ TƯƠNG PHẢN ĐẬM ĐÀ (VIVID RICH COLOR SATURATION - NOT WASHED OUT OR PALE): Màu sắc của thiết kế in (màu hồng, đỏ, bạc...), màu hộp quà đỏ rực và màu xanh cành thông phải đạt độ bão hòa rực rỡ, tương phản tươi tắn sắc nét, TUYỆT ĐỐI KHÔNG bị nhợt nhạt hay cháy sáng mờ nhạt.
+
+2. NẾU SẢN PHẨM TRONG ẢNH 1 LÀ SẢN PHẨM ĐỤC / GỖ / CERAMIC / RESIN / KIM LOẠI / VẢI (NON-GLASS PRODUCT - NHƯ SẢN PHẨM GỖ KHUÔN NEW JERSEY TRONG ẢNH 3):
+   - TUYỆT ĐỐI KHÔNG BIẾN SẢN PHẨM THÀNH KÍNH TRONG SUỐT HAY ACRYLIC TRONG SUỐT! KHÔNG TỰ Ý GẮN VIỀN KÍNH VÁT CẠNH!
+   - GIỮ NGUYÊN 100% CHẤT LIỆU ĐỤC VỐN CÓ TỪ ẢNH 1: viền gỗ sẫm màu (dark wood edge/border), vân gỗ tự nhiên (wood grain texture), bề mặt đục, texture và finish nguyên bản của Ảnh 1.
+   - Bề mặt nền không in giữ đúng màu sắc, độ đục và texture nền đục ban đầu của vật liệu gỗ/ceramic/resin.
+
+QUAN TRỌNG VỀ CHẤT LIỆU & PHÂN TÍCH ẢNH 1:
 - Chủ động phân tích trực tiếp Ảnh 1 để nhận biết chất liệu qua texture, độ trong/đục, độ bóng/mờ, phản xạ, cấu tạo bề mặt và kiểu cạnh; không yêu cầu mô tả thẻ phải ghi vật liệu.
 - Chỉ dùng tên sản phẩm hoặc thông tin bổ sung để hỗ trợ khi chúng thực sự nêu rõ chất liệu; dòng kích thước không phải là thông tin vật liệu.
 - Nếu không thể kết luận chắc chắn chất liệu, giữ nguyên diện mạo vật lý quan sát được trong Ảnh 1 và không tự gán một chất liệu cụ thể.
@@ -622,14 +642,14 @@ Giữ thiết kế in rõ nét và trung thành với ảnh tham chiếu.
 Không tự ý thay đổi nội dung chữ, hình minh họa hoặc bố cục thiết kế.
 
 Mục tiêu hình ảnh:
-premium commercial product photography,
+ultra crystal clear glass ornament commercial photography,
+pristine luminous transparent glass,
+beveled glass edge prismatic facets and white highlights,
 material-accurate rendering,
 faithful opacity and surface texture,
-realistic edges and thickness,
 physically appropriate highlights and reflections,
-clean studio rim light,
-bright white and fresh green bokeh background,
-premium finish appropriate to the actual material.
+clean high-key studio rim light,
+bright white and fresh green bokeh background.
 
 Concept: ${concept}${dimensionsLine}`;
 }
