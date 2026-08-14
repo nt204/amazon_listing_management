@@ -1,4 +1,5 @@
 import sharp, { type Metadata } from "sharp";
+import { createHash } from "node:crypto";
 import type { ListingInput } from "@/lib/types";
 
 const DATA_URL_PATTERN =
@@ -8,6 +9,23 @@ const AI_JPEG_QUALITY = 82;
 const PREVIEW_MAX_DIMENSION = 640;
 const PREVIEW_WEBP_QUALITY = 78;
 export const IMAGE_DERIVATIVE_VERSION = "1";
+export const TRELLO_PREVIEW_DERIVATIVE_VERSION = "1";
+
+const TRELLO_PREVIEW_MAX_DIMENSION = 1_280;
+const TRELLO_PREVIEW_WEBP_QUALITY = 86;
+const TRELLO_THUMBNAIL_MAX_DIMENSION = 320;
+const TRELLO_THUMBNAIL_WEBP_QUALITY = 78;
+
+export type TrelloImagePreviewVariant = "preview" | "thumbnail";
+
+export interface TrelloImageDerivative {
+  variant: TrelloImagePreviewVariant;
+  bytes: Buffer;
+  mimeType: "image/webp";
+  width: number;
+  height: number;
+  sha256: string;
+}
 
 export interface StoredImageDerivatives {
   originalBytes: Buffer;
@@ -160,4 +178,58 @@ export async function createStoredImageDerivatives(
     previewWidth: preview.info.width,
     previewHeight: preview.info.height,
   };
+}
+
+/**
+ * Creates display-only derivatives for Trello attachments. The source bytes are
+ * never changed and remain the downloadable master stored by Trello.
+ */
+export async function createTrelloImageDerivatives(
+  source: Buffer,
+): Promise<TrelloImageDerivative[]> {
+  const image = sharp(source, { failOn: "warning" }).rotate();
+  const [preview, thumbnail] = await Promise.all([
+    image
+      .clone()
+      .resize({
+        width: TRELLO_PREVIEW_MAX_DIMENSION,
+        height: TRELLO_PREVIEW_MAX_DIMENSION,
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      .webp({
+        quality: TRELLO_PREVIEW_WEBP_QUALITY,
+        alphaQuality: 90,
+        effort: 4,
+        smartSubsample: true,
+      })
+      .toBuffer({ resolveWithObject: true }),
+    image
+      .clone()
+      .resize({
+        width: TRELLO_THUMBNAIL_MAX_DIMENSION,
+        height: TRELLO_THUMBNAIL_MAX_DIMENSION,
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      .webp({
+        quality: TRELLO_THUMBNAIL_WEBP_QUALITY,
+        alphaQuality: 86,
+        effort: 3,
+        smartSubsample: true,
+      })
+      .toBuffer({ resolveWithObject: true }),
+  ]);
+
+  return ([
+    { variant: "preview" as const, output: preview },
+    { variant: "thumbnail" as const, output: thumbnail },
+  ]).map(({ variant, output }) => ({
+    variant,
+    bytes: output.data,
+    mimeType: "image/webp" as const,
+    width: output.info.width,
+    height: output.info.height,
+    sha256: createHash("sha256").update(output.data).digest("hex"),
+  }));
 }

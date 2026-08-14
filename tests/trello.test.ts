@@ -8,6 +8,7 @@ import {
   parseTrelloCardTitle,
   selectTrelloImageAttachments,
   selectLatestTrelloWorkbookAttachment,
+  withStoredTrelloImagePreviews,
   type TrelloAttachment,
 } from "../lib/trello";
 
@@ -109,4 +110,42 @@ test("selectLatestTrelloWorkbookAttachment returns the newest generated Excel fi
   });
 
   assert.equal(selectLatestTrelloWorkbookAttachment([older, newest]), newest);
+});
+
+test("stored Trello derivatives override display URLs without replacing the master", () => {
+  const master = attachment({
+    previewUrl: "https://trello.test/native-preview.jpg",
+    thumbnailUrl: "https://trello.test/native-thumbnail.jpg",
+  });
+  const [card] = withStoredTrelloImagePreviews(
+    [
+      {
+        id: "card-current",
+        name: "SKU_Product",
+        desc: "",
+        idList: "list-1",
+        url: "https://trello.test/card-current",
+        badges: { attachments: 1 },
+        attachments: [master],
+      },
+    ],
+    [
+      {
+        cardId: "card-current",
+        attachmentId: master.id,
+        variant: "preview",
+        sha256: "a".repeat(64),
+      },
+      {
+        cardId: "card-current",
+        attachmentId: master.id,
+        variant: "thumbnail",
+        sha256: "b".repeat(64),
+      },
+    ],
+  );
+
+  assert.equal(card.attachments?.[0].url, master.url);
+  assert.match(card.attachments?.[0].previewUrl || "", /\/preview\?v=a{16}$/);
+  assert.match(card.attachments?.[0].thumbnailUrl || "", /\/thumbnail\?v=b{16}$/);
 });

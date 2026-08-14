@@ -5,6 +5,8 @@ import { createHash } from "node:crypto";
 import {
   createStoredImageDerivatives,
   IMAGE_DERIVATIVE_VERSION,
+  type TrelloImageDerivative,
+  type TrelloImagePreviewVariant,
 } from "@/lib/image-processing";
 import type {
   BrandProfile,
@@ -50,7 +52,7 @@ async function ensureSchema() {
     const sql = getDatabase();
     globalForDatabase.listingPostgresSchema = sql<{ name: string }[]>`
         SELECT name FROM schema_migrations
-        WHERE name = '005_image_derivatives.sql'
+        WHERE name = '006_trello_image_previews.sql'
         LIMIT 1
       `
       .then((rows) => {
@@ -75,6 +77,87 @@ export async function checkDatabaseHealth() {
   await ensureSchema();
   const sql = getDatabase();
   await sql`SELECT 1`;
+}
+
+export async function saveTrelloImageDerivatives(
+  scope: DataScope,
+  cardId: string,
+  attachmentId: string,
+  derivatives: readonly TrelloImageDerivative[],
+) {
+  await ensureSchema();
+  const sql = getDatabase();
+  await sql.begin(async (transaction) => {
+    for (const derivative of derivatives) {
+      await transaction`
+        INSERT INTO trello_image_previews (
+          team_id, card_id, attachment_id, variant, mime_type, image_bytes,
+          width, height, sha256
+        ) VALUES (
+          ${scope.teamId}, ${cardId}, ${attachmentId}, ${derivative.variant},
+          ${derivative.mimeType}, ${derivative.bytes}, ${derivative.width},
+          ${derivative.height}, ${derivative.sha256}
+        )
+        ON CONFLICT (team_id, card_id, attachment_id, variant) DO UPDATE SET
+          mime_type = EXCLUDED.mime_type,
+          image_bytes = EXCLUDED.image_bytes,
+          width = EXCLUDED.width,
+          height = EXCLUDED.height,
+          sha256 = EXCLUDED.sha256,
+          updated_at = NOW()
+      `;
+    }
+  });
+}
+
+export async function getTrelloImageDerivative(
+  scope: DataScope,
+  cardId: string,
+  attachmentId: string,
+  variant: TrelloImagePreviewVariant,
+) {
+  await ensureSchema();
+  const sql = getDatabase();
+  const rows = await sql<{
+    mime_type: string;
+    image_bytes: Buffer;
+    width: number;
+    height: number;
+    sha256: string;
+  }[]>`
+    SELECT mime_type, image_bytes, width, height, sha256
+    FROM trello_image_previews
+    WHERE team_id = ${scope.teamId}
+      AND card_id = ${cardId}
+      AND attachment_id = ${attachmentId}
+      AND variant = ${variant}
+    LIMIT 1
+  `;
+  return rows[0] || null;
+}
+
+export async function listTrelloImageDerivativeReferences(
+  scope: DataScope,
+  cardIds: readonly string[],
+) {
+  if (cardIds.length === 0) return [];
+  await ensureSchema();
+  const sql = getDatabase();
+  return sql<{
+    cardId: string;
+    attachmentId: string;
+    variant: TrelloImagePreviewVariant;
+    sha256: string;
+  }[]>`
+    SELECT
+      card_id AS "cardId",
+      attachment_id AS "attachmentId",
+      variant,
+      sha256
+    FROM trello_image_previews
+    WHERE team_id = ${scope.teamId}
+      AND card_id IN ${sql(cardIds)}
+  `;
 }
 
 interface ListingRow {

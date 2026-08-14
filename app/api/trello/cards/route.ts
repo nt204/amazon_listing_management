@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
-import { authorize, routeErrorResponse } from "@/lib/api-guard";
-import { fetchTrelloCards, fetchTrelloLists, type TrelloCard, type TrelloList } from "@/lib/trello";
+import { authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
+import { listTrelloImageDerivativeReferences } from "@/lib/db";
+import { fetchTrelloCards, fetchTrelloLists, withStoredTrelloImagePreviews, type TrelloCard, type TrelloList } from "@/lib/trello";
 
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
-    authorize(request, "read");
+    const scope = dataScope(authorize(request, "read"));
     const { searchParams } = new URL(request.url);
     const apiKey = searchParams.get("apiKey") || process.env.TRELLO_API_KEY || "";
     const token = searchParams.get("token") || process.env.TRELLO_TOKEN || "";
@@ -56,6 +57,21 @@ export async function GET(request: Request) {
     if (listingList) {
       listingCards = await fetchTrelloCards(listingList.id, apiKey, token);
     }
+
+    const allCards = [...reviewCards, ...listingCards];
+    const references = await listTrelloImageDerivativeReferences(
+      scope,
+      allCards.map((card) => card.id),
+    );
+    const storedPreviewCards = withStoredTrelloImagePreviews(
+      allCards,
+      references,
+    );
+    const storedPreviewMap = new Map(
+      storedPreviewCards.map((card) => [card.id, card]),
+    );
+    reviewCards = reviewCards.map((card) => storedPreviewMap.get(card.id) || card);
+    listingCards = listingCards.map((card) => storedPreviewMap.get(card.id) || card);
 
     return NextResponse.json({
       boardId,

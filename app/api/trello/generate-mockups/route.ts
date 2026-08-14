@@ -1,11 +1,23 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { ApiError, authorize, routeErrorResponse } from "@/lib/api-guard";
+import sharp from "sharp";
+import {
+  ApiError,
+  authorize,
+  dataScope,
+  routeErrorResponse,
+} from "@/lib/api-guard";
+import {
+  saveTrelloImageDerivatives,
+  type DataScope,
+} from "@/lib/db";
+import { createTrelloImageDerivatives } from "@/lib/image-processing";
 import {
   fetchTrelloCardDetail,
   selectTrelloImageAttachments,
   downloadTrelloAttachment,
   attachFileToTrelloCard,
+  deleteTrelloCardAttachment,
   moveTrelloCard,
   parseTrelloCardTitle,
   parseCardDimensions,
@@ -41,8 +53,8 @@ const generateMockupsSchema = z.object({
   model: mockupModelSchema.optional(),
   quality: imageQualitySchema.optional(),
   selectedSteps: z
-    .array(z.number().int().min(2).max(20))
-    .min(1, "Hãy chọn ít nhất một concept mockup từ Content 2 trở đi.")
+    .array(z.number().int().min(1).max(20))
+    .min(1, "Hãy chọn ít nhất một concept mockup.")
     .optional(),
   customContents: z
     .array(
@@ -53,6 +65,8 @@ const generateMockupsSchema = z.object({
     )
     .max(13)
     .optional(),
+  customRefinementNotes: z.record(z.coerce.number(), z.string()).optional(),
+  forceRegenerate: z.boolean().optional(),
   stream: z.boolean().optional(),
 });
 
@@ -66,20 +80,22 @@ type ProgressReporter = (event: {
   message: string;
   attachmentUrl?: string;
   attachmentId?: string;
+  previewUrl?: string;
+  thumbnailUrl?: string;
 }) => void;
 
 const activeCardGenerations = new Set<string>();
 
 export async function POST(request: Request) {
   try {
-    authorize(request, "write");
+    const scope = dataScope(authorize(request, "write"));
     const input = generateMockupsSchema.parse(await request.json());
 
     if (input.stream) {
-      return createStreamingResponse(input);
+      return createStreamingResponse(input, scope);
     }
 
-    return NextResponse.json(await runMockupGeneration(input));
+    return NextResponse.json(await runMockupGeneration(input, scope));
   } catch (error) {
     return routeErrorResponse(
       normalizeGenerationError(error),
@@ -90,6 +106,7 @@ export async function POST(request: Request) {
 
 async function runMockupGeneration(
   input: GenerateMockupsInput,
+  scope: DataScope,
   report?: ProgressReporter,
 ) {
   if (activeCardGenerations.has(input.cardId)) {
@@ -100,7 +117,7 @@ async function runMockupGeneration(
   }
   activeCardGenerations.add(input.cardId);
   try {
-    return await executeMockupGeneration(input, report);
+    return await executeMockupGeneration(input, scope, report);
   } finally {
     activeCardGenerations.delete(input.cardId);
   }
@@ -108,6 +125,7 @@ async function runMockupGeneration(
 
 async function executeMockupGeneration(
   input: GenerateMockupsInput,
+  scope: DataScope,
   report?: ProgressReporter,
 ) {
   const { cardId, targetListId, model, quality } = input;
@@ -203,6 +221,8 @@ async function executeMockupGeneration(
     status: "success" | "failed";
     attachmentId?: string;
     url?: string;
+    previewUrl?: string;
+    thumbnailUrl?: string;
     error?: string;
     existing?: boolean;
   }> = [
@@ -245,29 +265,63 @@ async function executeMockupGeneration(
     });
   }
 
-  if (imageAttachments.length >= 7) {
+
+
+  const forceRegenerate = Boolean(
+    input.forceRegenerate ||
+      (input.selectedSteps && input.selectedSteps.length === 1),
+  );
+
+  const existingIndexesSet = new Set(existingGeneratedAttachments.keys());
+  const selectedStepSet = input.selectedSteps
+    ? new Set(input.selectedSteps)
+    : null;
+
+  const skipIndexes = Array.from(existingIndexesSet).filter((index) => {
+    if (forceRegenerate && selectedStepSet?.has(index)) {
+      return false;
+    }
+    return true;
+  });
+
+  const existingAiIndexes = Array.from(existingIndexesSet).filter(
+    (idx) => idx >= 2,
+  );
+  const existingAiCount = existingAiIndexes.length;
+  const maxAiAllowed = forceRegenerate
+    ? 6
+    : Math.max(0, 6 - existingAiCount);
+
+  const targetIndexes = input.selectedSteps
+    ? input.selectedSteps.filter((idx) => idx >= 2)
+    : [2, 3, 4, 5, 6, 7];
+
+  const ungeneratedTargetSteps = targetIndexes.filter(
+    (idx) => !skipIndexes.includes(idx),
+  );
+
+  const stepsToGenerate = ungeneratedTargetSteps.slice(0, maxAiAllowed);
+
+  if (stepsToGenerate.length === 0 && !forceRegenerate) {
     console.log(
-      `[API generate-mockups] Thẻ "${card.name}" đã có ${imageAttachments.length}/7 ảnh đính kèm. Đã dừng sinh thêm ảnh thứ 8.`,
+      `[API generate-mockups] Thẻ "${card.name}" đã có đủ ${existingAiCount}/6 concept AI đính kèm trên Trello. Bỏ qua sinh mới.`,
     );
     let movedToTargetList = false;
     if (targetListId) {
       try {
-        console.log(
-          `[API generate-mockups] Thẻ đã đủ 7 ảnh, đang tự động chuyển sang cột MOCKUP: ${targetListId}`,
-        );
         await moveTrelloCard(card.id, targetListId, apiKey, token);
         movedToTargetList = true;
       } catch (err) {
-        console.warn("[API generate-mockups] Không thể chuyển thẻ Trello:", err);
+        console.warn("[API generate-mockups] Cảnh báo chuyển cột Trello:", err);
       }
     }
     report?.({
       type: "progress",
       step: 1,
-      name: "Đã có đủ 7 ảnh",
+      name: "Đã có đủ ảnh",
       status: "success",
       phase: "upload",
-      message: `Thẻ đã có đủ ${imageAttachments.length}/7 ảnh đính kèm trên Trello. Đã tự động chuyển thẻ sang cột MOCKUP.`,
+      message: `Thẻ đã có đủ ${existingAiCount}/6 concept AI đính kèm trên Trello, đã tự động chuyển thẻ sang cột MOCKUP.`,
     });
     return {
       success: true,
@@ -277,13 +331,18 @@ async function executeMockupGeneration(
       uploadedCount: uploadedAttachments.length,
       attachments: uploadedAttachments,
       movedToTargetList,
-      message: `Thẻ đã có đủ ${imageAttachments.length}/7 ảnh đính kèm trên Trello, đã chuyển sang cột MOCKUP.`,
     };
   }
 
+  const selectedIndexesForGen = forceRegenerate
+    ? input.selectedSteps
+    : [1, ...stepsToGenerate];
+
   console.log(
-    `[API generate-mockups] SKU "${parsedTitle.sku}": đã có ${existingGeneratedAttachments.size}/6 ảnh AI, đang tạo các ảnh còn thiếu (tối đa tổng 7 ảnh)...`,
+    `[API generate-mockups] SKU "${parsedTitle.sku}": đang sinh thêm ${stepsToGenerate.length} concept AI... (đã có ${existingAiCount}/6 AI concept, forceRegenerate=${forceRegenerate})`,
   );
+
+  const uploadTasks: Promise<void>[] = [];
 
   const mockups = await generateAllMockups(
     {
@@ -295,65 +354,130 @@ async function executeMockupGeneration(
       inputMimeType: mimeType,
       model: selectedModel,
       quality: selectedQuality,
-      skipIndexes: Array.from(existingGeneratedAttachments.keys()),
-      selectedIndexes: input.selectedSteps,
+      skipIndexes,
+      selectedIndexes: selectedIndexesForGen,
       customMockups: input.customContents,
+      customRefinementNotes: input.customRefinementNotes,
       onMockupReady: async (mockup) => {
+        // 1. LIGHTWEIGHT WEBP PREVIEW (16KB vs 3MB PNG Base64!): Stream tiny WebP Data URI to UI instantly
+        const smallWebp = await sharp(mockup.buffer)
+          .resize(320, 320, { fit: "inside", withoutEnlargement: true })
+          .webp({ quality: 75 })
+          .toBuffer()
+          .catch(() => null);
+
+        const previewDataUri = smallWebp
+          ? `data:image/webp;base64,${smallWebp.toString("base64")}`
+          : undefined;
+
         report?.({
           type: "progress",
           step: mockup.index,
           name: mockup.name,
-          status: "processing",
-          phase: "upload",
-          message: `Đã tạo xong, đang tải ${mockup.name} lên Trello...`,
+          status: "success",
+          phase: "generation",
+          message: `Đã xong ${mockup.name}! Đang tải lên Trello...`,
+          attachmentUrl: previewDataUri,
+          previewUrl: previewDataUri,
+          thumbnailUrl: previewDataUri,
         });
-        try {
-          const attachment = await attachFileToTrelloCard(
-            card.id,
-            mockup.buffer,
-            mockup.type,
-            mockup.mimeType,
-            apiKey,
-            token,
-          );
-          uploadedAttachments.push({
-            index: mockup.index,
-            name: mockup.name,
-            attachmentId: attachment.id,
-            url: attachment.url,
-            status: "success",
-          });
-          report?.({
-            type: "progress",
-            step: mockup.index,
-            name: mockup.name,
-            status: "success",
-            phase: "upload",
-            message: `Đã tải ${mockup.name} lên Trello.`,
-            attachmentUrl: attachment.url,
-            attachmentId: attachment.id,
-          });
-        } catch (err: unknown) {
-          const errorMsg = err instanceof Error ? err.message : String(err);
-          console.error(
-            `[API generate-mockups] Lỗi khi upload ${mockup.name}:`,
-            errorMsg,
-          );
-          uploadedAttachments.push({
-            index: mockup.index,
-            name: mockup.name,
-            status: "failed",
-            error: errorMsg,
-          });
-          report?.({
-            type: "progress",
-            step: mockup.index,
-            name: mockup.name,
-            status: "error",
-            phase: "upload",
-            message: `Không thể tải ${mockup.name} lên Trello.`,
-          });
-        }
+
+        // 2. QUEUE TRELLO UPLOAD TO BACKGROUND TASK (AI worker is unblocked immediately!)
+        const uploadTask = (async () => {
+          try {
+            const attachment = await attachFileToTrelloCard(
+              card.id,
+              mockup.buffer,
+              mockup.type,
+              mockup.mimeType,
+              apiKey,
+              token,
+            );
+
+            const existingEntryIdx = uploadedAttachments.findIndex(
+              (item) => item.index === mockup.index,
+            );
+            const newEntry = {
+              index: mockup.index,
+              name: mockup.name,
+              attachmentId: attachment.id,
+              url: attachment.url,
+              status: "success" as const,
+            };
+            if (existingEntryIdx >= 0) {
+              uploadedAttachments[existingEntryIdx] = newEntry;
+            } else {
+              uploadedAttachments.push(newEntry);
+            }
+
+            report?.({
+              type: "progress",
+              step: mockup.index,
+              name: mockup.name,
+              status: "success",
+              phase: "upload",
+              message: `Đã tải ${mockup.name} lên Trello.`,
+              attachmentUrl: attachment.url,
+              attachmentId: attachment.id,
+            });
+
+            // WebP derivative creation & old attachment deletion
+            const derivatives = await createTrelloImageDerivatives(mockup.buffer).catch(() => null);
+            if (derivatives) {
+              await saveTrelloImageDerivatives(
+                scope,
+                card.id,
+                attachment.id,
+                derivatives,
+              ).catch((dbErr) => {
+                console.warn(
+                  `[API generate-mockups] Không thể lưu derivative DB cho ${mockup.name}:`,
+                  dbErr,
+                );
+              });
+            }
+
+            const oldAttachments = imageAttachments.filter(
+              (att) =>
+                att.id !== attachment.id &&
+                mockupIndexFromAttachmentName(att.name) === mockup.index,
+            );
+            if (oldAttachments.length > 0) {
+              await Promise.all(
+                oldAttachments.map((oldAtt) =>
+                  deleteTrelloCardAttachment(card.id, oldAtt.id, apiKey, token).catch((err) => {
+                    console.warn(
+                      `[API generate-mockups] Không thể xóa đính kèm cũ ID ${oldAtt.id} trên Trello:`,
+                      err,
+                    );
+                  }),
+                ),
+              );
+            }
+          } catch (err: unknown) {
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            console.error(
+              `[API generate-mockups] Lỗi khi upload ${mockup.name}:`,
+              errorMsg,
+            );
+            uploadedAttachments.push({
+              index: mockup.index,
+              name: mockup.name,
+              status: "failed",
+              error: errorMsg,
+            });
+            report?.({
+              type: "progress",
+              step: mockup.index,
+              name: mockup.name,
+              status: "error",
+              phase: "upload",
+              message: `Không thể tải ${mockup.name} lên Trello.`,
+            });
+          }
+        })();
+
+        uploadTasks.push(uploadTask);
       },
     },
     (step, name, status) => {
@@ -361,7 +485,6 @@ async function executeMockupGeneration(
         type: "progress",
         step,
         name,
-        // A generated image is not durable until Trello confirms the upload.
         status: "processing",
         phase: "generation",
         message:
@@ -375,6 +498,11 @@ async function executeMockupGeneration(
   console.log(
     `[API generate-mockups] Đã xử lý xong ${mockups.length - 1} ảnh AI mới cho SKU "${parsedTitle.sku}".`,
   );
+
+  // Await all Trello uploads to complete before finishing response
+  if (uploadTasks.length > 0) {
+    await Promise.allSettled(uploadTasks);
+  }
 
   const successfulIndexes = new Set(
     uploadedAttachments
@@ -399,10 +527,11 @@ async function executeMockupGeneration(
   ).length;
 
   let movedToTargetList = false;
-  if (targetListId && totalSuccessCount >= 7) {
+  // ONLY move card to MOCKUP list when card has ALL 7 images!
+  if (targetListId && (allUploadsSucceeded || totalSuccessCount >= 7)) {
     try {
       console.log(
-        `[API generate-mockups] Thẻ đã có ${totalSuccessCount}/7 ảnh. Đang chuyển thẻ Trello ${card.id} sang cột MOCKUP: ${targetListId}`,
+        `[API generate-mockups] Thẻ đã đủ ${totalSuccessCount}/7 ảnh, đang chuyển thẻ Trello "${card.name}" sang cột MOCKUP: ${targetListId}`,
       );
       await moveTrelloCard(card.id, targetListId, apiKey, token);
       movedToTargetList = true;
@@ -435,7 +564,7 @@ async function executeMockupGeneration(
   };
 }
 
-function createStreamingResponse(input: GenerateMockupsInput) {
+function createStreamingResponse(input: GenerateMockupsInput, scope: DataScope) {
   const encoder = new TextEncoder();
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -453,6 +582,7 @@ function createStreamingResponse(input: GenerateMockupsInput) {
       try {
         const result = await runMockupGeneration(
           input,
+          scope,
           send as ProgressReporter,
         );
         send({ type: "complete", data: result });

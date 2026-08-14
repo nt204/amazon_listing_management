@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import sharp from "sharp";
 import {
   createStoredImageDerivatives,
+  createTrelloImageDerivatives,
   prepareListingImagesForAi,
 } from "../lib/image-processing";
 import type { ListingInput } from "../lib/types";
@@ -79,4 +80,38 @@ test("image pipeline keeps exact master bytes and creates bounded derivatives", 
   assert.ok(
     Math.max(previewMetadata.width || 0, previewMetadata.height || 0) <= 640,
   );
+});
+
+test("Trello display derivatives are bounded WebP files and leave the master untouched", async () => {
+  const master = await sharp({
+    create: {
+      width: 2_000,
+      height: 1_500,
+      channels: 4,
+      background: { r: 25, g: 120, b: 220, alpha: 0.7 },
+    },
+  })
+    .png()
+    .toBuffer();
+  const masterCopy = Buffer.from(master);
+
+  const derivatives = await createTrelloImageDerivatives(master);
+  assert.deepEqual(master, masterCopy);
+  assert.deepEqual(
+    derivatives.map((item) => item.variant),
+    ["preview", "thumbnail"],
+  );
+
+  const preview = derivatives.find((item) => item.variant === "preview");
+  const thumbnail = derivatives.find((item) => item.variant === "thumbnail");
+  assert.ok(preview);
+  assert.ok(thumbnail);
+  assert.equal(preview.mimeType, "image/webp");
+  assert.equal(thumbnail.mimeType, "image/webp");
+  assert.ok(Math.max(preview.width, preview.height) <= 1_280);
+  assert.ok(Math.max(thumbnail.width, thumbnail.height) <= 320);
+  assert.match(preview.sha256, /^[a-f0-9]{64}$/);
+  assert.match(thumbnail.sha256, /^[a-f0-9]{64}$/);
+  assert.equal((await sharp(preview.bytes).metadata()).format, "webp");
+  assert.equal((await sharp(thumbnail.bytes).metadata()).format, "webp");
 });

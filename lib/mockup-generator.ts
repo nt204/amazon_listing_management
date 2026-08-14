@@ -5,16 +5,13 @@ import type { Dimensions3D } from "./trello";
 import { detectRasterImageMimeType } from "./image-processing";
 import { generateChatGPTWebImage } from "./chatgpt-web-automation";
 
-export type MockupModel =
-  | "gpt-image-2"
-  | "gpt-image-2-c"
-  | "gpt-image-1.5"
-  | "gemini-3.1-flash-image"
-  | "gemini-3-pro-image"
-  | "fast-graphic"
-  | "chatgpt-web-automation";
+import {
+  type MockupModel,
+  type MockupImageQuality,
+  mockupIndexFromAttachmentName,
+} from "./mockup-types";
 
-export type MockupImageQuality = "low" | "medium" | "high";
+export * from "./mockup-types";
 
 export interface MockupResult {
   index: number;
@@ -63,6 +60,8 @@ export interface GenerateMockupsOptions {
   selectedIndexes?: readonly number[];
   /** User-defined scene concepts, beginning at index 11. */
   customMockups?: readonly { id: number; label: string }[];
+  /** Optional custom user refinement prompt notes per mockup index. */
+  customRefinementNotes?: Record<number, string>;
   /** Called immediately after each AI image is ready, before the next image starts. */
   onMockupReady?: (mockup: MockupResult) => Promise<void> | void;
 }
@@ -205,23 +204,30 @@ export async function generateAllMockups(
   const normalizedDesignBuffer = await normalizeDesignImage(inputDesignBuffer);
   const base64Design = normalizedDesignBuffer.toString("base64");
 
-  // Mockup 1: 3D Dimensions Graphic with thickness callout
-  progressCallback?.(1, MOCKUP_TYPES[0].name, "processing");
-  const mockup1Buffer = await renderGraphicMockup("dimensions_3d", {
-    sku,
-    itemName,
-    dimensions,
-    base64Design,
-  });
-  const mockup1: MockupResult = {
-    index: 1,
-    name: MOCKUP_TYPES[0].name,
-    type: MOCKUP_TYPES[0].fileName,
-    buffer: mockup1Buffer,
-    mimeType: "image/png",
-    description: MOCKUP_TYPES[0].description,
-  };
-  progressCallback?.(1, MOCKUP_TYPES[0].name, "success");
+  const selectedIndexesSet = options.selectedIndexes
+    ? new Set(options.selectedIndexes)
+    : null;
+
+  const shouldRenderMockup1 =
+    !skippedIndexes.has(1) &&
+    (!selectedIndexesSet || selectedIndexesSet.has(1));
+
+  let mockup1: MockupResult | null = null;
+
+  if (shouldRenderMockup1) {
+    // Mockup 1: Full Design (Ảnh Gốc Đầu Vào)
+    progressCallback?.(1, MOCKUP_TYPES[0].name, "processing");
+    mockup1 = {
+      index: 1,
+      name: MOCKUP_TYPES[0].name,
+      type: MOCKUP_TYPES[0].fileName,
+      buffer: normalizedDesignBuffer,
+      mimeType: "image/png",
+      description: MOCKUP_TYPES[0].description,
+    };
+    progressCallback?.(1, MOCKUP_TYPES[0].name, "success");
+    await options.onMockupReady?.(mockup1);
+  }
 
   const openaiApiKey = process.env.OPENAI_API_KEY;
   const cheapKeyAIApiKey = process.env.CHEAPKEYAI_API_KEY;
@@ -270,9 +276,7 @@ export async function generateAllMockups(
     }
   }
 
-  const selectedIndexesSet = options.selectedIndexes
-    ? new Set(options.selectedIndexes)
-    : null;
+
 
   const targetMockups = effectiveMockupTypes.slice(1).filter((meta) => {
     if (skippedIndexes.has(meta.index)) return false;
@@ -289,12 +293,15 @@ export async function generateAllMockups(
       let mockupBuffer: Buffer;
       let providerTrace: MockupResult["providerTrace"];
 
+      const refinementNote = options.customRefinementNotes?.[meta.index];
+
       if (isImageApiModel(model) && openaiClient && openaiInput) {
         const prompt = buildMockupPrompt(
           meta.promptKey,
           itemName,
           dimensions,
           productContext,
+          refinementNote,
         );
         const usesCheapKeyAI = isCheapKeyAIImageModel(model);
         // Output quality and source fidelity are independent. CheapKeyAI bills
@@ -400,6 +407,7 @@ export async function generateAllMockups(
           itemName,
           dimensions,
           productContext,
+          refinementNote,
         );
         const response = await genAI.models.generateContent({
           model,
@@ -437,6 +445,7 @@ export async function generateAllMockups(
           itemName,
           dimensions,
           productContext,
+          refinementNote,
         );
         console.info(`[ChatGPT Web Automation] Generating ${meta.name} with prompt: ${prompt.substring(0, 100)}...`);
         mockupBuffer = await generateChatGPTWebImage(prompt, { inputImageBuffer: normalizedDesignBuffer });
@@ -460,21 +469,18 @@ export async function generateAllMockups(
     },
   );
 
-  return [mockup1, ...generatedResults.sort((a, b) => a.index - b.index)];
+  const allResults = mockup1 ? [mockup1, ...generatedResults] : generatedResults;
+  return allResults.sort((a, b) => a.index - b.index);
 }
 
-export function mockupIndexFromAttachmentName(name: string): number | null {
-  const match = name.trim().match(/^Mockup(\d+)_/i);
-  if (!match) return null;
-  const index = Number(match[1]);
-  return Number.isInteger(index) && index >= 2 && index <= 20 ? index : null;
-}
+
 
 export function buildMockupPrompt(
   promptKey: string,
   itemName: string,
   dimensions: Dimensions3D,
   productContext?: string,
+  refinementNote?: string,
 ): string {
   let concept: string;
   switch (promptKey) {
@@ -568,6 +574,10 @@ export function buildMockupPrompt(
 
   const productContextLine = productContext?.trim()
     ? `\nThông tin bổ sung từ thẻ sản phẩm:\n${productContext.trim()}\n`
+    : "";
+
+  const refinementLine = refinementNote?.trim()
+    ? `\n\n[CHỈ DẪN TINH CHỈNH TỪ NGƯỜI DÙNG / USER REFINEMENT NOTE]:\n${refinementNote.trim()}\n`
     : "";
 
   return `Sử dụng Ảnh 1 làm ảnh tham chiếu cho sản phẩm "${itemName}".${productContextLine}
@@ -911,6 +921,7 @@ function configuredGeminiRetryAttempts() {
 
 function configuredConcurrency(model: MockupModel) {
   if (model === "chatgpt-web-automation") return 1;
+  const isCheapKeyAI = isCheapKeyAIImageModel(model);
   const isGeminiImage =
     model === "gemini-3.1-flash-image" || model === "gemini-3-pro-image";
   const configured = isGeminiImage
@@ -918,8 +929,9 @@ function configuredConcurrency(model: MockupModel) {
     : process.env.IMAGE_GENERATION_CONCURRENCY;
   const fallback = isGeminiImage ? 1 : 3;
   const parsed = Number(configured || fallback);
+  const maxAllowed = isCheapKeyAI ? 3 : 6;
   return Number.isFinite(parsed)
-    ? Math.min(6, Math.max(1, Math.round(parsed)))
+    ? Math.min(maxAllowed, Math.max(1, Math.round(parsed)))
     : fallback;
 }
 

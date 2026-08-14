@@ -1,6 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  type SyntheticEvent,
+} from "react";
 import {
   SparkleIcon,
   SpinnerIcon,
@@ -22,9 +28,18 @@ import {
   TrashIcon,
   GearIcon,
   PlusIcon,
+  ThumbsUpIcon,
+  ThumbsDownIcon,
+  EyeIcon,
+  CaretLeftIcon,
+  CaretRightIcon,
 } from "@phosphor-icons/react";
 import { parseCardDimensions, type Dimensions3D } from "@/lib/trello";
 import { downloadOriginalTrelloImage } from "@/lib/trello-image-client";
+import {
+  mockupIndexFromAttachmentName,
+  type MockupModel,
+} from "@/lib/mockup-types";
 
 interface TrelloCard {
   id: string;
@@ -38,6 +53,7 @@ interface TrelloCard {
     url: string;
     mimeType: string;
     previewUrl?: string;
+    thumbnailUrl?: string;
   }>;
   parsed?: {
     sku: string;
@@ -89,6 +105,8 @@ interface MockupGenerationResponse {
   attachments: Array<{
     index: number;
     status: "success" | "failed";
+    previewUrl?: string;
+    thumbnailUrl?: string;
     error?: string;
   }>;
 }
@@ -102,6 +120,8 @@ type MockupStreamEvent =
     attachmentUrl?: string;
     attachmentId?: string;
     name?: string;
+    previewUrl?: string;
+    thumbnailUrl?: string;
   }
   | { type: "complete"; data: MockupGenerationResponse }
   | { type: "error"; error: string }
@@ -166,6 +186,16 @@ const DEFAULT_SYSTEM_MOCKUP_CONTENTS = [
 
 const MOCKUP_CONTENTS_STORAGE_KEY = "listing_desk_mockup_contents_v3";
 
+function fallBackToMasterImage(
+  event: SyntheticEvent<HTMLImageElement>,
+  masterUrl: string,
+) {
+  const image = event.currentTarget;
+  if (image.dataset.masterFallback === "true") return;
+  image.dataset.masterFallback = "true";
+  image.src = masterUrl;
+}
+
 export function AutoMockupGenerator({
   apiKey,
   token,
@@ -178,8 +208,8 @@ export function AutoMockupGenerator({
   const [designCards, setDesignCards] = useState<TrelloCard[]>([]);
   const [mockupCards, setMockupCards] = useState<TrelloCard[]>([]);
 
-  const [selectedModel, setSelectedModel] = useState<string>(
-    DEFAULT_MOCKUP_MODEL,
+  const [selectedModel, setSelectedModel] = useState<MockupModel>(
+    DEFAULT_MOCKUP_MODEL as MockupModel,
   );
   const [selectedQuality, setSelectedQuality] = useState<
     "low" | "medium" | "high"
@@ -199,20 +229,53 @@ export function AutoMockupGenerator({
   ).length;
 
   useEffect(() => {
-    // Load persisted mockup contents from localStorage
+    // Load persisted mockup contents from localStorage and merge with system defaults
     try {
       const saved = localStorage.getItem(MOCKUP_CONTENTS_STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const formatted = parsed.map(
-            (item: { id: number; label: string; checked?: boolean }) => ({
-              id: Number(item.id),
-              label: String(item.label),
-              checked: item.id === 1 ? true : Boolean(item.checked),
-            }),
+          const savedMap = new Map(
+            parsed.map((item: { id: number; label: string; checked?: boolean }) => [
+              Number(item.id),
+              item,
+            ]),
           );
-          setMockupContents(formatted);
+          const merged = DEFAULT_SYSTEM_MOCKUP_CONTENTS.map((defaultItem) => {
+            const savedItem = savedMap.get(defaultItem.id);
+            if (savedItem) {
+              return {
+                ...defaultItem,
+                label: savedItem.label || defaultItem.label,
+                checked: defaultItem.id === 1 ? true : Boolean(savedItem.checked),
+              };
+            }
+            return defaultItem;
+          });
+          parsed.forEach((savedItem: { id: number; label: string; checked?: boolean }) => {
+            if (savedItem.id >= 11 && !merged.some((m) => m.id === savedItem.id)) {
+              merged.push({
+                id: Number(savedItem.id),
+                label: String(savedItem.label),
+                checked: Boolean(savedItem.checked),
+              });
+            }
+          });
+
+          // Enforce max 6 checked AI options (max 7 total including Content 1)
+          let checkedAiCount = 0;
+          const sanitized = merged.map((item) => {
+            if (item.id === 1) return { ...item, checked: true };
+            if (item.checked) {
+              if (checkedAiCount < 6) {
+                checkedAiCount++;
+                return item;
+              }
+              return { ...item, checked: false };
+            }
+            return item;
+          });
+          setMockupContents(sanitized);
         }
       }
     } catch {
@@ -249,11 +312,11 @@ export function AutoMockupGenerator({
     }
 
     const currentItem = mockupContents.find((c) => c.id === id);
-    const totalChecked = mockupContents.filter((c) => c.checked).length;
+    const checkedAiCount = mockupContents.filter((c) => c.checked && c.id >= 2).length;
 
-    if (currentItem && !currentItem.checked && totalChecked >= 7) {
+    if (currentItem && !currentItem.checked && checkedAiCount >= 6) {
       setContentNoticeMsg(
-        "Đã đạt giới hạn tối đa 7 Content (1 Content 1 bắt buộc + tối đa 6 Content AI). Vui lòng bỏ chọn một content khác nếu muốn thay đổi.",
+        "Tối đa chỉ được chọn 6 option AI (tổng 7 Content gồm Content 1). Vui lòng bỏ chọn 1 option AI khác để chọn option này.",
       );
       return;
     }
@@ -289,8 +352,8 @@ export function AutoMockupGenerator({
       mockupContents.length > 0
         ? Math.max(...mockupContents.map((c) => c.id)) + 1
         : 1;
-    const currentChecked = mockupContents.filter((c) => c.checked).length;
-    const shouldCheck = currentChecked < 7;
+    const checkedAiCount = mockupContents.filter((c) => c.checked && c.id >= 2).length;
+    const shouldCheck = checkedAiCount < 6;
     const updated = [
       ...mockupContents,
       {
@@ -307,7 +370,7 @@ export function AutoMockupGenerator({
     setContentNoticeMsg(
       shouldCheck
         ? ""
-        : "Đã thêm Content mới (chưa bật chọn do đã đủ 7/7 Content).",
+        : "Đã thêm Content mới (chưa bật chọn do đã chọn tối đa 6/6 option AI).",
     );
   };
 
@@ -347,8 +410,97 @@ export function AutoMockupGenerator({
   >({});
   const [generationStatusText, setGenerationStatusText] = useState<string>("");
   const [generationResult, setGenerationResult] = useState<string | null>(null);
-  const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null);
+
+  // Studio Lightbox & Side-by-Side Refinement Modal State
+  const [studioModal, setStudioModal] = useState<{
+    cardId: string;
+    attachmentIndex: number;
+  } | null>(null);
+  const [regenPromptNote, setRegenPromptNote] = useState<string>("");
+  const [regenModel, setRegenModel] = useState<MockupModel>("gpt-image-1.5");
+  const [isRegeneratingSingle, setIsRegeneratingSingle] = useState(false);
+  const [singleRegenStatusText, setSingleRegenStatusText] = useState<string>("");
   const [downloadingImage, setDownloadingImage] = useState(false);
+
+  // Approval status tracking: map of `${cardId}_${attachmentId}` => "approved" | "rejected" | "pending"
+  const [approvalMap, setApprovalMap] = useState<
+    Record<string, "approved" | "rejected" | "pending">
+  >({});
+
+  const allBoardCards = [...designCards, ...mockupCards];
+  const activeStudioCard = allBoardCards.find((c) => c.id === studioModal?.cardId);
+  const activeCardIndex = allBoardCards.findIndex((c) => c.id === studioModal?.cardId);
+
+  // Keyboard navigation for Studio Modal (Left / Right Arrow) with Input Focus Guard
+  useEffect(() => {
+    if (!studioModal || !activeStudioCard) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Do NOT trigger keyboard navigation if focus is inside an input, textarea, or select element
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      const cardAtts = activeStudioCard.attachments || [];
+
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        setStudioModal((prev) => {
+          if (!prev) return null;
+          if (cardAtts.length > 1) {
+            return {
+              ...prev,
+              attachmentIndex: (prev.attachmentIndex - 1 + cardAtts.length) % cardAtts.length,
+            };
+          }
+          if (allBoardCards.length > 1) {
+            const prevCardIdx = (activeCardIndex - 1 + allBoardCards.length) % allBoardCards.length;
+            return { cardId: allBoardCards[prevCardIdx].id, attachmentIndex: 0 };
+          }
+          return prev;
+        });
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        setStudioModal((prev) => {
+          if (!prev) return null;
+          if (cardAtts.length > 1) {
+            return {
+              ...prev,
+              attachmentIndex: (prev.attachmentIndex + 1) % cardAtts.length,
+            };
+          }
+          if (allBoardCards.length > 1) {
+            const nextCardIdx = (activeCardIndex + 1) % allBoardCards.length;
+            return { cardId: allBoardCards[nextCardIdx].id, attachmentIndex: 0 };
+          }
+          return prev;
+        });
+      } else if (e.key === "Escape") {
+        setStudioModal(null);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [studioModal, activeStudioCard, activeCardIndex, allBoardCards]);
+
+  const toggleApprovalStatus = (
+    cardId: string,
+    attachmentId: string,
+    targetStatus: "approved" | "rejected",
+  ) => {
+    const key = `${cardId}_${attachmentId}`;
+    setApprovalMap((prev) => ({
+      ...prev,
+      [key]: prev[key] === targetStatus ? "pending" : targetStatus,
+    }));
+  };
 
   const [draggedCardId, setDraggedCardId] = useState<string | null>(null);
   const [draggedFromColumn, setDraggedFromColumn] = useState<"design" | "mockup" | null>(null);
@@ -512,12 +664,7 @@ export function AutoMockupGenerator({
       );
       return;
     }
-    if ((card.attachments?.length || 0) >= 7) {
-      setErrorMsg(
-        `Thẻ "${card.parsed?.itemName || card.name}" đã có đủ ${card.attachments?.length}/7 ảnh đính kèm trên Trello. Giữ nguyên 7 ảnh chuẩn, không tạo thêm ảnh thứ 8.`,
-      );
-      return;
-    }
+
     const selectedAiSteps = mockupContents
       .filter((content) => content.checked && content.id >= 2)
       .map((content) => content.id);
@@ -585,31 +732,34 @@ export function AutoMockupGenerator({
             [event.step]: event.status,
           }));
 
-          // When an image is ready & attached on Trello, display it on the MOCKUP card real-time!
+          // When an image is ready & attached on Trello, display it on screen real-time!
           if (event.status === "success" && event.attachmentUrl) {
             const newAtt = {
               id: event.attachmentId || String(Date.now()),
               name: event.name || `Mockup ${event.step}`,
               url: event.attachmentUrl,
               mimeType: "image/png",
+              previewUrl: event.previewUrl,
+              thumbnailUrl: event.thumbnailUrl,
             };
-            setMockupCards((prev) =>
+            const updateCardAttachments = (prev: TrelloCard[]) =>
               prev.map((c) => {
                 if (c.id !== card.id) return c;
                 const existingAtts = c.attachments || [];
-                if (existingAtts.some((a) => a.url === newAtt.url || a.id === newAtt.id)) {
-                  return c;
-                }
+                const filteredAtts = existingAtts.filter((a) => {
+                  if (a.id === newAtt.id || a.url === newAtt.url) return false;
+                  const step = mockupIndexFromAttachmentName(a.name);
+                  if (step !== null && step > 0 && step === event.step) return false;
+                  return true;
+                });
                 return {
                   ...c,
-                  attachments: [...existingAtts, newAtt],
+                  attachments: [...filteredAtts, newAtt],
                 };
-              }),
-            );
-            setPreviewImage({
-              url: event.attachmentUrl,
-              name: event.name || `Mockup ${event.step}`,
-            });
+              });
+
+            setDesignCards(updateCardAttachments);
+            setMockupCards(updateCardAttachments);
           }
         } else if (event.type === "complete") {
           streamResult.data = event.data;
@@ -743,46 +893,403 @@ export function AutoMockupGenerator({
 
   return (
     <div className="space-y-6 text-slate-800 font-sans">
-      {/* Lightbox Preview Modal */}
-      {previewImage && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 p-4 backdrop-blur-xs">
-          <div className="relative max-h-[90vh] max-w-[90vw] overflow-hidden rounded-2xl bg-white p-2 shadow-2xl">
-            <button
-              onClick={async () => {
-                setDownloadingImage(true);
-                try {
-                  await downloadOriginalTrelloImage({ ...previewImage, apiKey, token });
-                } catch (error) {
-                  setErrorMsg(error instanceof Error ? error.message : "Không thể tải ảnh gốc.");
-                } finally {
-                  setDownloadingImage(false);
-                }
-              }}
-              disabled={downloadingImage}
-              className="absolute right-16 top-4 flex items-center gap-1.5 rounded-full bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-60"
-              title="Tải đúng file ảnh gốc, không nén lại"
-            >
-              {downloadingImage ? (
-                <SpinnerIcon className="h-4 w-4 animate-spin" />
-              ) : (
-                <DownloadSimpleIcon className="h-4 w-4" />
-              )}
-              Tải ảnh gốc
-            </button>
-            <button
-              onClick={() => setPreviewImage(null)}
-              className="absolute right-4 top-4 rounded-full bg-black/60 p-2 text-white hover:bg-black transition"
-            >
-              <XIcon className="h-5 w-5" />
-            </button>
-            <img
-              src={previewImage.url}
-              alt="Mockup Preview"
-              className="max-h-[85vh] w-auto rounded-xl object-contain"
-            />
+      {/* Studio Lightbox & Image Refinement Side-by-Side Modal */}
+      {studioModal && activeStudioCard && activeStudioCard.attachments && activeStudioCard.attachments.length > 0 && (() => {
+        const card = activeStudioCard;
+        const attachments = card.attachments || [];
+        const safeIndex = Math.min(Math.max(0, studioModal.attachmentIndex), attachments.length - 1);
+        const currentAtt = attachments[safeIndex];
+        const stepId = mockupIndexFromAttachmentName(currentAtt.name) || (safeIndex === 0 ? 1 : undefined);
+        const statusKey = `${card.id}_${currentAtt.id}`;
+        const currentStatus = approvalMap[statusKey];
+
+        const handlePrev = () => {
+          if (attachments.length > 1) {
+            setStudioModal({
+              cardId: card.id,
+              attachmentIndex: (safeIndex - 1 + attachments.length) % attachments.length,
+            });
+          } else if (allBoardCards.length > 1) {
+            const prevIdx = (activeCardIndex - 1 + allBoardCards.length) % allBoardCards.length;
+            setStudioModal({ cardId: allBoardCards[prevIdx].id, attachmentIndex: 0 });
+          }
+        };
+
+        const handleNext = () => {
+          if (attachments.length > 1) {
+            setStudioModal({
+              cardId: card.id,
+              attachmentIndex: (safeIndex + 1) % attachments.length,
+            });
+          } else if (allBoardCards.length > 1) {
+            const nextIdx = (activeCardIndex + 1) % allBoardCards.length;
+            setStudioModal({ cardId: allBoardCards[nextIdx].id, attachmentIndex: 0 });
+          }
+        };
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-3 sm:p-5 backdrop-blur-md">
+            <div className="relative flex h-[94vh] w-[96vw] max-w-6xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl border border-slate-200/80">
+
+              {/* Top Header Bar */}
+              <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/90 px-5 py-3 gap-4 shrink-0">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className="font-extrabold text-sm text-slate-900 truncate">
+                    {currentAtt.name}
+                  </span>
+                  <span className="rounded-lg bg-indigo-100 px-2.5 py-0.5 text-xs font-black text-indigo-800 font-mono shrink-0 border border-indigo-200">
+                    SKU: {card.parsed?.sku || "SKU"}
+                  </span>
+                  <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-extrabold text-slate-700 shrink-0">
+                    Ảnh {safeIndex + 1} / {attachments.length}
+                  </span>
+                  {allBoardCards.length > 1 && (
+                    <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl px-2 py-0.5 text-xs font-bold text-slate-600 shadow-2xs shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const prevIdx = (activeCardIndex - 1 + allBoardCards.length) % allBoardCards.length;
+                          setStudioModal({ cardId: allBoardCards[prevIdx].id, attachmentIndex: 0 });
+                        }}
+                        className="hover:text-indigo-600 transition p-0.5"
+                        title="Chuyển sang Thẻ / SKU trước"
+                      >
+                        <CaretLeftIcon className="h-3.5 w-3.5" />
+                      </button>
+                      <span>Thẻ {activeCardIndex + 1}/{allBoardCards.length}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const nextIdx = (activeCardIndex + 1) % allBoardCards.length;
+                          setStudioModal({ cardId: allBoardCards[nextIdx].id, attachmentIndex: 0 });
+                        }}
+                        className="hover:text-indigo-600 transition p-0.5"
+                        title="Chuyển sang Thẻ / SKU tiếp theo"
+                      >
+                        <CaretRightIcon className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  {/* Approval toggle */}
+                  <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl p-1 shadow-2xs">
+                    <button
+                      type="button"
+                      onClick={() => toggleApprovalStatus(card.id, currentAtt.id, "approved")}
+                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-extrabold transition ${
+                        currentStatus === "approved"
+                          ? "bg-emerald-600 text-white shadow-xs"
+                          : "text-slate-600 hover:bg-emerald-50 hover:text-emerald-700"
+                      }`}
+                    >
+                      <ThumbsUpIcon className="h-4 w-4" />
+                      <span>Duyệt 💚</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleApprovalStatus(card.id, currentAtt.id, "rejected")}
+                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-extrabold transition ${
+                        currentStatus === "rejected"
+                          ? "bg-rose-600 text-white shadow-xs"
+                          : "text-slate-600 hover:bg-rose-50 hover:text-rose-700"
+                      }`}
+                    >
+                      <ThumbsDownIcon className="h-4 w-4" />
+                      <span>Chưa ưng 🔴</span>
+                    </button>
+                  </div>
+
+                  {/* Download */}
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setDownloadingImage(true);
+                      try {
+                        await downloadOriginalTrelloImage({
+                          url: currentAtt.url,
+                          name: currentAtt.name,
+                          apiKey,
+                          token,
+                        });
+                      } catch (error) {
+                        setErrorMsg(error instanceof Error ? error.message : "Không thể tải ảnh.");
+                      } finally {
+                        setDownloadingImage(false);
+                      }
+                    }}
+                    disabled={downloadingImage}
+                    className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-60 transition"
+                  >
+                    {downloadingImage ? (
+                      <SpinnerIcon className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <DownloadSimpleIcon className="h-4 w-4" />
+                    )}
+                    <span>Tải ảnh gốc</span>
+                  </button>
+
+                  {/* Close */}
+                  <button
+                    type="button"
+                    onClick={() => setStudioModal(null)}
+                    className="rounded-xl bg-slate-200 p-2 text-slate-600 hover:bg-slate-300 transition"
+                  >
+                    <XIcon className="h-5 w-5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Main Body: 2 Columns Side-by-Side */}
+              <div className="flex flex-1 flex-col md:flex-row overflow-hidden">
+
+                {/* COLUMN 1 (LEFT): Large Image Display with Next/Prev Arrow Navigation */}
+                <div className="relative flex flex-1 items-center justify-center bg-slate-950 p-4 select-none group min-h-[300px]">
+
+                  {/* Left Arrow Button */}
+                  {attachments.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={handlePrev}
+                      className="absolute left-4 top-1/2 -translate-y-1/2 z-10 flex h-12 w-12 items-center justify-center rounded-full bg-slate-900/80 text-white backdrop-blur-md border border-white/20 shadow-2xl hover:bg-slate-900 hover:scale-110 active:scale-95 transition"
+                      title="Ảnh trước (Mũi tên Trái ◀)"
+                    >
+                      <CaretLeftIcon className="h-7 w-7" weight="bold" />
+                    </button>
+                  )}
+
+                  {/* Large High-Res Image */}
+                  <img
+                    key={currentAtt.id}
+                    src={currentAtt.previewUrl || currentAtt.url}
+                    alt={currentAtt.name}
+                    className="max-h-[75vh] max-w-full rounded-2xl object-contain shadow-2xl transition"
+                    decoding="async"
+                    fetchPriority="high"
+                    onError={(event) =>
+                      fallBackToMasterImage(event, currentAtt.url)
+                    }
+                  />
+
+                  {/* Right Arrow Button */}
+                  {attachments.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={handleNext}
+                      className="absolute right-4 top-1/2 -translate-y-1/2 z-10 flex h-12 w-12 items-center justify-center rounded-full bg-slate-900/80 text-white backdrop-blur-md border border-white/20 shadow-2xl hover:bg-slate-900 hover:scale-110 active:scale-95 transition"
+                      title="Ảnh tiếp theo (Mũi tên Phải ▶)"
+                    >
+                      <CaretRightIcon className="h-7 w-7" weight="bold" />
+                    </button>
+                  )}
+
+                  {/* Bottom Thumbnail Navigation Strip */}
+                  {attachments.length > 1 && (
+                    <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 rounded-2xl bg-slate-900/85 p-1.5 backdrop-blur-md border border-white/10 max-w-[90%] overflow-x-auto shadow-2xl">
+                      {attachments.map((att, idx) => (
+                        <button
+                          key={att.id}
+                          type="button"
+                          onClick={() => setStudioModal({ cardId: card.id, attachmentIndex: idx })}
+                          className={`h-10 w-10 overflow-hidden rounded-xl border transition shrink-0 ${
+                            idx === safeIndex
+                              ? "border-amber-400 ring-2 ring-amber-400/50 scale-105"
+                              : "border-transparent opacity-50 hover:opacity-100"
+                          }`}
+                        >
+                          <img
+                            src={att.thumbnailUrl || att.previewUrl || att.url}
+                            alt=""
+                            className="h-full w-full object-cover"
+                            loading="lazy"
+                            decoding="async"
+                            onError={(event) => fallBackToMasterImage(event, att.url)}
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* COLUMN 2 (RIGHT): Refinement & AI Generation Form Side-by-Side */}
+                <div className="w-full md:w-[320px] lg:w-[350px] shrink-0 border-t md:border-t-0 md:border-l border-slate-200 bg-white p-5 flex flex-col justify-between overflow-y-auto space-y-4">
+
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                      <LightningIcon className="h-5 w-5 text-amber-500 shrink-0" />
+                      <h4 className="text-sm font-extrabold text-slate-900">
+                        Gen Lại Ảnh Này
+                      </h4>
+                    </div>
+
+                    {/* Model Select */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        AI Model:
+                      </label>
+                      <select
+                        value={regenModel}
+                        onChange={(e) => setRegenModel(e.target.value as MockupModel)}
+                        className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 shadow-2xs"
+                      >
+                        <option value="gpt-image-1.5">⚡ GPT Image 1.5 (Nhanh & Ổn Định)</option>
+                        <option value="gpt-image-2">🎨 GPT Image 2 (Mới & Chi Tiết)</option>
+                        <option value="gpt-image-2-c">💰 CheapKeyAI GPT Image 2 (Tiết Kiệm)</option>
+                        <option value="gemini-3-pro-image">💎 Gemini 3 Pro Image (Sắc Nét)</option>
+                        <option value="gemini-3.1-flash-image">⚡ Gemini 3.1 Flash Image (Tốc Độ)</option>
+                      </select>
+                    </div>
+
+                    {/* Prompt Refinement Textarea */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Mô tả tinh chỉnh AI:
+                      </label>
+                      <textarea
+                        value={regenPromptNote}
+                        onChange={(e) => setRegenPromptNote(e.target.value)}
+                        placeholder="Ví dụ: Đèn Giáng Sinh sáng hơn, bối cảnh tự nhiên hơn..."
+                        rows={6}
+                        className="w-full rounded-xl border border-slate-300 p-3 text-xs font-medium text-slate-800 outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-600/20 placeholder:text-slate-400 shadow-2xs leading-relaxed"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Action Button */}
+                  <div className="pt-3 border-t border-slate-100 shrink-0 space-y-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!stepId) {
+                          setErrorMsg("Không xác định được vị trí mockup để gen lại.");
+                          return;
+                        }
+                        setIsRegeneratingSingle(true);
+                        setSingleRegenStatusText("Đang kết nối AI...");
+                        setErrorMsg("");
+                        try {
+                          const res = await fetch("/api/trello/generate-mockups", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              cardId: card.id,
+                              targetListId: mockupListId || undefined,
+                              apiKey,
+                              token,
+                              model: regenModel,
+                              quality: selectedQuality,
+                              selectedSteps: [stepId],
+                              customRefinementNotes: regenPromptNote.trim()
+                                ? { [stepId]: regenPromptNote.trim() }
+                                : undefined,
+                              stream: true,
+                            }),
+                          });
+
+                          if (!res.ok) {
+                            const errData = await res.json().catch(() => ({}));
+                            throw new Error(errData.error || `Lỗi HTTP ${res.status}`);
+                          }
+
+                          if (!res.body) {
+                            throw new Error("Server không trả về luồng tiến độ.");
+                          }
+
+                          const reader = res.body.getReader();
+                          const decoder = new TextDecoder();
+                          let buffered = "";
+
+                          while (true) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+
+                            buffered += decoder.decode(value, { stream: true });
+                            const lines = buffered.split("\n");
+                            buffered = lines.pop() || "";
+
+                            for (const line of lines) {
+                              if (!line.trim()) continue;
+                              try {
+                                const event = JSON.parse(line.trim()) as MockupStreamEvent;
+                                if (event.type === "progress") {
+                                  setSingleRegenStatusText(event.message);
+                                  if (event.status === "success" && event.attachmentUrl) {
+                                    const newAtt = {
+                                      id: event.attachmentId || String(Date.now()),
+                                      name: event.name || `Mockup ${event.step}`,
+                                      url: event.attachmentUrl,
+                                      mimeType: "image/png",
+                                      previewUrl: event.previewUrl,
+                                      thumbnailUrl: event.thumbnailUrl,
+                                    };
+                                    const updateCardAttachments = (prev: TrelloCard[]) =>
+                                      prev.map((c) => {
+                                        if (c.id !== card.id) return c;
+                                        const existingAtts = c.attachments || [];
+                                        const filteredAtts = existingAtts.filter((a) => {
+                                          if (a.id === newAtt.id || a.url === newAtt.url) return false;
+                                          const step = mockupIndexFromAttachmentName(a.name);
+                                          if (step !== null && step > 0 && step === event.step) return false;
+                                          return true;
+                                        });
+                                        return {
+                                          ...c,
+                                          attachments: [...filteredAtts, newAtt],
+                                        };
+                                      });
+
+                                    setDesignCards(updateCardAttachments);
+                                    setMockupCards(updateCardAttachments);
+                                  }
+                                }
+                              } catch {
+                                // Ignore JSON parse errors
+                              }
+                            }
+                          }
+
+                          await syncAllColumns();
+                          setRegenPromptNote("");
+                        } catch (err) {
+                          setErrorMsg(err instanceof Error ? err.message : "Lỗi khi gen lại ảnh.");
+                        } finally {
+                          setIsRegeneratingSingle(false);
+                          setSingleRegenStatusText("");
+                        }
+                      }}
+                      disabled={isRegeneratingSingle}
+                      className="w-full flex items-center justify-center gap-2 rounded-2xl bg-amber-500 py-3 px-4 text-sm font-black text-white shadow-md hover:bg-amber-600 active:scale-[0.98] disabled:opacity-50 transition"
+                    >
+                      {isRegeneratingSingle ? (
+                        <div className="flex flex-col items-center justify-center py-0.5">
+                          <div className="flex items-center gap-2">
+                            <SpinnerIcon className="h-5 w-5 animate-spin text-white" />
+                            <span>Đang Gen Lại...</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <SparkleIcon className="h-5 w-5 text-amber-200" />
+                          <span>✨ Gen Lại Tấm Ảnh Này Ngay</span>
+                        </>
+                      )}
+                    </button>
+                    {isRegeneratingSingle && singleRegenStatusText && (
+                      <div className="text-center text-xs font-bold text-amber-600 animate-pulse bg-amber-50 rounded-xl py-1.5 px-2 border border-amber-200">
+                        {singleRegenStatusText}
+                      </div>
+                    )}
+                  </div>
+
+                </div>
+
+              </div>
+
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Floating Multi-Select Batch Action Bar */}
       {selectedCardIds.size > 0 && (
@@ -857,7 +1364,7 @@ export function AutoMockupGenerator({
               <span className="text-xs font-bold text-slate-600">Model:</span>
               <select
                 value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
+                onChange={(e) => setSelectedModel(e.target.value as MockupModel)}
                 className="bg-transparent text-xs font-extrabold text-slate-900 outline-none cursor-pointer pr-1"
               >
                 <option value="gpt-image-2-c">
@@ -1297,19 +1804,52 @@ export function AutoMockupGenerator({
                       </div>
                       {imageAttachments.length > 0 ? (
                         <div className="flex flex-wrap gap-2 overflow-x-auto py-1">
-                          {imageAttachments.map((att) => (
-                            <div
-                              key={att.id}
-                              onClick={() => setPreviewImage({ url: att.url, name: att.name })}
-                              className="group relative h-16 w-16 cursor-pointer overflow-hidden rounded-xl border border-slate-200 bg-slate-100 shadow-xs hover:border-indigo-500 hover:shadow-md transition shrink-0"
-                            >
-                              <img
-                                src={att.previewUrl || att.url}
-                                alt={att.name}
-                                className="h-full w-full object-cover transition group-hover:scale-105"
-                              />
-                            </div>
-                          ))}
+                          {imageAttachments.map((att, idx) => {
+                            const stepId =
+                              mockupIndexFromAttachmentName(att.name) ||
+                              (idx === 0 ? 1 : undefined);
+                            const statusKey = `${card.id}_${att.id}`;
+                            const currentStatus = approvalMap[statusKey];
+
+                            return (
+                              <div
+                                key={att.id}
+                                className={`group relative h-16 w-16 cursor-pointer overflow-hidden rounded-xl border bg-slate-100 shadow-xs transition shrink-0 ${
+                                  currentStatus === "approved"
+                                    ? "border-emerald-500 ring-2 ring-emerald-500/20"
+                                    : currentStatus === "rejected"
+                                      ? "border-rose-500 ring-2 ring-rose-500/20"
+                                      : "border-slate-200 hover:border-indigo-500"
+                                }`}
+                                title={att.name}
+                              >
+                                <img
+                                  src={att.thumbnailUrl || att.previewUrl || att.url}
+                                  alt={att.name}
+                                  className="h-full w-full object-cover transition group-hover:scale-105"
+                                  loading="lazy"
+                                  decoding="async"
+                                  onError={(event) => fallBackToMasterImage(event, att.url)}
+                                  onClick={() => {
+                                    setStudioModal({ cardId: card.id, attachmentIndex: idx });
+                                    setRegenModel(selectedModel);
+                                    setRegenPromptNote("");
+                                  }}
+                                />
+
+                                {currentStatus === "approved" && (
+                                  <span className="absolute top-1 right-1 h-3.5 w-3.5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[9px] font-bold shadow-xs pointer-events-none">
+                                    ✓
+                                  </span>
+                                )}
+                                {currentStatus === "rejected" && (
+                                  <span className="absolute top-1 right-1 h-3.5 w-3.5 rounded-full bg-rose-600 text-white flex items-center justify-center text-[9px] font-bold shadow-xs pointer-events-none">
+                                    ✕
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       ) : (
                         <div className="text-xs text-slate-400 italic bg-slate-50 p-2 rounded-lg text-center">
@@ -1469,20 +2009,51 @@ export function AutoMockupGenerator({
                         </span>
                       </div>
                       <div className="flex flex-wrap gap-2 overflow-x-auto py-1">
-                        {imageAttachments.map((att, idx) => (
-                          <div
-                            key={att.id}
-                            onClick={() => setPreviewImage({ url: att.url, name: att.name })}
-                            className="group relative h-16 w-16 cursor-pointer overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs hover:border-emerald-500 hover:shadow-md transition shrink-0"
-                            title={`Mockup ${idx + 1}: ${att.name}`}
-                          >
-                            <img
-                              src={att.previewUrl || att.url}
-                              alt={att.name}
-                              className="h-full w-full object-cover transition group-hover:scale-105"
-                            />
-                          </div>
-                        ))}
+                        {imageAttachments.map((att, idx) => {
+                          const stepId =
+                            mockupIndexFromAttachmentName(att.name) ||
+                            (idx === 0 ? 1 : undefined);
+                          const statusKey = `${card.id}_${att.id}`;
+                          const currentStatus = approvalMap[statusKey];
+
+                          return (
+                            <div
+                              key={att.id}
+                              className={`group relative h-16 w-16 cursor-pointer overflow-hidden rounded-xl border bg-white shadow-xs transition shrink-0 ${
+                                currentStatus === "approved"
+                                  ? "border-emerald-500 ring-2 ring-emerald-500/20"
+                                  : currentStatus === "rejected"
+                                    ? "border-rose-500 ring-2 ring-rose-500/20"
+                                    : "border-slate-200 hover:border-emerald-500"
+                              }`}
+                              title={att.name}
+                            >
+                              <img
+                                src={att.thumbnailUrl || att.previewUrl || att.url}
+                                alt={att.name}
+                                className="h-full w-full object-cover transition group-hover:scale-105"
+                                loading="lazy"
+                                decoding="async"
+                                onError={(event) => fallBackToMasterImage(event, att.url)}
+                                onClick={() => {
+                                  setStudioModal({ cardId: card.id, attachmentIndex: idx });
+                                  setRegenModel(selectedModel);
+                                  setRegenPromptNote("");
+                                }}
+                              />
+                              {currentStatus === "approved" && (
+                                <span className="absolute top-1 right-1 h-3.5 w-3.5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[9px] font-bold shadow-xs pointer-events-none">
+                                  ✓
+                                </span>
+                              )}
+                              {currentStatus === "rejected" && (
+                                <span className="absolute top-1 right-1 h-3.5 w-3.5 rounded-full bg-rose-600 text-white flex items-center justify-center text-[9px] font-bold shadow-xs pointer-events-none">
+                                  ✕
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
 

@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { authorize, routeErrorResponse } from "@/lib/api-guard";
-import { fetchTrelloBoards, fetchTrelloLists, fetchTrelloCards, moveTrelloCard } from "@/lib/trello";
+import { authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
+import { listTrelloImageDerivativeReferences } from "@/lib/db";
+import { fetchTrelloBoards, fetchTrelloLists, fetchTrelloCards, moveTrelloCard, withStoredTrelloImagePreviews } from "@/lib/trello";
 
 export const runtime = "nodejs";
 
@@ -13,7 +14,7 @@ const verifySchema = z.object({
 
 export async function GET(request: Request) {
   try {
-    authorize(request, "read");
+    const scope = dataScope(authorize(request, "read"));
     const { searchParams } = new URL(request.url);
     const action = searchParams.get("action");
 
@@ -41,7 +42,13 @@ export async function GET(request: Request) {
         );
       }
       const cards = await fetchTrelloCards(listId, apiKey, token);
-      return NextResponse.json({ cards });
+      const references = await listTrelloImageDerivativeReferences(
+        scope,
+        cards.map((card) => card.id),
+      );
+      return NextResponse.json({
+        cards: withStoredTrelloImagePreviews(cards, references),
+      });
     }
 
     const internalReviewListName = process.env.TRELLO_INTERNAL_REVIEW_LIST || "TEAM DUYỆT NỘI BỘ";

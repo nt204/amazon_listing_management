@@ -15,6 +15,7 @@ export interface TrelloAttachment {
   isUpload: boolean;
   date?: string;
   previewUrl?: string;
+  thumbnailUrl?: string;
   previews?: Array<{
     url: string;
     width: number;
@@ -22,6 +23,13 @@ export interface TrelloAttachment {
     bytes?: number;
     scaled?: boolean;
   }>;
+}
+
+export interface StoredTrelloImageDerivativeReference {
+  cardId: string;
+  attachmentId: string;
+  variant: "preview" | "thumbnail";
+  sha256: string;
 }
 
 const IMAGE_ATTACHMENT_PATTERN = /\.(png|jpe?g|webp)$/i;
@@ -52,12 +60,24 @@ export function selectTrelloImageAttachments(card: Pick<TrelloCard, "id" | "atta
   );
 }
 
-function preferredAttachmentPreview(attachment: TrelloAttachment) {
-  const previews = (attachment.previews || [])
+function sortedAttachmentPreviews(attachment: TrelloAttachment) {
+  return (attachment.previews || [])
     .filter((preview) => preview.url && preview.width > 0)
     .sort((first, second) => first.width - second.width);
+}
+
+function preferredAttachmentPreview(attachment: TrelloAttachment) {
+  const previews = sortedAttachmentPreviews(attachment);
   return (
-    previews.find((preview) => preview.width >= 320) ||
+    previews.find((preview) => preview.width >= 960) ||
+    previews[previews.length - 1]
+  )?.url;
+}
+
+function preferredAttachmentThumbnail(attachment: TrelloAttachment) {
+  const previews = sortedAttachmentPreviews(attachment);
+  return (
+    previews.find((preview) => preview.width >= 160) ||
     previews[previews.length - 1]
   )?.url;
 }
@@ -68,8 +88,37 @@ function withAttachmentPreview(card: TrelloCard): TrelloCard {
     attachments: card.attachments?.map((attachment) => ({
       ...attachment,
       previewUrl: preferredAttachmentPreview(attachment),
+      thumbnailUrl: preferredAttachmentThumbnail(attachment),
     })),
   };
+}
+
+export function withStoredTrelloImagePreviews(
+  cards: readonly TrelloCard[],
+  references: readonly StoredTrelloImageDerivativeReference[],
+): TrelloCard[] {
+  const urls = new Map(
+    references.map((reference) => {
+      const baseUrl = `/api/trello/cards/${encodeURIComponent(reference.cardId)}/attachments/${encodeURIComponent(reference.attachmentId)}`;
+      return [
+        `${reference.cardId}:${reference.attachmentId}:${reference.variant}`,
+        `${baseUrl}/${reference.variant}?v=${reference.sha256.slice(0, 16)}`,
+      ] as const;
+    }),
+  );
+
+  return cards.map((card) => ({
+    ...card,
+    attachments: card.attachments?.map((attachment) => ({
+      ...attachment,
+      previewUrl:
+        urls.get(`${card.id}:${attachment.id}:preview`) ||
+        attachment.previewUrl,
+      thumbnailUrl:
+        urls.get(`${card.id}:${attachment.id}:thumbnail`) ||
+        attachment.thumbnailUrl,
+    })),
+  }));
 }
 
 const WORKBOOK_ATTACHMENT_PATTERN = /\.(xlsx|xlsm|csv)$/i;
@@ -350,6 +399,29 @@ export async function attachFileToTrelloCard(
   }
 
   return (await response.json()) as TrelloAttachment;
+}
+
+export async function deleteTrelloCardAttachment(
+  cardId: string,
+  attachmentId: string,
+  apiKey: string,
+  token: string,
+): Promise<void> {
+  const url = buildUrl(
+    `/cards/${encodeURIComponent(cardId)}/attachments/${encodeURIComponent(attachmentId)}`,
+    apiKey,
+    token,
+  );
+  const response = await fetch(url, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => "");
+    console.warn(
+      `[Trello] Không thể xóa file đính kèm ${attachmentId} trên thẻ ${cardId} (${response.status}): ${errText}`,
+    );
+  }
 }
 
 export function assertTrelloAttachmentUrl(value: string) {
