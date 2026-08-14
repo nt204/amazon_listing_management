@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import sharp from "sharp";
+import { invalidateCachePattern } from "@/lib/redis";
 import {
   ApiError,
   authorize,
@@ -498,11 +499,12 @@ async function executeMockupGeneration(
   console.log(
     `[API generate-mockups] Đã xử lý xong ${mockups.length - 1} ảnh AI mới cho SKU "${parsedTitle.sku}".`,
   );
-
-  // Await all Trello uploads to complete before finishing response
   if (uploadTasks.length > 0) {
     await Promise.allSettled(uploadTasks);
   }
+
+  // Invalidate Redis card cache so team members instantly see updated cards
+  await invalidateCachePattern("trello:board:*");
 
   const successfulIndexes = new Set(
     uploadedAttachments

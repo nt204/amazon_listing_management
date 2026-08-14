@@ -3,6 +3,8 @@ import { authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { listTrelloImageDerivativeReferences } from "@/lib/db";
 import { fetchTrelloCards, fetchTrelloLists, withStoredTrelloImagePreviews, type TrelloCard, type TrelloList } from "@/lib/trello";
 
+import { getCachedOrFetch } from "@/lib/redis";
+
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
@@ -29,58 +31,59 @@ export async function GET(request: Request) {
       );
     }
 
-    const lists: TrelloList[] = await fetchTrelloLists(boardId, apiKey, token);
-    
-    // Find list matching reviewNameQuery (e.g. "TEAM DUYỆT NỘI BỘ")
-    let internalReviewList = lists.find(
-      (l) => l.name.trim().toLowerCase() === reviewNameQuery || l.name.toLowerCase().includes("duyệt nội bộ"),
-    );
-    if (!internalReviewList && lists.length > 0) {
-      internalReviewList = lists.find((l) => l.name.toLowerCase().includes("to-do") || l.name.toLowerCase().includes("getting started")) || lists[0];
-    }
+    const cacheKey = `trello:board:${boardId}:cards:${scope.teamId}`;
 
-    // Find list matching listingNameQuery (e.g. "Listing")
-    let listingList = lists.find(
-      (l) => l.name.trim().toLowerCase() === listingNameQuery || l.name.toLowerCase().includes("listing"),
-    );
-    if (!listingList && lists.length > 1) {
-      listingList = lists.find((l) => l.name.toLowerCase().includes("done")) || lists[lists.length - 1];
-    }
+    const payload = await getCachedOrFetch(cacheKey, 30, async () => {
+      const lists: TrelloList[] = await fetchTrelloLists(boardId, apiKey, token);
+      
+      let internalReviewList = lists.find(
+        (l) => l.name.trim().toLowerCase() === reviewNameQuery || l.name.toLowerCase().includes("duyệt nội bộ"),
+      );
+      if (!internalReviewList && lists.length > 0) {
+        internalReviewList = lists.find((l) => l.name.toLowerCase().includes("to-do") || l.name.toLowerCase().includes("getting started")) || lists[0];
+      }
 
-    let reviewCards: TrelloCard[] = [];
-    let listingCards: TrelloCard[] = [];
+      let listingList = lists.find(
+        (l) => l.name.trim().toLowerCase() === listingNameQuery || l.name.toLowerCase().includes("listing"),
+      );
+      if (!listingList && lists.length > 1) {
+        listingList = lists.find((l) => l.name.toLowerCase().includes("done")) || lists[lists.length - 1];
+      }
 
-    if (internalReviewList) {
-      reviewCards = await fetchTrelloCards(internalReviewList.id, apiKey, token);
-    }
+      let reviewCards: TrelloCard[] = [];
+      let listingCards: TrelloCard[] = [];
 
-    if (listingList) {
-      listingCards = await fetchTrelloCards(listingList.id, apiKey, token);
-    }
+      if (internalReviewList) {
+        reviewCards = await fetchTrelloCards(internalReviewList.id, apiKey, token);
+      }
 
-    const allCards = [...reviewCards, ...listingCards];
-    const references = await listTrelloImageDerivativeReferences(
-      scope,
-      allCards.map((card) => card.id),
-    );
-    const storedPreviewCards = withStoredTrelloImagePreviews(
-      allCards,
-      references,
-    );
-    const storedPreviewMap = new Map(
-      storedPreviewCards.map((card) => [card.id, card]),
-    );
-    reviewCards = reviewCards.map((card) => storedPreviewMap.get(card.id) || card);
-    listingCards = listingCards.map((card) => storedPreviewMap.get(card.id) || card);
+      if (listingList) {
+        listingCards = await fetchTrelloCards(listingList.id, apiKey, token);
+      }
 
-    return NextResponse.json({
-      boardId,
-      lists,
-      internalReviewList: internalReviewList || null,
-      listingList: listingList || null,
-      reviewCards,
-      listingCards,
+      const allCards = [...reviewCards, ...listingCards];
+      const references = await listTrelloImageDerivativeReferences(
+        scope,
+        allCards.map((card) => card.id),
+      );
+      const storedPreviewCards = withStoredTrelloImagePreviews(
+        allCards,
+        references,
+      );
+      const storedPreviewMap = new Map(
+        storedPreviewCards.map((card) => [card.id, card]),
+      );
+
+      return {
+        lists,
+        internalReviewListId: internalReviewList?.id || "",
+        listingListId: listingList?.id || "",
+        reviewCards: reviewCards.map((c) => storedPreviewMap.get(c.id) || c),
+        listingCards: listingCards.map((c) => storedPreviewMap.get(c.id) || c),
+      };
     });
+
+    return NextResponse.json(payload);
   } catch (error) {
     return routeErrorResponse(error, "Không thể tải danh sách thẻ từ Trello.");
   }
