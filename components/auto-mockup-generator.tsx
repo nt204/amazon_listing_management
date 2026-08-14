@@ -18,6 +18,10 @@ import {
   ArrowsClockwiseIcon,
   StopIcon,
   DownloadSimpleIcon,
+  PencilIcon,
+  TrashIcon,
+  GearIcon,
+  PlusIcon,
 } from "@phosphor-icons/react";
 import { parseCardDimensions, type Dimensions3D } from "@/lib/trello";
 import { downloadOriginalTrelloImage } from "@/lib/trello-image-client";
@@ -127,10 +131,40 @@ const MOCKUP_STEPS = [
     label: "Mockup 7: Car Rearview Mirror (Treo Kính Ô Tô)",
     icon: "🚗",
   },
+  {
+    id: 8,
+    label: "Mockup 8: Sunlit Glass Refraction (Thủy Tinh Chiếu Ánh Sáng Sunburst)",
+    icon: "☀️",
+  },
+  {
+    id: 9,
+    label: "Mockup 9: Glass Edge Thickness Callout (Cận Cảnh Độ Dày Cạnh & Nền Lụa)",
+    icon: "📐",
+  },
+  {
+    id: 10,
+    label: "Mockup 10: Wood Flat-Lay with Pine (Mặt Bàn Gỗ & Nhánh Thông)",
+    icon: "🪵",
+  },
 ];
 
 const DEFAULT_MOCKUP_MODEL = "gpt-image-2-c";
 const DEFAULT_MOCKUP_QUALITY = "low" as const;
+
+const DEFAULT_SYSTEM_MOCKUP_CONTENTS = [
+  { id: 1, label: "Content 1: Full Design", checked: true },
+  { id: 2, label: "Content 2: Dimension 3D", checked: true },
+  { id: 3, label: "Content 3: Gift Box", checked: true },
+  { id: 4, label: "Content 4: Tree View 1", checked: true },
+  { id: 5, label: "Content 5: Tree View 2", checked: true },
+  { id: 6, label: "Content 6: Gifting Hands", checked: true },
+  { id: 7, label: "Content 7: Car Mirror", checked: true },
+  { id: 8, label: "Content 8: Sunlit Glass Refraction", checked: false },
+  { id: 9, label: "Content 9: Glass Edge Thickness Callout", checked: false },
+  { id: 10, label: "Content 10: Wood Flat-Lay with Pine", checked: false },
+];
+
+const MOCKUP_CONTENTS_STORAGE_KEY = "listing_desk_mockup_contents_v3";
 
 export function AutoMockupGenerator({
   apiKey,
@@ -153,21 +187,38 @@ export function AutoMockupGenerator({
 
   const [mockupContents, setMockupContents] = useState<
     Array<{ id: number; label: string; checked: boolean }>
-  >([
-    { id: 1, label: "Content 1: Full Design", checked: true },
-    { id: 2, label: "Content 2: Dimension 3D", checked: true },
-    { id: 3, label: "Content 3: Gift Box", checked: true },
-    { id: 4, label: "Content 4: Tree View 1", checked: true },
-    { id: 5, label: "Content 5: Tree View 2", checked: true },
-    { id: 6, label: "Content 6: Gifting Hands", checked: true },
-    { id: 7, label: "Content 7: Car Mirror", checked: true },
-  ]);
+  >(DEFAULT_SYSTEM_MOCKUP_CONTENTS);
 
   const [showAddContentModal, setShowAddContentModal] = useState(false);
+  const [showManageModal, setShowManageModal] = useState(false);
   const [newContentLabel, setNewContentLabel] = useState("");
+  const [contentNoticeMsg, setContentNoticeMsg] = useState<string>("");
+
   const selectedAiMockupCount = mockupContents.filter(
     (content) => content.checked && content.id >= 2,
   ).length;
+
+  useEffect(() => {
+    // Load persisted mockup contents from localStorage
+    try {
+      const saved = localStorage.getItem(MOCKUP_CONTENTS_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const formatted = parsed.map(
+            (item: { id: number; label: string; checked?: boolean }) => ({
+              id: Number(item.id),
+              label: String(item.label),
+              checked: item.id === 1 ? true : Boolean(item.checked),
+            }),
+          );
+          setMockupContents(formatted);
+        }
+      }
+    } catch {
+      // Ignore storage errors
+    }
+  }, []);
 
   useEffect(() => {
     // Fast Refresh preserves old React state. Reset once on mount so a page that
@@ -179,34 +230,100 @@ export function AutoMockupGenerator({
     return () => window.clearTimeout(resetId);
   }, []);
 
-  const toggleContentCheck = (id: number) => {
-    setMockupContents((prev) =>
-      prev.map((item) =>
-        item.id === id ? { ...item, checked: !item.checked } : item,
-      ),
-    );
+  const saveContentsState = (
+    updated: Array<{ id: number; label: string; checked: boolean }>,
+  ) => {
+    setMockupContents(updated);
+    try {
+      localStorage.setItem(MOCKUP_CONTENTS_STORAGE_KEY, JSON.stringify(updated));
+    } catch {
+      // Ignore storage errors
+    }
   };
 
-  const toggleSelectAllContents = () => {
-    const allChecked = mockupContents.every((item) => item.checked);
-    setMockupContents((prev) =>
-      prev.map((item) => ({ ...item, checked: !allChecked })),
+  const toggleContentCheck = (id: number) => {
+    // Content 1 is mandatory
+    if (id === 1) {
+      setContentNoticeMsg("Content 1 (Full Design gốc) là bắt buộc, không thể bỏ chọn.");
+      return;
+    }
+
+    const currentItem = mockupContents.find((c) => c.id === id);
+    const totalChecked = mockupContents.filter((c) => c.checked).length;
+
+    if (currentItem && !currentItem.checked && totalChecked >= 7) {
+      setContentNoticeMsg(
+        "Đã đạt giới hạn tối đa 7 Content (1 Content 1 bắt buộc + tối đa 6 Content AI). Vui lòng bỏ chọn một content khác nếu muốn thay đổi.",
+      );
+      return;
+    }
+
+    setContentNoticeMsg("");
+    const updated = mockupContents.map((item) =>
+      item.id === id ? { ...item, checked: !item.checked } : item,
     );
+    saveContentsState(updated);
+  };
+
+  const resetToDefaultContents = () => {
+    setContentNoticeMsg("");
+    const updated = mockupContents.map((item) => ({
+      ...item,
+      checked: item.id >= 1 && item.id <= 7,
+    }));
+    saveContentsState(updated);
+  };
+
+  const deselectAllAiContents = () => {
+    setContentNoticeMsg("");
+    const updated = mockupContents.map((item) => ({
+      ...item,
+      checked: item.id === 1,
+    }));
+    saveContentsState(updated);
   };
 
   const handleAddCustomContent = () => {
     if (!newContentLabel.trim()) return;
-    const newId = mockupContents.length + 1;
-    setMockupContents((prev) => [
-      ...prev,
+    const nextId =
+      mockupContents.length > 0
+        ? Math.max(...mockupContents.map((c) => c.id)) + 1
+        : 1;
+    const currentChecked = mockupContents.filter((c) => c.checked).length;
+    const shouldCheck = currentChecked < 7;
+    const updated = [
+      ...mockupContents,
       {
-        id: newId,
-        label: `Content ${newId}: ${newContentLabel.trim()}`,
-        checked: true,
+        id: nextId,
+        label: newContentLabel.trim().startsWith("Content")
+          ? newContentLabel.trim()
+          : `Content ${nextId}: ${newContentLabel.trim()}`,
+        checked: shouldCheck,
       },
-    ]);
+    ];
+    saveContentsState(updated);
     setNewContentLabel("");
     setShowAddContentModal(false);
+    setContentNoticeMsg(
+      shouldCheck
+        ? ""
+        : "Đã thêm Content mới (chưa bật chọn do đã đủ 7/7 Content).",
+    );
+  };
+
+  const handleDeleteContent = (id: number) => {
+    if (id === 1) {
+      setContentNoticeMsg("Content 1 (Full Design gốc) là bắt buộc, không thể xóa.");
+      return;
+    }
+    const updated = mockupContents.filter((item) => item.id !== id);
+    saveContentsState(updated);
+    setContentNoticeMsg("");
+  };
+
+  const handleResetToSystemDefaults = () => {
+    saveContentsState(DEFAULT_SYSTEM_MOCKUP_CONTENTS);
+    setContentNoticeMsg("Đã khôi phục danh sách Content về mặc định của hệ thống.");
   };
 
   const [loadingLists, setLoadingLists] = useState<boolean>(false);
@@ -721,14 +838,9 @@ export function AutoMockupGenerator({
               <SparkleIcon className="h-6 w-6 text-amber-300" />
             </span>
             <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-base font-extrabold text-slate-900">
-                  Auto Mockup Generator (DESIGN ➔ MOCKUP)
-                </h3>
-                <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-bold text-indigo-800 border border-indigo-200">
-                  2 Cột Trello Đồng Bộ
-                </span>
-              </div>
+              <h3 className="text-base font-extrabold text-slate-900">
+                Auto Mockup Generator
+              </h3>
             </div>
           </div>
 
@@ -742,11 +854,11 @@ export function AutoMockupGenerator({
                 onChange={(e) => setSelectedModel(e.target.value)}
                 className="bg-transparent text-xs font-extrabold text-slate-900 outline-none cursor-pointer pr-1"
               >
+                <option value="gpt-image-2-c">
+                  💸 GPT Image 2 C (CheapKeyAI)
+                </option>
                 <option value="gpt-image-2">
                   🤖 GPT Image 2
-                </option>
-                <option value="gpt-image-2-c">
-                  💸 GPT Image 2 C (CheapKeyAI · $0.005/ảnh)
                 </option>
                 <option value="gpt-image-1.5">
                   🤖 GPT Image 1.5 (Mặc định / Legacy)
@@ -754,24 +866,11 @@ export function AutoMockupGenerator({
                 <option value="gemini-3.1-flash-image">
                   🎨 Gemini 3.1 Flash Image
                 </option>
-                <option value="gemini-3-pro-image">
-                  🎨 Gemini 3 Pro Image
-                </option>
                 <option value="fast-graphic">
                   ⚡ Fast Graphic Engine
                 </option>
-                <option value="chatgpt-web-automation">
-                  🌐 ChatGPT Web Automation (Playwright)
-                </option>
               </select>
             </div>
-
-            {selectedModel === "chatgpt-web-automation" && (
-              <div className="flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900 font-medium">
-                <span className="font-bold">🌐 Note:</span>
-                <span>Cần cấu hình Cookie session (`CHATGPT_WEB_COOKIES`) trong .env</span>
-              </div>
-            )}
 
             {(selectedModel === "gpt-image-2" ||
               selectedModel === "gpt-image-2-c" ||
@@ -803,49 +902,8 @@ export function AutoMockupGenerator({
               <ArrowsClockwiseIcon
                 className={`h-4 w-4 ${loadingCards ? "animate-spin" : ""}`}
               />
-              <span>Làm Mới Đồng Bộ</span>
+              <span>Làm Mới</span>
             </button>
-          </div>
-        </div>
-
-        {/* Trello Lists Selectors Row */}
-        <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-indigo-100/80 pt-3 text-xs">
-          <div className="flex items-center gap-2">
-            <span className="font-bold text-slate-700 flex items-center gap-1">
-              <KanbanIcon className="h-4 w-4 text-amber-600" /> Cột Nguồn:
-            </span>
-            <select
-              value={designListId}
-              onChange={(e) => setDesignListId(e.target.value)}
-              disabled={loadingLists}
-              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 font-bold text-slate-800 outline-none cursor-pointer shadow-2xs"
-            >
-              {lists.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <ArrowRightIcon className="h-4 w-4 text-slate-400" />
-
-          <div className="flex items-center gap-2">
-            <span className="font-bold text-slate-700 flex items-center gap-1">
-              <KanbanIcon className="h-4 w-4 text-emerald-600" /> Cột Đích:
-            </span>
-            <select
-              value={mockupListId}
-              onChange={(e) => setMockupListId(e.target.value)}
-              disabled={loadingLists}
-              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 font-bold text-slate-800 outline-none cursor-pointer shadow-2xs"
-            >
-              {lists.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
           </div>
         </div>
 
@@ -855,48 +913,188 @@ export function AutoMockupGenerator({
             <div className="flex items-center gap-2">
               <span className="text-xs font-black text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
                 <ImageSquareIcon className="h-4 w-4 text-indigo-600" />
-                MOCKUP CONTENT ({mockupContents.filter((c) => c.checked).length}/{mockupContents.length} ĐÃ CHỌN):
+                MOCKUP CONTENT ({mockupContents.filter((c) => c.checked).length}/7 TỐI ĐA SELECTION):
               </span>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2.5">
               <button
                 type="button"
-                onClick={toggleSelectAllContents}
+                onClick={resetToDefaultContents}
                 className="text-xs font-bold text-indigo-600 hover:text-indigo-800 underline"
               >
-                {mockupContents.every((c) => c.checked) ? "Bỏ chọn tất cả" : "Chọn tất cả"}
+                Mặc định (7 Content)
               </button>
               <button
                 type="button"
-                onClick={() => setShowAddContentModal(true)}
-                className="flex items-center gap-1 rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-extrabold text-white shadow-2xs hover:bg-indigo-700 transition"
+                onClick={deselectAllAiContents}
+                className="text-xs font-bold text-slate-500 hover:text-slate-700 underline"
               >
-                <span>+ Thêm Content Mới</span>
+                Bỏ chọn Content AI
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowManageModal(true)}
+                className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-1.5 text-xs font-extrabold text-white shadow-2xs hover:bg-indigo-700 transition"
+              >
+                <GearIcon className="h-4 w-4" />
+                <span>Quản Lý Content</span>
               </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2">
-            {mockupContents.map((content) => (
-              <label
-                key={content.id}
-                className={`flex items-center gap-2 rounded-xl border p-2 text-xs font-bold cursor-pointer transition select-none ${content.checked
-                    ? "border-indigo-500 bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-400/20"
-                    : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"
+          {contentNoticeMsg && (
+            <div className="mb-2.5 rounded-xl bg-sky-50 border border-sky-200 p-2 text-xs font-extrabold text-sky-900 flex items-center gap-2">
+              <span>ℹ️</span>
+              <span>{contentNoticeMsg}</span>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+            {mockupContents.map((content) => {
+              const isMandatory = content.id === 1;
+              return (
+                <label
+                  key={content.id}
+                  className={`flex items-center gap-2 rounded-xl border p-2.5 text-xs font-bold transition-all duration-150 select-none ${
+                    isMandatory
+                      ? "border-sky-400 bg-sky-50/90 text-sky-950 shadow-2xs ring-1 ring-sky-400/30 cursor-not-allowed"
+                      : content.checked
+                      ? "border-indigo-500 bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-400/20 hover:border-indigo-600 cursor-pointer"
+                      : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50/50 cursor-pointer"
                   }`}
-              >
-                <input
-                  type="checkbox"
-                  checked={content.checked}
-                  onChange={() => toggleContentCheck(content.id)}
-                  className="h-4 w-4 rounded accent-indigo-600 cursor-pointer shrink-0"
-                />
-                <span className="truncate">{content.label}</span>
-              </label>
-            ))}
+                >
+                  <input
+                    type="checkbox"
+                    checked={content.checked}
+                    disabled={isMandatory}
+                    onChange={() => toggleContentCheck(content.id)}
+                    className="h-4 w-4 rounded accent-indigo-600 cursor-pointer shrink-0 disabled:opacity-80 disabled:cursor-not-allowed"
+                  />
+                  <span className="truncate flex items-center gap-1 min-w-0">
+                    {content.label}
+                    {isMandatory && (
+                      <span className="text-[10px] font-extrabold text-sky-700 bg-sky-200/80 px-1 py-0.5 rounded shrink-0">
+                        Bắt buộc
+                      </span>
+                    )}
+                  </span>
+                </label>
+              );
+            })}
           </div>
         </div>
       </div>
+
+      {/* Manage Mockup Contents Modal (Add / Delete / Reset) */}
+      {showManageModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+          <div className="w-full max-w-2xl rounded-2xl bg-white p-5 shadow-2xl space-y-4 max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 shrink-0">
+              <div className="flex items-center gap-2">
+                <GearIcon className="h-5 w-5 text-indigo-600" />
+                <h3 className="text-base font-extrabold text-slate-900">
+                  Quản Lý Danh Sách Mockup Content
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowManageModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <XIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Quick Add Content Section inside Modal */}
+            <div className="flex items-center gap-2 bg-indigo-50/70 p-2.5 rounded-xl border border-indigo-100 shrink-0">
+              <input
+                type="text"
+                value={newContentLabel}
+                onChange={(e) => setNewContentLabel(e.target.value)}
+                placeholder="Thêm bối cảnh mới (VD: Garden View / Living Room Table)..."
+                className="w-full rounded-lg border border-slate-300 bg-white p-2 text-xs font-semibold outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleAddCustomContent();
+                }}
+              />
+              <button
+                type="button"
+                onClick={handleAddCustomContent}
+                className="flex items-center gap-1 rounded-lg bg-indigo-600 px-3.5 py-2 text-xs font-extrabold text-white shrink-0 hover:bg-indigo-700 transition"
+              >
+                <PlusIcon className="h-3.5 w-3.5" />
+                <span>Thêm Mới</span>
+              </button>
+            </div>
+
+            <div className="text-xs font-semibold text-slate-500 shrink-0">
+              Thêm concept bối cảnh mới hoặc xóa bối cảnh dư thừa. Content 1 là bắt buộc không thể xóa.
+            </div>
+
+            {/* List Table */}
+            <div className="overflow-y-auto space-y-2 pr-1 flex-1">
+              {mockupContents.map((content) => {
+                const isMandatory = content.id === 1;
+                return (
+                  <div
+                    key={content.id}
+                    className="flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-white transition"
+                  >
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <span className="text-xs font-black text-indigo-700 bg-indigo-100 px-2 py-1 rounded-lg shrink-0">
+                        #{content.id}
+                      </span>
+                      <span className="text-xs font-bold text-slate-800 truncate flex items-center gap-2">
+                        {content.label}
+                        {isMandatory && (
+                          <span className="text-[10px] font-extrabold text-sky-700 bg-sky-200/80 px-1.5 py-0.5 rounded">
+                            Bắt buộc
+                          </span>
+                        )}
+                        {content.checked && (
+                          <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">
+                            Đang chọn
+                          </span>
+                        )}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      {!isMandatory && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteContent(content.id)}
+                          className="flex items-center gap-1 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50"
+                        >
+                          <TrashIcon className="h-3.5 w-3.5" />
+                          <span>Xóa</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-100 shrink-0">
+              <button
+                type="button"
+                onClick={handleResetToSystemDefaults}
+                className="text-xs font-bold text-slate-500 hover:text-slate-800 underline"
+              >
+                🔄 Khôi phục danh sách mặc định (10 Content)
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowManageModal(false)}
+                className="rounded-xl bg-indigo-600 px-5 py-2 text-xs font-extrabold text-white shadow-md hover:bg-indigo-700"
+              >
+                Hoàn Tất / Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add Custom Mockup Content Modal */}
       {showAddContentModal && (

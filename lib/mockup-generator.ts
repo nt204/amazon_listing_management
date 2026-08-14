@@ -150,6 +150,30 @@ const MOCKUP_TYPES = [
     description:
       "Ảnh sản phẩm treo trang trí trên gương chiếu hậu kính ô Tô sang trọng.",
   },
+  {
+    index: 8,
+    name: "Mockup 8 - Sunlit Glass Refraction (Ảnh Thủy Tinh Chiếu Ánh Sáng Sunburst)",
+    fileName: "Mockup8_Sunlit_Glass_Refraction.png",
+    promptKey: "glass_sunburst",
+    description:
+      "Ảnh sản phẩm thủy tinh / glass ornament đặt trong ánh nắng tự nhiên lung linh, chiếu hiệu ứng sunburst và vạt khúc xạ ánh sáng lấp lánh.",
+  },
+  {
+    index: 9,
+    name: "Mockup 9 - Glass Edge Thickness Callout (Ảnh Cận Cảnh Độ Dày Cạnh Thủy Tinh & Nền Lụa)",
+    fileName: "Mockup9_Glass_Thickness_Callout.png",
+    promptKey: "glass_thickness_callout",
+    description:
+      "Ảnh cận cảnh góc nghiêng 3D đặc tả độ dày viền thủy tinh Bevel Cut đứng trên mặt kính phản chiếu, nền lụa hồng champagne và chú thích Thickness 6mm.",
+  },
+  {
+    index: 10,
+    name: "Mockup 10 - Wood Tabletop Flat-Lay with Pine (Ảnh Flat-Lay Mặt Bàn Gỗ & Nhánh Thông Noel)",
+    fileName: "Mockup10_Wood_Flatlay_Pine.png",
+    promptKey: "wood_flatlay_pine",
+    description:
+      "Ảnh chụp góc thẳng từ trên xuống (flat-lay) sản phẩm nằm trên mặt bàn gỗ tự nhiên, trang trí nhánh thông xanh ở mép trái và hiệu ứng trong suốt nhìn xuyên nền gỗ.",
+  },
 ];
 
 export async function generateAllMockups(
@@ -505,6 +529,32 @@ export function buildMockupPrompt(
       concept =
         "Sản phẩm treo trên gương chiếu hậu của ô tô vào ban ngày, ngoài cửa kính là cây xanh và bầu trời sáng.";
       break;
+    case "glass_sunburst":
+      concept = `SUNLIT LIGHT REFRACTION product photography, matching this composition:
+- Square 1:1 luxury product photograph featuring the ornament from Image 1 placed prominently on a warm polished wooden surface or hanging in direct natural sunlight.
+- Bright golden sunburst light ray hitting the ornament from the background or angle, creating soft specular highlights, edge sheen, and warm luminous light flares.
+- CRITICAL SHAPE & MATERIAL FIDELITY: Maintain the EXACT outer shape, silhouette, and material of the product from Image 1. If Image 1 is a die-cut custom shaped ornament (such as a house, star, tree, heart, acrylic cut, wood piece, or ceramic shape), keep ONLY that exact custom outer contour shape. Do NOT enclose or surround the product in an artificial circular glass disc, outer glass frame, or extra glass circle.
+- Soft warm blurred background with golden sunlight bokeh circles, subtle sunbeams, and realistic tabletop contact shadows.
+- Red hanging ribbon passing cleanly through the top loop. Preserve exact design artwork, lettering, and original colors from Image 1.`;
+      break;
+    case "glass_thickness_callout":
+      concept = `PRODUCT EDGE THICKNESS CALLOUT product photography, matching this composition:
+- Macro 3D angled product photograph with the ornament from Image 1 standing vertically at a 45-degree angle on a dark polished reflective surface.
+- Luxury soft draped dusty rose / pink champagne satin silk fabric backdrop in the soft-focus background.
+- Focus closely on the thick edge profile of the product on the left side.
+- Render a precise red indicator callout line pointing to the product edge with clean white text labeling "Thickness ${dimensions.thickness || "6mm"}".
+- CRITICAL SHAPE FIDELITY: Maintain the exact outer contour, silhouette, and material from Image 1. Do NOT turn a custom shaped non-glass product into an artificial round glass disc.
+- Highlighting edge construction, red hanging satin ribbon at top, and crisp mirror reflection on the dark surface below. Preserve exact printed artwork and lettering from Image 1.`;
+      break;
+    case "wood_flatlay_pine":
+      concept = `NATURAL WOOD TABLETOP FLAT-LAY WITH PINE BRANCH product photography, matching this composition:
+- Clean top-down 1:1 flat-lay product photograph with the EXACT ornament from Image 1 lying flat in the center on a vertical-grain light natural wood tabletop.
+- Fresh green pine / fir tree branches with subtle snow frosting placed elegantly along the left edge of the frame.
+- CRITICAL SHAPE & MATERIAL FIDELITY: Maintain the exact outer shape, silhouette, edge contour, and material of the product from Image 1.
+- If Image 1 is a die-cut custom shaped ornament (such as a house, star, tree, heart, acrylic cut, wood piece, or ceramic shape), keep ONLY that exact custom outer contour shape. Do NOT enclose or surround the product in an artificial circular glass disc, outer glass frame, or extra glass circle.
+- If Image 1 is a transparent glass ornament, preserve its glass translucency and bevel cuts. If Image 1 is opaque (resin, wood, ceramic), preserve its opaque material and surface texture faithfully.
+- Red hanging ribbon attached to top loop and drapes naturally upwards. Preserve exact artwork, text, and colors from Image 1.`;
+      break;
     default:
       concept = promptKey.startsWith("custom:")
         ? `Tạo bối cảnh mockup tùy chỉnh theo yêu cầu: ${promptKey.slice("custom:".length).trim()}. Bố cục phải tự nhiên, hợp lý và giữ sản phẩm làm chủ thể chính.`
@@ -530,6 +580,11 @@ Quan sát Ảnh 1 để nhận diện chính xác:
 - các hình minh họa
 - màu sắc của CÁC CHI TIẾT ĐƯỢC IN
 - lỗ treo và dây treo
+
+CỐ ĐỊNH HÌNH DÁNG SẢN PHẨM & TUYỆT ĐỐI KHÔNG TỰ THÊM ĐĨA KÍNH TRÒN:
+- Giữ CHÍNH XÁC hình dạng đường viền ngoài (contour silhouette) của sản phẩm trong Ảnh 1.
+- Nếu Ảnh 1 là sản phẩm cắt theo khuôn riêng (die-cut shape như hình ngôi nhà, hình ngôi sao, hình cây thông, hình áo, hình trái tim...), chỉ tái hiện đúng hình dạng cắt die-cut đó.
+- TUYỆT ĐỐI KHÔNG tự động bọc thêm một đĩa kính tròn (circular glass disc), khung kính ngoài, hay vòng kính bao quanh sản phẩm nếu Ảnh 1 không phải là hình đĩa kính tròn.
 
 QUAN TRỌNG VỀ CHẤT LIỆU:
 - Chủ động phân tích trực tiếp Ảnh 1 để nhận biết chất liệu qua texture, độ trong/đục, độ bóng/mờ, phản xạ, cấu tạo bề mặt và kiểu cạnh; không yêu cầu mô tả thẻ phải ghi vật liệu.
@@ -923,6 +978,18 @@ export async function renderGraphicMockup(
     bgGradient = "linear-gradient(135deg, #1c1917 0%, #0c0a09 100%)";
     titleBadge = "CAR REARVIEW MIRROR MOCKUP";
     sceneDesc = "Automotive Hanging Ornament View";
+  } else if (promptKey === "glass_sunburst") {
+    bgGradient = "linear-gradient(135deg, #78350f 0%, #451a03 100%)";
+    titleBadge = "SUNLIT GLASS REFRACTION MOCKUP";
+    sceneDesc = "Golden Sunlight Refraction & Beveled Glass Shine";
+  } else if (promptKey === "glass_thickness_callout") {
+    bgGradient = "linear-gradient(135deg, #2e1065 0%, #0f172a 100%)";
+    titleBadge = "GLASS THICKNESS CALLOUT MOCKUP";
+    sceneDesc = `Beveled Glass Edge Thickness: ${dimensions.thickness || "6mm"}`;
+  } else if (promptKey === "wood_flatlay_pine") {
+    bgGradient = "linear-gradient(135deg, #451a03 0%, #1c1917 100%)";
+    titleBadge = "WOOD FLAT-LAY & PINE MOCKUP";
+    sceneDesc = "Natural Wood Tabletop with Festive Pine Decor";
   }
 
   const svg = `
