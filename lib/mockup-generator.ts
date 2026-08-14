@@ -506,15 +506,12 @@ export function buildMockupPrompt(
       concept = "Sản phẩm treo trên nhánh cây thông xanh tươi. Giữ nguyên màu sắc và kiểu dây treo gốc từ Ảnh 1.";
       break;
     case "tree_view2":
-      concept = `BRIGHT & CLEAN PINE BRANCH WITH SOFT BOKEH LIGHTS product photography, matching this composition:
-- Square 1:1 close-up holiday product photograph featuring the EXACT ornament from Image 1 hanging vertically from a fresh green pine / fir tree branch in the upper-right area.
-- Top hanging ribbon / string / cord (copying the exact ribbon color, string material, and attachment holes from Image 1) draped naturally from the sturdy pine branch.
-- Lush vibrant green pine needles, small pinecones, and subtle red winter holly berries adorning the foreground branch.
-- LIGHTING & COLOR BALANCE: Bright, clean, luminous natural daylight exposure with neutral white balance. High-key soft studio illumination.
-- DO NOT apply a heavy yellow, orange, amber, or brown color cast. White and neutral background areas must remain crisp white and bright neutral.
-- In the softly blurred background: a clean Christmas tree filled with sparkling soft white fairy lights and subtle pastel bokeh circles.
-- Sharp photographic focus on the ornament and foreground pine branch, with a smooth cinematic shallow depth of field.
-- CRITICAL MATERIAL & SHAPE FIDELITY: Preserve the exact outer shape, contour silhouette, opacity, material texture, glass bevels (only if Image 1 is glass), printed artwork, text, and original colors from Image 1.`;
+      concept = `BRIGHT & CRYSTAL CLEAR PINE BRANCH & BOKEH product photography, matching this composition:
+- Square 1:1 close-up holiday product photograph with the ornament from Image 1 hanging vertically from a fresh green pine branch in the upper right.
+- ULTRA CRYSTAL CLEAR GLASS (100% PRISTINE WHITE GLASS TRANSPARENCY): If Image 1 is a glass ornament, the glass disc MUST be ultra pristine crystal clear transparent glass with bright white studio light reflections. Absolutely NO brown tint, NO tan gradient, NO muddy fog inside the glass disc (matching the clean white glass transparency of Content 4).
+- Top hanging ribbon / string (copying exact ribbon color and material from Image 1) draped naturally from the pine branch.
+- Soft-focus background: Bright white glowing fairy lights, fresh green pine needles, and clean white high-key studio illumination.
+- Preserve exact shape, material, glass bevels, printed artwork, and original colors from Image 1.`;
       break;
     case "gifting_hands":
       concept = `PERFECT GIFT HAND-TO-HAND ORNAMENT PRESENTATION, matching this exact composition:
