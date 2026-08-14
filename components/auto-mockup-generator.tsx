@@ -166,7 +166,7 @@ export function AutoMockupGenerator({
   const [showAddContentModal, setShowAddContentModal] = useState(false);
   const [newContentLabel, setNewContentLabel] = useState("");
   const selectedAiMockupCount = mockupContents.filter(
-    (content) => content.checked && content.id >= 2 && content.id <= 7,
+    (content) => content.checked && content.id >= 2,
   ).length;
 
   useEffect(() => {
@@ -396,10 +396,10 @@ export function AutoMockupGenerator({
       return;
     }
     const selectedAiSteps = mockupContents
-      .filter((content) => content.checked && content.id >= 2 && content.id <= 7)
+      .filter((content) => content.checked && content.id >= 2)
       .map((content) => content.id);
     if (selectedAiSteps.length === 0) {
-      setErrorMsg("Hãy chọn ít nhất một concept mockup từ Content 2 đến Content 7.");
+      setErrorMsg("Hãy chọn ít nhất một concept mockup từ Content 2 trở đi.");
       return;
     }
     generationInFlightRef.current = true;
@@ -431,6 +431,9 @@ export function AutoMockupGenerator({
           model: selectedModel,
           quality: selectedQuality,
           selectedSteps: selectedAiSteps,
+          customContents: mockupContents
+            .filter((content) => content.id >= 8)
+            .map((content) => ({ id: content.id, label: content.label })),
           stream: true,
         }),
       });

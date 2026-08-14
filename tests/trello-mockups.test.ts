@@ -519,8 +519,14 @@ test("mockup prompts contain only the generation request and scene concept", () 
     formatted: '3.1" x 3.1" x 0.15"',
   });
 
-  assert.match(prompt, /water-clear optical crystal/i);
-  assert.match(prompt, /Concept: Sản phẩm nằm bên trong một HỘP QUÀ MÀU ĐỎ SANG TRỌNG/);
+  assert.match(prompt, /KHÔNG mặc định sản phẩm là glass\/acrylic/i);
+  assert.match(prompt, /phân tích trực tiếp Ảnh 1/i);
+  assert.match(prompt, /dòng kích thước không phải là thông tin vật liệu/i);
+  assert.match(prompt, /material-accurate rendering/i);
+  assert.doesNotMatch(prompt, /100% WATER-CLEAR GLASS/i);
+  assert.match(prompt, /Concept: PACKAGE INCLUDED gift-box flat-lay/);
+  assert.match(prompt, /one open square red gift-box base/i);
+  assert.match(prompt, /"1 - Ornament"/);
 
   const treePrompt = buildMockupPrompt("tree_view1", "Test Ornament", {
     length: '3.1"',
@@ -529,6 +535,22 @@ test("mockup prompts contain only the generation request and scene concept", () 
     formatted: '3.1" x 3.1" x 0.15"',
   });
   assert.match(treePrompt, /Concept: Sản phẩm treo trên nhánh cây thông/);
+
+  const giftingPrompt = buildMockupPrompt("gifting_hands", "Test Ornament", {
+    length: '3.1"',
+    width: '3.1"',
+    thickness: '0.15"',
+    formatted: '3.1" x 3.1" x 0.15"',
+  });
+  assert.match(giftingPrompt, /Concept: PERFECT GIFT IDEA hand-to-hand gifting scene/);
+  assert.match(giftingPrompt, /exactly two realistic human hands/i);
+  assert.match(giftingPrompt, /Render exactly: "PERFECT GIFT IDEA"/);
+  assert.match(giftingPrompt, /bright, clean, softly exposed lifestyle photography/i);
+  assert.match(giftingPrompt, /soft light beige\/greige/i);
+  assert.match(giftingPrompt, /Do not apply a yellow, orange, amber, sepia or brown color cast/i);
+  assert.match(giftingPrompt, /elegant white handwritten calligraphy/i);
+  assert.match(giftingPrompt, /bright neutral palette overrides any general instruction/i);
+  assert.match(giftingPrompt, /do not add "GLASS ORNAMENT"/i);
 
   const dimensionPrompt = buildMockupPrompt(
     "dimensions_3d",
@@ -542,6 +564,74 @@ test("mockup prompts contain only the generation request and scene concept", () 
   );
   assert.match(dimensionPrompt, /Kích thước 3 chiều: 3\.1" x 3\.1" x 0\.15"\./);
   assert.match(dimensionPrompt, /Concept: Product Size & Thickness Infographic Photography/);
+  assert.doesNotMatch(dimensionPrompt, /transparent crystal glass disc/i);
+});
+
+test("mockup prompts include product material context from the source card", () => {
+  const prompt = buildMockupPrompt(
+    "gift_box",
+    "Wooden Ornament",
+    {
+      length: '3.1"',
+      width: '3.1"',
+      thickness: '0.15"',
+      formatted: '3.1" x 3.1" x 0.15"',
+    },
+    "Material: natural birch wood; Finish: matte",
+  );
+
+  assert.match(prompt, /Material: natural birch wood; Finish: matte/);
+  assert.match(prompt, /không biến chúng thành kính/i);
+});
+
+test("custom mockup prompts use the operator-provided scene", () => {
+  const prompt = buildMockupPrompt(
+    "custom:Minimalist living room shelf",
+    "Test Ornament",
+    {
+      length: '3.1"',
+      width: '3.1"',
+      thickness: '0.15"',
+      formatted: '3.1" x 3.1" x 0.15"',
+    },
+  );
+
+  assert.match(prompt, /bối cảnh mockup tùy chỉnh theo yêu cầu: Minimalist living room shelf/i);
+});
+
+test("custom content is generated and can be recognized for resume", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const fakeClient = {
+    images: {
+      edit: async (body: Record<string, unknown>) => {
+        calls.push(body);
+        return { data: [{ b64_json: SAMPLE_PNG.toString("base64") }] };
+      },
+    },
+  } as unknown as OpenAI;
+
+  const mockups = await generateAllMockups({
+    sku: "CUSTOM-SKU",
+    itemName: "Custom Product",
+    dimensions: {
+      length: '3.1"',
+      width: '3.1"',
+      thickness: '0.15"',
+      formatted: '3.1" x 3.1" x 0.15"',
+    },
+    inputDesignBuffer: SAMPLE_PNG,
+    inputMimeType: "image/png",
+    model: "gpt-image-1.5",
+    selectedIndexes: [8],
+    customMockups: [{ id: 8, label: "Content 8: Minimalist Shelf" }],
+    openaiClient: fakeClient,
+  });
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(mockups.map((mockup) => mockup.index), [1, 8]);
+  assert.match(mockups[1].type, /^Mockup8_Content-8-Minimalist-Shelf\./);
+  assert.match(String(calls[0].prompt), /Minimalist Shelf/i);
+  assert.equal(mockupIndexFromAttachmentName(mockups[1].type), 8);
 });
 
 test("OpenAI exhausted credit is translated into an actionable error", () => {

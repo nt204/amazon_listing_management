@@ -46,6 +46,8 @@ export interface MockupResult {
 export interface GenerateMockupsOptions {
   sku: string;
   itemName: string;
+  /** Product details from the source card, including material when available. */
+  productContext?: string;
   dimensions: Dimensions3D;
   inputDesignBuffer: Buffer;
   inputMimeType: string;
@@ -59,6 +61,8 @@ export interface GenerateMockupsOptions {
   skipIndexes?: readonly number[];
   /** Specific mockup indexes selected by user to generate. */
   selectedIndexes?: readonly number[];
+  /** User-defined scene concepts, beginning at index 8. */
+  customMockups?: readonly { id: number; label: string }[];
   /** Called immediately after each AI image is ready, before the next image starts. */
   onMockupReady?: (mockup: MockupResult) => Promise<void> | void;
 }
@@ -112,7 +116,7 @@ const MOCKUP_TYPES = [
     fileName: "Mockup3_Gift_Box.png",
     promptKey: "gift_box",
     description:
-      "Ảnh sản phẩm đúc bằng thủy tinh nằm trên hộp quà Giáng Sinh bằng nhung sang trọng.",
+      "Ảnh flat-lay ornament và đầy đủ phụ kiện đóng gói trong hộp quà đỏ.",
   },
   {
     index: 4,
@@ -136,7 +140,7 @@ const MOCKUP_TYPES = [
     fileName: "Mockup6_Gifting_Hands.png",
     promptKey: "gifting_hands",
     description:
-      "Ảnh ấm áp hai bàn tay trao tặng món quà trang trí cho nhau ngày lễ.",
+      "Ảnh cận cảnh hai bàn tay trao ornament bằng dây treo với thông điệp Perfect Gift Idea.",
   },
   {
     index: 7,
@@ -155,12 +159,21 @@ export async function generateAllMockups(
   const {
     sku,
     itemName,
+    productContext,
     dimensions,
     inputDesignBuffer,
     model = DEFAULT_IMAGE_MODEL,
     quality = configuredImageQuality(),
   } = options;
   const skippedIndexes = new Set(options.skipIndexes || []);
+  const customMockupTypes = (options.customMockups || []).map((custom) => ({
+    index: custom.id,
+    name: custom.label,
+    fileName: `Mockup${custom.id}_${safeFileStem(custom.label)}.png`,
+    promptKey: `custom:${custom.label}`,
+    description: `Ảnh mockup tùy chỉnh: ${custom.label}`,
+  }));
+  const effectiveMockupTypes = [...MOCKUP_TYPES, ...customMockupTypes];
 
   const normalizedDesignBuffer = await normalizeDesignImage(inputDesignBuffer);
   const base64Design = normalizedDesignBuffer.toString("base64");
@@ -234,7 +247,7 @@ export async function generateAllMockups(
     ? new Set(options.selectedIndexes)
     : null;
 
-  const targetMockups = MOCKUP_TYPES.slice(1).filter((meta) => {
+  const targetMockups = effectiveMockupTypes.slice(1).filter((meta) => {
     if (skippedIndexes.has(meta.index)) return false;
     if (selectedIndexesSet && !selectedIndexesSet.has(meta.index)) return false;
     return true;
@@ -250,7 +263,12 @@ export async function generateAllMockups(
       let providerTrace: MockupResult["providerTrace"];
 
       if (isImageApiModel(model) && openaiClient && openaiInput) {
-        const prompt = buildMockupPrompt(meta.promptKey, itemName, dimensions);
+        const prompt = buildMockupPrompt(
+          meta.promptKey,
+          itemName,
+          dimensions,
+          productContext,
+        );
         const usesCheapKeyAI = isCheapKeyAIImageModel(model);
         // Output quality and source fidelity are independent. CheapKeyAI bills
         // GPT Image 2 per image, so preserve the uploaded artwork at high
@@ -279,7 +297,7 @@ export async function generateAllMockups(
         );
         const upstreamModel = usesCheapKeyAI
           ? process.env.CHEAPKEYAI_UPSTREAM_MODEL?.trim() ||
-            (model === "gemini-3-pro-image-c" ? "gemini-3-pro-image" : model)
+            model
           : model;
         const response = await openaiClient.images.edit(
           {
@@ -350,7 +368,12 @@ export async function generateAllMockups(
         );
         mockupBuffer = Buffer.from(b64, "base64");
       } else if (genAI) {
-        const prompt = buildMockupPrompt(meta.promptKey, itemName, dimensions);
+        const prompt = buildMockupPrompt(
+          meta.promptKey,
+          itemName,
+          dimensions,
+          productContext,
+        );
         const response = await genAI.models.generateContent({
           model,
           contents: [
@@ -382,7 +405,12 @@ export async function generateAllMockups(
         }
         mockupBuffer = Buffer.from(imagePart.inlineData.data, "base64");
       } else if (isChatGPTWebModel(model)) {
-        const prompt = buildMockupPrompt(meta.promptKey, itemName, dimensions);
+        const prompt = buildMockupPrompt(
+          meta.promptKey,
+          itemName,
+          dimensions,
+          productContext,
+        );
         console.info(`[ChatGPT Web Automation] Generating ${meta.name} with prompt: ${prompt.substring(0, 100)}...`);
         mockupBuffer = await generateChatGPTWebImage(prompt, { inputImageBuffer: normalizedDesignBuffer });
       } else {
@@ -409,31 +437,43 @@ export async function generateAllMockups(
 }
 
 export function mockupIndexFromAttachmentName(name: string): number | null {
-  const match = name.trim().match(/^Mockup([2-7])_/i);
+  const match = name.trim().match(/^Mockup(\d+)_/i);
   if (!match) return null;
   const index = Number(match[1]);
-  return Number.isInteger(index) ? index : null;
+  return Number.isInteger(index) && index >= 2 && index <= 20 ? index : null;
 }
 
 export function buildMockupPrompt(
   promptKey: string,
   itemName: string,
   dimensions: Dimensions3D,
+  productContext?: string,
 ): string {
   let concept: string;
   switch (promptKey) {
     case "dimensions_3d":
       concept = `Product Size & Thickness Infographic Photography.
 - Hand holding white satin ribbon hanging loop at top against warm golden holiday bokeh background.
-- Water-clear transparent crystal glass disc ornament.
+- Render the product with the exact material, opacity, surface finish, shape and edge construction supported by the product information and reference image.
 - Vertical dashed white dimension line on the right side labeled "${dimensions.length}".
 - Horizontal dashed white dimension line at the bottom labeled "${dimensions.width}".
-- Callout pointer box at top right corner pointing to thick faceted bevel edge labeled "Thickness ${dimensions.thickness}".
+- Callout pointer box at top right corner pointing to the product edge labeled "Thickness ${dimensions.thickness}".
 - Bold white serif text at bottom center reading "PRODUCT SIZE".`;
       break;
     case "gift_box":
-      concept =
-        "Sản phẩm nằm bên trong một HỘP QUÀ MÀU ĐỎ SANG TRỌNG đang mở (open RED GIFT BOX), lót vải lụa trắng satin sáng bóng (soft white satin lining).";
+      concept = `PACKAGE INCLUDED gift-box flat-lay, matching this composition:
+- Square 1:1 image, clean top-down product photography on a warm ivory or pale neutral tabletop.
+- Place one open square red gift-box base in the left/lower area. Its interior is black velvet or black foam with a thin red rim.
+- Lay exactly one complete ornament on top of the open box base. Keep the ornament fully visible, centered, correctly scaled and unobstructed; preserve its exact shape, material, printed artwork, text and colors from Image 1.
+- Show the included hanging cord/lanyard attached to the ornament and draped naturally near the top. Its color may complement the ornament; do not cover important artwork or lettering.
+- Place the matching closed red textured gift-box lid separately in the upper-right area, rotated slightly and overlapping only the corner of the open box. The lid must not cover the ornament.
+- Use soft diffused studio lighting, realistic contact shadows and a premium e-commerce catalog finish. No hands, Christmas tree, lifestyle scene or decorative clutter.
+- Reserve a clean area across the bottom for centered black typography. Render this exact package list clearly and spell it correctly:
+"PACKAGE INCLUDED"
+"1 - Colored Lanyard"
+"1 - Gift Box Included"
+"1 - Ornament"
+- Do not add extra products, duplicate ornaments, extra accessories, logos or additional text.`;
       break;
     case "tree_view1":
       concept = "Sản phẩm treo trên nhánh cây thông xanh tươi.";
@@ -443,14 +483,32 @@ export function buildMockupPrompt(
         "Sản phẩm treo trên cây thông trong phòng khách tươi sáng, nền trắng và xanh tươi.";
       break;
     case "gifting_hands":
-      concept = "Hai người trao tặng sản phẩm cho nhau trong không gian sáng, sạch.";
+      concept = `PERFECT GIFT IDEA hand-to-hand gifting scene, matching this composition:
+- Square 1:1 close-up lifestyle product photograph with exactly two realistic human hands exchanging the ornament by its hanging ribbon or lanyard.
+- One hand enters from the upper-right and gently holds the top of the ribbon; the receiving hand enters from the upper-left/left side and reaches naturally toward the ribbon. The gesture must clearly communicate giving and receiving.
+- Show anatomically correct hands with natural fingers, nails and skin texture. No fused, duplicated, missing or deformed fingers; no jewelry unless subtle and realistic.
+- Place exactly one complete ornament large and centered in the foreground, hanging vertically beneath the hands. Keep it fully visible and unobstructed, occupying roughly 55-65% of the image width.
+- Preserve the ornament's exact shape, material, opacity, edge construction, printed artwork, original lettering and colors from Image 1. Do not turn it into glass unless Image 1 supports glass.
+- The ribbon must pass correctly through the ornament's hanging hole and respond naturally to gravity. The hands must hold the ribbon, not cover the ornament artwork.
+- Match this exact visual mood and color direction: bright, clean, softly exposed lifestyle photography with neutral color balance. Keep the hands, ornament and main center-right area luminous and clear, while using only a restrained deep neutral green shadow area at the far left for contrast.
+- Use a soft light beige/greige blurred indoor background with clean cream highlights and a few subtle neutral bokeh circles. Do not apply a yellow, orange, amber, sepia or brown color cast; white and neutral surfaces must remain visually neutral.
+- Render skin in natural light peach-beige tones with accurate highlights, not orange or heavily warmed. Use a clean deep-red satin ribbon as the small color accent. Preserve the ornament artwork's original colors without tinting the product.
+- Keep the ornament crisp and bright with realistic edge highlights appropriate to its actual material. Use shallow depth of field and smooth photographic blur, not a dark moody exposure, heavy vignette, flat gradient or artificial repeating bokeh.
+- This gifting-scene bright neutral palette overrides any general instruction elsewhere asking for warm golden, amber, brown or low-key cinematic lighting.
+- Reserve a clean area near the bottom for one centered luxury calligraphic headline. Render exactly: "PERFECT GIFT IDEA".
+- Typography style: elegant white handwritten calligraphy matching the reference aesthetic, with very thin hairlines, long graceful entry and exit swashes, tall flowing capital letters, restrained thin-and-thick contrast and airy spacing. Use clean warm-white lettering with no colored fill; add only a faint soft shadow when needed for readability over the dark background.
+- Keep every letter fully legible and correctly spelled. Use consistent baseline, generous breathing room and premium editorial composition. Do not use a generic system font, chunky bold lettering, cartoon lettering, heavy outline, neon glow, metallic 3D extrusion or excessive flourishes that cross other letters.
+- Do not render any other caption, subtitle, material name, product description, logo or promotional text. In particular, do not add "GLASS ORNAMENT" or "ONE SIDE PRINTED DESIGN".
+- Do not add a gift box, Christmas tree branches, duplicate ornaments or extra hands.`;
       break;
     case "car_mirror":
       concept =
         "Sản phẩm treo trên gương chiếu hậu của ô tô vào ban ngày, ngoài cửa kính là cây xanh và bầu trời sáng.";
       break;
     default:
-      concept = "Ảnh mockup sản phẩm.";
+      concept = promptKey.startsWith("custom:")
+        ? `Tạo bối cảnh mockup tùy chỉnh theo yêu cầu: ${promptKey.slice("custom:".length).trim()}. Bố cục phải tự nhiên, hợp lý và giữ sản phẩm làm chủ thể chính.`
+        : "Ảnh mockup sản phẩm.";
   }
 
   const dimensionsLine =
@@ -458,75 +516,78 @@ export function buildMockupPrompt(
       ? `\n\nKích thước 3 chiều: ${dimensions.formatted}.`
       : "";
 
-  return `Sử dụng Ảnh 1 làm ảnh tham chiếu cho sản phẩm "${itemName}".
+  const productContextLine = productContext?.trim()
+    ? `\nThông tin bổ sung từ thẻ sản phẩm:\n${productContext.trim()}\n`
+    : "";
+
+  return `Sử dụng Ảnh 1 làm ảnh tham chiếu cho sản phẩm "${itemName}".${productContextLine}
 
 Quan sát Ảnh 1 để nhận diện chính xác:
 - hình dáng và tỷ lệ sản phẩm
+- chất liệu, độ trong/đục, độ bóng/mờ và cấu tạo cạnh
 - thiết kế in
 - chữ và typography
 - các hình minh họa
 - màu sắc của CÁC CHI TIẾT ĐƯỢC IN
 - lỗ treo và dây treo
 
-QUAN TRỌNG VỀ CHẤT LIỆU VÀ ĐỘ TRONG SUỐT (100% WATER-CLEAR GLASS):
-Sản phẩm được làm từ acrylic / glass 100% TRONG SUỐT, KHÔNG MÀU, có độ trong quang học cao như pha lê (water-clear optical crystal).
+QUAN TRỌNG VỀ CHẤT LIỆU:
+- Chủ động phân tích trực tiếp Ảnh 1 để nhận biết chất liệu qua texture, độ trong/đục, độ bóng/mờ, phản xạ, cấu tạo bề mặt và kiểu cạnh; không yêu cầu mô tả thẻ phải ghi vật liệu.
+- Chỉ dùng tên sản phẩm hoặc thông tin bổ sung để hỗ trợ khi chúng thực sự nêu rõ chất liệu; dòng kích thước không phải là thông tin vật liệu.
+- Nếu không thể kết luận chắc chắn chất liệu, giữ nguyên diện mạo vật lý quan sát được trong Ảnh 1 và không tự gán một chất liệu cụ thể.
+- Sản phẩm có thể làm từ glass, acrylic, gỗ, kim loại, ceramic, nhựa, vải hoặc chất liệu khác.
+- KHÔNG mặc định sản phẩm là glass/acrylic, pha lê hoặc trong suốt nếu dữ liệu tham chiếu không xác nhận điều đó.
+- Giữ đúng độ trong suốt hoặc độ đục, màu nền vật liệu, texture, độ bóng/mờ, độ dày và kiểu cạnh của sản phẩm gốc.
 
 LƯU Ý NGUYÊN TẮC QUAN TRỌNG:
-- Màu nâu, vàng, cam hoặc bất kỳ màu đĩa nền nào trong Ảnh 1 KHÔNG PHẢI MÀU CỦA IN và TUYỆT ĐỐI KHÔNG ĐƯỢC GIỮ LẠI.
-- Loại bỏ hoàn toàn mảng đĩa tròn màu nâu phía sau.
-- Tất cả các vùng không được in PHẢI HOÀN TOÀN TRONG SUỐT, NHÌN XUYÊN THỦNG QUA MÔI TRƯỜNG BACKGROUND MỚI.
-- Phải thấy rõ background mới (Hộp quà màu đỏ / Cây thông xanh / Phòng khách) hiện lên trực tiếp phía sau đĩa sản phẩm trong suốt.
-- Chỉ các chữ, nét vẽ và chi tiết thiết kế thực sự mới có màu in trên bề mặt kính.
-
-Các vùng không được in phải:
-- trong suốt, không màu và rất trong trẻo
-- nhìn rõ BACKGROUND MỚI xuyên qua
-- có cảm giác giống crystal/glass cao cấp
-- có độ sâu và khúc xạ ánh sáng tự nhiên
-- không bị đục, mờ, matte hoặc smoky
+- Phân biệt chính xác phần thiết kế in với màu sắc/texture vốn có của vật liệu nền.
+- Với vật liệu trong suốt: chỉ vùng thực sự không được in mới nhìn xuyên qua background mới; tái hiện khúc xạ và phản xạ tự nhiên.
+- Với vật liệu đục: giữ đúng màu và texture của bề mặt, không biến vùng không in thành trong suốt.
+- Với bề mặt gỗ, kim loại, ceramic, nhựa hoặc vải: tái hiện đúng grain, reflection, glaze, texture và finish tương ứng; không biến chúng thành kính.
+- Không tự ý xóa nền vật liệu, đổi chất liệu hoặc thêm hiệu ứng trong suốt không có trong dữ liệu tham chiếu.
 
 CẠNH SẢN PHẨM:
-Tạo cạnh acrylic dày, trong suốt và được đánh bóng cao.
-Cạnh vát/faceted bevel phải bắt sáng mạnh như crystal.
-Tạo các highlight trắng sắc nét trên cạnh.
-Có refraction, specular reflections và các điểm lóe sáng nhỏ tự nhiên.
-Các cạnh có thể tạo subtle rainbow/prismatic reflections khi bắt sáng.
+Giữ đúng độ dày, hình dạng và kiểu hoàn thiện cạnh của sản phẩm tham chiếu.
+Chỉ tạo bevel, refraction, metallic reflection, wood grain hoặc đường may khi phù hợp với chất liệu thực tế.
+Highlight và phản xạ phải tự nhiên, không làm thay đổi bản chất vật liệu.
 
 ÁNH SÁNG:
 Sử dụng phong cách chụp sản phẩm high-key, sáng và sạch.
-Có soft white backlight chiếu xuyên qua acrylic và bright clean rim lighting quanh cạnh sản phẩm.
-Có những điểm specular highlight trắng sáng và crisp trên bề mặt và cạnh.
-Sản phẩm phải có cảm giác luminous, glossy, sparkling và crystal-clear.
-Không dùng ánh sáng vàng, amber, orange, muddy hoặc phủ màu nâu lên toàn bộ sản phẩm.
+Ánh sáng phải làm nổi bật texture và finish thực tế của chất liệu mà không làm đổi màu sản phẩm.
+Chỉ dùng backlight xuyên thấu, specular highlight mạnh hoặc hiệu ứng lấp lánh khi phù hợp với chất liệu.
+Không phủ màu vàng, amber, orange hoặc muddy lên toàn bộ sản phẩm.
 
 BACKGROUND:
 Bối cảnh phía sau sản phẩm phải sáng, mềm và có shallow depth of field.
 Bokeh nên là soft white bokeh hoặc light green bokeh.
 Không đặt một mảng cây tối hoặc vật thể tối phủ kín ngay phía sau toàn bộ sản phẩm.
-Cành cây có thể xuất hiện xung quanh sản phẩm nhưng không làm phần acrylic trung tâm trở nên tối hoặc đục.
+Cành cây có thể xuất hiện xung quanh sản phẩm nhưng không làm mất chi tiết, màu sắc hoặc texture của sản phẩm.
 
 Giữ thiết kế in rõ nét và trung thành với ảnh tham chiếu.
 Không tự ý thay đổi nội dung chữ, hình minh họa hoặc bố cục thiết kế.
 
 Mục tiêu hình ảnh:
 premium commercial product photography,
-water-clear colorless acrylic,
-high optical clarity,
-polished faceted edges,
-strong clean white specular highlights,
-bright white rim light,
-realistic light refraction,
-subtle prismatic reflections,
-sparkling crystal appearance,
+material-accurate rendering,
+faithful opacity and surface texture,
+realistic edges and thickness,
+physically appropriate highlights and reflections,
+clean studio rim light,
 bright white and fresh green bokeh background,
-luxurious glossy finish.
+premium finish appropriate to the actual material.
 
 Concept: ${concept}${dimensionsLine}`;
 }
 
 
 function mockupResult(
-  meta: (typeof MOCKUP_TYPES)[number],
+  meta: (typeof MOCKUP_TYPES)[number] | {
+    index: number;
+    name: string;
+    fileName: string;
+    promptKey: string;
+    description: string;
+  },
   image: { buffer: Buffer; mimeType: string; extension: string },
   providerTrace?: MockupResult["providerTrace"],
 ): MockupResult {
@@ -749,10 +810,10 @@ function configuredImageQuality(): MockupImageQuality {
 }
 
 function configuredOpenAITimeout() {
-  const parsed = Number(process.env.OPENAI_IMAGE_TIMEOUT_MS || 120_000);
+  const parsed = Number(process.env.OPENAI_IMAGE_TIMEOUT_MS || 600_000);
   return Number.isFinite(parsed)
-    ? Math.min(240_000, Math.max(30_000, Math.round(parsed)))
-    : 120_000;
+    ? Math.min(600_000, Math.max(30_000, Math.round(parsed)))
+    : 600_000;
 }
 
 function configuredCheapKeyAIBaseUrl() {

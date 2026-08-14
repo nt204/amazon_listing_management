@@ -20,7 +20,7 @@ import {
 } from "@/lib/mockup-generator";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
+export const maxDuration = 600;
 
 const mockupModelSchema = z.enum([
   "gpt-image-2",
@@ -41,8 +41,17 @@ const generateMockupsSchema = z.object({
   model: mockupModelSchema.optional(),
   quality: imageQualitySchema.optional(),
   selectedSteps: z
-    .array(z.number().int().min(2).max(7))
-    .min(1, "Hãy chọn ít nhất một concept mockup từ Content 2 đến Content 7.")
+    .array(z.number().int().min(2).max(20))
+    .min(1, "Hãy chọn ít nhất một concept mockup từ Content 2 trở đi.")
+    .optional(),
+  customContents: z
+    .array(
+      z.object({
+        id: z.number().int().min(8).max(20),
+        label: z.string().trim().min(1).max(200),
+      }),
+    )
+    .max(13)
     .optional(),
   stream: z.boolean().optional(),
 });
@@ -244,6 +253,7 @@ async function executeMockupGeneration(
     {
       sku: parsedTitle.sku,
       itemName: parsedTitle.itemName,
+      productContext: card.desc || undefined,
       dimensions,
       inputDesignBuffer: designBuffer,
       inputMimeType: mimeType,
@@ -251,6 +261,7 @@ async function executeMockupGeneration(
       quality: selectedQuality,
       skipIndexes: Array.from(existingGeneratedAttachments.keys()),
       selectedIndexes: input.selectedSteps,
+      customMockups: input.customContents,
       onMockupReady: async (mockup) => {
         report?.({
           type: "progress",
