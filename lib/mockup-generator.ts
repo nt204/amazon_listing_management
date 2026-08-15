@@ -276,12 +276,10 @@ export async function generateAllMockups(
     }
   }
 
-
-
   const targetMockups = effectiveMockupTypes.slice(1).filter((meta) => {
     if (skippedIndexes.has(meta.index)) return false;
-    if (selectedIndexesSet && !selectedIndexesSet.has(meta.index)) return false;
-    return true;
+    if (selectedIndexesSet) return selectedIndexesSet.has(meta.index);
+    return meta.index <= 7;
   });
 
   const generatedResults = await mapWithConcurrency(

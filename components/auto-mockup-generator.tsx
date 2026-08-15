@@ -415,6 +415,8 @@ export function AutoMockupGenerator({
   const [studioModal, setStudioModal] = useState<{
     cardId: string;
     attachmentIndex: number;
+    stepId?: number;
+    attachmentId?: string;
   } | null>(null);
   const [regenPromptNote, setRegenPromptNote] = useState<string>("");
   const [regenModel, setRegenModel] = useState<MockupModel>("gpt-image-1.5");
@@ -455,14 +457,21 @@ export function AutoMockupGenerator({
         setStudioModal((prev) => {
           if (!prev) return null;
           if (cardAtts.length > 1) {
+            const nextIndex = (prev.attachmentIndex - 1 + cardAtts.length) % cardAtts.length;
+            const nextAtt = cardAtts[nextIndex];
+            const nextStep = nextAtt ? (mockupIndexFromAttachmentName(nextAtt.name) || (nextIndex === 0 ? 1 : undefined)) : undefined;
             return {
-              ...prev,
-              attachmentIndex: (prev.attachmentIndex - 1 + cardAtts.length) % cardAtts.length,
+              cardId: prev.cardId,
+              attachmentIndex: nextIndex,
+              stepId: nextStep,
+              attachmentId: nextAtt?.id,
             };
           }
           if (allBoardCards.length > 1) {
             const prevCardIdx = (activeCardIndex - 1 + allBoardCards.length) % allBoardCards.length;
-            return { cardId: allBoardCards[prevCardIdx].id, attachmentIndex: 0 };
+            const firstAtt = allBoardCards[prevCardIdx].attachments?.[0];
+            const firstStep = firstAtt ? (mockupIndexFromAttachmentName(firstAtt.name) || 1) : undefined;
+            return { cardId: allBoardCards[prevCardIdx].id, attachmentIndex: 0, stepId: firstStep, attachmentId: firstAtt?.id };
           }
           return prev;
         });
@@ -471,14 +480,21 @@ export function AutoMockupGenerator({
         setStudioModal((prev) => {
           if (!prev) return null;
           if (cardAtts.length > 1) {
+            const nextIndex = (prev.attachmentIndex + 1) % cardAtts.length;
+            const nextAtt = cardAtts[nextIndex];
+            const nextStep = nextAtt ? (mockupIndexFromAttachmentName(nextAtt.name) || (nextIndex === 0 ? 1 : undefined)) : undefined;
             return {
-              ...prev,
-              attachmentIndex: (prev.attachmentIndex + 1) % cardAtts.length,
+              cardId: prev.cardId,
+              attachmentIndex: nextIndex,
+              stepId: nextStep,
+              attachmentId: nextAtt?.id,
             };
           }
           if (allBoardCards.length > 1) {
             const nextCardIdx = (activeCardIndex + 1) % allBoardCards.length;
-            return { cardId: allBoardCards[nextCardIdx].id, attachmentIndex: 0 };
+            const firstAtt = allBoardCards[nextCardIdx].attachments?.[0];
+            const firstStep = firstAtt ? (mockupIndexFromAttachmentName(firstAtt.name) || 1) : undefined;
+            return { cardId: allBoardCards[nextCardIdx].id, attachmentIndex: 0, stepId: firstStep, attachmentId: firstAtt?.id };
           }
           return prev;
         });
@@ -733,21 +749,26 @@ export function AutoMockupGenerator({
           }));
 
           // When an image is ready & attached on Trello, display it on screen real-time!
-          if (event.status === "success" && event.attachmentUrl) {
-            const newAtt = {
-              id: event.attachmentId || String(Date.now()),
-              name: event.name || `Mockup ${event.step}`,
-              url: event.attachmentUrl,
-              mimeType: "image/png",
-              previewUrl: event.previewUrl,
-              thumbnailUrl: event.thumbnailUrl,
-            };
+          if (event.status === "success" && (event.attachmentUrl || event.previewUrl)) {
             const updateCardAttachments = (prev: TrelloCard[]) =>
               prev.map((c) => {
                 if (c.id !== card.id) return c;
                 const existingAtts = c.attachments || [];
+                const prevAtt = existingAtts.find((a) => {
+                  if (event.attachmentId && a.id === event.attachmentId) return true;
+                  const step = mockupIndexFromAttachmentName(a.name);
+                  return step !== null && step > 0 && step === event.step;
+                });
+                const newAtt = {
+                  id: event.attachmentId || prevAtt?.id || String(Date.now()),
+                  name: event.name || prevAtt?.name || `Mockup ${event.step}`,
+                  url: event.attachmentUrl || prevAtt?.url || "",
+                  mimeType: "image/png",
+                  previewUrl: event.previewUrl || prevAtt?.previewUrl,
+                  thumbnailUrl: event.thumbnailUrl || prevAtt?.thumbnailUrl,
+                };
                 const filteredAtts = existingAtts.filter((a) => {
-                  if (a.id === newAtt.id || a.url === newAtt.url) return false;
+                  if (a.id === newAtt.id || (a.url && a.url === newAtt.url)) return false;
                   const step = mockupIndexFromAttachmentName(a.name);
                   if (step !== null && step > 0 && step === event.step) return false;
                   return true;
@@ -897,7 +918,19 @@ export function AutoMockupGenerator({
       {studioModal && activeStudioCard && activeStudioCard.attachments && activeStudioCard.attachments.length > 0 && (() => {
         const card = activeStudioCard;
         const attachments = card.attachments || [];
-        const safeIndex = Math.min(Math.max(0, studioModal.attachmentIndex), attachments.length - 1);
+
+        let safeIndex = Math.min(Math.max(0, studioModal.attachmentIndex), attachments.length - 1);
+        if (studioModal.stepId) {
+          const foundIdx = attachments.findIndex((a) => {
+            const step = mockupIndexFromAttachmentName(a.name);
+            return step !== null && step > 0 && step === studioModal.stepId;
+          });
+          if (foundIdx >= 0) safeIndex = foundIdx;
+        } else if (studioModal.attachmentId) {
+          const foundIdx = attachments.findIndex((a) => a.id === studioModal.attachmentId);
+          if (foundIdx >= 0) safeIndex = foundIdx;
+        }
+
         const currentAtt = attachments[safeIndex];
         const stepId = mockupIndexFromAttachmentName(currentAtt.name) || (safeIndex === 0 ? 1 : undefined);
         const statusKey = `${card.id}_${currentAtt.id}`;
@@ -905,25 +938,39 @@ export function AutoMockupGenerator({
 
         const handlePrev = () => {
           if (attachments.length > 1) {
+            const prevIndex = (safeIndex - 1 + attachments.length) % attachments.length;
+            const nextAtt = attachments[prevIndex];
+            const nextStep = nextAtt ? (mockupIndexFromAttachmentName(nextAtt.name) || (prevIndex === 0 ? 1 : undefined)) : undefined;
             setStudioModal({
               cardId: card.id,
-              attachmentIndex: (safeIndex - 1 + attachments.length) % attachments.length,
+              attachmentIndex: prevIndex,
+              stepId: nextStep,
+              attachmentId: nextAtt?.id,
             });
           } else if (allBoardCards.length > 1) {
             const prevIdx = (activeCardIndex - 1 + allBoardCards.length) % allBoardCards.length;
-            setStudioModal({ cardId: allBoardCards[prevIdx].id, attachmentIndex: 0 });
+            const firstAtt = allBoardCards[prevIdx].attachments?.[0];
+            const firstStep = firstAtt ? (mockupIndexFromAttachmentName(firstAtt.name) || 1) : undefined;
+            setStudioModal({ cardId: allBoardCards[prevIdx].id, attachmentIndex: 0, stepId: firstStep, attachmentId: firstAtt?.id });
           }
         };
 
         const handleNext = () => {
           if (attachments.length > 1) {
+            const nextIndex = (safeIndex + 1) % attachments.length;
+            const nextAtt = attachments[nextIndex];
+            const nextStep = nextAtt ? (mockupIndexFromAttachmentName(nextAtt.name) || (nextIndex === 0 ? 1 : undefined)) : undefined;
             setStudioModal({
               cardId: card.id,
-              attachmentIndex: (safeIndex + 1) % attachments.length,
+              attachmentIndex: nextIndex,
+              stepId: nextStep,
+              attachmentId: nextAtt?.id,
             });
           } else if (allBoardCards.length > 1) {
             const nextIdx = (activeCardIndex + 1) % allBoardCards.length;
-            setStudioModal({ cardId: allBoardCards[nextIdx].id, attachmentIndex: 0 });
+            const firstAtt = allBoardCards[nextIdx].attachments?.[0];
+            const firstStep = firstAtt ? (mockupIndexFromAttachmentName(firstAtt.name) || 1) : undefined;
+            setStudioModal({ cardId: allBoardCards[nextIdx].id, attachmentIndex: 0, stepId: firstStep, attachmentId: firstAtt?.id });
           }
         };
 
@@ -949,7 +996,9 @@ export function AutoMockupGenerator({
                         type="button"
                         onClick={() => {
                           const prevIdx = (activeCardIndex - 1 + allBoardCards.length) % allBoardCards.length;
-                          setStudioModal({ cardId: allBoardCards[prevIdx].id, attachmentIndex: 0 });
+                          const firstAtt = allBoardCards[prevIdx].attachments?.[0];
+                          const firstStep = firstAtt ? (mockupIndexFromAttachmentName(firstAtt.name) || 1) : undefined;
+                          setStudioModal({ cardId: allBoardCards[prevIdx].id, attachmentIndex: 0, stepId: firstStep, attachmentId: firstAtt?.id });
                         }}
                         className="hover:text-indigo-600 transition p-0.5"
                         title="Chuyển sang Thẻ / SKU trước"
@@ -961,7 +1010,9 @@ export function AutoMockupGenerator({
                         type="button"
                         onClick={() => {
                           const nextIdx = (activeCardIndex + 1) % allBoardCards.length;
-                          setStudioModal({ cardId: allBoardCards[nextIdx].id, attachmentIndex: 0 });
+                          const firstAtt = allBoardCards[nextIdx].attachments?.[0];
+                          const firstStep = firstAtt ? (mockupIndexFromAttachmentName(firstAtt.name) || 1) : undefined;
+                          setStudioModal({ cardId: allBoardCards[nextIdx].id, attachmentIndex: 0, stepId: firstStep, attachmentId: firstAtt?.id });
                         }}
                         className="hover:text-indigo-600 transition p-0.5"
                         title="Chuyển sang Thẻ / SKU tiếp theo"
@@ -1091,7 +1142,10 @@ export function AutoMockupGenerator({
                         <button
                           key={att.id}
                           type="button"
-                          onClick={() => setStudioModal({ cardId: card.id, attachmentIndex: idx })}
+                          onClick={() => {
+                            const targetStep = mockupIndexFromAttachmentName(att.name) || (idx === 0 ? 1 : undefined);
+                            setStudioModal({ cardId: card.id, attachmentIndex: idx, stepId: targetStep, attachmentId: att.id });
+                          }}
                           className={`h-10 w-10 overflow-hidden rounded-xl border transition shrink-0 ${
                             idx === safeIndex
                               ? "border-amber-400 ring-2 ring-amber-400/50 scale-105"
@@ -1133,9 +1187,9 @@ export function AutoMockupGenerator({
                         onChange={(e) => setRegenModel(e.target.value as MockupModel)}
                         className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 shadow-2xs"
                       >
-                        <option value="gpt-image-1.5">⚡ GPT Image 1.5 (Nhanh & Ổn Định)</option>
-                        <option value="gpt-image-2">🎨 GPT Image 2 (Mới & Chi Tiết)</option>
-                        <option value="gpt-image-2-c">💰 CheapKeyAI GPT Image 2 (Tiết Kiệm)</option>
+                        <option value="gpt-image-2-c">💸 GPT Image 2 C (CheapKeyAI)</option>
+                        <option value="gpt-image-2">🤖 GPT Image 2 (CheapKeyAI Gốc)</option>
+                        <option value="gpt-image-1.5">⚡ GPT Image 1.5 (OpenAI Chính Thống)</option>
                         <option value="gemini-3-pro-image">💎 Gemini 3 Pro Image (Sắc Nét)</option>
                         <option value="gemini-3.1-flash-image">⚡ Gemini 3.1 Flash Image (Tốc Độ)</option>
                       </select>
@@ -1214,21 +1268,26 @@ export function AutoMockupGenerator({
                                 const event = JSON.parse(line.trim()) as MockupStreamEvent;
                                 if (event.type === "progress") {
                                   setSingleRegenStatusText(event.message);
-                                  if (event.status === "success" && event.attachmentUrl) {
-                                    const newAtt = {
-                                      id: event.attachmentId || String(Date.now()),
-                                      name: event.name || `Mockup ${event.step}`,
-                                      url: event.attachmentUrl,
-                                      mimeType: "image/png",
-                                      previewUrl: event.previewUrl,
-                                      thumbnailUrl: event.thumbnailUrl,
-                                    };
+                                  if (event.status === "success" && (event.attachmentUrl || event.previewUrl)) {
                                     const updateCardAttachments = (prev: TrelloCard[]) =>
                                       prev.map((c) => {
                                         if (c.id !== card.id) return c;
                                         const existingAtts = c.attachments || [];
+                                        const prevAtt = existingAtts.find((a) => {
+                                          if (event.attachmentId && a.id === event.attachmentId) return true;
+                                          const step = mockupIndexFromAttachmentName(a.name);
+                                          return step !== null && step > 0 && step === event.step;
+                                        });
+                                        const newAtt = {
+                                          id: event.attachmentId || prevAtt?.id || String(Date.now()),
+                                          name: event.name || prevAtt?.name || `Mockup ${event.step}`,
+                                          url: event.attachmentUrl || prevAtt?.url || "",
+                                          mimeType: "image/png",
+                                          previewUrl: event.previewUrl || prevAtt?.previewUrl,
+                                          thumbnailUrl: event.thumbnailUrl || prevAtt?.thumbnailUrl,
+                                        };
                                         const filteredAtts = existingAtts.filter((a) => {
-                                          if (a.id === newAtt.id || a.url === newAtt.url) return false;
+                                          if (a.id === newAtt.id || (a.url && a.url === newAtt.url)) return false;
                                           const step = mockupIndexFromAttachmentName(a.name);
                                           if (step !== null && step > 0 && step === event.step) return false;
                                           return true;
@@ -1371,10 +1430,10 @@ export function AutoMockupGenerator({
                   💸 GPT Image 2 C (CheapKeyAI)
                 </option>
                 <option value="gpt-image-2">
-                  🤖 GPT Image 2
+                  🤖 GPT Image 2 (CheapKeyAI Gốc)
                 </option>
                 <option value="gpt-image-1.5">
-                  🤖 GPT Image 1.5 (Mặc định / Legacy)
+                  ⚡ GPT Image 1.5 (OpenAI Chính Thống)
                 </option>
                 <option value="gemini-3.1-flash-image">
                   🎨 Gemini 3.1 Flash Image
@@ -1831,7 +1890,8 @@ export function AutoMockupGenerator({
                                   decoding="async"
                                   onError={(event) => fallBackToMasterImage(event, att.url)}
                                   onClick={() => {
-                                    setStudioModal({ cardId: card.id, attachmentIndex: idx });
+                                    const stepId = mockupIndexFromAttachmentName(att.name) || (idx === 0 ? 1 : undefined);
+                                    setStudioModal({ cardId: card.id, attachmentIndex: idx, stepId, attachmentId: att.id });
                                     setRegenModel(selectedModel);
                                     setRegenPromptNote("");
                                   }}
@@ -2036,7 +2096,8 @@ export function AutoMockupGenerator({
                                 decoding="async"
                                 onError={(event) => fallBackToMasterImage(event, att.url)}
                                 onClick={() => {
-                                  setStudioModal({ cardId: card.id, attachmentIndex: idx });
+                                  const stepId = mockupIndexFromAttachmentName(att.name) || (idx === 0 ? 1 : undefined);
+                                  setStudioModal({ cardId: card.id, attachmentIndex: idx, stepId, attachmentId: att.id });
                                   setRegenModel(selectedModel);
                                   setRegenPromptNote("");
                                 }}

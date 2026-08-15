@@ -307,32 +307,111 @@ async function callOpenAI(
   prompt: string,
   signal?: AbortSignal,
 ): Promise<ProviderOutput> {
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const response = await withTimeout((requestSignal) => client.responses.create({
-    model,
-    instructions: systemInstruction,
-    input: [{
-      role: "user",
-      content: [
-        { type: "input_text", text: prompt },
-        ...input.images.map((image): OpenAI.Responses.ResponseInputImage => ({
-          type: "input_image",
-          image_url: image.data_url,
-          detail: "auto",
-        })),
-      ],
-    }],
-    text: {
-      format: {
-        type: "json_schema",
-        name: "amazon_listing",
-        strict: true,
-        schema: listingResponseSchema(input),
-      },
-    },
-  }, { signal: requestSignal, maxRetries: 0, timeout: Number(process.env.AI_TIMEOUT_MS || 45_000) }), signal);
-  if (!response.output_text) throw new Error("OpenAI returned an empty response.");
-  const generated = aiGeneratedListingSchema.parse(JSON.parse(response.output_text));
+  const cheapKeyApiKey = process.env.CHEAPKEYAI_API_KEY?.trim();
+  const cheapKeyBaseUrl = (
+    process.env.CHEAPKEYAI_BASE_URL || "https://cheapkeyai.shop/v1"
+  )
+    .trim()
+    .replace(/\/+$/, "");
+
+  const isCheapKeyModel = model === "gpt-5.6-luna" || model.includes("cheapkey");
+  const usesCheapKey = Boolean(
+    cheapKeyApiKey && (isCheapKeyModel || !process.env.OPENAI_API_KEY?.trim()),
+  );
+
+  if (isCheapKeyModel && !cheapKeyApiKey && !process.env.OPENAI_API_KEY?.trim()) {
+    throw new Error(
+      "CHEAPKEYAI_API_KEY chưa được cấu hình trên server để sử dụng model gpt-5.6-luna (CheapKey AI).",
+    );
+  }
+
+  const client = usesCheapKey
+    ? new OpenAI({
+        apiKey: cheapKeyApiKey,
+        baseURL: cheapKeyBaseUrl,
+      })
+    : new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+  const targetModel = isCheapKeyModel
+    ? process.env.CHEAPKEYAI_UPSTREAM_TEXT_MODEL?.trim() || model
+    : model;
+
+  let rawOutputText = "";
+  let usageInputTokens: number | undefined;
+  let usageOutputTokens: number | undefined;
+
+  try {
+    const response = await withTimeout(
+      (requestSignal) =>
+        client.responses.create(
+          {
+            model: targetModel,
+            instructions: systemInstruction,
+            input: [
+              {
+                role: "user",
+                content: [
+                  { type: "input_text", text: prompt },
+                  ...input.images.map(
+                    (image): OpenAI.Responses.ResponseInputImage => ({
+                      type: "input_image",
+                      image_url: image.data_url,
+                      detail: "auto",
+                    }),
+                  ),
+                ],
+              },
+            ],
+            text: {
+              format: {
+                type: "json_schema",
+                name: "amazon_listing",
+                strict: true,
+                schema: listingResponseSchema(input),
+              },
+            },
+          },
+          { signal: requestSignal, maxRetries: 0, timeout: Number(process.env.AI_TIMEOUT_MS || 45_000) },
+        ),
+      signal,
+    );
+    rawOutputText = response.output_text;
+    usageInputTokens = response.usage?.input_tokens;
+    usageOutputTokens = response.usage?.output_tokens;
+  } catch (responsesErr) {
+    if (!usesCheapKey) throw responsesErr;
+    // Fallback to OpenAI Chat Completion endpoint for proxy providers if v1/responses is unavailable
+    const chatResponse = await withTimeout(
+      (requestSignal) =>
+        client.chat.completions.create(
+          {
+            model: targetModel,
+            messages: [
+              { role: "system", content: systemInstruction },
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: prompt },
+                  ...input.images.map((image) => ({
+                    type: "image_url" as const,
+                    image_url: { url: image.data_url },
+                  })),
+                ],
+              },
+            ],
+            response_format: { type: "json_object" },
+          },
+          { signal: requestSignal, maxRetries: 0, timeout: Number(process.env.AI_TIMEOUT_MS || 45_000) },
+        ),
+      signal,
+    );
+    rawOutputText = chatResponse.choices?.[0]?.message?.content || "";
+    usageInputTokens = chatResponse.usage?.prompt_tokens;
+    usageOutputTokens = chatResponse.usage?.completion_tokens;
+  }
+
+  if (!rawOutputText) throw new Error("AI provider returned an empty response.");
+  const generated = aiGeneratedListingSchema.parse(JSON.parse(rawOutputText));
   return {
     listing: {
       title: generated.title,
@@ -340,8 +419,8 @@ async function callOpenAI(
       description: generated.description,
       backend_search_terms: generated.generic_keywords,
     },
-    inputTokens: response.usage?.input_tokens,
-    outputTokens: response.usage?.output_tokens,
+    inputTokens: usageInputTokens,
+    outputTokens: usageOutputTokens,
   };
 }
 

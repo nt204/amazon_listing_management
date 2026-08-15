@@ -522,6 +522,7 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
                   <option value="gemini-2.5-pro">Gemini 2.5 Pro (Deep Reasoning)</option>
                   <option value="gpt-4o">GPT-4o (Chất lượng cao)</option>
                   <option value="gpt-4o-mini">GPT-4o Mini (Nhanh & Tối ưu)</option>
+                  <option value="gpt-5.6-luna">💸 GPT-5.6 Luna (CheapKey AI)</option>
                 </select>
               </div>
             </div>

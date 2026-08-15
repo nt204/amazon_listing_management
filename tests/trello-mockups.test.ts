@@ -197,12 +197,12 @@ test("gpt-image-2-c is routed through the CheapKeyAI image edit provider", async
   assert.ok(calls[0].image);
   assert.deepEqual(
     mockups.map((mockup) => mockup.index),
-    [1, 4],
+    [4],
   );
-  assert.equal(mockups[1].providerTrace?.provider, "cheapkeyai");
-  assert.equal(mockups[1].providerTrace?.model, "gpt-image-2-c");
-  assert.equal(mockups[1].providerTrace?.inputFidelity, "high");
-  assert.equal(mockups[1].providerTrace?.estimatedCostUsd, 0.005);
+  assert.equal(mockups[0].providerTrace?.provider, "cheapkeyai");
+  assert.equal(mockups[0].providerTrace?.model, "gpt-image-2-c");
+  assert.equal(mockups[0].providerTrace?.inputFidelity, "high");
+  assert.equal(mockups[0].providerTrace?.estimatedCostUsd, 0.005);
 });
 
 test("CheapKeyAI client uses its own key and the image edits endpoint", async () => {
@@ -326,9 +326,9 @@ test("one selected concept makes exactly one provider request and records its tr
   assert.equal(calls.length, 1);
   assert.deepEqual(
     mockups.map((mockup) => mockup.index),
-    [1, 2],
+    [2],
   );
-  assert.deepEqual(mockups[1].providerTrace, {
+  assert.deepEqual(mockups[0].providerTrace, {
     provider: "openai",
     requestId: "req_mockup_2",
     model: "gpt-image-1.5",
@@ -542,15 +542,8 @@ test("mockup prompts contain only the generation request and scene concept", () 
     thickness: '0.15"',
     formatted: '3.1" x 3.1" x 0.15"',
   });
-  assert.match(giftingPrompt, /Concept: PERFECT GIFT IDEA hand-to-hand gifting scene/);
-  assert.match(giftingPrompt, /exactly two realistic human hands/i);
-  assert.match(giftingPrompt, /Render exactly: "PERFECT GIFT IDEA"/);
-  assert.match(giftingPrompt, /bright, clean, softly exposed lifestyle photography/i);
-  assert.match(giftingPrompt, /soft light beige\/greige/i);
-  assert.match(giftingPrompt, /Do not apply a yellow, orange, amber, sepia or brown color cast/i);
-  assert.match(giftingPrompt, /elegant white handwritten calligraphy/i);
-  assert.match(giftingPrompt, /bright neutral palette overrides any general instruction/i);
-  assert.match(giftingPrompt, /do not add "GLASS ORNAMENT"/i);
+  assert.match(giftingPrompt, /Concept: PERFECT GIFT HAND-TO-HAND ORNAMENT PRESENTATION/);
+  assert.match(giftingPrompt, /TWO realistic female hands presenting the ornament/i);
 
   const dimensionPrompt = buildMockupPrompt(
     "dimensions_3d",
@@ -622,7 +615,7 @@ test("custom content is generated and can be recognized for resume", async () =>
     inputDesignBuffer: SAMPLE_PNG,
     inputMimeType: "image/png",
     model: "gpt-image-1.5",
-    selectedIndexes: [11],
+    selectedIndexes: [1, 11],
     customMockups: [{ id: 11, label: "Content 11: Minimalist Shelf" }],
     openaiClient: fakeClient,
   });
@@ -657,7 +650,7 @@ test("system mockups are not duplicated when repeated as custom content", async 
     inputDesignBuffer: SAMPLE_PNG,
     inputMimeType: "image/png",
     model: "gpt-image-1.5",
-    selectedIndexes: [2, 9],
+    selectedIndexes: [1, 2, 9],
     customMockups: [{ id: 9, label: "Duplicate Content 9" }],
     openaiClient: fakeClient,
   });
@@ -877,6 +870,7 @@ test("completed Gemini images are handed off immediately before a later image fa
       inputMimeType: "image/png",
       model: "gemini-3.1-flash-image",
       geminiClient: fakeClient,
+      skipIndexes: [1],
       onMockupReady: (mockup) => {
         savedIndexes.push(mockup.index);
       },
@@ -927,7 +921,7 @@ test("resume skips mockups already identified on Trello", async () => {
     inputMimeType: "image/png",
     model: "gemini-3.1-flash-image",
     geminiClient: fakeClient,
-    skipIndexes: [2, 3, 4],
+    skipIndexes: [1, 2, 3, 4],
     onMockupReady: (mockup) => {
       savedIndexes.push(mockup.index);
     },

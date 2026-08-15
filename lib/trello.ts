@@ -66,7 +66,7 @@ function sortedAttachmentPreviews(attachment: TrelloAttachment) {
     .sort((first, second) => first.width - second.width);
 }
 
-function preferredAttachmentPreview(attachment: TrelloAttachment) {
+export function preferredAttachmentPreview(attachment: TrelloAttachment) {
   const previews = sortedAttachmentPreviews(attachment);
   return (
     previews.find((preview) => preview.width >= 960) ||
@@ -74,7 +74,7 @@ function preferredAttachmentPreview(attachment: TrelloAttachment) {
   )?.url;
 }
 
-function preferredAttachmentThumbnail(attachment: TrelloAttachment) {
+export function preferredAttachmentThumbnail(attachment: TrelloAttachment) {
   const previews = sortedAttachmentPreviews(attachment);
   return (
     previews.find((preview) => preview.width >= 160) ||

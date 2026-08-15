@@ -11,7 +11,7 @@ const DEFAULT_OPENAI_MODELS = [
   { id: "gpt-4o-mini", label: "GPT-4o Mini (Fast & Low Cost)", note: "Fastest response" },
   { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", note: "Highest quality" },
   { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", note: "Balanced quality and cost" },
-  { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", note: "Lowest cost and latency" },
+  { id: "gpt-5.6-luna", label: "GPT-5.6 Luna (CheapKey AI)", note: "Giá rẻ & tốc độ cao qua CheapKey AI" },
 ] as const;
 
 export const DEFAULT_GEMINI_MODEL = DEFAULT_GEMINI_MODELS[0].id;

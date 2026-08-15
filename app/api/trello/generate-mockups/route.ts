@@ -22,6 +22,8 @@ import {
   moveTrelloCard,
   parseTrelloCardTitle,
   parseCardDimensions,
+  preferredAttachmentPreview,
+  preferredAttachmentThumbnail,
 } from "@/lib/trello";
 import {
   classifyMockupGenerationError,
@@ -247,27 +249,6 @@ async function executeMockupGeneration(
       ),
     ];
 
-  report?.({
-    type: "progress",
-    step: 1,
-    name: uploadedAttachments[0].name,
-    status: "success",
-    phase: "upload",
-    message: "Đã giữ nguyên ảnh thiết kế gốc trên Trello.",
-  });
-  for (const [index, attachment] of existingGeneratedAttachments) {
-    report?.({
-      type: "progress",
-      step: index,
-      name: attachment.name,
-      status: "success",
-      phase: "upload",
-      message: `${attachment.name} đã có trên Trello, bỏ qua khi chạy tiếp.`,
-    });
-  }
-
-
-
   const forceRegenerate = Boolean(
     input.forceRegenerate ||
       (input.selectedSteps && input.selectedSteps.length === 1),
@@ -277,6 +258,29 @@ async function executeMockupGeneration(
   const selectedStepSet = input.selectedSteps
     ? new Set(input.selectedSteps)
     : null;
+
+  if (!selectedStepSet || selectedStepSet.has(1)) {
+    report?.({
+      type: "progress",
+      step: 1,
+      name: uploadedAttachments[0].name,
+      status: "success",
+      phase: "upload",
+      message: "Đã giữ nguyên ảnh thiết kế gốc trên Trello.",
+    });
+  }
+  for (const [index, attachment] of existingGeneratedAttachments) {
+    if (!selectedStepSet || selectedStepSet.has(index)) {
+      report?.({
+        type: "progress",
+        step: index,
+        name: attachment.name,
+        status: "success",
+        phase: "upload",
+        message: `${attachment.name} đã có trên Trello, bỏ qua khi chạy tiếp.`,
+      });
+    }
+  }
 
   const skipIndexes = Array.from(existingIndexesSet).filter((index) => {
     if (forceRegenerate && selectedStepSet?.has(index)) {
@@ -411,6 +415,15 @@ async function executeMockupGeneration(
               uploadedAttachments.push(newEntry);
             }
 
+            const previewUrl =
+              preferredAttachmentPreview(attachment) ||
+              `/api/trello/cards/${encodeURIComponent(card.id)}/attachments/${encodeURIComponent(attachment.id)}/preview` ||
+              previewDataUri;
+            const thumbnailUrl =
+              preferredAttachmentThumbnail(attachment) ||
+              `/api/trello/cards/${encodeURIComponent(card.id)}/attachments/${encodeURIComponent(attachment.id)}/thumbnail` ||
+              previewDataUri;
+
             report?.({
               type: "progress",
               step: mockup.index,
@@ -420,6 +433,8 @@ async function executeMockupGeneration(
               message: `Đã tải ${mockup.name} lên Trello.`,
               attachmentUrl: attachment.url,
               attachmentId: attachment.id,
+              previewUrl,
+              thumbnailUrl,
             });
 
             // WebP derivative creation & old attachment deletion
