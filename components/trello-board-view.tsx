@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ArrowsClockwiseIcon,
   ArrowsDownUpIcon,
   CheckCircleIcon,
   CheckSquareIcon,
@@ -109,7 +110,7 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
   const [inspectListing, setInspectListing] = useState<StoredListing | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const [selectedModel, setSelectedModel] = useState("gemini-3.6-flash");
+  const [selectedModel, setSelectedModel] = useState("gpt-5.6-luna");
   const [addedBrands, setAddedBrands] = useState<BrandProfile[]>([]);
   const [deletedBrandIds, setDeletedBrandIds] = useState<Set<string>>(new Set());
   const localBrands = useMemo(() => {
@@ -191,7 +192,11 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
       const res = await fetch("/api/templates");
       if (res.ok) {
         const data = await res.json();
-        setTemplates(data.templates || []);
+        const loaded: ListingTemplateSummary[] = data.templates || [];
+        setTemplates(loaded);
+        if (loaded.length > 0) {
+          setTemplateId((prev) => prev || loaded[0].id);
+        }
       }
     } catch (err) {
       console.error(err);
@@ -572,7 +577,6 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
                     }}
                     className="bg-transparent text-xs font-bold text-slate-900 outline-none cursor-pointer pr-1 max-w-[220px] truncate"
                   >
-                    <option value="">Amazon Flat File Mẫu (Tương Ứng Ngành Hàng)</option>
                     {templates.map((t) => (
                       <option key={t.id} value={t.id}>{getTemplateDisplayName(t)}</option>
                     ))}
@@ -588,6 +592,22 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
                 </button>
               </div>
             </div>
+
+            {/* Refresh / Reload Cards Button */}
+            <button
+              type="button"
+              onClick={() => {
+                if (apiKey && token && boardId) {
+                  loadCards(apiKey, token, boardId, reviewListName, listingListName);
+                }
+              }}
+              disabled={loading}
+              className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-slate-300 transition disabled:opacity-60 cursor-pointer"
+              title="Làm mới danh sách thẻ Trello ngay lập tức"
+            >
+              <ArrowsClockwiseIcon className={`h-4 w-4 text-sky-600 ${loading ? "animate-spin" : ""}`} />
+              <span>{loading ? "Đang làm mới..." : "Làm Mới Trello"}</span>
+            </button>
 
             {/* Config Trello API Button */}
             <button

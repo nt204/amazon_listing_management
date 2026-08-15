@@ -169,6 +169,7 @@ export interface TrelloCard {
   name: string;
   desc: string;
   idList: string;
+  idBoard?: string;
   url: string;
   badges: {
     attachments: number;
@@ -243,18 +244,34 @@ export function extractTrelloBoardId(input: string): string {
 
 export function formatRawTrelloKeywords(rawDesc: string): string {
   if (!rawDesc || !rawDesc.trim()) return "";
-  let text = rawDesc.trim();
-  const lower = text.toLowerCase();
-  if (lower.includes("generic keywords:")) {
-    const idx = lower.indexOf("generic keywords:");
-    text = text.slice(idx + "generic keywords:".length).trim();
-  } else if (lower.includes("generic keywords")) {
-    const idx = lower.indexOf("generic keywords");
-    text = text.slice(idx + "generic keywords".length).trim();
+
+  const lines = rawDesc.split(/\r?\n/);
+  const startIdx = lines.findIndex((line) =>
+    /(?:generic|backend)?\s*keywords?\s*:/i.test(line) ||
+    /generic\s*keywords/i.test(line) ||
+    /backend\s*keywords/i.test(line),
+  );
+
+  if (startIdx === -1) return "";
+
+  const extractedLines: string[] = [];
+  const firstLine = lines[startIdx];
+  const labelMatch = firstLine.match(/^(?:.*?(?:generic|backend)?\s*keywords?\s*:?\s*)(.*)$/i);
+  if (labelMatch && labelMatch[1].trim()) {
+    extractedLines.push(labelMatch[1].trim());
   }
 
+  for (let i = startIdx + 1; i < lines.length; i += 1) {
+    const line = lines[i].trim();
+    if (!line) break;
+    if (/^[A-Za-z0-9_\-\s]{2,20}\s*:/i.test(line)) break;
+    extractedLines.push(line);
+  }
+
+  const keywordText = extractedLines.join(" ");
+
   // Convert commas, semicolons, newlines, quotes into clean single spaces
-  const cleaned = text
+  const cleaned = keywordText
     .replace(/[\r\n,;:|"\']/g, " ")
     .replace(/\s+/g, " ")
     .trim();

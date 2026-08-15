@@ -12,10 +12,12 @@ import { getBrandProfile, getListingTemplate, listListingTemplates, saveGenerate
 import { DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_MODEL } from "@/lib/models";
 import { listingInputSchema } from "@/lib/schemas";
 import type { ListingTemplateSummary } from "@/lib/types";
+import { invalidateCachePattern } from "@/lib/redis";
 import {
   attachFileToTrelloCard,
   downloadTrelloAttachment,
   fetchTrelloCardDetail,
+  fetchTrelloLists,
   formatRawTrelloKeywords,
   moveTrelloCard,
   parseTrelloCardTitle,
@@ -69,23 +71,23 @@ export async function POST(request: Request) {
     const card = await fetchTrelloCardDetail(cardId, apiKey, token);
     const { sku, itemName } = parseTrelloCardTitle(card.name);
 
-    // 2. Load mockup image attachments from Trello card
+    // 2. Load primary cover image attachment (Full Design) from Trello card
     const imageAttachments = selectTrelloImageAttachments(card);
 
     const loadedImages: Array<{ name: string; type: string; data_url: string }> = [];
 
-    for (let index = 0; index < Math.min(imageAttachments.length, 5); index += 1) {
-      const att = imageAttachments[index];
+    if (imageAttachments.length > 0) {
+      const att = imageAttachments[0];
       try {
         const buffer = await downloadTrelloAttachment(att.url, apiKey, token);
         const mimeType = detectRasterImageMimeType(buffer);
         loadedImages.push({
-          name: att.name || `${sku}-mockup-${index + 1}`,
+          name: att.name || `${sku}-design.png`,
           type: mimeType,
           data_url: `data:${mimeType};base64,${buffer.toString("base64")}`,
         });
       } catch (err) {
-        console.warn(`Lỗi khi tải ảnh mockup Trello ${att.name}:`, err);
+        console.warn(`Lỗi khi tải ảnh thiết kế gốc Trello ${att.name}:`, err);
       }
     }
 
@@ -273,15 +275,36 @@ export async function POST(request: Request) {
       console.error("Lỗi khi đính kèm file Listing Excel vào Trello card:", attachErr);
     }
 
-    // 9. Move Trello Card to "Listing" list if targetListId provided
+    // 9. Move Trello Card to "Listing" list if targetListId provided (or auto-detected)
     let updatedCard = card;
-    if (targetListId) {
+    let finalTargetListId = targetListId;
+
+    if (!finalTargetListId && (card.idBoard || process.env.TRELLO_BOARD_ID)) {
       try {
-        updatedCard = await moveTrelloCard(card.id, targetListId, apiKey, token);
+        const boardId = card.idBoard || process.env.TRELLO_BOARD_ID || "";
+        const lists = await fetchTrelloLists(boardId, apiKey, token);
+        const listingNameQuery = (process.env.TRELLO_LISTING_LIST || "Listing").trim().toLowerCase();
+        const match = lists.find(
+          (l) => l.name.trim().toLowerCase() === listingNameQuery || l.name.toLowerCase().includes("listing"),
+        );
+        if (match) {
+          finalTargetListId = match.id;
+        }
+      } catch (detectErr) {
+        console.warn("Cảnh báo không thể tự động tìm danh sách Listing trên Trello:", detectErr);
+      }
+    }
+
+    if (finalTargetListId) {
+      try {
+        updatedCard = await moveTrelloCard(card.id, finalTargetListId, apiKey, token);
       } catch (moveErr) {
         console.error("Lỗi khi chuyển thẻ Trello sang cột Listing:", moveErr);
       }
     }
+
+    // Invalidate Redis card cache so board view updates immediately on client reload/sync
+    await invalidateCachePattern("trello:board:*").catch(() => null);
 
     return NextResponse.json({
       success: true,
