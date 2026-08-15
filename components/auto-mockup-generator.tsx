@@ -33,6 +33,7 @@ import {
   EyeIcon,
   CaretLeftIcon,
   CaretRightIcon,
+  TagIcon,
 } from "@phosphor-icons/react";
 import { parseCardDimensions, type Dimensions3D } from "@/lib/trello";
 import { downloadOriginalTrelloImage } from "@/lib/trello-image-client";
@@ -168,23 +169,77 @@ const MOCKUP_STEPS = [
   },
 ];
 
-const DEFAULT_MOCKUP_MODEL = "gpt-image-2-c";
+const DEFAULT_MOCKUP_MODEL = "gpt-image-2-cheapkey";
 const DEFAULT_MOCKUP_QUALITY = "low" as const;
 
-const DEFAULT_SYSTEM_MOCKUP_CONTENTS = [
-  { id: 1, label: "Content 1: Full Design", checked: true },
-  { id: 2, label: "Content 2: Dimension 3D", checked: true },
-  { id: 3, label: "Content 3: Gift Box", checked: true },
-  { id: 4, label: "Content 4: Tree View 1", checked: true },
-  { id: 5, label: "Content 5: Pine Branch & Bokeh", checked: true },
-  { id: 6, label: "Content 6: Gifting Hands", checked: true },
-  { id: 7, label: "Content 7: Car Mirror", checked: true },
-  { id: 8, label: "Content 8: Sunlit Glass Refraction", checked: false },
-  { id: 9, label: "Content 9: Glass Edge Thickness Callout", checked: false },
-  { id: 10, label: "Content 10: Wood Flat-Lay with Pine", checked: false },
-];
+export type MockupCategoryKey = "universal_standard" | "hanging_ornament" | "bullet_tumbler";
 
-const MOCKUP_CONTENTS_STORAGE_KEY = "listing_desk_mockup_contents_v3";
+export interface MockupContentItem {
+  id: number;
+  label: string;
+  checked: boolean;
+  promptKey?: string;
+}
+
+export const MOCKUP_CATEGORY_PRESETS: Record<
+  MockupCategoryKey,
+  {
+    id: MockupCategoryKey;
+    label: string;
+    icon: string;
+    contents: MockupContentItem[];
+  }
+> = {
+  universal_standard: {
+    id: "universal_standard",
+    label: "Chuẩn 7 Ảnh Amazon",
+    icon: "⭐",
+    contents: [
+      { id: 1, label: "Ảnh 1: Nền Trắng CTR", checked: true, promptKey: "universal_main_white" },
+      { id: 2, label: "Ảnh 2: Bối Cảnh Thực Tế", checked: true, promptKey: "universal_lifestyle" },
+      { id: 3, label: "Ảnh 3: Kích Thước 3D", checked: true, promptKey: "universal_dimensions" },
+      { id: 4, label: "Ảnh 4: Chất Liệu & Độ Dày", checked: true, promptKey: "universal_features_zoom" },
+      { id: 5, label: "Ảnh 5: Trao Quà Cảm Xúc", checked: true, promptKey: "universal_gifting" },
+      { id: 6, label: "Ảnh 6: Hộp Quà & Phụ Kiện", checked: true, promptKey: "universal_packaging" },
+      { id: 7, label: "Ảnh 7: Chi Tiết In Sắc Nét", checked: true, promptKey: "universal_artwork_macro" },
+    ],
+  },
+  hanging_ornament: {
+    id: "hanging_ornament",
+    label: "Hanging Ornament",
+    icon: "🎄",
+    contents: [
+      { id: 1, label: "Ảnh 1: Thiết Kế Nền Trắng", checked: true, promptKey: "full_design" },
+      { id: 2, label: "Ảnh 2: Treo Cành Thông", checked: true, promptKey: "tree_view1" },
+      { id: 3, label: "Ảnh 3: Bối Cảnh Theo Chủ Đề", checked: true, promptKey: "ornament_lifestyle_adaptive" },
+      { id: 4, label: "Ảnh 4: Độ Dày & Viền 3D", checked: true, promptKey: "glass_thickness_callout" },
+      { id: 5, label: "Ảnh 5: Trao Quà Cảm Xúc", checked: true, promptKey: "gifting_hands" },
+      { id: 6, label: "Ảnh 6: Hộp Quà & Đóng Gói", checked: true, promptKey: "ornament_package_adaptive" },
+      { id: 7, label: "Ảnh 7: Chiếu Nắng & Mùa", checked: true, promptKey: "ornament_sunburst_adaptive" },
+      { id: 8, label: "Ảnh 8: Treo Gương Ô Tô", checked: false, promptKey: "car_mirror" },
+      { id: 9, label: "Ảnh 9: Cành Thông & Flash", checked: false, promptKey: "tree_view2" },
+      { id: 10, label: "Ảnh 10: Mặt Bàn Gỗ Phẳng", checked: false, promptKey: "wood_flatlay_pine" },
+      { id: 11, label: "Ảnh 11: Tách Lớp Gỗ 3D (Layer 1 + Layer 2)", checked: false, promptKey: "ornament_2layer_breakdown" },
+    ],
+  },
+  bullet_tumbler: {
+    id: "bullet_tumbler",
+    label: "Bullet Tumbler",
+    icon: "🍾",
+    contents: [
+      { id: 1, label: "Ảnh 1: Thiết Kế Nền Trắng", checked: true, promptKey: "full_design" },
+      { id: 2, label: "Ảnh 2: Cách Nhiệt & Hộp Quà", checked: true, promptKey: "bullet_insulation_box" },
+      { id: 3, label: "Ảnh 3: Kích Thước 17oz", checked: true, promptKey: "bullet_capacity_size" },
+      { id: 4, label: "Ảnh 4: Nắp Bấm & Rót Cốc", checked: true, promptKey: "bullet_press_lid_pour" },
+      { id: 5, label: "Ảnh 5: Cắm Trại Dã Ngoại", checked: true, promptKey: "bullet_outdoor_camping" },
+      { id: 6, label: "Ảnh 6: Hộc Để Cốc Ô Tô", checked: true, promptKey: "bullet_car_cupholder" },
+    ],
+  },
+};
+
+const DEFAULT_SYSTEM_MOCKUP_CONTENTS = MOCKUP_CATEGORY_PRESETS.universal_standard.contents;
+const MOCKUP_CATEGORY_STORAGE_KEY = "listing_desk_mockup_category_v2";
+const MOCKUP_CONTENTS_STORAGE_KEY = "listing_desk_mockup_contents_v7";
 
 function fallBackToMasterImage(
   event: SyntheticEvent<HTMLImageElement>,
@@ -215,9 +270,10 @@ export function AutoMockupGenerator({
     "low" | "medium" | "high"
   >(DEFAULT_MOCKUP_QUALITY);
 
-  const [mockupContents, setMockupContents] = useState<
-    Array<{ id: number; label: string; checked: boolean }>
-  >(DEFAULT_SYSTEM_MOCKUP_CONTENTS);
+  const [selectedCategory, setSelectedCategory] = useState<MockupCategoryKey>("universal_standard");
+  const [mockupContents, setMockupContents] = useState<MockupContentItem[]>(
+    MOCKUP_CATEGORY_PRESETS.universal_standard.contents,
+  );
 
   const [showAddContentModal, setShowAddContentModal] = useState(false);
   const [showManageModal, setShowManageModal] = useState(false);
@@ -228,41 +284,57 @@ export function AutoMockupGenerator({
     (content) => content.checked && content.id >= 2,
   ).length;
 
+  const mergePresetWithSaved = (
+    categoryKey: MockupCategoryKey,
+    savedItems: MockupContentItem[],
+  ): MockupContentItem[] => {
+    const defaultPreset = MOCKUP_CATEGORY_PRESETS[categoryKey].contents;
+    const savedMap = new Map(
+      savedItems.map((item: MockupContentItem) => [Number(item.id), item]),
+    );
+
+    const merged = defaultPreset.map((defaultItem) => {
+      const savedItem = savedMap.get(defaultItem.id);
+      if (savedItem) {
+        return {
+          ...defaultItem,
+          label: defaultItem.label, // Always enforce system preset short label
+          checked: defaultItem.id === 1 ? true : Boolean(savedItem.checked),
+          promptKey: defaultItem.promptKey || savedItem.promptKey,
+        };
+      }
+      return defaultItem;
+    });
+
+    savedItems.forEach((savedItem: MockupContentItem) => {
+      if (savedItem.id >= 11 && !merged.some((m) => m.id === savedItem.id)) {
+        merged.push({
+          id: Number(savedItem.id),
+          label: String(savedItem.label),
+          checked: Boolean(savedItem.checked),
+          promptKey: savedItem.promptKey,
+        });
+      }
+    });
+
+    return merged;
+  };
+
   useEffect(() => {
-    // Load persisted mockup contents from localStorage and merge with system defaults
+    // Load persisted mockup category and contents from localStorage
     try {
-      const saved = localStorage.getItem(MOCKUP_CONTENTS_STORAGE_KEY);
+      const savedCategory = (localStorage.getItem(MOCKUP_CATEGORY_STORAGE_KEY) as MockupCategoryKey) || "universal_standard";
+      const categoryKey = MOCKUP_CATEGORY_PRESETS[savedCategory] ? savedCategory : "universal_standard";
+      setSelectedCategory(categoryKey);
+
+      const categoryStorageKey = `${MOCKUP_CONTENTS_STORAGE_KEY}_${categoryKey}`;
+      const saved = localStorage.getItem(categoryStorageKey) || localStorage.getItem(MOCKUP_CONTENTS_STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const savedMap = new Map(
-            parsed.map((item: { id: number; label: string; checked?: boolean }) => [
-              Number(item.id),
-              item,
-            ]),
-          );
-          const merged = DEFAULT_SYSTEM_MOCKUP_CONTENTS.map((defaultItem) => {
-            const savedItem = savedMap.get(defaultItem.id);
-            if (savedItem) {
-              return {
-                ...defaultItem,
-                label: savedItem.label || defaultItem.label,
-                checked: defaultItem.id === 1 ? true : Boolean(savedItem.checked),
-              };
-            }
-            return defaultItem;
-          });
-          parsed.forEach((savedItem: { id: number; label: string; checked?: boolean }) => {
-            if (savedItem.id >= 11 && !merged.some((m) => m.id === savedItem.id)) {
-              merged.push({
-                id: Number(savedItem.id),
-                label: String(savedItem.label),
-                checked: Boolean(savedItem.checked),
-              });
-            }
-          });
+          const merged = mergePresetWithSaved(categoryKey, parsed);
 
-          // Enforce max 6 checked AI options (max 7 total including Content 1)
+          // Enforce max 6 checked AI options
           let checkedAiCount = 0;
           const sanitized = merged.map((item) => {
             if (item.id === 1) return { ...item, checked: true };
@@ -277,6 +349,8 @@ export function AutoMockupGenerator({
           });
           setMockupContents(sanitized);
         }
+      } else {
+        setMockupContents(MOCKUP_CATEGORY_PRESETS[categoryKey].contents);
       }
     } catch {
       // Ignore storage errors
@@ -294,14 +368,38 @@ export function AutoMockupGenerator({
   }, []);
 
   const saveContentsState = (
-    updated: Array<{ id: number; label: string; checked: boolean }>,
+    updated: MockupContentItem[],
   ) => {
     setMockupContents(updated);
     try {
+      localStorage.setItem(MOCKUP_CATEGORY_STORAGE_KEY, selectedCategory);
+      localStorage.setItem(`${MOCKUP_CONTENTS_STORAGE_KEY}_${selectedCategory}`, JSON.stringify(updated));
       localStorage.setItem(MOCKUP_CONTENTS_STORAGE_KEY, JSON.stringify(updated));
     } catch {
       // Ignore storage errors
     }
+  };
+
+  const handleSelectCategory = (catKey: MockupCategoryKey) => {
+    setSelectedCategory(catKey);
+    const preset = MOCKUP_CATEGORY_PRESETS[catKey];
+    let updated = preset.contents;
+    try {
+      const saved = localStorage.getItem(`${MOCKUP_CONTENTS_STORAGE_KEY}_${catKey}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          updated = mergePresetWithSaved(catKey, parsed);
+        }
+      }
+    } catch {}
+
+    setMockupContents(updated);
+    try {
+      localStorage.setItem(MOCKUP_CATEGORY_STORAGE_KEY, catKey);
+      localStorage.setItem(`${MOCKUP_CONTENTS_STORAGE_KEY}_${catKey}`, JSON.stringify(updated));
+    } catch {}
+    setContentNoticeMsg(`Đã chuyển sang mục "${preset.label}" (${updated.length} Content mẫu).`);
   };
 
   const toggleContentCheck = (id: number) => {
@@ -330,11 +428,8 @@ export function AutoMockupGenerator({
 
   const resetToDefaultContents = () => {
     setContentNoticeMsg("");
-    const updated = mockupContents.map((item) => ({
-      ...item,
-      checked: item.id >= 1 && item.id <= 7,
-    }));
-    saveContentsState(updated);
+    const defaultContents = MOCKUP_CATEGORY_PRESETS[selectedCategory].contents;
+    saveContentsState(defaultContents);
   };
 
   const deselectAllAiContents = () => {
@@ -385,8 +480,9 @@ export function AutoMockupGenerator({
   };
 
   const handleResetToSystemDefaults = () => {
-    saveContentsState(DEFAULT_SYSTEM_MOCKUP_CONTENTS);
-    setContentNoticeMsg("Đã khôi phục danh sách Content về mặc định của hệ thống.");
+    const defaultContents = MOCKUP_CATEGORY_PRESETS[selectedCategory].contents;
+    saveContentsState(defaultContents);
+    setContentNoticeMsg(`Đã khôi phục danh sách Content của mục "${MOCKUP_CATEGORY_PRESETS[selectedCategory].label}" về mặc định.`);
   };
 
   const [loadingLists, setLoadingLists] = useState<boolean>(false);
@@ -717,9 +813,11 @@ export function AutoMockupGenerator({
           model: selectedModel,
           quality: selectedQuality,
           selectedSteps: selectedAiSteps,
-          customContents: mockupContents
-            .filter((content) => content.id >= 11)
-            .map((content) => ({ id: content.id, label: content.label })),
+          customContents: mockupContents.map((content) => ({
+            id: content.id,
+            label: content.label,
+            promptKey: content.promptKey,
+          })),
           stream: true,
         }),
       });
@@ -1188,8 +1286,9 @@ export function AutoMockupGenerator({
                         className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-xs font-bold text-slate-800 outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 shadow-2xs"
                       >
                         <option value="gpt-image-2-c">💸 GPT Image 2 C (CheapKeyAI)</option>
-                        <option value="gpt-image-2">🤖 GPT Image 2 (CheapKeyAI Gốc)</option>
-                        <option value="gpt-image-1.5">⚡ GPT Image 1.5 (OpenAI Chính Thống)</option>
+                        <option value="gpt-image-2-cheapkey">🤖 GPT Image 2 (CheapKeyAI)</option>
+                        <option value="gpt-image-2">🔑 GPT Image 2 (OpenAI Direct)</option>
+                        <option value="gpt-image-1.5">⚡ GPT Image 1.5 (OpenAI Direct)</option>
                         <option value="gemini-3-pro-image">💎 Gemini 3 Pro Image (Sắc Nét)</option>
                         <option value="gemini-3.1-flash-image">⚡ Gemini 3.1 Flash Image (Tốc Độ)</option>
                       </select>
@@ -1429,11 +1528,14 @@ export function AutoMockupGenerator({
                 <option value="gpt-image-2-c">
                   💸 GPT Image 2 C (CheapKeyAI)
                 </option>
+                <option value="gpt-image-2-cheapkey">
+                  🤖 GPT Image 2 (CheapKeyAI)
+                </option>
                 <option value="gpt-image-2">
-                  🤖 GPT Image 2 (CheapKeyAI Gốc)
+                  🔑 GPT Image 2 (OpenAI Direct)
                 </option>
                 <option value="gpt-image-1.5">
-                  ⚡ GPT Image 1.5 (OpenAI Chính Thống)
+                  ⚡ GPT Image 1.5 (OpenAI Direct)
                 </option>
                 <option value="gemini-3.1-flash-image">
                   🎨 Gemini 3.1 Flash Image
@@ -1446,6 +1548,7 @@ export function AutoMockupGenerator({
 
             {(selectedModel === "gpt-image-2" ||
               selectedModel === "gpt-image-2-c" ||
+              selectedModel === "gpt-image-2-cheapkey" ||
               selectedModel === "gpt-image-1.5") && (
                 <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-white px-3 py-1.5 shadow-2xs">
                   <span className="text-xs font-bold text-slate-600">Chất lượng:</span>
@@ -1481,6 +1584,42 @@ export function AutoMockupGenerator({
 
         {/* Mockup Content Checkbox Option Section */}
         <div className="mt-4 border-t border-indigo-100/80 pt-3">
+          {/* Category Selector Bar */}
+          <div className="flex flex-wrap items-center gap-2 mb-3.5 pb-2.5 border-b border-indigo-100/60">
+            <span className="text-xs font-black text-slate-700 uppercase tracking-wide flex items-center gap-1.5 shrink-0">
+              <TagIcon className="h-4 w-4 text-indigo-600" />
+              Mục Sản Phẩm (Product Category):
+            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              {(Object.keys(MOCKUP_CATEGORY_PRESETS) as MockupCategoryKey[]).map((catKey) => {
+                const cat = MOCKUP_CATEGORY_PRESETS[catKey];
+                const isActive = selectedCategory === catKey;
+                return (
+                  <button
+                    key={catKey}
+                    type="button"
+                    onClick={() => handleSelectCategory(catKey)}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all duration-150 cursor-pointer ${
+                      isActive
+                        ? "bg-indigo-600 text-white shadow-xs ring-2 ring-indigo-600/30"
+                        : "bg-slate-100 text-slate-700 hover:bg-slate-200/80 hover:text-slate-900 border border-slate-200/80"
+                    }`}
+                  >
+                    <span>{cat.icon}</span>
+                    <span>{cat.label}</span>
+                    <span
+                      className={`text-[10px] font-bold px-1.5 py-0.2 rounded-full ${
+                        isActive ? "bg-white/20 text-white" : "bg-slate-200 text-slate-600"
+                      }`}
+                    >
+                      {cat.contents.length} Content
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
             <div className="flex items-center gap-2">
               <span className="text-xs font-black text-slate-900 uppercase tracking-wide flex items-center gap-1.5">

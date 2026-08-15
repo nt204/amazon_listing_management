@@ -40,6 +40,7 @@ export const maxDuration = 600;
 const mockupModelSchema = z.enum([
   "gpt-image-2",
   "gpt-image-2-c",
+  "gpt-image-2-cheapkey",
   "gpt-image-1.5",
   "gemini-3.1-flash-image",
   "gemini-3-pro-image",
@@ -62,11 +63,12 @@ const generateMockupsSchema = z.object({
   customContents: z
     .array(
       z.object({
-        id: z.number().int().min(11).max(20),
+        id: z.number().int().min(1).max(20),
         label: z.string().trim().min(1).max(200),
+        promptKey: z.string().trim().optional(),
       }),
     )
-    .max(13)
+    .max(20)
     .optional(),
   customRefinementNotes: z.record(z.coerce.number(), z.string()).optional(),
   forceRegenerate: z.boolean().optional(),
@@ -189,11 +191,27 @@ async function executeMockupGeneration(
       return index ? ([[index, attachment]] as const) : [];
     }),
   );
-  const sourceAttachment = imageAttachments.find(
-    (attachment) => mockupIndexFromAttachmentName(attachment.name) === null,
-  );
+  const sourceAttachment =
+    imageAttachments.find(
+      (attachment) => mockupIndexFromAttachmentName(attachment.name) === null,
+    ) || imageAttachments[0];
   let designBuffer: Buffer | null = null;
   let mimeType = "image/jpeg";
+
+  // Auto-cleanup any old duplicate Mockup 1 attachments uploaded by previous system runs
+  const oldMockup1Attachments = imageAttachments.filter(
+    (att) => att.id !== sourceAttachment?.id && mockupIndexFromAttachmentName(att.name) === 1,
+  );
+  if (oldMockup1Attachments.length > 0) {
+    console.log(
+      `[API generate-mockups] Tự động xóa ${oldMockup1Attachments.length} file Mockup 1 trùng lặp cũ trên Trello.`,
+    );
+    await Promise.all(
+      oldMockup1Attachments.map((att) =>
+        deleteTrelloCardAttachment(card.id, att.id, apiKey, token).catch(() => null),
+      ),
+    );
+  }
 
   if (sourceAttachment) {
     console.log(
@@ -218,36 +236,45 @@ async function executeMockupGeneration(
     throw new ApiError("Thẻ Trello chưa có ảnh thiết kế đính kèm hợp lệ.", 400);
   }
 
-  const uploadedAttachments: Array<{
-    index: number;
-    name: string;
-    status: "success" | "failed";
-    attachmentId?: string;
-    url?: string;
-    previewUrl?: string;
-    thumbnailUrl?: string;
-    error?: string;
-    existing?: boolean;
-  }> = [
-      {
-        index: 1,
-        name: "Mockup 1 - Full Design (Ảnh Gốc Đầu Vào)",
-        attachmentId: sourceAttachment?.id,
-        url: sourceAttachment?.url,
-        status: "success",
-        existing: true,
-      },
-      ...Array.from(existingGeneratedAttachments.entries()).map(
-        ([index, attachment]) => ({
-          index,
-          name: attachment.name,
-          attachmentId: attachment.id,
-          url: attachment.url,
-          status: "success" as const,
-          existing: true,
-        }),
-      ),
-    ];
+  const uploadedAttachmentsMap = new Map<
+    number,
+    {
+      index: number;
+      name: string;
+      status: "success" | "failed";
+      attachmentId?: string;
+      url?: string;
+      previewUrl?: string;
+      thumbnailUrl?: string;
+      error?: string;
+      existing?: boolean;
+    }
+  >();
+
+  if (sourceAttachment) {
+    uploadedAttachmentsMap.set(1, {
+      index: 1,
+      name: "Mockup 1 - Full Design (Ảnh Gốc Đầu Vào)",
+      attachmentId: sourceAttachment.id,
+      url: sourceAttachment.url,
+      status: "success",
+      existing: true,
+    });
+  }
+
+  for (const [index, attachment] of existingGeneratedAttachments) {
+    if (index === 1) continue; // NEVER duplicate index 1
+    uploadedAttachmentsMap.set(index, {
+      index,
+      name: attachment.name,
+      attachmentId: attachment.id,
+      url: attachment.url,
+      status: "success" as const,
+      existing: true,
+    });
+  }
+
+  const uploadedAttachments = Array.from(uploadedAttachmentsMap.values());
 
   const forceRegenerate = Boolean(
     input.forceRegenerate ||
@@ -263,13 +290,14 @@ async function executeMockupGeneration(
     report?.({
       type: "progress",
       step: 1,
-      name: uploadedAttachments[0].name,
+      name: uploadedAttachments[0]?.name || "Mockup 1 - Full Design",
       status: "success",
       phase: "upload",
       message: "Đã giữ nguyên ảnh thiết kế gốc trên Trello.",
     });
   }
   for (const [index, attachment] of existingGeneratedAttachments) {
+    if (index === 1) continue;
     if (!selectedStepSet || selectedStepSet.has(index)) {
       report?.({
         type: "progress",
@@ -282,12 +310,17 @@ async function executeMockupGeneration(
     }
   }
 
-  const skipIndexes = Array.from(existingIndexesSet).filter((index) => {
-    if (forceRegenerate && selectedStepSet?.has(index)) {
-      return false;
-    }
-    return true;
-  });
+  const skipIndexes = Array.from(
+    new Set([
+      1, // Always skip generating Mockup 1 via AI
+      ...Array.from(existingIndexesSet).filter((index) => {
+        if (forceRegenerate && selectedStepSet?.has(index) && index >= 2) {
+          return false;
+        }
+        return true;
+      }),
+    ]),
+  );
 
   const existingAiIndexes = Array.from(existingIndexesSet).filter(
     (idx) => idx >= 2,
@@ -339,9 +372,9 @@ async function executeMockupGeneration(
     };
   }
 
-  const selectedIndexesForGen = forceRegenerate
-    ? input.selectedSteps
-    : [1, ...stepsToGenerate];
+  const selectedIndexesForGen = (
+    forceRegenerate ? input.selectedSteps : stepsToGenerate
+  )?.filter((idx) => idx >= 2);
 
   console.log(
     `[API generate-mockups] SKU "${parsedTitle.sku}": đang sinh thêm ${stepsToGenerate.length} concept AI... (đã có ${existingAiCount}/6 AI concept, forceRegenerate=${forceRegenerate})`,
@@ -364,6 +397,13 @@ async function executeMockupGeneration(
       customMockups: input.customContents,
       customRefinementNotes: input.customRefinementNotes,
       onMockupReady: async (mockup) => {
+        if (mockup.index === 1) {
+          console.log(
+            "[API generate-mockups] Bỏ qua tải lên Mockup 1 (ảnh gốc đã có sẵn trên Trello).",
+          );
+          return;
+        }
+
         // 1. LIGHTWEIGHT WEBP PREVIEW (16KB vs 3MB PNG Base64!): Stream tiny WebP Data URI to UI instantly
         const smallWebp = await sharp(mockup.buffer)
           .resize(320, 320, { fit: "inside", withoutEnlargement: true })

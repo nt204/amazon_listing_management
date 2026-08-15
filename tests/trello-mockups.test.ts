@@ -416,7 +416,7 @@ test("a provider failure waits for started image edits before releasing generati
   assert.equal(calls, 3, "no later concept starts after a provider failure");
 });
 
-test("mockup generation defaults to GPT Image 1.5 with low output and input fidelity", async () => {
+test("mockup generation defaults to GPT Image 2 (CheapKeyAI) with low output and input fidelity", async () => {
   const calls: Array<Record<string, unknown>> = [];
   const fakeClient = {
     images: {
@@ -450,10 +450,10 @@ test("mockup generation defaults to GPT Image 1.5 with low output and input fide
 
   assert.equal(calls.length, 6);
   for (const call of calls) {
-    assert.equal(call.model, "gpt-image-1.5");
+    assert.equal(call.model, "gpt-image-2");
     assert.equal(call.quality, "low");
     assert.equal(call.size, "1024x1024");
-    assert.equal(call.input_fidelity, "low");
+    assert.equal(call.input_fidelity, "high");
   }
 });
 
@@ -592,6 +592,123 @@ test("custom mockup prompts use the operator-provided scene", () => {
   assert.match(prompt, /bối cảnh mockup tùy chỉnh theo yêu cầu: Minimalist living room shelf/i);
 });
 
+test("buildMockupPrompt generates detailed prompts for Bullet Tumbler prompt keys", () => {
+  const dimensions = {
+    length: '11"',
+    width: '2.6"',
+    thickness: '0.1"',
+    formatted: '11" x 2.6"',
+  };
+
+  const insulationPrompt = buildMockupPrompt("bullet_insulation_box", "Navy Bullet Tumbler", dimensions);
+  assert.match(insulationPrompt, /UPGRADED VACUUM INSULATION & GIFT BOX/i);
+  assert.match(insulationPrompt, /BULLET TUMBLER/i);
+  assert.match(insulationPrompt, /11 HRS COLD/i);
+
+  const capacityPrompt = buildMockupPrompt("bullet_capacity_size", "Navy Bullet Tumbler", dimensions);
+  assert.match(capacityPrompt, /17OZ CAPACITY & 3D DIMENSION SPECIFICATION/i);
+  assert.match(capacityPrompt, /Safety Guaranteed/i);
+  assert.match(capacityPrompt, /Keep Cold For 12 H/i);
+
+  const pressLidPrompt = buildMockupPrompt("bullet_press_lid_pour", "Navy Bullet Tumbler", dimensions);
+  assert.match(pressLidPrompt, /DOUBLE WALL INSULATION & PRESS TO OPEN LID/i);
+  assert.match(pressLidPrompt, /Press here to open/i);
+
+  const campingPrompt = buildMockupPrompt("bullet_outdoor_camping", "Navy Bullet Tumbler", dimensions);
+  assert.match(campingPrompt, /OUTDOOR CAMPING & LIFESTYLE/i);
+
+  const carPrompt = buildMockupPrompt("bullet_car_cupholder", "Navy Bullet Tumbler", dimensions);
+  assert.match(carPrompt, /CUP HOLDER FRIENDLY/i);
+
+  const fireplacePrompt = buildMockupPrompt("ornament_fireplace_mantle", "Custom Ornament", dimensions);
+  assert.match(fireplacePrompt, /COZY FIREPLACE MANTLE & HOLIDAY AMBIENCE/i);
+
+  const windowPrompt = buildMockupPrompt("ornament_sunlit_window", "Custom Ornament", dimensions);
+  assert.match(windowPrompt, /SUNLIT WINDOW PANE & SNOWY GARDEN VIEW/i);
+
+  const adaptiveLifePrompt = buildMockupPrompt("ornament_lifestyle_adaptive", "Custom Ornament", dimensions);
+  assert.match(adaptiveLifePrompt, /ADAPTIVE OCCASION LIFESTYLE ORNAMENT PHOTOGRAPHY/i);
+
+  const adaptivePkgPrompt = buildMockupPrompt("ornament_package_adaptive", "Custom Ornament", dimensions);
+  assert.match(adaptivePkgPrompt, /STANDARD RETAIL GIFT BOX PACKAGING & ACCESSORIES FLAT-LAY/i);
+
+  const adaptiveSunPrompt = buildMockupPrompt("ornament_sunburst_adaptive", "Custom Ornament", dimensions);
+  assert.match(adaptiveSunPrompt, /ADAPTIVE SUNLIT LIGHT REFRACTION & SEASONAL ORNAMENT PHOTOGRAPHY/i);
+});
+
+test("buildMockupPrompt generates detailed prompts for Universal Standard 7-Image keys", () => {
+  const dimensions = {
+    length: '3.5"',
+    width: '3.5"',
+    thickness: '0.2"',
+    formatted: '3.5" x 3.5" x 0.2"',
+  };
+
+  const mainPrompt = buildMockupPrompt("universal_main_white", "Custom Mug", dimensions);
+  assert.match(mainPrompt, /HERO MAIN E-COMMERCE PRODUCT PHOTOGRAPHY/i);
+  assert.match(mainPrompt, /100% PURE SOLID WHITE BACKGROUND/i);
+  assert.match(mainPrompt, /80% to 90%/i);
+
+  const lifestylePrompt = buildMockupPrompt("universal_lifestyle", "Custom Mug", dimensions);
+  assert.match(lifestylePrompt, /REALISTIC LIFESTYLE & IN-USE PHOTOGRAPHY/i);
+
+  const sizePrompt = buildMockupPrompt("universal_dimensions", "Custom Mug", dimensions);
+  assert.match(sizePrompt, /PRODUCT SIZE & 3D DIMENSION INFOGRAPHIC/i);
+
+  const featurePrompt = buildMockupPrompt("universal_features_zoom", "Custom Mug", dimensions);
+  assert.match(featurePrompt, /EXTREME LOW-ANGLE 3D PERSPECTIVE THICKNESS/i);
+
+  const giftingPrompt = buildMockupPrompt("universal_gifting", "Custom Mug", dimensions);
+  assert.match(giftingPrompt, /STANDARD GIFT PRESENTATION PHOTOGRAPHY/i);
+
+  const packagingPrompt = buildMockupPrompt("universal_packaging", "Custom Mug", dimensions);
+  assert.match(packagingPrompt, /PACKAGE INCLUDED & RETAIL GIFT BOX FLAT-LAY/i);
+
+  const artworkPrompt = buildMockupPrompt("universal_artwork_macro", "Custom Mug", dimensions);
+  assert.match(artworkPrompt, /HD PRINT QUALITY & MATERIAL TEXTURE MACRO INFOGRAPHIC/i);
+});
+
+test("generateAllMockups generates mockups using Bullet Tumbler custom prompt keys", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const fakeClient = {
+    images: {
+      edit: async (body: Record<string, unknown>) => {
+        calls.push(body);
+        return { data: [{ b64_json: SAMPLE_PNG.toString("base64") }] };
+      },
+    },
+  } as unknown as OpenAI;
+
+  const mockups = await generateAllMockups({
+    sku: "BULLET-001",
+    itemName: "U.S. NAVY Bullet Tumbler",
+    dimensions: {
+      length: '11"',
+      width: '2.6"',
+      thickness: '0.1"',
+      formatted: '11" x 2.6"',
+    },
+    inputDesignBuffer: SAMPLE_PNG,
+    inputMimeType: "image/png",
+    model: "gpt-image-1.5",
+    selectedIndexes: [1, 2, 3, 4, 5, 6],
+    customMockups: [
+      { id: 1, label: "Content 1: Full Design", promptKey: "full_design" },
+      { id: 2, label: "Content 2: Upgraded Vacuum Insulation & Box", promptKey: "bullet_insulation_box" },
+      { id: 3, label: "Content 3: 17oz Capacity & Size Specs", promptKey: "bullet_capacity_size" },
+      { id: 4, label: "Content 4: Press To Open Lid & Cup Pouring", promptKey: "bullet_press_lid_pour" },
+      { id: 5, label: "Content 5: Outdoor Camping & Coffee Pouring", promptKey: "bullet_outdoor_camping" },
+      { id: 6, label: "Content 6: Car Cup Holder Friendly", promptKey: "bullet_car_cupholder" },
+    ],
+    openaiClient: fakeClient,
+  });
+
+  assert.equal(mockups.length, 6);
+  assert.equal(calls.length, 5); // 5 AI calls for mockups 2-6
+  assert.match(String(calls[0].prompt), /UPGRADED VACUUM INSULATION & GIFT BOX/i);
+  assert.match(String(calls[1].prompt), /17OZ CAPACITY & 3D DIMENSION SPECIFICATION/i);
+});
+
 test("custom content is generated and can be recognized for resume", async () => {
   const calls: Array<Record<string, unknown>> = [];
   const fakeClient = {
@@ -615,16 +732,16 @@ test("custom content is generated and can be recognized for resume", async () =>
     inputDesignBuffer: SAMPLE_PNG,
     inputMimeType: "image/png",
     model: "gpt-image-1.5",
-    selectedIndexes: [1, 11],
-    customMockups: [{ id: 11, label: "Content 11: Minimalist Shelf" }],
+    selectedIndexes: [1, 12],
+    customMockups: [{ id: 12, label: "Content 12: Minimalist Shelf" }],
     openaiClient: fakeClient,
   });
 
   assert.equal(calls.length, 1);
-  assert.deepEqual(mockups.map((mockup) => mockup.index), [1, 11]);
-  assert.match(mockups[1].type, /^Mockup11_Content-11-Minimalist-Shelf\./);
+  assert.deepEqual(mockups.map((mockup) => mockup.index), [1, 12]);
+  assert.match(mockups[1].type, /^Mockup12_Content-12-Minimalist-Shelf\./);
   assert.match(String(calls[0].prompt), /Minimalist Shelf/i);
-  assert.equal(mockupIndexFromAttachmentName(mockups[1].type), 11);
+  assert.equal(mockupIndexFromAttachmentName(mockups[1].type), 12);
 });
 
 test("system mockups are not duplicated when repeated as custom content", async () => {

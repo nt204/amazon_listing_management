@@ -59,7 +59,7 @@ export interface GenerateMockupsOptions {
   /** Specific mockup indexes selected by user to generate. */
   selectedIndexes?: readonly number[];
   /** User-defined scene concepts, beginning at index 11. */
-  customMockups?: readonly { id: number; label: string }[];
+  customMockups?: readonly { id: number; label: string; promptKey?: string }[];
   /** Optional custom user refinement prompt notes per mockup index. */
   customRefinementNotes?: Record<number, string>;
   /** Called immediately after each AI image is ready, before the next image starts. */
@@ -72,7 +72,7 @@ export type MockupProgressCallback = (
   status: "processing" | "success",
 ) => void;
 
-const DEFAULT_IMAGE_MODEL: MockupModel = "gpt-image-1.5";
+const DEFAULT_IMAGE_MODEL: MockupModel = "gpt-image-2-cheapkey";
 const OPENAI_IMAGE_SIZE = "1024x1024";
 const OPENAI_INPUT_LIMIT_BYTES = 50 * 1024 * 1024;
 const CHEAPKEYAI_GPT_IMAGE_2_PRICE_USD = 0.005;
@@ -82,7 +82,7 @@ export function isOpenAIImageModel(model: MockupModel) {
 }
 
 export function isCheapKeyAIImageModel(model: MockupModel) {
-  return model === "gpt-image-2-c";
+  return model === "gpt-image-2-c" || model === "gpt-image-2-cheapkey";
 }
 
 export function isImageApiModel(model: MockupModel) {
@@ -159,11 +159,11 @@ const MOCKUP_TYPES = [
   },
   {
     index: 9,
-    name: "Mockup 9 - Glass Edge Thickness Callout (Ảnh Cận Cảnh Độ Dày Cạnh Thủy Tinh & Nền Lụa)",
-    fileName: "Mockup9_Glass_Thickness_Callout.png",
+    name: "Mockup 9 - Product Thickness Callout (Ảnh Góc Nghiêng Thấp & Cận Cảnh Độ Dày 3D)",
+    fileName: "Mockup9_Product_Thickness_Callout.png",
     promptKey: "glass_thickness_callout",
     description:
-      "Ảnh cận cảnh góc nghiêng 3D đặc tả độ dày viền thủy tinh Bevel Cut đứng trên mặt kính phản chiếu, nền lụa hồng champagne và chú thích Thickness 6mm.",
+      "Ảnh chụp góc thấp 3D đặc tả độ nghiêng foreshortened, độ dày cạnh viền và lớp 3D sản phẩm với đường chỉ chú thích 6mm thickness.",
   },
   {
     index: 10,
@@ -172,6 +172,14 @@ const MOCKUP_TYPES = [
     promptKey: "wood_flatlay_pine",
     description:
       "Ảnh chụp góc thẳng từ trên xuống (flat-lay) sản phẩm nằm trên mặt bàn gỗ tự nhiên, trang trí nhánh thông xanh ở mép trái và hiệu ứng trong suốt nhìn xuyên nền gỗ.",
+  },
+  {
+    index: 11,
+    name: "Mockup 11 - 2-Layer Wooden Ornament Breakdown (Ảnh Tách Lớp Gỗ 3D Layer 1 + Layer 2)",
+    fileName: "Mockup11_2Layer_Wood_Breakdown.png",
+    promptKey: "ornament_2layer_breakdown",
+    description:
+      "Ảnh infographic tách chi tiết 2 lớp gỗ sản phẩm (Layer 1 + Layer 2) kèm chỉ dẫn độ dày 6mm góc nghiêng 3D.",
   },
 ];
 
@@ -189,17 +197,36 @@ export async function generateAllMockups(
     quality = configuredImageQuality(),
   } = options;
   const skippedIndexes = new Set(options.skipIndexes || []);
-  const systemMockupIndexes = new Set(MOCKUP_TYPES.map((mockup) => mockup.index));
-  const customMockupTypes = (options.customMockups || [])
-    .filter((custom) => !systemMockupIndexes.has(custom.id))
-    .map((custom) => ({
-      index: custom.id,
-      name: custom.label,
-      fileName: `Mockup${custom.id}_${safeFileStem(custom.label)}.png`,
-      promptKey: `custom:${custom.label}`,
-      description: `Ảnh mockup tùy chỉnh: ${custom.label}`,
-    }));
-  const effectiveMockupTypes = [...MOCKUP_TYPES, ...customMockupTypes];
+  const customMap = new Map((options.customMockups || []).map((c) => [c.id, c]));
+  const effectiveMockupTypes = MOCKUP_TYPES.map((defaultType) => {
+    const custom = customMap.get(defaultType.index);
+    if (custom) {
+      return {
+        index: defaultType.index,
+        name: custom.label.startsWith("Mockup")
+          ? custom.label
+          : `Mockup ${defaultType.index} - ${custom.label.replace(/^Content\s*\d+:\s*/i, "")}`,
+        fileName: `Mockup${defaultType.index}_${safeFileStem(custom.label)}.png`,
+        promptKey: custom.promptKey || defaultType.promptKey,
+        description: `Ảnh mockup: ${custom.label}`,
+      };
+    }
+    return defaultType;
+  });
+
+  (options.customMockups || []).forEach((custom) => {
+    if (!effectiveMockupTypes.some((t) => t.index === custom.id)) {
+      effectiveMockupTypes.push({
+        index: custom.id,
+        name: custom.label.startsWith("Mockup")
+          ? custom.label
+          : `Mockup ${custom.id} - ${custom.label.replace(/^Content\s*\d+:\s*/i, "")}`,
+        fileName: `Mockup${custom.id}_${safeFileStem(custom.label)}.png`,
+        promptKey: custom.promptKey || `custom:${custom.label}`,
+        description: `Ảnh mockup tùy chỉnh: ${custom.label}`,
+      });
+    }
+  });
 
   const normalizedDesignBuffer = await normalizeDesignImage(inputDesignBuffer);
   const base64Design = normalizedDesignBuffer.toString("base64");
@@ -329,7 +356,7 @@ export async function generateAllMockups(
         );
         const upstreamModel = usesCheapKeyAI
           ? process.env.CHEAPKEYAI_UPSTREAM_MODEL?.trim() ||
-            model
+            (model === "gpt-image-2-cheapkey" ? "gpt-image-2" : model)
           : model;
         const response = await openaiClient.images.edit(
           {
@@ -542,13 +569,33 @@ export function buildMockupPrompt(
 - Hanging ribbon/string (copying exact color and material from Image 1) passing cleanly through the top loop. Preserve exact design artwork, lettering, and original colors from Image 1.`;
       break;
     case "glass_thickness_callout":
-      concept = `PRODUCT EDGE THICKNESS CALLOUT product photography, matching this composition:
-- Macro 3D angled product photograph with the ornament from Image 1 standing vertically at a 45-degree angle on a dark polished reflective surface or luxury dusty rose / champagne satin silk fabric.
-- Focus closely on the thick edge profile of the product on the right side.
-- Render a single precise indicator callout bubble pointing to the thick edge labeled "Thickness ${dimensions.thickness || "6mm"}".
-- DO NOT add front height/width dimension arrows or "PRODUCT SIZE" footer text (those belong exclusively to Content 2).
-- CRITICAL SHAPE FIDELITY: Maintain the exact outer contour, silhouette, edge material, and texture from Image 1. Do NOT turn a custom shaped non-glass product into an artificial round glass disc.
-- Highlighting edge construction, top hanging satin ribbon/string (copying exact ribbon color from Image 1), and crisp mirror reflection on the surface below. Preserve exact printed artwork and lettering from Image 1.`;
+      concept = `EXTREME LOW-ANGLE 3D PERSPECTIVE & PRODUCT THICKNESS CALLOUT commercial photography, matching this exact composition:
+- CAMERA ANGLE & PERSPECTIVE (COMPULSORY EXTREME LOW ANGLE): Shot from an extreme low camera angle (close to surface level, looking slightly down at a 20-30 degree low-perspective angle). The ornament lies flat on the surface but is strongly foreshortened in perspective, showing its shape tilted into a dramatic 3D oval perspective.
+- THICK SIDE EDGE PROMINENCE: The thick outer edge profile of the product MUST face directly toward the front/lower camera view. Show the visible side edge thickness (e.g. 6mm thick wood layers, cut acrylic edge, ceramic edge, or glass rim) clearly extending along the entire bottom-left edge curve with distinct 3D depth, material texture, and shadow.
+- MULTI-LAYERED 3D DEPTH & RELIEF: Tightly capture the 3D raised multi-layer construction, showing printed elements, lettering, and figures popping up above the base layer with visible cast shadows beneath each layer.
+- BACKGROUND SURFACE: Lying flat on an aesthetic background surface that naturally fits the product style in Image 1 (such as soft fluffy white faux-fur / plush fabric, luxury silk, natural wood, or marble surface).
+- INDICATOR CALLOUT LINE & TEXT: Render a precise dark-blue indicator callout line with a solid round dot attached directly to the thick bottom-left side edge profile of the ornament. The pointer line extends downwards-left to a 2-line bold navy blue text label reading:
+"${dimensions.thickness || "6mm"}
+thickness"
+- Top hanging ribbon/string (matching exact ribbon color and material from Image 1) attached at top left and draping naturally towards the upper left.
+- DO NOT render front height/width dimension lines or "PRODUCT SIZE" footers.
+- CRITICAL MATERIAL & SHAPE FIDELITY: Preserve 100% exact material, surface texture, outer contour shape, printed design graphics, text, and colors from Image 1.`;
+      break;
+    case "ornament_2layer_breakdown":
+      concept = `2-LAYER WOODEN ORNAMENT PRODUCT DETAIL & LAYER BREAKDOWN INFOGRAPHIC, matching this exact composition:
+- HEADER TEXT AT TOP: "PRODUCT DETAIL" rendered at top left in clean dark grey typography.
+- TOP HALF EXPLODED LAYER BREAKDOWN:
+  1) Upper Left: Isolated solid wooden background layer labeled "Layer 1-wooden" beneath it, with a circular zoom callout pointing to the wood thickness labeled "${dimensions.thickness || "0.3cm~0.12in"}".
+  2) Center: A clear bold plus symbol "+" between the two isolated layers.
+  3) Upper Right: Isolated front cutout frame layer labeled "Layer 2 -wooden" beneath it, displaying the printed outer ring and design elements from Image 1.
+- BOTTOM HALF ASSEMBLED 3D PERSPECTIVE:
+  Center bottom displays the fully assembled 2-layer wooden ornament placed flat on a surface at a 20-30 degree low-perspective angle.
+  A clean indicator pointer line with a solid dot points to the thick side edge profile of the assembled ornament, labeled:
+"${dimensions.thickness || "6mm"}
+thickness"
+- Corner decoration: Subtle fresh green pine branch at the lower left corner.
+- CLEAN 100% PURE WHITE BACKGROUND (#FFFFFF).
+- CRITICAL MATERIAL & DESIGN FIDELITY: Preserve 100% exact printed artwork, lettering, colors, and 2-layer wood construction from Image 1.`;
       break;
     case "wood_flatlay_pine":
       concept = `NATURAL WOOD TABLETOP FLAT-LAY WITH PINE BRANCH product photography, matching this composition:
@@ -558,6 +605,166 @@ export function buildMockupPrompt(
 - If Image 1 is a die-cut custom shaped ornament (such as a house, star, tree, heart, acrylic cut, wood piece, or ceramic shape), keep ONLY that exact custom outer contour shape. Do NOT enclose or surround the product in an artificial circular glass disc, outer glass frame, or extra glass circle.
 - If Image 1 is a transparent glass ornament, preserve its glass translucency and bevel cuts. If Image 1 is opaque (resin, wood, ceramic), preserve its opaque material and surface texture faithfully.
 - Top hanging ribbon/string (copying exact ribbon color and material from Image 1) attached to top loop and drapes naturally upwards. Preserve exact artwork, text, and colors from Image 1.`;
+      break;
+
+    case "ornament_fireplace_mantle":
+      concept = `COZY FIREPLACE MANTLE & HOLIDAY AMBIENCE product photography:
+- CAMERA ANGLE & PERSPECTIVE: 35-degree eye-level lifestyle perspective photograph featuring the ornament from Image 1 hanging gracefully near a rustic wooden fireplace mantelpiece.
+- Background: Warm glowing Christmas stocking decor, lush green pine garlands with red berries, lit pillar candles, and soft warm fire embers glowing in the fireplace with soft bokeh.
+- Top hanging ribbon/string (copying exact ribbon color, string material, and loop style from Image 1) attached securely.
+- CRITICAL MATERIAL & SHAPE FIDELITY: Preserve 100% exact material (glass, wood, acrylic, ceramic), surface finish, outer contour shape, printed design artwork, and original colors from Image 1.`;
+      break;
+
+    case "ornament_sunlit_window":
+      concept = `SUNLIT WINDOW PANE & SNOWY GARDEN VIEW product photography:
+- CAMERA ANGLE & PERSPECTIVE: 30-degree macro perspective photograph with the ornament from Image 1 hanging near a clear frost-dusted window pane.
+- Background: Bright morning sunlight illuminating the scene from outside, showing a serene snowy pine garden background with crisp daylight sunbeams.
+- Light refraction: Golden sunlight filtering through the edge bevels or material grain, creating crisp luminous specular highlights along the edge profile.
+- Top hanging ribbon/string (matching exact ribbon color and material from Image 1) draped naturally.
+- CRITICAL MATERIAL & SHAPE FIDELITY: Preserve 100% exact outer shape, material opacity/transparency, printed artwork, text, and vibrant colors from Image 1.`;
+      break;
+
+    case "ornament_lifestyle_adaptive":
+      concept = `ADAPTIVE OCCASION LIFESTYLE ORNAMENT PHOTOGRAPHY:
+- CAMERA ANGLE & PERSPECTIVE: 35-degree angled lifestyle perspective photograph of the ornament from Image 1.
+- DYNAMIC OCCASION & BACKGROUND ADAPTATION: Observe the ornament design, text, and theme from Image 1 (such as Christmas holiday, Wedding/Anniversary, New Baby, Pet/Dog, Memorial/Angel, Graduation, Autumn/Thanksgiving, or Family gift). Automatically select an authentic, aesthetic lifestyle environment and background setting that perfectly matches THAT SPECIFIC OCCASION and theme (e.g. cozy holiday mantel for Christmas; warm sunny nursery/window for Baby; rustic romantic wood for Wedding; cozy autumn porch for Fall; warm living room display for Family/Pet).
+- Top hanging ribbon/string (copying exact ribbon color, string material, and loop style from Image 1) attached naturally.
+- Shallow depth of field with soft background bokeh.
+- CRITICAL MATERIAL & SHAPE FIDELITY: Maintain 100% exact outer shape, physical material (wood, glass, acrylic, ceramic), surface finish, printed artwork, text, and colors from Image 1.`;
+      break;
+
+    case "ornament_package_adaptive":
+      concept = `STANDARD RETAIL GIFT BOX PACKAGING & ACCESSORIES FLAT-LAY:
+- CAMERA ANGLE: 90-degree top-down 1:1 flat-lay photograph on an aesthetic surface.
+- STANDARD RETAIL GIFT BOX: Display a standard, sturdy commercial retail gift box (a realistic product gift box with custom interior foam/cushioning insert tray, matching ribbon/lanyard, and thank-you card).
+- Composition: Lay the ornament from Image 1 flat in the center-left area, next to its open standard retail gift box showing the protective interior lining, string lanyard, and gifting card.
+- Text callout area across bottom clearly rendering:
+"PACKAGE INCLUDED"
+"1 - Colored Lanyard"
+"1 - Gift Box Included"
+"1 - Ornament"
+- Authentic commercial e-commerce packaging presentation with realistic contact shadows.
+- Preserve 100% exact product contour silhouette, material, printed artwork, and colors from Image 1.`;
+      break;
+
+    case "ornament_sunburst_adaptive":
+      concept = `ADAPTIVE SUNLIT LIGHT REFRACTION & SEASONAL ORNAMENT PHOTOGRAPHY:
+- CAMERA ANGLE & PERSPECTIVE: 30-degree macro close-up perspective photograph featuring the ornament from Image 1 displayed near a natural light source.
+- Dynamic sunlight & environment: Bright golden morning sunlight ray hitting the ornament from an angle, creating crisp specular highlights, edge sheen, and luminous light flares along the bevels or material texture.
+- Occasion-adaptive background: The background environment automatically complements the ornament's specific event/theme (e.g., sunlit window pane near greenery/snow, sunny garden window sill, or cozy rustic indoor backdrop).
+- Top hanging ribbon/string (matching exact ribbon color and material from Image 1) draped naturally.
+- CRITICAL MATERIAL & SHAPE FIDELITY: Maintain 100% exact outer shape silhouette, material finish, printed artwork, text, and colors from Image 1.`;
+      break;
+    case "bullet_insulation_box":
+      concept = `UPGRADED VACUUM INSULATION & GIFT BOX product infographic photography:
+- Clean luxury studio photograph of the shiny metallic gold bullet-shaped tumbler from Image 1.
+- Standing next to it, display the high-end black marble gift box with gold foil line drawing of the bullet tumbler and gold lettering reading "BULLET TUMBLER".
+- Display disassembled component callouts: top bullet head cap, inner leak-proof push-button drinking lid ("BPA FREE LEAK PROOF LID"), smooth stainless steel inner wall ("Smooth Inner Surface Easy to Clean"), and sturdy 304 stainless steel bottom ("304 STAINLESS STEEL").
+- Clear typography icons at bottom indicating temperature performance: "11 HRS COLD", "2 DAYS ICED", "6 HRS HOT".
+- Preserve 100% exact printed artwork, logo, and text on the gold bullet body from Image 1.`;
+      break;
+    case "bullet_capacity_size":
+      concept = `17OZ CAPACITY & 3D DIMENSION SPECIFICATION infographic photography:
+- Professional e-commerce product photograph of the golden bullet tumbler standing vertically.
+- Height dimension line on the right side labeled "11 inches" (or "${dimensions.length}").
+- Base width dimension line at the bottom labeled "2.6 inches" (or "${dimensions.width}").
+- Four feature icons with text on the left side:
+  1) Shield icon: "Safety Guaranteed"
+  2) Leaf icon: "BPA Free Lid"
+  3) Snowflake icon: "Keep Cold For 12 H"
+  4) Flame icon: "Keep Hot For 6 H"
+- Translucent cutaway graphic on the bottle body showing icy cold drink on the left and hot dark coffee on the right.
+- Preserve 100% exact printed artwork, logo, graphics, and colors on the bullet tumbler from Image 1.`;
+      break;
+    case "bullet_press_lid_pour":
+      concept = `DOUBLE WALL INSULATION & PRESS TO OPEN LID functional close-up photography:
+- Macro 3D action photograph focusing on the top push-button mechanism of the inner leak-proof lid with indicator text "Press here to open".
+- Hand entering frame holding the gold bullet tumbler, pouring hot steaming coffee into the detached metallic gold bullet top cap which is serving as a drinking cup.
+- Header text across top: "DOUBLE WALL INSULATION - This keeps your drinks hot or cold all day long."
+- Studio lighting highlighting the smooth metallic golden bullet finish and high quality 304 stainless steel.
+- Preserve 100% exact printed artwork and lettering on the tumbler body from Image 1.`;
+      break;
+    case "bullet_outdoor_camping":
+      concept = `OUTDOOR CAMPING & LIFESTYLE coffee pouring photography:
+- Warm autumn outdoor adventure scene (camping tent background, cozy plaid jacket, wooden bench).
+- Person holding the shiny golden bullet tumbler horizontally, pouring hot dark coffee into a blue-handled stainless steel camping mug.
+- Soft natural daylight with warm outdoors depth of field highlighting the metallic golden bullet bottle.
+- Preserve 100% exact printed design artwork, lettering, and logo on the bullet tumbler body from Image 1.`;
+      break;
+    case "bullet_car_cupholder":
+      concept = `CUP HOLDER FRIENDLY car & travel lifestyle photography:
+- Interior view of a luxury car with the gold bullet tumbler standing securely in the center console cup holder.
+- Top banner with icons (truck, car, laptop/desk, camping tent, sports player) and bold header "CUP HOLDER FRIENDLY".
+- Text on right: "Fits most car cup holders and backpack side pockets."
+- Bright natural sunlight coming through the vehicle window, soft shallow depth of field.
+- Preserve 100% exact printed artwork, graphics, and text on the bullet tumbler body from Image 1.`;
+      break;
+
+    case "universal_main_white":
+      concept = `HERO MAIN E-COMMERCE PRODUCT PHOTOGRAPHY (AMAZON MAIN IMAGE - IMAGE 1):
+- CAMERA ANGLE: Clean full-front straight-on view (0 to 5 degree camera angle) for maximum visual clarity on Amazon search results.
+- 100% PURE SOLID WHITE BACKGROUND (#FFFFFF, zero grey tint, zero background objects, clean crisp contact shadow).
+- Centered product placement occupying 80% to 90% of the 2000x2000 square image frame.
+- High-key professional studio lighting highlighting vivid true printed artwork colors and physical material finish.
+- Preserve 100% exact product silhouette, material, printed design graphics, text, and original colors from Image 1.`;
+      break;
+
+    case "universal_lifestyle":
+      concept = `REALISTIC LIFESTYLE & IN-USE PHOTOGRAPHY (AMAZON LIFESTYLE - IMAGE 2):
+- CAMERA ANGLE & PERSPECTIVE: Dynamic 45-degree angled perspective view (placed in realistic depth within an authentic lifestyle setting).
+- Place the product in a high-end environment naturally matching its niche, usage, and US seasonal vibe.
+- Shallow depth of field with soft blurred background to keep the product as the main sharp focus.
+- Preserve 100% exact product material, silhouette, and printed design from Image 1.`;
+      break;
+
+    case "universal_dimensions":
+      concept = `PRODUCT SIZE & 3D DIMENSION INFOGRAPHIC (AMAZON DIMENSIONS - IMAGE 3):
+- CAMERA ANGLE & PERSPECTIVE: 3D Isometric or 30-degree tilted perspective view showing height, width, and thickness/depth simultaneously.
+- Height dimension line labeled "${dimensions.length}", width dimension line labeled "${dimensions.width}", thickness callout pointer labeled "${dimensions.thickness || "Standard Size"}".
+- Clean, highly legible white/navy typography and contrast indicators to prevent customer returns.
+- Maintain accurate real-life proportions, material texture, and printed artwork from Image 1.`;
+      break;
+
+    case "universal_features_zoom":
+      concept = `EXTREME LOW-ANGLE 3D PERSPECTIVE THICKNESS & MATERIAL CALLOUT (AMAZON FEATURES - IMAGE 4):
+- CAMERA ANGLE & PERSPECTIVE (COMPULSORY EXTREME LOW ANGLE): Shot from an extreme low camera angle (close to surface level, looking slightly down at a 20-30 degree low-perspective angle). The product lies flat on an aesthetic background surface (such as soft plush fabric, white faux fur, luxury silk, natural wood, or marble) but is strongly foreshortened in perspective, showing its shape tilted into a dramatic 3D oval perspective.
+- THICK SIDE EDGE PROMINENCE: The thick outer edge profile of the product MUST face directly toward the front/lower camera view. Show the visible side edge thickness (e.g. 6mm thick wood layers, cut acrylic edge, ceramic edge, or metallic rim) clearly extending along the entire lower edge curve with distinct 3D depth, material texture, and shadow.
+- MULTI-LAYERED 3D DEPTH & RELIEF: Tightly capture the 3D raised multi-layer construction, showing printed elements, lettering, and figures popping up above the base layer with visible cast shadows.
+- INDICATOR CALLOUT LINE & TEXT: Render a crisp indicator callout line ending with a solid dot pointing directly to the thick lower-left side edge profile of the product. Pointer line extends to a 2-line bold navy/black text label reading:
+"${dimensions.thickness || "6mm"}
+thickness"
+- Top hanging ribbon/string or accessories (matching exact color and material from Image 1) attached and draping naturally.
+- DO NOT render front height/width dimension arrows or "PRODUCT SIZE" footers.
+- CRITICAL MATERIAL & SHAPE FIDELITY: Preserve 100% exact material, surface texture, outer contour shape, printed design graphics, text, and colors from Image 1.`;
+      break;
+
+    case "universal_gifting":
+      concept = `STANDARD GIFT PRESENTATION PHOTOGRAPHY (AMAZON GIFTING - IMAGE 5):
+- CAMERA ANGLE & PERSPECTIVE: 35-45 degree presentation angle showing both the product and a standard retail gift box.
+- RETAIL GIFT BOX: Displays a sturdy, elegant standard retail gift box with soft interior cushioning tray alongside the product from Image 1.
+- Warm, pleasant studio lighting elevating product gift value.
+- Preserve exact printed design artwork, text, and product details from Image 1.`;
+      break;
+
+    case "universal_packaging":
+      concept = `PACKAGE INCLUDED & RETAIL GIFT BOX FLAT-LAY (AMAZON PACKAGING - IMAGE 6):
+- CAMERA ANGLE: 90-degree top-down 1:1 flat-lay photograph looking straight down at a clean studio background.
+- RETAIL GIFT BOX: Displaying the product from Image 1 alongside a sturdy standard retail gift box with protective interior lining, hanging ribbon, and thank-you card.
+- Text callout area listing included items ("PACKAGE INCLUDED: 1x Product, 1x Gift Box, Included Accessories").
+- High-quality commercial e-commerce presentation with soft realistic shadows.
+- Preserve exact product shape, material, and design from Image 1.`;
+      break;
+
+    case "universal_artwork_macro":
+      concept = `HD PRINT QUALITY & MATERIAL TEXTURE MACRO INFOGRAPHIC (AMAZON ARTWORK - IMAGE 7):
+- CAMERA ANGLE & PERSPECTIVE: Extreme 25-degree macro close-up photograph focusing tightly on the intricate printed artwork, typography, and true material texture of the product from Image 1.
+- INFOGRAPHIC CALLOUT HIGHLIGHTS: Clear professional text indicators pointing to key print & material qualities matching Image 1:
+  1. "HD Digital Printing" (Ultra-sharp lettering & crisp line details)
+  2. "Vibrant & Long-Lasting Colors" (Rich color saturation, true to design)
+  3. "Premium Material Finish" (Authentic surface texture, smooth or natural finish)
+- LIGHTING & TEXTURE: Professional studio lighting capturing fine material grain/surface texture (wood, ceramic, acrylic, metal, or fabric as shown in Image 1) with zero blur, pixelation, or noise.
+- Crisp depth of field with soft aesthetic background bokeh.
+- CRITICAL MATERIAL FIDELITY: Observe Image 1 closely. Do NOT add artificial gloss/coating if Image 1 is matte or raw wood/ceramic. Preserve 100% exact material finish, printed artwork, typography, and color fidelity from Image 1.`;
       break;
     default:
       concept = promptKey.startsWith("custom:")
@@ -637,11 +844,19 @@ Sử dụng phong cách chụp sản phẩm high-key, sáng và sạch.
 Chỉ dùng backlight xuyên thấu, specular highlight mạnh hoặc hiệu ứng lấp lánh khi phù hợp với chất liệu.
 Không phủ màu vàng, amber, orange hoặc muddy lên toàn bộ sản phẩm.
 
-BACKGROUND:
-Bối cảnh phía sau sản phẩm phải sáng, mềm và có shallow depth of field.
-Bokeh nên là soft white bokeh hoặc light green bokeh.
-Không đặt một mảng cây tối hoặc vật thể tối phủ kín ngay phía sau toàn bộ sản phẩm.
-Cành cây có thể xuất hiện xung quanh sản phẩm nhưng không làm mất chi tiết, màu sắc hoặc texture của sản phẩm.
+DYNAMIC OCCASION, THEME & ENVIRONMENT ADAPTABILITY (AI QUÉT ẢNH 1 VÀ TỰ ĐÁNH GIÁ CHỦ ĐỀ ĐỂ TẠO BỐI CẢNH):
+- AI VISION QUÉT TRỰC TIẾP ẢNH 1 ĐỂ NHẬN DIỆN CHỦ ĐỀ (AUTOMATIC VISUAL THEME EVALUATION FROM IMAGE 1):
+  AI Vision PHẢI quét trực tiếp Ảnh 1 (nhìn rõ hình vẽ minh họa, dòng chữ in, phong cách và thông điệp trên sản phẩm) kết hợp tên SKU "${itemName}" để TỰ ĐÁNH GIÁ CHÍNH XÁC chủ đề/ngách/dịp của sản phẩm:
+  * Chó / Mèo / Thú cưng (Dog/Pet Lover): Tự nhận diện hình chú chó/mèo/chữ "Dog Mom" -> Tạo bối cảnh phòng khách ấm cúng, sofa, thảm plush sáng hoặc góc thảm thanh lịch.
+  * Đám cưới / Kỷ niệm (Wedding/Anniversary): Tự nhận diện cô dâu chú rể/chữ "Mr & Mrs", "Our First Christmas" -> Tạo bối cảnh lãng mạn nhẹ nhàng, thảm lụa champagne, hoa nhàn nhạt, bàn gỗ sáng.
+  * Em bé mới sinh (New Baby/Baby's 1st): Tự nhận diện đôi chân em bé/chữ "Baby First" -> Tạo bối cảnh nôi trẻ em, phòng baby tone pastel sáng mịn, nơ lụa mềm mại.
+  * Ngành nghề (Y tế/Y tá, Giáo viên, Cảnh sát, Lính hỏa hoạn...): Tự nhận diện biểu tượng ngành nghề -> Tạo bối cảnh góc làm việc thanh lịch, bàn sách gỗ sáng, phụ kiện ngành nghề.
+  * Thể thao / Câu cá / Dã ngoại (Fishing, Golf, Camping...): Tự nhận diện cần câu/lều/con cá -> Tạo bối cảnh thiên nhiên mộc mạc ngoài trời, bàn gỗ tự nhiên, không gian dã ngoại.
+  * Tưởng niệm / Tình cảm gia đình (Memorial, Angel, Family, Grandma...): Tự nhận diện cánh thiên thần/chữ "In Loving Memory" -> Tạo bối cảnh ấm cúng gần cửa sổ nắng ban mai, nến thơm, hoa khô thanh lịch.
+  * Giáng Sinh / Lễ hội (Christmas/Holiday): Tự nhận diện biểu tượng Noel -> Tạo bối cảnh cành thông xanh tươi, đèn bokeh Giáng sinh lung linh, hộp quà rực rỡ.
+- CHỈ ĐỊNH NGHIÊM NGẶT: AI PHẢI QUÉT VÀ ĐÁNH GIÁ CHỦ ĐỀ TỪ ẢNH 1. Tuyệt đối KHÔNG gán nền Giáng sinh/cây thông cho các sản phẩm không có yếu tố Giáng sinh hoặc sản phẩm dùng quanh năm!
+- Bối cảnh phía sau sản phẩm phải sáng, mềm và có shallow depth of field tự nhiên với soft bokeh hài hòa.
+- Không đặt một mảng tối hoặc vật thể tối phủ kín ngay phía sau toàn bộ sản phẩm.
 
 Giữ thiết kế in rõ nét và trung thành với ảnh tham chiếu.
 Không tự ý thay đổi nội dung chữ, hình minh họa hoặc bố cục thiết kế.
@@ -1017,6 +1232,74 @@ export async function renderGraphicMockup(
     bgGradient = "linear-gradient(135deg, #451a03 0%, #1c1917 100%)";
     titleBadge = "WOOD FLAT-LAY & PINE MOCKUP";
     sceneDesc = "Natural Wood Tabletop with Festive Pine Decor";
+  } else if (promptKey === "ornament_fireplace_mantle") {
+    bgGradient = "linear-gradient(135deg, #7c2d12 0%, #451a03 100%)";
+    titleBadge = "COZY FIREPLACE MANTLE MOCKUP";
+    sceneDesc = "Festive Mantle Decoration with Warm Firelight Bokeh";
+  } else if (promptKey === "ornament_sunlit_window") {
+    bgGradient = "linear-gradient(135deg, #0369a1 0%, #0c4a6e 100%)";
+    titleBadge = "SUNLIT WINDOW & SNOW MOCKUP";
+    sceneDesc = "Morning Sunlight Refraction & Frosty Window View";
+  } else if (promptKey === "ornament_lifestyle_adaptive") {
+    bgGradient = "linear-gradient(135deg, #1e293b 0%, #0f172a 100%)";
+    titleBadge = "ADAPTIVE OCCASION LIFESTYLE";
+    sceneDesc = "Environment Adapts to Product Theme & Occasion";
+  } else if (promptKey === "ornament_package_adaptive") {
+    bgGradient = "linear-gradient(135deg, #450a0a 0%, #881337 100%)";
+    titleBadge = "PACKAGE INCLUDED FLAT-LAY";
+    sceneDesc = "Gift Box, Lanyard & Ornament Packaging";
+  } else if (promptKey === "ornament_sunburst_adaptive") {
+    bgGradient = "linear-gradient(135deg, #78350f 0%, #451a03 100%)";
+    titleBadge = "ADAPTIVE SUNLIT REFRACTION";
+    sceneDesc = "Natural Sunlight Rays & Occasion Complementary Background";
+  } else if (promptKey === "bullet_insulation_box") {
+    bgGradient = "linear-gradient(135deg, #1c1917 0%, #78350f 100%)";
+    titleBadge = "BULLET TUMBLER INSULATION & BOX";
+    sceneDesc = "Upgraded Vacuum Insulation & Marble Box";
+  } else if (promptKey === "bullet_capacity_size") {
+    bgGradient = "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)";
+    titleBadge = "17OZ CAPACITY & DIMENSIONS";
+    sceneDesc = "Height 11 inches, Width 2.6 inches";
+  } else if (promptKey === "bullet_press_lid_pour") {
+    bgGradient = "linear-gradient(135deg, #451a03 0%, #0f172a 100%)";
+    titleBadge = "PRESS LID & CUP POURING";
+    sceneDesc = "Double Wall Insulation & Press To Open Lid";
+  } else if (promptKey === "bullet_outdoor_camping") {
+    bgGradient = "linear-gradient(135deg, #3f6212 0%, #14532d 100%)";
+    titleBadge = "OUTDOOR CAMPING LIFESTYLE";
+    sceneDesc = "Pouring Coffee in Autumn Outdoor Setting";
+  } else if (promptKey === "bullet_car_cupholder") {
+    bgGradient = "linear-gradient(135deg, #18181b 0%, #27272a 100%)";
+    titleBadge = "CUP HOLDER FRIENDLY";
+    sceneDesc = "Fits Most Vehicle Cup Holders";
+  } else if (promptKey === "universal_main_white") {
+    bgGradient = "linear-gradient(135deg, #ffffff 0%, #f1f5f9 100%)";
+    titleBadge = "AMAZON MAIN HERO IMAGE";
+    sceneDesc = "100% Pure White Background (CTR Booster)";
+  } else if (promptKey === "universal_lifestyle") {
+    bgGradient = "linear-gradient(135deg, #1e293b 0%, #0f172a 100%)";
+    titleBadge = "AMAZON LIFESTYLE CONTEXT";
+    sceneDesc = "In-Use Product Photography";
+  } else if (promptKey === "universal_dimensions") {
+    bgGradient = "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)";
+    titleBadge = "AMAZON 3D DIMENSION INFOGRAPHIC";
+    sceneDesc = `Product Dimensions: ${dimensions.formatted}`;
+  } else if (promptKey === "universal_features_zoom") {
+    bgGradient = "linear-gradient(135deg, #2e1065 0%, #0f172a 100%)";
+    titleBadge = "MATERIAL & FEATURE ZOOM";
+    sceneDesc = "Macro Material Texture & Edge Thickness";
+  } else if (promptKey === "universal_gifting") {
+    bgGradient = "linear-gradient(135deg, #881337 0%, #450a0a 100%)";
+    titleBadge = "AMAZON GIFTING & EMOTIONAL SCENE";
+    sceneDesc = "Gift Box Presentation & Emotional Handover";
+  } else if (promptKey === "universal_packaging") {
+    bgGradient = "linear-gradient(135deg, #450a0a 0%, #1c1917 100%)";
+    titleBadge = "PACKAGE INCLUDED & PACKAGING";
+    sceneDesc = "Gift Box & Accessories Flat-Lay";
+  } else if (promptKey === "universal_artwork_macro") {
+    bgGradient = "linear-gradient(135deg, #0284c7 0%, #0369a1 100%)";
+    titleBadge = "MACRO ARTWORK & PRINT QUALITY";
+    sceneDesc = "Ultra Sharp Print Detail Zoom";
   }
 
   const svg = `

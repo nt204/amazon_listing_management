@@ -1,6 +1,7 @@
 export type MockupModel =
   | "gpt-image-2"
   | "gpt-image-2-c"
+  | "gpt-image-2-cheapkey"
   | "gpt-image-1.5"
   | "gemini-3.1-flash-image"
   | "gemini-3-pro-image"
