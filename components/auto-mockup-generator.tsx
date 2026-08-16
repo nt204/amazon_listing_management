@@ -41,6 +41,7 @@ import {
   mockupIndexFromAttachmentName,
   type MockupModel,
 } from "@/lib/mockup-types";
+import { GlassOrnamentTemplateModal } from "@/components/glass-ornament-template-modal";
 
 interface TrelloCard {
   id: string;
@@ -60,6 +61,25 @@ interface TrelloCard {
     sku: string;
     itemName: string;
   };
+}
+
+type TrelloCardAttachment = NonNullable<TrelloCard["attachments"]>[number];
+
+const IMAGE_ATTACHMENT_PATTERN = /\.(png|jpe?g|webp)(?:$|[?#])/i;
+
+function isImageAttachment(attachment: TrelloCardAttachment) {
+  return Boolean(
+    attachment.mimeType?.startsWith("image/") ||
+      IMAGE_ATTACHMENT_PATTERN.test(attachment.name || "") ||
+      IMAGE_ATTACHMENT_PATTERN.test(attachment.url || ""),
+  );
+}
+
+function findOriginalDesignAttachment(card: TrelloCard) {
+  const imageAttachments = (card.attachments || []).filter(isImageAttachment);
+  return imageAttachments.find(
+    (attachment) => mockupIndexFromAttachmentName(attachment.name) === null,
+  );
 }
 
 interface TrelloList {
@@ -277,6 +297,7 @@ export function AutoMockupGenerator({
 
   const [showAddContentModal, setShowAddContentModal] = useState(false);
   const [showManageModal, setShowManageModal] = useState(false);
+  const [showGlassTemplateModal, setShowGlassTemplateModal] = useState(false);
   const [newContentLabel, setNewContentLabel] = useState("");
   const [contentNoticeMsg, setContentNoticeMsg] = useState<string>("");
 
@@ -528,6 +549,32 @@ export function AutoMockupGenerator({
   const allBoardCards = [...designCards, ...mockupCards];
   const activeStudioCard = allBoardCards.find((c) => c.id === studioModal?.cardId);
   const activeCardIndex = allBoardCards.findIndex((c) => c.id === studioModal?.cardId);
+  const selectedDesignCardForTemplate =
+    selectedCardIds.size === 1
+      ? designCards.find((card) => selectedCardIds.has(card.id))
+      : undefined;
+  const selectedDesignAttachmentForTemplate = selectedDesignCardForTemplate
+    ? findOriginalDesignAttachment(selectedDesignCardForTemplate)
+    : undefined;
+  const glassTemplateSource =
+    selectedDesignCardForTemplate && selectedDesignAttachmentForTemplate
+      ? {
+          cardId: selectedDesignCardForTemplate.id,
+          cardName: selectedDesignCardForTemplate.name,
+          sku: selectedDesignCardForTemplate.parsed?.sku,
+          attachmentId: selectedDesignAttachmentForTemplate.id,
+          attachmentName: selectedDesignAttachmentForTemplate.name,
+          attachmentUrl: selectedDesignAttachmentForTemplate.url,
+        }
+      : undefined;
+  const glassTemplateSourceNotice =
+    selectedCardIds.size !== 1
+      ? `Cần chọn đúng 1 thẻ trong cột DESIGN để tự động lấy ảnh gốc (hiện đang chọn ${selectedCardIds.size}). Bạn vẫn có thể upload ảnh thủ công trong modal.`
+      : !selectedDesignCardForTemplate
+        ? "Thẻ đã chọn không còn nằm trong cột DESIGN. Bạn vẫn có thể upload ảnh thủ công trong modal."
+        : !selectedDesignAttachmentForTemplate
+          ? `Thẻ “${selectedDesignCardForTemplate.parsed?.sku || selectedDesignCardForTemplate.name}” không có attachment ảnh thiết kế gốc. Bạn vẫn có thể upload ảnh thủ công trong modal.`
+          : undefined;
 
   // Keyboard navigation for Studio Modal (Left / Right Arrow) with Input Focus Guard
   useEffect(() => {
@@ -1568,6 +1615,16 @@ export function AutoMockupGenerator({
                 </div>
               )}
 
+            {/* Glass Ornament Template Mockup Button */}
+            <button
+              onClick={() => setShowGlassTemplateModal(true)}
+              className="flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 px-3.5 py-2 text-xs font-extrabold text-amber-800 shadow-2xs hover:bg-amber-100 transition"
+              title="Dùng AI đưa thiết kế vào một template Glass Ornament"
+            >
+              <SparkleIcon className="h-4 w-4 text-amber-600 shrink-0" weight="fill" />
+              <span>🎨 Template Glass Ornament</span>
+            </button>
+
             {/* Sync / Refresh Button */}
             <button
               onClick={syncAllColumns}
@@ -2354,6 +2411,16 @@ export function AutoMockupGenerator({
           )}
         </div>
       )}
+
+      {/* Glass Ornament Template Mockup Modal */}
+      <GlassOrnamentTemplateModal
+        isOpen={showGlassTemplateModal}
+        onClose={() => setShowGlassTemplateModal(false)}
+        trelloSource={glassTemplateSource}
+        trelloApiKey={apiKey}
+        trelloToken={token}
+        automaticSourceNotice={glassTemplateSourceNotice}
+      />
     </div>
   );
 }

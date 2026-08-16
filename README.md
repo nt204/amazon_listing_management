@@ -38,6 +38,27 @@ IMAGE_GENERATION_CONCURRENCY=3
 
 Model và API key chỉ được gọi trong Route Handler phía server. Mỗi lần tạo một bộ mockup có thể phát sinh chi phí của provider cho 6 ảnh AI được sinh.
 
+### Glass Ornament với template
+
+Trong modal **Template Glass Ornament**, chọn một ảnh sản phẩm nguồn và đúng một
+template. Server gửi template làm ảnh base và ảnh sản phẩm làm reference trong
+cùng một request Image Edit tới CheapKeyAI, với upstream model được khóa cứng là
+`gpt-image-2`. Kết quả được AI tạo trực tiếp; luồng này không crop, mask,
+composite, resize hậu kỳ hoặc fallback sang ghép ảnh cục bộ hay OpenAI trực
+tiếp. Nếu CheapKeyAI lỗi hoặc thiếu key, API trả lỗi thay vì sinh kết quả thay
+thế.
+
+```env
+CHEAPKEYAI_API_KEY=sk-your-cheapkeyai-key
+CHEAPKEYAI_BASE_URL=https://cheapkeyai.shop/v1
+TEMPLATE_MOCKUP_IMAGE_SIZE=2000x2000
+TEMPLATE_MOCKUP_IMAGE_QUALITY=high
+TEMPLATE_MOCKUP_IMAGE_TIMEOUT_MS=600000
+```
+
+`OPENAI_API_KEY` và `TEMPLATE_MOCKUP_IMAGE_MODEL` không được dùng trong luồng
+Glass Ornament Template Mockup.
+
 Để dùng lựa chọn **GPT Image 2 C (CheapKeyAI)**:
 
 1. Đăng ký hoặc đăng nhập CheapKeyAI và nạp ví.

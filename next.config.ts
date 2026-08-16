@@ -19,6 +19,11 @@ const securityHeaders = isDev
 const nextConfig: NextConfig = {
   poweredByHeader: false,
   serverExternalPackages: ["tesseract.js", "@tesseract.js-data/eng"],
+  outputFileTracingIncludes: {
+    "/api/template-mockup/generate": [
+      "./public/templates/glass-ornament/*.jpg",
+    ],
+  },
   allowedDevOrigins: ["192.168.*.*", "10.*.*.*", "172.16.*.*"],
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
@@ -26,4 +31,3 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
-

@@ -846,7 +846,7 @@ Không phủ màu vàng, amber, orange hoặc muddy lên toàn bộ sản phẩm
 
 DYNAMIC OCCASION, THEME & ENVIRONMENT ADAPTABILITY (AI QUÉT ẢNH 1 VÀ TỰ ĐÁNH GIÁ CHỦ ĐỀ ĐỂ TẠO BỐI CẢNH):
 - AI VISION QUÉT TRỰC TIẾP ẢNH 1 ĐỂ NHẬN DIỆN CHỦ ĐỀ (AUTOMATIC VISUAL THEME EVALUATION FROM IMAGE 1):
-  AI Vision PHẢI quét trực tiếp Ảnh 1 (nhìn rõ hình vẽ minh họa, dòng chữ in, phong cách và thông điệp trên sản phẩm) kết hợp tên SKU "${itemName}" để TỰ ĐÁNH GIÁ CHÍNH XÁC chủ đề/ngách/dịp của sản phẩm:
+  * Bản đồ Bang Mỹ / Thành phố / Du lịch (State Outline / Map / New Jersey / Texas...): Tự nhận diện khuôn bản đồ bang/tên bang như "New Jersey" -> Ưu tiên bối cảnh gương chiếu hậu ô tô nhìn ra cung đường du lịch (scenic highway/road trip view) hoặc bối cảnh phòng khách ấm áp thể hiện niềm tự hào quê hương (Home State pride).
   * Chó / Mèo / Thú cưng (Dog/Pet Lover): Tự nhận diện hình chú chó/mèo/chữ "Dog Mom" -> Tạo bối cảnh phòng khách ấm cúng, sofa, thảm plush sáng hoặc góc thảm thanh lịch.
   * Đám cưới / Kỷ niệm (Wedding/Anniversary): Tự nhận diện cô dâu chú rể/chữ "Mr & Mrs", "Our First Christmas" -> Tạo bối cảnh lãng mạn nhẹ nhàng, thảm lụa champagne, hoa nhàn nhạt, bàn gỗ sáng.
   * Em bé mới sinh (New Baby/Baby's 1st): Tự nhận diện đôi chân em bé/chữ "Baby First" -> Tạo bối cảnh nôi trẻ em, phòng baby tone pastel sáng mịn, nơ lụa mềm mại.
