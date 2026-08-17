@@ -10,6 +10,15 @@ export type MockupModel =
 
 export type MockupImageQuality = "low" | "medium" | "high";
 
+/** Normalized physical specifications parsed from a Trello card description. */
+export interface ParsedDimensions {
+  length: string;
+  width: string;
+  thickness: string;
+  formatted: string;
+  capacity?: string;
+}
+
 export function mockupIndexFromAttachmentName(name: string): number | null {
   const match = name.trim().match(/^Mockup(\d+)_/i);
   if (!match) return null;

@@ -664,7 +664,32 @@ export function AutoMockupGenerator({
   const [draggedCardId, setDraggedCardId] = useState<string | null>(null);
   const [draggedFromColumn, setDraggedFromColumn] = useState<"design" | "mockup" | null>(null);
 
-  const moveCardToList = async (cardId: string, targetListId: string) => {
+  const moveCardToList = async (
+    cardId: string,
+    targetListId: string,
+    pos: "top" | "bottom" = "top",
+  ) => {
+    // Optimistic UI update
+    if (targetListId === mockupListId) {
+      const movedCard = designCards.find((c) => c.id === cardId);
+      if (movedCard) {
+        setDesignCards((prev) => prev.filter((c) => c.id !== cardId));
+        setMockupCards((prev) => [
+          { ...movedCard, idList: targetListId },
+          ...prev.filter((c) => c.id !== cardId),
+        ]);
+      }
+    } else if (targetListId === designListId) {
+      const movedCard = mockupCards.find((c) => c.id === cardId);
+      if (movedCard) {
+        setMockupCards((prev) => prev.filter((c) => c.id !== cardId));
+        setDesignCards((prev) => [
+          { ...movedCard, idList: targetListId },
+          ...prev.filter((c) => c.id !== cardId),
+        ]);
+      }
+    }
+
     try {
       const res = await fetch("/api/trello/config", {
         method: "POST",
@@ -675,6 +700,7 @@ export function AutoMockupGenerator({
           token,
           cardId,
           idList: targetListId,
+          pos,
         }),
       });
       if (res.ok) {
@@ -2052,9 +2078,9 @@ export function AutoMockupGenerator({
                     <div className="mb-3 flex items-center gap-2 rounded-xl bg-slate-50 border border-slate-200/80 p-2.5 text-xs text-slate-700 font-mono">
                       <RulerIcon className="h-4 w-4 text-indigo-600 shrink-0" />
                       <span>
-                        Kích thước 3D:{" "}
+                        Kích thước / dung tích:{" "}
                         <strong className="text-slate-900 font-bold">
-                          {dims.formatted}
+                          {dims.formatted || "Chưa có dữ liệu trong description"}
                         </strong>
                       </span>
                     </div>
@@ -2256,9 +2282,9 @@ export function AutoMockupGenerator({
                     <div className="mb-3 flex items-center gap-2 rounded-xl bg-white border border-slate-200/80 p-2.5 text-xs text-slate-700 font-mono">
                       <RulerIcon className="h-4 w-4 text-emerald-600 shrink-0" />
                       <span>
-                        Kích thước 3D:{" "}
+                        Kích thước / dung tích:{" "}
                         <strong className="text-slate-900">
-                          {dims.formatted}
+                          {dims.formatted || "Chưa có dữ liệu trong description"}
                         </strong>
                       </span>
                     </div>

@@ -75,14 +75,14 @@ export async function POST(request: Request) {
     const body = await request.json();
 
     if (body.action === "move-card") {
-      const { cardId, idList, apiKey, token } = body;
+      const { cardId, idList, apiKey, token, pos } = body;
       if (!cardId || !idList || !apiKey || !token) {
         return NextResponse.json(
           { error: "Thiếu thông tin cardId, idList, apiKey hoặc token" },
           { status: 400 },
         );
       }
-      const updatedCard = await moveTrelloCard(cardId, idList, apiKey, token);
+      const updatedCard = await moveTrelloCard(cardId, idList, apiKey, token, pos || "top");
       return NextResponse.json({ success: true, card: updatedCard });
     }
 

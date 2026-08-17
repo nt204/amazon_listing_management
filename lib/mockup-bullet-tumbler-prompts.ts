@@ -8,6 +8,8 @@ export function getBulletTumblerConcept(
   promptKey: string,
   dimensions: ParsedDimensions,
 ): string | null {
+  const capacity = dimensions.capacity || "17oz";
+  const capacityUpper = capacity.toUpperCase();
   const strictTypographyLock = `
 STRICT ZERO-SMUDGE VECTOR-SHARP TYPOGRAPHY LOCK:
 - Preserve 100% exact printed design graphics, illustrations, logo, text, typography, layout, and original colors from Image 1.
@@ -31,7 +33,7 @@ STRICT SINGLE FRONT ARTWORK VIEW LOCK (DO NOT SQUEEZE OR STUFF BOTH SIDES):
 - TOP-LEFT HEADER: Large bold black title text reading "UPGRADED" with sub-header text "Vacuum Insulation".
 - BOTTLE & BOX ARRANGEMENT:
   1) Center: The open bullet-shaped tumbler from Image 1 standing vertically with top cap detached, showing smooth stainless steel bottle neck.
-  2) Right: A premium black marble retail gift box standing upright with gold foil bullet tumbler outline drawing, logo, and gold text reading "BULLET TUMBLER", "17oz | 510 ml", "11 HRS COLD", "2 DAYS ICED", "6 HRS HOT".
+  2) Right: A premium black marble retail gift box standing upright with gold foil bullet tumbler outline drawing, logo, and gold text reading "BULLET TUMBLER", "${capacity}", "11 HRS COLD", "2 DAYS ICED", "6 HRS HOT".
   3) Left & Disassembled Components: Detached shiny metallic gold bullet head cap sitting on tabletop, and detached inner white push-button leak-proof lid with blue button.
 - CALLOUT POINTER LINES WITH SOLID RED/BLACK DOTS:
   - Pointer line to bottle neck: "Smooth Inner Surface Easy to Clean"
@@ -41,9 +43,9 @@ STRICT SINGLE FRONT ARTWORK VIEW LOCK (DO NOT SQUEEZE OR STUFF BOTH SIDES):
 - BOTTOM SUMMARY METRICS: "11 HRS COLD | 2 DAYS ICED | 6 HRS HOT".${strictTypographyLock}${strictSingleFaceLock}`;
 
     case "bullet_capacity_size":
-      return `17OZ CAPACITY & 3D DIMENSION INFOGRAPHIC (AMAZON IMAGE 3 - MATCHING REFERENCE LAYOUT):
+      return `${capacityUpper} CAPACITY & 3D DIMENSION INFOGRAPHIC (AMAZON IMAGE 3 - MATCHING REFERENCE LAYOUT):
 - BACKGROUND: Clean concrete/slate grey texture wall background.
-- TOP-LEFT HEADER: Large bold gold and black typography reading "17OZ CAPACITY".
+- TOP-LEFT HEADER: Large bold gold and black typography reading "${capacityUpper} CAPACITY".
 - CENTER TUMBLER: The bullet tumbler from Image 1 standing vertically in full height.
 - DIMENSION LINES:
   - Vertical height dimension line on right labeled "${dimensions.length || '11"'}".
@@ -105,8 +107,9 @@ STRICT SINGLE FRONT ARTWORK VIEW LOCK (DO NOT SQUEEZE OR STUFF BOTH SIDES):
 - AUTOMATIC UNIVERSAL VISUAL THEME & RECIPIENT EVALUATION (ANY RECIPIENT OR THEME): AI Vision scans Image 1 to evaluate the recipient and theme:
   * Male / Outdoors / Father / Husband / Biker / Military: Outdoor mountain vista or highway background, smiling handsome man wearing beanie & cozy sweater holding the tumbler. Footer banner: "COOLEST TUMBLER FOR MEN".
   * Female / Mom / Wife / Nurse / Teacher / Gift: Warm scenic outdoor, garden, or cozy living room background, smiling appealing woman holding the tumbler. Footer banner: "PERFECT GIFT FOR HER" or "COOLEST TUMBLER".
-  * Golf / Sports / Pet Lover / Niche / Veteran: Natural outdoor or niche backdrop perfectly matching the artwork theme.
+  * Golf / Sports / Pet Lover / Niche / Military Tribute: Natural outdoor or niche backdrop perfectly matching the artwork theme.
 - REALISTIC HUMAN MODEL WITH SMILE: Inspiring, high-quality commercial lifestyle photography featuring a real human model holding the bullet tumbler from Image 1 in both hands.
+- STRICT NO HALLUCINATED TEXT OR COUNTRY NAMES ON MODEL CLOTHING: All clothing, hats, beanies, caps, and apparel on the human model MUST BE PLAIN, UNBRANDED, AND TEXT-FREE. ABSOLUTELY DO NOT ADD "VIETNAM VETERAN", country names, or war names on model clothing/hats unless printed on Image 1!
 - BOTTOM FOOTER BANNER: Bold white banner across the bottom with large black all-caps text reading "COOLEST TUMBLER FOR MEN" (or "PERFECT GIFT").${strictTypographyLock}${strictSingleFaceLock}`;
 
     default:

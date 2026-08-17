@@ -527,6 +527,7 @@ export function buildMockupPrompt(
 - Lay exactly one complete ornament on top of the open box base. Keep the ornament fully visible, centered, correctly scaled and unobstructed; preserve its exact shape, material, printed artwork, text and colors from Image 1.
 - Show the included hanging cord/lanyard attached to the ornament (copying the exact ribbon/string color and style from Image 1) and draped naturally near the top. Do not cover important artwork or lettering.
 - Place the matching closed red textured gift-box lid separately in the upper-right area, rotated slightly and overlapping only the corner of the open box. The lid must not cover the ornament.
+- PLAIN UNBRANDED BOX (STRICT ZERO PATTERNS OR TEXT ON BOX): The gift-box base and lid MUST BE PLAIN AND SOLID COLORED. ABSOLUTELY NO PATTERNS, NO PRINTED GRAPHICS, NO LOGOS, NO BRAND NAMES, AND NO TEXT ON THE BOX SURFACE OR LID!
 - Use soft diffused studio lighting, realistic contact shadows and a premium e-commerce catalog finish. No hands, Christmas tree, lifestyle scene or decorative clutter.
 - Reserve a clean area across the bottom for centered black typography. Render this exact package list clearly and spell it correctly:
 "PACKAGE INCLUDED"
@@ -762,7 +763,7 @@ thickness"
   }
 
   const dimensionsLine =
-    promptKey === "dimensions_3d"
+    promptKey === "dimensions_3d" && dimensions.formatted
       ? `\n\nKích thước 3 chiều: ${dimensions.formatted}.`
       : "";
 

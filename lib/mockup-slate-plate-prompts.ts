@@ -19,6 +19,11 @@ STRICT SLATE STONE & CHISELED EDGE FIDELITY:
 - Preserve 100% exact natural slate stone texture, rough chiseled rock edges, square/rectangular plaque shape, black display stand, and smooth printed surface from Image 1.
 - DO NOT default to smooth glass, acrylic, plastic, ceramic tile, or wood! Maintain authentic dark chiseled slate stone texture along all outer borders.`;
 
+  const strictNoCountryOrWarHallucinationLock = `
+STRICT NO HALLUCINATED COUNTRY OR WAR NAMES ON MODEL CLOTHING & ACCESSORIES:
+- ABSOLUTELY DO NOT ADD ANY SPECIFIC COUNTRY NAMES, STATE NAMES, OR SPECIFIC WAR/CAMPAIGN NAMES (such as "VIETNAM", "VIETNAM VETERAN", "WWII", "IRAQ", "AFGHANISTAN", etc.) ON HUMAN MODEL HATS, CAPS, SHIRTS, OR CLOTHING UNLESS THAT EXACT WORD IS EXPLICITLY PRINTED ON IMAGE 1!
+- All human model hats, caps, shirts, and apparel MUST BE PLAIN, UNBRANDED, AND TEXT-FREE (e.g. a plain black/navy cap or plain sweater without hallucinated text or country labels).`;
+
   switch (promptKey) {
     case "slate_main_white":
       return `HERO MAIN E-COMMERCE PRODUCT PHOTOGRAPHY (AMAZON MAIN IMAGE - IMAGE 1):
@@ -43,9 +48,9 @@ STRICT SLATE STONE & CHISELED EDGE FIDELITY:
 - CENTER ARRANGEMENT: The natural photo slate plaque from Image 1 standing upright on its black display stand holder.
 - TOP/BOTTOM HEADER: Bold typography reading "PRODUCT SIZE & SPECIFICATIONS".
 - DIMENSION LINES:
-  - Vertical height dimension line labeled "${dimensions.length || '8"'}"
-  - Base width dimension line labeled "${dimensions.width || '8"'}"
-  - Thickness dimension callout labeled "${dimensions.thickness || '0.3"'}"
+  ${dimensions.length ? `- Vertical height dimension line labeled "${dimensions.length}"` : "- Do not invent a height measurement when none is supplied in the Trello description."}
+  ${dimensions.width ? `- Base width dimension line labeled "${dimensions.width}"` : "- Do not invent a width measurement when none is supplied in the Trello description."}
+  ${dimensions.thickness ? `- Thickness dimension callout labeled "${dimensions.thickness}"` : "- Omit the numeric thickness callout when thickness is not supplied in the Trello description."}
 - FEATURE CALLOUT TEXT (Left or Right side icons):
   * "Authentic Chiseled Slate Stone"
   * "Display Stand Included"
@@ -71,15 +76,19 @@ STRICT SLATE STONE & CHISELED EDGE FIDELITY:
 
     case "slate_gifting_emotion":
       return `MEANINGFUL TRIBUTE & GIFTING LIFESTYLE (AMAZON IMAGE 6 - MATCHING REFERENCE LAYOUT):
-- AUTOMATIC UNIVERSAL THEME & RECIPIENT ADAPTABILITY: AI Vision scans Image 1 to detect recipient and theme (e.g. Veteran/Military, Bus Driver, Teacher, Graduate, Mom/Dad, Memorial, Family, Pet Lover):
-  * Shows an authentic lifestyle scene with a smiling recipient/model matching THAT SPECIFIC THEME (e.g. smiling graduate hugging family, proud veteran, smiling mom/teacher).
-- BOTTOM CALLOUT BANNER: Subtle banner with elegant script typography reading: "A tribute gift for [theme/recipient]" (e.g. "A tribute gift for school bus drivers" or "A meaningful gift for loved ones").
-- PRODUCT ARRANGEMENT: The photo slate plaque from Image 1 standing gracefully on its display stand in the foreground/side.${strictTypographyLock}${strictSlateMaterialLock}`;
+- AUTOMATIC UNIVERSAL THEME & RECIPIENT ADAPTABILITY: AI Vision scans Image 1 to detect recipient and theme (e.g. Bus Driver, Teacher, Graduate, Mom/Dad, Memorial, Family, Pet Lover, Military/Soldier Tribute):
+  * Shows an authentic lifestyle scene with a smiling recipient/model matching THAT SPECIFIC THEME (e.g. smiling graduate hugging family, proud recipient, smiling mom/teacher).
+  * If a military or soldier theme is detected from Image 1, show a proud model in PLAIN, TEXT-FREE civilian or unbranded clothing. DO NOT add "VIETNAM VETERAN" or any specific country text on hats/clothing unless printed on Image 1!
+- BOTTOM CALLOUT BANNER: Subtle banner with elegant script typography reading: "A tribute gift for [theme/recipient]" (e.g. "A tribute gift for school bus drivers" or "A meaningful gift for loved ones"). Do NOT add any specific country or war names to the banner unless printed on Image 1.
+- PRODUCT ARRANGEMENT: The photo slate plaque from Image 1 standing gracefully on its display stand in the foreground/side.${strictTypographyLock}${strictSlateMaterialLock}${strictNoCountryOrWarHallucinationLock}`;
 
     case "slate_packaging_box":
       return `PACKAGE INCLUDED & RETAIL GIFT BOX FLAT-LAY (AMAZON IMAGE 7):
 - CAMERA ANGLE: 90-degree top-down flat-lay photograph looking straight down at a studio surface.
-- ARRANGEMENT: The photo slate plaque from Image 1 displayed alongside its black display stand holder, protective foam packaging box, and greeting card.
+- ARRANGEMENT: The photo slate plaque from Image 1 displayed alongside its black display stand holder and protective foam packaging box. DO NOT include any greeting card, thank-you card, envelope, or extra paper cards.
+- PLAIN UNBRANDED PACKAGING BOX (STRICT ZERO PATTERNS OR TEXT ON BOX):
+  * The protective packaging gift box MUST BE COMPLETELY PLAIN AND SOLID COLORED (e.g. solid matte black, plain craft brown, or plain solid white).
+  * ABSOLUTELY NO PATTERNS, NO DECORATIVE PRINTS, NO ARTWORK, NO LOGOS, NO BRAND NAMES, AND NO TEXT OF ANY KIND ON THE BOX SURFACE! The box exterior is 100% BLANK and UNBRANDED.
 - TEXT CALLOUT: "PACKAGE INCLUDED: 1x Photo Slate Plaque, 1x Display Stand, 1x Protective Box".${strictTypographyLock}${strictSlateMaterialLock}`;
 
     default:

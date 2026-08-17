@@ -374,13 +374,14 @@ export async function moveTrelloCard(
   targetListId: string,
   apiKey: string,
   token: string,
+  pos: "top" | "bottom" | number = "top",
 ): Promise<TrelloCard> {
   const response = await fetch(buildUrl(`/cards/${cardId}`, apiKey, token), {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ idList: targetListId }),
+    body: JSON.stringify({ idList: targetListId, pos }),
   });
 
   if (!response.ok) {
@@ -538,32 +539,153 @@ export interface Dimensions3D {
   width: string;
   thickness: string;
   formatted: string;
+  capacity?: string;
+}
+
+interface ParsedMeasurement {
+  value: string;
+  unit: string;
+}
+
+const measurementValuePattern = String.raw`(?:\d+\s+\d+\s*\/\s*\d+|\d+\s*\/\s*\d+|\d+(?:[.,]\d+)?)`;
+const measurementUnitPattern = String.raw`(?:fl\s*oz|inches?|in\.?|cm|mm|ft|feet|foot|oz|ml|l|m|["'])`;
+const measurementPattern = String.raw`(${measurementValuePattern})\s*(${measurementUnitPattern})?`;
+const dimensionsPattern = new RegExp(
+  String.raw`${measurementPattern}\s*x\s*${measurementPattern}(?:\s*x\s*${measurementPattern})?`,
+  "i",
+);
+
+function normalizeDimensionText(value: string) {
+  return value
+    .normalize("NFKC")
+    .replace(/[“”„‟″]/g, '"')
+    .replace(/[‘’‛′]/g, "'")
+    .replace(/[×✕✖]/g, "x")
+    .replace(/(\d),(\d)/g, "$1.$2");
+}
+
+function normalizeMeasurement(value = "", unit = ""): ParsedMeasurement {
+  const normalizedValue = value.replace(/\s*\/\s*/g, "/").replace(/,/g, ".").trim();
+  const normalizedUnit = unit.toLowerCase().replace(/\.$/, "").replace(/\s+/g, " ").trim();
+
+  if (!normalizedUnit) return { value: normalizedValue, unit: "" };
+  if (normalizedUnit === '"' || /^in(?:ch(?:es)?)?$/.test(normalizedUnit)) {
+    return { value: normalizedValue, unit: '"' };
+  }
+  if (normalizedUnit === "'" || /^(?:ft|feet|foot)$/.test(normalizedUnit)) {
+    return { value: normalizedValue, unit: "'" };
+  }
+  return { value: normalizedValue, unit: normalizedUnit };
+}
+
+function isCapacityUnit(unit: string) {
+  return /^(?:fl oz|oz|ml|l)$/.test(unit);
+}
+
+function formatMeasurement(measurement: ParsedMeasurement, inheritedUnit = "") {
+  const unit = measurement.unit || inheritedUnit;
+  if (!unit) return measurement.value;
+  if (unit === '"' || unit === "'") return `${measurement.value}${unit}`;
+  if (!isCapacityUnit(unit)) return `${measurement.value}${unit}`;
+  return `${measurement.value} ${unit}`;
+}
+
+function findLabeledMeasurement(desc: string, labels: string) {
+  const match = desc.match(
+    new RegExp(String.raw`(?:${labels})\s*(?:[:=\-]\s*)?${measurementPattern}`, "i"),
+  );
+  return match ? normalizeMeasurement(match[1], match[2]) : null;
 }
 
 export function parseCardDimensions(desc: string): Dimensions3D {
-  if (!desc) {
-    return { length: '3.1"', width: '3.1"', thickness: '0.15"', formatted: '3.1" x 3.1" x 0.15"' };
-  }
-
-  // Regex to match patterns like 3.1" x 3.1" x 0.15" or 8cm x 8cm x 0.4cm
-  const dimMatch = desc.match(/(\d+(?:\.\d+)?\s*(?:"|in|inch|cm|mm)?)\s*x\s*(\d+(?:\.\d+)?\s*(?:"|in|inch|cm|mm)?)\s*x\s*(\d+(?:\.\d+)?\s*(?:"|in|inch|cm|mm)?)/i);
+  const normalizedDesc = normalizeDimensionText(desc || "");
+  const dimMatch = normalizedDesc.match(dimensionsPattern);
   if (dimMatch) {
-    const length = dimMatch[1].trim();
-    const width = dimMatch[2].trim();
-    const thickness = dimMatch[3].trim();
+    const firstMeasurement = normalizeMeasurement(dimMatch[1], dimMatch[2]);
+    const secondMeasurement = normalizeMeasurement(dimMatch[3], dimMatch[4]);
+    const thirdMeasurement = dimMatch[5]
+      ? normalizeMeasurement(dimMatch[5], dimMatch[6])
+      : null;
+    const measurements = [
+      firstMeasurement,
+      secondMeasurement,
+      thirdMeasurement,
+    ];
+    const inheritedDimensionUnit = [...measurements]
+      .reverse()
+      .find((measurement) => measurement?.unit && !isCapacityUnit(measurement.unit))?.unit || "";
+    const length = formatMeasurement(firstMeasurement, inheritedDimensionUnit);
+    const width = formatMeasurement(secondMeasurement, inheritedDimensionUnit);
+    const third = thirdMeasurement;
+    const capacity = third && isCapacityUnit(third.unit)
+      ? formatMeasurement(third)
+      : "";
+    const thickness = third && !capacity
+      ? formatMeasurement(third, inheritedDimensionUnit)
+      : "";
+    const formattedDimensions = [length, width, thickness].filter(Boolean).join(" x ");
+
     return {
       length,
       width,
       thickness,
-      formatted: `${length} x ${width} x ${thickness}`,
+      formatted: capacity
+        ? `${formattedDimensions} • ${capacity}`
+        : formattedDimensions,
+      ...(capacity ? { capacity } : {}),
     };
   }
 
-  // Fallback defaults for ornament if unspecified
+  const lengthMeasurement = findLabeledMeasurement(
+    normalizedDesc,
+    String.raw`chiều\s*dài|dài|chiều\s*cao|cao|length|height`,
+  );
+  const widthMeasurement = findLabeledMeasurement(
+    normalizedDesc,
+    String.raw`chiều\s*rộng|rộng|width`,
+  );
+  const diameterMeasurement = findLabeledMeasurement(
+    normalizedDesc,
+    String.raw`đường\s*kính|diameter`,
+  );
+  const thicknessMeasurement = findLabeledMeasurement(
+    normalizedDesc,
+    String.raw`độ\s*dày|dày|thickness|depth`,
+  );
+  const capacityMeasurement = findLabeledMeasurement(
+    normalizedDesc,
+    String.raw`dung\s*tích|capacity`,
+  );
+
+  const dimensionMeasurements = [
+    lengthMeasurement || diameterMeasurement,
+    widthMeasurement || diameterMeasurement,
+    thicknessMeasurement,
+  ];
+  const inheritedDimensionUnit = [...dimensionMeasurements]
+    .reverse()
+    .find((measurement) => measurement?.unit && !isCapacityUnit(measurement.unit))?.unit || "";
+  const length = dimensionMeasurements[0]
+    ? formatMeasurement(dimensionMeasurements[0], inheritedDimensionUnit)
+    : "";
+  const width = dimensionMeasurements[1]
+    ? formatMeasurement(dimensionMeasurements[1], inheritedDimensionUnit)
+    : "";
+  const thickness = dimensionMeasurements[2]
+    ? formatMeasurement(dimensionMeasurements[2], inheritedDimensionUnit)
+    : "";
+  const capacity = capacityMeasurement && isCapacityUnit(capacityMeasurement.unit)
+    ? formatMeasurement(capacityMeasurement)
+    : "";
+  const formattedDimensions = [length, width, thickness].filter(Boolean).join(" x ");
+
   return {
-    length: '3.1"',
-    width: '3.1"',
-    thickness: '0.15"',
-    formatted: '3.1" x 3.1" x 0.15"',
+    length,
+    width,
+    thickness,
+    formatted: capacity && formattedDimensions
+      ? `${formattedDimensions} • ${capacity}`
+      : capacity || formattedDimensions,
+    ...(capacity ? { capacity } : {}),
   };
 }

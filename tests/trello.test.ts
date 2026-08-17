@@ -149,3 +149,25 @@ test("stored Trello derivatives override display URLs without replacing the mast
   assert.match(card.attachments?.[0].previewUrl || "", /\/preview\?v=a{16}$/);
   assert.match(card.attachments?.[0].thumbnailUrl || "", /\/thumbnail\?v=b{16}$/);
 });
+
+test("moveTrelloCard sends pos 'top' to place moved card at the top of target column", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody: Record<string, unknown> | null = null;
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    if (init?.body) {
+      requestBody = JSON.parse(init.body as string);
+    }
+    return new Response(JSON.stringify({ id: "card-123", idList: "list-target", pos: 1024 }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  try {
+    const { moveTrelloCard } = await import("../lib/trello");
+    await moveTrelloCard("card-123", "list-target", "key", "token");
+    assert.deepEqual(requestBody, { idList: "list-target", pos: "top" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

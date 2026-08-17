@@ -32,6 +32,59 @@ test("parseCardDimensions should extract 3D dimensions correctly", () => {
   assert.equal(result2.formatted, "8cm x 8cm x 0.4cm");
 });
 
+test("parseCardDimensions accepts smart inch quotes and two-dimensional products", () => {
+  const result = parseCardDimensions("Kích thước: 5.9” x 5.9”");
+
+  assert.deepEqual(result, {
+    length: '5.9"',
+    width: '5.9"',
+    thickness: "",
+    formatted: '5.9" x 5.9"',
+  });
+});
+
+test("parseCardDimensions accepts smart quotes, multiplication symbols, and mixed units", () => {
+  const result = parseCardDimensions("Kích thước: 4” × 4” × 0.4mm");
+
+  assert.deepEqual(result, {
+    length: '4"',
+    width: '4"',
+    thickness: "0.4mm",
+    formatted: '4" x 4" x 0.4mm',
+  });
+});
+
+test("parseCardDimensions separates capacity from physical dimensions", () => {
+  const result = parseCardDimensions("Kích thước: 11” x 2.6” x 11 oz");
+
+  assert.deepEqual(result, {
+    length: '11"',
+    width: '2.6"',
+    thickness: "",
+    capacity: "11 oz",
+    formatted: '11" x 2.6" • 11 oz',
+  });
+});
+
+test("parseCardDimensions reads labeled measurements and does not invent ornament defaults", () => {
+  assert.deepEqual(
+    parseCardDimensions("Chiều cao: 12 in; Chiều rộng: 8 in; Độ dày: 6 mm; Dung tích: 20 oz"),
+    {
+      length: '12"',
+      width: '8"',
+      thickness: "6mm",
+      capacity: "20 oz",
+      formatted: '12" x 8" x 6mm • 20 oz',
+    },
+  );
+  assert.deepEqual(parseCardDimensions("Không có thông tin kích thước"), {
+    length: "",
+    width: "",
+    thickness: "",
+    formatted: "",
+  });
+});
+
 test("generateAllMockups should produce 7 mockup results", async () => {
   const mockups = await generateAllMockups({
     sku: "TESTSKU01",
@@ -645,6 +698,29 @@ test("buildMockupPrompt generates detailed prompts for Bullet Tumbler prompt key
 
   const slateStackPrompt = buildMockupPrompt("slate_front_back_stack", "Photo Slate Plaque", dimensions);
   assert.match(slateStackPrompt, /FRONT & BACK SLATE TEXTURE FLAT-LAY/i);
+});
+
+test("product prompts use parsed Trello specifications instead of category defaults", () => {
+  const tumblerDimensions = parseCardDimensions('Kích thước: 11” x 2.6” x 11 oz');
+  const tumblerPrompt = buildMockupPrompt(
+    "bullet_capacity_size",
+    "Navy Bullet Tumbler",
+    tumblerDimensions,
+  );
+  assert.match(tumblerPrompt, /11 OZ CAPACITY/i);
+  assert.match(tumblerPrompt, /labeled "11\""/i);
+  assert.match(tumblerPrompt, /labeled "2\.6\""/i);
+  assert.doesNotMatch(tumblerPrompt, /17OZ CAPACITY/i);
+
+  const slateDimensions = parseCardDimensions('Kích thước: 5.9” x 5.9”');
+  const slatePrompt = buildMockupPrompt(
+    "slate_dimensions_size",
+    "Photo Slate Plaque",
+    slateDimensions,
+  );
+  assert.match(slatePrompt, /labeled "5\.9\""/i);
+  assert.match(slatePrompt, /omit the numeric thickness callout/i);
+  assert.doesNotMatch(slatePrompt, /0\.3\"/i);
 });
 
 test("buildMockupPrompt generates detailed prompts for Universal Standard 7-Image keys", () => {
