@@ -10,6 +10,8 @@ import {
   type MockupImageQuality,
   mockupIndexFromAttachmentName,
 } from "./mockup-types";
+import { getBulletTumblerConcept } from "./mockup-bullet-tumbler-prompts";
+import { getSlatePlateConcept } from "./mockup-slate-plate-prompts";
 
 export * from "./mockup-types";
 
@@ -656,48 +658,22 @@ thickness"
 - CRITICAL MATERIAL & SHAPE FIDELITY: Maintain 100% exact outer shape silhouette, material finish, printed artwork, text, and colors from Image 1.`;
       break;
     case "bullet_insulation_box":
-      concept = `UPGRADED VACUUM INSULATION & GIFT BOX product infographic photography:
-- Clean luxury studio photograph of the shiny metallic gold bullet-shaped tumbler from Image 1.
-- Standing next to it, display the high-end black marble gift box with gold foil line drawing of the bullet tumbler and gold lettering reading "BULLET TUMBLER".
-- Display disassembled component callouts: top bullet head cap, inner leak-proof push-button drinking lid ("BPA FREE LEAK PROOF LID"), smooth stainless steel inner wall ("Smooth Inner Surface Easy to Clean"), and sturdy 304 stainless steel bottom ("304 STAINLESS STEEL").
-- Clear typography icons at bottom indicating temperature performance: "11 HRS COLD", "2 DAYS ICED", "6 HRS HOT".
-- Preserve 100% exact printed artwork, logo, and text on the gold bullet body from Image 1.`;
-      break;
     case "bullet_capacity_size":
-      concept = `17OZ CAPACITY & 3D DIMENSION SPECIFICATION infographic photography:
-- Professional e-commerce product photograph of the golden bullet tumbler standing vertically.
-- Height dimension line on the right side labeled "11 inches" (or "${dimensions.length}").
-- Base width dimension line at the bottom labeled "2.6 inches" (or "${dimensions.width}").
-- Four feature icons with text on the left side:
-  1) Shield icon: "Safety Guaranteed"
-  2) Leaf icon: "BPA Free Lid"
-  3) Snowflake icon: "Keep Cold For 12 H"
-  4) Flame icon: "Keep Hot For 6 H"
-- Translucent cutaway graphic on the bottle body showing icy cold drink on the left and hot dark coffee on the right.
-- Preserve 100% exact printed artwork, logo, graphics, and colors on the bullet tumbler from Image 1.`;
-      break;
     case "bullet_press_lid_pour":
-      concept = `DOUBLE WALL INSULATION & PRESS TO OPEN LID functional close-up photography:
-- Macro 3D action photograph focusing on the top push-button mechanism of the inner leak-proof lid with indicator text "Press here to open".
-- Hand entering frame holding the gold bullet tumbler, pouring hot steaming coffee into the detached metallic gold bullet top cap which is serving as a drinking cup.
-- Header text across top: "DOUBLE WALL INSULATION - This keeps your drinks hot or cold all day long."
-- Studio lighting highlighting the smooth metallic golden bullet finish and high quality 304 stainless steel.
-- Preserve 100% exact printed artwork and lettering on the tumbler body from Image 1.`;
-      break;
     case "bullet_outdoor_camping":
-      concept = `OUTDOOR CAMPING & LIFESTYLE coffee pouring photography:
-- Warm autumn outdoor adventure scene (camping tent background, cozy plaid jacket, wooden bench).
-- Person holding the shiny golden bullet tumbler horizontally, pouring hot dark coffee into a blue-handled stainless steel camping mug.
-- Soft natural daylight with warm outdoors depth of field highlighting the metallic golden bullet bottle.
-- Preserve 100% exact printed design artwork, lettering, and logo on the bullet tumbler body from Image 1.`;
-      break;
     case "bullet_car_cupholder":
-      concept = `CUP HOLDER FRIENDLY car & travel lifestyle photography:
-- Interior view of a luxury car with the gold bullet tumbler standing securely in the center console cup holder.
-- Top banner with icons (truck, car, laptop/desk, camping tent, sports player) and bold header "CUP HOLDER FRIENDLY".
-- Text on right: "Fits most car cup holders and backpack side pockets."
-- Bright natural sunlight coming through the vehicle window, soft shallow depth of field.
-- Preserve 100% exact printed artwork, graphics, and text on the bullet tumbler body from Image 1.`;
+    case "bullet_men_gifting":
+      concept = getBulletTumblerConcept(promptKey, dimensions) || "";
+      break;
+
+    case "slate_main_white":
+    case "slate_features_infographic":
+    case "slate_dimensions_size":
+    case "slate_front_back_stack":
+    case "slate_home_decor_lifestyle":
+    case "slate_gifting_emotion":
+    case "slate_packaging_box":
+      concept = getSlatePlateConcept(promptKey, dimensions) || "";
       break;
 
     case "universal_main_white":
@@ -718,10 +694,15 @@ thickness"
       break;
 
     case "universal_dimensions":
-      concept = `PRODUCT SIZE & 3D DIMENSION INFOGRAPHIC (AMAZON DIMENSIONS - IMAGE 3):
-- CAMERA ANGLE & PERSPECTIVE: 3D Isometric or 30-degree tilted perspective view showing height, width, and thickness/depth simultaneously.
-- Height dimension line labeled "${dimensions.length}", width dimension line labeled "${dimensions.width}", thickness callout pointer labeled "${dimensions.thickness || "Standard Size"}".
-- Clean, highly legible white/navy typography and contrast indicators to prevent customer returns.
+      concept = `PRODUCT SIZE & INFOGRAPHIC DIMENSIONS (AMAZON DIMENSIONS - IMAGE 3):
+- CAMERA ANGLE & PERSPECTIVE: Front isometric view of the product displayed on an aesthetic lifestyle background surface (such as light marble, elegant wooden desk, or soft blurred holiday bokeh background - DO NOT use a plain white void background).
+- STRICT DYNAMIC MATERIAL FIDELITY (DO NOT DEFAULT TO GLASS):
+  1) IF IMAGE 1 IS A CLEAR GLASS / ACRYLIC ORNAMENT: Render ultra crystal clear 100% luminous transparent glass with sparkling diamond-cut bevel highlights along the outer rim edge.
+  2) IF IMAGE 1 IS AN OPAQUE PRODUCT (WOOD, CERAMIC, METAL, RESIN, PLYWOOD): PRESERVE 100% SOLID AND OPAQUE BASE MATERIAL, WOOD GRAIN TEXTURE, AND ORIGINAL SURFACE COLOR FROM IMAGE 1. DO NOT DEFAULT TO GLASS OR TRANSPARENT ACRYLIC! DO NOT ADD GLASS BEVELS TO WOOD/CERAMIC!
+- BOLD "PRODUCT SIZE" TITLE: Render clear, bold typography text reading "PRODUCT SIZE" at the bottom center (or top banner area) of the image.
+- DIMENSION CALLOUTS: Display clear, elegant height dimension line labeled "${dimensions.length}" and width dimension line labeled "${dimensions.width}".
+- EXCLUDE SIDE THICKNESS: Do NOT display side edge thickness callouts or side thickness bars in Image 3 (thickness details are reserved exclusively for Image 4).
+- Clean, highly legible white/navy typography and professional measurement callout indicators.
 - Maintain accurate real-life proportions, material texture, and printed artwork from Image 1.`;
       break;
 
@@ -739,32 +720,40 @@ thickness"
       break;
 
     case "universal_gifting":
-      concept = `STANDARD GIFT PRESENTATION PHOTOGRAPHY (AMAZON GIFTING - IMAGE 5):
-- CAMERA ANGLE & PERSPECTIVE: 35-45 degree presentation angle showing both the product and a standard retail gift box.
-- RETAIL GIFT BOX: Displays a sturdy, elegant standard retail gift box with soft interior cushioning tray alongside the product from Image 1.
-- Warm, pleasant studio lighting elevating product gift value.
-- Preserve exact printed design artwork, text, and product details from Image 1.`;
+      concept = `PERFECT GIFT HAND-TO-HAND PRODUCT PRESENTATION PHOTOGRAPHY (AMAZON GIFTING - IMAGE 5):
+- CAMERA ANGLE & PERSPECTIVE: 35-45 degree close-up presentation angle featuring TWO realistic hands presenting the product from Image 1 in a warm hand-to-hand gift handover moment:
+  1) Upper hand (entering from top-right) holding the top hanging ribbon/lanyard (COPYING THE EXACT RIBBON COLOR, MATERIAL, AND HOLE ATTACHMENT FROM IMAGE 1).
+  2) Lower receiving hand (wearing a cozy white or neutral knit sweater sleeve, entering from lower-left) with fingers and palm gently cupping and supporting beneath the bottom edge of the product.
+- RETAIL GIFT BOX: Displays a sturdy, elegant retail gift box with soft interior cushioning tray on the tabletop beside the handover scene.
+- SKIN TONES & LIGHTING: Natural warm skin tones, soft luminous high-contrast lighting highlighting the printed design artwork, lettering, and product material vividly.
+- Preserve 100% exact printed design artwork, text, outer silhouette contour shape, and material details from Image 1.`;
       break;
 
     case "universal_packaging":
       concept = `PACKAGE INCLUDED & RETAIL GIFT BOX FLAT-LAY (AMAZON PACKAGING - IMAGE 6):
 - CAMERA ANGLE: 90-degree top-down 1:1 flat-lay photograph looking straight down at a clean studio background.
 - RETAIL GIFT BOX: Displaying the product from Image 1 alongside a sturdy standard retail gift box with protective interior lining, hanging ribbon, and thank-you card.
+- PLAIN GIFT BOX LID (STRICT NO TEXT ON LID): The retail gift box and lid MUST BE CLEAN AND PLAIN SOLID COLORED. ABSOLUTELY NO TEXT, NO PRINTED LETTERS, NO LOGO, AND NO GRAPHICS ON THE GIFT BOX LID.
 - Text callout area listing included items ("PACKAGE INCLUDED: 1x Product, 1x Gift Box, Included Accessories").
 - High-quality commercial e-commerce presentation with soft realistic shadows.
 - Preserve exact product shape, material, and design from Image 1.`;
       break;
 
     case "universal_artwork_macro":
-      concept = `HD PRINT QUALITY & MATERIAL TEXTURE MACRO INFOGRAPHIC (AMAZON ARTWORK - IMAGE 7):
-- CAMERA ANGLE & PERSPECTIVE: Extreme 25-degree macro close-up photograph focusing tightly on the intricate printed artwork, typography, and true material texture of the product from Image 1.
-- INFOGRAPHIC CALLOUT HIGHLIGHTS: Clear professional text indicators pointing to key print & material qualities matching Image 1:
-  1. "HD Digital Printing" (Ultra-sharp lettering & crisp line details)
-  2. "Vibrant & Long-Lasting Colors" (Rich color saturation, true to design)
-  3. "Premium Material Finish" (Authentic surface texture, smooth or natural finish)
-- LIGHTING & TEXTURE: Professional studio lighting capturing fine material grain/surface texture (wood, ceramic, acrylic, metal, or fabric as shown in Image 1) with zero blur, pixelation, or noise.
-- Crisp depth of field with soft aesthetic background bokeh.
-- CRITICAL MATERIAL FIDELITY: Observe Image 1 closely. Do NOT add artificial gloss/coating if Image 1 is matte or raw wood/ceramic. Preserve 100% exact material finish, printed artwork, typography, and color fidelity from Image 1.`;
+    case "universal_card_flatlay_adaptive":
+    case "ornament_card_flatlay_adaptive":
+      concept = `ADAPTIVE THEME GREETING CARD FLAT-LAY PHOTOGRAPHY (AMAZON CARD & THEME LIFESTYLE - IMAGE 7):
+- CAMERA ANGLE & COMPOSITION: 90-degree top-down 1:1 flat-lay photograph looking straight down at an aesthetic background surface.
+- PRODUCT IN CENTER: The product from Image 1 rests prominently in the center of the flat-lay composition with its top hanging ribbon draped neatly.
+- STRICT MATERIAL FIDELITY & TRANSPARENCY ACCURACY (CRITICAL):
+  1) IF IMAGE 1 IS A CLEAR GLASS / ACRYLIC ORNAMENT: The non-printed glass disc area MUST BE 100% CRYSTAL CLEAR LUMINOUS TRANSPARENT. The underlying flat-lay background texture (e.g. wood grain, water ripples, silk fabric) MUST be clearly visible and refracted through the unprinted glass body, with sparkling prismatic diamond-cut bevel highlights along the outer rim edge.
+  2) IF IMAGE 1 IS AN OPAQUE PRODUCT (WOOD, CERAMIC, METAL, RESIN, PLYWOOD): The product body MUST REMAIN 100% SOLID AND OPAQUE WITH ITS EXACT ORIGINAL MATERIAL TEXTURE AND BASE COLOR. DO NOT MAKE OPAQUE WOOD/CERAMIC SEETHROUGH OR TRANSPARENT! DO NOT ADD GLASS BEVELS TO WOOD OR CERAMIC!
+- AUTOMATIC THEME EVALUATION & DYNAMIC QUOTE CARD:
+  * AI VISION AUTOMATICALLY EVALUATES THE DESIGN THEME FROM IMAGE 1 (e.g. Camper/Travel, Diving/Sea, Pet/Dog, Wedding/Anniversary, New Baby, Profession, Memorial, Christmas, Family).
+  * TOP-RIGHT OR TOP-LEFT CORNER QUOTE CARD: Position a square or rectangular cream/kraft paper greeting card in the TOP-RIGHT or TOP-LEFT corner of the frame, tilted naturally at a 10-15 degree angle.
+  * HANDWRITTEN QUOTE & TEXT: On the card, render a clear handwritten cursive quote matching THAT SPECIFIC THEME with a small heart symbol ♡ (e.g., "Home is where we park it ♡" for Camper; "Life is better when you're diving ♡" for Diving; "Stay Axolotl Positive ♡" for Axolotl/Pet; "Our First Christmas ♡" for Holiday; "In Loving Memory ♡" for Memorial; "Best Mom Ever ♡" for Family).
+- THEME-MATCHING FLAT-LAY PROPS: Surround the flat-lay with authentic decorative props matching the theme (e.g. camper toy model & map for camper; diving mask & sea shells for diving; corals & pet figurine for axolotl/pet; pine cones & fairy lights for Xmas; dry flowers & candle for memorial).
+- CRITICAL SHAPE & COLOR FIDELITY: Preserve 100% exact product contour silhouette, printed artwork, typography, and original colors from Image 1.`;
       break;
     default:
       concept = promptKey.startsWith("custom:")
@@ -862,16 +851,13 @@ Giữ thiết kế in rõ nét và trung thành với ảnh tham chiếu.
 Không tự ý thay đổi nội dung chữ, hình minh họa hoặc bố cục thiết kế.
 
 Mục tiêu hình ảnh:
-ultra crystal clear glass ornament commercial photography,
-pristine luminous transparent glass,
-beveled glass edge prismatic facets and white highlights,
+commercial product photography,
 material-accurate rendering,
 faithful opacity and surface texture,
 physically appropriate highlights and reflections,
-clean high-key studio rim light,
-bright white and fresh green bokeh background.
+clean professional studio rim light.
 
-Concept: ${concept}${dimensionsLine}`;
+Concept: ${concept}${dimensionsLine}${refinementLine}`;
 }
 
 
@@ -1272,6 +1258,10 @@ export async function renderGraphicMockup(
     bgGradient = "linear-gradient(135deg, #18181b 0%, #27272a 100%)";
     titleBadge = "CUP HOLDER FRIENDLY";
     sceneDesc = "Fits Most Vehicle Cup Holders";
+  } else if (promptKey === "bullet_men_gifting") {
+    bgGradient = "linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%)";
+    titleBadge = "COOLEST TUMBLER FOR MEN";
+    sceneDesc = "Mountain Vista Lifestyle & Gifting Banner";
   } else if (promptKey === "universal_main_white") {
     bgGradient = "linear-gradient(135deg, #ffffff 0%, #f1f5f9 100%)";
     titleBadge = "AMAZON MAIN HERO IMAGE";

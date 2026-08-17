@@ -56,6 +56,7 @@ const generateMockupsSchema = z.object({
   token: z.string().optional(),
   model: mockupModelSchema.optional(),
   quality: imageQualitySchema.optional(),
+  designDataUrl: z.string().optional(),
   selectedSteps: z
     .array(z.number().int().min(1).max(20))
     .min(1, "Hãy chọn ít nhất một concept mockup.")
@@ -213,7 +214,15 @@ async function executeMockupGeneration(
     );
   }
 
-  if (sourceAttachment) {
+  if (input.designDataUrl) {
+    const match = input.designDataUrl.match(/^data:(image\/\w+);base64,(.+)$/);
+    if (match) {
+      mimeType = match[1];
+      designBuffer = Buffer.from(match[2], "base64");
+    }
+  }
+
+  if (!designBuffer && sourceAttachment) {
     console.log(
       `[API generate-mockups] Tải đính kèm thiết kế từ Trello: ${sourceAttachment.url}`,
     );
@@ -278,13 +287,25 @@ async function executeMockupGeneration(
 
   const forceRegenerate = Boolean(
     input.forceRegenerate ||
-      (input.selectedSteps && input.selectedSteps.length === 1),
+      (input.selectedSteps && input.selectedSteps.length > 0),
   );
 
   const existingIndexesSet = new Set(existingGeneratedAttachments.keys());
   const selectedStepSet = input.selectedSteps
     ? new Set(input.selectedSteps)
     : null;
+
+  const skipIndexes = Array.from(
+    new Set([
+      1, // Always skip generating Mockup 1 via AI
+      ...Array.from(existingIndexesSet).filter((index) => {
+        if (forceRegenerate && selectedStepSet?.has(index) && index >= 2) {
+          return false;
+        }
+        return true;
+      }),
+    ]),
+  );
 
   if (!selectedStepSet || selectedStepSet.has(1)) {
     report?.({
@@ -298,7 +319,10 @@ async function executeMockupGeneration(
   }
   for (const [index, attachment] of existingGeneratedAttachments) {
     if (index === 1) continue;
-    if (!selectedStepSet || selectedStepSet.has(index)) {
+    if (
+      skipIndexes.includes(index) &&
+      (!selectedStepSet || selectedStepSet.has(index))
+    ) {
       report?.({
         type: "progress",
         step: index,
@@ -309,18 +333,6 @@ async function executeMockupGeneration(
       });
     }
   }
-
-  const skipIndexes = Array.from(
-    new Set([
-      1, // Always skip generating Mockup 1 via AI
-      ...Array.from(existingIndexesSet).filter((index) => {
-        if (forceRegenerate && selectedStepSet?.has(index) && index >= 2) {
-          return false;
-        }
-        return true;
-      }),
-    ]),
-  );
 
   const existingAiIndexes = Array.from(existingIndexesSet).filter(
     (idx) => idx >= 2,

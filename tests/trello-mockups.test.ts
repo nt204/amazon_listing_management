@@ -601,24 +601,26 @@ test("buildMockupPrompt generates detailed prompts for Bullet Tumbler prompt key
   };
 
   const insulationPrompt = buildMockupPrompt("bullet_insulation_box", "Navy Bullet Tumbler", dimensions);
-  assert.match(insulationPrompt, /UPGRADED VACUUM INSULATION & GIFT BOX/i);
+  assert.match(insulationPrompt, /UPGRADED VACUUM INSULATION & GIFT BOX INFOGRAPHIC/i);
   assert.match(insulationPrompt, /BULLET TUMBLER/i);
   assert.match(insulationPrompt, /11 HRS COLD/i);
 
   const capacityPrompt = buildMockupPrompt("bullet_capacity_size", "Navy Bullet Tumbler", dimensions);
-  assert.match(capacityPrompt, /17OZ CAPACITY & 3D DIMENSION SPECIFICATION/i);
+  assert.match(capacityPrompt, /17OZ CAPACITY & 3D DIMENSION INFOGRAPHIC/i);
   assert.match(capacityPrompt, /Safety Guaranteed/i);
   assert.match(capacityPrompt, /Keep Cold For 12 H/i);
 
   const pressLidPrompt = buildMockupPrompt("bullet_press_lid_pour", "Navy Bullet Tumbler", dimensions);
-  assert.match(pressLidPrompt, /DOUBLE WALL INSULATION & PRESS TO OPEN LID/i);
-  assert.match(pressLidPrompt, /Press here to open/i);
+  assert.match(pressLidPrompt, /DOUBLE WALL INSULATION & PRESS TO OPEN LID INFOGRAPHIC/i);
 
   const campingPrompt = buildMockupPrompt("bullet_outdoor_camping", "Navy Bullet Tumbler", dimensions);
-  assert.match(campingPrompt, /OUTDOOR CAMPING & LIFESTYLE/i);
+  assert.match(campingPrompt, /OUTDOOR CAMPING COFFEE POURING LIFESTYLE/i);
 
   const carPrompt = buildMockupPrompt("bullet_car_cupholder", "Navy Bullet Tumbler", dimensions);
-  assert.match(carPrompt, /CUP HOLDER FRIENDLY/i);
+  assert.match(carPrompt, /CUP HOLDER FRIENDLY CAR TRAVEL LIFESTYLE/i);
+
+  const menGiftingPrompt = buildMockupPrompt("bullet_men_gifting", "Navy Bullet Tumbler", dimensions);
+  assert.match(menGiftingPrompt, /HERO LIFESTYLE & GIFTING PRESENTATION/i);
 
   const fireplacePrompt = buildMockupPrompt("ornament_fireplace_mantle", "Custom Ornament", dimensions);
   assert.match(fireplacePrompt, /COZY FIREPLACE MANTLE & HOLIDAY AMBIENCE/i);
@@ -632,8 +634,17 @@ test("buildMockupPrompt generates detailed prompts for Bullet Tumbler prompt key
   const adaptivePkgPrompt = buildMockupPrompt("ornament_package_adaptive", "Custom Ornament", dimensions);
   assert.match(adaptivePkgPrompt, /STANDARD RETAIL GIFT BOX PACKAGING & ACCESSORIES FLAT-LAY/i);
 
-  const adaptiveSunPrompt = buildMockupPrompt("ornament_sunburst_adaptive", "Custom Ornament", dimensions);
-  assert.match(adaptiveSunPrompt, /ADAPTIVE SUNLIT LIGHT REFRACTION & SEASONAL ORNAMENT PHOTOGRAPHY/i);
+  const slateMainPrompt = buildMockupPrompt("slate_main_white", "Photo Slate Plaque", dimensions);
+  assert.match(slateMainPrompt, /HERO MAIN E-COMMERCE PRODUCT PHOTOGRAPHY/i);
+
+  const slateFeaturePrompt = buildMockupPrompt("slate_features_infographic", "Photo Slate Plaque", dimensions);
+  assert.match(slateFeaturePrompt, /NATURAL STONE & WATERPROOF INFOGRAPHIC/i);
+
+  const slateDimensionPrompt = buildMockupPrompt("slate_dimensions_size", "Photo Slate Plaque", dimensions);
+  assert.match(slateDimensionPrompt, /PRODUCT SIZE & 3D DIMENSIONS INFOGRAPHIC/i);
+
+  const slateStackPrompt = buildMockupPrompt("slate_front_back_stack", "Photo Slate Plaque", dimensions);
+  assert.match(slateStackPrompt, /FRONT & BACK SLATE TEXTURE FLAT-LAY/i);
 });
 
 test("buildMockupPrompt generates detailed prompts for Universal Standard 7-Image keys", () => {
@@ -653,19 +664,19 @@ test("buildMockupPrompt generates detailed prompts for Universal Standard 7-Imag
   assert.match(lifestylePrompt, /REALISTIC LIFESTYLE & IN-USE PHOTOGRAPHY/i);
 
   const sizePrompt = buildMockupPrompt("universal_dimensions", "Custom Mug", dimensions);
-  assert.match(sizePrompt, /PRODUCT SIZE & 3D DIMENSION INFOGRAPHIC/i);
+  assert.match(sizePrompt, /PRODUCT SIZE & INFOGRAPHIC DIMENSIONS/i);
 
   const featurePrompt = buildMockupPrompt("universal_features_zoom", "Custom Mug", dimensions);
   assert.match(featurePrompt, /EXTREME LOW-ANGLE 3D PERSPECTIVE THICKNESS/i);
 
   const giftingPrompt = buildMockupPrompt("universal_gifting", "Custom Mug", dimensions);
-  assert.match(giftingPrompt, /STANDARD GIFT PRESENTATION PHOTOGRAPHY/i);
+  assert.match(giftingPrompt, /PERFECT GIFT HAND-TO-HAND PRODUCT PRESENTATION/i);
 
   const packagingPrompt = buildMockupPrompt("universal_packaging", "Custom Mug", dimensions);
   assert.match(packagingPrompt, /PACKAGE INCLUDED & RETAIL GIFT BOX FLAT-LAY/i);
 
   const artworkPrompt = buildMockupPrompt("universal_artwork_macro", "Custom Mug", dimensions);
-  assert.match(artworkPrompt, /HD PRINT QUALITY & MATERIAL TEXTURE MACRO INFOGRAPHIC/i);
+  assert.match(artworkPrompt, /ADAPTIVE THEME GREETING CARD FLAT-LAY/i);
 });
 
 test("generateAllMockups generates mockups using Bullet Tumbler custom prompt keys", async () => {
@@ -705,8 +716,8 @@ test("generateAllMockups generates mockups using Bullet Tumbler custom prompt ke
 
   assert.equal(mockups.length, 6);
   assert.equal(calls.length, 5); // 5 AI calls for mockups 2-6
-  assert.match(String(calls[0].prompt), /UPGRADED VACUUM INSULATION & GIFT BOX/i);
-  assert.match(String(calls[1].prompt), /17OZ CAPACITY & 3D DIMENSION SPECIFICATION/i);
+  assert.match(String(calls[0].prompt), /UPGRADED VACUUM INSULATION & GIFT BOX INFOGRAPHIC/i);
+  assert.match(String(calls[1].prompt), /17OZ CAPACITY & 3D DIMENSION INFOGRAPHIC/i);
 });
 
 test("custom content is generated and can be recognized for resume", async () => {

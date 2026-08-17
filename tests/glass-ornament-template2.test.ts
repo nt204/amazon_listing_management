@@ -218,7 +218,7 @@ test("CheapKeyAI autonomously extracts the source artwork and fits it onto the t
   assert.match(rendered.providerUsed, /gpt-image-2/i);
 
   const requestOptions = asRecord(calls[0].requestOptions);
-  assert.equal(requestOptions.maxRetries, 0);
+  assert.equal(requestOptions.maxRetries, 3);
   assert.equal(typeof requestOptions.timeout, "number");
 });
 

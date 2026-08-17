@@ -192,7 +192,10 @@ const MOCKUP_STEPS = [
 const DEFAULT_MOCKUP_MODEL = "gpt-image-2-cheapkey";
 const DEFAULT_MOCKUP_QUALITY = "low" as const;
 
-export type MockupCategoryKey = "universal_standard" | "hanging_ornament" | "bullet_tumbler";
+export type MockupCategoryKey =
+  | "universal_standard"
+  | "bullet_tumbler"
+  | "slate_plate";
 
 export interface MockupContentItem {
   id: number;
@@ -212,34 +215,16 @@ export const MOCKUP_CATEGORY_PRESETS: Record<
 > = {
   universal_standard: {
     id: "universal_standard",
-    label: "Chuẩn 7 Ảnh Amazon",
-    icon: "⭐",
+    label: "Hanging Ornament",
+    icon: "🎄",
     contents: [
       { id: 1, label: "Ảnh 1: Nền Trắng CTR", checked: true, promptKey: "universal_main_white" },
       { id: 2, label: "Ảnh 2: Bối Cảnh Thực Tế", checked: true, promptKey: "universal_lifestyle" },
       { id: 3, label: "Ảnh 3: Kích Thước 3D", checked: true, promptKey: "universal_dimensions" },
       { id: 4, label: "Ảnh 4: Chất Liệu & Độ Dày", checked: true, promptKey: "universal_features_zoom" },
-      { id: 5, label: "Ảnh 5: Trao Quà Cảm Xúc", checked: true, promptKey: "universal_gifting" },
+      { id: 5, label: "Ảnh 5: Trao Quà Tay Trao Tay", checked: true, promptKey: "universal_gifting" },
       { id: 6, label: "Ảnh 6: Hộp Quà & Phụ Kiện", checked: true, promptKey: "universal_packaging" },
-      { id: 7, label: "Ảnh 7: Chi Tiết In Sắc Nét", checked: true, promptKey: "universal_artwork_macro" },
-    ],
-  },
-  hanging_ornament: {
-    id: "hanging_ornament",
-    label: "Hanging Ornament",
-    icon: "🎄",
-    contents: [
-      { id: 1, label: "Ảnh 1: Thiết Kế Nền Trắng", checked: true, promptKey: "full_design" },
-      { id: 2, label: "Ảnh 2: Treo Cành Thông", checked: true, promptKey: "tree_view1" },
-      { id: 3, label: "Ảnh 3: Bối Cảnh Theo Chủ Đề", checked: true, promptKey: "ornament_lifestyle_adaptive" },
-      { id: 4, label: "Ảnh 4: Độ Dày & Viền 3D", checked: true, promptKey: "glass_thickness_callout" },
-      { id: 5, label: "Ảnh 5: Trao Quà Cảm Xúc", checked: true, promptKey: "gifting_hands" },
-      { id: 6, label: "Ảnh 6: Hộp Quà & Đóng Gói", checked: true, promptKey: "ornament_package_adaptive" },
-      { id: 7, label: "Ảnh 7: Chiếu Nắng & Mùa", checked: true, promptKey: "ornament_sunburst_adaptive" },
-      { id: 8, label: "Ảnh 8: Treo Gương Ô Tô", checked: false, promptKey: "car_mirror" },
-      { id: 9, label: "Ảnh 9: Cành Thông & Flash", checked: false, promptKey: "tree_view2" },
-      { id: 10, label: "Ảnh 10: Mặt Bàn Gỗ Phẳng", checked: false, promptKey: "wood_flatlay_pine" },
-      { id: 11, label: "Ảnh 11: Tách Lớp Gỗ 3D (Layer 1 + Layer 2)", checked: false, promptKey: "ornament_2layer_breakdown" },
+      { id: 7, label: "Ảnh 7: Card Thiệp Theo Chủ Đề", checked: true, promptKey: "universal_artwork_macro" },
     ],
   },
   bullet_tumbler: {
@@ -253,6 +238,21 @@ export const MOCKUP_CATEGORY_PRESETS: Record<
       { id: 4, label: "Ảnh 4: Nắp Bấm & Rót Cốc", checked: true, promptKey: "bullet_press_lid_pour" },
       { id: 5, label: "Ảnh 5: Cắm Trại Dã Ngoại", checked: true, promptKey: "bullet_outdoor_camping" },
       { id: 6, label: "Ảnh 6: Hộc Để Cốc Ô Tô", checked: true, promptKey: "bullet_car_cupholder" },
+      { id: 7, label: "Ảnh 7: Quà Tặng Cho Nam", checked: true, promptKey: "bullet_men_gifting" },
+    ],
+  },
+  slate_plate: {
+    id: "slate_plate",
+    label: "Slate Plate",
+    icon: "🪨",
+    contents: [
+      { id: 1, label: "Ảnh 1: Nền Trắng Chân Đế", checked: true, promptKey: "slate_main_white" },
+      { id: 2, label: "Ảnh 2: Đá Tự Nhiên & Kháng Nước", checked: true, promptKey: "slate_features_infographic" },
+      { id: 3, label: "Ảnh 3: Kích Thước & Chân Đế", checked: true, promptKey: "slate_dimensions_size" },
+      { id: 4, label: "Ảnh 4: Mặt Trước & Sau Đá Đen", checked: true, promptKey: "slate_front_back_stack" },
+      { id: 5, label: "Ảnh 5: Trang Trí Nổi Bật (Home Decor)", checked: true, promptKey: "slate_home_decor_lifestyle" },
+      { id: 6, label: "Ảnh 6: Quà Tặng Tri Ơn & Ý Nghĩa", checked: true, promptKey: "slate_gifting_emotion" },
+      { id: 7, label: "Ảnh 7: Hộp Quà Retail & Phụ Kiện", checked: true, promptKey: "slate_packaging_box" },
     ],
   },
 };
@@ -860,6 +860,7 @@ export function AutoMockupGenerator({
           model: selectedModel,
           quality: selectedQuality,
           selectedSteps: selectedAiSteps,
+          forceRegenerate: true,
           customContents: mockupContents.map((content) => ({
             id: content.id,
             label: content.label,
@@ -1380,6 +1381,12 @@ export function AutoMockupGenerator({
                               model: regenModel,
                               quality: selectedQuality,
                               selectedSteps: [stepId],
+                              forceRegenerate: true,
+                              customContents: mockupContents.map((content) => ({
+                                id: content.id,
+                                label: content.label,
+                                promptKey: content.promptKey,
+                              })),
                               customRefinementNotes: regenPromptNote.trim()
                                 ? { [stepId]: regenPromptNote.trim() }
                                 : undefined,
