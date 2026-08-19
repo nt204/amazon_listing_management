@@ -21,6 +21,10 @@ import type {
   StoredListing,
   WorkflowMetrics,
 } from "@/lib/types";
+import type {
+  MockupContentItem,
+  ProductCategoryPreset,
+} from "@/types/mockup-preset";
 
 type PostgresClient = ReturnType<typeof postgres>;
 export interface DataScope { teamId: string; actorId: string }
@@ -52,7 +56,7 @@ async function ensureSchema() {
     const sql = getDatabase();
     globalForDatabase.listingPostgresSchema = sql<{ name: string }[]>`
         SELECT name FROM schema_migrations
-        WHERE name = '006_trello_image_previews.sql'
+        WHERE name = '008_mockup_preset_import_state.sql'
         LIMIT 1
       `
       .then((rows) => {
@@ -77,6 +81,13 @@ export async function checkDatabaseHealth() {
   await ensureSchema();
   const sql = getDatabase();
   await sql`SELECT 1`;
+}
+
+export async function closeDatabaseConnection() {
+  const sql = globalForDatabase.listingPostgres;
+  globalForDatabase.listingPostgres = undefined;
+  globalForDatabase.listingPostgresSchema = undefined;
+  if (sql) await sql.end({ timeout: 5 });
 }
 
 export async function saveTrelloImageDerivatives(
@@ -108,6 +119,91 @@ export async function saveTrelloImageDerivatives(
       `;
     }
   });
+}
+
+export async function deleteTrelloImageDerivatives(
+  scope: DataScope,
+  cardId: string,
+  attachmentIds: readonly string[],
+) {
+  if (attachmentIds.length === 0) return 0;
+  await ensureSchema();
+  const sql = getDatabase();
+  const deleted = await sql<{ attachment_id: string }[]>`
+    DELETE FROM trello_image_previews
+    WHERE team_id = ${scope.teamId}
+      AND card_id = ${cardId}
+      AND attachment_id IN ${sql([...attachmentIds])}
+    RETURNING attachment_id
+  `;
+  return deleted.length;
+}
+
+function configuredPreviewRetentionDays() {
+  const parsed = Number(process.env.TRELLO_PREVIEW_RETENTION_DAYS || 90);
+  return Number.isFinite(parsed)
+    ? Math.min(3_650, Math.max(7, Math.round(parsed)))
+    : 90;
+}
+
+export async function pruneExpiredTrelloImageDerivatives(options: {
+  scope?: DataScope;
+  retentionDays?: number;
+  batchSize?: number;
+} = {}) {
+  await ensureSchema();
+  const sql = getDatabase();
+  const retentionDays = Number.isFinite(options.retentionDays)
+    ? Math.min(3_650, Math.max(7, Math.round(options.retentionDays!)))
+    : configuredPreviewRetentionDays();
+  const batchSize = Number.isFinite(options.batchSize)
+    ? Math.min(10_000, Math.max(100, Math.round(options.batchSize!)))
+    : 1_000;
+  const cutoff = new Date(Date.now() - retentionDays * 86_400_000);
+
+  const deleted = options.scope
+    ? await sql<{ attachment_id: string }[]>`
+        WITH expired AS (
+          SELECT team_id, card_id, attachment_id, variant
+          FROM trello_image_previews
+          WHERE team_id = ${options.scope.teamId}
+            AND updated_at < ${cutoff}
+          ORDER BY updated_at ASC
+          LIMIT ${batchSize}
+        )
+        DELETE FROM trello_image_previews AS preview
+        USING expired
+        WHERE preview.team_id = expired.team_id
+          AND preview.card_id = expired.card_id
+          AND preview.attachment_id = expired.attachment_id
+          AND preview.variant = expired.variant
+        RETURNING preview.attachment_id
+      `
+    : await sql<{ attachment_id: string }[]>`
+        WITH expired AS (
+          SELECT team_id, card_id, attachment_id, variant
+          FROM trello_image_previews
+          WHERE updated_at < ${cutoff}
+          ORDER BY updated_at ASC
+          LIMIT ${batchSize}
+        )
+        DELETE FROM trello_image_previews AS preview
+        USING expired
+        WHERE preview.team_id = expired.team_id
+          AND preview.card_id = expired.card_id
+          AND preview.attachment_id = expired.attachment_id
+          AND preview.variant = expired.variant
+        RETURNING preview.attachment_id
+      `;
+
+  return deleted.length;
+}
+
+export async function vacuumImageStorageTables() {
+  await ensureSchema();
+  const sql = getDatabase();
+  await sql.unsafe("VACUUM (ANALYZE) trello_image_previews");
+  await sql.unsafe("VACUUM (ANALYZE) listing_images");
 }
 
 export async function getTrelloImageDerivative(
@@ -813,6 +909,134 @@ export async function deleteListingTemplate(scope: DataScope, id: string): Promi
   `;
   if (deleted.length > 0) {
     await recordAuditEvent(scope, "template.deleted", "listing_template", id);
+    return true;
+  }
+  return false;
+}
+
+interface SharedMockupPresetRow {
+  id: string;
+  label: string;
+  icon: string;
+  is_system: boolean;
+  contents_json: MockupContentItem[] | string;
+  revision: number;
+  updated_at: string;
+  updated_by: string;
+}
+
+function toSharedMockupPreset(
+  row: SharedMockupPresetRow,
+): ProductCategoryPreset {
+  return {
+    id: row.id,
+    label: row.label,
+    icon: row.icon,
+    isSystem: row.is_system,
+    contents: parseJson(row.contents_json),
+    revision: Number(row.revision),
+    updatedAt: row.updated_at,
+    updatedBy: row.updated_by,
+  };
+}
+
+export async function listSharedMockupPresets(
+  scope: DataScope,
+): Promise<ProductCategoryPreset[]> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const rows = await sql<SharedMockupPresetRow[]>`
+    SELECT preset_id AS id, label, icon, is_system, contents_json,
+      revision::int, updated_at::text, updated_by
+    FROM shared_mockup_presets
+    WHERE team_id = ${scope.teamId}
+    ORDER BY created_at ASC, preset_id ASC
+  `;
+  return rows.map(toSharedMockupPreset);
+}
+
+export async function saveSharedMockupPreset(
+  scope: DataScope,
+  preset: ProductCategoryPreset,
+): Promise<ProductCategoryPreset> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const rows = await sql<SharedMockupPresetRow[]>`
+    INSERT INTO shared_mockup_presets (
+      team_id, preset_id, label, icon, is_system, contents_json, updated_by
+    ) VALUES (
+      ${scope.teamId}, ${preset.id}, ${preset.label}, ${preset.icon || "📦"},
+      ${Boolean(preset.isSystem)}, ${sql.json(toJson(preset.contents))},
+      ${scope.actorId}
+    )
+    ON CONFLICT (team_id, preset_id) DO UPDATE SET
+      label = EXCLUDED.label,
+      icon = EXCLUDED.icon,
+      is_system = EXCLUDED.is_system,
+      contents_json = EXCLUDED.contents_json,
+      revision = shared_mockup_presets.revision + 1,
+      updated_by = EXCLUDED.updated_by,
+      updated_at = NOW()
+    RETURNING preset_id AS id, label, icon, is_system, contents_json,
+      revision::int, updated_at::text, updated_by
+  `;
+  await recordAuditEvent(
+    scope,
+    "mockup_preset.saved",
+    "mockup_preset",
+    preset.id,
+    { revision: rows[0].revision },
+  );
+  return toSharedMockupPreset(rows[0]);
+}
+
+export async function importLegacySharedMockupPresetsOnce(
+  scope: DataScope,
+  presets: readonly ProductCategoryPreset[],
+): Promise<void> {
+  await ensureSchema();
+  const sql = getDatabase();
+  await sql.begin(async (transaction) => {
+    const claimed = await transaction`
+      INSERT INTO shared_mockup_preset_state (team_id)
+      VALUES (${scope.teamId})
+      ON CONFLICT (team_id) DO NOTHING
+      RETURNING team_id
+    `;
+    if (claimed.length === 0) return;
+    for (const preset of presets) {
+      await transaction`
+        INSERT INTO shared_mockup_presets (
+          team_id, preset_id, label, icon, is_system, contents_json, updated_by
+        ) VALUES (
+          ${scope.teamId}, ${preset.id}, ${preset.label}, ${preset.icon || "📦"},
+          ${Boolean(preset.isSystem)}, ${transaction.json(toJson(preset.contents))},
+          ${scope.actorId}
+        )
+        ON CONFLICT (team_id, preset_id) DO NOTHING
+      `;
+    }
+  });
+}
+
+export async function deleteSharedMockupPreset(
+  scope: DataScope,
+  presetId: string,
+): Promise<boolean> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const deleted = await sql`
+    DELETE FROM shared_mockup_presets
+    WHERE team_id = ${scope.teamId} AND preset_id = ${presetId}
+    RETURNING preset_id
+  `;
+  if (deleted.length > 0) {
+    await recordAuditEvent(
+      scope,
+      "mockup_preset.deleted",
+      "mockup_preset",
+      presetId,
+    );
     return true;
   }
   return false;

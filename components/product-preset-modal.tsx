@@ -1,19 +1,28 @@
 "use client";
 
-import { useState, useEffect, useRef, type ChangeEvent } from "react";
+import {
+  useCallback,
+  useState,
+  useEffect,
+  useRef,
+  type ChangeEvent,
+} from "react";
 import type { MockupContentItem, ProductCategoryPreset } from "../types/mockup-preset";
 import {
-  getAllPresets,
+  MAX_AI_MOCKUPS_PER_PRODUCT,
+  limitSelectedMockupContents,
+} from "../lib/mockup-types";
+import {
   fetchPresetsFromServer,
   syncPresetsToServer,
-  saveStoredCustomPresets,
+  savePresetToServer,
+  deletePresetFromServer,
   createNewPreset,
   clonePreset,
   exportPresetsPayload,
   importPresetsPayload,
   parseChatGPTBatchInput,
   CHATGPT_PROMPT_TEMPLATE,
-  MATERIAL_STARTERS,
   SYSTEM_PRESETS,
 } from "../lib/mockup-preset-store";
 import {
@@ -37,7 +46,7 @@ interface ProductPresetModalProps {
   onClose: () => void;
   activeCategoryId: string;
   onSelectCategory: (categoryId: string, contents: MockupContentItem[]) => void;
-  onPresetsUpdated: () => void;
+  onPresetsUpdated: (presets: ProductCategoryPreset[]) => void;
 }
 
 export function ProductPresetModal({
@@ -57,30 +66,119 @@ export function ProductPresetModal({
   const [editingCategory, setEditingCategory] = useState<ProductCategoryPreset | null>(null);
   const [editLabel, setEditLabel] = useState<string>("");
   const [editIcon, setEditIcon] = useState<string>("");
+  const [editCategoryError, setEditCategoryError] = useState<string>("");
+
+  // Create category modal state
+  const [isCreatingCategory, setIsCreatingCategory] = useState<boolean>(false);
+  const [newCategoryLabel, setNewCategoryLabel] = useState<string>("");
+  const [newCategoryIcon, setNewCategoryIcon] = useState<string>("📦");
+  const [createCategoryError, setCreateCategoryError] = useState<string>("");
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const presetsRef = useRef<ProductCategoryPreset[]>([]);
+  const saveTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+    new Map(),
+  );
+  const pendingPresetIdsRef = useRef<Set<string>>(new Set());
+  const saveVersionsRef = useRef<Map<string, number>>(new Map());
+  const onPresetsUpdatedRef = useRef(onPresetsUpdated);
 
   useEffect(() => {
-    if (isOpen) {
-      void fetchPresetsFromServer().then((loaded) => {
-        setPresets(loaded);
-        const exists = loaded.some((p) => p.id === activeCategoryId);
-        setSelectedId(exists ? activeCategoryId : loaded[0]?.id || "universal_standard");
-        setNotice("");
-      });
-    }
-  }, [isOpen, activeCategoryId]);
+    onPresetsUpdatedRef.current = onPresetsUpdated;
+  }, [onPresetsUpdated]);
+
+  const applyServerPresets = useCallback(
+    (loaded: ProductCategoryPreset[], resetSelection = false) => {
+      const limited = loaded.map((preset) => ({
+        ...preset,
+        contents: limitSelectedMockupContents(preset.contents),
+      }));
+      presetsRef.current = limited;
+      setPresets(limited);
+      if (resetSelection) {
+        const exists = loaded.some((preset) => preset.id === activeCategoryId);
+        setSelectedId(
+          exists ? activeCategoryId : loaded[0]?.id || "universal_standard",
+        );
+      }
+      onPresetsUpdatedRef.current(limited);
+    },
+    [activeCategoryId],
+  );
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let disposed = false;
+    const refresh = async (resetSelection = false) => {
+      if (pendingPresetIdsRef.current.size > 0) return;
+      const loaded = await fetchPresetsFromServer();
+      if (!disposed) applyServerPresets(loaded, resetSelection);
+    };
+    void refresh(true).then(() => {
+      if (!disposed) setNotice("");
+    });
+    const interval = window.setInterval(() => void refresh(), 10_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+    };
+  }, [isOpen, applyServerPresets]);
+
+  useEffect(() => {
+    const saveTimers = saveTimersRef.current;
+    return () => {
+      for (const timer of saveTimers.values()) clearTimeout(timer);
+      saveTimers.clear();
+    };
+  }, []);
 
   if (!isOpen) return null;
 
   const currentPreset = presets.find((p) => p.id === selectedId) || presets[0];
 
-  const handleSaveAll = (updatedPresets: ProductCategoryPreset[]) => {
-    setPresets(updatedPresets);
-    void syncPresetsToServer(updatedPresets).then((synced) => {
-      setPresets(synced);
-      onPresetsUpdated();
-    });
+  const handleSaveAll = (
+    updatedPresets: ProductCategoryPreset[],
+    changedPresetId: string,
+    immediate = false,
+  ) => {
+    const limitedPresets = updatedPresets.map((preset) => ({
+      ...preset,
+      contents: limitSelectedMockupContents(preset.contents),
+    }));
+    presetsRef.current = limitedPresets;
+    setPresets(limitedPresets);
+    onPresetsUpdated(limitedPresets);
+    pendingPresetIdsRef.current.add(changedPresetId);
+    const saveVersion = (saveVersionsRef.current.get(changedPresetId) || 0) + 1;
+    saveVersionsRef.current.set(changedPresetId, saveVersion);
+    const previousTimer = saveTimersRef.current.get(changedPresetId);
+    if (previousTimer) clearTimeout(previousTimer);
+    const persist = async () => {
+      saveTimersRef.current.delete(changedPresetId);
+      const preset = presetsRef.current.find(
+        (item) => item.id === changedPresetId,
+      );
+      if (!preset) return;
+      try {
+        const synced = await savePresetToServer(preset);
+        if (saveVersionsRef.current.get(changedPresetId) !== saveVersion) {
+          return;
+        }
+        pendingPresetIdsRef.current.delete(changedPresetId);
+        applyServerPresets(synced);
+        setNotice(`Đã đồng bộ phôi "${preset.label}" cho cả team.`);
+      } catch (error) {
+        if (saveVersionsRef.current.get(changedPresetId) !== saveVersion) {
+          return;
+        }
+        pendingPresetIdsRef.current.delete(changedPresetId);
+        setNotice(
+          `❌ Chưa thể đồng bộ phôi: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    };
+    const timer = setTimeout(() => void persist(), immediate ? 0 : 600);
+    saveTimersRef.current.set(changedPresetId, timer);
   };
 
   const handleSelectPreset = (p: ProductCategoryPreset) => {
@@ -89,19 +187,49 @@ export function ProductPresetModal({
     setNotice(`Đã chuyển sang xem mẫu "${p.label}".`);
   };
 
-  const handleCreateNewCategory = () => {
-    const newP = createNewPreset("Sản phẩm mới", "📦");
+  const handleOpenCreateCategory = () => {
+    setNewCategoryLabel("");
+    setNewCategoryIcon("📦");
+    setCreateCategoryError("");
+    setIsCreatingCategory(true);
+  };
+
+  const handleConfirmCreateCategory = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const label = newCategoryLabel.trim() || "Sản phẩm mới";
+    const icon = newCategoryIcon.trim() || "📦";
+
+    // Duplicate name check
+    const isDuplicate = presets.some(
+      (p) => p.label.trim().toLowerCase() === label.toLowerCase(),
+    );
+    if (isDuplicate) {
+      setCreateCategoryError(`⚠️ Tên loại sản phẩm "${label}" đã tồn tại! Vui lòng chọn tên khác.`);
+      return;
+    }
+
+    setCreateCategoryError("");
+    const newP = createNewPreset(label, icon);
     const updated = [...presets, newP];
-    handleSaveAll(updated);
+    handleSaveAll(updated, newP.id, true);
     setSelectedId(newP.id);
     onSelectCategory(newP.id, newP.contents);
-    setNotice("🎉 Đã tạo mẫu sản phẩm mới. Dán nội dung từ ChatGPT vào mục '⚡ Thêm Hàng Loạt' để tự động nạp!");
+    setIsCreatingCategory(false);
+    setNotice(
+      `🎉 Đã tạo loại sản phẩm "${label}". Dán nội dung từ ChatGPT vào mục '⚡ Thêm Hàng Loạt' để tự động nạp!`,
+    );
   };
 
   const handleCloneCategory = (p: ProductCategoryPreset) => {
-    const cloned = clonePreset(p);
+    let cloneLabel = `${p.label} (Bản sao)`;
+    let counter = 2;
+    while (presets.some((item) => item.label.trim().toLowerCase() === cloneLabel.toLowerCase())) {
+      cloneLabel = `${p.label} (Bản sao ${counter})`;
+      counter++;
+    }
+    const cloned = clonePreset(p, cloneLabel);
     const updated = [...presets, cloned];
-    handleSaveAll(updated);
+    handleSaveAll(updated, cloned.id, true);
     setSelectedId(cloned.id);
     onSelectCategory(cloned.id, cloned.contents);
     setNotice(`📋 Đã nhân bản từ "${p.label}" thành "${cloned.label}".`);
@@ -114,28 +242,54 @@ export function ProductPresetModal({
     }
     if (!confirm(`Bạn có chắc chắn muốn xóa mẫu sản phẩm "${p.label}"?`)) return;
     const updated = presets.filter((item) => item.id !== p.id);
-    handleSaveAll(updated);
+    const pendingTimer = saveTimersRef.current.get(p.id);
+    if (pendingTimer) clearTimeout(pendingTimer);
+    saveTimersRef.current.delete(p.id);
+    pendingPresetIdsRef.current.delete(p.id);
+    presetsRef.current = updated;
+    setPresets(updated);
+    onPresetsUpdated(updated);
+    void deletePresetFromServer(p.id)
+      .then((synced) => {
+        applyServerPresets(synced);
+        setNotice(`🗑️ Đã xóa phôi "${p.label}" cho cả team.`);
+      })
+      .catch((error) => {
+        setNotice(
+          `❌ Không thể xóa phôi: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
     const nextId = updated[0]?.id || "universal_standard";
     setSelectedId(nextId);
     const nextP = updated[0] || presets[0];
     if (nextP) onSelectCategory(nextP.id, nextP.contents);
-    setNotice(`🗑️ Đã xóa mẫu "${p.label}".`);
   };
 
   const handleStartEditCategory = (p: ProductCategoryPreset) => {
     setEditingCategory(p);
     setEditLabel(p.label);
     setEditIcon(p.icon || "📦");
+    setEditCategoryError("");
   };
 
-  const handleSaveCategoryMeta = () => {
+  const handleSaveCategoryMeta = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (!editingCategory || !editLabel.trim()) return;
+    const label = editLabel.trim();
+    const isDuplicate = presets.some(
+      (p) => p.id !== editingCategory.id && p.label.trim().toLowerCase() === label.toLowerCase(),
+    );
+    if (isDuplicate) {
+      setEditCategoryError(`⚠️ Tên loại sản phẩm "${label}" đã tồn tại! Vui lòng chọn tên khác.`);
+      return;
+    }
+    setEditCategoryError("");
     const updated = presets.map((p) =>
       p.id === editingCategory.id
-        ? { ...p, label: editLabel.trim(), icon: editIcon.trim() || "📦" }
+        ? { ...p, label, icon: editIcon.trim() || "📦" }
         : p,
     );
-    handleSaveAll(updated);
+    handleSaveAll(updated, editingCategory.id, true);
     setEditingCategory(null);
     setNotice("Đã cập nhật tên & icon loại sản phẩm.");
   };
@@ -143,15 +297,30 @@ export function ProductPresetModal({
   // Content manipulation handlers for active currentPreset
   const updateCurrentPresetContents = (newContents: MockupContentItem[]) => {
     if (!currentPreset) return;
+    const limitedContents = limitSelectedMockupContents(newContents);
     const updated = presets.map((p) =>
-      p.id === currentPreset.id ? { ...p, contents: newContents } : p,
+      p.id === currentPreset.id ? { ...p, contents: limitedContents } : p,
     );
-    handleSaveAll(updated);
-    onSelectCategory(currentPreset.id, newContents);
+    handleSaveAll(updated, currentPreset.id);
+    onSelectCategory(currentPreset.id, limitedContents);
   };
 
   const handleToggleCheck = (id: number) => {
     if (id === 1) return;
+    const target = currentPreset.contents.find((content) => content.id === id);
+    const selectedAiCount = currentPreset.contents.filter(
+      (content) => content.id >= 2 && content.checked,
+    ).length;
+    if (
+      target &&
+      !target.checked &&
+      selectedAiCount >= MAX_AI_MOCKUPS_PER_PRODUCT
+    ) {
+      setNotice(
+        `Mỗi sản phẩm chỉ được chọn tối đa ${MAX_AI_MOCKUPS_PER_PRODUCT} Content AI ngoài Content 1.`,
+      );
+      return;
+    }
     const updated = currentPreset.contents.map((c) =>
       c.id === id ? { ...c, checked: !c.checked } : c,
     );
@@ -178,7 +347,9 @@ export function ProductPresetModal({
     const newContent: MockupContentItem = {
       id: nextId,
       label: `Content ${nextId}: Tên bối cảnh mới`,
-      checked: true,
+      checked:
+        currentPreset.contents.filter((content) => content.id >= 2 && content.checked)
+          .length < MAX_AI_MOCKUPS_PER_PRODUCT,
     };
     const updated = [...currentPreset.contents, newContent];
     updateCurrentPresetContents(updated);
@@ -192,26 +363,30 @@ export function ProductPresetModal({
 
     if (parsed.items.length === 0) return;
 
-    if (parsed.categoryMeta?.label && !currentPreset.isSystem) {
-      const updatedMetaPresets = presets.map((p) =>
-        p.id === currentPreset.id
-          ? {
-              ...p,
-              label: parsed.categoryMeta?.label || p.label,
-              icon: parsed.categoryMeta?.icon || p.icon,
-            }
-          : p,
-      );
-      setPresets(updatedMetaPresets);
-    }
-
     const isFullSet = parsed.items.some((item) => item.id === 1) || Boolean(parsed.categoryMeta?.label);
 
-    const updated = isFullSet
+    const newContents = isFullSet
       ? parsed.items
       : [...currentPreset.contents, ...parsed.items];
-
-    updateCurrentPresetContents(updated);
+    const limitedContents = limitSelectedMockupContents(newContents);
+    const updatedPresets = presets.map((preset) =>
+      preset.id === currentPreset.id
+        ? {
+            ...preset,
+            label:
+              parsed.categoryMeta?.label && !preset.isSystem
+                ? parsed.categoryMeta.label
+                : preset.label,
+            icon:
+              parsed.categoryMeta?.icon && !preset.isSystem
+                ? parsed.categoryMeta.icon
+                : preset.icon,
+            contents: limitedContents,
+          }
+        : preset,
+    );
+    handleSaveAll(updatedPresets, currentPreset.id, true);
+    onSelectCategory(currentPreset.id, limitedContents);
     setBatchInputText("");
     setBatchModalOpen(false);
     setNotice(
@@ -284,13 +459,29 @@ export function ProductPresetModal({
     reader.onload = (event) => {
       try {
         const jsonText = event.target?.result as string;
-        const imported = importPresetsPayload(jsonText);
-        handleSaveAll(imported);
-        if (imported.length > 0) {
+        const imported = importPresetsPayload(jsonText).map((preset) => ({
+          ...preset,
+          contents: limitSelectedMockupContents(preset.contents),
+        }));
+        presetsRef.current = imported;
+        setPresets(imported);
+        onPresetsUpdated(imported);
+        void syncPresetsToServer(imported)
+          .then((synced) => {
+            applyServerPresets(synced);
+            setNotice(
+              `📤 Đã nhập và đồng bộ ${imported.length} phôi cho cả team.`,
+            );
+          })
+          .catch((error) => {
+            setNotice(
+              `❌ Không thể đồng bộ file nhập: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          });
+        if (imported[0]) {
           setSelectedId(imported[0].id);
           onSelectCategory(imported[0].id, imported[0].contents);
         }
-        setNotice(`📤 Đã nhập thành công ${imported.length} mẫu sản phẩm từ file JSON.`);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         setNotice(`❌ Lỗi nhập file JSON: ${msg}`);
@@ -353,7 +544,7 @@ export function ProductPresetModal({
                   Loại Sản Phẩm ({presets.length})
                 </span>
                 <button
-                  onClick={handleCreateNewCategory}
+                  onClick={handleOpenCreateCategory}
                   className="flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-bold text-white shadow-2xs hover:bg-indigo-700 transition"
                   title="Thêm loại sản phẩm mới"
                 >
@@ -632,10 +823,100 @@ export function ProductPresetModal({
         </div>
       </div>
 
+      {/* Create Category Modal */}
+      {isCreatingCategory && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs">
+          <form
+            onSubmit={handleConfirmCreateCategory}
+            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-200 space-y-4"
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h4 className="text-sm font-black text-slate-900 flex items-center gap-2">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 text-sm font-bold">
+                  ➕
+                </span>
+                Tạo Loại Sản Phẩm Mới
+              </h4>
+              <button
+                type="button"
+                onClick={() => setIsCreatingCategory(false)}
+                className="text-slate-400 hover:text-slate-700 p-1 rounded-lg hover:bg-slate-100 transition"
+              >
+                <XIcon className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  Biểu Tượng Emoji Icon
+                </label>
+                <input
+                  type="text"
+                  value={newCategoryIcon}
+                  onChange={(e) => {
+                    setNewCategoryIcon(e.target.value);
+                    if (createCategoryError) setCreateCategoryError("");
+                  }}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-base outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+                  placeholder="📦"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  Tên Loại Sản Phẩm <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  required
+                  value={newCategoryLabel}
+                  onChange={(e) => {
+                    setNewCategoryLabel(e.target.value);
+                    if (createCategoryError) setCreateCategoryError("");
+                  }}
+                  className={`w-full rounded-xl border px-3 py-2 text-xs font-bold text-slate-900 outline-none transition ${
+                    createCategoryError
+                      ? "border-rose-400 focus:ring-2 focus:ring-rose-400/20"
+                      : "border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+                  }`}
+                  placeholder="VD: Glass Mug, Acrylic Plaque, Wood Sign..."
+                />
+                {createCategoryError && (
+                  <p className="mt-1 text-xs font-semibold text-rose-600 animate-fade-in">
+                    {createCategoryError}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setIsCreatingCategory(false)}
+                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 transition"
+              >
+                Hủy
+              </button>
+              <button
+                type="submit"
+                className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700 transition shadow-2xs"
+              >
+                Tạo Sản Phẩm
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {/* Edit Category Meta Modal */}
       {editingCategory && (
         <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-200 space-y-4">
+          <form
+            onSubmit={handleSaveCategoryMeta}
+            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-200 space-y-4"
+          >
             <h4 className="text-sm font-black text-slate-900">
               Đổi Tên & Icon Loại Sản Phẩm
             </h4>
@@ -647,7 +928,10 @@ export function ProductPresetModal({
                 <input
                   type="text"
                   value={editIcon}
-                  onChange={(e) => setEditIcon(e.target.value)}
+                  onChange={(e) => {
+                    setEditIcon(e.target.value);
+                    if (editCategoryError) setEditCategoryError("");
+                  }}
                   className="w-full rounded-xl border border-slate-200 px-3 py-2 text-base outline-none focus:border-indigo-500"
                   placeholder="📦"
                 />
@@ -659,11 +943,24 @@ export function ProductPresetModal({
                 </label>
                 <input
                   type="text"
+                  required
                   value={editLabel}
-                  onChange={(e) => setEditLabel(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-900 outline-none focus:border-indigo-500"
+                  onChange={(e) => {
+                    setEditLabel(e.target.value);
+                    if (editCategoryError) setEditCategoryError("");
+                  }}
+                  className={`w-full rounded-xl border px-3 py-2 text-xs font-bold text-slate-900 outline-none transition ${
+                    editCategoryError
+                      ? "border-rose-400 focus:ring-2 focus:ring-rose-400/20"
+                      : "border-slate-200 focus:border-indigo-500"
+                  }`}
                   placeholder="Nhập tên sản phẩm..."
                 />
+                {editCategoryError && (
+                  <p className="mt-1 text-xs font-semibold text-rose-600 animate-fade-in">
+                    {editCategoryError}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -676,14 +973,13 @@ export function ProductPresetModal({
                 Hủy
               </button>
               <button
-                type="button"
-                onClick={handleSaveCategoryMeta}
+                type="submit"
                 className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700"
               >
                 Lưu Thay Đổi
               </button>
             </div>
-          </div>
+          </form>
         </div>
       )}
 
@@ -693,7 +989,7 @@ export function ProductPresetModal({
           <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl border border-slate-200 space-y-4">
             <div className="flex items-center justify-between">
               <h4 className="text-sm font-black text-slate-900">
-                Thêm Hàng Loạt Content Cho "{currentPreset?.label}"
+                Thêm Hàng Loạt Content Cho &ldquo;{currentPreset?.label}&rdquo;
               </h4>
               <button
                 type="button"

@@ -4,6 +4,7 @@ import Redis from "ioredis";
 const globalForRedis = globalThis as unknown as {
   redisClient?: Redis | null;
   redisConnected?: boolean;
+  redisConnection?: Promise<boolean>;
 };
 
 export function getRedisClient(): Redis | null {
@@ -34,10 +35,14 @@ export function getRedisClient(): Redis | null {
     });
 
     // Fire lazy connection asynchronously
-    client.connect().catch((err) => {
-      console.warn("[Redis] Warning: Could not connect to Redis at startup. Fallback mode active.", err.message);
-      globalForRedis.redisConnected = false;
-    });
+    globalForRedis.redisConnection = client
+      .connect()
+      .then(() => true)
+      .catch((err) => {
+        console.warn("[Redis] Warning: Could not connect to Redis at startup. Fallback mode active.", err.message);
+        globalForRedis.redisConnected = false;
+        return false;
+      });
 
     globalForRedis.redisClient = client;
     return client;
@@ -46,6 +51,20 @@ export function getRedisClient(): Redis | null {
     globalForRedis.redisClient = null;
     return null;
   }
+}
+
+/**
+ * Returns a Redis client only after its initial connection attempt settles.
+ * Callers that require cross-process coordination should use this helper and
+ * explicitly fall back to process-local coordination when it returns null.
+ */
+export async function getReadyRedisClient(): Promise<Redis | null> {
+  const client = getRedisClient();
+  if (!client) return null;
+  if (client.status === "ready") return client;
+
+  await globalForRedis.redisConnection?.catch(() => false);
+  return String(client.status) === "ready" ? client : null;
 }
 
 /**

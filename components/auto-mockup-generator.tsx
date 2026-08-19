@@ -38,6 +38,8 @@ import {
 import { parseCardDimensions, type Dimensions3D } from "@/lib/trello";
 import { downloadOriginalTrelloImage } from "@/lib/trello-image-client";
 import {
+  MAX_AI_MOCKUPS_PER_PRODUCT,
+  limitSelectedMockupContents,
   mockupIndexFromAttachmentName,
   type MockupModel,
 } from "@/lib/mockup-types";
@@ -96,7 +98,12 @@ interface AutoMockupGeneratorProps {
   boardId: string;
 }
 
-type GenerationStepStatus = "pending" | "processing" | "success" | "error";
+type GenerationStepStatus =
+  | "pending"
+  | "processing"
+  | "uploading"
+  | "success"
+  | "error";
 
 interface MockupGenerationResponse {
   success: boolean;
@@ -139,6 +146,7 @@ type MockupStreamEvent =
     type: "progress";
     step: number;
     status: "processing" | "success" | "error";
+    phase: "generation" | "upload";
     message: string;
     attachmentUrl?: string;
     attachmentId?: string;
@@ -297,7 +305,9 @@ export function AutoMockupGenerator({
   const [selectedCategory, setSelectedCategory] = useState<string>("universal_standard");
   const [mockupContents, setMockupContents] = useState<MockupContentItem[]>(() => {
     const loaded = getAllPresets();
-    return loaded[0]?.contents || MOCKUP_CATEGORY_PRESETS.universal_standard.contents;
+    return limitSelectedMockupContents(
+      loaded[0]?.contents || MOCKUP_CATEGORY_PRESETS.universal_standard.contents,
+    );
   });
 
   const [showAddContentModal, setShowAddContentModal] = useState(false);
@@ -305,6 +315,16 @@ export function AutoMockupGenerator({
   const [showProductPresetModal, setShowProductPresetModal] = useState(false);
   const [newContentLabel, setNewContentLabel] = useState("");
   const [contentNoticeMsg, setContentNoticeMsg] = useState<string>("");
+  const allPresetsRef = useRef(allPresets);
+  const selectedCategoryRef = useRef(selectedCategory);
+
+  useEffect(() => {
+    allPresetsRef.current = allPresets;
+  }, [allPresets]);
+
+  useEffect(() => {
+    selectedCategoryRef.current = selectedCategory;
+  }, [selectedCategory]);
 
   const selectedAiMockupCount = mockupContents.filter(
     (content) => content.checked && content.id >= 2,
@@ -343,7 +363,7 @@ export function AutoMockupGenerator({
       }
     });
 
-    return merged;
+    return limitSelectedMockupContents(merged);
   };
 
   useEffect(() => {
@@ -360,23 +380,12 @@ export function AutoMockupGenerator({
         if (Array.isArray(parsed) && parsed.length > 0) {
           const merged = mergePresetWithSaved(categoryKey, parsed);
 
-          // Enforce max 6 checked AI options
-          let checkedAiCount = 0;
-          const sanitized = merged.map((item) => {
-            if (item.id === 1) return { ...item, checked: true };
-            if (item.checked) {
-              if (checkedAiCount < 6) {
-                checkedAiCount++;
-                return item;
-              }
-              return { ...item, checked: false };
-            }
-            return item;
-          });
-          setMockupContents(sanitized);
+          setMockupContents(limitSelectedMockupContents(merged));
         }
       } else {
-        setMockupContents(MOCKUP_CATEGORY_PRESETS[categoryKey].contents);
+        setMockupContents(
+          limitSelectedMockupContents(MOCKUP_CATEGORY_PRESETS[categoryKey].contents),
+        );
       }
     } catch {
       // Ignore storage errors
@@ -394,25 +403,60 @@ export function AutoMockupGenerator({
   }, []);
 
   useEffect(() => {
-    void fetchPresetsFromServer().then((loaded) => {
+    let disposed = false;
+    const refreshSharedPresets = async (applyActivePreset: boolean) => {
+      const loaded = await fetchPresetsFromServer();
+      if (disposed) return;
+      const activeId =
+        localStorage.getItem(MOCKUP_CATEGORY_STORAGE_KEY) ||
+        selectedCategoryRef.current;
+      const active = loaded.find((preset) => preset.id === activeId) || loaded[0];
+      const previousActive = allPresetsRef.current.find(
+        (preset) => preset.id === active?.id,
+      );
+      allPresetsRef.current = loaded;
       setAllPresets(loaded);
-      const savedCatId = localStorage.getItem(MOCKUP_CATEGORY_STORAGE_KEY) || selectedCategory;
-      const active = loaded.find((p) => p.id === savedCatId) || loaded[0];
-      if (active) {
+      if (
+        active &&
+        (applyActivePreset || previousActive?.revision !== active.revision)
+      ) {
         setSelectedCategory(active.id);
-        setMockupContents(active.contents);
+        setMockupContents((current) =>
+          limitSelectedMockupContents(
+            active.contents.map((content) => ({
+              ...content,
+              checked:
+                current.find((item) => item.id === content.id)?.checked ??
+                content.checked,
+            })),
+          ),
+        );
       }
-    });
+    };
+
+    void refreshSharedPresets(true);
+    const interval = window.setInterval(
+      () => void refreshSharedPresets(false),
+      10_000,
+    );
+    const refreshOnFocus = () => void refreshSharedPresets(false);
+    window.addEventListener("focus", refreshOnFocus);
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshOnFocus);
+    };
   }, []);
 
   const saveContentsState = (
     updated: MockupContentItem[],
   ) => {
-    setMockupContents(updated);
+    const limited = limitSelectedMockupContents(updated);
+    setMockupContents(limited);
     try {
       localStorage.setItem(MOCKUP_CATEGORY_STORAGE_KEY, selectedCategory);
-      localStorage.setItem(`${MOCKUP_CONTENTS_STORAGE_KEY}_${selectedCategory}`, JSON.stringify(updated));
-      localStorage.setItem(MOCKUP_CONTENTS_STORAGE_KEY, JSON.stringify(updated));
+      localStorage.setItem(`${MOCKUP_CONTENTS_STORAGE_KEY}_${selectedCategory}`, JSON.stringify(limited));
+      localStorage.setItem(MOCKUP_CONTENTS_STORAGE_KEY, JSON.stringify(limited));
     } catch {
       // Ignore storage errors
     }
@@ -421,8 +465,15 @@ export function AutoMockupGenerator({
   const handleSelectCategory = (catKey: string) => {
     setSelectedCategory(catKey);
     const found = allPresets.find((p) => p.id === catKey);
-    const updated = found ? found.contents : MOCKUP_CATEGORY_PRESETS.universal_standard.contents;
+    const updated = limitSelectedMockupContents(
+      found ? found.contents : MOCKUP_CATEGORY_PRESETS.universal_standard.contents,
+    );
     setMockupContents(updated);
+    try {
+      localStorage.setItem(MOCKUP_CATEGORY_STORAGE_KEY, catKey);
+    } catch {
+      // Ignore storage errors
+    }
     if (found) {
       setContentNoticeMsg(`Đã chuyển sang mục "${found.label}" (${updated.length} Content mẫu).`);
     }
@@ -438,9 +489,13 @@ export function AutoMockupGenerator({
     const currentItem = mockupContents.find((c) => c.id === id);
     const checkedAiCount = mockupContents.filter((c) => c.checked && c.id >= 2).length;
 
-    if (currentItem && !currentItem.checked && checkedAiCount >= 6) {
+    if (
+      currentItem &&
+      !currentItem.checked &&
+      checkedAiCount >= MAX_AI_MOCKUPS_PER_PRODUCT
+    ) {
       setContentNoticeMsg(
-        "Tối đa chỉ được chọn 6 option AI (tổng 7 Content gồm Content 1). Vui lòng bỏ chọn 1 option AI khác để chọn option này.",
+        `Tối đa chỉ được chọn ${MAX_AI_MOCKUPS_PER_PRODUCT} option AI (tổng 7 Content gồm Content 1). Vui lòng bỏ chọn 1 option AI khác để chọn option này.`,
       );
       return;
     }
@@ -475,7 +530,7 @@ export function AutoMockupGenerator({
         ? Math.max(...mockupContents.map((c) => c.id)) + 1
         : 1;
     const checkedAiCount = mockupContents.filter((c) => c.checked && c.id >= 2).length;
-    const shouldCheck = checkedAiCount < 6;
+    const shouldCheck = checkedAiCount < MAX_AI_MOCKUPS_PER_PRODUCT;
     const updated = [
       ...mockupContents,
       {
@@ -492,7 +547,7 @@ export function AutoMockupGenerator({
     setContentNoticeMsg(
       shouldCheck
         ? ""
-        : "Đã thêm Content mới (chưa bật chọn do đã chọn tối đa 6/6 option AI).",
+        : `Đã thêm Content mới (chưa bật chọn do đã chọn tối đa ${MAX_AI_MOCKUPS_PER_PRODUCT}/${MAX_AI_MOCKUPS_PER_PRODUCT} option AI).`,
     );
   };
 
@@ -543,7 +598,9 @@ export function AutoMockupGenerator({
     attachmentId?: string;
   } | null>(null);
   const [regenPromptNote, setRegenPromptNote] = useState<string>("");
-  const [regenModel, setRegenModel] = useState<MockupModel>("gpt-image-1.5");
+  const [regenModel, setRegenModel] = useState<MockupModel>(
+    DEFAULT_MOCKUP_MODEL as MockupModel,
+  );
   const [isRegeneratingSingle, setIsRegeneratingSingle] = useState(false);
   const [singleRegenStatusText, setSingleRegenStatusText] = useState<string>("");
   const [downloadingImage, setDownloadingImage] = useState(false);
@@ -752,27 +809,25 @@ export function AutoMockupGenerator({
     setLoadingCards(true);
     setErrorMsg("");
     try {
-      // 1. Fetch DESIGN list cards
-      if (designListId) {
-        const resD = await fetch(
-          `/api/trello/config?action=get-cards&apiKey=${encodeURIComponent(apiKey)}&token=${encodeURIComponent(token)}&listId=${encodeURIComponent(designListId)}`,
-        );
-        if (resD.ok) {
-          const dataD = await resD.json();
-          setDesignCards(dataD.cards || []);
-        }
-      }
+      const [designResult, mockupResult] = await Promise.all([
+        designListId
+          ? fetch(
+              `/api/trello/config?action=get-cards&apiKey=${encodeURIComponent(apiKey)}&token=${encodeURIComponent(token)}&listId=${encodeURIComponent(designListId)}`,
+            ).then(async (response) =>
+              response.ok ? response.json() : null,
+            )
+          : null,
+        mockupListId
+          ? fetch(
+              `/api/trello/config?action=get-cards&apiKey=${encodeURIComponent(apiKey)}&token=${encodeURIComponent(token)}&listId=${encodeURIComponent(mockupListId)}`,
+            ).then(async (response) =>
+              response.ok ? response.json() : null,
+            )
+          : null,
+      ]);
 
-      // 2. Fetch MOCKUP list cards
-      if (mockupListId) {
-        const resM = await fetch(
-          `/api/trello/config?action=get-cards&apiKey=${encodeURIComponent(apiKey)}&token=${encodeURIComponent(token)}&listId=${encodeURIComponent(mockupListId)}`,
-        );
-        if (resM.ok) {
-          const dataM = await resM.json();
-          setMockupCards(dataM.cards || []);
-        }
-      }
+      if (designResult) setDesignCards(designResult.cards || []);
+      if (mockupResult) setMockupCards(mockupResult.cards || []);
 
       setSelectedCardIds(new Set());
     } catch (err: unknown) {
@@ -838,6 +893,12 @@ export function AutoMockupGenerator({
       setErrorMsg("Hãy chọn ít nhất một concept mockup từ Content 2 trở đi.");
       return;
     }
+    if (selectedAiSteps.length > MAX_AI_MOCKUPS_PER_PRODUCT) {
+      setErrorMsg(
+        `Mỗi sản phẩm chỉ được tạo tối đa ${MAX_AI_MOCKUPS_PER_PRODUCT} Content AI ngoài ảnh gốc.`,
+      );
+      return;
+    }
     generationInFlightRef.current = true;
     isAbortingRef.current = false;
     setActiveGeneratingCardId(card.id);
@@ -867,7 +928,7 @@ export function AutoMockupGenerator({
           model: selectedModel,
           quality: selectedQuality,
           selectedSteps: selectedAiSteps,
-          forceRegenerate: true,
+          forceRegenerate: false,
           customContents: mockupContents.map((content) => ({
             id: content.id,
             label: content.label,
@@ -899,7 +960,10 @@ export function AutoMockupGenerator({
           setGenerationStatusText(event.message);
           setGenerationProgress((previous) => ({
             ...previous,
-            [event.step]: event.status,
+            [event.step]:
+              event.status === "success" && event.phase === "generation"
+                ? "uploading"
+                : event.status,
           }));
 
           // When an image is ready & attached on Trello, display it on screen real-time!
@@ -917,7 +981,9 @@ export function AutoMockupGenerator({
                   id: event.attachmentId || prevAtt?.id || String(Date.now()),
                   name: event.name || prevAtt?.name || `Mockup ${event.step}`,
                   url: event.attachmentUrl || prevAtt?.url || "",
-                  mimeType: "image/png",
+                  mimeType: event.previewUrl?.startsWith("data:image/webp")
+                    ? "image/webp"
+                    : "image/png",
                   previewUrl: event.previewUrl || prevAtt?.previewUrl,
                   thumbnailUrl: event.thumbnailUrl || prevAtt?.thumbnailUrl,
                 };
@@ -1019,7 +1085,7 @@ export function AutoMockupGenerator({
           `🎉 Đã tạo ${data.newlyGeneratedMockupsCount} mockup mới cho SKU "${data.sku}" bằng ${data.model}/${data.quality || "auto"}${providerAudit ? ` — ${data.providerResponseCount} phản hồi provider: ${providerAudit}` : ""}${locationText}.`,
         );
       }
-      await syncAllColumns();
+      void syncAllColumns();
     } catch (err: unknown) {
       if (isAbortingRef.current || (err instanceof Error && err.name === "AbortError")) {
         await syncAllColumns();
@@ -1362,6 +1428,10 @@ export function AutoMockupGenerator({
                         rows={6}
                         className="w-full rounded-xl border border-slate-300 p-3 text-xs font-medium text-slate-800 outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-600/20 placeholder:text-slate-400 shadow-2xs leading-relaxed"
                       />
+                      <p className="mt-1.5 text-[10px] font-semibold leading-relaxed text-slate-500">
+                        Chỉ áp dụng cho ảnh này của sản phẩm đang chọn; không thay
+                        đổi prompt trong phôi dùng chung của team.
+                      </p>
                     </div>
                   </div>
 
@@ -1372,6 +1442,12 @@ export function AutoMockupGenerator({
                       onClick={async () => {
                         if (!stepId) {
                           setErrorMsg("Không xác định được vị trí mockup để gen lại.");
+                          return;
+                        }
+                        if (stepId === 1) {
+                          setErrorMsg(
+                            "Content 1 là ảnh gốc mặc định nên không gọi AI để tạo lại.",
+                          );
                           return;
                         }
                         setIsRegeneratingSingle(true);
@@ -1416,58 +1492,84 @@ export function AutoMockupGenerator({
                           const decoder = new TextDecoder();
                           let buffered = "";
 
+                          const handleRegenEvent = (event: MockupStreamEvent) => {
+                            if (event.type === "error") {
+                              throw new Error(event.error);
+                            }
+                            if (event.type === "progress") {
+                              setSingleRegenStatusText(event.message);
+                              if (
+                                event.status === "success" &&
+                                (event.attachmentUrl || event.previewUrl)
+                              ) {
+                                const updateCardAttachments = (prev: TrelloCard[]) =>
+                                  prev.map((c) => {
+                                    if (c.id !== card.id) return c;
+                                    const existingAtts = c.attachments || [];
+                                    const prevAtt = existingAtts.find((a) => {
+                                      if (event.attachmentId && a.id === event.attachmentId)
+                                        return true;
+                                      const step = mockupIndexFromAttachmentName(a.name);
+                                      return step !== null && step > 0 && step === event.step;
+                                    });
+                                    const newAtt = {
+                                      id:
+                                        event.attachmentId ||
+                                        prevAtt?.id ||
+                                        String(Date.now()),
+                                      name: event.name || prevAtt?.name || `Mockup ${event.step}`,
+                                      url: event.attachmentUrl || prevAtt?.url || "",
+                                      mimeType: "image/png",
+                                      previewUrl: event.previewUrl || prevAtt?.previewUrl,
+                                      thumbnailUrl: event.thumbnailUrl || prevAtt?.thumbnailUrl,
+                                    };
+                                    const filteredAtts = existingAtts.filter((a) => {
+                                      if (a.id === newAtt.id || (a.url && a.url === newAtt.url))
+                                        return false;
+                                      const step = mockupIndexFromAttachmentName(a.name);
+                                      if (step !== null && step > 0 && step === event.step)
+                                        return false;
+                                      return true;
+                                    });
+                                    return {
+                                      ...c,
+                                      attachments: [...filteredAtts, newAtt],
+                                    };
+                                  });
+
+                                setDesignCards(updateCardAttachments);
+                                setMockupCards(updateCardAttachments);
+                              }
+                            }
+                          };
+
                           while (true) {
                             const { done, value } = await reader.read();
-                            if (done) break;
-
-                            buffered += decoder.decode(value, { stream: true });
+                            buffered += decoder.decode(value, { stream: !done });
                             const lines = buffered.split("\n");
                             buffered = lines.pop() || "";
 
                             for (const line of lines) {
                               if (!line.trim()) continue;
+                              let evt: MockupStreamEvent | null = null;
                               try {
-                                const event = JSON.parse(line.trim()) as MockupStreamEvent;
-                                if (event.type === "progress") {
-                                  setSingleRegenStatusText(event.message);
-                                  if (event.status === "success" && (event.attachmentUrl || event.previewUrl)) {
-                                    const updateCardAttachments = (prev: TrelloCard[]) =>
-                                      prev.map((c) => {
-                                        if (c.id !== card.id) return c;
-                                        const existingAtts = c.attachments || [];
-                                        const prevAtt = existingAtts.find((a) => {
-                                          if (event.attachmentId && a.id === event.attachmentId) return true;
-                                          const step = mockupIndexFromAttachmentName(a.name);
-                                          return step !== null && step > 0 && step === event.step;
-                                        });
-                                        const newAtt = {
-                                          id: event.attachmentId || prevAtt?.id || String(Date.now()),
-                                          name: event.name || prevAtt?.name || `Mockup ${event.step}`,
-                                          url: event.attachmentUrl || prevAtt?.url || "",
-                                          mimeType: "image/png",
-                                          previewUrl: event.previewUrl || prevAtt?.previewUrl,
-                                          thumbnailUrl: event.thumbnailUrl || prevAtt?.thumbnailUrl,
-                                        };
-                                        const filteredAtts = existingAtts.filter((a) => {
-                                          if (a.id === newAtt.id || (a.url && a.url === newAtt.url)) return false;
-                                          const step = mockupIndexFromAttachmentName(a.name);
-                                          if (step !== null && step > 0 && step === event.step) return false;
-                                          return true;
-                                        });
-                                        return {
-                                          ...c,
-                                          attachments: [...filteredAtts, newAtt],
-                                        };
-                                      });
-
-                                    setDesignCards(updateCardAttachments);
-                                    setMockupCards(updateCardAttachments);
-                                  }
-                                }
+                                evt = JSON.parse(line.trim()) as MockupStreamEvent;
                               } catch {
-                                // Ignore JSON parse errors
+                                // Ignore parse error
                               }
+                              if (evt) handleRegenEvent(evt);
                             }
+                            if (done) break;
+                          }
+
+                          if (buffered.trim()) {
+                            let evt: MockupStreamEvent | null = null;
+                            try {
+                              evt = JSON.parse(buffered.trim()) as MockupStreamEvent;
+                            } catch {
+                              // Ignore parse error
+                            }
+                            if (evt) handleRegenEvent(evt);
                           }
 
                           await syncAllColumns();
@@ -2383,6 +2485,8 @@ export function AutoMockupGenerator({
                       ? "border-emerald-200 bg-emerald-50/80 text-emerald-900"
                       : status === "processing"
                         ? "border-indigo-300 bg-indigo-50/90 text-indigo-900 animate-pulse"
+                        : status === "uploading"
+                          ? "border-amber-300 bg-amber-50/90 text-amber-900"
                         : status === "error"
                           ? "border-rose-200 bg-rose-50 text-rose-800"
                           : "border-slate-100 bg-slate-50 text-slate-500"
@@ -2399,6 +2503,11 @@ export function AutoMockupGenerator({
                     )}
                     {status === "processing" && (
                       <SpinnerIcon className="h-4 w-4 animate-spin text-indigo-600" />
+                    )}
+                    {status === "uploading" && (
+                      <span className="text-[10px] font-bold text-amber-700">
+                        Đẩy Trello...
+                      </span>
                     )}
                     {status === "error" && (
                       <WarningCircleIcon className="h-4 w-4 text-rose-600" />
@@ -2434,14 +2543,14 @@ export function AutoMockupGenerator({
         activeCategoryId={selectedCategory}
         onSelectCategory={(catId, contents) => {
           setSelectedCategory(catId);
-          setMockupContents(contents);
+          setMockupContents(limitSelectedMockupContents(contents));
         }}
-        onPresetsUpdated={() => {
-          const updated = getAllPresets();
+        onPresetsUpdated={(updated) => {
+          allPresetsRef.current = updated;
           setAllPresets(updated);
           const active = updated.find((p) => p.id === selectedCategory) || updated[0];
           if (active) {
-            setMockupContents(active.contents);
+            setMockupContents(limitSelectedMockupContents(active.contents));
           }
         }}
       />

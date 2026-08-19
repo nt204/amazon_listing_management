@@ -3,12 +3,19 @@ import assert from "node:assert/strict";
 import type OpenAI from "openai";
 import type { GoogleGenAI } from "@google/genai";
 import sharp from "sharp";
-import { parseCardDimensions } from "../lib/trello";
 import {
+  findRecentlyUploadedTrelloAttachment,
+  isTrelloRequestTimeoutError,
+  parseCardDimensions,
+} from "../lib/trello";
+import {
+  MAX_AI_MOCKUPS_PER_PRODUCT,
   buildMockupPrompt,
   classifyMockupGenerationError,
   generateAllMockups,
+  limitSelectedMockupContents,
   mockupIndexFromAttachmentName,
+  planMockupGeneration,
 } from "../lib/mockup-generator";
 
 const SAMPLE_PNG = Buffer.from(
@@ -85,6 +92,85 @@ test("parseCardDimensions reads labeled measurements and does not invent ornamen
   });
 });
 
+test("a timed-out Trello upload is recovered only from the matching new attachment", () => {
+  const startedAt = Date.parse("2026-08-19T12:00:00.000Z");
+  const attachment = (overrides: Record<string, unknown>) => ({
+    id: "attachment",
+    name: "Mockup3.png",
+    url: "https://trello.com/1/cards/card/attachments/attachment/download/Mockup3.png",
+    mimeType: "image/png",
+    bytes: 3_000_000,
+    isUpload: true,
+    date: "2026-08-19T12:00:05.000Z",
+    ...overrides,
+  });
+
+  const recovered = findRecentlyUploadedTrelloAttachment(
+    [
+      attachment({ id: "old", date: "2026-08-19T11:59:00.000Z" }),
+      attachment({ id: "wrong-size", bytes: 2_000_000 }),
+      attachment({ id: "newer", date: "2026-08-19T12:00:08.000Z" }),
+      attachment({ id: "newest", date: "2026-08-19T12:00:09.000Z" }),
+    ],
+    { name: "Mockup3.png", bytes: 3_000_000, startedAt },
+  );
+
+  assert.equal(recovered?.id, "newest");
+  assert.equal(
+    findRecentlyUploadedTrelloAttachment(
+      [attachment({ id: "old", date: "2026-08-19T11:59:00.000Z" })],
+      { name: "Mockup3.png", bytes: 3_000_000, startedAt },
+    ),
+    undefined,
+  );
+  assert.equal(
+    isTrelloRequestTimeoutError(
+      new DOMException("The operation was aborted due to timeout", "TimeoutError"),
+    ),
+    true,
+  );
+  assert.equal(isTrelloRequestTimeoutError(new Error("HTTP 400")), false);
+});
+
+test("one source Content stays selected and only six additional AI Contents may be selected", () => {
+  const contents = Array.from({ length: 9 }, (_, index) => ({
+    id: index + 1,
+    checked: index !== 0,
+  }));
+
+  const limited = limitSelectedMockupContents(contents);
+
+  assert.equal(limited.find((content) => content.id === 1)?.checked, true);
+  assert.equal(
+    limited.filter((content) => content.id >= 2 && content.checked).length,
+    MAX_AI_MOCKUPS_PER_PRODUCT,
+  );
+  assert.deepEqual(
+    limited.filter((content) => content.checked).map((content) => content.id),
+    [1, 2, 3, 4, 5, 6, 7],
+  );
+});
+
+test("a normal retry generates only missing mockups while single-image force replaces its target", () => {
+  const resumed = planMockupGeneration({
+    selectedSteps: [2, 3, 4, 5, 6, 7],
+    existingIndexes: [1, 2, 4],
+    forceRegenerate: false,
+  });
+  assert.deepEqual(resumed.stepsToGenerate, [3, 5, 6, 7]);
+  assert.ok(resumed.skipIndexes.includes(2));
+  assert.ok(resumed.skipIndexes.includes(4));
+
+  const forced = planMockupGeneration({
+    selectedSteps: [2],
+    existingIndexes: [1, 2, 4],
+    forceRegenerate: true,
+  });
+  assert.deepEqual(forced.stepsToGenerate, [2]);
+  assert.ok(!forced.skipIndexes.includes(2));
+  assert.ok(forced.skipIndexes.includes(4));
+});
+
 test("generateAllMockups should produce 7 mockup results", async () => {
   const mockups = await generateAllMockups({
     sku: "TESTSKU01",
@@ -118,6 +204,7 @@ test("GPT Image mockups use the edit API with the source artwork", async () => {
     body: Record<string, unknown>;
     options?: Record<string, unknown>;
   }> = [];
+  const controller = new AbortController();
   const fakeClient = {
     images: {
       edit: async (
@@ -147,6 +234,7 @@ test("GPT Image mockups use the edit API with the source artwork", async () => {
     model: "gpt-image-2",
     quality: "low",
     openaiClient: fakeClient,
+    signal: controller.signal,
   });
 
   assert.equal(mockups.length, 7);
@@ -162,8 +250,12 @@ test("GPT Image mockups use the edit API with the source artwork", async () => {
       call.body.image,
       "the source artwork file should be sent to images.edit",
     );
-    assert.match(String(call.body.prompt), /Sử dụng Ảnh 1 làm ảnh tham chiếu cho sản phẩm "Test Glass Ornament"/i);
-    assert.equal(call.options?.maxRetries, 0);
+    assert.match(
+      String(call.body.prompt),
+      /sản phẩm "Test Glass Ornament", sử dụng Ảnh 1 làm tham chiếu hình ảnh chính/i,
+    );
+    assert.equal(call.options?.maxRetries, 1);
+    assert.equal(call.options?.signal, controller.signal);
   }
 });
 
@@ -245,7 +337,7 @@ test("gpt-image-2-c is routed through the CheapKeyAI image edit provider", async
   assert.equal(calls.length, 1);
   assert.equal(calls[0].model, "gpt-image-2-c");
   assert.equal(calls[0].quality, "low");
-  assert.equal(calls[0].input_fidelity, "high");
+  assert.equal(calls[0].input_fidelity, undefined);
   assert.equal(calls[0].response_format, undefined);
   assert.ok(calls[0].image);
   assert.deepEqual(
@@ -254,7 +346,7 @@ test("gpt-image-2-c is routed through the CheapKeyAI image edit provider", async
   );
   assert.equal(mockups[0].providerTrace?.provider, "cheapkeyai");
   assert.equal(mockups[0].providerTrace?.model, "gpt-image-2-c");
-  assert.equal(mockups[0].providerTrace?.inputFidelity, "high");
+  assert.equal(mockups[0].providerTrace?.inputFidelity, null);
   assert.equal(mockups[0].providerTrace?.estimatedCostUsd, 0.005);
 });
 
@@ -334,7 +426,7 @@ test("CheapKeyAI client uses its own key and the image edits endpoint", async ()
   assert.equal(requestUrl, "https://cheapkeyai.shop/v1/images/edits");
   assert.equal(authorization, "Bearer sk-cheapkeyai-test-only");
   assert.equal(upstreamModel, "gpt-image-2-c");
-  assert.equal(inputFidelity, "high");
+  assert.equal(inputFidelity, null);
   assert.equal(responseFormat, null);
 });
 
@@ -400,6 +492,36 @@ test("one selected concept makes exactly one provider request and records its tr
   });
 });
 
+test("generation never sends more than six AI image requests for one product", async () => {
+  let calls = 0;
+  const fakeClient = {
+    images: {
+      edit: async () => {
+        calls += 1;
+        return { data: [{ b64_json: SAMPLE_PNG.toString("base64") }] };
+      },
+    },
+  } as unknown as OpenAI;
+
+  const mockups = await generateAllMockups({
+    sku: "TEST-LIMIT",
+    itemName: "Any Product",
+    dimensions: { length: "", width: "", thickness: "", formatted: "" },
+    inputDesignBuffer: SAMPLE_PNG,
+    inputMimeType: "image/png",
+    model: "gpt-image-1.5",
+    quality: "low",
+    selectedIndexes: [2, 3, 4, 5, 6, 7, 8],
+    openaiClient: fakeClient,
+  });
+
+  assert.equal(calls, MAX_AI_MOCKUPS_PER_PRODUCT);
+  assert.deepEqual(
+    mockups.map((mockup) => mockup.index),
+    [2, 3, 4, 5, 6, 7],
+  );
+});
+
 test("a provider failure waits for started image edits before releasing generation", async () => {
   let calls = 0;
   let rejectFirstCall: ((reason?: unknown) => void) | undefined;
@@ -412,7 +534,7 @@ test("a provider failure waits for started image edits before releasing generati
     images: {
       edit: async () => {
         calls += 1;
-        if (calls === 3) resolveInitialWindow?.();
+        if (calls === MAX_AI_MOCKUPS_PER_PRODUCT) resolveInitialWindow?.();
         if (calls === 1) {
           await new Promise<never>((_resolve, reject) => {
             rejectFirstCall = reject;
@@ -454,7 +576,11 @@ test("a provider failure waits for started image edits before releasing generati
   } finally {
     if (startupTimeout) clearTimeout(startupTimeout);
   }
-  assert.equal(calls, 3, "only the initial concurrency window may start");
+  assert.equal(
+    calls,
+    MAX_AI_MOCKUPS_PER_PRODUCT,
+    "only the configured concurrency window may start",
+  );
 
   let settled = false;
   void generation.catch(() => {
@@ -466,15 +592,30 @@ test("a provider failure waits for started image edits before releasing generati
 
   for (const resolve of pendingResolvers) resolve();
   await assert.rejects(generation, /provider failed/);
-  assert.equal(calls, 3, "no later concept starts after a provider failure");
+  assert.equal(
+    calls,
+    MAX_AI_MOCKUPS_PER_PRODUCT,
+    "no later concept starts after a provider failure",
+  );
 });
 
-test("mockup generation defaults to GPT Image 2 (CheapKeyAI) with low output and input fidelity", async () => {
+test("mockup generation defaults to GPT Image 2 (CheapKeyAI) without unsupported input_fidelity", async () => {
   const calls: Array<Record<string, unknown>> = [];
+  const requestOptions: Array<Record<string, unknown>> = [];
+  let activeRequests = 0;
+  let maxActiveRequests = 0;
   const fakeClient = {
     images: {
-      edit: async (body: Record<string, unknown>) => {
+      edit: async (
+        body: Record<string, unknown>,
+        options: Record<string, unknown>,
+      ) => {
         calls.push(body);
+        requestOptions.push(options);
+        activeRequests += 1;
+        maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+        await new Promise((resolve) => setImmediate(resolve));
+        activeRequests -= 1;
         return { data: [{ b64_json: SAMPLE_PNG.toString("base64") }] };
       },
     },
@@ -502,12 +643,29 @@ test("mockup generation defaults to GPT Image 2 (CheapKeyAI) with low output and
   }
 
   assert.equal(calls.length, 6);
+  assert.equal(maxActiveRequests, 3);
+  assert.ok(requestOptions.every((options) => options.timeout === 600_000));
+  assert.ok(requestOptions.every((options) => options.maxRetries === 0));
   for (const call of calls) {
     assert.equal(call.model, "gpt-image-2");
     assert.equal(call.quality, "low");
     assert.equal(call.size, "1024x1024");
-    assert.equal(call.input_fidelity, "high");
+    assert.equal(call.input_fidelity, undefined);
   }
+});
+
+test("CheapKeyAI saturated-upstream errors explain that the request is not retried", () => {
+  assert.deepEqual(
+    classifyMockupGenerationError({
+      status: 429,
+      message: "当前分组上游负载已饱和，请稍后再试",
+    }),
+    {
+      message:
+        "Upstream của CheapKeyAI đang quá tải. Hệ thống đã dừng request này và không tự retry; hãy chờ một lúc rồi thử lại.",
+      status: 429,
+    },
+  );
 });
 
 test("generated JPEG mockups retain provider bytes without another lossy encode", async () => {
@@ -564,7 +722,7 @@ test("generated JPEG mockups retain provider bytes without another lossy encode"
   }
 });
 
-test("mockup prompts contain only the generation request and scene concept", () => {
+test("mockup prompts use neutral shared instructions plus the selected scene concept", () => {
   const prompt = buildMockupPrompt("gift_box", "Test Ornament", {
     length: '3.1"',
     width: '3.1"',
@@ -572,12 +730,12 @@ test("mockup prompts contain only the generation request and scene concept", () 
     formatted: '3.1" x 3.1" x 0.15"',
   });
 
-  assert.match(prompt, /KHÔNG mặc định sản phẩm là glass\/acrylic/i);
-  assert.match(prompt, /phân tích trực tiếp Ảnh 1/i);
-  assert.match(prompt, /dòng kích thước không phải là thông tin vật liệu/i);
-  assert.match(prompt, /material-accurate rendering/i);
+  assert.match(prompt, /NGUYÊN TẮC CHUNG TRUNG TÍNH/i);
+  assert.match(prompt, /Không mặc định bất kỳ loại sản phẩm, chất liệu/i);
+  assert.match(prompt, /YÊU CẦU RIÊNG CỦA CONTENT — ƯU TIÊN CAO NHẤT/i);
+  assert.match(prompt, /không tự thêm hoặc thay đổi bộ phận, phụ kiện/i);
   assert.doesNotMatch(prompt, /100% WATER-CLEAR GLASS/i);
-  assert.match(prompt, /Concept: PACKAGE INCLUDED gift-box flat-lay/);
+  assert.match(prompt, /PACKAGE INCLUDED gift-box flat-lay/);
   assert.match(prompt, /one open square red gift-box base/i);
   assert.match(prompt, /"1 - Ornament"/);
 
@@ -587,7 +745,7 @@ test("mockup prompts contain only the generation request and scene concept", () 
     thickness: '0.15"',
     formatted: '3.1" x 3.1" x 0.15"',
   });
-  assert.match(treePrompt, /Concept: Sản phẩm treo trên nhánh cây thông/);
+  assert.match(treePrompt, /Sản phẩm treo trên nhánh cây thông/);
 
   const giftingPrompt = buildMockupPrompt("gifting_hands", "Test Ornament", {
     length: '3.1"',
@@ -595,7 +753,7 @@ test("mockup prompts contain only the generation request and scene concept", () 
     thickness: '0.15"',
     formatted: '3.1" x 3.1" x 0.15"',
   });
-  assert.match(giftingPrompt, /Concept: PERFECT GIFT HAND-TO-HAND ORNAMENT PRESENTATION/);
+  assert.match(giftingPrompt, /PERFECT GIFT HAND-TO-HAND ORNAMENT PRESENTATION/);
   assert.match(giftingPrompt, /TWO realistic female hands presenting the ornament/i);
 
   const dimensionPrompt = buildMockupPrompt(
@@ -609,7 +767,7 @@ test("mockup prompts contain only the generation request and scene concept", () 
     },
   );
   assert.match(dimensionPrompt, /Kích thước 3 chiều: 3\.1" x 3\.1" x 0\.15"\./);
-  assert.match(dimensionPrompt, /Concept: Product Size & Thickness Infographic Photography/);
+  assert.match(dimensionPrompt, /Product Size & Thickness Infographic Photography/);
   assert.doesNotMatch(dimensionPrompt, /transparent crystal glass disc/i);
 });
 
@@ -627,10 +785,11 @@ test("mockup prompts include product material context from the source card", () 
   );
 
   assert.match(prompt, /Material: natural birch wood; Finish: matte/);
-  assert.match(prompt, /không biến chúng thành kính/i);
+  assert.match(prompt, /chỉ dùng khi không mâu thuẫn với yêu cầu riêng hoặc Ảnh 1/i);
+  assert.doesNotMatch(prompt, /XÁC NHẬN CHẤT LIỆU/i);
 });
 
-test("hanging ornament prompts lock material from the Trello title or description", () => {
+test("shared prompt does not infer or hard-lock a product material from Trello text", () => {
   const dimensions = {
     length: '3.3"',
     width: '3.1"',
@@ -638,24 +797,24 @@ test("hanging ornament prompts lock material from the Trello title or descriptio
     formatted: '3.3" x 3.1" x 0.15"',
   };
   const glassPrompt = buildMockupPrompt(
-    "universal_dimensions",
+    "custom:Clean studio composition supplied by the operator",
     "Glass Ornament Heart",
     dimensions,
     'Kích thước: 3.3” x 3.1” x 0.15”',
   );
-  assert.match(glassPrompt, /được xác nhận là GLASS ORNAMENT/i);
-  assert.match(glassPrompt, /không được ghi đè/i);
-  assert.match(glassPrompt, /bất kỳ silhouette nào như trái tim/i);
-  assert.match(glassPrompt, /NEVER use blue, navy, cyan, teal/i);
+  assert.match(glassPrompt, /Clean studio composition supplied by the operator/i);
+  assert.doesNotMatch(glassPrompt, /được xác nhận là GLASS ORNAMENT/i);
+  assert.doesNotMatch(glassPrompt, /ULTRA BRIGHT WHITE CRYSTAL GLASS/i);
 
   const woodPrompt = buildMockupPrompt(
-    "universal_dimensions",
+    "custom:Use the exact product from Image 1",
     "Mr Mrs Wooden Ornament",
     dimensions,
     "generic keywords: anniversary glass ornament keepsake",
   );
-  assert.match(woodPrompt, /được xác nhận là GỖ \/ WOOD/i);
+  assert.doesNotMatch(woodPrompt, /được xác nhận là GỖ \/ WOOD/i);
   assert.doesNotMatch(woodPrompt, /được xác nhận là GLASS ORNAMENT/i);
+  assert.match(woodPrompt, /generic keywords: anniversary glass ornament keepsake/i);
 });
 
 test("custom mockup prompts use the operator-provided scene", () => {
@@ -690,7 +849,8 @@ test("Square Ceramic Keepsake Plate Mockup 3 custom prompt is built correctly", 
 
   assert.match(prompt, /Front-facing plus slightly elevated isometric 3D view/i);
   assert.match(prompt, /clearly showing overall width, height/i);
-  assert.match(prompt, /TUYỆT ĐỐI KHÔNG TỰ Ý THÊM DÂY TREO/i);
+  assert.match(prompt, /Không tự thêm hoặc thay đổi bộ phận, phụ kiện/i);
+  assert.doesNotMatch(prompt, /GLASS ORNAMENT|ĐĨA KÍNH|DÂY TREO/i);
 });
 
 test("buildMockupPrompt generates detailed prompts for Bullet Tumbler prompt keys", () => {
@@ -1060,11 +1220,19 @@ test("Gemini mockups use bounded retries and report real per-image progress", as
 });
 
 test("transport failures are translated instead of returning a generic 400", () => {
-  assert.deepEqual(classifyMockupGenerationError(new TypeError("fetch failed")), {
+  const expected = {
     message:
       "Kết nối tới API tạo ảnh bị gián đoạn hoặc hết thời gian chờ. Hệ thống đã dừng lần chạy này; hãy thử lại.",
     status: 502,
-  });
+  };
+  assert.deepEqual(
+    classifyMockupGenerationError(new TypeError("fetch failed")),
+    expected,
+  );
+  assert.deepEqual(
+    classifyMockupGenerationError(new Error("Request timed out")),
+    expected,
+  );
 });
 
 test("Gemini timeout aborts are translated into a connection error", () => {

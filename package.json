@@ -5,10 +5,11 @@
   "scripts": {
     "dev": "npm run db:start && npm run db:migrate && next dev --hostname 0.0.0.0",
     "dev:app": "next dev --hostname 0.0.0.0",
-    "db:start": "docker compose up -d db",
+    "db:start": "docker compose up -d db redis",
     "db:stop": "docker compose stop db",
     "db:migrate": "node --env-file-if-exists=.env --import tsx scripts/migrate.ts",
     "db:backfill-images": "node --env-file-if-exists=.env --import tsx scripts/backfill-images.ts",
+    "db:maintain": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/maintain-storage.ts",
     "db:revalidate": "node --env-file-if-exists=.env --import tsx scripts/revalidate-listings.ts",
     "ocr:eval": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/eval-ocr.ts",
     "ai:eval": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/eval-generation.ts",

@@ -6,6 +6,7 @@ import { detectRasterImageMimeType } from "./image-processing";
 import { generateChatGPTWebImage } from "./chatgpt-web-automation";
 
 import {
+  MAX_AI_MOCKUPS_PER_PRODUCT,
   type MockupModel,
   type MockupImageQuality,
   mockupIndexFromAttachmentName,
@@ -64,6 +65,13 @@ export interface GenerateMockupsOptions {
   customMockups?: readonly { id: number; label: string; promptKey?: string; customPrompt?: string }[];
   /** Optional custom user refinement prompt notes per mockup index. */
   customRefinementNotes?: Record<number, string>;
+  /** Cancels queued/provider work when the browser disconnects or the user stops the job. */
+  signal?: AbortSignal;
+  /** Shared provider semaphore supplied by the API route. */
+  acquireImageSlot?: (
+    signal?: AbortSignal,
+    pool?: "cheapkeyai" | "openai" | "gemini" | "chatgpt-web" | "default",
+  ) => Promise<{ release(): Promise<void> }>;
   /** Called immediately after each AI image is ready, before the next image starts. */
   onMockupReady?: (mockup: MockupResult) => Promise<void> | void;
 }
@@ -236,11 +244,21 @@ export async function generateAllMockups(
     }
   });
 
-  const normalizedDesignBuffer = await normalizeDesignImage(inputDesignBuffer);
+  throwIfAborted(options.signal);
+  const normalizedDesign = await normalizeDesignImage(
+    inputDesignBuffer,
+    model === "fast-graphic",
+  );
+  const normalizedDesignBuffer = normalizedDesign.buffer;
   const base64Design = normalizedDesignBuffer.toString("base64");
 
   const selectedIndexesSet = options.selectedIndexes
-    ? new Set(options.selectedIndexes)
+    ? new Set([
+      ...(options.selectedIndexes.includes(1) ? [1] : []),
+      ...Array.from(
+        new Set(options.selectedIndexes.filter((index) => index >= 2)),
+      ).slice(0, MAX_AI_MOCKUPS_PER_PRODUCT),
+    ])
     : null;
 
   const shouldRenderMockup1 =
@@ -255,9 +273,12 @@ export async function generateAllMockups(
     mockup1 = {
       index: 1,
       name: MOCKUP_TYPES[0].name,
-      type: MOCKUP_TYPES[0].fileName,
+      type: MOCKUP_TYPES[0].fileName.replace(
+        /\.[A-Za-z0-9]+$/,
+        normalizedDesign.extension,
+      ),
       buffer: normalizedDesignBuffer,
-      mimeType: "image/png",
+      mimeType: normalizedDesign.mimeType,
       description: MOCKUP_TYPES[0].description,
     };
     progressCallback?.(1, MOCKUP_TYPES[0].name, "success");
@@ -292,9 +313,9 @@ export async function generateAllMockups(
     }
     openaiInput = await toFile(
       normalizedDesignBuffer,
-      `${safeFileStem(sku)}-design.png`,
+      `${safeFileStem(sku)}-design${normalizedDesign.extension}`,
       {
-        type: "image/png",
+        type: normalizedDesign.mimeType,
       },
     );
   }
@@ -321,14 +342,27 @@ export async function generateAllMockups(
     targetMockups,
     configuredConcurrency(model),
     async (meta) => {
+      throwIfAborted(options.signal);
       progressCallback?.(meta.index, meta.name, "processing");
 
       let mockupBuffer: Buffer;
       let providerTrace: MockupResult["providerTrace"];
 
       const refinementNote = options.customRefinementNotes?.[meta.index];
+      const imagePool = isCheapKeyAIImageModel(model)
+        ? "cheapkeyai"
+        : model === "gemini-3.1-flash-image" || model === "gemini-3-pro-image"
+          ? "gemini"
+          : model === "chatgpt-web-automation"
+            ? "chatgpt-web"
+            : "openai";
+      const imageSlot = await options.acquireImageSlot?.(
+        options.signal,
+        imagePool,
+      );
 
-      if (isImageApiModel(model) && openaiClient && openaiInput) {
+      try {
+        if (isImageApiModel(model) && openaiClient && openaiInput) {
         const prompt = buildMockupPrompt(
           meta.promptKey,
           itemName,
@@ -337,17 +371,18 @@ export async function generateAllMockups(
           refinementNote,
         );
         const usesCheapKeyAI = isCheapKeyAIImageModel(model);
-        // Output quality and source fidelity are independent. CheapKeyAI bills
-        // GPT Image 2 per image, so preserve the uploaded artwork at high
-        // fidelity even when the requested output quality is low.
+        const upstreamModel = usesCheapKeyAI
+          ? process.env.CHEAPKEYAI_UPSTREAM_MODEL?.trim() ||
+            (model === "gpt-image-2-cheapkey" ? "gpt-image-2" : model)
+          : model;
+        // GPT Image 2 always uses high input fidelity and rejects this field.
+        // Only the GPT Image 1 family accepts input_fidelity.
         const inputFidelity =
-          usesCheapKeyAI
-            ? "high"
-            : model === "gpt-image-1.5"
-              ? quality === "low"
-                ? "low"
-                : "high"
-              : null;
+          upstreamModel === "gpt-image-1" || upstreamModel === "gpt-image-1.5"
+            ? quality === "low"
+              ? "low"
+              : "high"
+            : null;
         console.info(
           "[Image API edit attempt]",
           JSON.stringify({
@@ -362,10 +397,6 @@ export async function generateAllMockups(
             inputFidelity,
           }),
         );
-        const upstreamModel = usesCheapKeyAI
-          ? process.env.CHEAPKEYAI_UPSTREAM_MODEL?.trim() ||
-            (model === "gpt-image-2-cheapkey" ? "gpt-image-2" : model)
-          : model;
         const response = await openaiClient.images.edit(
           {
             model: upstreamModel,
@@ -379,10 +410,14 @@ export async function generateAllMockups(
             background: "opaque",
           },
           {
-            maxRetries: 0,
+            // CheapKeyAI may fan a retry out to another upstream channel. Do
+            // not let the SDK duplicate a slow/overloaded image request too.
+            maxRetries: usesCheapKeyAI ? 0 : configuredOpenAIRetries(),
             timeout: configuredOpenAITimeout(),
+            signal: options.signal,
           },
         );
+        throwIfAborted(options.signal);
         const b64 = response?.data?.[0]?.b64_json;
         if (!b64) {
           throw new Error(
@@ -434,7 +469,7 @@ export async function generateAllMockups(
           }),
         );
         mockupBuffer = Buffer.from(b64, "base64");
-      } else if (genAI) {
+        } else if (genAI) {
         const prompt = buildMockupPrompt(
           meta.promptKey,
           itemName,
@@ -449,12 +484,13 @@ export async function generateAllMockups(
               role: "user",
               parts: [
                 { text: prompt },
-                { inlineData: { data: base64Design, mimeType: "image/png" } },
+                { inlineData: { data: base64Design, mimeType: normalizedDesign.mimeType } },
               ],
             },
           ],
           config: {
             responseModalities: ["IMAGE"],
+            abortSignal: options.signal,
             httpOptions: {
               timeout: configuredGeminiTimeout(),
               retryOptions: {
@@ -465,6 +501,7 @@ export async function generateAllMockups(
             },
           },
         });
+        throwIfAborted(options.signal);
         const imagePart = response?.candidates?.[0]?.content?.parts?.find(
           (part: { inlineData?: { data?: string } }) => part.inlineData?.data,
         );
@@ -472,7 +509,7 @@ export async function generateAllMockups(
           throw new Error(`Gemini không trả về dữ liệu ảnh cho ${meta.name}.`);
         }
         mockupBuffer = Buffer.from(imagePart.inlineData.data, "base64");
-      } else if (isChatGPTWebModel(model)) {
+        } else if (isChatGPTWebModel(model)) {
         const prompt = buildMockupPrompt(
           meta.promptKey,
           itemName,
@@ -481,14 +518,21 @@ export async function generateAllMockups(
           refinementNote,
         );
         console.info(`[ChatGPT Web Automation] Generating ${meta.name} with prompt: ${prompt.substring(0, 100)}...`);
-        mockupBuffer = await generateChatGPTWebImage(prompt, { inputImageBuffer: normalizedDesignBuffer });
-      } else {
-        mockupBuffer = await renderGraphicMockup(meta.promptKey, {
-          sku,
-          itemName,
-          dimensions,
-          base64Design,
-        });
+        mockupBuffer = await raceWithSignal(
+          generateChatGPTWebImage(prompt, { inputImageBuffer: normalizedDesignBuffer }),
+          options.signal,
+        );
+        } else {
+          mockupBuffer = await renderGraphicMockup(meta.promptKey, {
+            sku,
+            itemName,
+            dimensions,
+            base64Design,
+            base64MimeType: normalizedDesign.mimeType,
+          });
+        }
+      } finally {
+        await imageSlot?.release();
       }
 
       const result = mockupResult(
@@ -504,67 +548,6 @@ export async function generateAllMockups(
 
   const allResults = mockup1 ? [mockup1, ...generatedResults] : generatedResults;
   return allResults.sort((a, b) => a.index - b.index);
-}
-
-
-
-type VerifiedMockupMaterial = "glass" | "wood" | "acrylic" | "ceramic" | "resin";
-
-function inferMaterialFromText(value: string): VerifiedMockupMaterial | null {
-  const normalized = value.toLowerCase();
-  if (/(?:glass\s+ornament|beveled?\s+glass|crystal\s+glass|\bglass\b|thủy\s*tinh|thuỷ\s*tinh|pha\s*lê)/iu.test(normalized)) return "glass";
-  if (/(?:wooden\s+ornament|wood\s+ornament|\bgỗ\b|\bwood\b)/iu.test(normalized)) return "wood";
-  if (/(?:acrylic|mica)/iu.test(normalized)) return "acrylic";
-  if (/(?:ceramic|porcelain|gốm|sứ)/iu.test(normalized)) return "ceramic";
-  if (/(?:resin|nhựa)/iu.test(normalized)) return "resin";
-  return null;
-}
-
-function inferVerifiedMockupMaterial(itemName: string, productContext?: string) {
-  const explicitMaterialLine = (productContext || "")
-    .split(/\r?\n/)
-    .find((line) => /(?:chất\s*liệu|material)\s*:/iu.test(line));
-
-  return (
-    (explicitMaterialLine ? inferMaterialFromText(explicitMaterialLine) : null) ||
-    inferMaterialFromText(itemName) ||
-    inferMaterialFromText(productContext || "")
-  );
-}
-
-function buildVerifiedMaterialLock(itemName: string, productContext?: string) {
-  switch (inferVerifiedMockupMaterial(itemName, productContext)) {
-    case "glass":
-      return `
-XÁC NHẬN CHẤT LIỆU TỪ TÊN/DESCRIPTION TRELLO — ƯU TIÊN CAO NHẤT:
-- Sản phẩm này được xác nhận là GLASS ORNAMENT / THỦY TINH. Đây là dữ liệu sản phẩm có thẩm quyền, không được ghi đè chỉ vì góc chụp hoặc vùng thiết kế in làm kính trông đục.
-- Giữ thân kính trong suốt, phản xạ và khúc xạ tự nhiên cùng viền kính vát cạnh lấp lánh theo đúng Ảnh 1. TUYỆT ĐỐI KHÔNG chuyển thành resin, ceramic, gỗ, kim loại hoặc acrylic mờ.
-- Kính có thể mang BẤT KỲ silhouette nào như trái tim, tròn, vuông hoặc die-cut. Không đổi hình trái tim thành đĩa tròn và không thêm vòng kính ngoài.
-- Phần thiết kế được in có thể đậm và không xuyên sáng; điều đó KHÔNG biến vật liệu nền hoặc viền sản phẩm thành chất liệu đục.
-`;
-    case "wood":
-      return `
-XÁC NHẬN CHẤT LIỆU TỪ TÊN/DESCRIPTION TRELLO — ƯU TIÊN CAO NHẤT:
-- Sản phẩm này được xác nhận là GỖ / WOOD. Giữ bề mặt đục, vân gỗ và cạnh gỗ; tuyệt đối không biến thành kính hoặc acrylic trong suốt.
-`;
-    case "acrylic":
-      return `
-XÁC NHẬN CHẤT LIỆU TỪ TÊN/DESCRIPTION TRELLO — ƯU TIÊN CAO NHẤT:
-- Sản phẩm này được xác nhận là ACRYLIC. Giữ đúng độ trong/đục và kiểu cạnh acrylic từ Ảnh 1; không đổi thành kính, gỗ, ceramic hoặc resin.
-`;
-    case "ceramic":
-      return `
-XÁC NHẬN CHẤT LIỆU TỪ TÊN/DESCRIPTION TRELLO — ƯU TIÊN CAO NHẤT:
-- Sản phẩm này được xác nhận là CERAMIC / GỐM SỨ. Giữ thân đục và men ceramic; tuyệt đối không biến thành kính hoặc acrylic trong suốt.
-`;
-    case "resin":
-      return `
-XÁC NHẬN CHẤT LIỆU TỪ TÊN/DESCRIPTION TRELLO — ƯU TIÊN CAO NHẤT:
-- Sản phẩm này được xác nhận là RESIN / NHỰA. Giữ đúng độ đục, texture và finish từ Ảnh 1; tuyệt đối không biến thành kính.
-`;
-    default:
-      return "";
-  }
 }
 
 export function buildMockupPrompt(
@@ -844,109 +827,33 @@ thickness"
       : "";
 
   const productContextLine = productContext?.trim()
-    ? `\nThông tin bổ sung từ thẻ sản phẩm:\n${productContext.trim()}\n`
+    ? `\nTHÔNG TIN BỔ SUNG TỪ THẺ SẢN PHẨM — chỉ dùng khi không mâu thuẫn với yêu cầu riêng hoặc Ảnh 1:\n${productContext.trim()}\n`
     : "";
-
-  const verifiedMaterialLock = buildVerifiedMaterialLock(itemName, productContext);
 
   const refinementLine = refinementNote?.trim()
     ? `\n\n[CHỈ DẪN TINH CHỈNH TỪ NGƯỜI DÙNG / USER REFINEMENT NOTE]:\n${refinementNote.trim()}\n`
     : "";
 
-  return `Sử dụng Ảnh 1 làm ảnh tham chiếu cho sản phẩm "${itemName}".${productContextLine}${verifiedMaterialLock}
+  return `Tạo một ảnh mockup thương mại mới cho sản phẩm "${itemName}", sử dụng Ảnh 1 làm tham chiếu hình ảnh chính.
 
-Quan sát Ảnh 1 để nhận diện chính xác:
-- hình dáng và tỷ lệ sản phẩm
-- chất liệu, độ trong/đục, độ bóng/mờ và cấu tạo cạnh
-- thiết kế in
-- chữ và typography
-- các hình minh họa
-- màu sắc của CÁC CHI TIẾT ĐƯỢC IN
-- lỗ treo và thiết kế dây treo (loại dây, màu dây, chất liệu dây, số lượng lỗ treo)
+THỨ TỰ ƯU TIÊN:
+1. Yêu cầu riêng của Content bên dưới.
+2. Các đặc điểm sản phẩm nhìn thấy rõ trong Ảnh 1.
+3. Thông tin bổ sung từ thẻ sản phẩm.
 
-CỐ ĐỊNH DÂY TREO VÀ LỖ TREO TỪ ẢNH 1 (EXACT HANGING STRING / RIBBON FIDELITY):
-- NẾU SẢN PHẨM TRONG ẢNH 1 KHÔNG CÓ DÂY TREO (ví dụ: đĩa sứ đặt bàn, khay đựng, cốc, biển đứng tabletop): TUYỆT ĐỐI KHÔNG TỰ Ý THÊM DÂY TREO, NƠ HAY LỖ TREO Ở ĐỈNH SẢN PHẨM!
-- QUAN SÁT KỸ DÂY TREO TRONG ẢNH 1: Copy chính xác 100% màu sắc dây (ruy-băng đỏ, ruy-băng trắng, dây thừng đay nâu, dây kim loại...), chất liệu dây (satin, đay, xích...) và kiểu xỏ lỗ (1 lỗ, 2 lỗ ở đỉnh...) từ Ảnh 1.
-- TUYỆT ĐỐI KHÔNG TỰ Ý ĐỔI MÀU DÂY TREO HAY THAY THẾ BẰNG XÍCH KIM LOẠI: Ví dụ nếu Ảnh 1 dùng dây ruy-băng đỏ, bắt buộc giữ nguyên dây ruy-băng đỏ, KHÔNG được tự ý chuyển thành dây trắng hay xích kim loại!
+NGUYÊN TẮC CHUNG TRUNG TÍNH:
+- Không mặc định bất kỳ loại sản phẩm, chất liệu, hình dạng, công dụng, dịp lễ hoặc phong cách bối cảnh nào.
+- Giữ đúng sản phẩm trong Ảnh 1: đường viền ngoài, tỷ lệ, cấu tạo, vật liệu, độ trong/đục, màu nền vật liệu, bề mặt, độ bóng/mờ, độ dày và kiểu hoàn thiện cạnh.
+- Giữ nguyên thiết kế POD: artwork, chữ, typography, hình minh họa, màu sắc và bố cục. Không viết lại, sửa chính tả, dịch, thay thế hoặc sáng tạo lại nội dung in.
+- Không tự thêm hoặc thay đổi bộ phận, phụ kiện hay kết cấu không có trong Ảnh 1 và không được yêu cầu riêng nêu rõ. Chỉ hiển thị phụ kiện khi có căn cứ từ ảnh hoặc yêu cầu riêng.
+- Phân biệt sản phẩm thật với nền ảnh nguồn. Khi đổi bối cảnh, chỉ thay phần môi trường; không biến nền cũ thành một phần của sản phẩm.
+- Ánh sáng, phản xạ, bóng đổ và phối cảnh phải phù hợp vật lý với đúng vật liệu và hình học của sản phẩm.
+- Nếu thông tin bổ sung mơ hồ hoặc mâu thuẫn, ưu tiên yêu cầu riêng và những gì quan sát được trong Ảnh 1; không tự suy đoán để lấp chỗ trống.
+${productContextLine}
 
-CỐ ĐỊNH HÌNH DÁNG SẢN PHẨM & TUYỆT ĐỐI KHÔNG TỰ THÊM ĐĨA KÍNH TRÒN:
-- Giữ CHÍNH XÁC hình dạng đường viền ngoài (contour silhouette) của sản phẩm trong Ảnh 1.
-- Nếu Ảnh 1 là sản phẩm cắt theo khuôn riêng (die-cut shape như hình ngôi nhà, hình bản đồ bang, hình ngôi sao, hình cây thông, hình áo, hình trái tim...), chỉ tái hiện đúng hình dạng cắt die-cut đó.
-- TUYỆT ĐỐI KHÔNG tự động bọc thêm một đĩa kính tròn (circular glass disc), khung kính ngoài, hay vòng kính bao quanh sản phẩm nếu Ảnh 1 không phải là hình đĩa kính tròn.
-
-BẢO TỒN CHẤT LIỆU VẬT LÝ GỐC CỦA SẢN PHẨM (STRICT MATERIAL FIDELITY):
-1. NẾU SẢN PHẨM TRONG ẢNH 1 LÀ KÍNH / THỦY TINH / PHA LÊ / ACRYLIC TRONG SUỐT (GLASS ORNAMENT):
-   - QUY TẮC SO SÁNH NỀN ẢNH ĐỂ PHÂN BIỆT KÍNH TRONG SUỐT VỚI HỌA TIẾT IN (GLASS TRANSPARENCY VS PRINTED ARTWORK DISCRIMINATION):
-     * NẾU MÀU BÊN TRONG LÒNG KÍNH TRÙNG/ĐỒNG DẠNG VỚI NỀN BÊN NGOÀI SẢN PHẨM TRONG ẢNH 1 (Ví dụ: bên ngoài là cành thông xanh, bên trong lòng kính trái tim cũng nhìn thấy cành thông xanh):
-       -> Đó LÀ NỀN ẢNH BÊN NGOÀI NHÌN XUYÊN QUA KÍNH TRONG SUỐT!
-       -> Trong mockup mới: BẮT BUỘC BỎ NỀN ẢNH CŨ (cành thông xanh cũ), giữ phần kính không in LÀ KÍNH TRẮNG TRONG SUỐT 100%, để nền mới của mockup (gỗ, marble, lụa, bokeh...) nhìn xuyên và khúc xạ qua kính!
-     * NẾU MÀU BÊN TRONG LÒNG KÍNH KHÁC HOÀN TOÀN NỀN BÊN NGOÀI SẢN PHẨM TRONG ẢNH 1 (Ví dụ: nền ảnh bên ngoài là đèn bokeh vàng/sáng, nhưng bên trong đĩa kính lại là một mảng hình tròn MÀU ĐEN/ĐẬM kèm đại bàng, cờ và chữ):
-       -> Mảng màu đen/đậm bên trong đó LÀ MẢNG NỀN HỌA TIẾT IN THUỘC THIẾT KẾ GỐC (Opaque Printed Artwork Background)!
-       -> Trong mockup mới: BẮT BUỘC GIỮ NGUYÊN 100% mảng họa tiết in màu đen/đậm đó như thiết kế gốc trên mặt kính. TUYỆT ĐỐI KHÔNG xóa mảng màu đen đó và KHÔNG làm thủng kính!
-   - ĐĨA KÍNH TRẮNG TRONG SUỐT TUYỆT ĐỐI (ULTRA BRIGHT WHITE CRYSTAL GLASS):
-     Thân và viền kính PHẢI LÀ KÍNH TRẮNG TRONG SUỐT SIÊU SÁNG, TINH KHIẾT NHƯ PHA LÊ CAO CẤP (ultra bright pristine white crystal glass, high-key white studio backlight, luminous transparency) đồng thời giữ đúng silhouette gốc, kể cả hình tim hoặc die-cut.
-   - TUYỆT ĐỐI KHÔNG CÓ SƯƠNG MỜ, KHÔNG XÁM ĐỤC, KHÔNG NÂU MỜ (ZERO GREY HAZE, ZERO FOG OPACITY, NO BROWN OR GREY SHADOW INSIDE GLASS BODY). Vùng kính không in phải xuyên sáng tinh khiết với ánh sáng trắng tươi từ bối cảnh.
-   - ĐƯỜNG VÁT CẠNH KÍNH LẮP LÁNH SẮC NÉT (SPARKLING PRISMATIC BEVELED EDGE): Viền ngoài bám đúng silhouette sản phẩm và có các vạt vát kim cương lấp lánh (diamond-cut beveled glass facets, bright white specular edge highlights, crystal rim light) rõ nét như Ảnh 1.
-   - MÀU SẮC TƯƠI TẮN & ĐỘ TƯƠNG PHẢN ĐẬM ĐÀ (VIVID RICH COLOR SATURATION - NOT WASHED OUT OR PALE): Màu sắc của thiết kế in (màu hồng, đỏ, bạc...), màu hộp quà đỏ rực và màu xanh cành thông phải đạt độ bão hòa rực rỡ, tương phản tươi tắn sắc nét, TUYỆT ĐỐI KHÔNG bị nhợt nhạt hay cháy sáng mờ nhạt.
-
-2. NẾU SẢN PHẨM TRONG ẢNH 1 LÀ SẢN PHẨM ĐỤC / GỖ / CERAMIC / RESIN / KIM LOẠI / VẢI (NON-GLASS PRODUCT):
-   - TUYỆT ĐỐI KHÔNG BIẾN SẢN PHẨM THÀNH KÍNH TRONG SUỐT HAY ACRYLIC TRONG SUỐT! KHÔNG TỰ Ý GẮN VIỀN KÍNH VÁT CẠNH!
-   - GIỮ NGUYÊN 100% CHẤT LIỆU ĐỤC VỐN CÓ TỪ ẢNH 1: viền gỗ sẫm màu (dark wood edge/border), vân gỗ tự nhiên (wood grain texture), bề mặt đục, texture và finish nguyên bản của Ảnh 1.
-   - Bề mặt nền không in giữ đúng màu sắc, độ đục và texture nền đục ban đầu của vật liệu gỗ/ceramic/resin.
-
-QUAN TRỌNG VỀ CHẤT LIỆU & PHÂN TÍCH ẢNH 1:
-- Chủ động phân tích trực tiếp Ảnh 1 để nhận biết chất liệu qua texture, độ trong/đục, độ bóng/mờ, phản xạ, cấu tạo bề mặt và kiểu cạnh; không yêu cầu mô tả thẻ phải ghi vật liệu.
-- Chỉ dùng tên sản phẩm hoặc thông tin bổ sung để hỗ trợ khi chúng thực sự nêu rõ chất liệu; dòng kích thước không phải là thông tin vật liệu.
-- Nếu không thể kết luận chắc chắn chất liệu, giữ nguyên diện mạo vật lý quan sát được trong Ảnh 1 và không tự gán một chất liệu cụ thể.
-- Sản phẩm có thể làm từ glass, acrylic, gỗ, kim loại, ceramic, nhựa, vải hoặc chất liệu khác.
-- KHÔNG mặc định sản phẩm là glass/acrylic, pha lê hoặc trong suốt nếu dữ liệu tham chiếu không xác nhận điều đó.
-- Giữ đúng độ trong suốt hoặc độ đục, màu nền vật liệu, texture, độ bóng/mờ, độ dày và kiểu cạnh của sản phẩm gốc.
-
-LƯU Ý NGUYÊN TẮC QUAN TRỌNG:
-- Phân biệt chính xác phần thiết kế in với màu sắc/texture vốn có của vật liệu nền.
-- Với vật liệu trong suốt: chỉ vùng thực sự không được in mới nhìn xuyên qua background mới; tái hiện khúc xạ và phản xạ tự nhiên.
-- Với vật liệu đục: giữ đúng màu và texture của bề mặt, không biến vùng không in thành trong suốt.
-- Với bề mặt gỗ, kim loại, ceramic, nhựa hoặc vải: tái hiện đúng grain, reflection, glaze, texture và finish tương ứng; không biến chúng thành kính.
-- Không tự ý xóa nền vật liệu, đổi chất liệu hoặc thêm hiệu ứng trong suốt không có trong dữ liệu tham chiếu.
-
-CẠNH SẢN PHẨM:
-Giữ đúng độ dày, hình dạng và kiểu hoàn thiện cạnh của sản phẩm tham chiếu.
-Chỉ tạo bevel, refraction, metallic reflection, wood grain hoặc đường may khi phù hợp với chất liệu thực tế.
-Highlight và phản xạ phải tự nhiên, không làm thay đổi bản chất vật liệu.
-
-ÁNH SÁNG:
-Sử dụng phong cách chụp sản phẩm high-key, sáng và sạch.
-Ánh sáng phải làm nổi bật texture và finish thực tế của chất liệu mà không làm đổi màu sản phẩm.
-Chỉ dùng backlight xuyên thấu, specular highlight mạnh hoặc hiệu ứng lấp lánh khi phù hợp với chất liệu.
-Không phủ màu vàng, amber, orange hoặc muddy lên toàn bộ sản phẩm.
-
-DYNAMIC OCCASION, THEME & ENVIRONMENT ADAPTABILITY (AI QUÉT ẢNH 1 VÀ TỰ ĐÁNH GIÁ CHỦ ĐỀ ĐỂ TẠO BỐI CẢNH):
-- AI VISION QUÉT TRỰC TIẾP ẢNH 1 ĐỂ NHẬN DIỆN CHỦ ĐỀ (AUTOMATIC VISUAL THEME EVALUATION FROM IMAGE 1):
-  * Bản đồ Bang Mỹ / Thành phố / Du lịch (State Outline / Map / New Jersey / Texas...): Tự nhận diện khuôn bản đồ bang/tên bang như "New Jersey" -> Ưu tiên bối cảnh gương chiếu hậu ô tô nhìn ra cung đường du lịch (scenic highway/road trip view) hoặc bối cảnh phòng khách ấm áp thể hiện niềm tự hào quê hương (Home State pride).
-  * Chó / Mèo / Thú cưng (Dog/Pet Lover): Tự nhận diện hình chú chó/mèo/chữ "Dog Mom" -> Tạo bối cảnh phòng khách ấm cúng, sofa, thảm plush sáng hoặc góc thảm thanh lịch.
-  * Đám cưới / Kỷ niệm (Wedding/Anniversary): Tự nhận diện cô dâu chú rể/chữ "Mr & Mrs", "Our First Christmas" -> Tạo bối cảnh lãng mạn nhẹ nhàng, thảm lụa champagne, hoa nhàn nhạt, bàn gỗ sáng.
-  * Em bé mới sinh (New Baby/Baby's 1st): Tự nhận diện đôi chân em bé/chữ "Baby First" -> Tạo bối cảnh nôi trẻ em, phòng baby tone pastel sáng mịn, nơ lụa mềm mại.
-  * Ngành nghề (Y tế/Y tá, Giáo viên, Cảnh sát, Lính hỏa hoạn...): Tự nhận diện biểu tượng ngành nghề -> Tạo bối cảnh góc làm việc thanh lịch, bàn sách gỗ sáng, phụ kiện ngành nghề.
-  * Thể thao / Câu cá / Dã ngoại (Fishing, Golf, Camping...): Tự nhận diện cần câu/lều/con cá -> Tạo bối cảnh thiên nhiên mộc mạc ngoài trời, bàn gỗ tự nhiên, không gian dã ngoại.
-  * Tưởng niệm / Tình cảm gia đình (Memorial, Angel, Family, Grandma...): Tự nhận diện cánh thiên thần/chữ "In Loving Memory" -> Tạo bối cảnh ấm cúng gần cửa sổ nắng ban mai, nến thơm, hoa khô thanh lịch.
-  * Giáng Sinh / Lễ hội (Christmas/Holiday): Tự nhận diện biểu tượng Noel -> Tạo bối cảnh cành thông xanh tươi, đèn bokeh Giáng sinh lung linh, hộp quà rực rỡ.
-- CHỈ ĐỊNH NGHIÊM NGẶT: AI PHẢI QUÉT VÀ ĐÁNH GIÁ CHỦ ĐỀ TỪ ẢNH 1. Tuyệt đối KHÔNG gán nền Giáng sinh/cây thông cho các sản phẩm không có yếu tố Giáng sinh hoặc sản phẩm dùng quanh năm!
-- Bối cảnh phía sau sản phẩm phải sáng, mềm và có shallow depth of field tự nhiên với soft bokeh hài hòa.
-- Không đặt một mảng tối hoặc vật thể tối phủ kín ngay phía sau toàn bộ sản phẩm.
-
-Giữ thiết kế in rõ nét và trung thành với ảnh tham chiếu.
-Không tự ý thay đổi nội dung chữ, hình minh họa hoặc bố cục thiết kế.
-
-Mục tiêu hình ảnh:
-commercial product photography,
-material-accurate rendering,
-faithful opacity and surface texture,
-physically appropriate highlights and reflections,
-clean professional studio rim light.
-
-Concept: ${concept}${dimensionsLine}${refinementLine}`;
+YÊU CẦU RIÊNG CỦA CONTENT — ƯU TIÊN CAO NHẤT:
+${concept}${dimensionsLine}${refinementLine}`;
 }
-
 
 function mockupResult(
   meta: (typeof MOCKUP_TYPES)[number] | {
@@ -970,22 +877,39 @@ function mockupResult(
   };
 }
 
-async function normalizeDesignImage(input: Buffer): Promise<Buffer> {
+async function normalizeDesignImage(
+  input: Buffer,
+  forcePng = false,
+): Promise<{ buffer: Buffer; mimeType: string; extension: string }> {
+  if (input.byteLength > OPENAI_INPUT_LIMIT_BYTES) {
+    throw new Error("Ảnh thiết kế vượt quá giới hạn 50 MB của Image API.");
+  }
+
   let normalized: Buffer;
+  let mimeType: "image/png" | "image/jpeg";
   try {
-    normalized = await sharp(input)
+    const metadata = await sharp(input, { failOn: "warning" }).metadata();
+    const pipeline = sharp(input, { failOn: "warning" })
       .rotate()
       .resize({
-        width: 2048,
-        height: 2048,
+        width: configuredInputMaxDimension(),
+        height: configuredInputMaxDimension(),
         fit: "inside",
         withoutEnlargement: true,
-      })
-      .png()
-      .toBuffer();
+      });
+    if (forcePng || metadata.hasAlpha || metadata.format === "png") {
+      mimeType = "image/png";
+      normalized = await pipeline.png({ compressionLevel: 9 }).toBuffer();
+    } else {
+      mimeType = "image/jpeg";
+      normalized = await pipeline
+        .flatten({ background: "#ffffff" })
+        .jpeg({ quality: 92, chromaSubsampling: "4:4:4", mozjpeg: true })
+        .toBuffer();
+    }
   } catch (error) {
     throw new Error(
-      "Ảnh thiết kế không thể chuyển sang PNG để gửi tới model tạo ảnh.",
+      "Ảnh thiết kế không thể chuẩn hóa để gửi tới model tạo ảnh.",
       { cause: error },
     );
   }
@@ -995,7 +919,11 @@ async function normalizeDesignImage(input: Buffer): Promise<Buffer> {
       "Ảnh thiết kế vượt quá giới hạn 50 MB của Image API.",
     );
   }
-  return normalized;
+  return {
+    buffer: normalized,
+    mimeType,
+    extension: mimeType === "image/png" ? ".png" : ".jpg",
+  };
 }
 
 async function validateGeneratedMockup(input: Buffer): Promise<{
@@ -1112,6 +1040,18 @@ export function classifyMockupGenerationError(
   }
 
   if (
+    searchable.includes("上游负载已饱和") ||
+    searchable.includes("upstream load") ||
+    searchable.includes("upstream is overloaded")
+  ) {
+    return {
+      message:
+        "Upstream của CheapKeyAI đang quá tải. Hệ thống đã dừng request này và không tự retry; hãy chờ một lúc rồi thử lại.",
+      status: 429,
+    };
+  }
+
+  if (
     status === 429 ||
     searchable.includes("resource_exhausted") ||
     searchable.includes("rate limit")
@@ -1138,6 +1078,8 @@ export function classifyMockupGenerationError(
   if (
     searchable.includes("fetch failed") ||
     searchable.includes("etimedout") ||
+    searchable.includes("timed out") ||
+    searchable.includes("request timeout") ||
     searchable.includes("econnreset") ||
     searchable.includes("socket hang up") ||
     searchable.includes("operation was aborted") ||
@@ -1184,6 +1126,20 @@ function configuredOpenAITimeout() {
     : 600_000;
 }
 
+function configuredOpenAIRetries() {
+  const parsed = Number(process.env.OPENAI_IMAGE_RETRY_ATTEMPTS || 1);
+  return Number.isFinite(parsed)
+    ? Math.min(2, Math.max(0, Math.round(parsed)))
+    : 1;
+}
+
+function configuredInputMaxDimension() {
+  const parsed = Number(process.env.MOCKUP_INPUT_MAX_DIMENSION || 1536);
+  return Number.isFinite(parsed)
+    ? Math.min(2048, Math.max(1024, Math.round(parsed)))
+    : 1536;
+}
+
 function configuredCheapKeyAIBaseUrl() {
   return (
     process.env.CHEAPKEYAI_BASE_URL?.trim().replace(/\/+$/, "") ||
@@ -1213,12 +1169,12 @@ function configuredConcurrency(model: MockupModel) {
   const configured = isGeminiImage
     ? process.env.GEMINI_IMAGE_CONCURRENCY
     : process.env.IMAGE_GENERATION_CONCURRENCY;
-  const fallback = isGeminiImage ? 1 : 3;
+  const fallback = isGeminiImage ? 1 : 6;
   const parsed = Number(configured || fallback);
   const maxAllowed = isCheapKeyAI ? 3 : 6;
   return Number.isFinite(parsed)
     ? Math.min(maxAllowed, Math.max(1, Math.round(parsed)))
-    : fallback;
+    : Math.min(maxAllowed, fallback);
 }
 
 async function mapWithConcurrency<T, R>(
@@ -1254,6 +1210,33 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) {
+    throw signal.reason || new DOMException("Tác vụ tạo ảnh đã bị hủy.", "AbortError");
+  }
+}
+
+async function raceWithSignal<T>(promise: Promise<T>, signal?: AbortSignal) {
+  if (!signal) return promise;
+  throwIfAborted(signal);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      reject(signal.reason || new DOMException("Tác vụ tạo ảnh đã bị hủy.", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
 export async function renderGraphicMockup(
   promptKey: string,
   params: {
@@ -1261,9 +1244,16 @@ export async function renderGraphicMockup(
     itemName: string;
     dimensions: Dimensions3D;
     base64Design: string;
+    base64MimeType?: string;
   },
 ): Promise<Buffer> {
-  const { sku, itemName, dimensions, base64Design } = params;
+  const {
+    sku,
+    itemName,
+    dimensions,
+    base64Design,
+    base64MimeType = "image/png",
+  } = params;
 
   let bgGradient = "linear-gradient(135deg, #1e293b 0%, #0f172a 100%)";
   let titleBadge = "DIMENSIONS 3D";
@@ -1427,7 +1417,7 @@ export async function renderGraphicMockup(
 
     <!-- Embedded Artwork -->
     <g clip-path="url(#circleClip)">
-      <image href="data:image/png;base64,${base64Design}" x="232" y="200" width="560" height="560" preserveAspectRatio="xMidYMid slice"/>
+      <image href="data:${base64MimeType};base64,${base64Design}" x="232" y="200" width="560" height="560" preserveAspectRatio="xMidYMid slice"/>
     </g>
 
     <!-- Subtle Material-Neutral Edge Accent -->

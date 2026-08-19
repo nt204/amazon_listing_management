@@ -25,6 +25,40 @@ export interface TrelloAttachment {
   }>;
 }
 
+export function isTrelloRequestTimeoutError(error: unknown) {
+  const name = error instanceof Error ? error.name.toLowerCase() : "";
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  return (
+    name === "timeouterror" ||
+    message.includes("timed out") ||
+    message.includes("timeout") ||
+    message.includes("aborted due to timeout")
+  );
+}
+
+/**
+ * An upload can reach Trello even when the client times out before receiving
+ * the response. Match only a newly-created attachment with the exact filename
+ * and byte size so an older mockup is never mistaken for that upload.
+ */
+export function findRecentlyUploadedTrelloAttachment(
+  attachments: readonly TrelloAttachment[],
+  expected: { name: string; bytes: number; startedAt: number },
+) {
+  const earliestAcceptedDate = expected.startedAt - 5_000;
+  return attachments
+    .filter((attachment) => {
+      if (!attachment.isUpload || attachment.name !== expected.name) return false;
+      if (attachment.bytes > 0 && attachment.bytes !== expected.bytes) return false;
+      const createdAt = Date.parse(attachment.date || "");
+      return Number.isFinite(createdAt) && createdAt >= earliestAcceptedDate;
+    })
+    .sort(
+      (first, second) =>
+        Date.parse(second.date || "") - Date.parse(first.date || ""),
+    )[0];
+}
+
 export interface StoredTrelloImageDerivativeReference {
   cardId: string;
   attachmentId: string;
@@ -303,6 +337,7 @@ export function formatRawTrelloKeywords(rawDesc: string): string {
 }
 
 const TRELLO_BASE_URL = "https://api.trello.com/1";
+const TRELLO_RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
 
 function buildUrl(path: string, key: string, token: string, params: Record<string, string> = {}) {
   const url = new URL(`${TRELLO_BASE_URL}${path}`);
@@ -312,6 +347,78 @@ function buildUrl(path: string, key: string, token: string, params: Record<strin
     url.searchParams.set(k, v);
   }
   return url.toString();
+}
+
+function trelloTimeoutMs() {
+  const parsed = Number(process.env.TRELLO_REQUEST_TIMEOUT_MS || 120_000);
+  return Number.isFinite(parsed)
+    ? Math.min(120_000, Math.max(10_000, Math.round(parsed)))
+    : 120_000;
+}
+
+function abortableDelay(ms: number, signal?: AbortSignal) {
+  if (signal?.aborted) {
+    return Promise.reject(
+      signal.reason || new DOMException("Tác vụ Trello đã bị hủy.", "AbortError"),
+    );
+  }
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timeout);
+      reject(signal?.reason || new DOMException("Tác vụ Trello đã bị hủy.", "AbortError"));
+    };
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    timeout.unref?.();
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function fetchTrelloWithRetry(
+  input: string | URL,
+  init: RequestInit,
+  signal?: AbortSignal,
+  options: { attempts?: number; retryNetworkErrors?: boolean } = {},
+) {
+  const attempts = Math.min(4, Math.max(1, options.attempts || 3));
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (signal?.aborted) {
+      throw signal.reason || new DOMException("Tác vụ Trello đã bị hủy.", "AbortError");
+    }
+    try {
+      const timeoutSignal = AbortSignal.timeout(trelloTimeoutMs());
+      const response = await fetch(input, {
+        ...init,
+        signal: signal
+          ? AbortSignal.any([signal, timeoutSignal])
+          : timeoutSignal,
+      });
+      if (!TRELLO_RETRYABLE_STATUS.has(response.status) || attempt === attempts) {
+        return response;
+      }
+
+      const retryAfterSeconds = Number(response.headers.get("retry-after") || 0);
+      await response.body?.cancel().catch(() => undefined);
+      const backoffMs = retryAfterSeconds > 0
+        ? retryAfterSeconds * 1_000
+        : 500 * 2 ** (attempt - 1) + Math.round(Math.random() * 250);
+      await abortableDelay(Math.min(10_000, backoffMs), signal);
+    } catch (error) {
+      if (signal?.aborted) throw signal.reason || error;
+      lastError = error;
+      if (!options.retryNetworkErrors || attempt === attempts) throw error;
+      await abortableDelay(
+        500 * 2 ** (attempt - 1) + Math.round(Math.random() * 250),
+        signal,
+      );
+    }
+  }
+
+  throw lastError || new Error("Không thể kết nối Trello.");
 }
 
 export async function fetchTrelloBoards(apiKey: string, token: string): Promise<TrelloBoard[]> {
@@ -353,10 +460,17 @@ export async function fetchTrelloCards(listId: string, apiKey: string, token: st
   }));
 }
 
-export async function fetchTrelloCardDetail(cardId: string, apiKey: string, token: string): Promise<TrelloCard> {
-  const response = await fetch(
+export async function fetchTrelloCardDetail(
+  cardId: string,
+  apiKey: string,
+  token: string,
+  signal?: AbortSignal,
+): Promise<TrelloCard> {
+  const response = await fetchTrelloWithRetry(
     buildUrl(`/cards/${cardId}`, apiKey, token, { attachments: "true", attachment_fields: "name,url,mimeType,bytes,isUpload,date,previews" }),
     { cache: "no-store" },
+    signal,
+    { retryNetworkErrors: true },
   );
   if (!response.ok) {
     const errText = await response.text().catch(() => "");
@@ -375,14 +489,15 @@ export async function moveTrelloCard(
   apiKey: string,
   token: string,
   pos: "top" | "bottom" | number = "top",
+  signal?: AbortSignal,
 ): Promise<TrelloCard> {
-  const response = await fetch(buildUrl(`/cards/${cardId}`, apiKey, token), {
+  const response = await fetchTrelloWithRetry(buildUrl(`/cards/${cardId}`, apiKey, token), {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ idList: targetListId, pos }),
-  });
+  }, signal, { retryNetworkErrors: true });
 
   if (!response.ok) {
     const errText = await response.text().catch(() => "");
@@ -399,6 +514,7 @@ export async function attachFileToTrelloCard(
   mimeType: string,
   apiKey: string,
   token: string,
+  signal?: AbortSignal,
 ): Promise<TrelloAttachment> {
   const formData = new FormData();
   const blob = new Blob([new Uint8Array(fileBuffer)], { type: mimeType });
@@ -406,10 +522,10 @@ export async function attachFileToTrelloCard(
   formData.append("name", fileName);
 
   const url = buildUrl(`/cards/${cardId}/attachments`, apiKey, token);
-  const response = await fetch(url, {
+  const response = await fetchTrelloWithRetry(url, {
     method: "POST",
     body: formData,
-  });
+  }, signal, { retryNetworkErrors: false });
 
   if (!response.ok) {
     const errText = await response.text().catch(() => "");
@@ -424,15 +540,16 @@ export async function deleteTrelloCardAttachment(
   attachmentId: string,
   apiKey: string,
   token: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   const url = buildUrl(
     `/cards/${encodeURIComponent(cardId)}/attachments/${encodeURIComponent(attachmentId)}`,
     apiKey,
     token,
   );
-  const response = await fetch(url, {
+  const response = await fetchTrelloWithRetry(url, {
     method: "DELETE",
-  });
+  }, signal, { retryNetworkErrors: true });
 
   if (!response.ok) {
     const errText = await response.text().catch(() => "");
@@ -478,6 +595,7 @@ export async function downloadTrelloAttachment(
   apiKey: string,
   token: string,
   maxBytes = 50_000_000,
+  signal?: AbortSignal,
 ): Promise<Buffer> {
   const trustedUrl = assertTrelloAttachmentUrl(url);
   const headers: Record<string, string> = {
@@ -485,9 +603,19 @@ export async function downloadTrelloAttachment(
     "User-Agent": "Mozilla/5.0 ListingDesk/1.0",
   };
 
-  const response = await fetch(trustedUrl, { headers });
+  const response = await fetchTrelloWithRetry(
+    trustedUrl,
+    { headers },
+    signal,
+    { retryNetworkErrors: true },
+  );
   if (!response.ok) {
-    const fallbackResponse = await fetch(trustedUrl);
+    const fallbackResponse = await fetchTrelloWithRetry(
+      trustedUrl,
+      {},
+      signal,
+      { retryNetworkErrors: true },
+    );
     if (!fallbackResponse.ok) {
       throw new Error(`Không thể tải đính kèm từ Trello HTTP ${response.status}`);
     }

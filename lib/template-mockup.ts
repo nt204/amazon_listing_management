@@ -357,7 +357,9 @@ export async function renderTemplateMockupWithAi(
         background: "opaque",
       },
       {
-        maxRetries: 3,
+        // CheapKeyAI already routes requests across upstream channels. Avoid
+        // multiplying slow 429/5xx requests in the SDK.
+        maxRetries: 0,
         timeout: configuredTimeout(),
       },
     );

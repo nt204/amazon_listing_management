@@ -161,8 +161,10 @@ export function getStoredCustomPresets(): ProductCategoryPreset[] {
 export function saveStoredCustomPresets(presets: ProductCategoryPreset[]): void {
   if (typeof window === "undefined") return;
   try {
-    const customOnly = presets.filter((p) => !p.isSystem);
-    localStorage.setItem(CUSTOM_PRESETS_STORAGE_KEY, JSON.stringify(customOnly));
+    // This is only an offline cache. PostgreSQL remains the shared source of truth.
+    // Keep system overrides too so a temporary network outage does not restore
+    // stale built-in prompts in this browser.
+    localStorage.setItem(CUSTOM_PRESETS_STORAGE_KEY, JSON.stringify(presets));
   } catch {
     // Ignore storage errors
   }
@@ -191,7 +193,7 @@ export function getAllPresets(): ProductCategoryPreset[] {
 
 export async function fetchPresetsFromServer(): Promise<ProductCategoryPreset[]> {
   try {
-    const res = await fetch("/api/presets");
+    const res = await fetch("/api/presets", { cache: "no-store" });
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data?.presets) && data.presets.length > 0) {
@@ -207,23 +209,54 @@ export async function fetchPresetsFromServer(): Promise<ProductCategoryPreset[]>
 
 export async function syncPresetsToServer(presets: ProductCategoryPreset[]): Promise<ProductCategoryPreset[]> {
   saveStoredCustomPresets(presets);
-  try {
-    const res = await fetch("/api/presets", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ presets }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data?.presets) && data.presets.length > 0) {
-        saveStoredCustomPresets(data.presets);
-        return data.presets;
-      }
-    }
-  } catch {
-    // Ignore server sync error
+  const data = await presetApiRequest("/api/presets", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ presets }),
+  });
+  saveStoredCustomPresets(data.presets);
+  return data.presets;
+}
+
+export async function savePresetToServer(
+  preset: ProductCategoryPreset,
+): Promise<ProductCategoryPreset[]> {
+  const data = await presetApiRequest("/api/presets", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ preset }),
+  });
+  saveStoredCustomPresets(data.presets);
+  return data.presets;
+}
+
+export async function deletePresetFromServer(
+  presetId: string,
+): Promise<ProductCategoryPreset[]> {
+  const data = await presetApiRequest(
+    `/api/presets?id=${encodeURIComponent(presetId)}`,
+    { method: "DELETE" },
+  );
+  saveStoredCustomPresets(data.presets);
+  return data.presets;
+}
+
+async function presetApiRequest(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<{ presets: ProductCategoryPreset[] }> {
+  const response = await fetch(input, init);
+  const data = (await response.json().catch(() => ({}))) as {
+    error?: string;
+    presets?: ProductCategoryPreset[];
+  };
+  if (!response.ok) {
+    throw new Error(data.error || `Không thể đồng bộ phôi (HTTP ${response.status}).`);
   }
-  return presets;
+  if (!Array.isArray(data.presets)) {
+    throw new Error("Server không trả về danh sách phôi dùng chung hợp lệ.");
+  }
+  return { presets: data.presets };
 }
 
 export function createNewPreset(

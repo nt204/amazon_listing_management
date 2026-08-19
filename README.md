@@ -159,6 +159,7 @@ Auth đang để `disabled` cho MVP nội bộ theo mặc định. Ở chế đ�
 ```bash
 npm run db:start
 npm run db:migrate
+npm run db:maintain          # dọn preview quá hạn, VACUUM/ANALYZE và kiểm tra ổ đĩa
 npm run db:backfill-images   # chỉ cần cho dữ liệu cũ còn inline image
 npm run db:revalidate        # chạy sau khi đổi rule/policy version
 npm run ocr:eval -- <listing-id>  # xem OCR của listing; bỏ ID để dùng listing mới nhất
@@ -166,6 +167,37 @@ npm run ai:eval -- <listing-id>   # chạy pipeline thật nhưng không ghi lis
 ```
 
 Production release phải chạy `npm run db:migrate` trước `npm run start`. Migration đã áp dụng được bảo vệ bằng checksum; không sửa file migration cũ, hãy thêm migration mới.
+
+### Bảo trì dung lượng production
+
+Ảnh mockup master nằm trên Trello. PostgreSQL chỉ giữ WebP preview 1280px và
+thumbnail 320px. Khi một attachment cũ được thay thế, derivative tương ứng được
+xóa ngay; derivative không được cập nhật trong 90 ngày cũng được dọn tự động sau
+các lượt tạo mockup.
+
+Đặt lệnh bảo trì chạy mỗi ngày lúc ít người dùng, ví dụ với cron trên VPS:
+
+```cron
+0 3 * * * cd /opt/listing-desk && /usr/bin/npm run db:maintain >> /var/log/listing-desk-maintenance.log 2>&1
+```
+
+Lệnh này dọn toàn bộ preview quá hạn theo batch rồi chạy `VACUUM (ANALYZE)` cho
+hai bảng ảnh. Nó trả exit code `1` khi ổ đĩa đạt ngưỡng cảnh báo và `2` ở ngưỡng
+nguy cấp để cron/monitoring gửi cảnh báo. Cấu hình mặc định:
+
+```env
+TRELLO_PREVIEW_RETENTION_DAYS=90
+DISK_WARNING_PERCENT=70
+DISK_CRITICAL_PERCENT=80
+# Trỏ tới filesystem chứa dữ liệu trên production nếu khác thư mục ứng dụng.
+DISK_MONITOR_PATH=/var/lib/listing-desk
+```
+
+`GET /api/health` trả thêm số byte trống/tổng và phần trăm đã dùng. Từ 70% nó
+trả trạng thái `warning`; từ 80% trả `critical` với HTTP 503. Nên nối endpoint
+này với uptime monitor của VPS. `VACUUM` định kỳ cho phép PostgreSQL tái sử dụng
+dung lượng; nếu cần thu nhỏ file database thật sự, chỉ chạy `VACUUM FULL` trong
+khung bảo trì vì thao tác đó khóa bảng.
 
 ## API chính
 

@@ -12,6 +12,9 @@ export interface ProductCategoryPreset {
   icon: string;
   isSystem?: boolean;
   contents: MockupContentItem[];
+  revision?: number;
+  updatedAt?: string;
+  updatedBy?: string;
 }
 
 export interface PresetExportPayload {
