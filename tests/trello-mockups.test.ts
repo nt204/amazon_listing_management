@@ -630,6 +630,34 @@ test("mockup prompts include product material context from the source card", () 
   assert.match(prompt, /không biến chúng thành kính/i);
 });
 
+test("hanging ornament prompts lock material from the Trello title or description", () => {
+  const dimensions = {
+    length: '3.3"',
+    width: '3.1"',
+    thickness: '0.15"',
+    formatted: '3.3" x 3.1" x 0.15"',
+  };
+  const glassPrompt = buildMockupPrompt(
+    "universal_dimensions",
+    "Glass Ornament Heart",
+    dimensions,
+    'Kích thước: 3.3” x 3.1” x 0.15”',
+  );
+  assert.match(glassPrompt, /được xác nhận là GLASS ORNAMENT/i);
+  assert.match(glassPrompt, /không được ghi đè/i);
+  assert.match(glassPrompt, /bất kỳ silhouette nào như trái tim/i);
+  assert.match(glassPrompt, /NEVER use blue, navy, cyan, teal/i);
+
+  const woodPrompt = buildMockupPrompt(
+    "universal_dimensions",
+    "Mr Mrs Wooden Ornament",
+    dimensions,
+    "generic keywords: anniversary glass ornament keepsake",
+  );
+  assert.match(woodPrompt, /được xác nhận là GỖ \/ WOOD/i);
+  assert.doesNotMatch(woodPrompt, /được xác nhận là GLASS ORNAMENT/i);
+});
+
 test("custom mockup prompts use the operator-provided scene", () => {
   const prompt = buildMockupPrompt(
     "custom:Minimalist living room shelf",
@@ -642,7 +670,27 @@ test("custom mockup prompts use the operator-provided scene", () => {
     },
   );
 
-  assert.match(prompt, /bối cảnh mockup tùy chỉnh theo yêu cầu: Minimalist living room shelf/i);
+  assert.match(prompt, /Minimalist living room shelf/i);
+});
+
+test("Square Ceramic Keepsake Plate Mockup 3 custom prompt is built correctly", () => {
+  const customPromptText =
+    "Front-facing plus slightly elevated isometric 3D view of the exact ceramic plate blank, clearly showing overall width, height, curved corner profile, and plate depth; clean professional dimension callout arrows along horizontal, vertical, and side-depth directions.";
+
+  const prompt = buildMockupPrompt(
+    `custom:${customPromptText}`,
+    "Square Ceramic Keepsake Plate",
+    {
+      length: '4.0"',
+      width: '4.0"',
+      thickness: '0.4"',
+      formatted: '4.0" x 4.0"',
+    },
+  );
+
+  assert.match(prompt, /Front-facing plus slightly elevated isometric 3D view/i);
+  assert.match(prompt, /clearly showing overall width, height/i);
+  assert.match(prompt, /TUYỆT ĐỐI KHÔNG TỰ Ý THÊM DÂY TREO/i);
 });
 
 test("buildMockupPrompt generates detailed prompts for Bullet Tumbler prompt keys", () => {

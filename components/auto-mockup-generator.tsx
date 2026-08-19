@@ -41,7 +41,9 @@ import {
   mockupIndexFromAttachmentName,
   type MockupModel,
 } from "@/lib/mockup-types";
-import { GlassOrnamentTemplateModal } from "@/components/glass-ornament-template-modal";
+import { getAllPresets, fetchPresetsFromServer } from "@/lib/mockup-preset-store";
+import { ProductPresetModal } from "@/components/product-preset-modal";
+import type { ProductCategoryPreset } from "@/types/mockup-preset";
 
 interface TrelloCard {
   id: string;
@@ -202,6 +204,7 @@ export interface MockupContentItem {
   label: string;
   checked: boolean;
   promptKey?: string;
+  customPrompt?: string;
 }
 
 export const MOCKUP_CATEGORY_PRESETS: Record<
@@ -290,14 +293,16 @@ export function AutoMockupGenerator({
     "low" | "medium" | "high"
   >(DEFAULT_MOCKUP_QUALITY);
 
-  const [selectedCategory, setSelectedCategory] = useState<MockupCategoryKey>("universal_standard");
-  const [mockupContents, setMockupContents] = useState<MockupContentItem[]>(
-    MOCKUP_CATEGORY_PRESETS.universal_standard.contents,
-  );
+  const [allPresets, setAllPresets] = useState<ProductCategoryPreset[]>(() => getAllPresets());
+  const [selectedCategory, setSelectedCategory] = useState<string>("universal_standard");
+  const [mockupContents, setMockupContents] = useState<MockupContentItem[]>(() => {
+    const loaded = getAllPresets();
+    return loaded[0]?.contents || MOCKUP_CATEGORY_PRESETS.universal_standard.contents;
+  });
 
   const [showAddContentModal, setShowAddContentModal] = useState(false);
   const [showManageModal, setShowManageModal] = useState(false);
-  const [showGlassTemplateModal, setShowGlassTemplateModal] = useState(false);
+  const [showProductPresetModal, setShowProductPresetModal] = useState(false);
   const [newContentLabel, setNewContentLabel] = useState("");
   const [contentNoticeMsg, setContentNoticeMsg] = useState<string>("");
 
@@ -388,6 +393,18 @@ export function AutoMockupGenerator({
     return () => window.clearTimeout(resetId);
   }, []);
 
+  useEffect(() => {
+    void fetchPresetsFromServer().then((loaded) => {
+      setAllPresets(loaded);
+      const savedCatId = localStorage.getItem(MOCKUP_CATEGORY_STORAGE_KEY) || selectedCategory;
+      const active = loaded.find((p) => p.id === savedCatId) || loaded[0];
+      if (active) {
+        setSelectedCategory(active.id);
+        setMockupContents(active.contents);
+      }
+    });
+  }, []);
+
   const saveContentsState = (
     updated: MockupContentItem[],
   ) => {
@@ -401,26 +418,14 @@ export function AutoMockupGenerator({
     }
   };
 
-  const handleSelectCategory = (catKey: MockupCategoryKey) => {
+  const handleSelectCategory = (catKey: string) => {
     setSelectedCategory(catKey);
-    const preset = MOCKUP_CATEGORY_PRESETS[catKey];
-    let updated = preset.contents;
-    try {
-      const saved = localStorage.getItem(`${MOCKUP_CONTENTS_STORAGE_KEY}_${catKey}`);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          updated = mergePresetWithSaved(catKey, parsed);
-        }
-      }
-    } catch {}
-
+    const found = allPresets.find((p) => p.id === catKey);
+    const updated = found ? found.contents : MOCKUP_CATEGORY_PRESETS.universal_standard.contents;
     setMockupContents(updated);
-    try {
-      localStorage.setItem(MOCKUP_CATEGORY_STORAGE_KEY, catKey);
-      localStorage.setItem(`${MOCKUP_CONTENTS_STORAGE_KEY}_${catKey}`, JSON.stringify(updated));
-    } catch {}
-    setContentNoticeMsg(`Đã chuyển sang mục "${preset.label}" (${updated.length} Content mẫu).`);
+    if (found) {
+      setContentNoticeMsg(`Đã chuyển sang mục "${found.label}" (${updated.length} Content mẫu).`);
+    }
   };
 
   const toggleContentCheck = (id: number) => {
@@ -449,7 +454,8 @@ export function AutoMockupGenerator({
 
   const resetToDefaultContents = () => {
     setContentNoticeMsg("");
-    const defaultContents = MOCKUP_CATEGORY_PRESETS[selectedCategory].contents;
+    const active = allPresets.find((p) => p.id === selectedCategory) || allPresets[0];
+    const defaultContents = active?.contents || MOCKUP_CATEGORY_PRESETS.universal_standard.contents;
     saveContentsState(defaultContents);
   };
 
@@ -501,9 +507,10 @@ export function AutoMockupGenerator({
   };
 
   const handleResetToSystemDefaults = () => {
-    const defaultContents = MOCKUP_CATEGORY_PRESETS[selectedCategory].contents;
+    const active = allPresets.find((p) => p.id === selectedCategory) || allPresets[0];
+    const defaultContents = active?.contents || MOCKUP_CATEGORY_PRESETS.universal_standard.contents;
     saveContentsState(defaultContents);
-    setContentNoticeMsg(`Đã khôi phục danh sách Content của mục "${MOCKUP_CATEGORY_PRESETS[selectedCategory].label}" về mặc định.`);
+    setContentNoticeMsg(`Đã khôi phục danh sách Content của mục "${active?.label || selectedCategory}" về mặc định.`);
   };
 
   const [loadingLists, setLoadingLists] = useState<boolean>(false);
@@ -549,32 +556,6 @@ export function AutoMockupGenerator({
   const allBoardCards = [...designCards, ...mockupCards];
   const activeStudioCard = allBoardCards.find((c) => c.id === studioModal?.cardId);
   const activeCardIndex = allBoardCards.findIndex((c) => c.id === studioModal?.cardId);
-  const selectedDesignCardForTemplate =
-    selectedCardIds.size === 1
-      ? designCards.find((card) => selectedCardIds.has(card.id))
-      : undefined;
-  const selectedDesignAttachmentForTemplate = selectedDesignCardForTemplate
-    ? findOriginalDesignAttachment(selectedDesignCardForTemplate)
-    : undefined;
-  const glassTemplateSource =
-    selectedDesignCardForTemplate && selectedDesignAttachmentForTemplate
-      ? {
-          cardId: selectedDesignCardForTemplate.id,
-          cardName: selectedDesignCardForTemplate.name,
-          sku: selectedDesignCardForTemplate.parsed?.sku,
-          attachmentId: selectedDesignAttachmentForTemplate.id,
-          attachmentName: selectedDesignAttachmentForTemplate.name,
-          attachmentUrl: selectedDesignAttachmentForTemplate.url,
-        }
-      : undefined;
-  const glassTemplateSourceNotice =
-    selectedCardIds.size !== 1
-      ? `Cần chọn đúng 1 thẻ trong cột DESIGN để tự động lấy ảnh gốc (hiện đang chọn ${selectedCardIds.size}). Bạn vẫn có thể upload ảnh thủ công trong modal.`
-      : !selectedDesignCardForTemplate
-        ? "Thẻ đã chọn không còn nằm trong cột DESIGN. Bạn vẫn có thể upload ảnh thủ công trong modal."
-        : !selectedDesignAttachmentForTemplate
-          ? `Thẻ “${selectedDesignCardForTemplate.parsed?.sku || selectedDesignCardForTemplate.name}” không có attachment ảnh thiết kế gốc. Bạn vẫn có thể upload ảnh thủ công trong modal.`
-          : undefined;
 
   // Keyboard navigation for Studio Modal (Left / Right Arrow) with Input Focus Guard
   useEffect(() => {
@@ -891,6 +872,7 @@ export function AutoMockupGenerator({
             id: content.id,
             label: content.label,
             promptKey: content.promptKey,
+            customPrompt: content.customPrompt,
           })),
           stream: true,
         }),
@@ -1412,6 +1394,7 @@ export function AutoMockupGenerator({
                                 id: content.id,
                                 label: content.label,
                                 promptKey: content.promptKey,
+                                customPrompt: content.customPrompt,
                               })),
                               customRefinementNotes: regenPromptNote.trim()
                                 ? { [stepId]: regenPromptNote.trim() }
@@ -1648,16 +1631,6 @@ export function AutoMockupGenerator({
                 </div>
               )}
 
-            {/* Glass Ornament Template Mockup Button */}
-            <button
-              onClick={() => setShowGlassTemplateModal(true)}
-              className="flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 px-3.5 py-2 text-xs font-extrabold text-amber-800 shadow-2xs hover:bg-amber-100 transition"
-              title="Dùng AI đưa thiết kế vào một template Glass Ornament"
-            >
-              <SparkleIcon className="h-4 w-4 text-amber-600 shrink-0" weight="fill" />
-              <span>🎨 Template Glass Ornament</span>
-            </button>
-
             {/* Sync / Refresh Button */}
             <button
               onClick={syncAllColumns}
@@ -1681,21 +1654,20 @@ export function AutoMockupGenerator({
               Mục Sản Phẩm (Product Category):
             </span>
             <div className="flex flex-wrap items-center gap-2">
-              {(Object.keys(MOCKUP_CATEGORY_PRESETS) as MockupCategoryKey[]).map((catKey) => {
-                const cat = MOCKUP_CATEGORY_PRESETS[catKey];
-                const isActive = selectedCategory === catKey;
+              {allPresets.map((cat) => {
+                const isActive = selectedCategory === cat.id;
                 return (
                   <button
-                    key={catKey}
+                    key={cat.id}
                     type="button"
-                    onClick={() => handleSelectCategory(catKey)}
+                    onClick={() => handleSelectCategory(cat.id)}
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all duration-150 cursor-pointer ${
                       isActive
                         ? "bg-indigo-600 text-white shadow-xs ring-2 ring-indigo-600/30"
                         : "bg-slate-100 text-slate-700 hover:bg-slate-200/80 hover:text-slate-900 border border-slate-200/80"
                     }`}
                   >
-                    <span>{cat.icon}</span>
+                    <span>{cat.icon || "📦"}</span>
                     <span>{cat.label}</span>
                     <span
                       className={`text-[10px] font-bold px-1.5 py-0.2 rounded-full ${
@@ -1707,6 +1679,16 @@ export function AutoMockupGenerator({
                   </button>
                 );
               })}
+
+              <button
+                type="button"
+                onClick={() => setShowProductPresetModal(true)}
+                className="flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-extrabold text-amber-800 shadow-2xs hover:bg-amber-100 transition cursor-pointer"
+                title="Thêm, nhân bản loại sản phẩm mới & chỉnh sửa Content / Prompt AI"
+              >
+                <GearIcon className="h-4 w-4 text-amber-600" />
+                <span>⚙️ Quản Lý Mẫu SP & Content</span>
+              </button>
             </div>
           </div>
 
@@ -2445,14 +2427,23 @@ export function AutoMockupGenerator({
         </div>
       )}
 
-      {/* Glass Ornament Template Mockup Modal */}
-      <GlassOrnamentTemplateModal
-        isOpen={showGlassTemplateModal}
-        onClose={() => setShowGlassTemplateModal(false)}
-        trelloSource={glassTemplateSource}
-        trelloApiKey={apiKey}
-        trelloToken={token}
-        automaticSourceNotice={glassTemplateSourceNotice}
+      {/* Product Preset Studio Modal */}
+      <ProductPresetModal
+        isOpen={showProductPresetModal}
+        onClose={() => setShowProductPresetModal(false)}
+        activeCategoryId={selectedCategory}
+        onSelectCategory={(catId, contents) => {
+          setSelectedCategory(catId);
+          setMockupContents(contents);
+        }}
+        onPresetsUpdated={() => {
+          const updated = getAllPresets();
+          setAllPresets(updated);
+          const active = updated.find((p) => p.id === selectedCategory) || updated[0];
+          if (active) {
+            setMockupContents(active.contents);
+          }
+        }}
       />
     </div>
   );

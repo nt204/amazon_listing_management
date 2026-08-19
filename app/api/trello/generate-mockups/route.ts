@@ -67,6 +67,7 @@ const generateMockupsSchema = z.object({
         id: z.number().int().min(1).max(20),
         label: z.string().trim().min(1).max(200),
         promptKey: z.string().trim().optional(),
+        customPrompt: z.string().trim().optional(),
       }),
     )
     .max(20)

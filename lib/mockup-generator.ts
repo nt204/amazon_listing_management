@@ -61,7 +61,7 @@ export interface GenerateMockupsOptions {
   /** Specific mockup indexes selected by user to generate. */
   selectedIndexes?: readonly number[];
   /** User-defined scene concepts, beginning at index 11. */
-  customMockups?: readonly { id: number; label: string; promptKey?: string }[];
+  customMockups?: readonly { id: number; label: string; promptKey?: string; customPrompt?: string }[];
   /** Optional custom user refinement prompt notes per mockup index. */
   customRefinementNotes?: Record<number, string>;
   /** Called immediately after each AI image is ready, before the next image starts. */
@@ -203,13 +203,16 @@ export async function generateAllMockups(
   const effectiveMockupTypes = MOCKUP_TYPES.map((defaultType) => {
     const custom = customMap.get(defaultType.index);
     if (custom) {
+      const effectivePromptKey = custom.customPrompt?.trim()
+        ? `custom:${custom.customPrompt.trim()}`
+        : (custom.promptKey || defaultType.promptKey);
       return {
         index: defaultType.index,
         name: custom.label.startsWith("Mockup")
           ? custom.label
           : `Mockup ${defaultType.index} - ${custom.label.replace(/^Content\s*\d+:\s*/i, "")}`,
         fileName: `Mockup${defaultType.index}_${safeFileStem(custom.label)}.png`,
-        promptKey: custom.promptKey || defaultType.promptKey,
+        promptKey: effectivePromptKey,
         description: `Ảnh mockup: ${custom.label}`,
       };
     }
@@ -218,13 +221,16 @@ export async function generateAllMockups(
 
   (options.customMockups || []).forEach((custom) => {
     if (!effectiveMockupTypes.some((t) => t.index === custom.id)) {
+      const effectivePromptKey = custom.customPrompt?.trim()
+        ? `custom:${custom.customPrompt.trim()}`
+        : (custom.promptKey || `custom:${custom.label}`);
       effectiveMockupTypes.push({
         index: custom.id,
         name: custom.label.startsWith("Mockup")
           ? custom.label
           : `Mockup ${custom.id} - ${custom.label.replace(/^Content\s*\d+:\s*/i, "")}`,
         fileName: `Mockup${custom.id}_${safeFileStem(custom.label)}.png`,
-        promptKey: custom.promptKey || `custom:${custom.label}`,
+        promptKey: effectivePromptKey,
         description: `Ảnh mockup tùy chỉnh: ${custom.label}`,
       });
     }
@@ -502,6 +508,65 @@ export async function generateAllMockups(
 
 
 
+type VerifiedMockupMaterial = "glass" | "wood" | "acrylic" | "ceramic" | "resin";
+
+function inferMaterialFromText(value: string): VerifiedMockupMaterial | null {
+  const normalized = value.toLowerCase();
+  if (/(?:glass\s+ornament|beveled?\s+glass|crystal\s+glass|\bglass\b|thủy\s*tinh|thuỷ\s*tinh|pha\s*lê)/iu.test(normalized)) return "glass";
+  if (/(?:wooden\s+ornament|wood\s+ornament|\bgỗ\b|\bwood\b)/iu.test(normalized)) return "wood";
+  if (/(?:acrylic|mica)/iu.test(normalized)) return "acrylic";
+  if (/(?:ceramic|porcelain|gốm|sứ)/iu.test(normalized)) return "ceramic";
+  if (/(?:resin|nhựa)/iu.test(normalized)) return "resin";
+  return null;
+}
+
+function inferVerifiedMockupMaterial(itemName: string, productContext?: string) {
+  const explicitMaterialLine = (productContext || "")
+    .split(/\r?\n/)
+    .find((line) => /(?:chất\s*liệu|material)\s*:/iu.test(line));
+
+  return (
+    (explicitMaterialLine ? inferMaterialFromText(explicitMaterialLine) : null) ||
+    inferMaterialFromText(itemName) ||
+    inferMaterialFromText(productContext || "")
+  );
+}
+
+function buildVerifiedMaterialLock(itemName: string, productContext?: string) {
+  switch (inferVerifiedMockupMaterial(itemName, productContext)) {
+    case "glass":
+      return `
+XÁC NHẬN CHẤT LIỆU TỪ TÊN/DESCRIPTION TRELLO — ƯU TIÊN CAO NHẤT:
+- Sản phẩm này được xác nhận là GLASS ORNAMENT / THỦY TINH. Đây là dữ liệu sản phẩm có thẩm quyền, không được ghi đè chỉ vì góc chụp hoặc vùng thiết kế in làm kính trông đục.
+- Giữ thân kính trong suốt, phản xạ và khúc xạ tự nhiên cùng viền kính vát cạnh lấp lánh theo đúng Ảnh 1. TUYỆT ĐỐI KHÔNG chuyển thành resin, ceramic, gỗ, kim loại hoặc acrylic mờ.
+- Kính có thể mang BẤT KỲ silhouette nào như trái tim, tròn, vuông hoặc die-cut. Không đổi hình trái tim thành đĩa tròn và không thêm vòng kính ngoài.
+- Phần thiết kế được in có thể đậm và không xuyên sáng; điều đó KHÔNG biến vật liệu nền hoặc viền sản phẩm thành chất liệu đục.
+`;
+    case "wood":
+      return `
+XÁC NHẬN CHẤT LIỆU TỪ TÊN/DESCRIPTION TRELLO — ƯU TIÊN CAO NHẤT:
+- Sản phẩm này được xác nhận là GỖ / WOOD. Giữ bề mặt đục, vân gỗ và cạnh gỗ; tuyệt đối không biến thành kính hoặc acrylic trong suốt.
+`;
+    case "acrylic":
+      return `
+XÁC NHẬN CHẤT LIỆU TỪ TÊN/DESCRIPTION TRELLO — ƯU TIÊN CAO NHẤT:
+- Sản phẩm này được xác nhận là ACRYLIC. Giữ đúng độ trong/đục và kiểu cạnh acrylic từ Ảnh 1; không đổi thành kính, gỗ, ceramic hoặc resin.
+`;
+    case "ceramic":
+      return `
+XÁC NHẬN CHẤT LIỆU TỪ TÊN/DESCRIPTION TRELLO — ƯU TIÊN CAO NHẤT:
+- Sản phẩm này được xác nhận là CERAMIC / GỐM SỨ. Giữ thân đục và men ceramic; tuyệt đối không biến thành kính hoặc acrylic trong suốt.
+`;
+    case "resin":
+      return `
+XÁC NHẬN CHẤT LIỆU TỪ TÊN/DESCRIPTION TRELLO — ƯU TIÊN CAO NHẤT:
+- Sản phẩm này được xác nhận là RESIN / NHỰA. Giữ đúng độ đục, texture và finish từ Ảnh 1; tuyệt đối không biến thành kính.
+`;
+    default:
+      return "";
+  }
+}
+
 export function buildMockupPrompt(
   promptKey: string,
   itemName: string,
@@ -690,6 +755,9 @@ thickness"
       concept = `REALISTIC LIFESTYLE & IN-USE PHOTOGRAPHY (AMAZON LIFESTYLE - IMAGE 2):
 - CAMERA ANGLE & PERSPECTIVE: Dynamic 45-degree angled perspective view (placed in realistic depth within an authentic lifestyle setting).
 - Place the product in a high-end environment naturally matching its niche, usage, and US seasonal vibe.
+- STRICT DYNAMIC MATERIAL FIDELITY & TRANSPARENCY ACCURACY (CRITICAL):
+  1) IF IMAGE 1 IS A CLEAR GLASS / ACRYLIC ORNAMENT: The non-printed glass area MUST BE 100% CRYSTAL CLEAR LUMINOUS TRANSPARENT. The underlying background scene (e.g. green pine needles, sunlit window, or bokeh lights) MUST BE CLEARLY VISIBLE AND REFRACTED THROUGH THE UNPRINTED GLASS BODY, with sparkling prismatic diamond-cut beveled facets along the outer rim edge.
+  2) IF IMAGE 1 IS AN OPAQUE PRODUCT (WOOD, CERAMIC, METAL, RESIN): PRESERVE 100% SOLID AND OPAQUE BASE MATERIAL AND SURFACE TEXTURE FROM IMAGE 1.
 - Shallow depth of field with soft blurred background to keep the product as the main sharp focus.
 - Preserve 100% exact product material, silhouette, and printed design from Image 1.`;
       break;
@@ -700,18 +768,20 @@ thickness"
 - STRICT DYNAMIC MATERIAL FIDELITY (DO NOT DEFAULT TO GLASS):
   1) IF IMAGE 1 IS A CLEAR GLASS / ACRYLIC ORNAMENT: Render ultra crystal clear 100% luminous transparent glass with sparkling diamond-cut bevel highlights along the outer rim edge.
   2) IF IMAGE 1 IS AN OPAQUE PRODUCT (WOOD, CERAMIC, METAL, RESIN, PLYWOOD): PRESERVE 100% SOLID AND OPAQUE BASE MATERIAL, WOOD GRAIN TEXTURE, AND ORIGINAL SURFACE COLOR FROM IMAGE 1. DO NOT DEFAULT TO GLASS OR TRANSPARENT ACRYLIC! DO NOT ADD GLASS BEVELS TO WOOD/CERAMIC!
-- BOLD "PRODUCT SIZE" TITLE: Render clear, bold typography text reading "PRODUCT SIZE" at the bottom center (or top banner area) of the image.
+- BOLD "PRODUCT SIZE" TITLE: Render clear bold sans-serif typography reading "PRODUCT SIZE" at the bottom center (or top banner area). Use solid WHITE text on a dark area or solid BLACK/DARK-CHARCOAL text on a light area. NEVER use blue, navy, cyan, teal, gradients, outlines, glow, or decorative colored lettering for this title.
 - DIMENSION CALLOUTS: Display clear, elegant height dimension line labeled "${dimensions.length}" and width dimension line labeled "${dimensions.width}".
 - EXCLUDE SIDE THICKNESS: Do NOT display side edge thickness callouts or side thickness bars in Image 3 (thickness details are reserved exclusively for Image 4).
-- Clean, highly legible white/navy typography and professional measurement callout indicators.
+- Use clean, highly legible neutral black/white typography for the title and professional measurement callout indicators.
 - Maintain accurate real-life proportions, material texture, and printed artwork from Image 1.`;
       break;
 
     case "universal_features_zoom":
       concept = `EXTREME LOW-ANGLE 3D PERSPECTIVE THICKNESS & MATERIAL CALLOUT (AMAZON FEATURES - IMAGE 4):
 - CAMERA ANGLE & PERSPECTIVE (COMPULSORY EXTREME LOW ANGLE): Shot from an extreme low camera angle (close to surface level, looking slightly down at a 20-30 degree low-perspective angle). The product lies flat on an aesthetic background surface (such as soft plush fabric, white faux fur, luxury silk, natural wood, or marble) but is strongly foreshortened in perspective, showing its shape tilted into a dramatic 3D oval perspective.
-- THICK SIDE EDGE PROMINENCE: The thick outer edge profile of the product MUST face directly toward the front/lower camera view. Show the visible side edge thickness (e.g. 6mm thick wood layers, cut acrylic edge, ceramic edge, or metallic rim) clearly extending along the entire lower edge curve with distinct 3D depth, material texture, and shadow.
-- MULTI-LAYERED 3D DEPTH & RELIEF: Tightly capture the 3D raised multi-layer construction, showing printed elements, lettering, and figures popping up above the base layer with visible cast shadows.
+- THICK SIDE EDGE PROMINENCE: The thick outer edge profile of the product MUST face directly toward the front/lower camera view. Show the visible side edge thickness (e.g. 6mm beveled crystal glass edge, cut acrylic edge, ceramic edge, or metallic rim) clearly extending along the entire lower edge curve with distinct 3D depth, material texture, and shadow.
+- STRICT DYNAMIC MATERIAL FIDELITY & TRANSPARENCY ACCURACY (CRITICAL):
+  1) IF IMAGE 1 IS A CLEAR GLASS / ACRYLIC ORNAMENT: The non-printed glass body MUST BE 100% CRYSTAL CLEAR LUMINOUS TRANSPARENT. The underlying background surface (e.g. wood grain, marble, silk, or fur fabric) MUST BE CLEARLY VISIBLE AND REFRACTED THROUGH THE UNPRINTED GLASS BODY, with sparkling prismatic diamond-cut beveled facets along the outer rim edge. DO NOT render a solid dark, brown, or opaque body for glass! DO NOT invent fake multi-layer wood stacks if Image 1 is a single glass disc!
+  2) IF IMAGE 1 IS AN OPAQUE PRODUCT (WOOD, CERAMIC, METAL, RESIN, PLYWOOD): PRESERVE 100% SOLID AND OPAQUE BASE MATERIAL, WOOD GRAIN TEXTURE, AND ORIGINAL SURFACE COLOR FROM IMAGE 1. DO NOT DEFAULT TO GLASS! DO NOT ADD GLASS BEVELS TO WOOD OR CERAMIC!
 - INDICATOR CALLOUT LINE & TEXT: Render a crisp indicator callout line ending with a solid dot pointing directly to the thick lower-left side edge profile of the product. Pointer line extends to a 2-line bold navy/black text label reading:
 "${dimensions.thickness || "6mm"}
 thickness"
@@ -725,6 +795,9 @@ thickness"
 - CAMERA ANGLE & PERSPECTIVE: 35-45 degree close-up presentation angle featuring TWO realistic hands presenting the product from Image 1 in a warm hand-to-hand gift handover moment:
   1) Upper hand (entering from top-right) holding the top hanging ribbon/lanyard (COPYING THE EXACT RIBBON COLOR, MATERIAL, AND HOLE ATTACHMENT FROM IMAGE 1).
   2) Lower receiving hand (wearing a cozy white or neutral knit sweater sleeve, entering from lower-left) with fingers and palm gently cupping and supporting beneath the bottom edge of the product.
+- STRICT DYNAMIC MATERIAL FIDELITY & TRANSPARENCY ACCURACY (CRITICAL):
+  1) IF IMAGE 1 IS A CLEAR GLASS / ACRYLIC ORNAMENT: The non-printed glass area MUST BE 100% CRYSTAL CLEAR LUMINOUS TRANSPARENT. The background and hands behind the glass MUST BE VISIBLE THROUGH THE UNPRINTED GLASS BODY, with sparkling prismatic diamond-cut beveled facets along the outer rim edge.
+  2) IF IMAGE 1 IS AN OPAQUE PRODUCT (WOOD, CERAMIC, METAL): PRESERVE 100% OPAQUE BASE MATERIAL AND TEXTURE.
 - RETAIL GIFT BOX: Displays a sturdy, elegant retail gift box with soft interior cushioning tray on the tabletop beside the handover scene.
 - SKIN TONES & LIGHTING: Natural warm skin tones, soft luminous high-contrast lighting highlighting the printed design artwork, lettering, and product material vividly.
 - Preserve 100% exact printed design artwork, text, outer silhouette contour shape, and material details from Image 1.`;
@@ -733,6 +806,9 @@ thickness"
     case "universal_packaging":
       concept = `PACKAGE INCLUDED & RETAIL GIFT BOX FLAT-LAY (AMAZON PACKAGING - IMAGE 6):
 - CAMERA ANGLE: 90-degree top-down 1:1 flat-lay photograph looking straight down at a clean studio background.
+- STRICT DYNAMIC MATERIAL FIDELITY & TRANSPARENCY ACCURACY (CRITICAL):
+  1) IF IMAGE 1 IS A CLEAR GLASS / ACRYLIC ORNAMENT: The non-printed glass area MUST BE 100% CRYSTAL CLEAR LUMINOUS TRANSPARENT. The underlying box interior / background MUST BE VISIBLE THROUGH THE UNPRINTED GLASS BODY, with sparkling prismatic diamond-cut beveled facets along the outer rim edge.
+  2) IF IMAGE 1 IS AN OPAQUE PRODUCT (WOOD, CERAMIC, METAL): PRESERVE 100% OPAQUE BASE MATERIAL AND TEXTURE.
 - RETAIL GIFT BOX: Displaying the product from Image 1 alongside a sturdy standard retail gift box with protective interior lining, hanging ribbon, and thank-you card.
 - PLAIN GIFT BOX LID (STRICT NO TEXT ON LID): The retail gift box and lid MUST BE CLEAN AND PLAIN SOLID COLORED. ABSOLUTELY NO TEXT, NO PRINTED LETTERS, NO LOGO, AND NO GRAPHICS ON THE GIFT BOX LID.
 - Text callout area listing included items ("PACKAGE INCLUDED: 1x Product, 1x Gift Box, Included Accessories").
@@ -758,7 +834,7 @@ thickness"
       break;
     default:
       concept = promptKey.startsWith("custom:")
-        ? `Tạo bối cảnh mockup tùy chỉnh theo yêu cầu: ${promptKey.slice("custom:".length).trim()}. Bố cục phải tự nhiên, hợp lý và giữ sản phẩm làm chủ thể chính.`
+        ? promptKey.slice("custom:".length).trim()
         : "Ảnh mockup sản phẩm.";
   }
 
@@ -771,11 +847,13 @@ thickness"
     ? `\nThông tin bổ sung từ thẻ sản phẩm:\n${productContext.trim()}\n`
     : "";
 
+  const verifiedMaterialLock = buildVerifiedMaterialLock(itemName, productContext);
+
   const refinementLine = refinementNote?.trim()
     ? `\n\n[CHỈ DẪN TINH CHỈNH TỪ NGƯỜI DÙNG / USER REFINEMENT NOTE]:\n${refinementNote.trim()}\n`
     : "";
 
-  return `Sử dụng Ảnh 1 làm ảnh tham chiếu cho sản phẩm "${itemName}".${productContextLine}
+  return `Sử dụng Ảnh 1 làm ảnh tham chiếu cho sản phẩm "${itemName}".${productContextLine}${verifiedMaterialLock}
 
 Quan sát Ảnh 1 để nhận diện chính xác:
 - hình dáng và tỷ lệ sản phẩm
@@ -787,6 +865,7 @@ Quan sát Ảnh 1 để nhận diện chính xác:
 - lỗ treo và thiết kế dây treo (loại dây, màu dây, chất liệu dây, số lượng lỗ treo)
 
 CỐ ĐỊNH DÂY TREO VÀ LỖ TREO TỪ ẢNH 1 (EXACT HANGING STRING / RIBBON FIDELITY):
+- NẾU SẢN PHẨM TRONG ẢNH 1 KHÔNG CÓ DÂY TREO (ví dụ: đĩa sứ đặt bàn, khay đựng, cốc, biển đứng tabletop): TUYỆT ĐỐI KHÔNG TỰ Ý THÊM DÂY TREO, NƠ HAY LỖ TREO Ở ĐỈNH SẢN PHẨM!
 - QUAN SÁT KỸ DÂY TREO TRONG ẢNH 1: Copy chính xác 100% màu sắc dây (ruy-băng đỏ, ruy-băng trắng, dây thừng đay nâu, dây kim loại...), chất liệu dây (satin, đay, xích...) và kiểu xỏ lỗ (1 lỗ, 2 lỗ ở đỉnh...) từ Ảnh 1.
 - TUYỆT ĐỐI KHÔNG TỰ Ý ĐỔI MÀU DÂY TREO HAY THAY THẾ BẰNG XÍCH KIM LOẠI: Ví dụ nếu Ảnh 1 dùng dây ruy-băng đỏ, bắt buộc giữ nguyên dây ruy-băng đỏ, KHÔNG được tự ý chuyển thành dây trắng hay xích kim loại!
 
@@ -797,13 +876,20 @@ CỐ ĐỊNH HÌNH DÁNG SẢN PHẨM & TUYỆT ĐỐI KHÔNG TỰ THÊM ĐĨA K
 
 BẢO TỒN CHẤT LIỆU VẬT LÝ GỐC CỦA SẢN PHẨM (STRICT MATERIAL FIDELITY):
 1. NẾU SẢN PHẨM TRONG ẢNH 1 LÀ KÍNH / THỦY TINH / PHA LÊ / ACRYLIC TRONG SUỐT (GLASS ORNAMENT):
+   - QUY TẮC SO SÁNH NỀN ẢNH ĐỂ PHÂN BIỆT KÍNH TRONG SUỐT VỚI HỌA TIẾT IN (GLASS TRANSPARENCY VS PRINTED ARTWORK DISCRIMINATION):
+     * NẾU MÀU BÊN TRONG LÒNG KÍNH TRÙNG/ĐỒNG DẠNG VỚI NỀN BÊN NGOÀI SẢN PHẨM TRONG ẢNH 1 (Ví dụ: bên ngoài là cành thông xanh, bên trong lòng kính trái tim cũng nhìn thấy cành thông xanh):
+       -> Đó LÀ NỀN ẢNH BÊN NGOÀI NHÌN XUYÊN QUA KÍNH TRONG SUỐT!
+       -> Trong mockup mới: BẮT BUỘC BỎ NỀN ẢNH CŨ (cành thông xanh cũ), giữ phần kính không in LÀ KÍNH TRẮNG TRONG SUỐT 100%, để nền mới của mockup (gỗ, marble, lụa, bokeh...) nhìn xuyên và khúc xạ qua kính!
+     * NẾU MÀU BÊN TRONG LÒNG KÍNH KHÁC HOÀN TOÀN NỀN BÊN NGOÀI SẢN PHẨM TRONG ẢNH 1 (Ví dụ: nền ảnh bên ngoài là đèn bokeh vàng/sáng, nhưng bên trong đĩa kính lại là một mảng hình tròn MÀU ĐEN/ĐẬM kèm đại bàng, cờ và chữ):
+       -> Mảng màu đen/đậm bên trong đó LÀ MẢNG NỀN HỌA TIẾT IN THUỘC THIẾT KẾ GỐC (Opaque Printed Artwork Background)!
+       -> Trong mockup mới: BẮT BUỘC GIỮ NGUYÊN 100% mảng họa tiết in màu đen/đậm đó như thiết kế gốc trên mặt kính. TUYỆT ĐỐI KHÔNG xóa mảng màu đen đó và KHÔNG làm thủng kính!
    - ĐĨA KÍNH TRẮNG TRONG SUỐT TUYỆT ĐỐI (ULTRA BRIGHT WHITE CRYSTAL GLASS):
-     Đĩa kính PHẢI LÀ KÍNH TRẮNG TRONG SUỐT SIÊU SÁNG, TINH KHIẾT NHƯ PHA LÊ CAO CẤP (ultra bright pristine white crystal glass, high-key white studio backlight, 100% luminous transparency).
+     Thân và viền kính PHẢI LÀ KÍNH TRẮNG TRONG SUỐT SIÊU SÁNG, TINH KHIẾT NHƯ PHA LÊ CAO CẤP (ultra bright pristine white crystal glass, high-key white studio backlight, luminous transparency) đồng thời giữ đúng silhouette gốc, kể cả hình tim hoặc die-cut.
    - TUYỆT ĐỐI KHÔNG CÓ SƯƠNG MỜ, KHÔNG XÁM ĐỤC, KHÔNG NÂU MỜ (ZERO GREY HAZE, ZERO FOG OPACITY, NO BROWN OR GREY SHADOW INSIDE GLASS BODY). Vùng kính không in phải xuyên sáng tinh khiết với ánh sáng trắng tươi từ bối cảnh.
-   - ĐƯỜNG VÁT CẠNH KÍNH LẮP LÁNH SẮC NÉT (SPARKLING PRISMATIC BEVELED EDGE): Viền đĩa kính tròn có các vạt vát kim cương lấp lánh (diamond-cut beveled glass facets, bright white specular edge highlights, crystal rim light) rõ nét, cực kỳ sang trọng y hệt ảnh mẫu chuẩn.
+   - ĐƯỜNG VÁT CẠNH KÍNH LẮP LÁNH SẮC NÉT (SPARKLING PRISMATIC BEVELED EDGE): Viền ngoài bám đúng silhouette sản phẩm và có các vạt vát kim cương lấp lánh (diamond-cut beveled glass facets, bright white specular edge highlights, crystal rim light) rõ nét như Ảnh 1.
    - MÀU SẮC TƯƠI TẮN & ĐỘ TƯƠNG PHẢN ĐẬM ĐÀ (VIVID RICH COLOR SATURATION - NOT WASHED OUT OR PALE): Màu sắc của thiết kế in (màu hồng, đỏ, bạc...), màu hộp quà đỏ rực và màu xanh cành thông phải đạt độ bão hòa rực rỡ, tương phản tươi tắn sắc nét, TUYỆT ĐỐI KHÔNG bị nhợt nhạt hay cháy sáng mờ nhạt.
 
-2. NẾU SẢN PHẨM TRONG ẢNH 1 LÀ SẢN PHẨM ĐỤC / GỖ / CERAMIC / RESIN / KIM LOẠI / VẢI (NON-GLASS PRODUCT - NHƯ SẢN PHẨM GỖ KHUÔN NEW JERSEY TRONG ẢNH 3):
+2. NẾU SẢN PHẨM TRONG ẢNH 1 LÀ SẢN PHẨM ĐỤC / GỖ / CERAMIC / RESIN / KIM LOẠI / VẢI (NON-GLASS PRODUCT):
    - TUYỆT ĐỐI KHÔNG BIẾN SẢN PHẨM THÀNH KÍNH TRONG SUỐT HAY ACRYLIC TRONG SUỐT! KHÔNG TỰ Ý GẮN VIỀN KÍNH VÁT CẠNH!
    - GIỮ NGUYÊN 100% CHẤT LIỆU ĐỤC VỐN CÓ TỪ ẢNH 1: viền gỗ sẫm màu (dark wood edge/border), vân gỗ tự nhiên (wood grain texture), bề mặt đục, texture và finish nguyên bản của Ảnh 1.
    - Bề mặt nền không in giữ đúng màu sắc, độ đục và texture nền đục ban đầu của vật liệu gỗ/ceramic/resin.
