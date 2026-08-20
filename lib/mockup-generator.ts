@@ -550,12 +550,26 @@ export async function generateAllMockups(
   return allResults.sort((a, b) => a.index - b.index);
 }
 
-export function buildMockupPrompt(
-  promptKey: string,
-  itemName: string,
+function applyPromptDimensionPlaceholders(
+  prompt: string,
   dimensions: Dimensions3D,
-  productContext?: string,
-  refinementNote?: string,
+) {
+  const values: Record<string, string> = {
+    length: dimensions.length || "not provided",
+    width: dimensions.width || "not provided",
+    thickness: dimensions.thickness || "not provided",
+    formatted: dimensions.formatted || "not provided",
+    capacity: dimensions.capacity || "not provided",
+  };
+  return prompt.replace(
+    /\{\{(length|width|thickness|formatted|capacity)\}\}/gi,
+    (_, key: string) => values[key.toLowerCase()],
+  );
+}
+
+export function buildMockupConcept(
+  promptKey: string,
+  dimensions: Dimensions3D,
 ): string {
   let concept: string;
   switch (promptKey) {
@@ -817,9 +831,24 @@ thickness"
       break;
     default:
       concept = promptKey.startsWith("custom:")
-        ? promptKey.slice("custom:".length).trim()
+        ? applyPromptDimensionPlaceholders(
+            promptKey.slice("custom:".length).trim(),
+            dimensions,
+          )
         : "Ảnh mockup sản phẩm.";
   }
+
+  return concept;
+}
+
+export function buildMockupPrompt(
+  promptKey: string,
+  itemName: string,
+  dimensions: Dimensions3D,
+  productContext?: string,
+  refinementNote?: string,
+): string {
+  const concept = buildMockupConcept(promptKey, dimensions);
 
   const dimensionsLine =
     promptKey === "dimensions_3d" && dimensions.formatted

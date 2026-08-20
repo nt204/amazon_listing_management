@@ -82,8 +82,32 @@ export interface ParsedDimensions {
 }
 
 export function mockupIndexFromAttachmentName(name: string): number | null {
-  const match = name.trim().match(/^Mockup(\d+)_/i);
+  const match = name.trim().match(/^Mockup\s*(\d+)(?=[\s_.-]|$)/i);
   if (!match) return null;
   const index = Number(match[1]);
   return Number.isInteger(index) && index >= 1 && index <= 20 ? index : null;
+}
+
+/**
+ * Keep the source artwork first and generated mockups in their numbered slots.
+ * A decorated copy is used so ties retain the order received from Trello.
+ */
+export function sortMockupAttachments<T extends { name: string }>(
+  attachments: readonly T[],
+): T[] {
+  return attachments
+    .map((attachment, originalIndex) => ({ attachment, originalIndex }))
+    .sort((left, right) => {
+      const leftIndex = mockupIndexFromAttachmentName(left.attachment.name);
+      const rightIndex = mockupIndexFromAttachmentName(right.attachment.name);
+
+      if (leftIndex === null && rightIndex !== null) return -1;
+      if (leftIndex !== null && rightIndex === null) return 1;
+
+      return (
+        (leftIndex ?? 0) - (rightIndex ?? 0) ||
+        left.originalIndex - right.originalIndex
+      );
+    })
+    .map(({ attachment }) => attachment);
 }

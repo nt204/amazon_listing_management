@@ -1,3 +1,5 @@
+import { sortMockupAttachments } from "./mockup-types";
+
 export interface TrelloConfig {
   apiKey: string;
   token: string;
@@ -87,10 +89,12 @@ function attachmentBelongsToCard(attachment: TrelloAttachment, cardId: string) {
 }
 
 export function selectTrelloImageAttachments(card: Pick<TrelloCard, "id" | "attachments">) {
-  return (card.attachments || []).filter(
-    (attachment) =>
-      isTrelloImageAttachment(attachment) &&
-      attachmentBelongsToCard(attachment, card.id),
+  return sortMockupAttachments(
+    (card.attachments || []).filter(
+      (attachment) =>
+        isTrelloImageAttachment(attachment) &&
+        attachmentBelongsToCard(attachment, card.id),
+    ),
   );
 }
 
@@ -119,11 +123,15 @@ export function preferredAttachmentThumbnail(attachment: TrelloAttachment) {
 function withAttachmentPreview(card: TrelloCard): TrelloCard {
   return {
     ...card,
-    attachments: card.attachments?.map((attachment) => ({
-      ...attachment,
-      previewUrl: preferredAttachmentPreview(attachment),
-      thumbnailUrl: preferredAttachmentThumbnail(attachment),
-    })),
+    attachments: card.attachments
+      ? sortMockupAttachments(
+          card.attachments.map((attachment) => ({
+            ...attachment,
+            previewUrl: preferredAttachmentPreview(attachment),
+            thumbnailUrl: preferredAttachmentThumbnail(attachment),
+          })),
+        )
+      : undefined,
   };
 }
 

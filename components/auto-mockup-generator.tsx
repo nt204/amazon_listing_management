@@ -33,6 +33,11 @@ import {
   EyeIcon,
   CaretLeftIcon,
   CaretRightIcon,
+  CaretDownIcon,
+  CopyIcon,
+  CheckIcon,
+  ArrowCounterClockwiseIcon,
+  FloppyDiskIcon,
   TagIcon,
 } from "@phosphor-icons/react";
 import { parseCardDimensions, type Dimensions3D } from "@/lib/trello";
@@ -41,9 +46,14 @@ import {
   MAX_AI_MOCKUPS_PER_PRODUCT,
   limitSelectedMockupContents,
   mockupIndexFromAttachmentName,
+  sortMockupAttachments,
   type MockupModel,
 } from "@/lib/mockup-types";
-import { getAllPresets, fetchPresetsFromServer } from "@/lib/mockup-preset-store";
+import {
+  getAllPresets,
+  fetchPresetsFromServer,
+  savePresetToServer,
+} from "@/lib/mockup-preset-store";
 import { ProductPresetModal } from "@/components/product-preset-modal";
 import type { ProductCategoryPreset } from "@/types/mockup-preset";
 
@@ -139,6 +149,38 @@ interface MockupGenerationResponse {
     thumbnailUrl?: string;
     error?: string;
   }>;
+}
+
+interface MockupCompletionNotice {
+  type: "success" | "warning" | "error";
+  title: string;
+  message: string;
+}
+
+interface MockupGenerationSummary {
+  status: "success" | "partial" | "failed" | "cancelled";
+  sku: string;
+  completed: number;
+  requested: number;
+}
+
+interface SingleMockupRegenerationJob {
+  statusText: string;
+}
+
+interface ImagePromptEditorState {
+  original: string;
+  draft: string;
+  loading: boolean;
+  error?: string;
+}
+
+function singleMockupRegenerationKey(cardId: string, stepId: number) {
+  return `${cardId}:${stepId}`;
+}
+
+function sharedPresetPromptKey(stepId: number, presetId: string) {
+  return `${presetId}:${stepId}`;
 }
 
 type MockupStreamEvent =
@@ -589,6 +631,39 @@ export function AutoMockupGenerator({
   >({});
   const [generationStatusText, setGenerationStatusText] = useState<string>("");
   const [generationResult, setGenerationResult] = useState<string | null>(null);
+  const [completionNotice, setCompletionNotice] = useState<MockupCompletionNotice | null>(null);
+
+  const prepareBrowserNotification = useCallback(() => {
+    if (
+      typeof window === "undefined" ||
+      !("Notification" in window) ||
+      Notification.permission !== "default"
+    ) return;
+    void Notification.requestPermission().catch(() => undefined);
+  }, []);
+
+  const showCompletionNotice = useCallback((notice: MockupCompletionNotice) => {
+    setCompletionNotice(notice);
+
+    if (
+      typeof document !== "undefined" &&
+      document.hidden &&
+      typeof Notification !== "undefined" &&
+      Notification.permission === "granted"
+    ) {
+      const notification = new Notification(notice.title, {
+        body: notice.message,
+        tag: "mockup-generation-complete",
+      });
+      window.setTimeout(() => notification.close(), 10_000);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!completionNotice) return;
+    const timeoutId = window.setTimeout(() => setCompletionNotice(null), 8_000);
+    return () => window.clearTimeout(timeoutId);
+  }, [completionNotice]);
 
   // Studio Lightbox & Side-by-Side Refinement Modal State
   const [studioModal, setStudioModal] = useState<{
@@ -601,8 +676,21 @@ export function AutoMockupGenerator({
   const [regenModel, setRegenModel] = useState<MockupModel>(
     DEFAULT_MOCKUP_MODEL as MockupModel,
   );
-  const [isRegeneratingSingle, setIsRegeneratingSingle] = useState(false);
-  const [singleRegenStatusText, setSingleRegenStatusText] = useState<string>("");
+  const [singleMockupRegenerationJobs, setSingleMockupRegenerationJobs] = useState<
+    Record<string, SingleMockupRegenerationJob>
+  >({});
+  const [expandedImagePromptKey, setExpandedImagePromptKey] = useState<
+    string | null
+  >(null);
+  const [imagePromptEditors, setImagePromptEditors] = useState<
+    Record<string, ImagePromptEditorState>
+  >({});
+  const [copiedImagePromptKey, setCopiedImagePromptKey] = useState<
+    string | null
+  >(null);
+  const [savingImagePromptKey, setSavingImagePromptKey] = useState<
+    string | null
+  >(null);
   const [downloadingImage, setDownloadingImage] = useState(false);
 
   // Approval status tracking: map of `${cardId}_${attachmentId}` => "approved" | "rejected" | "pending"
@@ -878,12 +966,17 @@ export function AutoMockupGenerator({
     await syncAllColumns();
   };
 
-  const handleGenerateMockupsSingle = async (card: TrelloCard) => {
+  const handleGenerateMockupsSingle = async (
+    card: TrelloCard,
+    options: { notify?: boolean } = {},
+  ): Promise<MockupGenerationSummary | undefined> => {
+    const shouldNotify = options.notify !== false;
+    if (shouldNotify) prepareBrowserNotification();
     if (generationInFlightRef.current) {
       setErrorMsg(
         "Đang có một lượt tạo mockup chạy. Request bấm trùng đã được chặn để không phát sinh thêm chi phí.",
       );
-      return;
+      return undefined;
     }
 
     const selectedAiSteps = mockupContents
@@ -891,13 +984,13 @@ export function AutoMockupGenerator({
       .map((content) => content.id);
     if (selectedAiSteps.length === 0) {
       setErrorMsg("Hãy chọn ít nhất một concept mockup từ Content 2 trở đi.");
-      return;
+      return undefined;
     }
     if (selectedAiSteps.length > MAX_AI_MOCKUPS_PER_PRODUCT) {
       setErrorMsg(
         `Mỗi sản phẩm chỉ được tạo tối đa ${MAX_AI_MOCKUPS_PER_PRODUCT} Content AI ngoài ảnh gốc.`,
       );
-      return;
+      return undefined;
     }
     generationInFlightRef.current = true;
     isAbortingRef.current = false;
@@ -979,7 +1072,10 @@ export function AutoMockupGenerator({
                 });
                 const newAtt = {
                   id: event.attachmentId || prevAtt?.id || String(Date.now()),
-                  name: event.name || prevAtt?.name || `Mockup ${event.step}`,
+                  name:
+                    event.name ||
+                    prevAtt?.name ||
+                    `Mockup${event.step}_Generated`,
                   url: event.attachmentUrl || prevAtt?.url || "",
                   mimeType: event.previewUrl?.startsWith("data:image/webp")
                     ? "image/webp"
@@ -995,7 +1091,10 @@ export function AutoMockupGenerator({
                 });
                 return {
                   ...c,
-                  attachments: [...filteredAtts, newAtt],
+                  attachments: sortMockupAttachments([
+                    ...filteredAtts,
+                    newAtt,
+                  ]),
                 };
               });
 
@@ -1025,7 +1124,12 @@ export function AutoMockupGenerator({
       if (isAbortingRef.current) {
         await syncAllColumns();
         setGenerationStatusText("Đã dừng tạo mockup. Ảnh đã tạo thành công đều được giữ trên Trello.");
-        return;
+        return {
+          status: "cancelled",
+          sku: card.parsed?.sku || card.name,
+          completed: 0,
+          requested: selectedAiSteps.length,
+        };
       }
 
       if (buffered.trim())
@@ -1053,12 +1157,26 @@ export function AutoMockupGenerator({
         (attachment) => attachment.status === "failed",
       );
       if (failedUploads.length > 0) {
+        const completedCount = Math.max(0, data.requestedMockupsCount - failedUploads.length);
         setGenerationStatusText(
           `Hoàn tất tạo ảnh nhưng ${failedUploads.length} ảnh upload thất bại.`,
         );
         setErrorMsg(
           `Đã tạo xong nhưng ${failedUploads.length}/${data.requestedMockupsCount} concept đã chọn không tải được lên Trello. Thẻ vẫn ở cột DESIGN để bạn thử lại.`,
         );
+        if (shouldNotify) {
+          showCompletionNotice({
+            type: "warning",
+            title: `Bộ mockup ${data.sku} chưa hoàn tất`,
+            message: `Đã hoàn tất ${completedCount}/${data.requestedMockupsCount} ảnh AI. ${failedUploads.length} ảnh cần thử lại.`,
+          });
+        }
+        return {
+          status: "partial",
+          sku: data.sku,
+          completed: completedCount,
+          requested: data.requestedMockupsCount,
+        };
       } else {
         const providerAudit = (data.providerResponses || [])
           .map((response) => {
@@ -1084,14 +1202,31 @@ export function AutoMockupGenerator({
         setGenerationResult(
           `🎉 Đã tạo ${data.newlyGeneratedMockupsCount} mockup mới cho SKU "${data.sku}" bằng ${data.model}/${data.quality || "auto"}${providerAudit ? ` — ${data.providerResponseCount} phản hồi provider: ${providerAudit}` : ""}${locationText}.`,
         );
+        if (shouldNotify) {
+          showCompletionNotice({
+            type: "success",
+            title: `Đã tạo xong mockup ${data.sku}`,
+            message: `${data.requestedMockupsCount}/${data.requestedMockupsCount} ảnh AI đã hoàn tất${data.movedToTargetList ? ", file đã lên Trello và thẻ đã chuyển sang cột MOCKUP" : ", ảnh đã được lưu trên Trello"}.`,
+          });
+        }
+        return {
+          status: "success",
+          sku: data.sku,
+          completed: data.requestedMockupsCount,
+          requested: data.requestedMockupsCount,
+        };
       }
-      void syncAllColumns();
     } catch (err: unknown) {
       if (isAbortingRef.current || (err instanceof Error && err.name === "AbortError")) {
         await syncAllColumns();
         setGenerationStatusText("Đã dừng tạo mockup. Các ảnh đã tạo thành công trước đó được lưu giữ đầy đủ.");
         setErrorMsg("");
-        return;
+        return {
+          status: "cancelled",
+          sku: card.parsed?.sku || card.name,
+          completed: 0,
+          requested: selectedAiSteps.length,
+        };
       }
       const msg = err instanceof Error ? err.message : String(err);
       setGenerationProgress((prev) => {
@@ -1106,34 +1241,114 @@ export function AutoMockupGenerator({
       await syncAllColumns();
       setErrorMsg(`Lỗi khi tạo Mockup: ${msg}`);
       setGenerationStatusText(msg);
+      if (shouldNotify) {
+        showCompletionNotice({
+          type: "error",
+          title: `Không thể tạo mockup ${card.parsed?.sku || card.name}`,
+          message: msg,
+        });
+      }
+      return {
+        status: "failed",
+        sku: card.parsed?.sku || card.name,
+        completed: 0,
+        requested: selectedAiSteps.length,
+      };
     } finally {
       generationInFlightRef.current = false;
       setActiveGeneratingCardId(null);
       abortControllerRef.current = null;
+      void syncAllColumns();
     }
   };
 
   const handleBatchGenerateMockups = async () => {
     if (selectedCardIds.size === 0) return;
+    prepareBrowserNotification();
     setBatchProcessing(true);
     isAbortingRef.current = false;
     const selectedCards = designCards.filter((c) => selectedCardIds.has(c.id));
     setBatchProgress({ current: 0, total: selectedCards.length });
+    const summaries: MockupGenerationSummary[] = [];
 
     for (let index = 0; index < selectedCards.length; index++) {
       if (isAbortingRef.current) break;
       const card = selectedCards[index];
       setBatchProgress({ current: index + 1, total: selectedCards.length });
-      await handleGenerateMockupsSingle(card);
+      const summary = await handleGenerateMockupsSingle(card, { notify: false });
+      if (summary) summaries.push(summary);
     }
 
     setBatchProcessing(false);
     setSelectedCardIds(new Set());
     await syncAllColumns();
+
+    if (!isAbortingRef.current) {
+      const successful = summaries.filter((summary) => summary.status === "success").length;
+      const partial = summaries.filter((summary) => summary.status === "partial").length;
+      const failed = summaries.filter((summary) => summary.status === "failed").length;
+      const completedImages = summaries.reduce((total, summary) => total + summary.completed, 0);
+      const requestedImages = summaries.reduce((total, summary) => total + summary.requested, 0);
+      showCompletionNotice({
+        type: partial > 0 || failed > 0 ? "warning" : "success",
+        title: partial > 0 || failed > 0
+          ? `Batch mockup hoàn tất ${successful}/${selectedCards.length} thẻ`
+          : `Đã tạo xong batch ${successful} thẻ`,
+        message: partial > 0 || failed > 0
+          ? `${completedImages}/${requestedImages} ảnh AI hoàn tất. ${partial + failed} thẻ cần kiểm tra lại.`
+          : `${completedImages}/${requestedImages} ảnh AI đã hoàn tất và được lưu trên Trello.`,
+      });
+    }
   };
 
   return (
     <div className="space-y-6 text-slate-800 font-sans">
+      {completionNotice && (
+        <div
+          className={`fixed right-5 top-5 z-[70] w-[min(24rem,calc(100vw-2.5rem))] rounded-2xl border bg-white p-4 shadow-2xl ${
+            completionNotice.type === "success"
+              ? "border-emerald-200"
+              : completionNotice.type === "warning"
+                ? "border-amber-200"
+                : "border-rose-200"
+          }`}
+          role={completionNotice.type === "error" ? "alert" : "status"}
+          aria-live="polite"
+        >
+          <div className="flex items-start gap-3">
+            <div
+              className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
+                completionNotice.type === "success"
+                  ? "bg-emerald-50 text-emerald-600"
+                  : completionNotice.type === "warning"
+                    ? "bg-amber-50 text-amber-600"
+                    : "bg-rose-50 text-rose-600"
+              }`}
+            >
+              {completionNotice.type === "success" ? (
+                <CheckCircleIcon className="h-5 w-5" weight="fill" />
+              ) : (
+                <WarningCircleIcon className="h-5 w-5" weight="fill" />
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-extrabold text-slate-900">{completionNotice.title}</p>
+              <p className="mt-1 text-xs font-medium leading-relaxed text-slate-600">
+                {completionNotice.message}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCompletionNotice(null)}
+              className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+              aria-label="Đóng thông báo"
+            >
+              <XIcon className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Studio Lightbox & Image Refinement Side-by-Side Modal */}
       {studioModal && activeStudioCard && activeStudioCard.attachments && activeStudioCard.attachments.length > 0 && (() => {
         const card = activeStudioCard;
@@ -1155,6 +1370,209 @@ export function AutoMockupGenerator({
         const stepId = mockupIndexFromAttachmentName(currentAtt.name) || (safeIndex === 0 ? 1 : undefined);
         const statusKey = `${card.id}_${currentAtt.id}`;
         const currentStatus = approvalMap[statusKey];
+        const currentRegenerationKey = stepId
+          ? singleMockupRegenerationKey(card.id, stepId)
+          : null;
+        const currentRegenerationJob = currentRegenerationKey
+          ? singleMockupRegenerationJobs[currentRegenerationKey]
+          : undefined;
+        const currentContent = stepId
+          ? mockupContents.find((content) => content.id === stepId)
+          : undefined;
+        const activePreset = allPresets.find(
+          (preset) => preset.id === selectedCategory,
+        );
+        const promptEditorKey = stepId && stepId > 1
+          ? sharedPresetPromptKey(stepId, selectedCategory)
+          : null;
+        const promptEditor = promptEditorKey
+          ? imagePromptEditors[promptEditorKey]
+          : undefined;
+        const isPromptExpanded = Boolean(
+          promptEditorKey && expandedImagePromptKey === promptEditorKey,
+        );
+        const promptHasChanges = Boolean(
+          promptEditor && promptEditor.draft !== promptEditor.original,
+        );
+        const promptBlocksRegeneration = Boolean(
+          promptEditor?.loading ||
+            (promptEditor &&
+              !promptEditor.error &&
+              (!promptEditor.draft.trim() || promptHasChanges)),
+        );
+
+        const loadCurrentImagePrompt = async (force = false) => {
+          if (!promptEditorKey || (promptEditor && !force)) return;
+
+          const savedPrompt = currentContent?.customPrompt?.trim();
+          if (savedPrompt) {
+            setImagePromptEditors((previous) => ({
+              ...previous,
+              [promptEditorKey]: {
+                original: savedPrompt,
+                draft: savedPrompt,
+                loading: false,
+              },
+            }));
+            return;
+          }
+
+          setImagePromptEditors((previous) => ({
+            ...previous,
+            [promptEditorKey]: {
+              original: "",
+              draft: "",
+              loading: true,
+            },
+          }));
+
+          try {
+            const response = await fetch("/api/trello/mockup-prompt", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                promptKey:
+                  currentContent?.promptKey ||
+                  `custom:${currentContent?.label || currentAtt.name}`,
+                dimensions: {
+                  length: "{{length}}",
+                  width: "{{width}}",
+                  thickness: "{{thickness}}",
+                  formatted: "{{formatted}}",
+                  capacity: "{{capacity}}",
+                },
+              }),
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+              throw new Error(payload.error || `Lỗi HTTP ${response.status}`);
+            }
+            const prompt = String(payload.prompt || "").trim();
+            if (!prompt) throw new Error("Prompt của ảnh đang trống.");
+
+            setImagePromptEditors((previous) => ({
+              ...previous,
+              [promptEditorKey]: {
+                original: prompt,
+                draft: prompt,
+                loading: false,
+              },
+            }));
+          } catch (error) {
+            setImagePromptEditors((previous) => ({
+              ...previous,
+              [promptEditorKey]: {
+                original: "",
+                draft: "",
+                loading: false,
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Không thể tải prompt của ảnh.",
+              },
+            }));
+          }
+        };
+
+        const toggleCurrentImagePrompt = () => {
+          if (!promptEditorKey) return;
+          if (isPromptExpanded) {
+            setExpandedImagePromptKey(null);
+            return;
+          }
+          setExpandedImagePromptKey(promptEditorKey);
+          void loadCurrentImagePrompt();
+        };
+
+        const copyCurrentImagePrompt = async () => {
+          if (!promptEditorKey || !promptEditor?.draft.trim()) return;
+          try {
+            await navigator.clipboard.writeText(promptEditor.draft);
+            setCopiedImagePromptKey(promptEditorKey);
+            window.setTimeout(() => {
+              setCopiedImagePromptKey((current) =>
+                current === promptEditorKey ? null : current,
+              );
+            }, 1_500);
+          } catch {
+            showCompletionNotice({
+              type: "error",
+              title: "Không thể copy prompt",
+              message: "Trình duyệt không cho phép sao chép vào clipboard.",
+            });
+          }
+        };
+
+        const saveSharedPromptToPreset = async () => {
+          if (
+            !promptEditorKey ||
+            !stepId ||
+            !currentContent ||
+            !promptEditor?.draft.trim()
+          ) return;
+
+          if (!activePreset) {
+            showCompletionNotice({
+              type: "error",
+              title: "Không tìm thấy phôi đang dùng",
+              message: "Hãy tải lại danh sách phôi rồi thử lại.",
+            });
+            return;
+          }
+
+          const confirmed = window.confirm(
+            `Lưu prompt mới cho Content ${stepId} vào phôi "${activePreset.label}"? Thay đổi này sẽ áp dụng cho cả team.`,
+          );
+          if (!confirmed) return;
+
+          setSavingImagePromptKey(promptEditorKey);
+          try {
+            const prompt = promptEditor.draft.trim();
+            const syncedPresets = await savePresetToServer({
+              ...activePreset,
+              contents: activePreset.contents.map((content) =>
+                content.id === stepId
+                  ? { ...content, customPrompt: prompt }
+                  : content,
+              ),
+            });
+            setAllPresets(syncedPresets);
+            setMockupContents((current) =>
+              current.map((content) =>
+                content.id === stepId
+                  ? { ...content, customPrompt: prompt }
+                  : content,
+              ),
+            );
+            setImagePromptEditors((previous) => ({
+              ...previous,
+              [promptEditorKey]: {
+                ...previous[promptEditorKey],
+                original: prompt,
+                draft: prompt,
+                error: undefined,
+              },
+            }));
+            showCompletionNotice({
+              type: "success",
+              title: "Đã lưu prompt vào phôi",
+              message: `Content ${stepId} của phôi "${activePreset.label}" đã được cập nhật cho team.`,
+            });
+          } catch (error) {
+            showCompletionNotice({
+              type: "error",
+              title: "Chưa thể lưu prompt",
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "Không thể đồng bộ phôi cho team.",
+            });
+          } finally {
+            setSavingImagePromptKey((current) =>
+              current === promptEditorKey ? null : current,
+            );
+          }
+        };
 
         const handlePrev = () => {
           if (attachments.length > 1) {
@@ -1342,6 +1760,12 @@ export function AutoMockupGenerator({
                       fallBackToMasterImage(event, currentAtt.url)
                     }
                   />
+                  {currentRegenerationJob && (
+                    <div className="pointer-events-none absolute left-1/2 top-5 flex -translate-x-1/2 items-center gap-2 rounded-full border border-amber-300/50 bg-slate-950/80 px-4 py-2 text-xs font-extrabold text-white shadow-xl backdrop-blur-md">
+                      <SpinnerIcon className="h-4 w-4 animate-spin text-amber-300" />
+                      <span>{currentRegenerationJob.statusText}</span>
+                    </div>
+                  )}
 
                   {/* Right Arrow Button */}
                   {attachments.length > 1 && (
@@ -1358,36 +1782,53 @@ export function AutoMockupGenerator({
                   {/* Bottom Thumbnail Navigation Strip */}
                   {attachments.length > 1 && (
                     <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 rounded-2xl bg-slate-900/85 p-1.5 backdrop-blur-md border border-white/10 max-w-[90%] overflow-x-auto shadow-2xl">
-                      {attachments.map((att, idx) => (
-                        <button
-                          key={att.id}
-                          type="button"
-                          onClick={() => {
-                            const targetStep = mockupIndexFromAttachmentName(att.name) || (idx === 0 ? 1 : undefined);
-                            setStudioModal({ cardId: card.id, attachmentIndex: idx, stepId: targetStep, attachmentId: att.id });
-                          }}
-                          className={`h-10 w-10 overflow-hidden rounded-xl border transition shrink-0 ${
-                            idx === safeIndex
-                              ? "border-amber-400 ring-2 ring-amber-400/50 scale-105"
-                              : "border-transparent opacity-50 hover:opacity-100"
-                          }`}
-                        >
-                          <img
-                            src={att.thumbnailUrl || att.previewUrl || att.url}
-                            alt=""
-                            className="h-full w-full object-cover"
-                            loading="lazy"
-                            decoding="async"
-                            onError={(event) => fallBackToMasterImage(event, att.url)}
-                          />
-                        </button>
-                      ))}
+                      {attachments.map((att, idx) => {
+                        const targetStep =
+                          mockupIndexFromAttachmentName(att.name) ||
+                          (idx === 0 ? 1 : undefined);
+                        const isRegeneratingThumbnail = targetStep
+                          ? Boolean(
+                              singleMockupRegenerationJobs[
+                                singleMockupRegenerationKey(card.id, targetStep)
+                              ],
+                            )
+                          : false;
+
+                        return (
+                          <button
+                            key={att.id}
+                            type="button"
+                            onClick={() => {
+                              setStudioModal({ cardId: card.id, attachmentIndex: idx, stepId: targetStep, attachmentId: att.id });
+                            }}
+                            className={`relative h-10 w-10 overflow-hidden rounded-xl border transition shrink-0 ${
+                              idx === safeIndex
+                                ? "border-amber-400 ring-2 ring-amber-400/50 scale-105"
+                                : "border-transparent opacity-50 hover:opacity-100"
+                            }`}
+                          >
+                            <img
+                              src={att.thumbnailUrl || att.previewUrl || att.url}
+                              alt=""
+                              className="h-full w-full object-cover"
+                              loading="lazy"
+                              decoding="async"
+                              onError={(event) => fallBackToMasterImage(event, att.url)}
+                            />
+                            {isRegeneratingThumbnail && (
+                              <span className="absolute inset-0 flex items-center justify-center bg-slate-950/65 text-white">
+                                <SpinnerIcon className="h-5 w-5 animate-spin" />
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
 
                 {/* COLUMN 2 (RIGHT): Refinement & AI Generation Form Side-by-Side */}
-                <div className="w-full md:w-[320px] lg:w-[350px] shrink-0 border-t md:border-t-0 md:border-l border-slate-200 bg-white p-5 flex flex-col justify-between overflow-y-auto space-y-4">
+                <div className="w-full md:w-[350px] lg:w-[380px] shrink-0 border-t md:border-t-0 md:border-l border-slate-200 bg-white p-5 flex flex-col justify-between overflow-y-auto space-y-4">
 
                   <div className="space-y-4">
                     <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
@@ -1416,16 +1857,174 @@ export function AutoMockupGenerator({
                       </select>
                     </div>
 
+                    {promptEditorKey && (
+                      <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50/70">
+                        <button
+                          type="button"
+                          onClick={toggleCurrentImagePrompt}
+                          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition hover:bg-slate-100 active:bg-slate-200/70"
+                          aria-expanded={isPromptExpanded}
+                        >
+                          <PencilIcon className="h-4 w-4 shrink-0 text-indigo-600" />
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-xs font-extrabold text-slate-800">
+                              Prompt chung của phôi
+                            </span>
+                            <span className="mt-0.5 block truncate text-[10px] font-medium text-slate-500">
+                              {activePreset?.label || selectedCategory}, Content {stepId}
+                            </span>
+                          </span>
+                          {promptHasChanges && (
+                            <span className="shrink-0 text-[10px] font-bold text-amber-700">
+                              Chưa lưu
+                            </span>
+                          )}
+                          <CaretDownIcon
+                            className={`h-4 w-4 shrink-0 text-slate-500 transition-transform ${
+                              isPromptExpanded ? "rotate-180" : ""
+                            }`}
+                          />
+                        </button>
+
+                        {isPromptExpanded && (
+                          <div className="border-t border-slate-200 bg-white p-3">
+                            {promptEditor?.loading ? (
+                              <div
+                                className="space-y-2"
+                                role="status"
+                                aria-label="Đang tải prompt"
+                              >
+                                <div className="h-3 w-4/5 animate-pulse rounded bg-slate-200 motion-reduce:animate-none" />
+                                <div className="h-3 w-full animate-pulse rounded bg-slate-200 motion-reduce:animate-none" />
+                                <div className="h-3 w-3/5 animate-pulse rounded bg-slate-200 motion-reduce:animate-none" />
+                              </div>
+                            ) : promptEditor?.error ? (
+                              <div className="rounded-lg bg-rose-50 p-2.5 text-[11px] font-semibold leading-relaxed text-rose-700">
+                                <p>{promptEditor.error}</p>
+                                <button
+                                  type="button"
+                                  onClick={() => void loadCurrentImagePrompt(true)}
+                                  className="mt-2 font-extrabold text-rose-800 underline underline-offset-2"
+                                >
+                                  Thử tải lại
+                                </button>
+                              </div>
+                            ) : promptEditor ? (
+                              <>
+                                <textarea
+                                  value={promptEditor.draft}
+                                  onChange={(event) =>
+                                    setImagePromptEditors((previous) => ({
+                                      ...previous,
+                                      [promptEditorKey]: {
+                                        ...previous[promptEditorKey],
+                                        draft: event.target.value,
+                                        error: undefined,
+                                      },
+                                    }))
+                                  }
+                                  rows={8}
+                                  aria-label={`Prompt chung của Content ${stepId} trong phôi ${activePreset?.label || selectedCategory}`}
+                                  className="w-full resize-y rounded-lg border border-slate-300 bg-white p-2.5 text-[11px] font-medium leading-relaxed text-slate-800 outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-600/15"
+                                />
+                                <div className="mt-2 flex items-center justify-between gap-2">
+                                  <span
+                                    className={`text-[10px] font-semibold ${
+                                      !promptEditor.draft.trim()
+                                        ? "text-rose-600"
+                                        : promptHasChanges
+                                          ? "text-amber-700"
+                                          : "text-slate-500"
+                                    }`}
+                                  >
+                                    {!promptEditor.draft.trim()
+                                      ? "Prompt không được để trống"
+                                      : promptHasChanges
+                                        ? "Thay đổi chưa được lưu"
+                                        : "Áp dụng cho cả phôi"}
+                                  </span>
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setImagePromptEditors((previous) => ({
+                                          ...previous,
+                                          [promptEditorKey]: {
+                                            ...previous[promptEditorKey],
+                                            draft: previous[promptEditorKey].original,
+                                            error: undefined,
+                                          },
+                                        }))
+                                      }
+                                      disabled={!promptHasChanges}
+                                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                                    >
+                                      <ArrowCounterClockwiseIcon className="h-3.5 w-3.5" />
+                                      Khôi phục
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => void copyCurrentImagePrompt()}
+                                      className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-[10px] font-extrabold text-slate-700 transition hover:bg-slate-200 active:scale-[0.98]"
+                                    >
+                                      {copiedImagePromptKey === promptEditorKey ? (
+                                        <CheckIcon className="h-3.5 w-3.5 text-emerald-600" weight="bold" />
+                                      ) : (
+                                        <CopyIcon className="h-3.5 w-3.5" />
+                                      )}
+                                      {copiedImagePromptKey === promptEditorKey
+                                        ? "Đã copy"
+                                        : "Copy"}
+                                    </button>
+                                  </div>
+                                </div>
+                                {promptHasChanges && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      void saveSharedPromptToPreset()
+                                    }
+                                    disabled={
+                                      savingImagePromptKey === promptEditorKey ||
+                                      !promptEditor.draft.trim()
+                                    }
+                                    className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-extrabold text-amber-800 transition hover:bg-amber-100 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    {savingImagePromptKey === promptEditorKey ? (
+                                      <SpinnerIcon className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
+                                    ) : (
+                                      <FloppyDiskIcon className="h-3.5 w-3.5" />
+                                    )}
+                                    {savingImagePromptKey === promptEditorKey
+                                      ? "Đang lưu..."
+                                      : "Lưu prompt chung"}
+                                  </button>
+                                )}
+                                <p className="mt-2 border-t border-slate-100 pt-2 text-[10px] font-medium leading-relaxed text-slate-500">
+                                  Khi lưu, Content {stepId} của phôi {activePreset?.label || selectedCategory}
+                                  sẽ được cập nhật cho cả team.
+                                  <span className="mt-1 block">
+                                    Các biến kích thước trong prompt tự lấy dữ liệu
+                                    từ từng thẻ sản phẩm.
+                                  </span>
+                                </p>
+                              </>
+                            ) : null}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {/* Prompt Refinement Textarea */}
                     <div>
                       <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Mô tả tinh chỉnh AI:
+                        Tinh chỉnh thêm <span className="font-medium text-slate-400">(không bắt buộc)</span>
                       </label>
                       <textarea
                         value={regenPromptNote}
                         onChange={(e) => setRegenPromptNote(e.target.value)}
                         placeholder="Ví dụ: Đèn Giáng Sinh sáng hơn, bối cảnh tự nhiên hơn..."
-                        rows={6}
+                        rows={4}
                         className="w-full rounded-xl border border-slate-300 p-3 text-xs font-medium text-slate-800 outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-600/20 placeholder:text-slate-400 shadow-2xs leading-relaxed"
                       />
                       <p className="mt-1.5 text-[10px] font-semibold leading-relaxed text-slate-500">
@@ -1437,6 +2036,11 @@ export function AutoMockupGenerator({
 
                   {/* Action Button */}
                   <div className="pt-3 border-t border-slate-100 shrink-0 space-y-2">
+                    {promptHasChanges && (
+                      <p className="rounded-lg bg-amber-50 px-2.5 py-2 text-center text-[10px] font-bold text-amber-800">
+                        Hãy lưu hoặc khôi phục prompt chung trước khi gen.
+                      </p>
+                    )}
                     <button
                       type="button"
                       onClick={async () => {
@@ -1450,8 +2054,15 @@ export function AutoMockupGenerator({
                           );
                           return;
                         }
-                        setIsRegeneratingSingle(true);
-                        setSingleRegenStatusText("Đang kết nối AI...");
+                        const regenerationKey = singleMockupRegenerationKey(card.id, stepId);
+                        if (singleMockupRegenerationJobs[regenerationKey]) return;
+                        const refinementNote = regenPromptNote.trim();
+                        prepareBrowserNotification();
+                        setSingleMockupRegenerationJobs((previous) => ({
+                          ...previous,
+                          [regenerationKey]: { statusText: "Đang kết nối AI..." },
+                        }));
+                        setRegenPromptNote("");
                         setErrorMsg("");
                         try {
                           const res = await fetch("/api/trello/generate-mockups", {
@@ -1472,8 +2083,8 @@ export function AutoMockupGenerator({
                                 promptKey: content.promptKey,
                                 customPrompt: content.customPrompt,
                               })),
-                              customRefinementNotes: regenPromptNote.trim()
-                                ? { [stepId]: regenPromptNote.trim() }
+                              customRefinementNotes: refinementNote
+                                ? { [stepId]: refinementNote }
                                 : undefined,
                               stream: true,
                             }),
@@ -1491,13 +2102,21 @@ export function AutoMockupGenerator({
                           const reader = res.body.getReader();
                           const decoder = new TextDecoder();
                           let buffered = "";
+                          const regenStreamResult: { data: MockupGenerationResponse | null } = { data: null };
 
                           const handleRegenEvent = (event: MockupStreamEvent) => {
                             if (event.type === "error") {
                               throw new Error(event.error);
                             }
+                            if (event.type === "complete") {
+                              regenStreamResult.data = event.data;
+                              return;
+                            }
                             if (event.type === "progress") {
-                              setSingleRegenStatusText(event.message);
+                              setSingleMockupRegenerationJobs((previous) => ({
+                                ...previous,
+                                [regenerationKey]: { statusText: event.message },
+                              }));
                               if (
                                 event.status === "success" &&
                                 (event.attachmentUrl || event.previewUrl)
@@ -1517,7 +2136,10 @@ export function AutoMockupGenerator({
                                         event.attachmentId ||
                                         prevAtt?.id ||
                                         String(Date.now()),
-                                      name: event.name || prevAtt?.name || `Mockup ${event.step}`,
+                                      name:
+                                        event.name ||
+                                        prevAtt?.name ||
+                                        `Mockup${event.step}_Generated`,
                                       url: event.attachmentUrl || prevAtt?.url || "",
                                       mimeType: "image/png",
                                       previewUrl: event.previewUrl || prevAtt?.previewUrl,
@@ -1533,7 +2155,10 @@ export function AutoMockupGenerator({
                                     });
                                     return {
                                       ...c,
-                                      attachments: [...filteredAtts, newAtt],
+                                      attachments: sortMockupAttachments([
+                                        ...filteredAtts,
+                                        newAtt,
+                                      ]),
                                     };
                                   });
 
@@ -1573,18 +2198,47 @@ export function AutoMockupGenerator({
                           }
 
                           await syncAllColumns();
-                          setRegenPromptNote("");
+                          const regenData = regenStreamResult.data;
+                          if (!regenData) {
+                            throw new Error("Luồng gen lại ảnh kết thúc nhưng không có kết quả.");
+                          }
+                          const failedRegen = regenData.attachments.some(
+                            (attachment) => attachment.index === stepId && attachment.status === "failed",
+                          );
+                          showCompletionNotice(failedRegen
+                            ? {
+                                type: "warning",
+                                title: `Mockup ${stepId} chưa cập nhật`,
+                                message: `Ảnh của SKU ${card.parsed?.sku || card.name} chưa tải được lên Trello. Bạn có thể thử lại.`,
+                              }
+                            : {
+                                type: "success",
+                                title: `Đã gen lại Mockup ${stepId}`,
+                                message: `Ảnh của SKU ${card.parsed?.sku || card.name} đã được cập nhật trên Trello.`,
+                              });
                         } catch (err) {
-                          setErrorMsg(err instanceof Error ? err.message : "Lỗi khi gen lại ảnh.");
+                          const message = err instanceof Error ? err.message : "Lỗi khi gen lại ảnh.";
+                          setErrorMsg(message);
+                          showCompletionNotice({
+                            type: "error",
+                            title: `Không thể gen lại Mockup ${stepId}`,
+                            message,
+                          });
                         } finally {
-                          setIsRegeneratingSingle(false);
-                          setSingleRegenStatusText("");
+                          setSingleMockupRegenerationJobs((previous) => {
+                            const next = { ...previous };
+                            delete next[regenerationKey];
+                            return next;
+                          });
                         }
                       }}
-                      disabled={isRegeneratingSingle}
+                      disabled={
+                        Boolean(currentRegenerationJob) ||
+                        promptBlocksRegeneration
+                      }
                       className="w-full flex items-center justify-center gap-2 rounded-2xl bg-amber-500 py-3 px-4 text-sm font-black text-white shadow-md hover:bg-amber-600 active:scale-[0.98] disabled:opacity-50 transition"
                     >
-                      {isRegeneratingSingle ? (
+                      {currentRegenerationJob ? (
                         <div className="flex flex-col items-center justify-center py-0.5">
                           <div className="flex items-center gap-2">
                             <SpinnerIcon className="h-5 w-5 animate-spin text-white" />
@@ -1598,9 +2252,9 @@ export function AutoMockupGenerator({
                         </>
                       )}
                     </button>
-                    {isRegeneratingSingle && singleRegenStatusText && (
+                    {currentRegenerationJob?.statusText && (
                       <div className="text-center text-xs font-bold text-amber-600 animate-pulse bg-amber-50 rounded-xl py-1.5 px-2 border border-amber-200">
-                        {singleRegenStatusText}
+                        {currentRegenerationJob.statusText}
                       </div>
                     )}
                   </div>
@@ -2182,6 +2836,13 @@ export function AutoMockupGenerator({
                               (idx === 0 ? 1 : undefined);
                             const statusKey = `${card.id}_${att.id}`;
                             const currentStatus = approvalMap[statusKey];
+                            const isRegeneratingAttachment = stepId
+                              ? Boolean(
+                                  singleMockupRegenerationJobs[
+                                    singleMockupRegenerationKey(card.id, stepId)
+                                  ],
+                                )
+                              : false;
 
                             return (
                               <div
@@ -2209,6 +2870,12 @@ export function AutoMockupGenerator({
                                     setRegenPromptNote("");
                                   }}
                                 />
+
+                                {isRegeneratingAttachment && (
+                                  <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-slate-950/65 text-white">
+                                    <SpinnerIcon className="h-6 w-6 animate-spin" />
+                                  </span>
+                                )}
 
                                 {currentStatus === "approved" && (
                                   <span className="absolute top-1 right-1 h-3.5 w-3.5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[9px] font-bold shadow-xs pointer-events-none">
@@ -2388,6 +3055,13 @@ export function AutoMockupGenerator({
                             (idx === 0 ? 1 : undefined);
                           const statusKey = `${card.id}_${att.id}`;
                           const currentStatus = approvalMap[statusKey];
+                          const isRegeneratingAttachment = stepId
+                            ? Boolean(
+                                singleMockupRegenerationJobs[
+                                  singleMockupRegenerationKey(card.id, stepId)
+                                ],
+                              )
+                            : false;
 
                           return (
                             <div
@@ -2415,6 +3089,11 @@ export function AutoMockupGenerator({
                                   setRegenPromptNote("");
                                 }}
                               />
+                              {isRegeneratingAttachment && (
+                                <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-slate-950/65 text-white">
+                                  <SpinnerIcon className="h-6 w-6 animate-spin" />
+                                </span>
+                              )}
                               {currentStatus === "approved" && (
                                 <span className="absolute top-1 right-1 h-3.5 w-3.5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[9px] font-bold shadow-xs pointer-events-none">
                                   ✓

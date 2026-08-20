@@ -435,30 +435,69 @@ export async function acquireMockupImageSlot(
 
 export async function tryAcquireMockupCardLock(
   cardId: string,
+  stepIds?: readonly number[],
 ): Promise<MockupLease | null> {
   const redis = await getReadyRedisClient();
-  const key = `${CARD_LOCK_PREFIX}${cardId}`;
-  const token = randomUUID();
+  const lockScopes = stepIds?.length
+    ? Array.from(new Set(stepIds)).sort((left, right) => left - right)
+    : ["all"];
+  const keys = lockScopes.map(
+    (scope) => `${CARD_LOCK_PREFIX}${cardId}:step:${scope}`,
+  );
+  const acquiredLeases: MockupLease[] = [];
+
+  const releaseAcquiredLeases = async () => {
+    await Promise.allSettled(
+      acquiredLeases.map((lease) => lease.release()),
+    );
+  };
 
   if (redis) {
-    const acquired = await redis.set(key, token, "PX", LEASE_TTL_MS, "NX");
-    if (acquired !== "OK") return null;
-    return renewableRedisLease(
-      redis,
-      () => redis.eval(RENEW_LOCK_SCRIPT, 1, key, token, LEASE_TTL_MS),
-      () => redis.eval(RELEASE_LOCK_SCRIPT, 1, key, token),
-    );
+    try {
+      for (const key of keys) {
+        const token = randomUUID();
+        const acquired = await redis.set(key, token, "PX", LEASE_TTL_MS, "NX");
+        if (acquired !== "OK") {
+          await releaseAcquiredLeases();
+          return null;
+        }
+        acquiredLeases.push(
+          renewableRedisLease(
+            redis,
+            () => redis.eval(RENEW_LOCK_SCRIPT, 1, key, token, LEASE_TTL_MS),
+            () => redis.eval(RELEASE_LOCK_SCRIPT, 1, key, token),
+          ),
+        );
+      }
+    } catch (error) {
+      await releaseAcquiredLeases();
+      throw error;
+    }
+  } else {
+    warnAboutLocalFallback();
+    for (const key of keys) {
+      if (localState.cardLocks.has(key)) {
+        await releaseAcquiredLeases();
+        return null;
+      }
+      localState.cardLocks.add(key);
+      let released = false;
+      acquiredLeases.push({
+        async release() {
+          if (released) return;
+          released = true;
+          localState.cardLocks.delete(key);
+        },
+      });
+    }
   }
 
-  warnAboutLocalFallback();
-  if (localState.cardLocks.has(key)) return null;
-  localState.cardLocks.add(key);
   let released = false;
   return {
     async release() {
       if (released) return;
       released = true;
-      localState.cardLocks.delete(key);
+      await releaseAcquiredLeases();
     },
   };
 }

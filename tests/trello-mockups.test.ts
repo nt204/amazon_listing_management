@@ -10,12 +10,14 @@ import {
 } from "../lib/trello";
 import {
   MAX_AI_MOCKUPS_PER_PRODUCT,
+  buildMockupConcept,
   buildMockupPrompt,
   classifyMockupGenerationError,
   generateAllMockups,
   limitSelectedMockupContents,
   mockupIndexFromAttachmentName,
   planMockupGeneration,
+  sortMockupAttachments,
 } from "../lib/mockup-generator";
 
 const SAMPLE_PNG = Buffer.from(
@@ -149,6 +151,21 @@ test("one source Content stays selected and only six additional AI Contents may 
     limited.filter((content) => content.checked).map((content) => content.id),
     [1, 2, 3, 4, 5, 6, 7],
   );
+});
+
+test("mockup attachments stay in content order regardless of upload completion order", () => {
+  const source = { id: "source", name: "SKU_FullDesign.jpg" };
+  const mockup2 = { id: "mockup-2", name: "Mockup2_Dimensions.png" };
+  const mockup3 = { id: "mockup-3", name: "Mockup 3 - Gift Box.png" };
+  const mockup10 = { id: "mockup-10", name: "Mockup10_Custom.png" };
+
+  assert.deepEqual(
+    sortMockupAttachments([mockup10, mockup3, source, mockup2]).map(
+      (attachment) => attachment.id,
+    ),
+    ["source", "mockup-2", "mockup-3", "mockup-10"],
+  );
+  assert.equal(mockupIndexFromAttachmentName(mockup3.name), 3);
 });
 
 test("a normal retry generates only missing mockups while single-image force replaces its target", () => {
@@ -769,6 +786,36 @@ test("mockup prompts use neutral shared instructions plus the selected scene con
   assert.match(dimensionPrompt, /Kích thước 3 chiều: 3\.1" x 3\.1" x 0\.15"\./);
   assert.match(dimensionPrompt, /Product Size & Thickness Infographic Photography/);
   assert.doesNotMatch(dimensionPrompt, /transparent crystal glass disc/i);
+});
+
+test("mockup concept preview exposes the editable scene without shared generation rules", () => {
+  const concept = buildMockupConcept("universal_lifestyle", {
+    length: '3.1"',
+    width: '3.1"',
+    thickness: '0.15"',
+    formatted: '3.1" x 3.1" x 0.15"',
+  });
+
+  assert.match(concept, /REALISTIC LIFESTYLE & IN-USE PHOTOGRAPHY/);
+  assert.doesNotMatch(concept, /THỨ TỰ ƯU TIÊN/);
+});
+
+test("shared custom prompts resolve product dimensions when generating each image", () => {
+  const concept = buildMockupConcept(
+    "custom:Use {{length}} x {{width}}, thickness {{thickness}}, capacity {{capacity}}.",
+    {
+      length: '3.1"',
+      width: '3.1"',
+      thickness: '0.15"',
+      capacity: "17oz",
+      formatted: '3.1" x 3.1" x 0.15"',
+    },
+  );
+
+  assert.equal(
+    concept,
+    'Use 3.1" x 3.1", thickness 0.15", capacity 17oz.',
+  );
 });
 
 test("mockup prompts include product material context from the source card", () => {

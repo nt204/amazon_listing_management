@@ -236,10 +236,19 @@ async function runMockupGeneration(
   postResponseTasks: PostResponseTask[] = [],
 ) {
   throwIfAborted(signal);
-  const cardLock = await tryAcquireMockupCardLock(input.cardId);
+  const requestedSteps = input.selectedSteps || Array.from(
+    { length: MAX_AI_MOCKUPS_PER_PRODUCT },
+    (_, index) => index + 2,
+  );
+  const cardLock = await tryAcquireMockupCardLock(
+    input.cardId,
+    requestedSteps,
+  );
   if (!cardLock) {
     throw new ApiError(
-      "Thẻ này đang có một lượt tạo mockup khác chạy. Hệ thống đã chặn request trùng để tránh phát sinh thêm chi phí.",
+      requestedSteps.length === 1
+        ? `Mockup ${requestedSteps[0]} đang được tạo. Hệ thống đã chặn request trùng để tránh phát sinh thêm chi phí.`
+        : "Một hoặc nhiều mockup đã chọn đang được tạo. Hệ thống đã chặn phần bị trùng để tránh phát sinh thêm chi phí.",
       409,
     );
   }
