@@ -168,6 +168,16 @@ interface SingleMockupRegenerationJob {
   statusText: string;
 }
 
+interface MockupBackgroundJob {
+  id: string;
+  cardId: string;
+  status: "queued" | "running" | "cancel_requested";
+  progress?: {
+    message?: string;
+    step?: number;
+  };
+}
+
 interface ImagePromptEditorState {
   original: string;
   draft: string;
@@ -632,6 +642,8 @@ export function AutoMockupGenerator({
   const [generationStatusText, setGenerationStatusText] = useState<string>("");
   const [generationResult, setGenerationResult] = useState<string | null>(null);
   const [completionNotice, setCompletionNotice] = useState<MockupCompletionNotice | null>(null);
+  const [backgroundJobs, setBackgroundJobs] = useState<MockupBackgroundJob[]>([]);
+  const previousBackgroundJobIdsRef = useRef<Set<string>>(new Set());
 
   const prepareBrowserNotification = useCallback(() => {
     if (
@@ -699,6 +711,7 @@ export function AutoMockupGenerator({
   >({});
 
   const allBoardCards = [...designCards, ...mockupCards];
+  const backgroundJobCardIds = new Set(backgroundJobs.map((job) => job.cardId));
   const activeStudioCard = allBoardCards.find((c) => c.id === studioModal?.cardId);
   const activeCardIndex = allBoardCards.findIndex((c) => c.id === studioModal?.cardId);
 
@@ -933,6 +946,46 @@ export function AutoMockupGenerator({
     return () => window.clearTimeout(timeoutId);
   }, [syncAllColumns]);
 
+  useEffect(() => {
+    let disposed = false;
+    const refreshBackgroundJobs = async () => {
+      try {
+        const response = await fetch(
+          "/api/trello/mockup-jobs?status=active&limit=30",
+          { cache: "no-store" },
+        );
+        if (!response.ok) return;
+        const payload = (await response.json()) as {
+          jobs?: MockupBackgroundJob[];
+        };
+        if (disposed) return;
+        const jobs = payload.jobs || [];
+        const nextIds = new Set(jobs.map((job) => job.id));
+        const hadCompletedJob = Array.from(
+          previousBackgroundJobIdsRef.current,
+        ).some((jobId) => !nextIds.has(jobId));
+        previousBackgroundJobIdsRef.current = nextIds;
+        setBackgroundJobs(jobs);
+        if (hadCompletedJob) void syncAllColumns();
+      } catch {
+        // The board stays usable if queue status is briefly unavailable.
+      }
+    };
+
+    void refreshBackgroundJobs();
+    const interval = window.setInterval(
+      () => void refreshBackgroundJobs(),
+      3_000,
+    );
+    const refreshOnFocus = () => void refreshBackgroundJobs();
+    window.addEventListener("focus", refreshOnFocus);
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshOnFocus);
+    };
+  }, [syncAllColumns]);
+
   const toggleSelectCard = (cardId: string) => {
     const next = new Set(selectedCardIds);
     if (next.has(cardId)) {
@@ -952,11 +1005,18 @@ export function AutoMockupGenerator({
   };
 
   const abortControllerRef = useRef<AbortController | null>(null);
+  const activeGenerationJobIdRef = useRef<string | null>(null);
   const isAbortingRef = useRef<boolean>(false);
   const generationInFlightRef = useRef<boolean>(false);
 
   const cancelGeneration = async () => {
     isAbortingRef.current = true;
+    const jobId = activeGenerationJobIdRef.current;
+    if (jobId) {
+      await fetch(`/api/trello/mockup-jobs/${encodeURIComponent(jobId)}`, {
+        method: "DELETE",
+      }).catch(() => undefined);
+    }
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
@@ -1009,7 +1069,7 @@ export function AutoMockupGenerator({
     setGenerationProgress(initialProgress);
 
     try {
-      const res = await fetch("/api/trello/generate-mockups", {
+      const res = await fetch("/api/trello/mockup-jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
@@ -1036,6 +1096,8 @@ export function AutoMockupGenerator({
         const errData = await res.json().catch(() => ({}));
         throw new Error(errData.error || `Lỗi HTTP ${res.status}`);
       }
+
+      activeGenerationJobIdRef.current = res.headers.get("x-mockup-job-id");
 
       if (!res.body) {
         throw new Error("Server không trả về luồng tiến độ tạo ảnh.");
@@ -1258,6 +1320,7 @@ export function AutoMockupGenerator({
       generationInFlightRef.current = false;
       setActiveGeneratingCardId(null);
       abortControllerRef.current = null;
+      activeGenerationJobIdRef.current = null;
       void syncAllColumns();
     }
   };
@@ -1303,6 +1366,25 @@ export function AutoMockupGenerator({
 
   return (
     <div className="space-y-6 text-slate-800 font-sans">
+      {backgroundJobs.length > 0 && (
+        <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 shadow-sm">
+          <div className="flex items-center gap-3">
+            <SpinnerIcon className="h-5 w-5 shrink-0 animate-spin text-sky-600" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-extrabold text-sky-950">
+                {backgroundJobs.length} tác vụ mockup đang chạy nền
+              </p>
+              <p className="mt-0.5 truncate text-xs font-medium text-sky-700">
+                {backgroundJobs[0]?.progress?.message ||
+                  "Đang chờ worker xử lý. Có thể tải lại hoặc đóng trang mà không mất tác vụ."}
+              </p>
+            </div>
+            <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-sky-700 ring-1 ring-sky-200">
+              {backgroundJobs.filter((job) => job.status === "running").length} đang chạy
+            </span>
+          </div>
+        </div>
+      )}
       {completionNotice && (
         <div
           className={`fixed right-5 top-5 z-[70] w-[min(24rem,calc(100vw-2.5rem))] rounded-2xl border bg-white p-4 shadow-2xl ${
@@ -2065,7 +2147,7 @@ export function AutoMockupGenerator({
                         setRegenPromptNote("");
                         setErrorMsg("");
                         try {
-                          const res = await fetch("/api/trello/generate-mockups", {
+                          const res = await fetch("/api/trello/mockup-jobs", {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({
@@ -2234,6 +2316,7 @@ export function AutoMockupGenerator({
                       }}
                       disabled={
                         Boolean(currentRegenerationJob) ||
+                        backgroundJobCardIds.has(card.id) ||
                         promptBlocksRegeneration
                       }
                       className="w-full flex items-center justify-center gap-2 rounded-2xl bg-amber-500 py-3 px-4 text-sm font-black text-white shadow-md hover:bg-amber-600 active:scale-[0.98] disabled:opacity-50 transition"
@@ -2404,11 +2487,24 @@ export function AutoMockupGenerator({
         {/* Mockup Content Checkbox Option Section */}
         <div className="mt-4 border-t border-indigo-100/80 pt-3">
           {/* Category Selector Bar */}
-          <div className="flex flex-wrap items-center gap-2 mb-3.5 pb-2.5 border-b border-indigo-100/60">
-            <span className="text-xs font-black text-slate-700 uppercase tracking-wide flex items-center gap-1.5 shrink-0">
-              <TagIcon className="h-4 w-4 text-indigo-600" />
-              Mục Sản Phẩm (Product Category):
-            </span>
+          <div className="mb-3.5 pb-2.5 border-b border-indigo-100/60">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <span className="text-xs font-black text-slate-700 uppercase tracking-wide flex items-center gap-1.5 shrink-0">
+                <TagIcon className="h-4 w-4 text-indigo-600" />
+                Mục Sản Phẩm (Product Category):
+              </span>
+
+              <button
+                type="button"
+                onClick={() => setShowProductPresetModal(true)}
+                className="flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-extrabold text-amber-800 shadow-2xs hover:bg-amber-100 transition cursor-pointer"
+                title="Thêm, nhân bản loại sản phẩm mới & chỉnh sửa Content / Prompt AI"
+              >
+                <GearIcon className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                <span>Quản Lý Mẫu SP & Content</span>
+              </button>
+            </div>
+
             <div className="flex flex-wrap items-center gap-2">
               {allPresets.map((cat) => {
                 const isActive = selectedCategory === cat.id;
@@ -2435,16 +2531,6 @@ export function AutoMockupGenerator({
                   </button>
                 );
               })}
-
-              <button
-                type="button"
-                onClick={() => setShowProductPresetModal(true)}
-                className="flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-extrabold text-amber-800 shadow-2xs hover:bg-amber-100 transition cursor-pointer"
-                title="Thêm, nhân bản loại sản phẩm mới & chỉnh sửa Content / Prompt AI"
-              >
-                <GearIcon className="h-4 w-4 text-amber-600" />
-                <span>⚙️ Quản Lý Mẫu SP & Content</span>
-              </button>
             </div>
           </div>
 
@@ -2756,7 +2842,9 @@ export function AutoMockupGenerator({
               designCards.map((card) => {
                 const dims: Dimensions3D = parseCardDimensions(card.desc || "");
                 const isSelected = selectedCardIds.has(card.id);
-                const isGenerating = activeGeneratingCardId === card.id;
+                const isGenerating =
+                  activeGeneratingCardId === card.id ||
+                  backgroundJobCardIds.has(card.id);
                 const imageAttachments = card.attachments || [];
 
                 return (
@@ -2919,6 +3007,7 @@ export function AutoMockupGenerator({
                         onClick={() => handleGenerateMockupsSingle(card)}
                         disabled={
                           Boolean(activeGeneratingCardId) ||
+                          backgroundJobCardIds.has(card.id) ||
                           batchProcessing ||
                           selectedAiMockupCount === 0
                         }
@@ -2984,7 +3073,9 @@ export function AutoMockupGenerator({
             ) : (
               mockupCards.map((card) => {
                 const dims: Dimensions3D = parseCardDimensions(card.desc || "");
-                const isGenerating = activeGeneratingCardId === card.id;
+                const isGenerating =
+                  activeGeneratingCardId === card.id ||
+                  backgroundJobCardIds.has(card.id);
                 const imageAttachments = card.attachments || [];
 
                 return (
@@ -3114,6 +3205,7 @@ export function AutoMockupGenerator({
                       onClick={() => handleGenerateMockupsSingle(card)}
                       disabled={
                         Boolean(activeGeneratingCardId) ||
+                        backgroundJobCardIds.has(card.id) ||
                         selectedAiMockupCount === 0
                       }
                       className="w-full flex items-center justify-center gap-2 rounded-xl bg-slate-800 px-4 py-2.5 text-xs font-bold text-white shadow hover:bg-slate-900 active:scale-[0.98] disabled:opacity-50 transition"

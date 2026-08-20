@@ -213,6 +213,7 @@ export interface TrelloCard {
   idList: string;
   idBoard?: string;
   url: string;
+  dateLastActivity?: string;
   badges: {
     attachments: number;
   };

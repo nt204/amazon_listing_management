@@ -1,21 +1,33 @@
 import { checkDatabaseHealth } from "@/lib/db";
 import { getRuleRegistry } from "@/lib/rules";
 import { checkDiskHealth } from "@/lib/system-health";
+import { getReadyRedisClient } from "@/lib/redis";
+import { getMockupQueueMetrics } from "@/lib/mockup-jobs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const [, storage] = await Promise.all([
+    const [, storage, redis, mockupQueue] = await Promise.all([
       checkDatabaseHealth(),
       checkDiskHealth(),
+      getReadyRedisClient(),
+      getMockupQueueMetrics(),
     ]);
-    const status = storage.level === "healthy" ? "ready" : storage.level;
+    const redisReady = Boolean(redis);
+    const status =
+      storage.level === "critical"
+        ? "critical"
+        : storage.level === "warning" || !redisReady
+          ? "warning"
+          : "ready";
     return Response.json(
       {
         status,
         rules_version: getRuleRegistry().version,
+        redis: redisReady ? "ready" : "unavailable",
+        mockup_queue: mockupQueue,
         storage: {
           level: storage.level,
           used_percent: storage.usedPercent,

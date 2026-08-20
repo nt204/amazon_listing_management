@@ -65,11 +65,29 @@ interface TrelloCard {
   desc: string;
   idList: string;
   url: string;
+  dateLastActivity?: string;
   attachments?: TrelloAttachment[];
   parsed?: {
     sku: string;
     itemName: string;
   };
+}
+
+function formatCardDate(isoString?: string) {
+  if (!isoString) {
+    const now = new Date();
+    const dateStr = now.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
+    const timeStr = now.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", hour12: false });
+    return `${dateStr} ${timeStr}`;
+  }
+  try {
+    const d = new Date(isoString);
+    const dateStr = d.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
+    const timeStr = d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", hour12: false });
+    return `${dateStr} ${timeStr}`;
+  } catch {
+    return isoString;
+  }
 }
 
 interface CardProcessProgress {
@@ -949,7 +967,7 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
             </div>
             <div className="flex items-center gap-2">
               <a
-                href={`/api/trello/download-card-excel?cardId=${inspectListing.id}&apiKey=${encodeURIComponent(apiKey)}&token=${encodeURIComponent(token)}&templateId=${encodeURIComponent(templateId)}`}
+                href={`/api/trello/download-card-excel?listingId=${inspectListing.id}&apiKey=${encodeURIComponent(apiKey)}&token=${encodeURIComponent(token)}&templateId=${encodeURIComponent(templateId)}`}
                 target="_blank"
                 rel="noreferrer"
                 className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white shadow hover:bg-emerald-700 transition"
@@ -1343,7 +1361,7 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
                             {card.parsed?.itemName || card.name}
                           </h4>
                           <p className="text-xs text-slate-400 font-semibold mt-1">
-                            Cập nhật: 12/06/2026 10:30
+                            Cập nhật: {formatCardDate(card.dateLastActivity)}
                           </p>
                         </div>
                       </div>

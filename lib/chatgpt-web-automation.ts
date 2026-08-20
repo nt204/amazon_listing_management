@@ -1,4 +1,6 @@
 import { chromium, type Browser, type Cookie } from "playwright-core";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 
 export interface ChatGPTWebAutomationOptions {
   cookies?: string;
@@ -45,11 +47,9 @@ function sanitizePlaywrightCookie(raw: Partial<Cookie> & Record<string, unknown>
 function getLatestEnvVar(key: string): string {
   if (process.env[key]?.trim()) return process.env[key]!;
   try {
-    const fs = require("fs");
-    const path = require("path");
     const envPath = path.join(process.cwd(), ".env");
-    if (fs.existsSync(envPath)) {
-      const content = fs.readFileSync(envPath, "utf8");
+    if (existsSync(envPath)) {
+      const content = readFileSync(envPath, "utf8");
       const lines = content.split("\n");
       for (const line of lines) {
         const trimmed = line.trim();

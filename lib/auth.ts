@@ -172,6 +172,35 @@ export function authenticateRequest(request: Request, permission: Permission): R
   return actor;
 }
 
+export function authenticateMockupWorker(request: Request): RequestActor | null {
+  const supplied = request.headers.get("x-mockup-worker-secret")?.trim();
+  if (!supplied) return null;
+
+  const configured = (
+    process.env.MOCKUP_WORKER_SECRET || process.env.LISTING_DESK_SESSION_SECRET || ""
+  ).trim();
+  if (configured.length < 32 || !safeEqual(configured, supplied)) {
+    throw new AuthError("Invalid mockup worker credential.", 401);
+  }
+
+  const teamId = request.headers.get("x-mockup-team-id")?.trim() || "";
+  const actorId = request.headers.get("x-mockup-actor-id")?.trim() || "";
+  if (
+    !/^[A-Za-z0-9._:-]{1,128}$/.test(teamId) ||
+    !/^[A-Za-z0-9._:@+-]{1,128}$/.test(actorId)
+  ) {
+    throw new AuthError("Invalid mockup worker scope.", 400);
+  }
+
+  return {
+    teamId,
+    userId: actorId,
+    displayName: "Mockup worker",
+    role: "admin",
+    ruleProfile: "",
+  };
+}
+
 export function authErrorResponse(error: unknown) {
   if (!(error instanceof AuthError)) return null;
   return Response.json({ error: error.message }, { status: error.status });

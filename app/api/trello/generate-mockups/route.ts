@@ -1,5 +1,4 @@
 import { after, NextResponse } from "next/server";
-import { z } from "zod";
 import sharp from "sharp";
 import { invalidateCachePattern } from "@/lib/redis";
 import {
@@ -8,6 +7,10 @@ import {
   dataScope,
   routeErrorResponse,
 } from "@/lib/api-guard";
+import {
+  authenticateMockupWorker,
+  isAuthenticationRequired,
+} from "@/lib/auth";
 import {
   deleteTrelloImageDerivatives,
   pruneExpiredTrelloImageDerivatives,
@@ -45,58 +48,16 @@ import {
   mockupIndexFromAttachmentName,
   planMockupGeneration,
 } from "@/lib/mockup-generator";
+import {
+  generateMockupsSchema,
+  imageQualitySchema,
+  mockupModelSchema,
+  type GenerateMockupsInput,
+} from "@/lib/mockup-request";
 
 export const runtime = "nodejs";
 export const maxDuration = 600;
 
-const mockupModelSchema = z.enum([
-  "gpt-image-2",
-  "gpt-image-2-c",
-  "gpt-image-2-cheapkey",
-  "gpt-image-1.5",
-  "gemini-3.1-flash-image",
-  "gemini-3-pro-image",
-  "fast-graphic",
-  "chatgpt-web-automation",
-]);
-const imageQualitySchema = z.enum(["low", "medium", "high"]);
-
-const generateMockupsSchema = z.object({
-  cardId: z.string().min(1, "cardId là bắt buộc"),
-  targetListId: z.string().optional(),
-  apiKey: z.string().optional(),
-  token: z.string().optional(),
-  model: mockupModelSchema.optional(),
-  quality: imageQualitySchema.optional(),
-  designDataUrl: z.string().optional(),
-  selectedSteps: z
-    .array(z.number().int().min(2).max(20))
-    .min(1, "Hãy chọn ít nhất một concept mockup.")
-    .max(
-      MAX_AI_MOCKUPS_PER_PRODUCT,
-      `Mỗi sản phẩm chỉ được chọn tối đa ${MAX_AI_MOCKUPS_PER_PRODUCT} Content AI ngoài ảnh gốc.`,
-    )
-    .refine((steps) => new Set(steps).size === steps.length, {
-      message: "Danh sách Content AI không được chứa vị trí trùng nhau.",
-    })
-    .optional(),
-  customContents: z
-    .array(
-      z.object({
-        id: z.number().int().min(1).max(20),
-        label: z.string().trim().min(1).max(200),
-        promptKey: z.string().trim().optional(),
-        customPrompt: z.string().trim().optional(),
-      }),
-    )
-    .max(20)
-    .optional(),
-  customRefinementNotes: z.record(z.coerce.number(), z.string()).optional(),
-  forceRegenerate: z.boolean().optional(),
-  stream: z.boolean().optional(),
-});
-
-type GenerateMockupsInput = z.infer<typeof generateMockupsSchema>;
 type PostResponseTask = () => Promise<void>;
 type ProgressReporter = (event: {
   type: "progress";
@@ -168,7 +129,19 @@ async function recoverTimedOutTrelloUpload(options: {
 
 export async function POST(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "write"));
+    const workerActor = authenticateMockupWorker(request);
+    if (
+      !workerActor &&
+      process.env.NODE_ENV === "production" &&
+      isAuthenticationRequired() &&
+      process.env.ALLOW_DIRECT_MOCKUP_GENERATION !== "true"
+    ) {
+      throw new ApiError(
+        "Production chỉ nhận tạo mockup qua hàng đợi bền vững.",
+        403,
+      );
+    }
+    const scope = dataScope(workerActor || authorize(request, "write"));
     const input = generateMockupsSchema.parse(await request.json());
     const postResponseTasks: PostResponseTask[] = [];
     after(async () => {

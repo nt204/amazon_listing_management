@@ -38,6 +38,55 @@ IMAGE_GENERATION_CONCURRENCY=3
 
 Model và API key chỉ được gọi trong Route Handler phía server. Mỗi lần tạo một bộ mockup có thể phát sinh chi phí của provider cho 6 ảnh AI được sinh.
 
+### Hàng đợi mockup cho nhiều người dùng
+
+Tạo mockup đi qua hàng đợi bền vững trong PostgreSQL. Redis điều phối giới hạn
+provider và worker được khởi động cùng tiến trình Node.js bằng Next.js
+instrumentation. Sau khi đã nhận `jobId`, tác vụ tiếp tục chạy khi người dùng tải
+lại trang, đóng modal hoặc mất kết nối; giao diện tự đọc lại các job đang hoạt
+động và đồng bộ ảnh từ Trello khi hoàn tất.
+
+Với một team khoảng 10 người, dùng cấu hình khởi đầu sau:
+
+```env
+MOCKUP_JOB_WORKER_ENABLED=true
+MOCKUP_JOB_WORKER_CONCURRENCY=5
+MOCKUP_MAX_ACTIVE_PRODUCTS=5
+MOCKUP_MAX_CHEAPKEYAI_IMAGE_REQUESTS=3
+MOCKUP_MAX_GLOBAL_IMAGE_REQUESTS=6
+MOCKUP_MAX_TRELLO_UPLOADS=2
+MOCKUP_MAX_QUEUED_JOBS_PER_TEAM=30
+MOCKUP_JOB_RATE_LIMIT_PER_MINUTE=10
+```
+
+`MOCKUP_JOB_WORKER_CONCURRENCY` là số job được worker nhận, không phải số request
+AI. Giới hạn request ảnh toàn hệ thống vẫn do Redis và các biến
+`MOCKUP_MAX_*_IMAGE_REQUESTS` kiểm soát. Không tăng CheapKeyAI quá 3 trước khi
+provider xác nhận quota và số liệu production cho thấy tỷ lệ lỗi ổn định.
+
+Queued worker chỉ sử dụng `TRELLO_API_KEY` và `TRELLO_TOKEN` phía server; credential
+Trello từ trình duyệt không được ghi vào bảng job. Production nhiều instance phải
+dùng chung `DATABASE_URL` và `REDIS_URL`. Redis trong `compose.yaml` bật AOF để
+khôi phục trạng thái điều phối sau restart; PostgreSQL vẫn là nguồn dữ liệu chính
+của job.
+
+Quy trình release self-hosted:
+
+```bash
+npm ci
+docker compose up -d db redis
+npm run db:migrate
+npm run build
+npm run start
+```
+
+Chỉ đưa instance vào load balancer sau khi `GET /api/health` trả HTTP 200 và có
+`redis: "ready"`. Nếu triển khai ra ngoài mạng riêng/VPN, bật
+`LISTING_DESK_AUTH_MODE=required`, đặt `LISTING_DESK_SESSION_SECRET` tối thiểu 32
+ký tự và khai báo từng người dùng trong `LISTING_DESK_TEAMS_JSON`. Worker dùng
+chính session secret này để gọi engine nội bộ; có thể tách riêng bằng
+`MOCKUP_WORKER_SECRET`.
+
 ### Glass Ornament với template
 
 Trong modal **Template Glass Ornament**, chọn một ảnh sản phẩm nguồn và đúng một

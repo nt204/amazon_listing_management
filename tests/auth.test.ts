@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AuthError,
+  authenticateMockupWorker,
   authenticateRequest,
   authenticateTeamToken,
   createSessionToken,
@@ -40,6 +41,24 @@ test("team tokens create signed sessions and enforce role permissions", () => {
       () => authenticateRequest(bearerRequest, "approve"),
       (error) => error instanceof AuthError && error.status === 403,
     );
+
+    const workerRequest = new Request(
+      "https://listing.example/api/trello/generate-mockups",
+      {
+        headers: {
+          "x-mockup-worker-secret": process.env.LISTING_DESK_SESSION_SECRET,
+          "x-mockup-team-id": "team-a",
+          "x-mockup-actor-id": "editor-a",
+        },
+      },
+    );
+    assert.deepEqual(authenticateMockupWorker(workerRequest), {
+      teamId: "team-a",
+      userId: "editor-a",
+      displayName: "Mockup worker",
+      role: "admin",
+      ruleProfile: "",
+    });
   } finally {
     if (previous.mode === undefined) delete process.env.LISTING_DESK_AUTH_MODE;
     else process.env.LISTING_DESK_AUTH_MODE = previous.mode;

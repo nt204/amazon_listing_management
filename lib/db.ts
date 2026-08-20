@@ -56,7 +56,7 @@ async function ensureSchema() {
     const sql = getDatabase();
     globalForDatabase.listingPostgresSchema = sql<{ name: string }[]>`
         SELECT name FROM schema_migrations
-        WHERE name = '008_mockup_preset_import_state.sql'
+        WHERE name = '009_persistent_mockup_jobs.sql'
         LIMIT 1
       `
       .then((rows) => {
@@ -75,6 +75,11 @@ async function ensureSchema() {
   }
 
   await globalForDatabase.listingPostgresSchema;
+}
+
+export async function getDatabaseClient() {
+  await ensureSchema();
+  return getDatabase();
 }
 
 export async function checkDatabaseHealth() {
