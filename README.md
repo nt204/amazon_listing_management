@@ -218,6 +218,9 @@ khung bảo trì vì thao tác đó khóa bảng.
 - `POST /api/listings/:id/export`
 - `GET|POST /api/brands`
 - `POST /api/references`
+- `POST /api/trello/process-card` - trả JSON như cũ; gửi `Accept: application/x-ndjson`
+  để nhận tiến độ từng công đoạn, event `listing_ready` trước khi Excel/Trello hoàn tất,
+  rồi event `complete` sau hậu xử lý.
 
 Các mutation tốn AI yêu cầu `Idempotency-Key`. Frontend đã tự tạo key cho generate, batch và revise.
 

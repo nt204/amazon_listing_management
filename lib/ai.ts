@@ -39,6 +39,20 @@ export interface GenerationOptions {
   currentListing?: ListingContent;
   reviewInstruction?: string;
   signal?: AbortSignal;
+  onProgress?: (progress: ListingGenerationProgress) => void;
+}
+
+export type ListingGenerationStage =
+  | "keyword_research"
+  | "competitor_research"
+  | "ocr"
+  | "ai_writer"
+  | "validation";
+
+export interface ListingGenerationProgress {
+  stage: ListingGenerationStage;
+  status: "started" | "completed";
+  duration_ms?: number;
 }
 
 interface ProviderOutput {
@@ -464,13 +478,27 @@ export async function generateListing(
   options: GenerationOptions = {},
 ): Promise<ListingResult> {
   const startedAt = Date.now();
+  const stageTimings: Partial<Record<ListingGenerationStage, number>> = {};
+  const runStage = async <T>(stage: ListingGenerationStage, operation: () => Promise<T> | T) => {
+    options.onProgress?.({ stage, status: "started" });
+    const stageStartedAt = Date.now();
+    try {
+      return await operation();
+    } finally {
+      const duration = Date.now() - stageStartedAt;
+      stageTimings[stage] = duration;
+      options.onProgress?.({ stage, status: "completed", duration_ms: duration });
+    }
+  };
   const keywordInput = options.productBrief
     ? sourceInput
-    : await enrichListingKeywordResearch(sourceInput, options.signal);
+    : await runStage("keyword_research", () => enrichListingKeywordResearch(sourceInput, options.signal));
   const input = options.productBrief
     ? keywordInput
-    : await enrichCompetitorResearch(keywordInput);
-  const ocr = options.productBrief ? undefined : await extractLocalOcr(input, options.signal);
+    : await runStage("competitor_research", () => enrichCompetitorResearch(keywordInput));
+  const ocr = options.productBrief
+    ? undefined
+    : await runStage("ocr", () => extractLocalOcr(input, options.signal));
   const brief = simpleBrief(input, ocr, options.productBrief);
   const titleBlueprint = buildTitleBlueprint(input);
   const prompt = buildPrompt(input, ocr, options, titleBlueprint);
@@ -484,7 +512,9 @@ export async function generateListing(
   let providerOutput: ProviderOutput;
 
   if (mock) {
-    providerOutput = { listing: options.currentListing || createMockListing(input) };
+    providerOutput = await runStage("ai_writer", () => ({
+      listing: options.currentListing || createMockListing(input),
+    }));
   } else {
     const preferred: Provider = input.configuration.ai_provider === "openai" ? "openai" : "gemini";
     const providers = [preferred, preferred === "gemini" ? "openai" : "gemini"]
@@ -492,44 +522,51 @@ export async function generateListing(
       .filter((provider) => provider === "gemini" ? hasGemini : hasOpenAI) as Provider[];
     if (!providers.length) throw new Error("No AI provider is configured.");
     let firstError: unknown;
-    try {
-      const provider = providers[0];
-      modelUsed = provider;
-      modelName = provider === "gemini"
-        ? input.configuration.gemini_model || getGeminiModels()[0].id
-        : input.configuration.openai_model || getOpenAIModels()[0].id;
-      providerOutput = provider === "gemini"
-        ? await callGemini(input, modelName, prompt, options.signal)
-        : await callOpenAI(input, modelName, prompt, options.signal);
-    } catch (error) {
-      firstError = error;
-      const provider = providers[1];
-      if (!provider) throw error;
-      fallbackUsed = true;
-      fallbackReason = error instanceof Error ? error.message : String(error);
-      modelUsed = provider;
-      modelName = provider === "gemini"
-        ? input.configuration.gemini_model || getGeminiModels()[0].id
-        : input.configuration.openai_model || getOpenAIModels()[0].id;
+    providerOutput = await runStage("ai_writer", async () => {
       try {
-        providerOutput = provider === "gemini"
+        const provider = providers[0];
+        modelUsed = provider;
+        modelName = provider === "gemini"
+          ? input.configuration.gemini_model || getGeminiModels()[0].id
+          : input.configuration.openai_model || getOpenAIModels()[0].id;
+        return provider === "gemini"
           ? await callGemini(input, modelName, prompt, options.signal)
           : await callOpenAI(input, modelName, prompt, options.signal);
-      } catch (fallbackError) {
-        throw new AggregateError(
-          [firstError, fallbackError],
-          `All configured AI providers failed. ${providers[0]}: ${firstError instanceof Error ? firstError.message : String(firstError)}; ${provider}: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`,
-        );
+      } catch (error) {
+        firstError = error;
+        const provider = providers[1];
+        if (!provider) throw error;
+        fallbackUsed = true;
+        fallbackReason = error instanceof Error ? error.message : String(error);
+        modelUsed = provider;
+        modelName = provider === "gemini"
+          ? input.configuration.gemini_model || getGeminiModels()[0].id
+          : input.configuration.openai_model || getOpenAIModels()[0].id;
+        try {
+          return provider === "gemini"
+            ? await callGemini(input, modelName, prompt, options.signal)
+            : await callOpenAI(input, modelName, prompt, options.signal);
+        } catch (fallbackError) {
+          throw new AggregateError(
+            [firstError, fallbackError],
+            `All configured AI providers failed. ${providers[0]}: ${firstError instanceof Error ? firstError.message : String(firstError)}; ${provider}: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`,
+          );
+        }
       }
-    }
+    });
   }
 
-  const listing = cleanListing(providerOutput.listing, input, brief);
-  const analysis = analyzeListing(listing, input, {
-    relatedKeywords: brief.related_keywords,
-    suppliedFacts: brief.supplied_facts,
-    imageFacts: brief.image_facts,
-    competitorProfile: input.research.competitor_profile,
+  const { listing, analysis } = await runStage("validation", () => {
+    const cleanedListing = cleanListing(providerOutput.listing, input, brief);
+    return {
+      listing: cleanedListing,
+      analysis: analyzeListing(cleanedListing, input, {
+        relatedKeywords: brief.related_keywords,
+        suppliedFacts: brief.supplied_facts,
+        imageFacts: brief.image_facts,
+        competitorProfile: input.research.competitor_profile,
+      }),
+    };
   });
   return {
     request_id: crypto.randomUUID(),
@@ -549,6 +586,7 @@ export async function generateListing(
     ...analysis,
     metadata: {
       processing_time_ms: Date.now() - startedAt,
+      stage_timings_ms: stageTimings as Record<string, number>,
       retry_count: 0,
       prompt_version: getRuleRegistry().prompt_version,
       policy_version: getPolicy(input).version,

@@ -30,6 +30,14 @@ import type { BrandProfile, ListingTemplateSummary, StoredListing } from "@/lib/
 import { extractTrelloBoardId } from "@/lib/trello";
 import { AutoMockupGenerator } from "@/components/auto-mockup-generator";
 import { downloadOriginalTrelloImage } from "@/lib/trello-image-client";
+import { readNdjsonStream } from "@/lib/read-ndjson-stream";
+import { runWithConcurrency } from "@/lib/run-with-concurrency";
+import {
+  formatStageDuration,
+  TRELLO_LISTING_STAGE_LABELS,
+  type TrelloListingStage,
+  type TrelloListingStreamEvent,
+} from "@/lib/trello-listing-progress";
 
 interface TrelloBoardViewProps {
   brands: BrandProfile[];
@@ -62,6 +70,13 @@ interface TrelloCard {
     sku: string;
     itemName: string;
   };
+}
+
+interface CardProcessProgress {
+  message: string;
+  progress: number;
+  status: "running" | "listing_ready" | "complete" | "warning" | "error";
+  timings: Record<string, number>;
 }
 
 function getTemplateDisplayName(template: ListingTemplateSummary) {
@@ -97,7 +112,8 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
   const [loading, setLoading] = useState(false);
   const [batchProcessing, setBatchProcessing] = useState(false);
   const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
-  const [processingCardId, setProcessingCardId] = useState<string | null>(null);
+  const [processingCardIds, setProcessingCardIds] = useState<Set<string>>(new Set());
+  const [cardProcessProgress, setCardProcessProgress] = useState<Record<string, CardProcessProgress>>({});
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
   const [showConfig, setShowConfig] = useState(false);
@@ -319,14 +335,27 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
     }
   };
 
-  const processCardToListing = async (card: TrelloCard) => {
-    setProcessingCardId(card.id);
-    setError("");
-    setSuccessMsg("");
+  const runCardListing = async (card: TrelloCard, openWhenReady: boolean) => {
+    setProcessingCardIds((current) => new Set(current).add(card.id));
+    setCardProcessProgress((current) => ({
+      ...current,
+      [card.id]: {
+        message: "Đang bắt đầu xử lý thẻ...",
+        progress: 1,
+        status: "running",
+        timings: {},
+      },
+    }));
+    let readyListing: StoredListing | null = null;
+    let completedAttachment: { id: string; name: string; url: string } | null = null;
+
     try {
       const res = await fetch("/api/trello/process-card", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/x-ndjson",
+        },
         body: JSON.stringify({
           cardId: card.id,
           targetListId: listingList?.id,
@@ -338,28 +367,111 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
           model: selectedModel,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Lỗi tạo Listing.");
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(data.error || "Lỗi tạo Listing.");
+      }
 
-      if (data.trelloAttachment) {
-        setProcessedCardsMap((prev) => ({
-          ...prev,
-          [card.id]: { attachmentUrl: data.trelloAttachment.url, name: data.trelloAttachment.name },
+      await readNdjsonStream<TrelloListingStreamEvent>(res, (event) => {
+        if (event.type === "error") throw new Error(event.message);
+
+        if (event.type === "progress") {
+          setCardProcessProgress((current) => ({
+            ...current,
+            [card.id]: {
+              message: event.message,
+              progress: event.progress,
+              status: "running",
+              timings: event.timings_ms,
+            },
+          }));
+          return;
+        }
+
+        if (event.type === "listing_ready") {
+          readyListing = event.listing;
+          setCardProcessProgress((current) => ({
+            ...current,
+            [card.id]: {
+              message: event.message,
+              progress: event.progress,
+              status: "listing_ready",
+              timings: event.timings_ms,
+            },
+          }));
+          onListingCreated?.(event.listing);
+          if (openWhenReady) {
+            setInspectListing(event.listing);
+            setSuccessMsg(`Listing của SKU ${event.sku} đã sẵn sàng. Excel và Trello đang hoàn tất nền.`);
+          }
+          return;
+        }
+
+        if (event.type === "warning") {
+          setCardProcessProgress((current) => ({
+            ...current,
+            [card.id]: {
+              message: event.message,
+              progress: current[card.id]?.progress || 84,
+              status: "warning",
+              timings: event.timings_ms,
+            },
+          }));
+          return;
+        }
+
+        completedAttachment = event.attachment || null;
+        if (event.attachment) {
+          setProcessedCardsMap((current) => ({
+            ...current,
+            [card.id]: { attachmentUrl: event.attachment?.url, name: event.attachment?.name },
+          }));
+        }
+        setCardProcessProgress((current) => ({
+          ...current,
+          [card.id]: {
+            message: event.message,
+            progress: 100,
+            status: "complete",
+            timings: event.timings_ms,
+          },
         }));
-      }
+      });
 
-      setSuccessMsg(`Tạo Listing Excel thành công cho SKU: ${data.sku}! Đã đính kèm file Excel vào thẻ Trello.`);
+      if (!readyListing) throw new Error("Server kết thúc nhưng chưa trả về listing.");
+      return { listing: readyListing, attachment: completedAttachment };
+    } catch (requestError) {
+      setCardProcessProgress((current) => ({
+        ...current,
+        [card.id]: {
+          message: requestError instanceof Error ? requestError.message : "Không thể tạo listing.",
+          progress: current[card.id]?.progress || 0,
+          status: "error",
+          timings: current[card.id]?.timings || {},
+        },
+      }));
+      throw requestError;
+    } finally {
+      setProcessingCardIds((current) => {
+        const next = new Set(current);
+        next.delete(card.id);
+        return next;
+      });
+    }
+  };
 
-      if (data.listing) {
-        if (onListingCreated) onListingCreated(data.listing);
-        setInspectListing(data.listing);
-      }
+  const processCardToListing = async (card: TrelloCard) => {
+    setError("");
+    setSuccessMsg("");
+    try {
+      const completed = await runCardListing(card, true);
+      setSuccessMsg(completed.attachment
+        ? `Đã tạo listing và đính kèm Excel cho SKU ${card.parsed?.sku || card.name}.`
+        : `Đã tạo listing cho SKU ${card.parsed?.sku || card.name}; cần kiểm tra lại file Excel trên Trello.`);
 
       await loadCards(apiKey, token, boardId, reviewListName, listingListName);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Đã xảy ra lỗi khi tạo Listing từ thẻ Trello.");
-    } finally {
-      setProcessingCardId(null);
     }
   };
 
@@ -433,43 +545,28 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
     setSuccessMsg("");
 
     let successCount = 0;
+    let completedCount = 0;
+    let postProcessWarningCount = 0;
     const batchErrors: string[] = [];
-    for (let i = 0; i < cardsToProcess.length; i += 1) {
-      const card = cardsToProcess[i];
-      setBatchProgress({ current: i + 1, total: cardsToProcess.length });
-      setProcessingCardId(card.id);
+    await runWithConcurrency(cardsToProcess, 2, async (card) => {
       try {
-        const res = await fetch("/api/trello/process-card", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            cardId: card.id,
-            targetListId: listingList?.id,
-            apiKey: apiKey.trim() || undefined,
-            token: token.trim() || undefined,
-            brandProfileId: brandProfileId || undefined,
-            marketplace,
-            templateId: templateId || undefined,
-            model: selectedModel,
-          }),
-        });
-        const data = await res.json();
-        if (res.ok && data.listing) {
-          successCount += 1;
-          if (onListingCreated) onListingCreated(data.listing);
-        } else {
-          batchErrors.push(`${card.parsed?.sku || card.name}: ${data.error || "Không thể tạo listing"}`);
-        }
+        const completed = await runCardListing(card, false);
+        successCount += 1;
+        if (!completed.attachment) postProcessWarningCount += 1;
       } catch (err) {
         console.error(`Lỗi tạo batch cho card ${card.id}:`, err);
         batchErrors.push(`${card.parsed?.sku || card.name}: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        completedCount += 1;
+        setBatchProgress({ current: completedCount, total: cardsToProcess.length });
       }
-    }
+    });
 
     setBatchProcessing(false);
-    setProcessingCardId(null);
     if (successCount > 0) {
-      setSuccessMsg(`Đã hoàn thành Batch tạo Listing cho ${successCount}/${cardsToProcess.length} thẻ đã chọn! Các file Excel đã được đính kèm vào thẻ Trello.`);
+      setSuccessMsg(postProcessWarningCount > 0
+        ? `Đã tạo ${successCount}/${cardsToProcess.length} listing; ${postProcessWarningCount} thẻ cần kiểm tra lại Excel hoặc Trello.`
+        : `Đã tạo ${successCount}/${cardsToProcess.length} listing và đính kèm đầy đủ file Excel lên Trello.`);
     }
     if (batchErrors.length > 0) {
       setError(`Lỗi khi tạo Listing: ${batchErrors.join("; ")}`);
@@ -492,6 +589,11 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  const activeProgressCards = reviewCards
+    .filter((card) => processingCardIds.has(card.id))
+    .map((card) => ({ card, progress: cardProcessProgress[card.id] }))
+    .filter((item): item is { card: TrelloCard; progress: CardProcessProgress } => Boolean(item.progress));
 
   return (
     <div className="relative flex h-full w-full flex-col bg-slate-100 text-slate-800 font-sans">
@@ -636,6 +738,50 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
         </div>
       )}
 
+      {activeProgressCards.length > 0 && (
+        <section
+          className="border-b border-sky-200 bg-sky-50 px-6 py-3"
+          aria-label="Tiến độ tạo listing"
+          aria-live="polite"
+        >
+          <div className="mx-auto grid max-w-6xl gap-2 md:grid-cols-2">
+            {activeProgressCards.map(({ card, progress }) => {
+              const completedTimings = Object.entries(progress.timings)
+                .filter(([, duration]) => duration >= 0)
+                .slice(-5);
+              return (
+                <div key={card.id} className="rounded-xl border border-sky-200 bg-white px-3.5 py-3 shadow-2xs">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-extrabold text-slate-900">
+                        {card.parsed?.sku || card.name}
+                      </p>
+                      <p className="mt-0.5 truncate text-xs font-medium text-sky-800">{progress.message}</p>
+                    </div>
+                    <span className="shrink-0 font-mono text-xs font-bold text-sky-700">{progress.progress}%</span>
+                  </div>
+                  <progress
+                    className="mt-2 h-1.5 w-full overflow-hidden rounded-full accent-sky-600"
+                    max={100}
+                    value={progress.progress}
+                    aria-label={`Tiến độ ${card.parsed?.sku || card.name}`}
+                  />
+                  {completedTimings.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-semibold text-slate-500">
+                      {completedTimings.map(([stage, duration]) => (
+                        <span key={stage}>
+                          {TRELLO_LISTING_STAGE_LABELS[stage as TrelloListingStage] || stage}: {formatStageDuration(duration)}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
       {/* Large Prominent Config Panel */}
       {showConfig && (
         <div className="border-b border-slate-200 bg-white p-6 shadow-md">
@@ -720,7 +866,7 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
             <span className="text-xs font-bold">Thẻ đã chọn để Batch Listing</span>
             {batchProcessing && (
               <span className="text-xs font-semibold text-sky-100">
-                (Đang xử lý {batchProgress.current}/{batchProgress.total} thẻ...)
+                (Hoàn tất {batchProgress.current}/{batchProgress.total}, tối đa 2 thẻ cùng lúc)
               </span>
             )}
           </div>
@@ -746,7 +892,7 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
               ) : (
                 <>
                   <LightningIcon className="h-4 w-4 fill-current" />
-                  <span>⚡ Batch Tạo Listing Cho {selectedCardIds.size} Thẻ Đã Chọn</span>
+                  <span>Batch Tạo Listing Cho {selectedCardIds.size} Thẻ Đã Chọn</span>
                 </>
               )}
             </button>
@@ -828,6 +974,25 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
           </div>
 
           <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            {inspectListing.result.metadata.stage_timings_ms && (
+              <div>
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Thời gian xử lý</label>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {Object.entries(inspectListing.result.metadata.stage_timings_ms).map(([stage, duration]) => (
+                    <span
+                      key={stage}
+                      className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-semibold text-slate-600"
+                    >
+                      {TRELLO_LISTING_STAGE_LABELS[stage as TrelloListingStage] || stage}: {formatStageDuration(duration)}
+                    </span>
+                  ))}
+                  <span className="rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-[11px] font-bold text-sky-700">
+                    Tổng AI: {formatStageDuration(inspectListing.result.metadata.processing_time_ms)}
+                  </span>
+                </div>
+              </div>
+            )}
+
             <div>
               <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Product Title</label>
               <p className="mt-1 font-semibold text-slate-900 bg-slate-50 p-3 rounded-lg border border-slate-200 text-sm">
@@ -924,7 +1089,7 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
               ) : (
                 reviewCards.map((card) => {
                   const isSelected = selectedCardIds.has(card.id);
-                  const isProcessing = processingCardId === card.id;
+                  const isProcessing = processingCardIds.has(card.id);
                   const imageAttachments = (card.attachments || []).filter(
                     (a) => a.mimeType?.startsWith("image/") || /\.(png|jpe?g|webp)$/i.test(a.url),
                   );

@@ -2,17 +2,23 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { generateListing } from "@/lib/ai";
+import { generateListing, type ListingGenerationProgress } from "@/lib/ai";
 import {
   detectRasterImageMimeType,
   prepareListingImagesForAi,
 } from "@/lib/image-processing";
-import { authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
+import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { getBrandProfile, getListingTemplate, listListingTemplates, saveGeneratedListing } from "@/lib/db";
 import { DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_MODEL } from "@/lib/models";
 import { listingInputSchema } from "@/lib/schemas";
 import type { ListingTemplateSummary } from "@/lib/types";
+import type { StoredListing } from "@/lib/types";
 import { invalidateCachePattern } from "@/lib/redis";
+import {
+  TRELLO_LISTING_STAGE_UI,
+  type TrelloListingStage,
+  type TrelloListingStreamEvent,
+} from "@/lib/trello-listing-progress";
 import {
   attachFileToTrelloCard,
   downloadTrelloAttachment,
@@ -53,22 +59,67 @@ function inferProductType(itemName: string, defaultType = "3D Card") {
   return defaultType;
 }
 
-export async function POST(request: Request) {
-  try {
+type ProgressEmitter = (event: TrelloListingStreamEvent) => void;
+
+interface ProcessCardResult {
+  success: true;
+  sku: string;
+  itemName: string;
+  listing: StoredListing;
+  trelloAttachment: TrelloAttachment | null;
+  updatedCard: Awaited<ReturnType<typeof fetchTrelloCardDetail>>;
+  timings_ms: Record<string, number>;
+}
+
+async function processCardRequest(
+  request: Request,
+  emit: ProgressEmitter = () => undefined,
+): Promise<ProcessCardResult> {
+    const timings: Record<string, number> = {};
+    let activeCardId = "";
+    const emitProgress = (
+      stage: TrelloListingStage,
+      status: "started" | "completed",
+      durationMs?: number,
+    ) => {
+      if (durationMs !== undefined) timings[stage] = durationMs;
+      const copy = TRELLO_LISTING_STAGE_UI[stage];
+      emit({
+        type: "progress",
+        card_id: activeCardId,
+        stage,
+        status,
+        message: copy[status],
+        progress: status === "started" ? copy.started_progress : copy.progress,
+        duration_ms: durationMs,
+        timings_ms: { ...timings },
+      });
+    };
+    const runStage = async <T>(stage: TrelloListingStage, operation: () => Promise<T> | T) => {
+      emitProgress(stage, "started");
+      const startedAt = Date.now();
+      try {
+        return await operation();
+      } finally {
+        emitProgress(stage, "completed", Date.now() - startedAt);
+      }
+    };
+
     const actor = authorize(request, "write");
     const scope = dataScope(actor);
     const body = await request.json();
     const { cardId, targetListId, brandProfileId, marketplace, productType, templateId } = processCardSchema.parse(body);
+    activeCardId = cardId;
 
     const apiKey = body.apiKey || process.env.TRELLO_API_KEY || "";
     const token = body.token || process.env.TRELLO_TOKEN || "";
 
     if (!apiKey || !token) {
-      return NextResponse.json({ error: "Vui lòng cung cấp Trello API Key và Token." }, { status: 400 });
+      throw new ApiError("Vui lòng cung cấp Trello API Key và Token.", 400);
     }
 
     // 1. Fetch card details & attachments from Trello
-    const card = await fetchTrelloCardDetail(cardId, apiKey, token);
+    const card = await runStage("card", () => fetchTrelloCardDetail(cardId, apiKey, token));
     const { sku, itemName } = parseTrelloCardTitle(card.name);
 
     // 2. Load primary cover image attachment (Full Design) from Trello card
@@ -76,6 +127,8 @@ export async function POST(request: Request) {
 
     const loadedImages: Array<{ name: string; type: string; data_url: string }> = [];
 
+    emitProgress("image_download", "started");
+    const imageDownloadStartedAt = Date.now();
     if (imageAttachments.length > 0) {
       const att = imageAttachments[0];
       try {
@@ -98,6 +151,7 @@ export async function POST(request: Request) {
         data_url: tinySamplePng,
       });
     }
+    emitProgress("image_download", "completed", Date.now() - imageDownloadStartedAt);
 
     // 3. Extract generic keywords from card description
     const rawDesc = (card.desc || "").trim();
@@ -122,6 +176,8 @@ export async function POST(request: Request) {
     let resolvedTemplate: { workbook: Buffer; original_filename: string } | null = null;
     let templateDefaults: ListingTemplateSummary["metadata"]["defaults"] | undefined;
 
+    emitProgress("template", "started");
+    const templateStartedAt = Date.now();
     if (templateId) {
       const dbTemplate = await getListingTemplate(scope, templateId);
       if (dbTemplate) {
@@ -156,6 +212,7 @@ export async function POST(request: Request) {
         original_filename: "HANGING_ORNAMENT_3_SKU_INPUT.xlsx",
       };
     }
+    emitProgress("template", "completed", Date.now() - templateStartedAt);
 
     // 5. Construct Listing Input
     const selectedModel = body.model || "";
@@ -207,21 +264,40 @@ export async function POST(request: Request) {
       },
     };
 
-    const input = await prepareListingImagesForAi(
+    const input = await runStage("image_prepare", () => prepareListingImagesForAi(
       listingInputSchema.parse(rawInputPayload),
-    );
+    ));
 
     // 6. Generate AI Listing
-    const result = await generateListing(input, { signal: request.signal });
+    const onAiProgress = (progress: ListingGenerationProgress) => {
+      emitProgress(progress.stage, progress.status, progress.duration_ms);
+    };
+    const result = await generateListing(input, { signal: request.signal, onProgress: onAiProgress });
+    result.metadata.stage_timings_ms = {
+      ...timings,
+      ...result.metadata.stage_timings_ms,
+    };
     const exactCardKeywords = formatRawTrelloKeywords(rawDesc);
     if (exactCardKeywords) {
       result.listing.backend_search_terms = exactCardKeywords;
     }
-    const stored = await saveGeneratedListing(scope, input, result);
+    const stored = await runStage("database", () => saveGeneratedListing(scope, input, result));
 
     if (!stored) {
       throw new Error("Không thể lưu kết quả Listing vào cơ sở dữ liệu.");
     }
+    stored.result.metadata.stage_timings_ms = { ...timings };
+
+    emit({
+      type: "listing_ready",
+      card_id: cardId,
+      sku,
+      item_name: itemName,
+      listing: stored,
+      message: "Listing đã sẵn sàng. Excel và Trello đang tiếp tục xử lý nền.",
+      progress: TRELLO_LISTING_STAGE_UI.listing_ready.progress,
+      timings_ms: { ...timings },
+    });
 
     // 7. Resolve corresponding Amazon Excel Template (.xlsx) & Fill AI generated content
     const templateItem = {
@@ -232,88 +308,183 @@ export async function POST(request: Request) {
       product_information: stored.input.product_information,
     };
 
-    let excelWorkbook: Buffer;
+    let excelWorkbook: Buffer | null = null;
     let excelFileName = `${sku.toLowerCase()}-amazon-listing.xlsx`;
     let mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
-    const { createAmazonTemplate, createStandardListingExcel } = await import("@/lib/excel-automation");
+    try {
+      await runStage("excel", async () => {
+        const { createAmazonTemplate, createStandardListingExcel } = await import("@/lib/excel-automation");
 
-    if (resolvedTemplate) {
-      try {
-        const res = await createAmazonTemplate(
-          resolvedTemplate.workbook,
-          resolvedTemplate.original_filename,
-          [templateItem],
-        );
-        excelWorkbook = res.workbook;
-        excelFileName = `${sku.toLowerCase()}-amazon-template${res.extension}`;
-        if (res.extension === ".xlsm") {
-          mimeType = "application/vnd.ms-excel.sheet.macroEnabled.12";
+        if (resolvedTemplate) {
+          try {
+            const res = await createAmazonTemplate(
+              resolvedTemplate.workbook,
+              resolvedTemplate.original_filename,
+              [templateItem],
+            );
+            excelWorkbook = res.workbook;
+            excelFileName = `${sku.toLowerCase()}-amazon-template${res.extension}`;
+            if (res.extension === ".xlsm") {
+              mimeType = "application/vnd.ms-excel.sheet.macroEnabled.12";
+            }
+          } catch (fillErr) {
+            console.error("Lỗi khi điền nội dung AI vào Amazon Template, dùng fallback:", fillErr);
+            const res = await createStandardListingExcel([templateItem]);
+            excelWorkbook = res.workbook;
+          }
+        } else {
+          const res = await createStandardListingExcel([templateItem]);
+          excelWorkbook = res.workbook;
         }
-      } catch (fillErr) {
-        console.error("Lỗi khi điền nội dung AI vào Amazon Template, dùng fallback:", fillErr);
-        const res = await createStandardListingExcel([templateItem]);
-        excelWorkbook = res.workbook;
-      }
-    } else {
-      const res = await createStandardListingExcel([templateItem]);
-      excelWorkbook = res.workbook;
+      });
+    } catch (excelError) {
+      console.error("Lỗi khi tạo file Listing Excel:", excelError);
+      emit({
+        type: "warning",
+        card_id: cardId,
+        stage: "excel",
+        message: "Listing đã lưu nhưng chưa thể tạo file Excel.",
+        timings_ms: { ...timings },
+      });
     }
 
     // 8. Attach Excel (.xlsx) file back to Trello Card
     let attachment: TrelloAttachment | null = null;
-    try {
-      attachment = await attachFileToTrelloCard(
-        card.id,
-        excelWorkbook,
-        excelFileName,
-        mimeType,
-        apiKey,
-        token,
-      );
-    } catch (attachErr) {
-      console.error("Lỗi khi đính kèm file Listing Excel vào Trello card:", attachErr);
-    }
+    await runStage("trello_upload", async () => {
+      if (!excelWorkbook) return;
+      try {
+        attachment = await attachFileToTrelloCard(
+          card.id,
+          excelWorkbook,
+          excelFileName,
+          mimeType,
+          apiKey,
+          token,
+        );
+      } catch (attachErr) {
+        console.error("Lỗi khi đính kèm file Listing Excel vào Trello card:", attachErr);
+        emit({
+          type: "warning",
+          card_id: cardId,
+          stage: "trello_upload",
+          message: "Listing đã lưu nhưng chưa thể đính kèm file Excel lên Trello.",
+          timings_ms: { ...timings },
+        });
+      }
+    });
 
     // 9. Move Trello Card to "Listing" list if targetListId provided (or auto-detected)
     let updatedCard = card;
     let finalTargetListId = targetListId;
 
-    if (!finalTargetListId && (card.idBoard || process.env.TRELLO_BOARD_ID)) {
-      try {
-        const boardId = card.idBoard || process.env.TRELLO_BOARD_ID || "";
-        const lists = await fetchTrelloLists(boardId, apiKey, token);
-        const listingNameQuery = (process.env.TRELLO_LISTING_LIST || "Listing").trim().toLowerCase();
-        const match = lists.find(
-          (l) => l.name.trim().toLowerCase() === listingNameQuery || l.name.toLowerCase().includes("listing"),
-        );
-        if (match) {
-          finalTargetListId = match.id;
+    await runStage("trello_move", async () => {
+      if (!finalTargetListId && (card.idBoard || process.env.TRELLO_BOARD_ID)) {
+        try {
+          const boardId = card.idBoard || process.env.TRELLO_BOARD_ID || "";
+          const lists = await fetchTrelloLists(boardId, apiKey, token);
+          const listingNameQuery = (process.env.TRELLO_LISTING_LIST || "Listing").trim().toLowerCase();
+          const match = lists.find(
+            (l) => l.name.trim().toLowerCase() === listingNameQuery || l.name.toLowerCase().includes("listing"),
+          );
+          if (match) finalTargetListId = match.id;
+        } catch (detectErr) {
+          console.warn("Cảnh báo không thể tự động tìm danh sách Listing trên Trello:", detectErr);
         }
-      } catch (detectErr) {
-        console.warn("Cảnh báo không thể tự động tìm danh sách Listing trên Trello:", detectErr);
       }
-    }
-
-    if (finalTargetListId) {
-      try {
-        updatedCard = await moveTrelloCard(card.id, finalTargetListId, apiKey, token);
-      } catch (moveErr) {
-        console.error("Lỗi khi chuyển thẻ Trello sang cột Listing:", moveErr);
+      if (finalTargetListId) {
+        try {
+          updatedCard = await moveTrelloCard(card.id, finalTargetListId, apiKey, token);
+        } catch (moveErr) {
+          console.error("Lỗi khi chuyển thẻ Trello sang cột Listing:", moveErr);
+          emit({
+            type: "warning",
+            card_id: cardId,
+            stage: "trello_move",
+            message: "Listing đã lưu nhưng chưa thể chuyển thẻ sang cột Listing.",
+            timings_ms: { ...timings },
+          });
+        }
       }
-    }
+    });
 
     // Invalidate Redis card cache so board view updates immediately on client reload/sync
     await invalidateCachePattern("trello:board:*").catch(() => null);
 
-    return NextResponse.json({
+    emitProgress("complete", "completed", 0);
+    console.info("[listing timing]", JSON.stringify({ card_id: cardId, sku, timings_ms: timings }));
+
+    return {
       success: true,
       sku,
       itemName,
       listing: stored,
       trelloAttachment: attachment,
       updatedCard,
-    });
+      timings_ms: timings,
+    };
+}
+
+function streamProcessCard(request: Request) {
+  const encoder = new TextEncoder();
+  let closed = false;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const emit: ProgressEmitter = (event) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+        } catch {
+          closed = true;
+        }
+      };
+      void processCardRequest(request, emit)
+        .then((result) => {
+          emit({
+            type: "complete",
+            card_id: result.updatedCard.id,
+            sku: result.sku,
+            attachment: result.trelloAttachment,
+            message: result.trelloAttachment
+              ? "Đã tạo listing, đính kèm Excel và cập nhật thẻ Trello."
+              : "Đã tạo listing. Cần kiểm tra lại bước đính kèm Excel trên Trello.",
+            progress: 100,
+            timings_ms: result.timings_ms,
+          });
+        })
+        .catch((error) => {
+          emit({
+            type: "error",
+            card_id: "",
+            message: error instanceof Error ? error.message : "Không thể xử lý thẻ Trello.",
+          });
+        })
+        .finally(() => {
+          if (!closed) {
+            closed = true;
+            controller.close();
+          }
+        });
+    },
+    cancel() {
+      closed = true;
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-store, no-transform",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
+
+export async function POST(request: Request) {
+  if (request.headers.get("accept")?.includes("application/x-ndjson")) {
+    return streamProcessCard(request);
+  }
+  try {
+    return NextResponse.json(await processCardRequest(request));
   } catch (error) {
     return routeErrorResponse(error, "Không thể xử lý thẻ Trello.");
   }

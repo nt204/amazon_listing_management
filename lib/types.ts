@@ -299,6 +299,7 @@ export interface ListingResult {
   };
   metadata: {
     processing_time_ms: number;
+    stage_timings_ms?: Record<string, number>;
     retry_count: number;
     prompt_version: string;
     policy_version: string;
