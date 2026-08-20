@@ -12,7 +12,7 @@ export function getRedisClient(): Redis | null {
     return globalForRedis.redisClient;
   }
 
-  const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+  const redisUrl = process.env.REDIS_URL || "redis://localhost:2413";
 
   try {
     const client = new Redis(redisUrl, {

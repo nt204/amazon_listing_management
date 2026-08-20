@@ -11,7 +11,7 @@ cp .env.example .env
 npm run dev
 ```
 
-`npm run dev` khởi động PostgreSQL, chạy migration có checksum rồi mới chạy Next.js. Docker Desktop cần đang mở. Truy cập [http://localhost:3000](http://localhost:3000).
+`npm run dev` khởi động PostgreSQL trên cổng `2412`, Redis trên cổng `2413`, chạy migration có checksum rồi mới chạy Next.js trên cổng `2411`. Docker Desktop cần đang mở. Truy cập [http://localhost:2411](http://localhost:2411).
 
 Mặc định `AI_MOCK_MODE=true`. Để chạy AI thật, thêm ít nhất một trong hai key:
 

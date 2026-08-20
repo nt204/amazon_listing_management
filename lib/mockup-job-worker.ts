@@ -28,7 +28,7 @@ function configuredWorkerConcurrency() {
 function configuredBaseUrl() {
   return (
     process.env.MOCKUP_WORKER_BASE_URL ||
-    `http://127.0.0.1:${process.env.PORT || 3000}`
+    `http://127.0.0.1:${process.env.PORT || 2411}`
   ).replace(/\/$/, "");
 }
 

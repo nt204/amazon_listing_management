@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "npm run db:start && npm run db:migrate && next dev --hostname 0.0.0.0",
-    "dev:app": "next dev --hostname 0.0.0.0",
+    "dev": "npm run db:start && npm run db:migrate && next dev --hostname 0.0.0.0 --port 2411",
+    "dev:app": "next dev --hostname 0.0.0.0 --port 2411",
     "db:start": "docker compose up -d db redis",
     "db:stop": "docker compose stop db",
     "db:migrate": "node --env-file-if-exists=.env --import tsx scripts/migrate.ts",
@@ -16,7 +16,7 @@
     "mockup:cheapkeyai:smoke": "node --import tsx scripts/test-cheapkeyai-image.ts",
     "build": "next build --webpack",
     "build:turbo": "next build",
-    "start": "next start --hostname 0.0.0.0",
+    "start": "next start --hostname 0.0.0.0 --port 2411",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts"
