@@ -1431,10 +1431,10 @@ export async function renderGraphicMockup(
 
     <!-- Header Badge -->
     <rect x="262" y="50" width="500" height="44" rx="22" fill="#38bdf8" opacity="0.15"/>
-    <text x="512" y="78" text-anchor="middle" fill="#38bdf8" font-family="system-ui, sans-serif" font-size="16" font-weight="700" letter-spacing="2">${escapeXml(titleBadge)}</text>
+    <text x="512" y="78" text-anchor="middle" fill="#38bdf8" font-family="'Noto Sans', 'DejaVu Sans', Arial, Roboto, sans-serif" font-size="16" font-weight="700" letter-spacing="2">${escapeXml(titleBadge)}</text>
 
-    <text x="512" y="125" text-anchor="middle" fill="#ffffff" font-family="system-ui, sans-serif" font-size="28" font-weight="800">${escapeXml(itemName)}</text>
-    <text x="512" y="155" text-anchor="middle" fill="#94a3b8" font-family="system-ui, sans-serif" font-size="18" font-weight="500">SKU: ${escapeXml(sku)}</text>
+    <text x="512" y="125" text-anchor="middle" fill="#ffffff" font-family="'Noto Sans', 'DejaVu Sans', Arial, Roboto, sans-serif" font-size="28" font-weight="800">${escapeXml(itemName)}</text>
+    <text x="512" y="155" text-anchor="middle" fill="#94a3b8" font-family="'Noto Sans', 'DejaVu Sans', Arial, Roboto, sans-serif" font-size="18" font-weight="500">SKU: ${escapeXml(sku)}</text>
 
     <!-- Product Rim Accent -->
     <circle cx="512" cy="480" r="290" fill="none" stroke="#ffffff" stroke-width="8" opacity="0.8" filter="url(#shadow)"/>
@@ -1453,7 +1453,7 @@ export async function renderGraphicMockup(
     <circle cx="512" cy="480" r="280" fill="none" stroke="url(#glow)" stroke-width="20" opacity="0.6"/>
 
     <!-- PRODUCT SIZE Title at Bottom -->
-    <text x="512" y="940" text-anchor="middle" fill="#ffffff" font-family="'Times New Roman', Georgia, serif" font-size="44" font-weight="900" letter-spacing="4">PRODUCT SIZE</text>
+    <text x="512" y="940" text-anchor="middle" fill="#ffffff" font-family="'Noto Sans', 'DejaVu Sans', Arial, Roboto, sans-serif" font-size="44" font-weight="900" letter-spacing="4">PRODUCT SIZE</text>
 
     ${promptKey === "dimensions_3d"
       ? `
@@ -1462,21 +1462,21 @@ export async function renderGraphicMockup(
       <line x1="210" y1="795" x2="210" y2="825" stroke="#ffffff" stroke-width="4"/>
       <line x1="814" y1="795" x2="814" y2="825" stroke="#ffffff" stroke-width="4"/>
       <rect x="100" y="786" width="100" height="48" rx="8" fill="#0f172a" opacity="0.8" stroke="#ffffff" stroke-width="1.5"/>
-      <text x="150" y="818" text-anchor="middle" fill="#ffffff" font-family="system-ui, sans-serif" font-size="24" font-weight="800">${escapeXml(dimensions.width)}</text>
+      <text x="150" y="818" text-anchor="middle" fill="#ffffff" font-family="'Noto Sans', 'DejaVu Sans', Arial, Roboto, sans-serif" font-size="24" font-weight="800">${escapeXml(dimensions.width)}</text>
 
       <!-- Vertical Height Dimension Line (Right) -->
       <line x1="850" y1="210" x2="850" y2="760" stroke="#ffffff" stroke-width="3" stroke-dasharray="8 6"/>
       <line x1="835" y1="210" x2="865" y2="210" stroke="#ffffff" stroke-width="4"/>
       <line x1="835" y1="760" x2="865" y2="760" stroke="#ffffff" stroke-width="4"/>
       <rect x="872" y="320" width="100" height="48" rx="8" fill="#0f172a" opacity="0.8" stroke="#ffffff" stroke-width="1.5"/>
-      <text x="922" y="352" text-anchor="middle" fill="#ffffff" font-family="system-ui, sans-serif" font-size="24" font-weight="800">${escapeXml(dimensions.length)}</text>
+      <text x="922" y="352" text-anchor="middle" fill="#ffffff" font-family="'Noto Sans', 'DejaVu Sans', Arial, Roboto, sans-serif" font-size="24" font-weight="800">${escapeXml(dimensions.length)}</text>
 
       <!-- Top Right Corner Thickness Callout Box -->
       <line x1="770" y1="230" x2="710" y2="280" stroke="#ef4444" stroke-width="3"/>
       <circle cx="710" cy="280" r="6" fill="#ef4444"/>
       <rect x="755" y="170" width="200" height="65" rx="12" fill="#0f172a" stroke="#ef4444" stroke-width="2.5" filter="url(#shadow)"/>
-      <text x="855" y="196" text-anchor="middle" fill="#94a3b8" font-family="'Times New Roman', Georgia, serif" font-size="16" font-weight="700">Thickness</text>
-      <text x="855" y="224" text-anchor="middle" fill="#ef4444" font-family="system-ui, sans-serif" font-size="20" font-weight="800">${escapeXml(dimensions.thickness)}</text>
+      <text x="855" y="196" text-anchor="middle" fill="#94a3b8" font-family="'Noto Sans', 'DejaVu Sans', Arial, Roboto, sans-serif" font-size="16" font-weight="700">Thickness</text>
+      <text x="855" y="224" text-anchor="middle" fill="#ef4444" font-family="'Noto Sans', 'DejaVu Sans', Arial, Roboto, sans-serif" font-size="20" font-weight="800">${escapeXml(dimensions.thickness)}</text>
     `
       : ""
     }
