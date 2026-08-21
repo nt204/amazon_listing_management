@@ -56,7 +56,7 @@ async function ensureSchema() {
     const sql = getDatabase();
     globalForDatabase.listingPostgresSchema = sql<{ name: string }[]>`
         SELECT name FROM schema_migrations
-        WHERE name = '009_persistent_mockup_jobs.sql'
+        WHERE name = '010_sellersprite_settings.sql'
         LIMIT 1
       `
       .then((rows) => {
@@ -1152,3 +1152,25 @@ export async function recordAuditEvent(
     )
   `;
 }
+
+export async function getAppSetting<T = Record<string, unknown>>(key: string): Promise<T | null> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const rows = await sql<{ value_json: string }[]>`
+    SELECT value AS value_json FROM app_settings WHERE key = ${key} LIMIT 1
+  `;
+  if (!rows.length || !rows[0].value_json) return null;
+  return parseJson(rows[0].value_json) as T;
+}
+
+export async function setAppSetting(key: string, value: Record<string, unknown> | unknown[]) {
+  await ensureSchema();
+  const sql = getDatabase();
+  await sql`
+    INSERT INTO app_settings (key, value, updated_at)
+    VALUES (${key}, ${sql.json(toJson(value as Record<string, unknown>))}, NOW())
+    ON CONFLICT (key) DO UPDATE
+    SET value = EXCLUDED.value, updated_at = NOW()
+  `;
+}
+

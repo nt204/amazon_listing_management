@@ -8,6 +8,7 @@ import {
   CheckSquareIcon,
   ImageSquareIcon,
   KanbanIcon,
+  LightningIcon,
   ListPlusIcon,
   MagnifyingGlassIcon,
   PackageIcon,
@@ -20,6 +21,7 @@ import { generateUUID } from "@/lib/uuid-client";
 import { ListingForm, type FormIssue } from "@/components/listing-form";
 import { ResultPanel } from "@/components/result-panel";
 import { TrelloBoardView } from "@/components/trello-board-view";
+import { SellerSpriteKeywordMiner } from "@/components/sellersprite-keyword-miner";
 import { DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_MODEL, type AiOptions } from "@/lib/models";
 import type {
   BrandProfile,
@@ -232,7 +234,7 @@ export function ListingWorkspace() {
   const [filter, setFilter] = useState<QueueFilter>("all");
   const [queueQuery, setQueueQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [viewMode, setViewMode] = useState<"trello" | "workspace">("trello");
+  const [viewMode, setViewMode] = useState<"trello" | "workspace" | "sellersprite">("trello");
 
   const refreshHistory = useCallback(async () => {
     try {
@@ -531,12 +533,12 @@ export function ListingWorkspace() {
               type="button"
               onClick={() => { setSidebarTab("trello"); setViewMode("trello"); }}
               className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-extrabold transition ${
-                sidebarTab === "trello" || sidebarTab === "overview" || sidebarTab === "workspace"
+                (sidebarTab === "trello" || sidebarTab === "overview" || sidebarTab === "workspace") && viewMode !== "sellersprite"
                   ? "bg-blue-50 text-blue-700 border border-blue-100 shadow-2xs"
                   : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
               }`}
             >
-              <KanbanIcon size={16} className={sidebarTab === "trello" || sidebarTab === "overview" || sidebarTab === "workspace" ? "text-blue-600" : "text-slate-400"} />
+              <KanbanIcon size={16} className={(sidebarTab === "trello" || sidebarTab === "overview" || sidebarTab === "workspace") && viewMode !== "sellersprite" ? "text-blue-600" : "text-slate-400"} />
               <span>Listing</span>
             </button>
 
@@ -544,13 +546,26 @@ export function ListingWorkspace() {
               type="button"
               onClick={() => { setSidebarTab("mockups"); setViewMode("trello"); }}
               className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-extrabold transition ${
-                sidebarTab === "mockups"
+                sidebarTab === "mockups" && viewMode !== "sellersprite"
                   ? "bg-blue-50 text-blue-700 border border-blue-100 shadow-2xs"
                   : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
               }`}
             >
-              <ImageSquareIcon size={16} className={sidebarTab === "mockups" ? "text-blue-600" : "text-slate-400"} />
+              <ImageSquareIcon size={16} className={sidebarTab === "mockups" && viewMode !== "sellersprite" ? "text-blue-600" : "text-slate-400"} />
               <span>Mockup design</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setViewMode("sellersprite"); }}
+              className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-extrabold transition ${
+                viewMode === "sellersprite"
+                  ? "bg-blue-50 text-blue-700 border border-blue-100 shadow-2xs"
+                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+              }`}
+            >
+              <LightningIcon size={16} className={viewMode === "sellersprite" ? "text-blue-600" : "text-slate-400"} />
+              <span>Đào Keyword</span>
             </button>
           </nav>
         </div>
@@ -636,6 +651,19 @@ export function ListingWorkspace() {
               <ListPlusIcon size={14} />
               <span>Soạn Listing Thủ Công</span>
             </button>
+
+            <button
+              type="button"
+              onClick={() => setViewMode("sellersprite")}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                viewMode === "sellersprite"
+                  ? "bg-blue-600 text-white shadow-xs shadow-blue-500/20"
+                  : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50"
+              }`}
+            >
+              <LightningIcon size={14} />
+              <span>Đào Keyword</span>
+            </button>
           </div>
 
           {/* Right Header Items: Brand Selector, Bell Notification, User Avatar */}
@@ -706,7 +734,20 @@ export function ListingWorkspace() {
 
         {/* VIEW MODE CONTENT */}
         <div className="flex-1 min-h-0 overflow-hidden">
-          {viewMode === "trello" ? (
+          {viewMode === "sellersprite" ? (
+            <div className="h-full w-full overflow-y-auto p-6 bg-slate-50 thin-scrollbar">
+              <SellerSpriteKeywordMiner
+                onImportKeywords={(keywords) => {
+                  setInput((prev) => ({
+                    ...prev,
+                    related_keywords: Array.from(new Set([...prev.related_keywords, ...keywords])),
+                  }));
+                  setViewMode("workspace");
+                  notify(`Đã nhập ${keywords.length} từ khóa SellerSprite vào Listing Input.`);
+                }}
+              />
+            </div>
+          ) : viewMode === "trello" ? (
             <div className="h-full w-full overflow-hidden">
               <TrelloBoardView
                 brands={brands}
