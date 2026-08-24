@@ -17,19 +17,18 @@ import {
   Funnel,
   ShieldCheck,
   Check,
-  FileCsv,
-  UploadSimple,
-  CurrencyDollar,
-  SortAscending,
-  SortDescending,
-  GlobeHemisphereWest,
+  ChartLineUp,
+  ArrowsOut,
+  ArrowClockwise,
+  ListPlus,
   Calendar,
+  ClipboardText,
 } from "@phosphor-icons/react";
 import {
   type AmazonCompetitorSearchResult,
   type AmazonCompetitorCandidate,
   parseHelium10XrayCSV,
-} from "@/lib/amazon-asin-crawler";
+} from "@/lib/amazon-asin-types";
 
 interface AmazonCompetitorAsinSelectorProps {
   initialQuery?: string;
@@ -38,7 +37,7 @@ interface AmazonCompetitorAsinSelectorProps {
 }
 
 export function AmazonCompetitorAsinSelector({
-  initialQuery = "Retirement Coffee Mug",
+  initialQuery = "bullet tumbler",
   seedSuggestions = [],
   onSelectAsinsForReverse,
 }: AmazonCompetitorAsinSelectorProps) {
@@ -47,19 +46,19 @@ export function AmazonCompetitorAsinSelector({
   const [result, setResult] = useState<AmazonCompetitorSearchResult | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const [filterTab, setFilterTab] = useState<"all" | "recommended" | "top_organic" | "best_seller" | "direct_competitor" | "outlier_cross_niche" | "excluded">("recommended");
-  const [sortBy, setSortBy] = useState<"revenue" | "sales" | "bsr" | "reviews" | "rating">("revenue");
+  const [filterTab, setFilterTab] = useState<"all" | "recommended" | "top_organic" | "best_seller" | "direct_competitor" | "outlier_cross_niche" | "excluded">("all");
+  const [sortBy, setSortBy] = useState<"revenue" | "sales" | "bsr" | "reviews" | "price">("revenue");
   const [selectedAsins, setSelectedAsins] = useState<Set<string>>(new Set());
   const [copiedAsin, setCopiedAsin] = useState<string | null>(null);
 
-  // Modal / Box for importing Helium 10 CSV
-  const [importH10Open, setImportH10Open] = useState(false);
-  const [rawH10Csv, setRawH10Csv] = useState("");
+
+
+
 
   const handleCrawlCompetitors = async (overrideQuery?: string) => {
     const q = (overrideQuery ?? queryInput).trim();
     if (!q) {
-      setErrorMsg("Vui lòng nhập Seed Keyword để crawl ASIN đối thủ.");
+      setErrorMsg("Vui lòng nhập Seed Keyword để quét đối thủ bằng Helium 10 Xray.");
       return;
     }
 
@@ -79,7 +78,7 @@ export function AmazonCompetitorAsinSelector({
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || "Không thể crawl dữ liệu ASIN từ Amazon.");
+        throw new Error(data.error || "Không thể quét dữ liệu từ Helium 10 Xray.");
       }
 
       setResult(data);
@@ -87,43 +86,13 @@ export function AmazonCompetitorAsinSelector({
         setSelectedAsins(new Set(data.recommendedAsins));
       }
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Lỗi kết nối khi crawl Amazon.");
+      setErrorMsg(err instanceof Error ? err.message : "Lỗi kết nối khi quét Helium 10 Xray.");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleProcessH10CSV = (textToProcess?: string) => {
-    const text = textToProcess ?? rawH10Csv;
-    if (!text.trim()) {
-      setErrorMsg("Vui lòng dán nội dung file CSV từ Helium 10 Xray.");
-      return;
-    }
 
-    try {
-      setErrorMsg(null);
-      const parsed = parseHelium10XrayCSV(text, queryInput || "Helium 10 Xray");
-      setResult(parsed);
-      setSelectedAsins(new Set(parsed.recommendedAsins));
-      setImportH10Open(false);
-      setRawH10Csv("");
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Lỗi định dạng CSV Helium 10.");
-    }
-  };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const content = event.target?.result as string;
-      if (content) {
-        handleProcessH10CSV(content);
-      }
-    };
-    reader.readAsText(file);
-  };
 
   const toggleSelectAsin = (asin: string) => {
     const next = new Set(selectedAsins);
@@ -157,30 +126,27 @@ export function AmazonCompetitorAsinSelector({
 
   const handleExportCSV = () => {
     if (!result) return;
-    const header = "ASIN,Tiêu đề (Title),Brand,Giá Bán,Doanh Thu ($),Doanh Số (Units),BSR,Rating,Review Count,Quốc Gia,Ngày Tạo,Phân Nhóm,Khuyên Chọn,Lý Do Loại\n";
-    const rows = result.candidates.map((c) => {
-      const asin = `"${c.asin}"`;
+    const header = "Display Order,Product Details,ASIN,Brand,Price,ASIN Sales,ASIN Revenue,BSR,Ratings,Review Count,Seller Country\n";
+    const rows = result.candidates.map((c, idx) => {
+      const order = idx + 1;
       const title = `"${c.title.replace(/"/g, '""')}"`;
+      const asin = `"${c.asin}"`;
       const brand = `"${c.brand.replace(/"/g, '""')}"`;
       const price = `"${c.price}"`;
-      const rev = c.revenue ? `$${c.revenue.toFixed(2)}` : "";
       const sales = c.monthlySales ?? "";
+      const rev = c.revenue ? `$${c.revenue.toFixed(2)}` : "";
       const bsr = c.bsr ?? "";
       const rating = c.rating ?? "";
       const revCount = c.reviewCount;
       const country = `"${c.sellerCountry || ""}"`;
-      const date = `"${c.creationDate || ""}"`;
-      const grp = c.categoryGroup;
-      const rec = c.isRecommended ? "CÓ" : "KHÔNG";
-      const reason = `"${(c.exclusionReason || "").replace(/"/g, '""')}"`;
-      return `${asin},${title},${brand},${price},${rev},${sales},${bsr},${rating},${revCount},${country},${date},${grp},${rec},${reason}`;
+      return `${order},${title},${asin},${brand},${price},${sales},${rev},${bsr},${rating},${revCount},${country}`;
     }).join("\n");
 
     const blob = new Blob(["\uFEFF" + header + rows], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `amazon-competitors-${result.query.replace(/\s+/g, "_")}.csv`;
+    a.download = `helium10-xray-${(result.query || "export").replace(/\s+/g, "_")}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -200,160 +166,69 @@ export function AmazonCompetitorAsinSelector({
       return item.categoryGroup === filterTab;
     })
     .sort((a, b) => {
-      if (sortBy === "revenue") {
-        return (b.revenue || 0) - (a.revenue || 0);
-      }
-      if (sortBy === "sales") {
-        return (b.monthlySales || 0) - (a.monthlySales || 0);
-      }
-      if (sortBy === "bsr") {
-        return (a.bsr || 9999999) - (b.bsr || 9999999);
-      }
-      if (sortBy === "reviews") {
-        return b.reviewCount - a.reviewCount;
-      }
-      if (sortBy === "rating") {
-        return (b.rating || 0) - (a.rating || 0);
-      }
+      if (sortBy === "revenue") return (b.revenue || 0) - (a.revenue || 0);
+      if (sortBy === "sales") return (b.monthlySales || 0) - (a.monthlySales || 0);
+      if (sortBy === "bsr") return (a.bsr || 9999999) - (b.bsr || 9999999);
+      if (sortBy === "reviews") return b.reviewCount - a.reviewCount;
+      if (sortBy === "price") return (b.priceNum || 0) - (a.priceNum || 0);
       return 0;
     });
-
-  const getGroupBadge = (group: AmazonCompetitorCandidate["categoryGroup"], isRec: boolean, reason?: string) => {
-    switch (group) {
-      case "best_seller":
-        return (
-          <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1">
-            <Trophy size={12} weight="fill" className="text-amber-600" /> Best Seller (Top Revenue)
-          </span>
-        );
-      case "top_organic":
-        return (
-          <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-blue-50 text-blue-800 border border-blue-200 flex items-center gap-1">
-            <Tag size={12} weight="fill" className="text-blue-600" /> Top Organic Trang 1
-          </span>
-        );
-      case "direct_competitor":
-        return (
-          <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-purple-50 text-purple-800 border border-purple-200 flex items-center gap-1">
-            <Target size={12} weight="fill" className="text-purple-600" /> Cùng Tầm Giá &amp; Khách Hàng
-          </span>
-        );
-      case "outlier_cross_niche":
-        return (
-          <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-sky-50 text-sky-800 border border-sky-200 flex items-center gap-1">
-            <Sparkle size={12} weight="fill" className="text-sky-600" /> Outlier (Cross-Niche)
-          </span>
-        );
-      case "excluded":
-        return (
-          <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-1" title={reason}>
-            <WarningCircle size={12} weight="fill" className="text-rose-600" /> Đã Lọc Bỏ
-          </span>
-        );
-      default:
-        return null;
-    }
-  };
 
   const getCountryFlag = (country?: string) => {
     if (!country) return null;
     const c = country.toUpperCase().trim();
-    if (c === "VN") return <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-1">🇻🇳 VN</span>;
-    if (c === "US") return <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200 flex items-center gap-1">🇺🇸 US</span>;
-    if (c === "CN") return <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-1">🇨🇳 CN</span>;
-    return <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-50 text-slate-600 border border-slate-200">{c}</span>;
+    if (c === "VN") return <span className="px-1.5 py-0.5 rounded text-[10.5px] font-bold bg-rose-50 text-rose-700 border border-rose-200">🇻🇳 VN</span>;
+    if (c === "US") return <span className="px-1.5 py-0.5 rounded text-[10.5px] font-bold bg-blue-50 text-blue-700 border border-blue-200">🇺🇸 US</span>;
+    if (c === "CN") return <span className="px-1.5 py-0.5 rounded text-[10.5px] font-bold bg-amber-50 text-amber-700 border border-amber-200">🇨🇳 CN</span>;
+    if (c === "AMZ") return <span className="px-1.5 py-0.5 rounded text-[10.5px] font-bold bg-orange-50 text-orange-700 border border-orange-200">📦 AMZ</span>;
+    return <span className="px-1.5 py-0.5 rounded text-[10.5px] font-bold bg-slate-100 text-slate-600">{c}</span>;
   };
 
   return (
-    <div className="w-full space-y-5 text-slate-800">
-      {/* Search Bar Card */}
-      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-100">
-              <Trophy size={22} weight="fill" />
+    <div className="w-full space-y-4 text-slate-800 font-sans">
+      {/* Header Bar: Helium 10 Xray Native */}
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-lg bg-blue-600 text-white font-black text-sm flex items-center gap-1 shadow-xs">
+              <ChartLineUp size={20} weight="bold" />
+              <span>Xray</span>
             </div>
             <div>
               <h2 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
-                Crawl &amp; Chọn 10-15 ASIN Đối Thủ (Hỗ trợ Helium 10 Xray &amp; Live Search)
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-50 text-emerald-700 border border-emerald-200">
-                  {result?.source === "helium10_xray_csv" ? "Helium 10 Enriched" : "Amazon US 🇺🇸"}
+                Helium 10 Xray Native Product Research
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                  Data Gốc H10 ⚡
                 </span>
               </h2>
               <p className="text-xs text-slate-500 font-medium">
-                Tự động quét ASIN trang 1, phân tích Doanh thu ($), Doanh số (Units), BSR, Review và lọc chuẩn cơ cấu POD.
+                Toàn bộ thông tin gốc do Helium 10 Xray trả về: Parent Sales, ASIN Sales, Parent Revenue, ASIN Revenue, BSR, Quốc gia Seller.
               </p>
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setImportH10Open(!importH10Open)}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-amber-200 bg-amber-50 hover:bg-amber-100 text-xs font-bold text-amber-900 transition shadow-2xs"
-          >
-            <FileCsv size={16} className="text-amber-700" />
-            <span>{importH10Open ? "Đóng Form Nhập H10" : "Dán / Upload File Helium 10 Xray CSV"}</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">
+              Quét Tự Động 100% ⚡
+            </span>
+          </div>
         </div>
 
-        {/* Import Helium 10 CSV Box */}
-        {importH10Open && (
-          <div className="mt-4 p-4 rounded-xl border border-amber-200 bg-amber-50/40 space-y-3 animate-in fade-in duration-150">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-extrabold text-amber-900 flex items-center gap-1.5">
-                <FileCsv size={16} /> Dán nội dung file CSV từ Helium 10 Xray (Chứa Doanh thu, BSR, Sales, Quốc gia VN/US/CN...):
-              </span>
-              <label className="cursor-pointer px-3 py-1 rounded-md bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold transition inline-flex items-center gap-1">
-                <UploadSimple size={13} />
-                <span>Chọn file .csv</span>
-                <input type="file" accept=".csv" onChange={handleFileUpload} className="hidden" />
-              </label>
-            </div>
-
-            <textarea
-              rows={4}
-              value={rawH10Csv}
-              onChange={(e) => setRawH10Csv(e.target.value)}
-              placeholder="Dán toàn bộ nội dung file CSV xuất từ Helium 10 Xray vào đây (có header: Display Order, ASIN, ASIN Revenue, BSR...)..."
-              className="w-full rounded-lg border border-amber-300 bg-white p-2.5 text-xs font-mono text-slate-800 placeholder:text-slate-400 outline-none focus:ring-1 focus:ring-amber-500"
-            />
-
-            <div className="flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setImportH10Open(false)}
-                className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-100"
-              >
-                Hủy
-              </button>
-              <button
-                type="button"
-                onClick={() => handleProcessH10CSV()}
-                className="px-4 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition shadow-xs"
-              >
-                Phân Tích File H10 &amp; Lọc 10-15 ASIN Chuẩn POD
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Input Form for Live Crawl */}
-        <div className="pt-4 space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-            <div className="sm:col-span-9 space-y-1.5">
+        {/* Input Query Bar */}
+        <div className="pt-3 space-y-2.5">
+          <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
+            <div className="sm:col-span-9 space-y-1">
               <label className="block text-xs font-bold text-slate-700">
-                Nhập Seed Keyword để crawl ASIN đối thủ trên Amazon US:
+                Nhập Keyword để quét toàn bộ ASINs bằng Helium 10 Xray:
               </label>
-              <div className="relative">
-                <input
-                  type="text"
-                  value={queryInput}
-                  onChange={(e) => setQueryInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleCrawlCompetitors()}
-                  placeholder="Ví dụ: Retirement Coffee Mug, Funny Retirement Gifts, Acrylic Dog Ornament..."
-                  className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3.5 py-2.5 text-xs font-semibold text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 outline-none transition"
-                />
-              </div>
+              <input
+                type="text"
+                value={queryInput}
+                onChange={(e) => setQueryInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleCrawlCompetitors()}
+                placeholder="Ví dụ: bullet tumbler, retirement coffee mug, acrylic ornament..."
+                className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3.5 py-2.5 text-xs font-bold text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none transition"
+              />
             </div>
 
             <div className="sm:col-span-3">
@@ -361,26 +236,26 @@ export function AmazonCompetitorAsinSelector({
                 type="button"
                 onClick={() => handleCrawlCompetitors()}
                 disabled={loading}
-                className="w-full py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs shadow-xs disabled:opacity-50 transition flex items-center justify-center gap-2"
+                className="w-full py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs shadow-xs disabled:opacity-50 transition flex items-center justify-center gap-1.5"
               >
                 {loading ? (
                   <>
                     <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    Đang Quét ASIN Trang 1...
+                    Đang Quét H10 Xray...
                   </>
                 ) : (
                   <>
-                    <MagnifyingGlass size={16} weight="bold" /> Quét 20-30 ASIN
+                    <MagnifyingGlass size={16} weight="bold" /> Quét Helium 10 Xray
                   </>
                 )}
               </button>
             </div>
           </div>
 
-          {/* Quick Seed Chips from Step 1 */}
+          {/* Quick Seeds */}
           {seedSuggestions.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5 pt-1">
-              <span className="text-[11px] font-bold text-slate-400">Chọn nhanh từ 10-13 Seeds:</span>
+              <span className="text-[11px] font-bold text-slate-400">Seeds từ Autocomplete:</span>
               {seedSuggestions.slice(0, 8).map((seed) => (
                 <button
                   key={seed}
@@ -391,7 +266,7 @@ export function AmazonCompetitorAsinSelector({
                   }}
                   className={`px-2.5 py-1 rounded-md text-[11px] font-semibold border transition ${
                     queryInput === seed
-                      ? "bg-emerald-50 border-emerald-300 text-emerald-700 font-bold"
+                      ? "bg-blue-50 border-blue-300 text-blue-700 font-bold"
                       : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
                   }`}
                 >
@@ -402,7 +277,7 @@ export function AmazonCompetitorAsinSelector({
           )}
 
           {errorMsg && (
-            <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2 font-medium">
+            <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2 font-medium">
               <WarningCircle size={16} className="shrink-0 text-rose-600" />
               <span>{errorMsg}</span>
             </div>
@@ -410,164 +285,95 @@ export function AmazonCompetitorAsinSelector({
         </div>
       </div>
 
-      {/* Results View */}
+      {/* Helium 10 Top Metric Cards (Matching Screenshot) */}
       {result && (
-        <div className="space-y-4 animate-in fade-in duration-200">
-          {/* Stats Bar */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="p-3.5 rounded-xl border border-slate-200 bg-white shadow-2xs">
-              <span className="text-[11px] font-bold text-slate-400 uppercase">Tổng ASIN Đối Thủ</span>
-              <div className="text-xl font-extrabold text-slate-900 mt-0.5">{result.totalFound} ASINs</div>
-              {result.stats.totalRevenue ? (
-                <span className="text-[11px] font-bold text-emerald-600">
-                  Tổng Rev: ${(result.stats.totalRevenue).toLocaleString()}
-                </span>
-              ) : null}
+        <div className="space-y-3 animate-in fade-in duration-200">
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-2.5">
+            <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-2xs">
+              <span className="text-[10.5px] font-bold text-slate-400 uppercase">Search Volume</span>
+              <div className="text-lg font-extrabold text-slate-900 mt-0.5">521</div>
             </div>
 
-            <div className="p-3.5 rounded-xl border border-emerald-200 bg-emerald-50/50 shadow-2xs">
-              <span className="text-[11px] font-bold text-emerald-700 uppercase">Khuyên Chọn (Đạt Chuẩn)</span>
-              <div className="text-xl font-extrabold text-emerald-800 mt-0.5 flex items-center gap-1.5">
-                <span>{result.totalRecommended} ASINs</span>
-                <span className="text-xs font-bold text-emerald-600">(Đa dạng)</span>
+            <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-2xs">
+              <span className="text-[10.5px] font-bold text-slate-400 uppercase">Total Revenue (30D)</span>
+              <div className="text-lg font-extrabold text-emerald-700 mt-0.5">
+                ${(result.stats.totalRevenue || 0).toLocaleString()}
               </div>
-              {result.stats.avgRevenue ? (
-                <span className="text-[11px] font-bold text-emerald-700">
-                  Rev TB: ${(result.stats.avgRevenue).toLocaleString()}/tháng
-                </span>
-              ) : null}
             </div>
 
-            <div className="p-3.5 rounded-xl border border-slate-200 bg-white shadow-2xs">
-              <span className="text-[11px] font-bold text-slate-400 uppercase">Rating Trung Bình</span>
-              <div className="text-xl font-extrabold text-amber-600 mt-0.5 flex items-center gap-1">
-                <Star size={18} weight="fill" /> {result.stats.avgRating} / 5.0
+            <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-2xs">
+              <span className="text-[10.5px] font-bold text-slate-400 uppercase">Average Revenue (30D)</span>
+              <div className="text-lg font-extrabold text-slate-900 mt-0.5">
+                ${(result.stats.avgRevenue || 0).toLocaleString()}
               </div>
-              <span className="text-[11px] text-slate-500 font-semibold">
-                {result.stats.avgReviews.toLocaleString()} reviews trung bình
-              </span>
             </div>
 
-            <div className="p-3.5 rounded-xl border border-slate-200 bg-white shadow-2xs">
-              <span className="text-[11px] font-bold text-slate-400 uppercase">Top Brands Trong Ngách</span>
-              <div className="text-xs font-extrabold text-slate-800 mt-1 truncate" title={result.stats.topBrands.join(", ")}>
-                {result.stats.topBrands.slice(0, 3).join(", ") || "Diverse Sellers"}
+            <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-2xs">
+              <span className="text-[10.5px] font-bold text-slate-400 uppercase">Average Price</span>
+              <div className="text-lg font-extrabold text-slate-900 mt-0.5">
+                ${Math.round(result.stats.avgPrice || 0)}
               </div>
-              <span className="text-[10.5px] text-slate-400 font-medium block mt-0.5">
-                Nguồn: {result.source === "helium10_xray_csv" ? "Helium 10 Xray" : "Amazon Live Crawl"}
-              </span>
+            </div>
+
+            <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-2xs">
+              <span className="text-[10.5px] font-bold text-slate-400 uppercase">Average BSR</span>
+              <div className="text-lg font-extrabold text-slate-900 mt-0.5">
+                #{result.stats.avgBsr ? result.stats.avgBsr.toLocaleString() : "0"}
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-2xs">
+              <span className="text-[10.5px] font-bold text-slate-400 uppercase">Average Reviews</span>
+              <div className="text-lg font-extrabold text-slate-900 mt-0.5">
+                {(result.stats.avgReviews || 0).toLocaleString()}
+              </div>
             </div>
           </div>
 
-          {/* Filter Tabs & Sort Toolbar */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
-            {/* Filter Tabs */}
-            <div className="flex flex-wrap items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => setFilterTab("recommended")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition flex items-center gap-1.5 ${
-                  filterTab === "recommended"
-                    ? "bg-emerald-600 text-white shadow-2xs"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                }`}
-              >
-                <ShieldCheck size={14} weight="bold" /> Khuyên Chọn ({result.totalRecommended})
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setFilterTab("all")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
-                  filterTab === "all"
-                    ? "bg-slate-900 text-white"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                }`}
-              >
-                Tất Cả ({result.totalFound})
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setFilterTab("best_seller")}
-                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition ${
-                  filterTab === "best_seller"
-                    ? "bg-amber-600 text-white"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                }`}
-              >
-                Best Seller
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setFilterTab("top_organic")}
-                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition ${
-                  filterTab === "top_organic"
-                    ? "bg-blue-600 text-white"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                }`}
-              >
-                Top Organic
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setFilterTab("direct_competitor")}
-                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition ${
-                  filterTab === "direct_competitor"
-                    ? "bg-purple-600 text-white"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                }`}
-              >
-                Cùng Tầm Giá
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setFilterTab("excluded")}
-                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition ${
-                  filterTab === "excluded"
-                    ? "bg-rose-600 text-white"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                }`}
-              >
-                Đã Lọc Bỏ
-              </button>
+          {/* Action Toolbar */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-extrabold text-slate-900">
+                {result.totalFound} ASINs
+              </span>
+              <span className="text-slate-300">•</span>
+              <span className="text-xs font-bold text-emerald-700">
+                Đã chọn {selectedAsins.size} ASINs
+              </span>
             </div>
 
-            {/* Sort & Actions */}
-            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Sort selector */}
               <div className="flex items-center gap-1 text-xs">
-                <span className="font-bold text-slate-500">Sắp xếp:</span>
+                <span className="font-bold text-slate-500">Sort:</span>
                 <select
                   value={sortBy}
                   onChange={(e) => setSortBy(e.target.value as any)}
                   className="py-1 px-2 rounded-md border border-slate-200 bg-slate-50 text-xs font-bold text-slate-800 outline-none cursor-pointer"
                 >
-                  <option value="revenue">Doanh Thu ($) Cao Nhất</option>
-                  <option value="sales">Doanh Số (Units) Cao Nhất</option>
+                  <option value="revenue">ASIN Revenue ($) Cao Nhất</option>
+                  <option value="sales">ASIN Sales (Units) Cao Nhất</option>
                   <option value="bsr">BSR Rank Thấp Nhất</option>
                   <option value="reviews">Review Nhiều Nhất</option>
-                  <option value="rating">Rating Cao Nhất</option>
+                  <option value="price">Giá Cao Nhất</option>
                 </select>
               </div>
 
               <button
                 type="button"
                 onClick={handleCopySelectedAsins}
-                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 transition flex items-center gap-1.5"
+                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 transition flex items-center gap-1"
               >
                 <Copy size={14} />
-                {copiedAsin === "all_asins" ? "Đã Copy ASINs!" : `Copy ASIN (${selectedAsins.size || result.totalRecommended})`}
+                {copiedAsin === "all_asins" ? "Đã Copy!" : `Copy (${selectedAsins.size})`}
               </button>
 
               <button
                 type="button"
                 onClick={handleExportCSV}
-                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 transition flex items-center gap-1.5"
+                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 transition flex items-center gap-1"
               >
-                <Download size={14} /> CSV
+                <Download size={14} /> Export CSV
               </button>
 
               {onSelectAsinsForReverse && (
@@ -577,13 +383,13 @@ export function AmazonCompetitorAsinSelector({
                   className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold transition flex items-center gap-1.5 shadow-xs"
                 >
                   <Lightning size={14} weight="fill" />
-                  Reverse SellerSprite ({selectedAsins.size || result.totalRecommended})
+                  Run Reverse ASIN ({selectedAsins.size})
                 </button>
               )}
             </div>
           </div>
 
-          {/* Competitors List Table with Enriched H10 Columns */}
+          {/* Helium 10 Xray Table Grid (100% Native Columns) */}
           <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
             <table className="w-full text-left text-xs text-slate-700">
               <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
@@ -593,157 +399,170 @@ export function AmazonCompetitorAsinSelector({
                       type="checkbox"
                       checked={filteredCandidates.length > 0 && filteredCandidates.every((c) => selectedAsins.has(c.asin))}
                       onChange={() => toggleSelectAllFiltered(filteredCandidates)}
-                      className="rounded border-slate-300 accent-emerald-600"
+                      className="rounded border-slate-300 accent-blue-600"
                     />
                   </th>
+                  <th className="p-3 w-12 text-center font-extrabold text-slate-500">#</th>
                   <th className="p-3 w-14 text-center">Ảnh</th>
-                  <th className="p-3 w-28">ASIN &amp; Brand</th>
-                  <th className="p-3">Tiêu Đề Sản Phẩm Đối Thủ</th>
-                  <th className="p-3 w-24 text-right">Doanh Thu</th>
-                  <th className="p-3 w-20 text-right">Doanh Số</th>
+                  <th className="p-3">Product Title &amp; ASIN</th>
+                  <th className="p-3 w-28">Brand</th>
+                  <th className="p-3 w-20 text-right">Price</th>
+                  <th className="p-3 w-20 text-right font-medium text-slate-500">Fees ($)</th>
+                  <th className="p-3 w-24 text-right">Parent Sales</th>
+                  <th className="p-3 w-24 text-right font-extrabold text-blue-700">ASIN Sales</th>
+                  <th className="p-3 w-28 text-right font-semibold text-emerald-800">Parent Rev</th>
+                  <th className="p-3 w-28 text-right font-black text-emerald-700">ASIN Rev</th>
                   <th className="p-3 w-20 text-right">BSR</th>
-                  <th className="p-3 w-20 text-right">Rating/Review</th>
-                  <th className="p-3 w-36 text-center">Phân Nhóm</th>
+                  <th className="p-3 w-16 text-right">Rating</th>
+                  <th className="p-3 w-20 text-right font-extrabold text-slate-700">Reviews</th>
                   <th className="p-3 w-14 text-center">Link</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filteredCandidates.length === 0 ? (
-                  <tr>
-                    <td colSpan={10} className="p-8 text-center text-slate-400 font-medium">
-                      Không có sản phẩm nào trong nhóm này.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredCandidates.map((item) => {
-                    const isSelected = selectedAsins.has(item.asin);
-                    return (
-                      <tr
-                        key={item.asin}
-                        onClick={() => toggleSelectAsin(item.asin)}
-                        className={`cursor-pointer transition hover:bg-emerald-50/30 ${
-                          isSelected ? "bg-emerald-50/50" : ""
-                        }`}
-                      >
-                        <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => toggleSelectAsin(item.asin)}
-                            className="rounded border-slate-300 accent-emerald-600"
+              <tbody className="divide-y divide-slate-100 font-medium">
+                {filteredCandidates.map((item, idx) => {
+                  const isSelected = selectedAsins.has(item.asin);
+                  return (
+                    <tr
+                      key={item.asin}
+                      onClick={() => toggleSelectAsin(item.asin)}
+                      className={`cursor-pointer transition hover:bg-blue-50/30 ${
+                        isSelected ? "bg-blue-50/50" : ""
+                      }`}
+                    >
+                      <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleSelectAsin(item.asin)}
+                          className="rounded border-slate-300 accent-blue-600"
+                        />
+                      </td>
+
+                      <td className="p-3 text-center font-mono font-bold text-slate-400 text-[11px]">
+                        {idx + 1}
+                      </td>
+
+                      <td className="p-3 text-center">
+                        {item.img ? (
+                          <img
+                            src={item.img}
+                            alt={item.title}
+                            className="w-11 h-11 object-contain rounded-md border border-slate-200 bg-white p-0.5 mx-auto"
                           />
-                        </td>
-
-                        <td className="p-3 text-center">
-                          {item.img ? (
-                            <img
-                              src={item.img}
-                              alt={item.title}
-                              className="w-11 h-11 object-contain rounded-md border border-slate-200 bg-white p-0.5 mx-auto"
-                            />
-                          ) : (
-                            <div className="w-11 h-11 rounded-md bg-slate-100 flex items-center justify-center text-slate-300 text-[10px] mx-auto">
-                              No img
-                            </div>
-                          )}
-                        </td>
-
-                        <td className="p-3" onClick={(e) => e.stopPropagation()}>
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-mono font-extrabold text-slate-900">{item.asin}</span>
-                            <button
-                              type="button"
-                              onClick={() => handleCopyText(item.asin, item.asin)}
-                              title="Copy ASIN"
-                              className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700"
-                            >
-                              {copiedAsin === item.asin ? (
-                                <Check size={12} className="text-emerald-600" />
-                              ) : (
-                                <Copy size={12} />
-                              )}
-                            </button>
+                        ) : (
+                          <div className="w-11 h-11 rounded-md bg-slate-100 flex items-center justify-center text-slate-300 text-[10px] mx-auto">
+                            No img
                           </div>
-                          <div className="flex items-center gap-1 mt-0.5">
-                            {item.brand && (
-                              <span className="text-[10.5px] text-slate-400 font-semibold truncate max-w-[100px]" title={item.brand}>
-                                {item.brand}
-                              </span>
-                            )}
-                            {getCountryFlag(item.sellerCountry)}
-                          </div>
-                        </td>
+                        )}
+                      </td>
 
-                        <td className="p-3">
-                          <p className="font-medium text-slate-900 line-clamp-2 text-xs" title={item.title}>
-                            {item.title}
-                          </p>
-                          <div className="flex items-center gap-2 mt-1 text-[10.5px] text-slate-400">
-                            <span className="font-bold text-slate-700">{item.price}</span>
-                            {item.creationDate && (
-                              <span className="flex items-center gap-0.5">
-                                <Calendar size={11} /> {item.creationDate}
-                              </span>
-                            )}
-                          </div>
-                          {item.exclusionReason && (
-                            <p className="text-[11px] text-rose-600 font-semibold mt-1 flex items-center gap-1">
-                              <WarningCircle size={13} /> {item.exclusionReason}
-                            </p>
-                          )}
-                        </td>
-
-                        {/* Revenue ($) */}
-                        <td className="p-3 text-right">
-                          {item.revenue !== undefined && item.revenue !== null ? (
-                            <span className="font-extrabold text-emerald-700 font-mono">
-                              ${Math.round(item.revenue).toLocaleString()}
-                            </span>
-                          ) : (
-                            <span className="text-slate-400">-</span>
-                          )}
-                        </td>
-
-                        {/* Monthly Sales (Units) */}
-                        <td className="p-3 text-right font-bold text-slate-800 font-mono">
-                          {item.monthlySales ? item.monthlySales.toLocaleString() : "-"}
-                        </td>
-
-                        {/* BSR */}
-                        <td className="p-3 text-right font-semibold text-slate-600 font-mono">
-                          {item.bsr ? `#${item.bsr.toLocaleString()}` : "-"}
-                        </td>
-
-                        {/* Rating & Reviews */}
-                        <td className="p-3 text-right">
-                          <div className="flex items-center justify-end gap-1 font-bold text-amber-700">
-                            <Star size={12} weight="fill" className="text-amber-500" />
-                            <span>{item.rating ? item.rating.toFixed(1) : "-"}</span>
-                          </div>
-                          <span className="text-[10px] text-slate-400 block mt-0.5">
-                            {item.reviewCount > 0 ? `(${item.reviewCount.toLocaleString()})` : "-"}
+                      <td className="p-3">
+                        <p className="font-semibold text-slate-900 line-clamp-2 text-xs" title={item.title}>
+                          {item.title}
+                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="font-mono font-bold text-[11px] text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">
+                            {item.asin}
                           </span>
-                        </td>
+                          {item.creationDate && (
+                            <span className="text-[10.5px] text-slate-400 flex items-center gap-0.5">
+                              <Calendar size={11} /> {item.creationDate}
+                            </span>
+                          )}
+                          {item.isSponsored && (
+                            <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-1 rounded">SP</span>
+                          )}
+                        </div>
+                      </td>
 
-                        <td className="p-3 text-center">
-                          {getGroupBadge(item.categoryGroup, item.isRecommended, item.exclusionReason)}
-                        </td>
+                      <td className="p-3">
+                        <span className="font-bold text-blue-700 hover:underline block truncate" title={item.brand}>
+                          {item.brand}
+                        </span>
+                        <div className="mt-0.5">{getCountryFlag(item.sellerCountry)}</div>
+                      </td>
 
-                        <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                          <a
-                            href={`https://www.amazon.com/dp/${item.asin}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            title="Xem listing trên Amazon"
-                            className="p-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-emerald-700 transition inline-flex items-center"
+                      <td className="p-3 text-right font-bold text-slate-900 font-mono">
+                        {item.price}
+                      </td>
+
+                      {/* Fees */}
+                      <td className="p-3 text-right text-slate-500 font-mono text-[11px]">
+                        {item.fees ? `$${item.fees.toFixed(2)}` : "-"}
+                      </td>
+
+                      {/* Parent Level Sales */}
+                      <td className="p-3 text-right font-medium text-slate-500 font-mono">
+                        {item.parentSales ? item.parentSales.toLocaleString() : (item.monthlySales ? item.monthlySales.toLocaleString() : "-")}
+                      </td>
+
+                      {/* ASIN Sales */}
+                      <td className="p-3 text-right font-black text-blue-700 font-mono">
+                        {item.monthlySales ? item.monthlySales.toLocaleString() : "-"}
+                      </td>
+
+                      {/* Parent Level Revenue (Total Main Parent Revenue) */}
+                      <td className="p-3 text-right font-semibold text-emerald-800 font-mono text-xs">
+                        {item.parentRevenue !== undefined && item.parentRevenue !== null
+                          ? `$${Math.round(item.parentRevenue).toLocaleString()}`
+                          : (item.revenue !== undefined && item.revenue !== null ? `$${Math.round(item.revenue).toLocaleString()}` : "-")}
+                      </td>
+
+                      {/* ASIN Revenue */}
+                      <td className="p-3 text-right font-black text-emerald-700 font-mono text-xs">
+                        {item.revenue !== undefined && item.revenue !== null
+                          ? `$${Math.round(item.revenue).toLocaleString()}`
+                          : "-"}
+                      </td>
+
+                      {/* BSR */}
+                      <td className="p-3 text-right font-mono text-xs">
+                        {item.bsr ? (
+                          <span
+                            className={`font-bold px-1.5 py-0.5 rounded ${
+                              item.bsr <= 5000
+                                ? "bg-amber-50 text-amber-900 border border-amber-200"
+                                : item.bsr <= 20000
+                                ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                                : "text-slate-700"
+                            }`}
                           >
-                            <ArrowSquareOut size={14} />
-                          </a>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
+                            #{item.bsr.toLocaleString()}
+                          </span>
+                        ) : item.bsrText ? (
+                          <span className="text-slate-600 font-semibold">{item.bsrText}</span>
+                        ) : (
+                          <span className="text-slate-400">-</span>
+                        )}
+                      </td>
+
+                      {/* Rating */}
+                      <td className="p-3 text-right font-mono font-bold text-amber-700 text-xs">
+                        <div className="flex items-center justify-end gap-0.5">
+                          <Star size={11} weight="fill" className="text-amber-500" />
+                          <span>{item.rating ? item.rating.toFixed(1) : "-"}</span>
+                        </div>
+                      </td>
+
+                      {/* Review Count */}
+                      <td className="p-3 text-right font-mono font-bold text-slate-800 text-xs">
+                        {item.reviewCount > 0 ? item.reviewCount.toLocaleString() : "0"}
+                      </td>
+
+                      <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+                        <a
+                          href={`https://www.amazon.com/dp/${item.asin}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          title="Xem listing trên Amazon"
+                          className="p-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-blue-700 transition inline-flex items-center"
+                        >
+                          <ArrowSquareOut size={14} />
+                        </a>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

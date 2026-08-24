@@ -195,9 +195,9 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
           }`}
         >
           <Trophy size={16} weight={activeSection === "competitor_asins" ? "fill" : "bold"} className={activeSection === "competitor_asins" ? "text-emerald-600" : "text-slate-400"} />
-          <span>2. Crawl &amp; Lọc 10-15 ASIN (Amazon Search)</span>
-          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/60">
-            Đa Dạng BSR
+          <span>2. Helium 10 Xray (Soi BSR, Doanh Thu, ASINs)</span>
+          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200/60">
+            H10 Native
           </span>
         </button>
 
