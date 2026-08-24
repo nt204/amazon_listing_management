@@ -6,6 +6,7 @@ import {
   filterPublicTrelloImageAttachments,
   formatRawTrelloKeywords,
   parseTrelloCardTitle,
+  selectMissingTrelloImageDerivatives,
   selectTrelloImageAttachments,
   selectLatestTrelloWorkbookAttachment,
   withStoredTrelloImagePreviews,
@@ -148,6 +149,83 @@ test("stored Trello derivatives override display URLs without replacing the mast
   assert.equal(card.attachments?.[0].url, master.url);
   assert.match(card.attachments?.[0].previewUrl || "", /\/preview\?v=a{16}$/);
   assert.match(card.attachments?.[0].thumbnailUrl || "", /\/thumbnail\?v=b{16}$/);
+});
+
+test("missing Trello derivatives use same-origin lazy-cache URLs", () => {
+  const master = attachment({
+    id: "attachment missing",
+    previewUrl: "https://trello.com/native-preview.jpg",
+    thumbnailUrl: "https://trello.com/native-thumbnail.jpg",
+  });
+  const [card] = withStoredTrelloImagePreviews(
+    [
+      {
+        id: "card-current",
+        name: "SKU_Product",
+        desc: "",
+        idList: "list-1",
+        url: "https://trello.test/card-current",
+        badges: { attachments: 1 },
+        attachments: [master],
+      },
+    ],
+    [],
+  );
+
+  assert.equal(card.attachments?.[0].url, master.url);
+  assert.equal(
+    card.attachments?.[0].previewUrl,
+    "/api/trello/cards/card-current/attachments/attachment%20missing/preview",
+  );
+  assert.equal(
+    card.attachments?.[0].thumbnailUrl,
+    "/api/trello/cards/card-current/attachments/attachment%20missing/thumbnail",
+  );
+});
+
+test("preview scan selects only images missing at least one derivative", () => {
+  const master = attachment({ id: "master" });
+  const complete = attachment({
+    id: "complete",
+    url: "https://trello.com/1/cards/card-current/attachments/complete/download/complete.jpg",
+  });
+  const card = {
+    id: "card-current",
+    name: "SKU_Product",
+    desc: "",
+    idList: "list-1",
+    url: "https://trello.test/card-current",
+    badges: { attachments: 2 },
+    attachments: [master, complete],
+  };
+  const missing = selectMissingTrelloImageDerivatives(
+    [card],
+    [
+      {
+        cardId: card.id,
+        attachmentId: master.id,
+        variant: "preview",
+        sha256: "a".repeat(64),
+      },
+      {
+        cardId: card.id,
+        attachmentId: complete.id,
+        variant: "preview",
+        sha256: "b".repeat(64),
+      },
+      {
+        cardId: card.id,
+        attachmentId: complete.id,
+        variant: "thumbnail",
+        sha256: "c".repeat(64),
+      },
+    ],
+  );
+
+  assert.deepEqual(
+    missing.map((item) => item.attachment.id),
+    [master.id],
+  );
 });
 
 test("moveTrelloCard sends pos 'top' to place moved card at the top of target column", async () => {

@@ -259,11 +259,19 @@ nguy cấp để cron/monitoring gửi cảnh báo. Cấu hình mặc định:
 
 ```env
 TRELLO_PREVIEW_RETENTION_DAYS=90
+TRELLO_PREVIEW_SYNC_CONCURRENCY=3
+TRELLO_PREVIEW_SYNC_TIMEOUT_MS=45000
+TRELLO_PREVIEW_SYNC_MAX_BYTES=20000000
 DISK_WARNING_PERCENT=70
 DISK_CRITICAL_PERCENT=80
 # Trỏ tới filesystem chứa dữ liệu trên production nếu khác thư mục ứng dụng.
 DISK_MONITOR_PATH=/var/lib/listing-desk
 ```
+
+Khi tải một cột Trello, ứng dụng trả URL ảnh cùng miền ngay lập tức rồi quét nền
+các attachment chưa có preview. Server tải ảnh bằng Trello credential, tạo WebP
+1280px/320px và lưu vào object storage. Lần hiển thị sau đọc trực tiếp từ R2 hoặc
+database; giới hạn đồng thời giúp việc quét không làm nghẽn Trello.
 
 `GET /api/health` trả thêm số byte trống/tổng và phần trăm đã dùng. Từ 70% nó
 trả trạng thái `warning`; từ 80% trả `critical` với HTTP 503. Nên nối endpoint

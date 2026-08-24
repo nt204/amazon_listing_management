@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { z } from "zod";
 import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import {
@@ -13,7 +13,9 @@ import {
   moveTrelloCard,
   withStoredTrelloImagePreviews,
 } from "@/lib/trello";
+import { syncMissingTrelloImageDerivatives } from "@/lib/trello-image-sync";
 import { getTrelloServerCredentials } from "@/lib/trello-server-config";
+import { getCachedOrFetch, invalidateCachePattern } from "@/lib/redis";
 
 export const runtime = "nodejs";
 
@@ -65,7 +67,11 @@ export async function GET(request: Request) {
     if (!boardId) {
       throw new ApiError("Vui lòng lưu Board ID hoặc URL Trello Board trước.", 400);
     }
-    const lists = await fetchTrelloLists(boardId, apiKey, token);
+    const lists = await getCachedOrFetch(
+      `trello:lists:${boardId}:${scope.teamId}:${scope.actorId}`,
+      30,
+      () => fetchTrelloLists(boardId, apiKey, token),
+    );
 
     if (action === "get-lists") return NextResponse.json({ lists });
 
@@ -74,11 +80,34 @@ export async function GET(request: Request) {
       if (!listId || !lists.some((list) => list.id === listId)) {
         throw new ApiError("List ID không thuộc Trello Board đã lưu.", 400);
       }
-      const cards = await fetchTrelloCards(listId, apiKey, token);
+      const cards = await getCachedOrFetch(
+        `trello:board:${boardId}:${listId}:${scope.teamId}:${scope.actorId}`,
+        30,
+        () => fetchTrelloCards(listId, apiKey, token),
+      );
       const references = await listTrelloImageDerivativeReferences(
         scope,
         cards.map((card) => card.id),
       );
+      after(async () => {
+        const result = await syncMissingTrelloImageDerivatives({
+          scope,
+          cards,
+          apiKey,
+          token,
+        }).catch((error) => {
+          console.warn(
+            "[Trello preview sync] Không thể quét ảnh cột Trello:",
+            error instanceof Error ? error.message : String(error),
+          );
+          return null;
+        });
+        if (result?.requested) {
+          console.info(
+            `[Trello preview sync] Cột Trello: ${result.succeeded}/${result.requested} ảnh đã lưu, ${result.failed} lỗi.`,
+          );
+        }
+      });
       return NextResponse.json({ cards: withStoredTrelloImagePreviews(cards, references) });
     }
 
@@ -109,6 +138,10 @@ export async function POST(request: Request) {
         token,
         input.pos || "top",
       );
+      await Promise.all([
+        invalidateCachePattern("trello:board:*"),
+        invalidateCachePattern("trello:listing:*"),
+      ]);
       return NextResponse.json({ success: true, card: updatedCard });
     }
 
@@ -175,6 +208,11 @@ export async function POST(request: Request) {
           }),
     };
     await saveUserTrelloSettings(scope, settings);
+    await Promise.all([
+      invalidateCachePattern("trello:board:*"),
+      invalidateCachePattern("trello:listing:*"),
+      invalidateCachePattern("trello:lists:*"),
+    ]);
     return NextResponse.json({ success: true, ...settings, lists });
   } catch (error) {
     return routeErrorResponse(error, "Không thể kiểm tra hoặc lưu Trello Board.");

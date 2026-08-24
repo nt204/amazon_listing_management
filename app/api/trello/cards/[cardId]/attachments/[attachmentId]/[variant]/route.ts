@@ -1,7 +1,10 @@
 import { z } from "zod";
-import { authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
+import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { getTrelloImageDerivative } from "@/lib/db";
 import { TRELLO_PREVIEW_DERIVATIVE_VERSION } from "@/lib/image-processing";
+import { ensureTrelloImageDerivatives } from "@/lib/trello-image-sync";
+import { fetchTrelloCardDetail, selectTrelloImageAttachments } from "@/lib/trello";
+import { getUserTrelloServerConfig } from "@/lib/trello-server-config";
 
 export const runtime = "nodejs";
 
@@ -25,17 +28,53 @@ export async function GET(request: Request, context: RouteContext) {
     const { cardId, attachmentId, variant } = paramsSchema.parse(
       await context.params,
     );
-    const derivative = await getTrelloImageDerivative(
+    let derivative = await getTrelloImageDerivative(
       scope,
       cardId,
       attachmentId,
       variant,
     );
     if (!derivative) {
-      return Response.json(
-        { error: "Image preview not found." },
-        { status: 404, headers: { "Cache-Control": "private, no-store" } },
+      const config = await getUserTrelloServerConfig(scope);
+      const card = await fetchTrelloCardDetail(
+        cardId,
+        config.apiKey,
+        config.token,
       );
+      const configuredListIds = new Set(
+        [
+          config.listingSourceListId,
+          config.listingTargetListId,
+          config.mockupSourceListId,
+          config.mockupTargetListId,
+        ].filter((listId): listId is string => Boolean(listId)),
+      );
+      if (!configuredListIds.has(card.idList)) {
+        throw new ApiError("Thẻ Trello không thuộc cột đã cấu hình.", 404);
+      }
+      const attachment = selectTrelloImageAttachments(card).find(
+        (item) => item.id === attachmentId,
+      );
+      if (!attachment) {
+        throw new ApiError("Không tìm thấy ảnh đính kèm Trello.", 404);
+      }
+
+      await ensureTrelloImageDerivatives({
+        scope,
+        cardId,
+        attachment,
+        apiKey: config.apiKey,
+        token: config.token,
+      });
+      derivative = await getTrelloImageDerivative(
+        scope,
+        cardId,
+        attachmentId,
+        variant,
+      );
+      if (!derivative) {
+        throw new ApiError("Không thể tạo preview ảnh Trello.", 502);
+      }
     }
 
     const etag = `"${derivative.sha256}-${TRELLO_PREVIEW_DERIVATIVE_VERSION}"`;

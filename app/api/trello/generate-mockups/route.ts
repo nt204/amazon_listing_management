@@ -33,8 +33,6 @@ import {
   moveTrelloCard,
   parseTrelloCardTitle,
   parseCardDimensions,
-  preferredAttachmentPreview,
-  preferredAttachmentThumbnail,
   findRecentlyUploadedTrelloAttachment,
   isTrelloRequestTimeoutError,
   type TrelloAttachment,
@@ -636,14 +634,10 @@ async function executeMockupGeneration(
               uploadedAttachments.push(newEntry);
             }
 
-            const previewUrl =
-              preferredAttachmentPreview(attachment) ||
-              `/api/trello/cards/${encodeURIComponent(card.id)}/attachments/${encodeURIComponent(attachment.id)}/preview` ||
-              previewDataUri;
-            const thumbnailUrl =
-              preferredAttachmentThumbnail(attachment) ||
-              `/api/trello/cards/${encodeURIComponent(card.id)}/attachments/${encodeURIComponent(attachment.id)}/thumbnail` ||
-              previewDataUri;
+            const attachmentBaseUrl =
+              `/api/trello/cards/${encodeURIComponent(card.id)}/attachments/${encodeURIComponent(attachment.id)}`;
+            const previewUrl = `${attachmentBaseUrl}/preview`;
+            const thumbnailUrl = `${attachmentBaseUrl}/thumbnail`;
 
             report?.({
               type: "progress",

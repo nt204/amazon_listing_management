@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { listTrelloImageDerivativeReferences } from "@/lib/db";
+import { syncMissingTrelloImageDerivatives } from "@/lib/trello-image-sync";
 import { fetchTrelloCards, fetchTrelloLists, withStoredTrelloImagePreviews } from "@/lib/trello";
 import { getUserTrelloServerConfig } from "@/lib/trello-server-config";
 
@@ -67,6 +68,27 @@ export async function GET(request: Request) {
         reviewCards: reviewCards.map((c) => storedPreviewMap.get(c.id) || c),
         listingCards: listingCards.map((c) => storedPreviewMap.get(c.id) || c),
       };
+    });
+
+    after(async () => {
+      const cards = [...payload.reviewCards, ...payload.listingCards];
+      const result = await syncMissingTrelloImageDerivatives({
+        scope,
+        cards,
+        apiKey,
+        token,
+      }).catch((error) => {
+        console.warn(
+          "[Trello preview sync] Không thể quét ảnh Listing:",
+          error instanceof Error ? error.message : String(error),
+        );
+        return null;
+      });
+      if (result?.requested) {
+        console.info(
+          `[Trello preview sync] Listing: ${result.succeeded}/${result.requested} ảnh đã lưu, ${result.failed} lỗi.`,
+        );
+      }
     });
 
     return NextResponse.json(payload);

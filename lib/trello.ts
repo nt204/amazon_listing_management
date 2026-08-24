@@ -68,6 +68,11 @@ export interface StoredTrelloImageDerivativeReference {
   sha256: string;
 }
 
+export interface MissingTrelloImageDerivative {
+  card: TrelloCard;
+  attachment: TrelloAttachment;
+}
+
 const IMAGE_ATTACHMENT_PATTERN = /\.(png|jpe?g|webp)$/i;
 
 export function isTrelloImageAttachment(attachment: TrelloAttachment) {
@@ -151,16 +156,40 @@ export function withStoredTrelloImagePreviews(
 
   return cards.map((card) => ({
     ...card,
-    attachments: card.attachments?.map((attachment) => ({
-      ...attachment,
-      previewUrl:
-        urls.get(`${card.id}:${attachment.id}:preview`) ||
-        attachment.previewUrl,
-      thumbnailUrl:
-        urls.get(`${card.id}:${attachment.id}:thumbnail`) ||
-        attachment.thumbnailUrl,
-    })),
+    attachments: card.attachments?.map((attachment) => {
+      if (!isTrelloImageAttachment(attachment)) return attachment;
+      const baseUrl = `/api/trello/cards/${encodeURIComponent(card.id)}/attachments/${encodeURIComponent(attachment.id)}`;
+      return {
+        ...attachment,
+        previewUrl:
+          urls.get(`${card.id}:${attachment.id}:preview`) ||
+          `${baseUrl}/preview`,
+        thumbnailUrl:
+          urls.get(`${card.id}:${attachment.id}:thumbnail`) ||
+          `${baseUrl}/thumbnail`,
+      };
+    }),
   }));
+}
+
+export function selectMissingTrelloImageDerivatives(
+  cards: readonly TrelloCard[],
+  references: readonly StoredTrelloImageDerivativeReference[],
+): MissingTrelloImageDerivative[] {
+  const variants = new Set(
+    references.map(
+      (reference) =>
+        `${reference.cardId}:${reference.attachmentId}:${reference.variant}`,
+    ),
+  );
+
+  return cards.flatMap((card) =>
+    selectTrelloImageAttachments(card).flatMap((attachment) => {
+      const hasPreview = variants.has(`${card.id}:${attachment.id}:preview`);
+      const hasThumbnail = variants.has(`${card.id}:${attachment.id}:thumbnail`);
+      return hasPreview && hasThumbnail ? [] : [{ card, attachment }];
+    }),
+  );
 }
 
 const WORKBOOK_ATTACHMENT_PATTERN = /\.(xlsx|xlsm|csv)$/i;
