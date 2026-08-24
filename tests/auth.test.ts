@@ -36,11 +36,24 @@ test("team tokens create signed sessions and enforce role permissions", () => {
     const bearerRequest = new Request("https://listing.example/api/listings", {
       headers: { authorization: "Bearer team-a-token-that-is-at-least-24-characters" },
     });
-    assert.equal(authenticateRequest(bearerRequest, "write").userId, "editor-a");
-    assert.throws(
-      () => authenticateRequest(bearerRequest, "approve"),
-      (error) => error instanceof AuthError && error.status === 403,
-    );
+    for (const permission of [
+      "write",
+      "approve",
+      "export",
+      "manage_brands",
+      "manage_templates",
+    ] as const) {
+      assert.equal(
+        authenticateRequest(bearerRequest, permission).userId,
+        "editor-a",
+      );
+    }
+    for (const permission of ["manage_users", "manage_storage"] as const) {
+      assert.throws(
+        () => authenticateRequest(bearerRequest, permission),
+        (error) => error instanceof AuthError && error.status === 403,
+      );
+    }
 
     const workerRequest = new Request(
       "https://listing.example/api/trello/generate-mockups",

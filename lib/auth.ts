@@ -39,16 +39,19 @@ export class AuthError extends Error {
 }
 
 const cookieName = "listing_desk_session";
+const memberPermissions: Permission[] = [
+  "read",
+  "write",
+  "approve",
+  "export",
+  "manage_brands",
+  "manage_templates",
+];
 const rolePermissions: Record<TeamRole, Set<Permission>> = {
-  editor: new Set(["read", "write"]),
-  reviewer: new Set(["read", "write", "approve", "export"]),
+  editor: new Set(memberPermissions),
+  reviewer: new Set(memberPermissions),
   admin: new Set([
-    "read",
-    "write",
-    "approve",
-    "export",
-    "manage_brands",
-    "manage_templates",
+    ...memberPermissions,
     "manage_users",
     "manage_storage",
   ]),
