@@ -27,8 +27,6 @@ interface GlassOrnamentTemplateModalProps {
   isOpen: boolean;
   onClose: () => void;
   trelloSource?: GlassOrnamentTrelloSource;
-  trelloApiKey?: string;
-  trelloToken?: string;
   automaticSourceNotice?: string;
 }
 
@@ -62,8 +60,6 @@ export function GlassOrnamentTemplateModal({
   isOpen,
   onClose,
   trelloSource,
-  trelloApiKey,
-  trelloToken,
   automaticSourceNotice,
 }: GlassOrnamentTemplateModalProps) {
   const [designDataUrl, setDesignDataUrl] = useState<string>("");
@@ -234,8 +230,6 @@ export function GlassOrnamentTemplateModal({
           body: JSON.stringify({
             url: sourceAttachmentUrl,
             name: sourceAttachmentName,
-            apiKey: trelloApiKey,
-            token: trelloToken,
           }),
           signal: controller.signal,
         });
@@ -305,8 +299,6 @@ export function GlassOrnamentTemplateModal({
     sourceCardId,
     sourceCardName,
     sourceSku,
-    trelloApiKey,
-    trelloToken,
   ]);
 
   if (!isOpen) return null;

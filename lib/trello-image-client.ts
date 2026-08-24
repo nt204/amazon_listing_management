@@ -1,8 +1,6 @@
 export async function downloadOriginalTrelloImage(input: {
   url: string;
   name: string;
-  apiKey: string;
-  token: string;
 }) {
   const response = await fetch("/api/trello/download-image", {
     method: "POST",

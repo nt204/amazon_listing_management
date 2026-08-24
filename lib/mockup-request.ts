@@ -16,9 +16,6 @@ export const imageQualitySchema = z.enum(["low", "medium", "high"]);
 
 export const generateMockupsSchema = z.object({
   cardId: z.string().min(1, "cardId là bắt buộc"),
-  targetListId: z.string().optional(),
-  apiKey: z.string().optional(),
-  token: z.string().optional(),
   model: mockupModelSchema.optional(),
   quality: imageQualitySchema.optional(),
   designDataUrl: z.string().optional(),
@@ -47,7 +44,7 @@ export const generateMockupsSchema = z.object({
   customRefinementNotes: z.record(z.coerce.number(), z.string()).optional(),
   forceRegenerate: z.boolean().optional(),
   stream: z.boolean().optional(),
-});
+}).strict();
 
 export type GenerateMockupsInput = z.infer<typeof generateMockupsSchema>;
 
@@ -56,8 +53,6 @@ export function sanitizeQueuedMockupInput(
 ): GenerateMockupsInput {
   return {
     ...input,
-    apiKey: undefined,
-    token: undefined,
     designDataUrl: undefined,
     stream: true,
     selectedSteps: input.selectedSteps

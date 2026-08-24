@@ -12,6 +12,7 @@ import {
   selectTrelloImageAttachments,
   selectLatestTrelloWorkbookAttachment,
 } from "@/lib/trello";
+import { getTrelloServerCredentials } from "@/lib/trello-server-config";
 
 export const runtime = "nodejs";
 export const maxDuration = 150;
@@ -29,8 +30,6 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "cardId hoặc listingId là bắt buộc" }, { status: 400 });
     }
 
-    const apiKey = searchParams.get("apiKey") || process.env.TRELLO_API_KEY || "";
-    const token = searchParams.get("token") || process.env.TRELLO_TOKEN || "";
     const templateId = searchParams.get("templateId") || "";
 
     let templateItem: {
@@ -49,8 +48,9 @@ export async function GET(request: Request) {
 
     // 1. Try fetching from Trello if cardId is a valid Trello ID (24 hex characters)
     const isTrelloCardId = Boolean(cardId && /^[a-fA-F0-9]{24}$/.test(cardId));
-    if (isTrelloCardId && apiKey && token) {
+    if (isTrelloCardId) {
       try {
+        const { apiKey, token } = getTrelloServerCredentials();
         const card = await fetchTrelloCardDetail(cardId!, apiKey, token);
         const { sku, itemName } = parseTrelloCardTitle(card.name);
 
@@ -111,7 +111,7 @@ export async function GET(request: Request) {
           const listingContent = stored.current_listing || stored.result.listing;
           templateItem = {
             sku,
-            image_urls: (stored.input.images || []).map((img: any) =>
+            image_urls: (stored.input.images || []).map((img) =>
               typeof img === "string" ? img : img.data_url || img.download_url || "",
             ),
             brand: stored.input.brand || "Limima",

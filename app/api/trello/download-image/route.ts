@@ -5,15 +5,14 @@ import {
   assertTrelloAttachmentUrl,
   downloadTrelloAttachment,
 } from "@/lib/trello";
+import { getTrelloServerCredentials } from "@/lib/trello-server-config";
 
 export const runtime = "nodejs";
 
 const requestSchema = z.object({
   url: z.string().min(1),
   name: z.string().trim().max(255).optional(),
-  apiKey: z.string().optional(),
-  token: z.string().optional(),
-});
+}).strict();
 
 function downloadFilename(name: string | undefined, mimeType: string) {
   const extension =
@@ -31,14 +30,7 @@ export async function POST(request: Request) {
     authorize(request, "read");
     const input = requestSchema.parse(await request.json());
     const url = assertTrelloAttachmentUrl(input.url);
-    const apiKey = input.apiKey || process.env.TRELLO_API_KEY || "";
-    const token = input.token || process.env.TRELLO_TOKEN || "";
-    if (!apiKey || !token) {
-      return Response.json(
-        { error: "Thiếu Trello API Key hoặc Token để tải ảnh gốc." },
-        { status: 400 },
-      );
-    }
+    const { apiKey, token } = getTrelloServerCredentials();
     const bytes = await downloadTrelloAttachment(url, apiKey, token, 25_000_000);
     const mimeType = detectRasterImageMimeType(bytes);
     const filename = downloadFilename(input.name, mimeType);

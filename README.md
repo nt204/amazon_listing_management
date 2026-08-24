@@ -70,6 +70,29 @@ dùng chung `DATABASE_URL` và `REDIS_URL`. Redis trong `compose.yaml` bật AOF
 khôi phục trạng thái điều phối sau restart; PostgreSQL vẫn là nguồn dữ liệu chính
 của job.
 
+Trello API Key và Token chỉ được cấu hình trong `.env` trên server và không bao
+giờ được trả về trình duyệt. Trong màn hình cấu hình, người dùng chỉ nhập Board ID
+hoặc URL của Board. Board được chuẩn hóa, kiểm tra bằng credential server rồi lưu
+riêng trong PostgreSQL theo cặp `team_id + actor_id`; người dùng mới luôn bắt đầu
+với ô Board trống.
+
+Sau khi kiểm tra Board, người dùng cấu hình riêng tại từng chức năng: tab Listing chỉ
+hiển thị cột đầu và cột đích của Listing, còn tab Mockup chỉ hiển thị cột đầu và cột
+đích của Mockup. Ứng dụng lưu List ID thay vì dò theo tên,
+vì vậy có thể dùng bất kỳ tên cột Trello nào. Hai cột trong cùng một chức năng phải
+khác nhau và tất cả cột phải thuộc Board đã chọn.
+
+Luồng tạo Listing không tự dừng theo thời gian. Người dùng có thể ngắt từng Listing
+đang chạy hoặc ngắt toàn bộ Batch ngay trên giao diện; thao tác hủy được truyền xuống
+request AI và Trello trên server.
+
+### Cloudflare R2 object storage
+
+Ảnh listing, derivative Trello và workbook Amazon có thể chuyển khỏi PostgreSQL
+sang bucket Cloudflare R2 private. Tích hợp hỗ trợ dual-write, backfill, verify,
+cleanup có xác nhận và fallback về binary DB trong giai đoạn rollout. Xem hướng
+dẫn đầy đủ tại [docs/CLOUDFLARE_R2.md](docs/CLOUDFLARE_R2.md).
+
 Quy trình release self-hosted:
 
 ```bash

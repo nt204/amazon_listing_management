@@ -29,11 +29,21 @@ const SAMPLE_PNG = Buffer.from(
   "base64",
 );
 
-test("queued mockup requests drop browser credentials and keep deterministic step order", () => {
-  const input = generateMockupsSchema.parse({
+test("mockup requests reject browser credentials or target-list overrides and keep deterministic step order", () => {
+  assert.equal(generateMockupsSchema.safeParse({
     cardId: "card-queue-1",
     apiKey: "browser-api-key",
     token: "browser-token",
+    selectedSteps: [2],
+  }).success, false);
+  assert.equal(generateMockupsSchema.safeParse({
+    cardId: "card-queue-1",
+    targetListId: "browser-selected-target",
+    selectedSteps: [2],
+  }).success, false);
+
+  const input = generateMockupsSchema.parse({
+    cardId: "card-queue-1",
     designDataUrl: "data:image/png;base64,abc",
     selectedSteps: [7, 2, 4],
     stream: false,
@@ -41,8 +51,6 @@ test("queued mockup requests drop browser credentials and keep deterministic ste
 
   assert.deepEqual(sanitizeQueuedMockupInput(input), {
     cardId: "card-queue-1",
-    apiKey: undefined,
-    token: undefined,
     designDataUrl: undefined,
     selectedSteps: [2, 4, 7],
     stream: true,

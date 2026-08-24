@@ -25,6 +25,19 @@ import type {
   MockupContentItem,
   ProductCategoryPreset,
 } from "@/types/mockup-preset";
+import {
+  deleteStoredObjects,
+  getStoredObject,
+  objectStorageDriver,
+  putStoredObject,
+  r2KeyPrefix,
+} from "@/lib/object-storage";
+import {
+  listingImageObjectKey,
+  listingTemplateObjectKey,
+  retainDatabaseObjectBytes,
+  trelloPreviewObjectKey,
+} from "@/lib/object-storage-core";
 
 type PostgresClient = ReturnType<typeof postgres>;
 export interface DataScope { teamId: string; actorId: string }
@@ -56,7 +69,7 @@ async function ensureSchema() {
     const sql = getDatabase();
     globalForDatabase.listingPostgresSchema = sql<{ name: string }[]>`
         SELECT name FROM schema_migrations
-        WHERE name = '010_sellersprite_settings.sql'
+        WHERE name = '014_remove_default_mockup_presets.sql'
         LIMIT 1
       `
       .then((rows) => {
@@ -77,6 +90,70 @@ async function ensureSchema() {
   await globalForDatabase.listingPostgresSchema;
 }
 
+type ObjectUpload = {
+  key: string;
+  bytes: Buffer;
+  contentType: string;
+  sha256: string;
+  metadata?: Record<string, string>;
+};
+
+async function uploadObjectsAtomically(objects: readonly ObjectUpload[]) {
+  const settled = await Promise.allSettled(
+    objects.map(async (object) => {
+      await putStoredObject(object);
+      return object.key;
+    }),
+  );
+  const uploadedKeys = settled.flatMap((result) =>
+    result.status === "fulfilled" ? [result.value] : [],
+  );
+  const failed = settled.find(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  );
+  if (failed) {
+    await deleteStoredObjects(uploadedKeys).catch((cleanupError) => {
+      console.warn("[R2] Could not roll back uploaded objects:", cleanupError);
+    });
+    throw failed.reason;
+  }
+  return uploadedKeys;
+}
+
+async function deleteObjectKeysBestEffort(keys: readonly (string | null)[]) {
+  const filtered = keys.filter((key): key is string => Boolean(key));
+  if (!filtered.length) return;
+  try {
+    if (objectStorageDriver() !== "r2") return;
+    await deleteStoredObjects(filtered);
+  } catch (error) {
+    console.warn("[R2] Could not remove unreferenced objects:", error);
+  }
+}
+
+async function resolveStoredBytes(
+  objectKey: string | null,
+  databaseBytes: Buffer | null,
+  label: string,
+) {
+  if (objectKey && objectStorageDriver() === "r2") {
+    const object = await getStoredObject(objectKey);
+    if (object) return object.bytes;
+    if (databaseBytes) {
+      console.warn(`[R2] ${label} was missing; using the retained database copy.`);
+      return databaseBytes;
+    }
+    throw new Error(`${label} is missing from Cloudflare R2 (${objectKey}).`);
+  }
+  if (databaseBytes) return databaseBytes;
+  if (objectKey) {
+    throw new Error(
+      `${label} is stored in Cloudflare R2. Set OBJECT_STORAGE_DRIVER=r2 and configure its credentials.`,
+    );
+  }
+  throw new Error(`${label} has no stored bytes or object key.`);
+}
+
 export async function getDatabaseClient() {
   await ensureSchema();
   return getDatabase();
@@ -95,35 +172,166 @@ export async function closeDatabaseConnection() {
   if (sql) await sql.end({ timeout: 5 });
 }
 
+export interface UserTrelloSettings {
+  boardId: string;
+  listingSourceListId: string;
+  listingTargetListId: string;
+  mockupSourceListId: string;
+  mockupTargetListId: string;
+}
+
+export async function getUserTrelloSettings(scope: DataScope): Promise<UserTrelloSettings> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const rows = await sql<{
+    board_id: string;
+    listing_source_list_id: string;
+    listing_target_list_id: string;
+    mockup_source_list_id: string;
+    mockup_target_list_id: string;
+  }[]>`
+    SELECT board_id, listing_source_list_id, listing_target_list_id,
+      mockup_source_list_id, mockup_target_list_id
+    FROM user_trello_settings
+    WHERE team_id = ${scope.teamId} AND actor_id = ${scope.actorId}
+    LIMIT 1
+  `;
+  const row = rows[0];
+  return {
+    boardId: row?.board_id || "",
+    listingSourceListId: row?.listing_source_list_id || "",
+    listingTargetListId: row?.listing_target_list_id || "",
+    mockupSourceListId: row?.mockup_source_list_id || "",
+    mockupTargetListId: row?.mockup_target_list_id || "",
+  };
+}
+
+export async function getUserTrelloBoardId(scope: DataScope): Promise<string> {
+  return (await getUserTrelloSettings(scope)).boardId;
+}
+
+export async function saveUserTrelloBoardId(
+  scope: DataScope,
+  boardId: string,
+): Promise<void> {
+  await ensureSchema();
+  const sql = getDatabase();
+  await sql`
+    INSERT INTO user_trello_settings (team_id, actor_id, board_id)
+    VALUES (${scope.teamId}, ${scope.actorId}, ${boardId})
+    ON CONFLICT (team_id, actor_id) DO UPDATE SET
+      board_id = EXCLUDED.board_id,
+      updated_at = NOW()
+  `;
+}
+
+export async function saveUserTrelloSettings(
+  scope: DataScope,
+  settings: UserTrelloSettings,
+): Promise<void> {
+  await ensureSchema();
+  const sql = getDatabase();
+  await sql`
+    INSERT INTO user_trello_settings (
+      team_id, actor_id, board_id, listing_source_list_id,
+      listing_target_list_id, mockup_source_list_id, mockup_target_list_id
+    ) VALUES (
+      ${scope.teamId}, ${scope.actorId}, ${settings.boardId},
+      ${settings.listingSourceListId}, ${settings.listingTargetListId},
+      ${settings.mockupSourceListId}, ${settings.mockupTargetListId}
+    )
+    ON CONFLICT (team_id, actor_id) DO UPDATE SET
+      board_id = EXCLUDED.board_id,
+      listing_source_list_id = EXCLUDED.listing_source_list_id,
+      listing_target_list_id = EXCLUDED.listing_target_list_id,
+      mockup_source_list_id = EXCLUDED.mockup_source_list_id,
+      mockup_target_list_id = EXCLUDED.mockup_target_list_id,
+      updated_at = NOW()
+  `;
+}
+
 export async function saveTrelloImageDerivatives(
   scope: DataScope,
   cardId: string,
   attachmentId: string,
   derivatives: readonly TrelloImageDerivative[],
 ) {
+  if (derivatives.length === 0) return;
   await ensureSchema();
   const sql = getDatabase();
-  await sql.begin(async (transaction) => {
-    for (const derivative of derivatives) {
-      await transaction`
-        INSERT INTO trello_image_previews (
-          team_id, card_id, attachment_id, variant, mime_type, image_bytes,
-          width, height, sha256
-        ) VALUES (
-          ${scope.teamId}, ${cardId}, ${attachmentId}, ${derivative.variant},
-          ${derivative.mimeType}, ${derivative.bytes}, ${derivative.width},
-          ${derivative.height}, ${derivative.sha256}
-        )
-        ON CONFLICT (team_id, card_id, attachment_id, variant) DO UPDATE SET
-          mime_type = EXCLUDED.mime_type,
-          image_bytes = EXCLUDED.image_bytes,
-          width = EXCLUDED.width,
-          height = EXCLUDED.height,
-          sha256 = EXCLUDED.sha256,
-          updated_at = NOW()
-      `;
-    }
-  });
+  const useR2 = objectStorageDriver() === "r2";
+  const keepDatabaseBytes = !useR2 || retainDatabaseObjectBytes();
+  const uploadId = crypto.randomUUID();
+  const storedDerivatives = derivatives.map((derivative) => ({
+    ...derivative,
+    objectKey: useR2
+      ? trelloPreviewObjectKey({
+          prefix: r2KeyPrefix(),
+          teamId: scope.teamId,
+          cardId,
+          attachmentId,
+          variant: derivative.variant,
+          mimeType: derivative.mimeType,
+          bytes: derivative.bytes,
+          objectId: uploadId,
+        })
+      : null,
+  }));
+  const oldRows = await sql<{ object_key: string | null }[]>`
+    SELECT object_key
+    FROM trello_image_previews
+    WHERE team_id = ${scope.teamId}
+      AND card_id = ${cardId}
+      AND attachment_id = ${attachmentId}
+      AND variant IN ${sql(derivatives.map((item) => item.variant))}
+  `;
+  const uploadedKeys = useR2
+    ? await uploadObjectsAtomically(
+        storedDerivatives.map((derivative) => ({
+          key: derivative.objectKey!,
+          bytes: derivative.bytes,
+          contentType: derivative.mimeType,
+          sha256: derivative.sha256,
+          metadata: {
+            kind: "trello-preview",
+            variant: derivative.variant,
+          },
+        })),
+      )
+    : [];
+  try {
+    await sql.begin(async (transaction) => {
+      for (const derivative of storedDerivatives) {
+        await transaction`
+          INSERT INTO trello_image_previews (
+            team_id, card_id, attachment_id, variant, mime_type, image_bytes,
+            object_key, image_byte_size, width, height, sha256
+          ) VALUES (
+            ${scope.teamId}, ${cardId}, ${attachmentId}, ${derivative.variant},
+            ${derivative.mimeType}, ${keepDatabaseBytes ? derivative.bytes : null},
+            ${derivative.objectKey}, ${derivative.bytes.byteLength},
+            ${derivative.width}, ${derivative.height}, ${derivative.sha256}
+          )
+          ON CONFLICT (team_id, card_id, attachment_id, variant) DO UPDATE SET
+            mime_type = EXCLUDED.mime_type,
+            image_bytes = EXCLUDED.image_bytes,
+            object_key = EXCLUDED.object_key,
+            image_byte_size = EXCLUDED.image_byte_size,
+            width = EXCLUDED.width,
+            height = EXCLUDED.height,
+            sha256 = EXCLUDED.sha256,
+            updated_at = NOW()
+        `;
+      }
+    });
+  } catch (error) {
+    await deleteObjectKeysBestEffort(uploadedKeys);
+    throw error;
+  }
+  const currentKeys = new Set(storedDerivatives.map((item) => item.objectKey));
+  await deleteObjectKeysBestEffort(
+    oldRows.map((row) => row.object_key).filter((key) => !currentKeys.has(key)),
+  );
 }
 
 export async function deleteTrelloImageDerivatives(
@@ -134,13 +342,14 @@ export async function deleteTrelloImageDerivatives(
   if (attachmentIds.length === 0) return 0;
   await ensureSchema();
   const sql = getDatabase();
-  const deleted = await sql<{ attachment_id: string }[]>`
+  const deleted = await sql<{ attachment_id: string; object_key: string | null }[]>`
     DELETE FROM trello_image_previews
     WHERE team_id = ${scope.teamId}
       AND card_id = ${cardId}
       AND attachment_id IN ${sql([...attachmentIds])}
-    RETURNING attachment_id
+    RETURNING attachment_id, object_key
   `;
+  await deleteObjectKeysBestEffort(deleted.map((row) => row.object_key));
   return deleted.length;
 }
 
@@ -167,7 +376,7 @@ export async function pruneExpiredTrelloImageDerivatives(options: {
   const cutoff = new Date(Date.now() - retentionDays * 86_400_000);
 
   const deleted = options.scope
-    ? await sql<{ attachment_id: string }[]>`
+    ? await sql<{ attachment_id: string; object_key: string | null }[]>`
         WITH expired AS (
           SELECT team_id, card_id, attachment_id, variant
           FROM trello_image_previews
@@ -182,9 +391,9 @@ export async function pruneExpiredTrelloImageDerivatives(options: {
           AND preview.card_id = expired.card_id
           AND preview.attachment_id = expired.attachment_id
           AND preview.variant = expired.variant
-        RETURNING preview.attachment_id
+        RETURNING preview.attachment_id, preview.object_key
       `
-    : await sql<{ attachment_id: string }[]>`
+    : await sql<{ attachment_id: string; object_key: string | null }[]>`
         WITH expired AS (
           SELECT team_id, card_id, attachment_id, variant
           FROM trello_image_previews
@@ -198,9 +407,10 @@ export async function pruneExpiredTrelloImageDerivatives(options: {
           AND preview.card_id = expired.card_id
           AND preview.attachment_id = expired.attachment_id
           AND preview.variant = expired.variant
-        RETURNING preview.attachment_id
+        RETURNING preview.attachment_id, preview.object_key
       `;
 
+  await deleteObjectKeysBestEffort(deleted.map((row) => row.object_key));
   return deleted.length;
 }
 
@@ -221,12 +431,13 @@ export async function getTrelloImageDerivative(
   const sql = getDatabase();
   const rows = await sql<{
     mime_type: string;
-    image_bytes: Buffer;
+    image_bytes: Buffer | null;
+    object_key: string | null;
     width: number;
     height: number;
     sha256: string;
   }[]>`
-    SELECT mime_type, image_bytes, width, height, sha256
+    SELECT mime_type, image_bytes, object_key, width, height, sha256
     FROM trello_image_previews
     WHERE team_id = ${scope.teamId}
       AND card_id = ${cardId}
@@ -234,7 +445,15 @@ export async function getTrelloImageDerivative(
       AND variant = ${variant}
     LIMIT 1
   `;
-  return rows[0] || null;
+  if (!rows[0]) return null;
+  return {
+    ...rows[0],
+    image_bytes: await resolveStoredBytes(
+      rows[0].object_key,
+      rows[0].image_bytes,
+      `Trello ${variant} derivative`,
+    ),
+  };
 }
 
 export async function listTrelloImageDerivativeReferences(
@@ -322,34 +541,110 @@ export async function saveGeneratedListing(scope: DataScope, input: ListingInput
   const storedInputBase = result.competitor_profile
     ? { ...input, research: { ...input.research, competitor_profile: result.competitor_profile } }
     : input;
+  const useR2 = objectStorageDriver() === "r2";
+  const keepDatabaseBytes = !useR2 || retainDatabaseObjectBytes();
+  const prefix = useR2 ? r2KeyPrefix() : "";
   const images = await Promise.all(input.images.map(async (image, imageIndex) => {
     const derivatives = await createStoredImageDerivatives(image);
+    const id = crypto.randomUUID();
     const sha256 = createHash("sha256")
       .update(derivatives.originalBytes)
+      .digest("hex");
+    const aiSha256 = createHash("sha256").update(derivatives.aiBytes).digest("hex");
+    const previewSha256 = createHash("sha256")
+      .update(derivatives.previewBytes)
       .digest("hex");
     return {
       ...image,
       ...derivatives,
       imageIndex,
       sha256,
-      id: crypto.randomUUID(),
+      aiSha256,
+      previewSha256,
+      id,
+      originalObjectKey: useR2
+        ? listingImageObjectKey({
+            prefix,
+            teamId: scope.teamId,
+            listingId: result.request_id,
+            imageIndex,
+            variant: "original",
+            mimeType: derivatives.originalMimeType,
+            bytes: derivatives.originalBytes,
+            objectId: id,
+          })
+        : null,
+      aiObjectKey: useR2
+        ? listingImageObjectKey({
+            prefix,
+            teamId: scope.teamId,
+            listingId: result.request_id,
+            imageIndex,
+            variant: "ai",
+            mimeType: derivatives.aiMimeType,
+            bytes: derivatives.aiBytes,
+            objectId: id,
+          })
+        : null,
+      previewObjectKey: useR2
+        ? listingImageObjectKey({
+            prefix,
+            teamId: scope.teamId,
+            listingId: result.request_id,
+            imageIndex,
+            variant: "preview",
+            mimeType: derivatives.previewMimeType,
+            bytes: derivatives.previewBytes,
+            objectId: id,
+          })
+        : null,
     };
   }));
+  const uploadedKeys = useR2
+    ? await uploadObjectsAtomically(
+        images.flatMap((image) => [
+          {
+            key: image.originalObjectKey!,
+            bytes: image.originalBytes,
+            contentType: image.originalMimeType,
+            sha256: image.sha256,
+            metadata: { kind: "listing-image", variant: "original" },
+          },
+          {
+            key: image.aiObjectKey!,
+            bytes: image.aiBytes,
+            contentType: image.aiMimeType,
+            sha256: image.aiSha256,
+            metadata: { kind: "listing-image", variant: "ai" },
+          },
+          {
+            key: image.previewObjectKey!,
+            bytes: image.previewBytes,
+            contentType: image.previewMimeType,
+            sha256: image.previewSha256,
+            metadata: { kind: "listing-image", variant: "preview" },
+          },
+        ]),
+      )
+    : [];
   const storedInput: ListingInput = {
     ...storedInputBase,
     images: images.map((image) => ({
       name: image.originalName,
       type: image.originalMimeType,
       data_url: "",
-      storage_key: `db:${result.request_id}:${image.imageIndex}`,
+      storage_key: useR2
+        ? `r2:${image.originalObjectKey}`
+        : `db:${result.request_id}:${image.imageIndex}`,
       sha256: image.sha256,
       width: image.width || undefined,
       height: image.height || undefined,
       bytes: image.originalBytes.byteLength,
     })),
   };
-  await sql.begin(async (transaction) => {
-    await transaction`
+  try {
+    await sql.begin(async (transaction) => {
+      await transaction`
       INSERT INTO listings (
         id, team_id, internal_name, product_type, marketplace, status, model_used,
         input_json, result_json, current_listing_json
@@ -358,23 +653,28 @@ export async function saveGeneratedListing(scope: DataScope, input: ListingInput
         ${input.marketplace}, ${status}, ${result.model_used}, ${transaction.json(toJson(storedInput))},
         ${transaction.json(toJson(result))}, ${transaction.json(toJson(result.listing))}
       )
-    `;
-    for (const image of images) {
-      await transaction`
+      `;
+      for (const image of images) {
+        await transaction`
         INSERT INTO listing_images (
           id, listing_id, team_id, image_index, name, mime_type, sha256, image_bytes,
           width, height, ai_mime_type, ai_image_bytes, preview_mime_type,
-          preview_image_bytes, preview_width, preview_height
+          preview_image_bytes, preview_width, preview_height, original_object_key,
+          original_byte_size, ai_object_key, ai_byte_size, preview_object_key,
+          preview_byte_size
         ) VALUES (
           ${image.id}, ${result.request_id}, ${scope.teamId}, ${image.imageIndex},
           ${image.originalName}, ${image.originalMimeType}, ${image.sha256},
-          ${image.originalBytes}, ${image.width}, ${image.height},
-          ${image.aiMimeType}, ${image.aiBytes}, ${image.previewMimeType},
-          ${image.previewBytes}, ${image.previewWidth}, ${image.previewHeight}
+          ${keepDatabaseBytes ? image.originalBytes : null}, ${image.width}, ${image.height},
+          ${image.aiMimeType}, ${keepDatabaseBytes ? image.aiBytes : null}, ${image.previewMimeType},
+          ${keepDatabaseBytes ? image.previewBytes : null}, ${image.previewWidth}, ${image.previewHeight},
+          ${image.originalObjectKey}, ${image.originalBytes.byteLength},
+          ${image.aiObjectKey}, ${image.aiBytes.byteLength}, ${image.previewObjectKey},
+          ${image.previewBytes.byteLength}
         )
-      `;
-    }
-    await transaction`
+        `;
+      }
+      await transaction`
       INSERT INTO listing_revisions (
         listing_id, team_id, actor_id, action, instruction, content_json, quality_json
       ) VALUES (
@@ -382,16 +682,20 @@ export async function saveGeneratedListing(scope: DataScope, input: ListingInput
         ${transaction.json(toJson(result.listing))},
         ${transaction.json(toJson(qualitySnapshot(result)))}
       )
-    `;
-    await transaction`
+      `;
+      await transaction`
       INSERT INTO audit_events (
         team_id, actor_id, action, resource_type, resource_id, metadata_json
       ) VALUES (
         ${scope.teamId}, ${scope.actorId}, 'listing.generated', 'listing', ${result.request_id},
         ${transaction.json(toJson({ model: result.metadata.model_name }))}
       )
-    `;
-  });
+      `;
+    });
+  } catch (error) {
+    await deleteObjectKeysBestEffort(uploadedKeys);
+    throw error;
+  }
   return getListing(scope, result.request_id);
 }
 
@@ -460,7 +764,7 @@ export async function getListing(scope: DataScope, id: string): Promise<StoredLi
       name,
       mime_type,
       sha256,
-      OCTET_LENGTH(image_bytes)::int AS byte_size,
+      COALESCE(original_byte_size, OCTET_LENGTH(image_bytes), 0)::int AS byte_size,
       width,
       height
     FROM listing_images
@@ -501,17 +805,29 @@ export async function getListingWithAiImages(
   const imageRows = await sql<{
     image_index: number;
     mime_type: string;
-    image_bytes: Buffer;
+    image_bytes: Buffer | null;
+    object_key: string | null;
   }[]>`
     SELECT
       image_index,
       COALESCE(ai_mime_type, mime_type) AS mime_type,
-      COALESCE(ai_image_bytes, image_bytes) AS image_bytes
+      COALESCE(ai_image_bytes, image_bytes) AS image_bytes,
+      COALESCE(ai_object_key, original_object_key) AS object_key
     FROM listing_images
     WHERE listing_id = ${id} AND team_id = ${scope.teamId}
     ORDER BY image_index ASC
   `;
-  const imageMap = new Map(imageRows.map((image) => [image.image_index, image]));
+  const resolvedRows = await Promise.all(
+    imageRows.map(async (image) => ({
+      ...image,
+      image_bytes: await resolveStoredBytes(
+        image.object_key,
+        image.image_bytes,
+        `AI image ${image.image_index} for listing ${id}`,
+      ),
+    })),
+  );
+  const imageMap = new Map(resolvedRows.map((image) => [image.image_index, image]));
   listing.input.images = listing.input.images.map((image, index) => {
     const storedImage = imageMap.get(index);
     if (!storedImage) return image;
@@ -536,7 +852,8 @@ export async function getListingImage(
     name: string;
     mime_type: string;
     sha256: string;
-    image_bytes: Buffer;
+    image_bytes: Buffer | null;
+    object_key: string | null;
   }[]>`
     SELECT
       name,
@@ -548,14 +865,26 @@ export async function getListingImage(
       CASE
         WHEN ${variant} = 'preview' THEN COALESCE(preview_image_bytes, image_bytes)
         ELSE image_bytes
-      END AS image_bytes
+      END AS image_bytes,
+      CASE
+        WHEN ${variant} = 'preview' THEN COALESCE(preview_object_key, original_object_key)
+        ELSE original_object_key
+      END AS object_key
     FROM listing_images
     WHERE listing_id = ${listingId}
       AND team_id = ${scope.teamId}
       AND image_index = ${imageIndex}
     LIMIT 1
   `;
-  return rows[0] || null;
+  if (!rows[0]) return null;
+  return {
+    ...rows[0],
+    image_bytes: await resolveStoredBytes(
+      rows[0].object_key,
+      rows[0].image_bytes,
+      `${variant} image ${imageIndex} for listing ${listingId}`,
+    ),
+  };
 }
 
 export async function updateListingContent(
@@ -822,7 +1151,8 @@ export async function deleteBrandProfile(scope: DataScope, id: string): Promise<
 
 interface ListingTemplateRow extends ListingTemplateSummary {
   metadata_json: ListingTemplateMetadata | string;
-  workbook_bytes?: Buffer;
+  workbook_bytes?: Buffer | null;
+  workbook_object_key?: string | null;
 }
 
 function toListingTemplateSummary(row: ListingTemplateRow): ListingTemplateSummary {
@@ -856,13 +1186,19 @@ export async function getListingTemplate(scope: DataScope, id: string) {
   const sql = getDatabase();
   const rows = await sql<ListingTemplateRow[]>`
     SELECT id::text, name, original_filename, file_extension, product_type,
-      metadata_json, workbook_bytes, created_at::text, updated_at::text
+      metadata_json, workbook_bytes, workbook_object_key,
+      created_at::text, updated_at::text
     FROM listing_templates
     WHERE id = ${id} AND team_id = ${scope.teamId}
     LIMIT 1
   `;
-  if (!rows[0]?.workbook_bytes) return null;
-  return { ...toListingTemplateSummary(rows[0]), workbook: rows[0].workbook_bytes };
+  if (!rows[0]) return null;
+  const workbook = await resolveStoredBytes(
+    rows[0].workbook_object_key || null,
+    rows[0].workbook_bytes || null,
+    `Workbook for template ${id}`,
+  );
+  return { ...toListingTemplateSummary(rows[0]), workbook };
 }
 
 export async function saveListingTemplate(
@@ -879,24 +1215,69 @@ export async function saveListingTemplate(
   await ensureSchema();
   const sql = getDatabase();
   const id = crypto.randomUUID();
-  const rows = await sql<ListingTemplateRow[]>`
-    INSERT INTO listing_templates (
-      id, team_id, name, original_filename, file_extension, product_type,
-      metadata_json, workbook_bytes
-    ) VALUES (
-      ${id}, ${scope.teamId}, ${input.name}, ${input.originalFilename}, ${input.fileExtension},
-      ${input.productType}, ${sql.json(toJson(input.metadata))}, ${input.workbook}
-    )
-    ON CONFLICT (team_id, LOWER(name)) DO UPDATE SET
-      original_filename = EXCLUDED.original_filename,
-      file_extension = EXCLUDED.file_extension,
-      product_type = EXCLUDED.product_type,
-      metadata_json = EXCLUDED.metadata_json,
-      workbook_bytes = EXCLUDED.workbook_bytes,
-      updated_at = NOW()
-    RETURNING id::text, name, original_filename, file_extension, product_type,
-      metadata_json, created_at::text, updated_at::text
+  const useR2 = objectStorageDriver() === "r2";
+  const keepDatabaseBytes = !useR2 || retainDatabaseObjectBytes();
+  const sha256 = createHash("sha256").update(input.workbook).digest("hex");
+  const objectKey = useR2
+    ? listingTemplateObjectKey({
+        prefix: r2KeyPrefix(),
+        teamId: scope.teamId,
+        templateName: input.name,
+        fileExtension: input.fileExtension,
+        bytes: input.workbook,
+        objectId: id,
+      })
+    : null;
+  const oldRows = await sql<{ workbook_object_key: string | null }[]>`
+    SELECT workbook_object_key
+    FROM listing_templates
+    WHERE team_id = ${scope.teamId} AND LOWER(name) = LOWER(${input.name})
+    LIMIT 1
   `;
+  const uploadedKeys = useR2
+    ? await uploadObjectsAtomically([
+        {
+          key: objectKey!,
+          bytes: input.workbook,
+          contentType:
+            input.fileExtension.toLowerCase() === ".xlsm"
+              ? "application/vnd.ms-excel.sheet.macroEnabled.12"
+              : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          sha256,
+          metadata: { kind: "listing-template" },
+        },
+      ])
+    : [];
+  let rows: ListingTemplateRow[];
+  try {
+    rows = await sql<ListingTemplateRow[]>`
+      INSERT INTO listing_templates (
+        id, team_id, name, original_filename, file_extension, product_type,
+        metadata_json, workbook_bytes, workbook_object_key, workbook_byte_size
+      ) VALUES (
+        ${id}, ${scope.teamId}, ${input.name}, ${input.originalFilename}, ${input.fileExtension},
+        ${input.productType}, ${sql.json(toJson(input.metadata))},
+        ${keepDatabaseBytes ? input.workbook : null}, ${objectKey}, ${input.workbook.byteLength}
+      )
+      ON CONFLICT (team_id, LOWER(name)) DO UPDATE SET
+        original_filename = EXCLUDED.original_filename,
+        file_extension = EXCLUDED.file_extension,
+        product_type = EXCLUDED.product_type,
+        metadata_json = EXCLUDED.metadata_json,
+        workbook_bytes = EXCLUDED.workbook_bytes,
+        workbook_object_key = EXCLUDED.workbook_object_key,
+        workbook_byte_size = EXCLUDED.workbook_byte_size,
+        updated_at = NOW()
+      RETURNING id::text, name, original_filename, file_extension, product_type,
+        metadata_json, created_at::text, updated_at::text
+    `;
+  } catch (error) {
+    await deleteObjectKeysBestEffort(uploadedKeys);
+    throw error;
+  }
+  if (oldRows[0]?.workbook_object_key !== objectKey) {
+    await deleteObjectKeysBestEffort([oldRows[0]?.workbook_object_key || null]);
+  }
   await recordAuditEvent(scope, "template.saved", "listing_template", rows[0].id, {
     filename: input.originalFilename,
     columns: input.metadata.column_count,
@@ -907,12 +1288,13 @@ export async function saveListingTemplate(
 export async function deleteListingTemplate(scope: DataScope, id: string): Promise<boolean> {
   await ensureSchema();
   const sql = getDatabase();
-  const deleted = await sql`
+  const deleted = await sql<{ id: string; workbook_object_key: string | null }[]>`
     DELETE FROM listing_templates
     WHERE id = ${id} AND team_id = ${scope.teamId}
-    RETURNING id
+    RETURNING id::text, workbook_object_key
   `;
   if (deleted.length > 0) {
+    await deleteObjectKeysBestEffort([deleted[0].workbook_object_key]);
     await recordAuditEvent(scope, "template.deleted", "listing_template", id);
     return true;
   }
@@ -1173,4 +1555,3 @@ export async function setAppSetting(key: string, value: Record<string, unknown> 
     SET value = EXCLUDED.value, updated_at = NOW()
   `;
 }
-

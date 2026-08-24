@@ -8,7 +8,7 @@ import {
   prepareListingImagesForAi,
 } from "@/lib/image-processing";
 import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
-import { getBrandProfile, getListingTemplate, listListingTemplates, saveGeneratedListing } from "@/lib/db";
+import { getBrandProfile, getListingTemplate, getUserTrelloSettings, listListingTemplates, saveGeneratedListing } from "@/lib/db";
 import { DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_MODEL } from "@/lib/models";
 import { listingInputSchema } from "@/lib/schemas";
 import type { ListingTemplateSummary } from "@/lib/types";
@@ -23,31 +23,32 @@ import {
   attachFileToTrelloCard,
   downloadTrelloAttachment,
   fetchTrelloCardDetail,
-  fetchTrelloLists,
   formatRawTrelloKeywords,
   moveTrelloCard,
   parseTrelloCardTitle,
   selectTrelloImageAttachments,
   type TrelloAttachment,
 } from "@/lib/trello";
+import { getTrelloServerCredentials } from "@/lib/trello-server-config";
 
 export const runtime = "nodejs";
-export const maxDuration = 150;
-
 const processCardSchema = z.object({
   cardId: z.string().min(1, "cardId là bắt buộc"),
-  targetListId: z.string().optional(),
-  apiKey: z.string().optional(),
-  token: z.string().optional(),
   brandProfileId: z.string().optional(),
   marketplace: z.enum(["US", "UK", "DE"]).default("US"),
   productType: z.string().optional(),
   model: z.string().optional(),
   templateId: z.string().optional(),
-});
+}).strict();
 
 const tinySamplePng =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nJkAAAAASUVORK5CYII=";
+
+function throwIfListingCancelled(signal: AbortSignal) {
+  if (signal.aborted) {
+    throw signal.reason || new Error("Người dùng đã ngắt quá trình tạo Listing.");
+  }
+}
 
 function inferProductType(itemName: string, defaultType = "3D Card") {
   const lower = itemName.toLowerCase();
@@ -74,6 +75,7 @@ interface ProcessCardResult {
 async function processCardRequest(
   request: Request,
   emit: ProgressEmitter = () => undefined,
+  signal: AbortSignal = request.signal,
 ): Promise<ProcessCardResult> {
     const timings: Record<string, number> = {};
     let activeCardId = "";
@@ -108,18 +110,18 @@ async function processCardRequest(
     const actor = authorize(request, "write");
     const scope = dataScope(actor);
     const body = await request.json();
-    const { cardId, targetListId, brandProfileId, marketplace, productType, templateId } = processCardSchema.parse(body);
+    const { cardId, brandProfileId, marketplace, productType, templateId } = processCardSchema.parse(body);
     activeCardId = cardId;
+    throwIfListingCancelled(signal);
 
-    const apiKey = body.apiKey || process.env.TRELLO_API_KEY || "";
-    const token = body.token || process.env.TRELLO_TOKEN || "";
-
-    if (!apiKey || !token) {
-      throw new ApiError("Vui lòng cung cấp Trello API Key và Token.", 400);
+    const { apiKey, token } = getTrelloServerCredentials();
+    const trelloSettings = await getUserTrelloSettings(scope);
+    if (!trelloSettings.boardId || !trelloSettings.listingTargetListId) {
+      throw new ApiError("Vui lòng cấu hình cột đích cho chức năng Listing.", 400);
     }
 
     // 1. Fetch card details & attachments from Trello
-    const card = await runStage("card", () => fetchTrelloCardDetail(cardId, apiKey, token));
+    const card = await runStage("card", () => fetchTrelloCardDetail(cardId, apiKey, token, signal));
     const { sku, itemName } = parseTrelloCardTitle(card.name);
 
     // 2. Load primary cover image attachment (Full Design) from Trello card
@@ -132,7 +134,7 @@ async function processCardRequest(
     if (imageAttachments.length > 0) {
       const att = imageAttachments[0];
       try {
-        const buffer = await downloadTrelloAttachment(att.url, apiKey, token);
+        const buffer = await downloadTrelloAttachment(att.url, apiKey, token, 50_000_000, signal);
         const mimeType = detectRasterImageMimeType(buffer);
         loadedImages.push({
           name: att.name || `${sku}-design.png`,
@@ -140,6 +142,7 @@ async function processCardRequest(
           data_url: `data:${mimeType};base64,${buffer.toString("base64")}`,
         });
       } catch (err) {
+        throwIfListingCancelled(signal);
         console.warn(`Lỗi khi tải ảnh thiết kế gốc Trello ${att.name}:`, err);
       }
     }
@@ -267,12 +270,14 @@ async function processCardRequest(
     const input = await runStage("image_prepare", () => prepareListingImagesForAi(
       listingInputSchema.parse(rawInputPayload),
     ));
+    throwIfListingCancelled(signal);
 
     // 6. Generate AI Listing
     const onAiProgress = (progress: ListingGenerationProgress) => {
       emitProgress(progress.stage, progress.status, progress.duration_ms);
     };
-    const result = await generateListing(input, { signal: request.signal, onProgress: onAiProgress });
+    const result = await generateListing(input, { signal, onProgress: onAiProgress });
+    throwIfListingCancelled(signal);
     result.metadata.stage_timings_ms = {
       ...timings,
       ...result.metadata.stage_timings_ms,
@@ -298,6 +303,7 @@ async function processCardRequest(
       progress: TRELLO_LISTING_STAGE_UI.listing_ready.progress,
       timings_ms: { ...timings },
     });
+    throwIfListingCancelled(signal);
 
     // 7. Resolve corresponding Amazon Excel Template (.xlsx) & Fill AI generated content
     const templateItem = {
@@ -339,6 +345,7 @@ async function processCardRequest(
         }
       });
     } catch (excelError) {
+      throwIfListingCancelled(signal);
       console.error("Lỗi khi tạo file Listing Excel:", excelError);
       emit({
         type: "warning",
@@ -350,6 +357,7 @@ async function processCardRequest(
     }
 
     // 8. Attach Excel (.xlsx) file back to Trello Card
+    throwIfListingCancelled(signal);
     let attachment: TrelloAttachment | null = null;
     await runStage("trello_upload", async () => {
       if (!excelWorkbook) return;
@@ -361,8 +369,10 @@ async function processCardRequest(
           mimeType,
           apiKey,
           token,
+          signal,
         );
       } catch (attachErr) {
+        throwIfListingCancelled(signal);
         console.error("Lỗi khi đính kèm file Listing Excel vào Trello card:", attachErr);
         emit({
           type: "warning",
@@ -374,42 +384,29 @@ async function processCardRequest(
       }
     });
 
-    // 9. Move Trello Card to "Listing" list if targetListId provided (or auto-detected)
+    // 9. Move the Trello card to the user's configured Listing target list.
+    throwIfListingCancelled(signal);
     let updatedCard = card;
-    let finalTargetListId = targetListId;
+    const finalTargetListId = trelloSettings.listingTargetListId;
 
     await runStage("trello_move", async () => {
-      if (!finalTargetListId && (card.idBoard || process.env.TRELLO_BOARD_ID)) {
-        try {
-          const boardId = card.idBoard || process.env.TRELLO_BOARD_ID || "";
-          const lists = await fetchTrelloLists(boardId, apiKey, token);
-          const listingNameQuery = (process.env.TRELLO_LISTING_LIST || "Listing").trim().toLowerCase();
-          const match = lists.find(
-            (l) => l.name.trim().toLowerCase() === listingNameQuery || l.name.toLowerCase().includes("listing"),
-          );
-          if (match) finalTargetListId = match.id;
-        } catch (detectErr) {
-          console.warn("Cảnh báo không thể tự động tìm danh sách Listing trên Trello:", detectErr);
-        }
-      }
-      if (finalTargetListId) {
-        try {
-          updatedCard = await moveTrelloCard(card.id, finalTargetListId, apiKey, token);
-        } catch (moveErr) {
-          console.error("Lỗi khi chuyển thẻ Trello sang cột Listing:", moveErr);
-          emit({
-            type: "warning",
-            card_id: cardId,
-            stage: "trello_move",
-            message: "Listing đã lưu nhưng chưa thể chuyển thẻ sang cột Listing.",
-            timings_ms: { ...timings },
-          });
-        }
+      try {
+        updatedCard = await moveTrelloCard(card.id, finalTargetListId, apiKey, token, "top", signal);
+      } catch (moveErr) {
+        throwIfListingCancelled(signal);
+        console.error("Lỗi khi chuyển thẻ Trello sang cột đích Listing:", moveErr);
+        emit({
+          type: "warning",
+          card_id: cardId,
+          stage: "trello_move",
+          message: "Listing đã lưu nhưng chưa thể chuyển thẻ sang cột đích đã chọn.",
+          timings_ms: { ...timings },
+        });
       }
     });
 
     // Invalidate Redis card cache so board view updates immediately on client reload/sync
-    await invalidateCachePattern("trello:board:*").catch(() => null);
+    await invalidateCachePattern("trello:listing:*").catch(() => null);
 
     emitProgress("complete", "completed", 0);
     console.info("[listing timing]", JSON.stringify({ card_id: cardId, sku, timings_ms: timings }));
@@ -427,6 +424,10 @@ async function processCardRequest(
 
 function streamProcessCard(request: Request) {
   const encoder = new TextEncoder();
+  const abortController = new AbortController();
+  const relayRequestAbort = () => abortController.abort(request.signal.reason);
+  if (request.signal.aborted) relayRequestAbort();
+  else request.signal.addEventListener("abort", relayRequestAbort, { once: true });
   let closed = false;
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -438,7 +439,7 @@ function streamProcessCard(request: Request) {
           closed = true;
         }
       };
-      void processCardRequest(request, emit)
+      void processCardRequest(request, emit, abortController.signal)
         .then((result) => {
           emit({
             type: "complete",
@@ -460,6 +461,7 @@ function streamProcessCard(request: Request) {
           });
         })
         .finally(() => {
+          request.signal.removeEventListener("abort", relayRequestAbort);
           if (!closed) {
             closed = true;
             controller.close();
@@ -468,6 +470,7 @@ function streamProcessCard(request: Request) {
     },
     cancel() {
       closed = true;
+      abortController.abort(new Error("Người dùng đã ngắt quá trình tạo Listing."));
     },
   });
   return new Response(stream, {

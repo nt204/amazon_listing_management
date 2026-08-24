@@ -25,7 +25,7 @@ import {
   XIcon,
   CheckIcon,
 } from "@phosphor-icons/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BrandProfile, ListingTemplateSummary, StoredListing } from "@/lib/types";
 import { extractTrelloBoardId } from "@/lib/trello";
 import { AutoMockupGenerator } from "@/components/auto-mockup-generator";
@@ -93,7 +93,7 @@ function formatCardDate(isoString?: string) {
 interface CardProcessProgress {
   message: string;
   progress: number;
-  status: "running" | "listing_ready" | "complete" | "warning" | "error";
+  status: "running" | "listing_ready" | "complete" | "warning" | "error" | "cancelled";
   timings: Record<string, number>;
 }
 
@@ -111,11 +111,12 @@ function getTemplateDisplayName(template: ListingTemplateSummary) {
 }
 
 export function TrelloBoardView({ brands, activeTab = "listing", onListingCreated }: TrelloBoardViewProps) {
-  const [apiKey, setApiKey] = useState("");
-  const [token, setToken] = useState("");
   const [boardId, setBoardId] = useState("");
-  const [reviewListName, setReviewListName] = useState("TEAM DUYỆT NỘI BỘ");
-  const [listingListName, setListingListName] = useState("Listing");
+  const [boardLists, setBoardLists] = useState<TrelloList[]>([]);
+  const [listingSourceListId, setListingSourceListId] = useState("");
+  const [listingTargetListId, setListingTargetListId] = useState("");
+  const [mockupSourceListId, setMockupSourceListId] = useState("");
+  const [mockupTargetListId, setMockupTargetListId] = useState("");
   const [brandProfileId, setBrandProfileId] = useState("");
   const [templateId, setTemplateId] = useState("");
   const marketplace = "US" as const;
@@ -132,6 +133,8 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
   const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
   const [processingCardIds, setProcessingCardIds] = useState<Set<string>>(new Set());
   const [cardProcessProgress, setCardProcessProgress] = useState<Record<string, CardProcessProgress>>({});
+  const listingAbortControllersRef = useRef(new Map<string, AbortController>());
+  const batchAbortControllerRef = useRef<AbortController | null>(null);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
   const [showConfig, setShowConfig] = useState(false);
@@ -237,43 +240,21 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
     }
   }, []);
 
-  const saveLocalConfig = (key: string, tok: string, bId: string, rName: string, lName: string) => {
-    try {
-      const cleanId = extractTrelloBoardId(bId);
-      if (typeof window !== "undefined") {
-        if (key) localStorage.setItem("trello_api_key", key);
-        if (tok) localStorage.setItem("trello_token", tok);
-        if (cleanId) localStorage.setItem("trello_board_id", cleanId);
-        if (rName) localStorage.setItem("trello_review_list_name", rName);
-        if (lName) localStorage.setItem("trello_listing_list_name", lName);
-      }
-    } catch (e) {
-      console.error("Failed to save to localStorage", e);
-    }
-  };
-
   const loadCards = useCallback(
-    async (key: string, tok: string, bId: string, rName: string, lName: string) => {
-      const cleanId = extractTrelloBoardId(bId);
-      if (!key || !tok || !cleanId) {
+    async (bId: string) => {
+      if (!extractTrelloBoardId(bId)) {
         setShowConfig(true);
         return;
       }
       setLoading(true);
       setError("");
       try {
-        const query = new URLSearchParams({
-          apiKey: key,
-          token: tok,
-          boardId: cleanId,
-          internalReviewListName: rName,
-          listingListName: lName,
-        });
-        const res = await fetch(`/api/trello/cards?${query.toString()}`);
+        const res = await fetch("/api/trello/cards");
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Không thể tải thẻ Trello.");
         setReviewList(data.internalReviewList);
         setListingList(data.listingList);
+        setBoardLists(data.lists || []);
         setReviewCards(data.reviewCards || []);
         setListingCards(data.listingCards || []);
         setSelectedCardIds(new Set());
@@ -288,30 +269,29 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
 
   const fetchConfig = useCallback(async () => {
     try {
-      const localApiKey = typeof window !== "undefined" ? localStorage.getItem("trello_api_key") : null;
-      const localToken = typeof window !== "undefined" ? localStorage.getItem("trello_token") : null;
-      const localBoardId = typeof window !== "undefined" ? localStorage.getItem("trello_board_id") : null;
-      const localReviewName = typeof window !== "undefined" ? localStorage.getItem("trello_review_list_name") : null;
-      const localListingName = typeof window !== "undefined" ? localStorage.getItem("trello_listing_list_name") : null;
-
       const res = await fetch("/api/trello/config");
       const data = await res.json();
       if (res.ok) {
-        const finalApiKey = localApiKey || data.rawApiKey || "";
-        const finalToken = localToken || data.rawToken || "";
-        const rawBoardId = localBoardId || data.boardId || "";
-        const finalBoardId = extractTrelloBoardId(rawBoardId);
-        const finalReviewName = localReviewName || data.internalReviewListName || "TEAM DUYỆT NỘI BỘ";
-        const finalListingName = localListingName || data.listingListName || "Listing";
-
-        if (finalApiKey) setApiKey(finalApiKey);
-        if (finalToken) setToken(finalToken);
+        const finalBoardId = extractTrelloBoardId(data.boardId || "");
         if (finalBoardId) setBoardId(finalBoardId);
-        if (finalReviewName) setReviewListName(finalReviewName);
-        if (finalListingName) setListingListName(finalListingName);
+        setListingSourceListId(data.listingSourceListId || "");
+        setListingTargetListId(data.listingTargetListId || "");
+        setMockupSourceListId(data.mockupSourceListId || "");
+        setMockupTargetListId(data.mockupTargetListId || "");
 
-        if (finalApiKey && finalToken && finalBoardId) {
-          await loadCards(finalApiKey, finalToken, finalBoardId, finalReviewName, finalListingName);
+        const activeFlowConfigured = activeTab === "listing"
+          ? Boolean(data.listingSourceListId && data.listingTargetListId)
+          : Boolean(data.mockupSourceListId && data.mockupTargetListId);
+
+        if (finalBoardId && activeTab === "mockups") {
+          const listsResponse = await fetch("/api/trello/config?action=get-lists");
+          const listsPayload = await listsResponse.json();
+          if (listsResponse.ok) setBoardLists(listsPayload.lists || []);
+        }
+
+        if (data.configured && finalBoardId && activeFlowConfigured) {
+          setShowConfig(false);
+          if (activeTab === "listing") await loadCards(finalBoardId);
         } else {
           setShowConfig(true);
         }
@@ -319,33 +299,65 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
     } catch (err) {
       console.error(err);
     }
-  }, [loadCards]);
+  }, [activeTab, loadCards]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      void fetchConfig();
+      for (const legacyKey of [
+        "trello_api_key",
+        "trello_token",
+        "trello_board_id",
+        "trello_review_list_name",
+        "trello_listing_list_name",
+      ]) {
+        localStorage.removeItem(legacyKey);
+      }
       void fetchTemplates();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [fetchConfig, fetchTemplates]);
+  }, [fetchTemplates]);
 
-  const testAndFetchBoards = async () => {
-    if (!apiKey || !token) {
-      setError("Vui lòng nhập API Key và Token Trello.");
+  useEffect(() => {
+    setError("");
+    setSuccessMsg("");
+    const timer = window.setTimeout(() => void fetchConfig(), 0);
+    return () => window.clearTimeout(timer);
+  }, [fetchConfig]);
+
+  useEffect(() => () => {
+    batchAbortControllerRef.current?.abort();
+    for (const controller of listingAbortControllersRef.current.values()) {
+      controller.abort();
+    }
+    listingAbortControllersRef.current.clear();
+  }, []);
+
+  const inspectBoard = async () => {
+    const cleanId = extractTrelloBoardId(boardId);
+    if (!cleanId) {
+      setError("Vui lòng nhập Board ID hoặc URL Trello Board.");
       return;
     }
     setLoading(true);
     setError("");
     try {
-      const cleanId = extractTrelloBoardId(boardId);
       const res = await fetch("/api/trello/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey, token, boardId: cleanId }),
+        body: JSON.stringify({ action: "inspect-board", boardId: cleanId }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không thể kết nối Trello.");
-      setSuccessMsg("Kết nối Trello thành công!");
+      setBoardId(data.boardId);
+      setBoardLists(data.lists || []);
+      if (activeTab === "listing") {
+        setListingSourceListId("");
+        setListingTargetListId("");
+      } else {
+        setMockupSourceListId("");
+        setMockupTargetListId("");
+      }
+      setSuccessMsg(`Board hợp lệ. Hãy chọn hai cột cho ${activeTab === "listing" ? "Listing" : "Mockup"}.`);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Lỗi kết nối Trello.");
     } finally {
@@ -353,7 +365,62 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
     }
   };
 
+  const saveWorkflowConfig = async () => {
+    const cleanId = extractTrelloBoardId(boardId);
+    const sourceListId = activeTab === "listing" ? listingSourceListId : mockupSourceListId;
+    const targetListId = activeTab === "listing" ? listingTargetListId : mockupTargetListId;
+    if (!cleanId || !sourceListId || !targetListId) {
+      setError(`Vui lòng chọn cột đầu và cột đích cho ${activeTab === "listing" ? "Listing" : "Mockup"}.`);
+      return;
+    }
+    if (sourceListId === targetListId) {
+      setError("Cột đầu và cột đích phải khác nhau.");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/trello/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(activeTab === "listing"
+          ? {
+              action: "save-listing-settings",
+              boardId: cleanId,
+              listingSourceListId,
+              listingTargetListId,
+            }
+          : {
+              action: "save-mockup-settings",
+              boardId: cleanId,
+              mockupSourceListId,
+              mockupTargetListId,
+            }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không thể lưu cấu hình Trello.");
+      setListingSourceListId(data.listingSourceListId || "");
+      setListingTargetListId(data.listingTargetListId || "");
+      setMockupSourceListId(data.mockupSourceListId || "");
+      setMockupTargetListId(data.mockupTargetListId || "");
+      setSuccessMsg(`Đã lưu hai cột ${activeTab === "listing" ? "Listing" : "Mockup"}.`);
+      setShowConfig(false);
+      if (activeTab === "listing") await loadCards(data.boardId);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Lỗi lưu cấu hình Trello.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const cancelCardListing = useCallback((cardId: string) => {
+    listingAbortControllersRef.current.get(cardId)?.abort();
+  }, []);
+
   const runCardListing = async (card: TrelloCard, openWhenReady: boolean) => {
+    listingAbortControllersRef.current.get(card.id)?.abort();
+    const abortController = new AbortController();
+    listingAbortControllersRef.current.set(card.id, abortController);
     setProcessingCardIds((current) => new Set(current).add(card.id));
     setCardProcessProgress((current) => ({
       ...current,
@@ -370,15 +437,13 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
     try {
       const res = await fetch("/api/trello/process-card", {
         method: "POST",
+        signal: abortController.signal,
         headers: {
           "Content-Type": "application/json",
           Accept: "application/x-ndjson",
         },
         body: JSON.stringify({
           cardId: card.id,
-          targetListId: listingList?.id,
-          apiKey: apiKey.trim() || undefined,
-          token: token.trim() || undefined,
           brandProfileId: brandProfileId || undefined,
           marketplace,
           templateId: templateId || undefined,
@@ -459,17 +524,23 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
       if (!readyListing) throw new Error("Server kết thúc nhưng chưa trả về listing.");
       return { listing: readyListing, attachment: completedAttachment };
     } catch (requestError) {
+      const cancelled = abortController.signal.aborted;
       setCardProcessProgress((current) => ({
         ...current,
         [card.id]: {
-          message: requestError instanceof Error ? requestError.message : "Không thể tạo listing.",
+          message: cancelled
+            ? "Đã ngắt quá trình tạo Listing."
+            : requestError instanceof Error ? requestError.message : "Không thể tạo listing.",
           progress: current[card.id]?.progress || 0,
-          status: "error",
+          status: cancelled ? "cancelled" : "error",
           timings: current[card.id]?.timings || {},
         },
       }));
       throw requestError;
     } finally {
+      if (listingAbortControllersRef.current.get(card.id) === abortController) {
+        listingAbortControllersRef.current.delete(card.id);
+      }
       setProcessingCardIds((current) => {
         const next = new Set(current);
         next.delete(card.id);
@@ -487,9 +558,13 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
         ? `Đã tạo listing và đính kèm Excel cho SKU ${card.parsed?.sku || card.name}.`
         : `Đã tạo listing cho SKU ${card.parsed?.sku || card.name}; cần kiểm tra lại file Excel trên Trello.`);
 
-      await loadCards(apiKey, token, boardId, reviewListName, listingListName);
+      await loadCards(boardId);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Đã xảy ra lỗi khi tạo Listing từ thẻ Trello.");
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setSuccessMsg(`Đã ngắt tạo Listing cho ${card.parsed?.sku || card.name}.`);
+      } else {
+        setError(err instanceof Error ? err.message : "Đã xảy ra lỗi khi tạo Listing từ thẻ Trello.");
+      }
     }
   };
 
@@ -557,6 +632,9 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
   const processBatchListings = async () => {
     if (selectedCardIds.size === 0) return;
     const cardsToProcess = reviewCards.filter((c) => selectedCardIds.has(c.id));
+    const batchAbortController = new AbortController();
+    batchAbortControllerRef.current?.abort();
+    batchAbortControllerRef.current = batchAbortController;
     setBatchProcessing(true);
     setBatchProgress({ current: 0, total: cardsToProcess.length });
     setError("");
@@ -564,22 +642,36 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
 
     let successCount = 0;
     let completedCount = 0;
+    let cancelledCount = 0;
     let postProcessWarningCount = 0;
     const batchErrors: string[] = [];
     await runWithConcurrency(cardsToProcess, 2, async (card) => {
+      if (batchAbortController.signal.aborted) {
+        cancelledCount += 1;
+        completedCount += 1;
+        setBatchProgress({ current: completedCount, total: cardsToProcess.length });
+        return;
+      }
       try {
         const completed = await runCardListing(card, false);
         successCount += 1;
         if (!completed.attachment) postProcessWarningCount += 1;
       } catch (err) {
-        console.error(`Lỗi tạo batch cho card ${card.id}:`, err);
-        batchErrors.push(`${card.parsed?.sku || card.name}: ${err instanceof Error ? err.message : String(err)}`);
+        if ((err instanceof DOMException && err.name === "AbortError") || batchAbortController.signal.aborted) {
+          cancelledCount += 1;
+        } else {
+          console.error(`Lỗi tạo batch cho card ${card.id}:`, err);
+          batchErrors.push(`${card.parsed?.sku || card.name}: ${err instanceof Error ? err.message : String(err)}`);
+        }
       } finally {
         completedCount += 1;
         setBatchProgress({ current: completedCount, total: cardsToProcess.length });
       }
     });
 
+    if (batchAbortControllerRef.current === batchAbortController) {
+      batchAbortControllerRef.current = null;
+    }
     setBatchProcessing(false);
     if (successCount > 0) {
       setSuccessMsg(postProcessWarningCount > 0
@@ -589,7 +681,18 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
     if (batchErrors.length > 0) {
       setError(`Lỗi khi tạo Listing: ${batchErrors.join("; ")}`);
     }
-    await loadCards(apiKey, token, boardId, reviewListName, listingListName);
+    if (cancelledCount > 0) {
+      setSuccessMsg(`Đã ngắt ${cancelledCount} Listing trong Batch; hoàn tất ${successCount}/${cardsToProcess.length} thẻ.`);
+    }
+    await loadCards(boardId);
+  };
+
+  const cancelBatchListings = () => {
+    batchAbortControllerRef.current?.abort();
+    for (const controller of listingAbortControllersRef.current.values()) {
+      controller.abort();
+    }
+    setSuccessMsg("Đang ngắt các Listing trong Batch...");
   };
 
   const copyListingText = async (listing: StoredListing) => {
@@ -641,13 +744,13 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
                   onChange={(e) => setSelectedModel(e.target.value)}
                   className="bg-transparent text-xs font-bold text-slate-900 outline-none cursor-pointer pr-1"
                 >
-                  <option value="gemini-3.6-flash">Gemini 3.6 Flash (Mặc định)</option>
-                  <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite (Fast)</option>
+                  <option value="gemini-3.6-flash">Gemini 3.6 Flash (Chất lượng cao)</option>
+                  <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite (Nhanh)</option>
                   <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
                   <option value="gemini-2.5-pro">Gemini 2.5 Pro (Deep Reasoning)</option>
                   <option value="gpt-4o">GPT-4o (Chất lượng cao)</option>
                   <option value="gpt-4o-mini">GPT-4o Mini (Nhanh & Tối ưu)</option>
-                  <option value="gpt-5.6-luna">💸 GPT-5.6 Luna (CheapKey AI)</option>
+                  <option value="gpt-5.6-luna">💸 GPT-5.6 Luna (Mặc định - CheapKey AI)</option>
                 </select>
               </div>
             </div>
@@ -714,20 +817,20 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
             </div>
 
             {/* Refresh / Reload Cards Button */}
-            <button
-              type="button"
-              onClick={() => {
-                if (apiKey && token && boardId) {
-                  loadCards(apiKey, token, boardId, reviewListName, listingListName);
-                }
-              }}
-              disabled={loading}
-              className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-slate-300 transition disabled:opacity-60 cursor-pointer"
-              title="Làm mới danh sách thẻ Trello ngay lập tức"
-            >
-              <ArrowsClockwiseIcon className={`h-4 w-4 text-sky-600 ${loading ? "animate-spin" : ""}`} />
-              <span>{loading ? "Đang làm mới..." : "Làm Mới Trello"}</span>
-            </button>
+            {activeTab === "listing" && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (boardId) loadCards(boardId);
+                }}
+                disabled={loading}
+                className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-slate-300 transition disabled:opacity-60 cursor-pointer"
+                title="Làm mới danh sách thẻ Trello ngay lập tức"
+              >
+                <ArrowsClockwiseIcon className={`h-4 w-4 text-sky-600 ${loading ? "animate-spin" : ""}`} />
+                <span>{loading ? "Đang làm mới..." : "Làm Mới Trello"}</span>
+              </button>
+            )}
 
             {/* Config Trello API Button */}
             <button
@@ -735,7 +838,7 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
               className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-slate-300 transition"
             >
               <GearIcon className="h-4 w-4 text-slate-600" />
-              <span>Cấu Hình Trello API</span>
+              <span>Cấu Hình {activeTab === "listing" ? "Listing" : "Mockup"}</span>
             </button>
           </div>
         </div>
@@ -776,7 +879,16 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
                       </p>
                       <p className="mt-0.5 truncate text-xs font-medium text-sky-800">{progress.message}</p>
                     </div>
-                    <span className="shrink-0 font-mono text-xs font-bold text-sky-700">{progress.progress}%</span>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="font-mono text-xs font-bold text-sky-700">{progress.progress}%</span>
+                      <button
+                        type="button"
+                        onClick={() => cancelCardListing(card.id)}
+                        className="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[10px] font-extrabold text-red-700 hover:bg-red-100"
+                      >
+                        Ngắt
+                      </button>
+                    </div>
                   </div>
                   <progress
                     className="mt-2 h-1.5 w-full overflow-hidden rounded-full accent-sky-600"
@@ -805,71 +917,82 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
         <div className="border-b border-slate-200 bg-white p-6 shadow-md">
           <div className="mb-4 flex items-center justify-between">
             <div>
-              <h3 className="text-base font-bold text-slate-900">Cấu hình Thông Tin Kết Nối Trello API</h3>
-              <p className="text-xs text-slate-500">Nhập API Key và Token với quyền Read/Write từ Trello Developer Portal</p>
+              <h3 className="text-base font-bold text-slate-900">
+                Cấu hình Trello cho {activeTab === "listing" ? "Listing" : "Mockup"}
+              </h3>
+              <p className="text-xs text-slate-500">API Key và Token đã được quản trị viên khóa an toàn trên server.</p>
             </div>
-            <a
-              href="https://trello.com/app-key"
-              target="_blank"
-              rel="noreferrer"
-              className="text-xs font-bold text-sky-600 hover:underline"
-            >
-              Lấy API Key trên Trello ↗
-            </a>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <div>
-              <label className="mb-1 block text-xs font-bold text-slate-700">Trello API Key</label>
-              <input
-                type="text"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="Ví dụ: 59fbd..."
-                className="w-full rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-2.5 text-xs font-mono text-slate-900 focus:bg-white focus:border-sky-500 outline-none"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-bold text-slate-700">Trello Token (Read/Write Scope)</label>
-              <input
-                type="password"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                placeholder="Ví dụ: ATTA..."
-                className="w-full rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-2.5 text-xs font-mono text-slate-900 focus:bg-white focus:border-sky-500 outline-none"
-              />
-            </div>
+          <div className="max-w-4xl space-y-5">
             <div>
               <label className="mb-1 block text-xs font-bold text-slate-700">Board ID / URL Trello Board</label>
               <input
                 type="text"
                 value={boardId}
-                onChange={(e) => setBoardId(extractTrelloBoardId(e.target.value))}
+                onChange={(e) => {
+                  setBoardId(extractTrelloBoardId(e.target.value));
+                  setBoardLists([]);
+                  setListingSourceListId("");
+                  setListingTargetListId("");
+                  setMockupSourceListId("");
+                  setMockupTargetListId("");
+                }}
                 placeholder="https://trello.com/b/UaCRcUxZ/test-project hoặc UaCRcUxZ"
                 className="w-full rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-2.5 text-xs font-mono text-slate-900 focus:bg-white focus:border-sky-500 outline-none"
               />
             </div>
+
+            {boardLists.length > 0 && (
+              <div className="grid grid-cols-1 gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-2">
+                {(activeTab === "listing"
+                  ? [
+                      ["Cột đầu — Listing", listingSourceListId, setListingSourceListId],
+                      ["Cột đích — Listing", listingTargetListId, setListingTargetListId],
+                    ]
+                  : [
+                      ["Cột đầu — Mockup", mockupSourceListId, setMockupSourceListId],
+                      ["Cột đích — Mockup", mockupTargetListId, setMockupTargetListId],
+                    ]
+                ).map(([label, value, setter]) => (
+                  <div key={label as string}>
+                    <label className="mb-1 block text-xs font-bold text-slate-700">{label as string}</label>
+                    <select
+                      value={value as string}
+                      onChange={(event) => (setter as (value: string) => void)(event.target.value)}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-xs font-semibold text-slate-900 outline-none focus:border-sky-500"
+                    >
+                      <option value="">-- Chọn cột Trello --</option>
+                      {boardLists.map((list) => (
+                        <option key={list.id} value={list.id}>{list.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+                <p className="md:col-span-2 text-[11px] font-medium text-slate-500">
+                  Khi hoàn tất, thẻ sẽ được chuyển từ cột đầu sang cột đích của {activeTab === "listing" ? "Listing" : "Mockup"}.
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="mt-5 flex justify-end gap-3 border-t border-slate-100 pt-4">
             <button
-              onClick={testAndFetchBoards}
+              onClick={inspectBoard}
               disabled={loading}
-              className="rounded-xl border border-slate-300 bg-slate-100 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200"
+              className="rounded-xl border border-slate-300 bg-white px-5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
             >
-              Kiểm Tra Kết Nối
+              {loading ? "Đang kiểm tra..." : "Kiểm Tra & Tải Danh Sách Cột"}
             </button>
-            <button
-              onClick={() => {
-                saveLocalConfig(apiKey, token, boardId, reviewListName, listingListName);
-                loadCards(apiKey, token, boardId, reviewListName, listingListName);
-                setShowConfig(false);
-              }}
-              disabled={loading}
-              className="rounded-xl bg-sky-600 px-5 py-2 text-xs font-bold text-white shadow hover:bg-sky-700"
-            >
-              Lưu Cấu Hình
-            </button>
+            {boardLists.length > 0 && (
+              <button
+                onClick={saveWorkflowConfig}
+                disabled={loading}
+                className="rounded-xl bg-sky-600 px-5 py-2 text-xs font-bold text-white shadow hover:bg-sky-700 disabled:opacity-60"
+              >
+                Lưu Cấu Hình {activeTab === "listing" ? "Listing" : "Mockup"}
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -897,23 +1020,24 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
             >
               Bỏ chọn tất cả
             </button>
-            <button
-              onClick={processBatchListings}
-              disabled={batchProcessing}
-              className="flex items-center gap-1.5 rounded-lg bg-amber-400 px-4 py-2 text-xs font-bold text-slate-900 shadow hover:bg-amber-300 transition disabled:opacity-50"
-            >
-              {batchProcessing ? (
-                <>
-                  <SpinnerIcon className="h-4 w-4 animate-spin" />
-                  <span>Đang xử lý Batch...</span>
-                </>
-              ) : (
-                <>
-                  <LightningIcon className="h-4 w-4 fill-current" />
-                  <span>Batch Tạo Listing Cho {selectedCardIds.size} Thẻ Đã Chọn</span>
-                </>
-              )}
-            </button>
+            {batchProcessing ? (
+              <button
+                type="button"
+                onClick={cancelBatchListings}
+                className="flex items-center gap-1.5 rounded-lg bg-red-500 px-4 py-2 text-xs font-bold text-white shadow hover:bg-red-400 transition"
+              >
+                <XIcon className="h-4 w-4" weight="bold" />
+                <span>Ngắt Batch</span>
+              </button>
+            ) : (
+              <button
+                onClick={processBatchListings}
+                className="flex items-center gap-1.5 rounded-lg bg-amber-400 px-4 py-2 text-xs font-bold text-slate-900 shadow hover:bg-amber-300 transition"
+              >
+                <LightningIcon className="h-4 w-4 fill-current" />
+                <span>Batch Tạo Listing Cho {selectedCardIds.size} Thẻ Đã Chọn</span>
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -926,7 +1050,7 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
               onClick={async () => {
                 setDownloadingImage(true);
                 try {
-                  await downloadOriginalTrelloImage({ ...previewImage, apiKey, token });
+                  await downloadOriginalTrelloImage(previewImage);
                 } catch (requestError) {
                   setError(requestError instanceof Error ? requestError.message : "Không thể tải ảnh gốc.");
                 } finally {
@@ -967,7 +1091,7 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
             </div>
             <div className="flex items-center gap-2">
               <a
-                href={`/api/trello/download-card-excel?listingId=${inspectListing.id}&apiKey=${encodeURIComponent(apiKey)}&token=${encodeURIComponent(token)}&templateId=${encodeURIComponent(templateId)}`}
+                href={`/api/trello/download-card-excel?listingId=${inspectListing.id}&templateId=${encodeURIComponent(templateId)}`}
                 target="_blank"
                 rel="noreferrer"
                 className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white shadow hover:bg-emerald-700 transition"
@@ -1050,12 +1174,18 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
 
       {activeTab === "mockups" ? (
         <div className="flex-1 overflow-y-auto p-6 bg-slate-100">
-          <AutoMockupGenerator apiKey={apiKey} token={token} boardId={boardId} />
+          <AutoMockupGenerator
+            boardId={boardId}
+            sourceListId={mockupSourceListId}
+            sourceListName={boardLists.find((list) => list.id === mockupSourceListId)?.name || "Cột đầu Mockup"}
+            targetListId={mockupTargetListId}
+            targetListName={boardLists.find((list) => list.id === mockupTargetListId)?.name || "Cột đích Mockup"}
+          />
         </div>
       ) : (
         /* Main Kanban Columns Container */
         <div className="flex flex-1 overflow-x-auto p-6 gap-6 bg-slate-100 min-h-0">
-          {/* Column 1: TEAM DUYỆT NỘI BỘ */}
+          {/* Configured Listing source column */}
           <div className="flex w-1/2 flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-2xs">
             {/* Column Header */}
             <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-3">
@@ -1074,7 +1204,7 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
 
                 <span className="h-3 w-3 rounded-full bg-amber-500 shadow-2xs"></span>
                 <h3 className="text-sm font-extrabold text-slate-900 uppercase tracking-wide">
-                  {reviewList ? reviewList.name : reviewListName}
+                  {reviewList ? reviewList.name : "Cột đầu Listing"}
                 </h3>
                 <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-bold text-amber-700 border border-amber-200">
                   {reviewCards.length} thẻ
@@ -1102,7 +1232,9 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
             <div className="flex-1 overflow-y-auto space-y-4 pr-1 thin-scrollbar">
               {reviewCards.length === 0 ? (
                 <div className="flex h-48 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 p-6 text-center">
-                  <p className="text-xs font-semibold text-slate-400">Không có thẻ nào trong danh sách duyệt nội bộ</p>
+                  <p className="text-xs font-semibold text-slate-400">
+                    Không có thẻ nào trong cột {reviewList?.name || "đầu Listing"}
+                  </p>
                 </div>
               ) : (
                 reviewCards.map((card) => {
@@ -1138,7 +1270,7 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
                         isSelected
                           ? "border-blue-500 bg-blue-50/40 ring-2 ring-blue-400/30"
                           : "border-slate-200 bg-white hover:border-blue-300"
-                      } ${isProcessing ? "opacity-60 pointer-events-none" : ""}`}
+                      } ${isProcessing ? "opacity-75" : ""}`}
                     >
                       {/* Card Header: Checkbox | SKU Badge | Country Flag | Menu */}
                       <div className="mb-2.5 flex items-center justify-between">
@@ -1219,14 +1351,21 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
                         </a>
 
                         <button
-                          onClick={() => processCardToListing(card)}
-                          disabled={isProcessing || loading || batchProcessing}
-                          className="flex items-center gap-2 rounded-xl bg-blue-600 px-4.5 py-2.5 text-sm font-extrabold text-white shadow-xs hover:bg-blue-700 transition disabled:opacity-50"
+                          onClick={() => {
+                            if (isProcessing) cancelCardListing(card.id);
+                            else void processCardToListing(card);
+                          }}
+                          disabled={!isProcessing && (loading || batchProcessing)}
+                          className={`flex items-center gap-2 rounded-xl px-4.5 py-2.5 text-sm font-extrabold text-white shadow-xs transition disabled:opacity-50 ${
+                            isProcessing
+                              ? "bg-red-500 hover:bg-red-600"
+                              : "bg-blue-600 hover:bg-blue-700"
+                          }`}
                         >
                           {isProcessing ? (
                             <>
-                              <SpinnerIcon className="h-4 w-4 animate-spin" />
-                              <span>Đang xử lý...</span>
+                              <XIcon className="h-4 w-4" weight="bold" />
+                              <span>Ngắt Listing</span>
                             </>
                           ) : (
                             <>
@@ -1291,7 +1430,7 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
               <div className="flex items-center gap-2.5">
                 <span className="h-3.5 w-3.5 rounded-full bg-emerald-500 shadow-2xs"></span>
                 <h3 className="text-base font-black text-slate-900 uppercase tracking-wide">
-                  {listingList ? listingList.name : listingListName}
+                  {listingList ? listingList.name : "Cột đích Listing"}
                 </h3>
                 <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-extrabold text-emerald-700 border border-emerald-200">
                   {listingCards.length} thẻ
@@ -1325,7 +1464,7 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
                   <p className="text-xs font-bold">
                     {draggedCardId
                       ? "✨ Thả thẻ vào đây để tự động tạo Listing & Đính kèm Excel!"
-                      : "Chưa có thẻ nào trong cột Listing (Kéo thẻ từ cột Duyệt Nội Bộ thả vào đây để tự động xử lý)"}
+                      : `Chưa có thẻ nào trong cột ${listingList?.name || "đích Listing"}. Kéo thẻ từ cột ${reviewList?.name || "đầu Listing"} thả vào đây để xử lý.`}
                   </p>
                 </div>
               ) : (
@@ -1337,7 +1476,7 @@ export function TrelloBoardView({ brands, activeTab = "listing", onListingCreate
                   const fileUrl =
                     csvAttachment?.url ||
                     localAttachment?.attachmentUrl ||
-                    `/api/trello/download-card-excel?cardId=${card.id}&apiKey=${encodeURIComponent(apiKey)}&token=${encodeURIComponent(token)}&templateId=${encodeURIComponent(templateId)}`;
+                    `/api/trello/download-card-excel?cardId=${card.id}&templateId=${encodeURIComponent(templateId)}`;
                   const fileName =
                     csvAttachment?.name ||
                     localAttachment?.name ||

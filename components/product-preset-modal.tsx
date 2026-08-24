@@ -98,7 +98,7 @@ export function ProductPresetModal({
       if (resetSelection) {
         const exists = loaded.some((preset) => preset.id === activeCategoryId);
         setSelectedId(
-          exists ? activeCategoryId : loaded[0]?.id || "universal_standard",
+          exists ? activeCategoryId : loaded[0]?.id || "",
         );
       }
       onPresetsUpdatedRef.current(limited);
@@ -259,9 +259,9 @@ export function ProductPresetModal({
           `❌ Không thể xóa phôi: ${error instanceof Error ? error.message : String(error)}`,
         );
       });
-    const nextId = updated[0]?.id || "universal_standard";
+    const nextId = updated[0]?.id || "";
     setSelectedId(nextId);
-    const nextP = updated[0] || presets[0];
+    const nextP = updated[0];
     if (nextP) onSelectCategory(nextP.id, nextP.contents);
   };
 

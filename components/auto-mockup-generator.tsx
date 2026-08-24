@@ -96,16 +96,12 @@ function findOriginalDesignAttachment(card: TrelloCard) {
   );
 }
 
-interface TrelloList {
-  id: string;
-  name: string;
-  closed: boolean;
-}
-
 interface AutoMockupGeneratorProps {
-  apiKey: string;
-  token: string;
   boardId: string;
+  sourceListId: string;
+  sourceListName: string;
+  targetListId: string;
+  targetListName: string;
 }
 
 type GenerationStepStatus =
@@ -171,7 +167,7 @@ interface SingleMockupRegenerationJob {
 interface MockupBackgroundJob {
   id: string;
   cardId: string;
-  status: "queued" | "running" | "cancel_requested";
+  status: "queued" | "running" | "cancel_requested" | "cancelled";
   progress?: {
     message?: string;
     step?: number;
@@ -254,11 +250,6 @@ const MOCKUP_STEPS = [
 const DEFAULT_MOCKUP_MODEL = "gpt-image-2-cheapkey";
 const DEFAULT_MOCKUP_QUALITY = "low" as const;
 
-export type MockupCategoryKey =
-  | "universal_standard"
-  | "bullet_tumbler"
-  | "slate_plate";
-
 export interface MockupContentItem {
   id: number;
   label: string;
@@ -267,60 +258,6 @@ export interface MockupContentItem {
   customPrompt?: string;
 }
 
-export const MOCKUP_CATEGORY_PRESETS: Record<
-  MockupCategoryKey,
-  {
-    id: MockupCategoryKey;
-    label: string;
-    icon: string;
-    contents: MockupContentItem[];
-  }
-> = {
-  universal_standard: {
-    id: "universal_standard",
-    label: "Hanging Ornament",
-    icon: "🎄",
-    contents: [
-      { id: 1, label: "Ảnh 1: Nền Trắng CTR", checked: true, promptKey: "universal_main_white" },
-      { id: 2, label: "Ảnh 2: Bối Cảnh Thực Tế", checked: true, promptKey: "universal_lifestyle" },
-      { id: 3, label: "Ảnh 3: Kích Thước 3D", checked: true, promptKey: "universal_dimensions" },
-      { id: 4, label: "Ảnh 4: Chất Liệu & Độ Dày", checked: true, promptKey: "universal_features_zoom" },
-      { id: 5, label: "Ảnh 5: Trao Quà Tay Trao Tay", checked: true, promptKey: "universal_gifting" },
-      { id: 6, label: "Ảnh 6: Hộp Quà & Phụ Kiện", checked: true, promptKey: "universal_packaging" },
-      { id: 7, label: "Ảnh 7: Card Thiệp Theo Chủ Đề", checked: true, promptKey: "universal_artwork_macro" },
-    ],
-  },
-  bullet_tumbler: {
-    id: "bullet_tumbler",
-    label: "Bullet Tumbler",
-    icon: "🍾",
-    contents: [
-      { id: 1, label: "Ảnh 1: Thiết Kế Nền Trắng", checked: true, promptKey: "full_design" },
-      { id: 2, label: "Ảnh 2: Cách Nhiệt & Hộp Quà", checked: true, promptKey: "bullet_insulation_box" },
-      { id: 3, label: "Ảnh 3: Kích Thước 17oz", checked: true, promptKey: "bullet_capacity_size" },
-      { id: 4, label: "Ảnh 4: Nắp Bấm & Rót Cốc", checked: true, promptKey: "bullet_press_lid_pour" },
-      { id: 5, label: "Ảnh 5: Cắm Trại Dã Ngoại", checked: true, promptKey: "bullet_outdoor_camping" },
-      { id: 6, label: "Ảnh 6: Hộc Để Cốc Ô Tô", checked: true, promptKey: "bullet_car_cupholder" },
-      { id: 7, label: "Ảnh 7: Quà Tặng Cho Nam", checked: true, promptKey: "bullet_men_gifting" },
-    ],
-  },
-  slate_plate: {
-    id: "slate_plate",
-    label: "Slate Plate",
-    icon: "🪨",
-    contents: [
-      { id: 1, label: "Ảnh 1: Nền Trắng Chân Đế", checked: true, promptKey: "slate_main_white" },
-      { id: 2, label: "Ảnh 2: Đá Tự Nhiên & Kháng Nước", checked: true, promptKey: "slate_features_infographic" },
-      { id: 3, label: "Ảnh 3: Kích Thước & Chân Đế", checked: true, promptKey: "slate_dimensions_size" },
-      { id: 4, label: "Ảnh 4: Mặt Trước & Sau Đá Đen", checked: true, promptKey: "slate_front_back_stack" },
-      { id: 5, label: "Ảnh 5: Trang Trí Nổi Bật (Home Decor)", checked: true, promptKey: "slate_home_decor_lifestyle" },
-      { id: 6, label: "Ảnh 6: Quà Tặng Tri Ơn & Ý Nghĩa", checked: true, promptKey: "slate_gifting_emotion" },
-      { id: 7, label: "Ảnh 7: Hộp Quà Retail & Phụ Kiện", checked: true, promptKey: "slate_packaging_box" },
-    ],
-  },
-};
-
-const DEFAULT_SYSTEM_MOCKUP_CONTENTS = MOCKUP_CATEGORY_PRESETS.universal_standard.contents;
 const MOCKUP_CATEGORY_STORAGE_KEY = "listing_desk_mockup_category_v2";
 const MOCKUP_CONTENTS_STORAGE_KEY = "listing_desk_mockup_contents_v7";
 
@@ -335,14 +272,12 @@ function fallBackToMasterImage(
 }
 
 export function AutoMockupGenerator({
-  apiKey,
-  token,
   boardId,
+  sourceListId: designListId,
+  sourceListName,
+  targetListId: mockupListId,
+  targetListName,
 }: AutoMockupGeneratorProps) {
-  const [lists, setLists] = useState<TrelloList[]>([]);
-  const [designListId, setDesignListId] = useState<string>("");
-  const [mockupListId, setMockupListId] = useState<string>("");
-
   const [designCards, setDesignCards] = useState<TrelloCard[]>([]);
   const [mockupCards, setMockupCards] = useState<TrelloCard[]>([]);
 
@@ -354,12 +289,10 @@ export function AutoMockupGenerator({
   >(DEFAULT_MOCKUP_QUALITY);
 
   const [allPresets, setAllPresets] = useState<ProductCategoryPreset[]>(() => getAllPresets());
-  const [selectedCategory, setSelectedCategory] = useState<string>("universal_standard");
+  const [selectedCategory, setSelectedCategory] = useState<string>(() => getAllPresets()[0]?.id || "");
   const [mockupContents, setMockupContents] = useState<MockupContentItem[]>(() => {
     const loaded = getAllPresets();
-    return limitSelectedMockupContents(
-      loaded[0]?.contents || MOCKUP_CATEGORY_PRESETS.universal_standard.contents,
-    );
+    return limitSelectedMockupContents(loaded[0]?.contents || []);
   });
 
   const [showAddContentModal, setShowAddContentModal] = useState(false);
@@ -382,65 +315,14 @@ export function AutoMockupGenerator({
     (content) => content.checked && content.id >= 2,
   ).length;
 
-  const mergePresetWithSaved = (
-    categoryKey: MockupCategoryKey,
-    savedItems: MockupContentItem[],
-  ): MockupContentItem[] => {
-    const defaultPreset = MOCKUP_CATEGORY_PRESETS[categoryKey].contents;
-    const savedMap = new Map(
-      savedItems.map((item: MockupContentItem) => [Number(item.id), item]),
-    );
-
-    const merged = defaultPreset.map((defaultItem) => {
-      const savedItem = savedMap.get(defaultItem.id);
-      if (savedItem) {
-        return {
-          ...defaultItem,
-          label: defaultItem.label, // Always enforce system preset short label
-          checked: defaultItem.id === 1 ? true : Boolean(savedItem.checked),
-          promptKey: defaultItem.promptKey || savedItem.promptKey,
-        };
-      }
-      return defaultItem;
-    });
-
-    savedItems.forEach((savedItem: MockupContentItem) => {
-      if (savedItem.id >= 11 && !merged.some((m) => m.id === savedItem.id)) {
-        merged.push({
-          id: Number(savedItem.id),
-          label: String(savedItem.label),
-          checked: Boolean(savedItem.checked),
-          promptKey: savedItem.promptKey,
-        });
-      }
-    });
-
-    return limitSelectedMockupContents(merged);
-  };
-
   useEffect(() => {
-    // Load persisted mockup category and contents from localStorage
-    try {
-      const savedCategory = (localStorage.getItem(MOCKUP_CATEGORY_STORAGE_KEY) as MockupCategoryKey) || "universal_standard";
-      const categoryKey = MOCKUP_CATEGORY_PRESETS[savedCategory] ? savedCategory : "universal_standard";
-      setSelectedCategory(categoryKey);
-
-      const categoryStorageKey = `${MOCKUP_CONTENTS_STORAGE_KEY}_${categoryKey}`;
-      const saved = localStorage.getItem(categoryStorageKey) || localStorage.getItem(MOCKUP_CONTENTS_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const merged = mergePresetWithSaved(categoryKey, parsed);
-
-          setMockupContents(limitSelectedMockupContents(merged));
-        }
-      } else {
-        setMockupContents(
-          limitSelectedMockupContents(MOCKUP_CATEGORY_PRESETS[categoryKey].contents),
-        );
-      }
-    } catch {
-      // Ignore storage errors
+    for (const retiredId of ["universal_standard", "bullet_tumbler", "slate_plate"]) {
+      localStorage.removeItem(`${MOCKUP_CONTENTS_STORAGE_KEY}_${retiredId}`);
+    }
+    const savedCategory = localStorage.getItem(MOCKUP_CATEGORY_STORAGE_KEY) || "";
+    if (["universal_standard", "bullet_tumbler", "slate_plate"].includes(savedCategory)) {
+      localStorage.removeItem(MOCKUP_CATEGORY_STORAGE_KEY);
+      localStorage.removeItem(MOCKUP_CONTENTS_STORAGE_KEY);
     }
   }, []);
 
@@ -483,6 +365,11 @@ export function AutoMockupGenerator({
             })),
           ),
         );
+      } else if (!active) {
+        setSelectedCategory("");
+        setMockupContents([]);
+        localStorage.removeItem(MOCKUP_CATEGORY_STORAGE_KEY);
+        localStorage.removeItem(MOCKUP_CONTENTS_STORAGE_KEY);
       }
     };
 
@@ -503,6 +390,7 @@ export function AutoMockupGenerator({
   const saveContentsState = (
     updated: MockupContentItem[],
   ) => {
+    if (!selectedCategory) return;
     const limited = limitSelectedMockupContents(updated);
     setMockupContents(limited);
     try {
@@ -518,7 +406,7 @@ export function AutoMockupGenerator({
     setSelectedCategory(catKey);
     const found = allPresets.find((p) => p.id === catKey);
     const updated = limitSelectedMockupContents(
-      found ? found.contents : MOCKUP_CATEGORY_PRESETS.universal_standard.contents,
+      found?.contents || [],
     );
     setMockupContents(updated);
     try {
@@ -562,7 +450,7 @@ export function AutoMockupGenerator({
   const resetToDefaultContents = () => {
     setContentNoticeMsg("");
     const active = allPresets.find((p) => p.id === selectedCategory) || allPresets[0];
-    const defaultContents = active?.contents || MOCKUP_CATEGORY_PRESETS.universal_standard.contents;
+    const defaultContents = active?.contents || [];
     saveContentsState(defaultContents);
   };
 
@@ -576,7 +464,7 @@ export function AutoMockupGenerator({
   };
 
   const handleAddCustomContent = () => {
-    if (!newContentLabel.trim()) return;
+    if (!selectedCategory || !newContentLabel.trim()) return;
     const nextId =
       mockupContents.length > 0
         ? Math.max(...mockupContents.map((c) => c.id)) + 1
@@ -615,12 +503,11 @@ export function AutoMockupGenerator({
 
   const handleResetToSystemDefaults = () => {
     const active = allPresets.find((p) => p.id === selectedCategory) || allPresets[0];
-    const defaultContents = active?.contents || MOCKUP_CATEGORY_PRESETS.universal_standard.contents;
+    const defaultContents = active?.contents || [];
     saveContentsState(defaultContents);
     setContentNoticeMsg(`Đã khôi phục danh sách Content của mục "${active?.label || selectedCategory}" về mặc định.`);
   };
 
-  const [loadingLists, setLoadingLists] = useState<boolean>(false);
   const [loadingCards, setLoadingCards] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>("");
 
@@ -643,6 +530,7 @@ export function AutoMockupGenerator({
   const [generationResult, setGenerationResult] = useState<string | null>(null);
   const [completionNotice, setCompletionNotice] = useState<MockupCompletionNotice | null>(null);
   const [backgroundJobs, setBackgroundJobs] = useState<MockupBackgroundJob[]>([]);
+  const [cancellingJobIds, setCancellingJobIds] = useState<Set<string>>(new Set());
   const previousBackgroundJobIdsRef = useRef<Set<string>>(new Set());
 
   const prepareBrowserNotification = useCallback(() => {
@@ -835,8 +723,6 @@ export function AutoMockupGenerator({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "move-card",
-          apiKey,
-          token,
           cardId,
           idList: targetListId,
           pos,
@@ -850,77 +736,27 @@ export function AutoMockupGenerator({
     }
   };
 
-  // Load Lists
-  useEffect(() => {
-    if (!apiKey || !token || !boardId) return;
-
-    async function loadLists() {
-      setLoadingLists(true);
-      setErrorMsg("");
-      try {
-        const res = await fetch(
-          `/api/trello/config?action=get-lists&apiKey=${encodeURIComponent(apiKey)}&token=${encodeURIComponent(token)}&boardId=${encodeURIComponent(boardId)}`,
-        );
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.error || `HTTP ${res.status}`);
-        }
-        const data = await res.json();
-        const loadedLists: TrelloList[] = data.lists || [];
-        setLists(loadedLists);
-
-        // Find or default DESIGN list
-        const dList = loadedLists.find(
-          (l) =>
-            l.name.trim().toUpperCase() === "DESIGN" ||
-            l.name.toLowerCase().includes("design"),
-        );
-        if (dList) {
-          setDesignListId(dList.id);
-        } else if (loadedLists.length > 0) {
-          setDesignListId(loadedLists[0].id);
-        }
-
-        // Find or default MOCKUP list (e.g. MOCKUP or TEAM DUYỆT NỘI BỘ)
-        const mList = loadedLists.find(
-          (l) =>
-            l.name.trim().toUpperCase() === "MOCKUP" ||
-            l.name.toLowerCase().includes("mockup") ||
-            l.name.toLowerCase().includes("duyệt nội bộ"),
-        );
-        if (mList) {
-          setMockupListId(mList.id);
-        } else if (loadedLists.length > 1) {
-          setMockupListId(loadedLists[1].id);
-        }
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        setErrorMsg(`Không thể tải danh sách cột Trello: ${msg}`);
-      } finally {
-        setLoadingLists(false);
-      }
-    }
-
-    loadLists();
-  }, [apiKey, token, boardId]);
-
   // Sync / Reload Cards from both DESIGN and MOCKUP columns on Trello
   const syncAllColumns = useCallback(async () => {
-    if (!apiKey || !token) return;
+    if (!boardId || !designListId || !mockupListId) {
+      setDesignCards([]);
+      setMockupCards([]);
+      return;
+    }
     setLoadingCards(true);
     setErrorMsg("");
     try {
       const [designResult, mockupResult] = await Promise.all([
         designListId
           ? fetch(
-              `/api/trello/config?action=get-cards&apiKey=${encodeURIComponent(apiKey)}&token=${encodeURIComponent(token)}&listId=${encodeURIComponent(designListId)}`,
+              `/api/trello/config?action=get-cards&listId=${encodeURIComponent(designListId)}`,
             ).then(async (response) =>
               response.ok ? response.json() : null,
             )
           : null,
         mockupListId
           ? fetch(
-              `/api/trello/config?action=get-cards&apiKey=${encodeURIComponent(apiKey)}&token=${encodeURIComponent(token)}&listId=${encodeURIComponent(mockupListId)}`,
+              `/api/trello/config?action=get-cards&listId=${encodeURIComponent(mockupListId)}`,
             ).then(async (response) =>
               response.ok ? response.json() : null,
             )
@@ -937,7 +773,7 @@ export function AutoMockupGenerator({
     } finally {
       setLoadingCards(false);
     }
-  }, [apiKey, token, designListId, mockupListId]);
+  }, [boardId, designListId, mockupListId]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -1009,21 +845,72 @@ export function AutoMockupGenerator({
   const isAbortingRef = useRef<boolean>(false);
   const generationInFlightRef = useRef<boolean>(false);
 
-  const cancelGeneration = async () => {
-    isAbortingRef.current = true;
-    const jobId = activeGenerationJobIdRef.current;
-    if (jobId) {
-      await fetch(`/api/trello/mockup-jobs/${encodeURIComponent(jobId)}`, {
-        method: "DELETE",
-      }).catch(() => undefined);
+  const cancelGeneration = async (requestedJobId?: string) => {
+    const jobId = requestedJobId || activeGenerationJobIdRef.current;
+    if (!jobId) {
+      setErrorMsg("Chưa xác định được tác vụ Mockup cần dừng. Hãy tải lại trang rồi thử lại.");
+      return;
     }
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
+
+    const isForegroundJob = activeGenerationJobIdRef.current === jobId;
+    setCancellingJobIds((current) => new Set(current).add(jobId));
+    setErrorMsg("");
+    setGenerationStatusText("Đang gửi yêu cầu dừng tác vụ Mockup...");
+
+    try {
+      const response = await fetch(
+        `/api/trello/mockup-jobs/${encodeURIComponent(jobId)}`,
+        { method: "DELETE" },
+      );
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        job?: MockupBackgroundJob;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error || "Không thể gửi yêu cầu dừng tác vụ Mockup.");
+      }
+
+      setBackgroundJobs((current) =>
+        current.map((job) =>
+          job.id === jobId
+            ? {
+                ...job,
+                status: payload.job?.status || "cancel_requested",
+                progress: {
+                  ...job.progress,
+                  message:
+                    payload.job?.status === "cancelled"
+                      ? "Đã dừng tác vụ Mockup."
+                      : "Đã gửi yêu cầu dừng; worker đang ngắt kết nối tạo ảnh...",
+                },
+              }
+            : job,
+        ),
+      );
+
+      if (isForegroundJob) {
+        isAbortingRef.current = true;
+        abortControllerRef.current?.abort();
+        setBatchProcessing(false);
+        setActiveGeneratingCardId(null);
+      }
+      setGenerationStatusText(
+        payload.job?.status === "cancelled"
+          ? "Đã dừng tạo mockup. Các ảnh đã đính kèm trước đó vẫn được giữ trên Trello."
+          : "Đã yêu cầu dừng tạo mockup. Worker đang ngắt tác vụ; các ảnh đã upload vẫn được giữ lại.",
+      );
+      await syncAllColumns();
+    } catch (error) {
+      if (isForegroundJob) isAbortingRef.current = false;
+      setErrorMsg(error instanceof Error ? error.message : "Không thể dừng tác vụ Mockup.");
+      setGenerationStatusText("Tác vụ Mockup vẫn đang chạy.");
+    } finally {
+      setCancellingJobIds((current) => {
+        const next = new Set(current);
+        next.delete(jobId);
+        return next;
+      });
     }
-    setBatchProcessing(false);
-    setActiveGeneratingCardId(null);
-    setGenerationStatusText("Đã dừng tạo mockup. Tất cả ảnh đã đính kèm trước đó đều được lưu giữ trên Trello.");
-    await syncAllColumns();
   };
 
   const handleGenerateMockupsSingle = async (
@@ -1075,9 +962,6 @@ export function AutoMockupGenerator({
         signal: controller.signal,
         body: JSON.stringify({
           cardId: card.id,
-          targetListId: mockupListId, // Automatically move card on Trello to MOCKUP list!
-          apiKey,
-          token,
           model: selectedModel,
           quality: selectedQuality,
           selectedSteps: selectedAiSteps,
@@ -1224,7 +1108,7 @@ export function AutoMockupGenerator({
           `Hoàn tất tạo ảnh nhưng ${failedUploads.length} ảnh upload thất bại.`,
         );
         setErrorMsg(
-          `Đã tạo xong nhưng ${failedUploads.length}/${data.requestedMockupsCount} concept đã chọn không tải được lên Trello. Thẻ vẫn ở cột DESIGN để bạn thử lại.`,
+          `Đã tạo xong nhưng ${failedUploads.length}/${data.requestedMockupsCount} concept đã chọn không tải được lên Trello. Thẻ vẫn ở cột ${sourceListName} để bạn thử lại.`,
         );
         if (shouldNotify) {
           showCompletionNotice({
@@ -1256,8 +1140,8 @@ export function AutoMockupGenerator({
           })
           .join("; ");
         const locationText = data.movedToTargetList
-          ? " — rồi chuyển thẻ sang cột MOCKUP"
-          : " — thẻ vẫn ở cột DESIGN để bạn tạo các concept còn lại";
+          ? ` — rồi chuyển thẻ sang cột ${targetListName}`
+          : ` — thẻ vẫn ở cột ${sourceListName} để bạn tạo các concept còn lại`;
         setGenerationStatusText(
           `Đã tạo ${data.newlyGeneratedMockupsCount} ảnh mới bằng ${data.model}/${data.quality || "auto"}.`,
         );
@@ -1268,7 +1152,7 @@ export function AutoMockupGenerator({
           showCompletionNotice({
             type: "success",
             title: `Đã tạo xong mockup ${data.sku}`,
-            message: `${data.requestedMockupsCount}/${data.requestedMockupsCount} ảnh AI đã hoàn tất${data.movedToTargetList ? ", file đã lên Trello và thẻ đã chuyển sang cột MOCKUP" : ", ảnh đã được lưu trên Trello"}.`,
+            message: `${data.requestedMockupsCount}/${data.requestedMockupsCount} ảnh AI đã hoàn tất${data.movedToTargetList ? `, file đã lên Trello và thẻ đã chuyển sang cột ${targetListName}` : ", ảnh đã được lưu trên Trello"}.`,
           });
         }
         return {
@@ -1368,20 +1252,44 @@ export function AutoMockupGenerator({
     <div className="space-y-6 text-slate-800 font-sans">
       {backgroundJobs.length > 0 && (
         <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 shadow-sm">
-          <div className="flex items-center gap-3">
+          <div className="mb-2 flex items-center gap-3">
             <SpinnerIcon className="h-5 w-5 shrink-0 animate-spin text-sky-600" />
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-extrabold text-sky-950">
-                {backgroundJobs.length} tác vụ mockup đang chạy nền
-              </p>
-              <p className="mt-0.5 truncate text-xs font-medium text-sky-700">
-                {backgroundJobs[0]?.progress?.message ||
-                  "Đang chờ worker xử lý. Có thể tải lại hoặc đóng trang mà không mất tác vụ."}
-              </p>
-            </div>
+            <p className="min-w-0 flex-1 text-sm font-extrabold text-sky-950">
+              {backgroundJobs.length} tác vụ mockup đang chạy nền
+            </p>
             <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-sky-700 ring-1 ring-sky-200">
               {backgroundJobs.filter((job) => job.status === "running").length} đang chạy
             </span>
+          </div>
+          <div className="space-y-2">
+            {backgroundJobs.map((job) => {
+              const cancelling =
+                cancellingJobIds.has(job.id) || job.status === "cancel_requested";
+              return (
+                <div
+                  key={job.id}
+                  className="flex items-center gap-3 rounded-xl border border-sky-200 bg-white/80 px-3 py-2"
+                >
+                  <p className="min-w-0 flex-1 truncate text-xs font-medium text-sky-700">
+                    {job.progress?.message ||
+                      "Đang chờ worker xử lý. Có thể tải lại hoặc đóng trang mà không mất tác vụ."}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void cancelGeneration(job.id)}
+                    disabled={cancelling || job.status === "cancelled"}
+                    className="flex shrink-0 items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-rose-700 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {cancelling ? (
+                      <SpinnerIcon className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <StopIcon className="h-3.5 w-3.5 fill-current" />
+                    )}
+                    <span>{cancelling ? "Đang dừng..." : "Dừng"}</span>
+                  </button>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -1781,8 +1689,6 @@ export function AutoMockupGenerator({
                         await downloadOriginalTrelloImage({
                           url: currentAtt.url,
                           name: currentAtt.name,
-                          apiKey,
-                          token,
                         });
                       } catch (error) {
                         setErrorMsg(error instanceof Error ? error.message : "Không thể tải ảnh.");
@@ -2152,9 +2058,6 @@ export function AutoMockupGenerator({
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({
                               cardId: card.id,
-                              targetListId: mockupListId || undefined,
-                              apiKey,
-                              token,
                               model: regenModel,
                               quality: selectedQuality,
                               selectedSteps: [stepId],
@@ -2359,7 +2262,7 @@ export function AutoMockupGenerator({
               {selectedCardIds.size}
             </span>
             <span className="text-xs font-bold">
-              Thẻ DESIGN đã chọn để sinh Mockups
+              Thẻ {sourceListName} đã chọn để sinh Mockups
             </span>
             {batchProcessing && (
               <span className="text-xs font-semibold text-indigo-100">
@@ -2473,7 +2376,7 @@ export function AutoMockupGenerator({
             {/* Sync / Refresh Button */}
             <button
               onClick={syncAllColumns}
-              disabled={loadingCards || loadingLists}
+              disabled={loadingCards}
               className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-indigo-700 transition disabled:opacity-50"
             >
               <ArrowsClockwiseIcon
@@ -2506,6 +2409,11 @@ export function AutoMockupGenerator({
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              {allPresets.length === 0 && (
+                <div className="w-full rounded-xl border border-dashed border-indigo-200 bg-white px-4 py-3 text-xs font-semibold text-slate-500">
+                  Chưa có mục sản phẩm. Chọn <strong>Quản Lý Mẫu SP &amp; Content</strong> để tạo mục đầu tiên.
+                </div>
+              )}
               {allPresets.map((cat) => {
                 const isActive = selectedCategory === cat.id;
                 return (
@@ -2545,21 +2453,24 @@ export function AutoMockupGenerator({
               <button
                 type="button"
                 onClick={resetToDefaultContents}
-                className="text-xs font-bold text-indigo-600 hover:text-indigo-800 underline"
+                disabled={!selectedCategory}
+                className="text-xs font-bold text-indigo-600 hover:text-indigo-800 underline disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Mặc định (7 Content)
               </button>
               <button
                 type="button"
                 onClick={deselectAllAiContents}
-                className="text-xs font-bold text-slate-500 hover:text-slate-700 underline"
+                disabled={!selectedCategory}
+                className="text-xs font-bold text-slate-500 hover:text-slate-700 underline disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Bỏ chọn Content AI
               </button>
               <button
                 type="button"
                 onClick={() => setShowManageModal(true)}
-                className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-1.5 text-xs font-extrabold text-white shadow-2xs hover:bg-indigo-700 transition"
+                disabled={!selectedCategory}
+                className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-1.5 text-xs font-extrabold text-white shadow-2xs hover:bg-indigo-700 transition disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <GearIcon className="h-4 w-4" />
                 <span>Quản Lý Content</span>
@@ -2575,6 +2486,11 @@ export function AutoMockupGenerator({
           )}
 
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+            {mockupContents.length === 0 && (
+              <div className="col-span-full rounded-xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center text-xs font-semibold text-slate-500">
+                Tạo một mục sản phẩm mới để thiết lập Mockup Content.
+              </div>
+            )}
             {mockupContents.map((content) => {
               const isMandatory = content.id === 1;
               return (
@@ -2818,7 +2734,7 @@ export function AutoMockupGenerator({
               </button>
               <span className="h-3.5 w-3.5 rounded-full bg-amber-500 shadow-xs"></span>
               <h4 className="text-sm font-extrabold text-slate-900 uppercase tracking-wide">
-                DESIGN
+                {sourceListName}
               </h4>
               <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-bold text-amber-700 border border-amber-200">
                 {designCards.length} thẻ
@@ -2831,20 +2747,22 @@ export function AutoMockupGenerator({
               <div className="flex h-48 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 p-6 text-center">
                 <CheckCircleIcon className="h-10 w-10 text-emerald-400" />
                 <p className="mt-2 text-xs font-bold text-slate-700">
-                  Không còn thẻ nào trong cột DESIGN!
+                  Không còn thẻ nào trong cột {sourceListName}!
                 </p>
                 <p className="mt-1 text-[11px] text-slate-400">
-                  Tất cả thẻ thiết kế đều đã được tạo Mockup và chuyển sang cột
-                  MOCKUP.
+                  Tất cả thẻ thiết kế đã được xử lý và chuyển sang cột {targetListName}.
                 </p>
               </div>
             ) : (
               designCards.map((card) => {
                 const dims: Dimensions3D = parseCardDimensions(card.desc || "");
                 const isSelected = selectedCardIds.has(card.id);
+                const backgroundJob = backgroundJobs.find(
+                  (job) => job.cardId === card.id,
+                );
                 const isGenerating =
                   activeGeneratingCardId === card.id ||
-                  backgroundJobCardIds.has(card.id);
+                  Boolean(backgroundJob);
                 const imageAttachments = card.attachments || [];
 
                 return (
@@ -2863,7 +2781,7 @@ export function AutoMockupGenerator({
                     className={`group rounded-2xl border p-4 transition shadow-xs hover:shadow-md cursor-grab active:cursor-grabbing ${isSelected
                         ? "border-indigo-500 bg-indigo-50/30 ring-2 ring-indigo-400/20"
                         : "border-slate-200 bg-white hover:border-indigo-300"
-                      } ${isGenerating ? "opacity-60 pointer-events-none" : ""}`}
+                      } ${isGenerating ? "opacity-90" : ""}`}
                   >
                     <div className="mb-3 flex items-start gap-3">
                       <button
@@ -2994,12 +2912,35 @@ export function AutoMockupGenerator({
                         </div>
                         <button
                           type="button"
-                          onClick={() => void cancelGeneration()}
+                          onClick={() =>
+                            void cancelGeneration(
+                              backgroundJob?.id || undefined,
+                            )
+                          }
+                          disabled={
+                            Boolean(
+                              backgroundJob &&
+                                (cancellingJobIds.has(backgroundJob.id) ||
+                                  backgroundJob.status === "cancel_requested"),
+                            )
+                          }
                           className="flex items-center gap-1.5 rounded-xl bg-rose-600 px-4 py-3 text-xs font-bold text-white shadow-md hover:bg-rose-700 active:scale-[0.98] transition shrink-0"
                           title="Dừng tạo mockup & lưu các ảnh đã đính kèm"
                         >
-                          <StopIcon className="h-4 w-4 fill-current" />
-                          <span>Hủy & Lưu</span>
+                          {backgroundJob &&
+                          (cancellingJobIds.has(backgroundJob.id) ||
+                            backgroundJob.status === "cancel_requested") ? (
+                            <SpinnerIcon className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <StopIcon className="h-4 w-4 fill-current" />
+                          )}
+                          <span>
+                            {backgroundJob &&
+                            (cancellingJobIds.has(backgroundJob.id) ||
+                              backgroundJob.status === "cancel_requested")
+                              ? "Đang dừng..."
+                              : "Hủy & Lưu"}
+                          </span>
                         </button>
                       </div>
                     ) : (
@@ -3051,7 +2992,7 @@ export function AutoMockupGenerator({
             <div className="flex items-center gap-2.5">
               <span className="h-3.5 w-3.5 rounded-full bg-emerald-500 shadow-xs"></span>
               <h4 className="text-base font-black text-slate-900 uppercase tracking-wide">
-                MOCKUP
+                {targetListName}
               </h4>
               <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-extrabold text-emerald-700 border border-emerald-200">
                 {mockupCards.length} thẻ
@@ -3064,10 +3005,10 @@ export function AutoMockupGenerator({
               <div className="flex h-48 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 p-6 text-center">
                 <ImageSquareIcon className="h-10 w-10 text-slate-300" />
                 <p className="text-xs font-bold text-slate-500 mt-2">
-                  Chưa có thẻ nào trong cột MOCKUP
+                  Chưa có thẻ nào trong cột {targetListName}
                 </p>
                 <p className="text-[11px] text-slate-400 mt-1">
-                  Bấm nút “Tạo 6 Mockups AI + 1 Ảnh Gốc” hoặc kéo thẻ từ cột DESIGN thả vào đây.
+                  Bấm nút tạo Mockup hoặc kéo thẻ từ cột {sourceListName} thả vào đây.
                 </p>
               </div>
             ) : (
@@ -3321,7 +3262,11 @@ export function AutoMockupGenerator({
           setAllPresets(updated);
           const active = updated.find((p) => p.id === selectedCategory) || updated[0];
           if (active) {
+            setSelectedCategory(active.id);
             setMockupContents(limitSelectedMockupContents(active.contents));
+          } else {
+            setSelectedCategory("");
+            setMockupContents([]);
           }
         }}
       />

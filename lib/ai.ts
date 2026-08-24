@@ -95,29 +95,21 @@ Competitor data is light inspiration for search intent, strengths, and gaps. Nev
 Use natural English Title Case in titles: capitalize important words, but keep articles, conjunctions, and short prepositions lowercase. Write visible artwork wording in readable Title Case without quotation marks.
 Return only the requested JSON.`;
 
+// The OpenAI SDK requires a finite positive timeout. Keep its watchdog near the
+// maximum safe setTimeout value so Listing cancellation remains user-controlled.
+const MANUAL_CANCELLATION_TIMEOUT_MS = 2_147_000_000;
+
 function parseDataUrl(dataUrl: string) {
   const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
   if (!match) throw new Error("Invalid image data URL.");
   return { mimeType: match[1], data: match[2] };
 }
 
-function withTimeout<T>(
+function withCancellation<T>(
   operation: (signal: AbortSignal) => Promise<T>,
   parentSignal?: AbortSignal,
 ) {
-  const timeoutMs = Number(process.env.AI_TIMEOUT_MS || 45_000);
-  const controller = new AbortController();
-  const timer = setTimeout(
-    () => controller.abort(new Error(`AI request timed out after ${timeoutMs}ms.`)),
-    timeoutMs,
-  );
-  const abort = () => controller.abort(parentSignal?.reason || new Error("AI request cancelled."));
-  if (parentSignal?.aborted) abort();
-  else parentSignal?.addEventListener("abort", abort, { once: true });
-  return operation(controller.signal).finally(() => {
-    clearTimeout(timer);
-    parentSignal?.removeEventListener("abort", abort);
-  });
+  return operation(parentSignal || new AbortController().signal);
 }
 
 function simpleCompetitorReference(input: ListingInput) {
@@ -280,7 +272,7 @@ async function callGemini(
   signal?: AbortSignal,
 ): Promise<ProviderOutput> {
   const client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
-  const response = await withTimeout((requestSignal) =>
+  const response = await withCancellation((requestSignal) =>
     client.models.generateContent({
       model,
       contents: [{
@@ -355,7 +347,7 @@ async function callOpenAI(
   let usageOutputTokens: number | undefined;
 
   try {
-    const response = await withTimeout(
+    const response = await withCancellation(
       (requestSignal) =>
         client.responses.create(
           {
@@ -385,7 +377,7 @@ async function callOpenAI(
               },
             },
           },
-          { signal: requestSignal, maxRetries: 0, timeout: Number(process.env.AI_TIMEOUT_MS || 45_000) },
+          { signal: requestSignal, maxRetries: 0, timeout: MANUAL_CANCELLATION_TIMEOUT_MS },
         ),
       signal,
     );
@@ -393,9 +385,10 @@ async function callOpenAI(
     usageInputTokens = response.usage?.input_tokens;
     usageOutputTokens = response.usage?.output_tokens;
   } catch (responsesErr) {
+    if (signal?.aborted) throw signal.reason || responsesErr;
     if (!usesCheapKey) throw responsesErr;
     // Fallback to OpenAI Chat Completion endpoint for proxy providers if v1/responses is unavailable
-    const chatResponse = await withTimeout(
+    const chatResponse = await withCancellation(
       (requestSignal) =>
         client.chat.completions.create(
           {
@@ -415,7 +408,7 @@ async function callOpenAI(
             ],
             response_format: { type: "json_object" },
           },
-          { signal: requestSignal, maxRetries: 0, timeout: Number(process.env.AI_TIMEOUT_MS || 45_000) },
+          { signal: requestSignal, maxRetries: 0, timeout: MANUAL_CANCELLATION_TIMEOUT_MS },
         ),
       signal,
     );
@@ -533,6 +526,7 @@ export async function generateListing(
           ? await callGemini(input, modelName, prompt, options.signal)
           : await callOpenAI(input, modelName, prompt, options.signal);
       } catch (error) {
+        if (options.signal?.aborted) throw options.signal.reason || error;
         firstError = error;
         const provider = providers[1];
         if (!provider) throw error;

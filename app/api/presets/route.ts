@@ -15,7 +15,7 @@ import {
   importLegacySharedMockupPresetsOnce,
   type DataScope,
 } from "@/lib/db";
-import { SYSTEM_PRESETS } from "@/lib/mockup-preset-store";
+import { RETIRED_SYSTEM_PRESET_IDS, SYSTEM_PRESETS } from "@/lib/mockup-preset-store";
 import type { ProductCategoryPreset } from "@/types/mockup-preset";
 
 export const runtime = "nodejs";
@@ -95,7 +95,9 @@ function mergeWithSystemPresets(
   storedPresets: readonly ProductCategoryPreset[],
 ): ProductCategoryPreset[] {
   const storedById = new Map(
-    storedPresets.map((preset) => [preset.id, preset]),
+    storedPresets
+      .filter((preset) => !RETIRED_SYSTEM_PRESET_IDS.has(preset.id))
+      .map((preset) => [preset.id, preset]),
   );
   const systemPresets = SYSTEM_PRESETS.map((systemPreset) => {
     const override = storedById.get(systemPreset.id);
@@ -112,7 +114,11 @@ async function readLegacyPresets(): Promise<ProductCategoryPreset[]> {
     const content = await fs.readFile(LEGACY_PRESETS_FILE_PATH, "utf8");
     const parsed = JSON.parse(content) as unknown;
     const result = z.array(presetSchema).safeParse(parsed);
-    return result.success ? result.data.map(normalizedPreset) : [];
+    return result.success
+      ? result.data
+          .filter((preset) => !RETIRED_SYSTEM_PRESET_IDS.has(preset.id))
+          .map(normalizedPreset)
+      : [];
   } catch {
     return [];
   }
@@ -146,6 +152,9 @@ export async function POST(request: Request) {
     );
     if (presets.length === 0) {
       throw new ApiError("Không có phôi mockup để lưu.", 400);
+    }
+    if (presets.some((preset) => RETIRED_SYSTEM_PRESET_IDS.has(preset.id))) {
+      throw new ApiError("Preset mặc định này đã được gỡ khỏi hệ thống.", 400);
     }
     const saved = [];
     for (const preset of presets) {

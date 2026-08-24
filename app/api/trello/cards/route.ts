@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { listTrelloImageDerivativeReferences } from "@/lib/db";
-import { fetchTrelloCards, fetchTrelloLists, withStoredTrelloImagePreviews, type TrelloCard, type TrelloList } from "@/lib/trello";
+import { fetchTrelloCards, fetchTrelloLists, withStoredTrelloImagePreviews } from "@/lib/trello";
+import { getUserTrelloServerConfig } from "@/lib/trello-server-config";
 
 import { getCachedOrFetch } from "@/lib/redis";
 
@@ -10,19 +11,13 @@ export const runtime = "nodejs";
 export async function GET(request: Request) {
   try {
     const scope = dataScope(authorize(request, "read"));
-    const { searchParams } = new URL(request.url);
-    const apiKey = searchParams.get("apiKey") || process.env.TRELLO_API_KEY || "";
-    const token = searchParams.get("token") || process.env.TRELLO_TOKEN || "";
-    const boardId = searchParams.get("boardId") || process.env.TRELLO_BOARD_ID || "";
-    const reviewNameQuery = (searchParams.get("internalReviewListName") || process.env.TRELLO_INTERNAL_REVIEW_LIST || "TEAM DUYỆT NỘI BỘ").trim().toLowerCase();
-    const listingNameQuery = (searchParams.get("listingListName") || process.env.TRELLO_LISTING_LIST || "Listing").trim().toLowerCase();
-
-    if (!apiKey || !token) {
-      return NextResponse.json(
-        { error: "Vui lòng cấu hình Trello API Key và Token trước." },
-        { status: 400 },
-      );
-    }
+    const {
+      apiKey,
+      token,
+      boardId,
+      listingSourceListId,
+      listingTargetListId,
+    } = await getUserTrelloServerConfig(scope);
 
     if (!boardId) {
       return NextResponse.json(
@@ -30,36 +25,27 @@ export async function GET(request: Request) {
         { status: 400 },
       );
     }
+    if (!listingSourceListId || !listingTargetListId) {
+      return NextResponse.json(
+        { error: "Vui lòng chọn cột đầu và cột đích cho chức năng Listing." },
+        { status: 400 },
+      );
+    }
 
-    const cacheKey = `trello:board:${boardId}:cards:${scope.teamId}`;
+    const cacheKey = `trello:listing:${boardId}:${listingSourceListId}:${listingTargetListId}:${scope.teamId}:${scope.actorId}`;
 
     const payload = await getCachedOrFetch(cacheKey, 30, async () => {
-      const lists: TrelloList[] = await fetchTrelloLists(boardId, apiKey, token);
-      
-      let internalReviewList = lists.find(
-        (l) => l.name.trim().toLowerCase() === reviewNameQuery || l.name.toLowerCase().includes("duyệt nội bộ"),
-      );
-      if (!internalReviewList && lists.length > 0) {
-        internalReviewList = lists.find((l) => l.name.toLowerCase().includes("to-do") || l.name.toLowerCase().includes("getting started")) || lists[0];
+      const lists = await fetchTrelloLists(boardId, apiKey, token);
+      const internalReviewList = lists.find((list) => list.id === listingSourceListId);
+      const listingList = lists.find((list) => list.id === listingTargetListId);
+      if (!internalReviewList || !listingList) {
+        throw new Error("Cột Listing đã lưu không còn tồn tại trên Trello Board.");
       }
 
-      let listingList = lists.find(
-        (l) => l.name.trim().toLowerCase() === listingNameQuery || l.name.toLowerCase().includes("listing"),
-      );
-      if (!listingList && lists.length > 1) {
-        listingList = lists.find((l) => l.name.toLowerCase().includes("done")) || lists[lists.length - 1];
-      }
-
-      let reviewCards: TrelloCard[] = [];
-      let listingCards: TrelloCard[] = [];
-
-      if (internalReviewList) {
-        reviewCards = await fetchTrelloCards(internalReviewList.id, apiKey, token);
-      }
-
-      if (listingList) {
-        listingCards = await fetchTrelloCards(listingList.id, apiKey, token);
-      }
+      const [reviewCards, listingCards] = await Promise.all([
+        fetchTrelloCards(internalReviewList.id, apiKey, token),
+        fetchTrelloCards(listingList.id, apiKey, token),
+      ]);
 
       const allCards = [...reviewCards, ...listingCards];
       const references = await listTrelloImageDerivativeReferences(
@@ -76,8 +62,8 @@ export async function GET(request: Request) {
 
       return {
         lists,
-        internalReviewListId: internalReviewList?.id || "",
-        listingListId: listingList?.id || "",
+        internalReviewList,
+        listingList,
         reviewCards: reviewCards.map((c) => storedPreviewMap.get(c.id) || c),
         listingCards: listingCards.map((c) => storedPreviewMap.get(c.id) || c),
       };

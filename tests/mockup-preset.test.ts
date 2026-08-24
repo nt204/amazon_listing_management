@@ -10,12 +10,10 @@ import {
   parseChatGPTBatchInput,
 } from "../lib/mockup-preset-store";
 
-test("getAllPresets returns built-in system presets by default", () => {
+test("getAllPresets starts without the retired built-in product categories", () => {
   const presets = getAllPresets();
-  assert.ok(presets.length >= 3);
-  assert.equal(presets[0].id, "universal_standard");
-  assert.equal(presets[1].id, "bullet_tumbler");
-  assert.equal(presets[2].id, "slate_plate");
+  assert.deepEqual(SYSTEM_PRESETS, []);
+  assert.deepEqual(presets, []);
 });
 
 test("createNewPreset creates a custom category with 7 default contents", () => {
@@ -28,7 +26,7 @@ test("createNewPreset creates a custom category with 7 default contents", () => 
 });
 
 test("clonePreset duplicates an existing category preset", () => {
-  const source = SYSTEM_PRESETS[0];
+  const source = createNewPreset("Hanging Ornament", "🎄");
   const cloned = clonePreset(source, "Hanging Ornament Copy");
   assert.equal(cloned.label, "Hanging Ornament Copy");
   assert.equal(cloned.icon, source.icon);
@@ -42,14 +40,14 @@ test("exportPresetsPayload and importPresetsPayload handle JSON roundtrip", () =
 
   const payload = exportPresetsPayload(all);
   assert.equal(payload.version, "1.0");
-  assert.equal(payload.presets.length, 4);
+  assert.equal(payload.presets.length, 1);
 
   const jsonStr = JSON.stringify(payload);
   const imported = importPresetsPayload(jsonStr);
 
-  assert.equal(imported.length, 4);
-  assert.equal(imported[3].label, "Custom Wood Sign");
-  assert.equal(imported[3].icon, "🪵");
+  assert.equal(imported.length, 1);
+  assert.equal(imported[0].label, "Custom Wood Sign");
+  assert.equal(imported[0].icon, "🪵");
 });
 
 test("parseChatGPTBatchInput parses structured text from ChatGPT into items and category meta", () => {

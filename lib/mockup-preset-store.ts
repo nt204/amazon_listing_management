@@ -6,53 +6,13 @@ import type {
 
 export const CUSTOM_PRESETS_STORAGE_KEY = "listing_desk_custom_presets_v1";
 
-export const SYSTEM_PRESETS: ProductCategoryPreset[] = [
-  {
-    id: "universal_standard",
-    label: "Hanging Ornament",
-    icon: "🎄",
-    isSystem: true,
-    contents: [
-      { id: 1, label: "Ảnh 1: Nền Trắng CTR", checked: true, promptKey: "universal_main_white" },
-      { id: 2, label: "Ảnh 2: Bối Cảnh Thực Tế", checked: true, promptKey: "universal_lifestyle" },
-      { id: 3, label: "Ảnh 3: Kích Thước 3D", checked: true, promptKey: "universal_dimensions" },
-      { id: 4, label: "Ảnh 4: Chất Liệu & Độ Dày", checked: true, promptKey: "universal_features_zoom" },
-      { id: 5, label: "Ảnh 5: Trao Quà Tay Trao Tay", checked: true, promptKey: "universal_gifting" },
-      { id: 6, label: "Ảnh 6: Hộp Quà & Phụ Kiện", checked: true, promptKey: "universal_packaging" },
-      { id: 7, label: "Ảnh 7: Card Thiệp Theo Chủ Đề", checked: true, promptKey: "universal_artwork_macro" },
-    ],
-  },
-  {
-    id: "bullet_tumbler",
-    label: "Bullet Tumbler",
-    icon: "🍾",
-    isSystem: true,
-    contents: [
-      { id: 1, label: "Ảnh 1: Thiết Kế Nền Trắng", checked: true, promptKey: "full_design" },
-      { id: 2, label: "Ảnh 2: Cách Nhiệt & Hộp Quà", checked: true, promptKey: "bullet_insulation_box" },
-      { id: 3, label: "Ảnh 3: Kích Thước 17oz", checked: true, promptKey: "bullet_capacity_size" },
-      { id: 4, label: "Ảnh 4: Nắp Bấm & Rót Cốc", checked: true, promptKey: "bullet_press_lid_pour" },
-      { id: 5, label: "Ảnh 5: Cắm Trại Dã Ngoại", checked: true, promptKey: "bullet_outdoor_camping" },
-      { id: 6, label: "Ảnh 6: Hộc Để Cốc Ô Tô", checked: true, promptKey: "bullet_car_cupholder" },
-      { id: 7, label: "Ảnh 7: Quà Tặng Cho Nam", checked: true, promptKey: "bullet_men_gifting" },
-    ],
-  },
-  {
-    id: "slate_plate",
-    label: "Slate Plate",
-    icon: "🪨",
-    isSystem: true,
-    contents: [
-      { id: 1, label: "Ảnh 1: Nền Trắng Chân Đế", checked: true, promptKey: "slate_main_white" },
-      { id: 2, label: "Ảnh 2: Đá Tự Nhiên & Kháng Nước", checked: true, promptKey: "slate_features_infographic" },
-      { id: 3, label: "Ảnh 3: Kích Thước & Chân Đế", checked: true, promptKey: "slate_dimensions_size" },
-      { id: 4, label: "Ảnh 4: Mặt Trước & Sau Đá Đen", checked: true, promptKey: "slate_front_back_stack" },
-      { id: 5, label: "Ảnh 5: Trang Trí Nổi Bật (Home Decor)", checked: true, promptKey: "slate_home_decor_lifestyle" },
-      { id: 6, label: "Ảnh 6: Quà Tặng Tri Ơn & Ý Nghĩa", checked: true, promptKey: "slate_gifting_emotion" },
-      { id: 7, label: "Ảnh 7: Hộp Quà Retail & Phụ Kiện", checked: true, promptKey: "slate_packaging_box" },
-    ],
-  },
-];
+export const RETIRED_SYSTEM_PRESET_IDS = new Set([
+  "universal_standard",
+  "bullet_tumbler",
+  "slate_plate",
+]);
+
+export const SYSTEM_PRESETS: ProductCategoryPreset[] = [];
 
 export const MATERIAL_STARTERS: Array<{
   id: string;
@@ -151,7 +111,8 @@ export function getStoredCustomPresets(): ProductCategoryPreset[] {
         item !== null &&
         typeof item.id === "string" &&
         typeof item.label === "string" &&
-        Array.isArray(item.contents),
+        Array.isArray(item.contents) &&
+        !RETIRED_SYSTEM_PRESET_IDS.has(item.id),
     );
   } catch {
     return [];
@@ -164,7 +125,10 @@ export function saveStoredCustomPresets(presets: ProductCategoryPreset[]): void 
     // This is only an offline cache. PostgreSQL remains the shared source of truth.
     // Keep system overrides too so a temporary network outage does not restore
     // stale built-in prompts in this browser.
-    localStorage.setItem(CUSTOM_PRESETS_STORAGE_KEY, JSON.stringify(presets));
+    localStorage.setItem(
+      CUSTOM_PRESETS_STORAGE_KEY,
+      JSON.stringify(presets.filter((preset) => !RETIRED_SYSTEM_PRESET_IDS.has(preset.id))),
+    );
   } catch {
     // Ignore storage errors
   }

@@ -13,6 +13,7 @@ import {
 } from "@/lib/auth";
 import {
   deleteTrelloImageDerivatives,
+  getUserTrelloSettings,
   pruneExpiredTrelloImageDerivatives,
   saveTrelloImageDerivatives,
   type DataScope,
@@ -54,6 +55,7 @@ import {
   mockupModelSchema,
   type GenerateMockupsInput,
 } from "@/lib/mockup-request";
+import { getTrelloServerCredentials } from "@/lib/trello-server-config";
 
 export const runtime = "nodejs";
 export const maxDuration = 600;
@@ -252,16 +254,13 @@ async function executeMockupGeneration(
 ) {
   const startedAt = Date.now();
   throwIfAborted(signal);
-  const { cardId, targetListId, model, quality } = input;
+  const { cardId, model, quality } = input;
 
-  const apiKey = input.apiKey || process.env.TRELLO_API_KEY || "";
-  const token = input.token || process.env.TRELLO_TOKEN || "";
-
-  if (!apiKey || !token) {
-    throw new ApiError(
-      "Vui lòng cung cấp Trello API Key và Token (hoặc cấu hình trong .env)",
-      400,
-    );
+  const { apiKey, token } = getTrelloServerCredentials();
+  const trelloSettings = await getUserTrelloSettings(scope);
+  const targetListId = trelloSettings.mockupTargetListId;
+  if (!trelloSettings.boardId || !targetListId) {
+    throw new ApiError("Vui lòng cấu hình cột đích cho chức năng Mockup.", 400);
   }
 
   const configuredModel = mockupModelSchema.safeParse(

@@ -10,6 +10,8 @@
     "db:migrate": "node --env-file-if-exists=.env --import tsx scripts/migrate.ts",
     "db:backfill-images": "node --env-file-if-exists=.env --import tsx scripts/backfill-images.ts",
     "db:maintain": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/maintain-storage.ts",
+    "storage:check": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/check-object-storage.ts",
+    "storage:migrate": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/migrate-object-storage.ts",
     "db:revalidate": "node --env-file-if-exists=.env --import tsx scripts/revalidate-listings.ts",
     "ocr:eval": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/eval-ocr.ts",
     "ai:eval": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/eval-generation.ts",
@@ -22,6 +24,7 @@
     "test": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1116.0",
     "@google/genai": "^2.15.0",
     "@modelcontextprotocol/client": "^2.0.0",
     "@phosphor-icons/react": "^2.1.10",
