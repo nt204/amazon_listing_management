@@ -3,7 +3,10 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import { getDatabaseClient, type DataScope } from "@/lib/db";
-import type { GenerateMockupsInput } from "@/lib/mockup-request";
+import {
+  mockupRequestsOverlap,
+  type GenerateMockupsInput,
+} from "@/lib/mockup-request";
 
 export type MockupJobStatus =
   | "queued"
@@ -143,6 +146,28 @@ export async function createMockupJob(
             "Team đang có quá nhiều tác vụ mockup chờ xử lý. Hãy đợi một số tác vụ hoàn tất rồi thử lại.",
           ),
           { status: 429 },
+        );
+      }
+
+      const activeCardJobs = await transaction<MockupJobRow[]>`
+        SELECT *
+        FROM mockup_jobs
+        WHERE team_id = ${scope.teamId}
+          AND card_id = ${request.cardId}
+          AND status IN ('queued', 'running', 'cancel_requested')
+        ORDER BY created_at ASC
+      `;
+      const conflictingJob = activeCardJobs
+        .map(mapJob)
+        .find((job) => mockupRequestsOverlap(job.request, request));
+      if (conflictingJob) {
+        throw Object.assign(
+          new Error(
+            request.selectedSteps?.length === 1
+              ? `Mockup ${request.selectedSteps[0]} của thẻ này đã có một tác vụ trong hàng đợi.`
+              : "Một hoặc nhiều mockup đã chọn của thẻ này đang nằm trong hàng đợi.",
+          ),
+          { status: 409, jobId: conflictingJob.id },
         );
       }
 

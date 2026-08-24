@@ -58,13 +58,16 @@ GEMINI_API_KEY=your_gemini_api_key
 OPENAI_API_KEY=your_openai_api_key
 
 # Bật bảo mật đăng nhập phân quyền cho Team (Tùy chọn khuyến nghị)
-LISTING_DESK_AUTH_MODE=enabled
+LISTING_DESK_AUTH_MODE=required
+LISTING_DESK_DEFAULT_TEAM_ID=pod-team-1
+LISTING_DESK_SESSION_SECRET=thay-bang-chuoi-ngau-nhien-toi-thieu-32-ky-tu
 LISTING_DESK_TEAMS_JSON=[{"team_id":"pod-team-1","user_id":"admin-user","role":"admin","token":"MatKhauBaoMatTeamCapRongTren24KyTu123!"}]
 ```
 
 ```bash
 # 4. Khởi tạo các bảng Database
-npx tsx scripts/migrate.ts
+npm run db:migrate
+npm run auth:bootstrap
 ```
 
 ---

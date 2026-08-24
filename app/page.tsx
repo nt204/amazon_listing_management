@@ -4,9 +4,9 @@ import { LoginScreen } from "@/components/login-screen";
 import { actorFromCookieHeader, isAuthenticationRequired } from "@/lib/auth";
 
 export default async function Home() {
-  if (isAuthenticationRequired()) {
-    const headerStore = await headers();
-    if (!actorFromCookieHeader(headerStore.get("cookie"))) return <LoginScreen />;
-  }
-  return <ListingWorkspace />;
+  const headerStore = await headers();
+  const actor = actorFromCookieHeader(headerStore.get("cookie"));
+  if (isAuthenticationRequired() && !actor) return <LoginScreen />;
+  if (!actor) return <LoginScreen />;
+  return <ListingWorkspace actor={actor} />;
 }

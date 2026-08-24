@@ -48,6 +48,15 @@ export const generateMockupsSchema = z.object({
 
 export type GenerateMockupsInput = z.infer<typeof generateMockupsSchema>;
 
+export function mockupRequestsOverlap(
+  left: Pick<GenerateMockupsInput, "selectedSteps">,
+  right: Pick<GenerateMockupsInput, "selectedSteps">,
+) {
+  if (!left.selectedSteps?.length || !right.selectedSteps?.length) return true;
+  const leftSteps = new Set(left.selectedSteps);
+  return right.selectedSteps.some((step) => leftSteps.has(step));
+}
+
 export function sanitizeQueuedMockupInput(
   input: GenerateMockupsInput,
 ): GenerateMockupsInput {

@@ -3,11 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "npm run db:start && npm run db:migrate && next dev --hostname 0.0.0.0 --port 2411",
+    "dev": "npm run db:start && npm run db:migrate && npm run auth:bootstrap && next dev --hostname 0.0.0.0 --port 2411",
     "dev:app": "next dev --hostname 0.0.0.0 --port 2411",
     "db:start": "docker compose up -d db redis",
     "db:stop": "docker compose stop db",
     "db:migrate": "node --env-file-if-exists=.env --import tsx scripts/migrate.ts",
+    "auth:bootstrap": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/bootstrap-admin.ts",
     "db:backfill-images": "node --env-file-if-exists=.env --import tsx scripts/backfill-images.ts",
     "db:maintain": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/maintain-storage.ts",
     "storage:check": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/check-object-storage.ts",

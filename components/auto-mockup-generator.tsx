@@ -168,6 +168,10 @@ interface MockupBackgroundJob {
   id: string;
   cardId: string;
   status: "queued" | "running" | "cancel_requested" | "cancelled";
+  request?: {
+    selectedSteps?: number[];
+    forceRegenerate?: boolean;
+  };
   progress?: {
     message?: string;
     step?: number;
@@ -185,8 +189,12 @@ function singleMockupRegenerationKey(cardId: string, stepId: number) {
   return `${cardId}:${stepId}`;
 }
 
-function sharedPresetPromptKey(stepId: number, presetId: string) {
-  return `${presetId}:${stepId}`;
+function imagePromptEditorKey(
+  cardId: string,
+  stepId: number,
+  presetId: string,
+) {
+  return `${cardId}:${presetId}:${stepId}`;
 }
 
 type MockupStreamEvent =
@@ -600,6 +608,15 @@ export function AutoMockupGenerator({
 
   const allBoardCards = [...designCards, ...mockupCards];
   const backgroundJobCardIds = new Set(backgroundJobs.map((job) => job.cardId));
+  const backgroundRegenerationKeys = new Set(
+    backgroundJobs.flatMap((job) =>
+      job.request?.forceRegenerate
+        ? (job.request.selectedSteps || []).map((stepId) =>
+            singleMockupRegenerationKey(job.cardId, stepId),
+          )
+        : [],
+    ),
+  );
   const activeStudioCard = allBoardCards.find((c) => c.id === studioModal?.cardId);
   const activeCardIndex = allBoardCards.findIndex((c) => c.id === studioModal?.cardId);
 
@@ -1366,6 +1383,18 @@ export function AutoMockupGenerator({
         const currentRegenerationJob = currentRegenerationKey
           ? singleMockupRegenerationJobs[currentRegenerationKey]
           : undefined;
+        const currentBackgroundRegenerationJob = currentRegenerationKey
+          ? backgroundJobs.find(
+              (job) =>
+                job.request?.forceRegenerate &&
+                job.cardId === card.id &&
+                typeof stepId === "number" &&
+                job.request.selectedSteps?.includes(stepId),
+            )
+          : undefined;
+        const isCurrentImageRegenerating = Boolean(
+          currentRegenerationJob || currentBackgroundRegenerationJob,
+        );
         const currentContent = stepId
           ? mockupContents.find((content) => content.id === stepId)
           : undefined;
@@ -1373,7 +1402,7 @@ export function AutoMockupGenerator({
           (preset) => preset.id === selectedCategory,
         );
         const promptEditorKey = stepId && stepId > 1
-          ? sharedPresetPromptKey(stepId, selectedCategory)
+          ? imagePromptEditorKey(card.id, stepId, selectedCategory)
           : null;
         const promptEditor = promptEditorKey
           ? imagePromptEditors[promptEditorKey]
@@ -1388,7 +1417,7 @@ export function AutoMockupGenerator({
           promptEditor?.loading ||
             (promptEditor &&
               !promptEditor.error &&
-              (!promptEditor.draft.trim() || promptHasChanges)),
+              !promptEditor.draft.trim()),
         );
 
         const loadCurrentImagePrompt = async (force = false) => {
@@ -1778,7 +1807,10 @@ export function AutoMockupGenerator({
                           ? Boolean(
                               singleMockupRegenerationJobs[
                                 singleMockupRegenerationKey(card.id, targetStep)
-                              ],
+                              ] ||
+                                backgroundRegenerationKeys.has(
+                                  singleMockupRegenerationKey(card.id, targetStep),
+                                ),
                             )
                           : false;
 
@@ -1856,7 +1888,7 @@ export function AutoMockupGenerator({
                           <PencilIcon className="h-4 w-4 shrink-0 text-indigo-600" />
                           <span className="min-w-0 flex-1">
                             <span className="block text-xs font-extrabold text-slate-800">
-                              Prompt chung của phôi
+                              Prompt cho ảnh đang chọn
                             </span>
                             <span className="mt-0.5 block truncate text-[10px] font-medium text-slate-500">
                               {activePreset?.label || selectedCategory}, Content {stepId}
@@ -1864,7 +1896,7 @@ export function AutoMockupGenerator({
                           </span>
                           {promptHasChanges && (
                             <span className="shrink-0 text-[10px] font-bold text-amber-700">
-                              Chưa lưu
+                              Prompt tạm
                             </span>
                           )}
                           <CaretDownIcon
@@ -1912,7 +1944,7 @@ export function AutoMockupGenerator({
                                     }))
                                   }
                                   rows={8}
-                                  aria-label={`Prompt chung của Content ${stepId} trong phôi ${activePreset?.label || selectedCategory}`}
+                                  aria-label={`Prompt tạm của Content ${stepId} cho sản phẩm ${card.parsed?.sku || card.name}`}
                                   className="w-full resize-y rounded-lg border border-slate-300 bg-white p-2.5 text-[11px] font-medium leading-relaxed text-slate-800 outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-600/15"
                                 />
                                 <div className="mt-2 flex items-center justify-between gap-2">
@@ -1928,8 +1960,8 @@ export function AutoMockupGenerator({
                                     {!promptEditor.draft.trim()
                                       ? "Prompt không được để trống"
                                       : promptHasChanges
-                                        ? "Thay đổi chưa được lưu"
-                                        : "Áp dụng cho cả phôi"}
+                                        ? "Sẽ dùng riêng cho lần gen này"
+                                        : "Đang dùng prompt chung"}
                                   </span>
                                   <div className="flex items-center gap-1">
                                     <button
@@ -1989,8 +2021,10 @@ export function AutoMockupGenerator({
                                   </button>
                                 )}
                                 <p className="mt-2 border-t border-slate-100 pt-2 text-[10px] font-medium leading-relaxed text-slate-500">
-                                  Khi lưu, Content {stepId} của phôi {activePreset?.label || selectedCategory}
-                                  sẽ được cập nhật cho cả team.
+                                  Nội dung đang sửa chỉ dùng cho lần gen ảnh này.
+                                  Chỉ khi bấm &quot;Lưu prompt chung&quot;, Content {stepId} của
+                                  phôi {activePreset?.label || selectedCategory} mới được cập
+                                  nhật cho cả team.
                                   <span className="mt-1 block">
                                     Các biến kích thước trong prompt tự lấy dữ liệu
                                     từ từng thẻ sản phẩm.
@@ -2025,8 +2059,8 @@ export function AutoMockupGenerator({
                   {/* Action Button */}
                   <div className="pt-3 border-t border-slate-100 shrink-0 space-y-2">
                     {promptHasChanges && (
-                      <p className="rounded-lg bg-amber-50 px-2.5 py-2 text-center text-[10px] font-bold text-amber-800">
-                        Hãy lưu hoặc khôi phục prompt chung trước khi gen.
+                      <p className="rounded-lg bg-indigo-50 px-2.5 py-2 text-center text-[10px] font-bold text-indigo-800">
+                        Lần gen này sẽ dùng prompt tạm. Prompt chung của team không thay đổi.
                       </p>
                     )}
                     <button
@@ -2045,6 +2079,9 @@ export function AutoMockupGenerator({
                         const regenerationKey = singleMockupRegenerationKey(card.id, stepId);
                         if (singleMockupRegenerationJobs[regenerationKey]) return;
                         const refinementNote = regenPromptNote.trim();
+                        const temporaryPrompt = promptHasChanges
+                          ? promptEditor?.draft.trim()
+                          : undefined;
                         prepareBrowserNotification();
                         setSingleMockupRegenerationJobs((previous) => ({
                           ...previous,
@@ -2066,7 +2103,10 @@ export function AutoMockupGenerator({
                                 id: content.id,
                                 label: content.label,
                                 promptKey: content.promptKey,
-                                customPrompt: content.customPrompt,
+                                customPrompt:
+                                  content.id === stepId && temporaryPrompt
+                                    ? temporaryPrompt
+                                    : content.customPrompt,
                               })),
                               customRefinementNotes: refinementNote
                                 ? { [stepId]: refinementNote }
@@ -2079,6 +2119,10 @@ export function AutoMockupGenerator({
                             const errData = await res.json().catch(() => ({}));
                             throw new Error(errData.error || `Lỗi HTTP ${res.status}`);
                           }
+
+                          const regenerationJobId = res.headers.get(
+                            "X-Mockup-Job-Id",
+                          );
 
                           if (!res.body) {
                             throw new Error("Server không trả về luồng tiến độ.");
@@ -2187,9 +2231,28 @@ export function AutoMockupGenerator({
                           if (!regenData) {
                             throw new Error("Luồng gen lại ảnh kết thúc nhưng không có kết quả.");
                           }
+                          if (regenerationJobId) {
+                            setBackgroundJobs((current) =>
+                              current.filter((job) => job.id !== regenerationJobId),
+                            );
+                          }
                           const failedRegen = regenData.attachments.some(
                             (attachment) => attachment.index === stepId && attachment.status === "failed",
                           );
+                          if (!failedRegen && promptEditorKey && temporaryPrompt) {
+                            setImagePromptEditors((previous) => {
+                              const editor = previous[promptEditorKey];
+                              if (!editor) return previous;
+                              return {
+                                ...previous,
+                                [promptEditorKey]: {
+                                  ...editor,
+                                  draft: editor.original,
+                                  error: undefined,
+                                },
+                              };
+                            });
+                          }
                           showCompletionNotice(failedRegen
                             ? {
                                 type: "warning",
@@ -2218,13 +2281,12 @@ export function AutoMockupGenerator({
                         }
                       }}
                       disabled={
-                        Boolean(currentRegenerationJob) ||
-                        backgroundJobCardIds.has(card.id) ||
+                        isCurrentImageRegenerating ||
                         promptBlocksRegeneration
                       }
                       className="w-full flex items-center justify-center gap-2 rounded-2xl bg-amber-500 py-3 px-4 text-sm font-black text-white shadow-md hover:bg-amber-600 active:scale-[0.98] disabled:opacity-50 transition"
                     >
-                      {currentRegenerationJob ? (
+                      {isCurrentImageRegenerating ? (
                         <div className="flex flex-col items-center justify-center py-0.5">
                           <div className="flex items-center gap-2">
                             <SpinnerIcon className="h-5 w-5 animate-spin text-white" />
@@ -2234,7 +2296,11 @@ export function AutoMockupGenerator({
                       ) : (
                         <>
                           <SparkleIcon className="h-5 w-5 text-amber-200" />
-                          <span>✨ Gen Lại Tấm Ảnh Này Ngay</span>
+                          <span>
+                            {promptHasChanges
+                              ? "✨ Gen Lại Bằng Prompt Tạm"
+                              : "✨ Gen Lại Tấm Ảnh Này Ngay"}
+                          </span>
                         </>
                       )}
                     </button>
@@ -2846,7 +2912,10 @@ export function AutoMockupGenerator({
                               ? Boolean(
                                   singleMockupRegenerationJobs[
                                     singleMockupRegenerationKey(card.id, stepId)
-                                  ],
+                                  ] ||
+                                    backgroundRegenerationKeys.has(
+                                      singleMockupRegenerationKey(card.id, stepId),
+                                    ),
                                 )
                               : false;
 
@@ -3091,7 +3160,10 @@ export function AutoMockupGenerator({
                             ? Boolean(
                                 singleMockupRegenerationJobs[
                                   singleMockupRegenerationKey(card.id, stepId)
-                                ],
+                                ] ||
+                                  backgroundRegenerationKeys.has(
+                                    singleMockupRegenerationKey(card.id, stepId),
+                                  ),
                               )
                             : false;
 

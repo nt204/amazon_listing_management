@@ -21,6 +21,7 @@ import {
 } from "../lib/mockup-generator";
 import {
   generateMockupsSchema,
+  mockupRequestsOverlap,
   sanitizeQueuedMockupInput,
 } from "../lib/mockup-request";
 
@@ -55,6 +56,25 @@ test("mockup requests reject browser credentials or target-list overrides and ke
     selectedSteps: [2, 4, 7],
     stream: true,
   });
+});
+
+test("mockup jobs on one card may run together only when their image steps differ", () => {
+  assert.equal(
+    mockupRequestsOverlap({ selectedSteps: [2] }, { selectedSteps: [3] }),
+    false,
+  );
+  assert.equal(
+    mockupRequestsOverlap({ selectedSteps: [2] }, { selectedSteps: [2] }),
+    true,
+  );
+  assert.equal(
+    mockupRequestsOverlap({ selectedSteps: [2, 3] }, { selectedSteps: [3, 4] }),
+    true,
+  );
+  assert.equal(
+    mockupRequestsOverlap({ selectedSteps: undefined }, { selectedSteps: [4] }),
+    true,
+  );
 });
 
 test("parseCardDimensions should extract 3D dimensions correctly", () => {

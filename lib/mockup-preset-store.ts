@@ -160,7 +160,7 @@ export async function fetchPresetsFromServer(): Promise<ProductCategoryPreset[]>
     const res = await fetch("/api/presets", { cache: "no-store" });
     if (res.ok) {
       const data = await res.json();
-      if (Array.isArray(data?.presets) && data.presets.length > 0) {
+      if (Array.isArray(data?.presets)) {
         saveStoredCustomPresets(data.presets);
         return data.presets;
       }

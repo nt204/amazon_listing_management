@@ -22,6 +22,8 @@ import { ListingForm, type FormIssue } from "@/components/listing-form";
 import { ResultPanel } from "@/components/result-panel";
 import { TrelloBoardView } from "@/components/trello-board-view";
 import { SellerSpriteKeywordMiner } from "@/components/sellersprite-keyword-miner";
+import { AccountMenu } from "@/components/account-menu";
+import type { RequestActor } from "@/lib/auth";
 import { DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_MODEL, type AiOptions } from "@/lib/models";
 import type {
   BrandProfile,
@@ -217,7 +219,7 @@ function QueuePanel({
   );
 }
 
-export function ListingWorkspace() {
+export function ListingWorkspace({ actor }: { actor: RequestActor }) {
   const [input, setInput] = useState<ListingInput>(emptyInput);
   const [history, setHistory] = useState<ListingSummary[]>([]);
   const [metrics, setMetrics] = useState<WorkflowMetrics>(emptyMetrics);
@@ -705,13 +707,7 @@ export function ListingWorkspace() {
               </span>
             </button>
 
-            {/* User Avatar Circle */}
-            <div
-              className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-600 text-[10px] font-black text-white shadow-xs cursor-pointer"
-              title="User Account: Team Automation"
-            >
-              TA
-            </div>
+            <AccountMenu actor={actor} />
           </div>
         </header>
 

@@ -99,6 +99,7 @@ Quy trình release self-hosted:
 npm ci
 docker compose up -d db redis
 npm run db:migrate
+npm run auth:bootstrap
 npm run build
 npm run start
 ```
@@ -106,9 +107,14 @@ npm run start
 Chỉ đưa instance vào load balancer sau khi `GET /api/health` trả HTTP 200 và có
 `redis: "ready"`. Nếu triển khai ra ngoài mạng riêng/VPN, bật
 `LISTING_DESK_AUTH_MODE=required`, đặt `LISTING_DESK_SESSION_SECRET` tối thiểu 32
-ký tự và khai báo từng người dùng trong `LISTING_DESK_TEAMS_JSON`. Worker dùng
-chính session secret này để gọi engine nội bộ; có thể tách riêng bằng
-`MOCKUP_WORKER_SECRET`.
+ký tự và khai báo một admin đầu tiên trong `LISTING_DESK_TEAMS_JSON`. Chạy
+`npm run auth:bootstrap` sau migration. Người dùng tự đăng ký trên màn hình đăng
+nhập và ở trạng thái chờ cho đến khi admin duyệt tại `/admin`. Worker dùng chính
+session secret để gọi engine nội bộ; có thể tách riêng bằng `MOCKUP_WORKER_SECRET`.
+
+Sau lần đăng nhập admin đầu tiên, mở menu tài khoản và chọn **Đổi mật khẩu** để
+thay mật khẩu bootstrap. Script bootstrap không ghi đè mật khẩu của tài khoản đã
+tồn tại.
 
 ### Glass Ornament với template
 
@@ -224,13 +230,16 @@ Trong modal Batch, upload template Amazon một lần và đặt tên dễ chọ
 
 Nút **Tải file đầu vào mẫu** tạo sẵn workbook bốn cột. Không có tọa độ cột content nào được cấu hình cố định; cùng một trường `generic_keyword[...]` có thể nằm ở AP, CG hoặc cột khác tùy template.
 
-Auth đang để `disabled` cho MVP nội bộ theo mặc định. Ở chế độ này chỉ nên deploy sau VPN/private ingress hoặc trên máy nội bộ. Cơ chế team token/session có thể bật sau bằng `LISTING_DESK_AUTH_MODE=required`; xem `.env.example`.
+Auth dùng tài khoản trong PostgreSQL. Mỗi tài khoản có cấu hình Trello riêng theo
+`team_id + user_id`; listing, brand, template và prompt/preset vẫn dùng chung theo
+`team_id`. Tài khoản mới phải được admin duyệt trước khi đăng nhập.
 
 ## Database và release
 
 ```bash
 npm run db:start
 npm run db:migrate
+npm run auth:bootstrap        # tạo admin đầu tiên từ LISTING_DESK_TEAMS_JSON
 npm run db:maintain          # dọn preview quá hạn, VACUUM/ANALYZE và kiểm tra ổ đĩa
 npm run db:backfill-images   # chỉ cần cho dữ liệu cũ còn inline image
 npm run db:revalidate        # chạy sau khi đổi rule/policy version

@@ -69,7 +69,7 @@ async function ensureSchema() {
     const sql = getDatabase();
     globalForDatabase.listingPostgresSchema = sql<{ name: string }[]>`
         SELECT name FROM schema_migrations
-        WHERE name = '014_remove_default_mockup_presets.sql'
+        WHERE name = '016_parallel_mockup_steps.sql'
         LIMIT 1
       `
       .then((rows) => {
@@ -170,6 +170,291 @@ export async function closeDatabaseConnection() {
   globalForDatabase.listingPostgres = undefined;
   globalForDatabase.listingPostgresSchema = undefined;
   if (sql) await sql.end({ timeout: 5 });
+}
+
+export type AppUserStatus = "pending" | "approved" | "rejected" | "disabled";
+
+export interface AppUserSummary {
+  teamId: string;
+  userId: string;
+  username: string;
+  displayName: string;
+  role: "editor" | "reviewer" | "admin";
+  status: AppUserStatus;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  lastLoginAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface AppUserRow {
+  team_id: string;
+  user_id: string;
+  username: string;
+  display_name: string;
+  password_hash: string;
+  role: "editor" | "reviewer" | "admin";
+  status: AppUserStatus;
+  approved_by: string | null;
+  approved_at: string | null;
+  last_login_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function toAppUserSummary(row: AppUserRow): AppUserSummary {
+  return {
+    teamId: row.team_id,
+    userId: row.user_id,
+    username: row.username,
+    displayName: row.display_name,
+    role: row.role,
+    status: row.status,
+    approvedBy: row.approved_by,
+    approvedAt: row.approved_at,
+    lastLoginAt: row.last_login_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function createPendingUserAccount(input: {
+  teamId: string;
+  username: string;
+  displayName: string;
+  passwordHash: string;
+}): Promise<AppUserSummary | null> {
+  await ensureSchema();
+  const sql = getDatabase();
+  try {
+    const rows = await sql<AppUserRow[]>`
+      INSERT INTO app_users (
+        team_id, user_id, username, display_name, password_hash, role, status
+      ) VALUES (
+        ${input.teamId}, ${crypto.randomUUID()}, ${input.username},
+        ${input.displayName}, ${input.passwordHash}, 'editor', 'pending'
+      )
+      RETURNING team_id, user_id, username, display_name, password_hash, role,
+        status, approved_by, approved_at::text, last_login_at::text,
+        created_at::text, updated_at::text
+    `;
+    return toAppUserSummary(rows[0]);
+  } catch (error) {
+    if (
+      typeof error === "object" && error !== null &&
+      "code" in error && error.code === "23505"
+    ) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+export async function getUserAccountForLogin(teamId: string, username: string) {
+  await ensureSchema();
+  const sql = getDatabase();
+  const rows = await sql<AppUserRow[]>`
+    SELECT team_id, user_id, username, display_name, password_hash, role,
+      status, approved_by, approved_at::text, last_login_at::text,
+      created_at::text, updated_at::text
+    FROM app_users
+    WHERE team_id = ${teamId} AND LOWER(username) = LOWER(${username})
+    LIMIT 1
+  `;
+  const row = rows[0];
+  return row ? { ...toAppUserSummary(row), passwordHash: row.password_hash } : null;
+}
+
+export async function getUserAccountForLoginById(teamId: string, userId: string) {
+  await ensureSchema();
+  const sql = getDatabase();
+  const rows = await sql<AppUserRow[]>`
+    SELECT team_id, user_id, username, display_name, password_hash, role,
+      status, approved_by, approved_at::text, last_login_at::text,
+      created_at::text, updated_at::text
+    FROM app_users
+    WHERE team_id = ${teamId} AND user_id = ${userId}
+    LIMIT 1
+  `;
+  const row = rows[0];
+  return row ? { ...toAppUserSummary(row), passwordHash: row.password_hash } : null;
+}
+
+export async function updateUserPassword(scope: DataScope, passwordHash: string) {
+  await ensureSchema();
+  const sql = getDatabase();
+  const updated = await sql<{ user_id: string }[]>`
+    UPDATE app_users
+    SET password_hash = ${passwordHash}, updated_at = NOW()
+    WHERE team_id = ${scope.teamId}
+      AND user_id = ${scope.actorId}
+      AND status = 'approved'
+    RETURNING user_id
+  `;
+  if (!updated.length) return false;
+  await recordAuditEvent(scope, "user.password_changed", "app_user", scope.actorId);
+  return true;
+}
+
+export async function recordUserLogin(teamId: string, userId: string) {
+  await ensureSchema();
+  const sql = getDatabase();
+  await sql`
+    UPDATE app_users
+    SET last_login_at = NOW(), updated_at = NOW()
+    WHERE team_id = ${teamId} AND user_id = ${userId}
+  `;
+}
+
+export async function listTeamUserAccounts(teamId: string): Promise<AppUserSummary[]> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const rows = await sql<AppUserRow[]>`
+    SELECT team_id, user_id, username, display_name, password_hash, role,
+      status, approved_by, approved_at::text, last_login_at::text,
+      created_at::text, updated_at::text
+    FROM app_users
+    WHERE team_id = ${teamId}
+    ORDER BY
+      CASE status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END,
+      created_at DESC
+  `;
+  return rows.map(toAppUserSummary);
+}
+
+export async function updateTeamUserAccount(
+  scope: DataScope,
+  targetUserId: string,
+  action: "approve" | "reject" | "disable" | "restore",
+): Promise<AppUserSummary | null> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const statusByAction: Record<typeof action, AppUserStatus> = {
+    approve: "approved",
+    reject: "rejected",
+    disable: "disabled",
+    restore: "approved",
+  };
+  const nextStatus = statusByAction[action];
+  const rows = await sql<AppUserRow[]>`
+    UPDATE app_users
+    SET
+      status = ${nextStatus},
+      approved_by = CASE WHEN ${nextStatus} = 'approved' THEN ${scope.actorId} ELSE approved_by END,
+      approved_at = CASE WHEN ${nextStatus} = 'approved' THEN NOW() ELSE approved_at END,
+      updated_at = NOW()
+    WHERE team_id = ${scope.teamId}
+      AND user_id = ${targetUserId}
+      AND user_id <> ${scope.actorId}
+    RETURNING team_id, user_id, username, display_name, password_hash, role,
+      status, approved_by, approved_at::text, last_login_at::text,
+      created_at::text, updated_at::text
+  `;
+  if (!rows[0]) return null;
+  await recordAuditEvent(scope, `user.${action}`, "app_user", targetUserId, {
+    status: nextStatus,
+  });
+  return toAppUserSummary(rows[0]);
+}
+
+export interface ImageStorageStats {
+  listingRows: number;
+  listingDatabaseBytes: number;
+  listingR2BackedDatabaseBytes: number;
+  trelloPreviewRows: number;
+  trelloPreviewDatabaseBytes: number;
+  trelloR2BackedDatabaseBytes: number;
+}
+
+export async function getImageStorageStats(teamId: string): Promise<ImageStorageStats> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const [listing] = await sql<{
+    row_count: number;
+    database_bytes: string;
+    r2_backed_database_bytes: string;
+  }[]>`
+    SELECT
+      COUNT(*)::int AS row_count,
+      COALESCE(SUM(
+        COALESCE(OCTET_LENGTH(image_bytes), 0) +
+        COALESCE(OCTET_LENGTH(ai_image_bytes), 0) +
+        COALESCE(OCTET_LENGTH(preview_image_bytes), 0)
+      ), 0)::bigint AS database_bytes,
+      COALESCE(SUM(
+        CASE WHEN original_object_key IS NOT NULL THEN COALESCE(OCTET_LENGTH(image_bytes), 0) ELSE 0 END +
+        CASE WHEN ai_object_key IS NOT NULL THEN COALESCE(OCTET_LENGTH(ai_image_bytes), 0) ELSE 0 END +
+        CASE WHEN preview_object_key IS NOT NULL THEN COALESCE(OCTET_LENGTH(preview_image_bytes), 0) ELSE 0 END
+      ), 0)::bigint AS r2_backed_database_bytes
+    FROM listing_images
+    WHERE team_id = ${teamId}
+  `;
+  const [trello] = await sql<{
+    row_count: number;
+    database_bytes: string;
+    r2_backed_database_bytes: string;
+  }[]>`
+    SELECT
+      COUNT(*)::int AS row_count,
+      COALESCE(SUM(COALESCE(OCTET_LENGTH(image_bytes), 0)), 0)::bigint AS database_bytes,
+      COALESCE(SUM(
+        CASE WHEN object_key IS NOT NULL THEN COALESCE(OCTET_LENGTH(image_bytes), 0) ELSE 0 END
+      ), 0)::bigint AS r2_backed_database_bytes
+    FROM trello_image_previews
+    WHERE team_id = ${teamId}
+  `;
+  return {
+    listingRows: Number(listing.row_count),
+    listingDatabaseBytes: Number(listing.database_bytes),
+    listingR2BackedDatabaseBytes: Number(listing.r2_backed_database_bytes),
+    trelloPreviewRows: Number(trello.row_count),
+    trelloPreviewDatabaseBytes: Number(trello.database_bytes),
+    trelloR2BackedDatabaseBytes: Number(trello.r2_backed_database_bytes),
+  };
+}
+
+export async function clearR2BackedImageBytes(scope: DataScope) {
+  await ensureSchema();
+  const sql = getDatabase();
+  const before = await getImageStorageStats(scope.teamId);
+  const [listingRows, trelloRows] = await sql.begin(async (transaction) => {
+    const listing = await transaction<{ id: string }[]>`
+      UPDATE listing_images
+      SET
+        image_bytes = CASE WHEN original_object_key IS NOT NULL THEN NULL ELSE image_bytes END,
+        ai_image_bytes = CASE WHEN ai_object_key IS NOT NULL THEN NULL ELSE ai_image_bytes END,
+        preview_image_bytes = CASE WHEN preview_object_key IS NOT NULL THEN NULL ELSE preview_image_bytes END
+      WHERE team_id = ${scope.teamId}
+        AND (
+          (original_object_key IS NOT NULL AND image_bytes IS NOT NULL) OR
+          (ai_object_key IS NOT NULL AND ai_image_bytes IS NOT NULL) OR
+          (preview_object_key IS NOT NULL AND preview_image_bytes IS NOT NULL)
+        )
+      RETURNING id::text
+    `;
+    const trello = await transaction<{ attachment_id: string }[]>`
+      UPDATE trello_image_previews
+      SET image_bytes = NULL, updated_at = NOW()
+      WHERE team_id = ${scope.teamId}
+        AND object_key IS NOT NULL
+        AND image_bytes IS NOT NULL
+      RETURNING attachment_id
+    `;
+    return [listing.length, trello.length] as const;
+  });
+  const after = await getImageStorageStats(scope.teamId);
+  const freedBytes = Math.max(
+    0,
+    before.listingDatabaseBytes + before.trelloPreviewDatabaseBytes -
+      after.listingDatabaseBytes - after.trelloPreviewDatabaseBytes,
+  );
+  await recordAuditEvent(scope, "storage.database_image_bytes_cleared", "storage", scope.teamId, {
+    listingRows,
+    trelloRows,
+    freedBytes,
+  });
+  return { listingRows, trelloRows, freedBytes, stats: after };
 }
 
 export interface UserTrelloSettings {

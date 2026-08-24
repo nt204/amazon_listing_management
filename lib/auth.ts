@@ -1,7 +1,15 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 export type TeamRole = "editor" | "reviewer" | "admin";
-export type Permission = "read" | "write" | "approve" | "export" | "manage_brands" | "manage_templates";
+export type Permission =
+  | "read"
+  | "write"
+  | "approve"
+  | "export"
+  | "manage_brands"
+  | "manage_templates"
+  | "manage_users"
+  | "manage_storage";
 
 export interface RequestActor {
   teamId: string;
@@ -34,7 +42,16 @@ const cookieName = "listing_desk_session";
 const rolePermissions: Record<TeamRole, Set<Permission>> = {
   editor: new Set(["read", "write"]),
   reviewer: new Set(["read", "write", "approve", "export"]),
-  admin: new Set(["read", "write", "approve", "export", "manage_brands", "manage_templates"]),
+  admin: new Set([
+    "read",
+    "write",
+    "approve",
+    "export",
+    "manage_brands",
+    "manage_templates",
+    "manage_users",
+    "manage_storage",
+  ]),
 };
 
 function authMode() {
@@ -43,6 +60,14 @@ function authMode() {
 
 export function isAuthenticationRequired() {
   return authMode() !== "disabled";
+}
+
+export function defaultRegistrationTeamId() {
+  const value = process.env.LISTING_DESK_DEFAULT_TEAM_ID?.trim() || "default";
+  if (!/^[A-Za-z0-9._:-]{1,128}$/.test(value)) {
+    throw new Error("LISTING_DESK_DEFAULT_TEAM_ID is invalid.");
+  }
+  return value;
 }
 
 function safeEqual(first: string, second: string) {
