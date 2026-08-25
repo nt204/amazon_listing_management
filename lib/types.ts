@@ -321,6 +321,7 @@ export interface StoredListing {
   result: ListingResult;
   current_listing: ListingContent;
   revisions: ListingRevision[];
+  source_trello_card_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -366,7 +367,21 @@ export interface BrandProfile {
   updated_at: string;
 }
 
+export interface AmazonShopSummary {
+  id: string;
+  name: string;
+  seller_id: string;
+  contributor_id: string;
+  is_unassigned: boolean;
+  template_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ListingTemplateMetadata {
+  is_blank?: boolean;
+  is_ready?: boolean;
+  warning_reason?: string;
   sheet_name: string;
   attribute_row: number;
   label_row: number;
@@ -395,6 +410,16 @@ export interface ListingTemplateMetadata {
 
 export interface ListingTemplateSummary {
   id: string;
+  shop_id: string;
+  shop_name: string;
+  shop_is_unassigned: boolean;
+  brand_profile_id: string | null;
+  brand_name: string;
+  phoi_name: string;
+  phoi_key: string;
+  source_template_id: string | null;
+  is_auto_mapped: boolean;
+  is_ready?: boolean;
   name: string;
   original_filename: string;
   file_extension: string;

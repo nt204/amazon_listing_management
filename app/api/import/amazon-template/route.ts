@@ -3,11 +3,13 @@ import { createAmazonTemplate } from "@/lib/excel-automation";
 import { getListingTemplate } from "@/lib/db";
 import { ApiError, authorize, dataScope, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
 import { generatedListingSchema, productInformationSchema } from "@/lib/schemas";
+import { isTemplateForShop } from "@/lib/amazon-template-shop";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
 const exportSchema = z.object({
+  shop_id: z.uuid(),
   template_id: z.uuid(),
   items: z.array(
     z.object({
@@ -26,6 +28,9 @@ export async function POST(request: Request) {
     const payload = exportSchema.parse(await readJsonBody(request, 3_000_000));
     const template = await getListingTemplate(scope, payload.template_id);
     if (!template) throw new ApiError("Template đã chọn không còn tồn tại.", 404);
+    if (!isTemplateForShop(template, payload.shop_id)) {
+      throw new ApiError("Template không thuộc shop đích đã chọn.", 400);
+    }
     const output = await createAmazonTemplate(template.workbook, template.original_filename, payload.items);
     const campaign = payload.items[0]?.sku.replace(/[^A-Za-z0-9_-]/g, "-") || "listing";
     const templateName = template.name.replace(/[^A-Za-z0-9_-]/g, "-") || "Amazon-Template";

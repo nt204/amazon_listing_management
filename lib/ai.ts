@@ -313,7 +313,10 @@ async function callOpenAI(
   prompt: string,
   signal?: AbortSignal,
 ): Promise<ProviderOutput> {
-  const cheapKeyApiKey = process.env.CHEAPKEYAI_API_KEY?.trim();
+  const cheapKeyApiKey =
+    process.env.CHEAPKEYAI_TEXT_API_KEY?.trim() ||
+    process.env.CHEAPKEYAI_LUNA_API_KEY?.trim() ||
+    process.env.CHEAPKEYAI_API_KEY?.trim();
   const cheapKeyBaseUrl = (
     process.env.CHEAPKEYAI_BASE_URL || "https://cheapkeyai.shop/v1"
   )
@@ -327,7 +330,7 @@ async function callOpenAI(
 
   if (isCheapKeyModel && !cheapKeyApiKey && !process.env.OPENAI_API_KEY?.trim()) {
     throw new Error(
-      "CHEAPKEYAI_API_KEY chưa được cấu hình trên server để sử dụng model gpt-5.6-luna (CheapKey AI).",
+      "CHEAPKEYAI_TEXT_API_KEY hoặc CHEAPKEYAI_API_KEY chưa được cấu hình trên server để sử dụng model gpt-5.6-luna (CheapKey AI).",
     );
   }
 

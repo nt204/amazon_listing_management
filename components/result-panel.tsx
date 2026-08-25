@@ -45,7 +45,7 @@ function ActionButton({
   primary,
 }: {
   children: React.ReactNode;
-  onClick: () => void;
+  onClick?: () => void;
   disabled?: boolean;
   primary?: boolean;
 }) {
@@ -56,8 +56,8 @@ function ActionButton({
       disabled={disabled}
       className={
         primary
-          ? "inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-lg bg-[#b84f1d] px-3 text-xs font-bold text-white hover:bg-[#963f17] active:translate-y-px disabled:bg-[#c4c8cb]"
-          : "inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-lg border border-[#cfd5da] bg-white px-3 text-xs font-semibold text-[#39444d] hover:bg-[#f5f6f7] active:translate-y-px disabled:text-[#9ba3aa]"
+          ? "inline-flex h-8.5 items-center gap-1.5 whitespace-nowrap rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 px-3.5 text-xs font-black text-white shadow-xs hover:from-indigo-700 hover:to-indigo-800 active:scale-[0.98] disabled:opacity-50 transition cursor-pointer"
+          : "inline-flex h-8.5 items-center gap-1.5 whitespace-nowrap rounded-xl border border-slate-200/90 bg-white px-3.5 text-xs font-bold text-slate-700 hover:bg-slate-50 hover:border-slate-300 active:scale-[0.98] disabled:opacity-50 transition cursor-pointer shadow-2xs"
       }
     >
       {children}
@@ -67,12 +67,12 @@ function ActionButton({
 
 function StatusBadge({ status }: { status: StoredListing["status"] }) {
   const styles = {
-    Draft: "bg-[#edf1f3] text-[#4d5962]",
-    Review: "bg-[#fff1d8] text-[#83520f]",
-    Approved: "bg-[#e8f5ed] text-[#17663a]",
-    Exported: "bg-[#e8f0f7] text-[#285a7d]",
+    Draft: "bg-slate-100 text-slate-700 border border-slate-200",
+    Review: "bg-amber-50 text-amber-800 border border-amber-200",
+    Approved: "bg-emerald-50 text-emerald-800 border border-emerald-200",
+    Exported: "bg-indigo-50 text-indigo-800 border border-indigo-200",
   }[status];
-  return <span className={`rounded-md px-2 py-1 text-[11px] font-bold ${styles}`}>{status}</span>;
+  return <span className={`rounded-lg px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider ${styles}`}>{status}</span>;
 }
 
 function LoadingState() {
@@ -93,18 +93,18 @@ function LoadingState() {
         : "AI đang hoàn thiện draft. Kết quả chưa đạt sẽ được đưa vào Review, không retry âm thầm.";
   return (
     <div className="mx-auto w-full max-w-5xl p-6 lg:p-8" aria-label="Generating listing">
-      <div className="mb-7 flex items-center gap-3 rounded-lg border border-[#ead7ce] bg-[#fff8f4] p-4">
-        <MagicWandIcon className="text-[#b84f1d]" size={22} />
+      <div className="mb-7 flex items-center gap-3 rounded-2xl border border-indigo-100 bg-indigo-50/70 p-4 shadow-xs">
+        <MagicWandIcon className="text-indigo-600 animate-spin" size={24} />
         <div>
-          <p className="text-sm font-bold text-[#60321d]">{stage}</p>
-          <p className="mt-0.5 text-xs text-[#79513e]">{elapsedSeconds}s - AI đang tạo title, bullets, description và search terms.</p>
+          <p className="text-sm font-black text-indigo-950">{stage}</p>
+          <p className="mt-0.5 text-xs font-semibold text-indigo-700">{elapsedSeconds}s - AI đang tạo title, bullets, description và search terms.</p>
         </div>
       </div>
       <div className="grid gap-6">
         {["w-24", "w-32", "w-28", "w-40"].map((width, index) => (
           <div key={index} className="animate-pulse">
-            <div className={`mb-3 h-3 rounded bg-[#dfe3e6] ${width}`} />
-            <div className="h-24 rounded-lg bg-[#e8ebed]" />
+            <div className={`mb-3 h-3 rounded bg-slate-200 ${width}`} />
+            <div className="h-24 rounded-2xl bg-slate-100" />
           </div>
         ))}
       </div>
@@ -605,34 +605,34 @@ export function ResultPanel({
             {stored.status === "Approved" || stored.status === "Exported" ? <ActionButton onClick={onExport} disabled={busy || !canExport} primary><DownloadSimpleIcon size={15} /> {stored.status === "Exported" ? "Exported" : action === "export" ? "Exporting..." : "Export CSV"}</ActionButton> : null}
           </div>
         </div>
-        <div className="flex gap-1 px-5" role="tablist" aria-label="Listing review">
-          <button type="button" role="tab" aria-selected={tab === "content"} onClick={() => setTab("content")} className={`border-b-2 px-3 py-2 text-xs font-bold ${tab === "content" ? "border-[#b84f1d] text-[#8f3d17]" : "border-transparent text-[#65717c] hover:text-[#303b44]"}`}>Nội dung</button>
-          <button type="button" role="tab" aria-selected={tab === "seo"} onClick={() => setTab("seo")} className={`border-b-2 px-3 py-2 text-xs font-bold ${tab === "seo" ? "border-[#b84f1d] text-[#8f3d17]" : "border-transparent text-[#65717c] hover:text-[#303b44]"}`}>SEO &amp; Inputs</button>
-          <button type="button" role="tab" aria-selected={tab === "revisions"} onClick={() => setTab("revisions")} className={`border-b-2 px-3 py-2 text-xs font-bold ${tab === "revisions" ? "border-[#b84f1d] text-[#8f3d17]" : "border-transparent text-[#65717c] hover:text-[#303b44]"}`}>Phiên bản ({revisions.length})</button>
+        <div className="flex gap-2 px-5 border-b border-slate-200/80 bg-white" role="tablist" aria-label="Listing review">
+          <button type="button" role="tab" aria-selected={tab === "content"} onClick={() => setTab("content")} className={`border-b-2 px-3 py-2 text-xs font-bold transition cursor-pointer ${tab === "content" ? "border-indigo-600 text-indigo-700 font-extrabold" : "border-transparent text-slate-500 hover:text-slate-900"}`}>Nội dung</button>
+          <button type="button" role="tab" aria-selected={tab === "seo"} onClick={() => setTab("seo")} className={`border-b-2 px-3 py-2 text-xs font-bold transition cursor-pointer ${tab === "seo" ? "border-indigo-600 text-indigo-700 font-extrabold" : "border-transparent text-slate-500 hover:text-slate-900"}`}>SEO &amp; Inputs</button>
+          <button type="button" role="tab" aria-selected={tab === "revisions"} onClick={() => setTab("revisions")} className={`border-b-2 px-3 py-2 text-xs font-bold transition cursor-pointer ${tab === "revisions" ? "border-indigo-600 text-indigo-700 font-extrabold" : "border-transparent text-slate-500 hover:text-slate-900"}`}>Phiên bản ({revisions.length})</button>
         </div>
       </div>
 
       <div className="mx-auto w-full max-w-[1220px] p-5 lg:p-7">
         {stored.input.images.length ? (
-          <section className="mb-5 rounded-[10px] border border-[#dfe3e6] bg-white p-4">
+          <section className="mb-5 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-2xs">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
                 <div className="flex items-center gap-2">
-                  <ImageSquareIcon size={18} className="text-[#a24419]" />
-                  <h2 className="text-sm font-bold text-[#222b32]">Ảnh sản phẩm</h2>
+                  <ImageSquareIcon size={18} className="text-indigo-600" weight="duotone" />
+                  <h2 className="text-sm font-extrabold text-slate-900">Ảnh sản phẩm</h2>
                 </div>
-                <p className="mt-1 text-xs text-[#65717c]">
+                <p className="mt-1 text-xs text-slate-500">
                   Màn hình dùng bản preview nhẹ; nút tải luôn trả về đúng byte ảnh gốc.
                 </p>
               </div>
-              <span className="text-xs font-semibold text-[#65717c]">
+              <span className="text-xs font-bold text-slate-500">
                 {stored.input.images.length} ảnh
               </span>
             </div>
-            <div className="mt-3 flex gap-3 overflow-x-auto pb-1">
+            <div className="mt-3 flex gap-3 overflow-x-auto pb-1 thin-scrollbar">
               {stored.input.images.map((image, index) => (
                 <div key={`${image.storage_key || image.name}-${index}`} className="w-28 shrink-0">
-                  <div className="relative aspect-square overflow-hidden rounded-lg border border-[#dfe3e6] bg-[#f5f7f8]">
+                  <div className="relative aspect-square overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
                     <Image
                       src={image.data_url}
                       alt={`Ảnh sản phẩm ${index + 1}`}
@@ -645,7 +645,7 @@ export function ResultPanel({
                   <a
                     href={image.download_url || image.data_url}
                     download={image.name}
-                    className="mt-1.5 flex items-center justify-center gap-1 rounded-md border border-[#cfd5da] bg-white px-2 py-1.5 text-[10px] font-bold text-[#39444d] hover:bg-[#f5f6f7]"
+                    className="mt-1.5 flex items-center justify-center gap-1 rounded-lg border border-slate-200/90 bg-white px-2 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-50 transition shadow-2xs"
                   >
                     <DownloadSimpleIcon size={13} /> Tải ảnh gốc
                   </a>
@@ -655,17 +655,17 @@ export function ResultPanel({
           </section>
         ) : null}
 
-        <section className="mb-5 rounded-[10px] border border-[#dfc8bc] bg-[#fffaf7] p-4">
-          <label htmlFor="review_instruction" className="text-[13px] font-bold text-[#49372f]">Yêu cầu AI chỉnh sửa</label>
-          <p className="mt-1 text-xs leading-5 text-[#786156]">Một câu lệnh cho toàn bộ listing. Sau khi sửa, hệ thống chỉ kiểm tra lại định dạng Amazon cơ bản.</p>
+        <section className="mb-5 rounded-2xl border border-indigo-100 bg-indigo-50/50 p-4.5 shadow-2xs">
+          <label htmlFor="review_instruction" className="text-xs font-extrabold text-indigo-950 uppercase tracking-wider">Yêu cầu AI chỉnh sửa</label>
+          <p className="mt-1 text-xs leading-5 text-indigo-900/80">Một câu lệnh cho toàn bộ listing. Sau khi sửa, hệ thống chỉ kiểm tra lại định dạng Amazon cơ bản.</p>
           <div className="mt-3 flex flex-wrap gap-2">
-            {issuePrompt ? <button type="button" onClick={() => setInstruction(`Sửa toàn bộ lỗi và cảnh báo dưới đây, giữ nguyên các phần đang tốt và không thêm claim mới:\n${issuePrompt}`)} className="rounded-md border border-[#dbc8be] bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#76503d] hover:bg-[#fff7f2]">Sửa lỗi quality</button> : null}
-            <button type="button" onClick={() => setInstruction("Tối ưu SEO tự nhiên cho toàn bộ listing. Ưu tiên keyword do operator cung cấp và intent lặp lại ở đối thủ, không copy wording, không lặp noun để keyword stuffing, và dùng Generic keywords cho vocabulary chưa có trong title hoặc bullets.")} className="rounded-md border border-[#dbc8be] bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#76503d] hover:bg-[#fff7f2]">Tối ưu SEO</button>
-            {missingFacts.length ? <button type="button" onClick={() => setInstruction(`Tích hợp tự nhiên các fact đã xác minh còn thiếu sau đây, không thay đổi thông số:\n${missingFacts.join("\n")}`)} className="rounded-md border border-[#dbc8be] bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#76503d] hover:bg-[#fff7f2]">Dùng fact còn thiếu</button> : null}
+            {issuePrompt ? <button type="button" onClick={() => setInstruction(`Sửa toàn bộ lỗi và cảnh báo dưới đây, giữ nguyên các phần đang tốt và không thêm claim mới:\n${issuePrompt}`)} className="rounded-xl border border-indigo-200 bg-white px-3 py-1.5 text-xs font-bold text-indigo-800 hover:bg-indigo-50 shadow-2xs transition cursor-pointer">Sửa lỗi quality</button> : null}
+            <button type="button" onClick={() => setInstruction("Tối ưu SEO tự nhiên cho toàn bộ listing. Ưu tiên keyword do operator cung cấp và intent lặp lại ở đối thủ, không copy wording, không lặp noun để keyword stuffing, và dùng Generic keywords cho vocabulary chưa có trong title hoặc bullets.")} className="rounded-xl border border-indigo-200 bg-white px-3 py-1.5 text-xs font-bold text-indigo-800 hover:bg-indigo-50 shadow-2xs transition cursor-pointer">Tối ưu SEO</button>
+            {missingFacts.length ? <button type="button" onClick={() => setInstruction(`Tích hợp tự nhiên các fact đã xác minh còn thiếu sau đây, không thay đổi thông số:\n${missingFacts.join("\n")}`)} className="rounded-xl border border-indigo-200 bg-white px-3 py-1.5 text-xs font-bold text-indigo-800 hover:bg-indigo-50 shadow-2xs transition cursor-pointer">Dùng fact còn thiếu</button> : null}
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
             <textarea id="review_instruction" className="field-control min-h-20 resize-y bg-white" value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="Dùng brand Limima, description khoảng 800 ký tự, factual hơn và giữ nguyên các thông số đã xác minh." />
-            <button type="button" onClick={() => void revise()} disabled={busy || !instruction.trim()} className="inline-flex h-10 items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-[#b84f1d] px-4 text-sm font-bold text-white hover:bg-[#963f17] active:translate-y-px disabled:bg-[#c5c9cc]"><MagicWandIcon size={17} /> {action === "revise" ? "Đang sửa..." : "Áp dụng"}</button>
+            <button type="button" onClick={() => void revise()} disabled={busy || !instruction.trim()} className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 px-4 text-xs font-black text-white shadow-xs hover:from-indigo-700 hover:to-indigo-800 active:scale-[0.98] disabled:opacity-50 transition cursor-pointer"><MagicWandIcon size={17} weight="bold" /> {action === "revise" ? "Đang sửa..." : "Áp dụng"}</button>
           </div>
         </section>
 

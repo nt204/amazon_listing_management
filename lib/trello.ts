@@ -1,4 +1,7 @@
-import { sortMockupAttachments } from "./mockup-types";
+import {
+  mockupIndexFromAttachmentName,
+  sortMockupAttachments,
+} from "./mockup-types";
 
 export interface TrelloConfig {
   apiKey: string;
@@ -101,6 +104,59 @@ export function selectTrelloImageAttachments(card: Pick<TrelloCard, "id" | "atta
         attachmentBelongsToCard(attachment, card.id),
     ),
   );
+}
+
+/**
+ * Amazon listing images are one main image plus at most six generated
+ * mockups. Ignore extra source/reference images so they cannot displace a
+ * numbered mockup in the workbook.
+ */
+export function selectTrelloListingImageAttachments(
+  card: Pick<TrelloCard, "id" | "attachments">,
+) {
+  const images = selectTrelloImageAttachments(card);
+  const preferredSourcePattern =
+    /(?:full[\s_.-]*design|(?:^|[\s_.-])(?:source|artwork)(?:[\s_.-]|$))/i;
+  const mainImage =
+    images.find(
+      (attachment) =>
+        mockupIndexFromAttachmentName(attachment.name) === null &&
+        preferredSourcePattern.test(attachment.name),
+    ) ||
+    images.find(
+      (attachment) => mockupIndexFromAttachmentName(attachment.name) === 1,
+    ) ||
+    images.find(
+      (attachment) => mockupIndexFromAttachmentName(attachment.name) === null,
+    ) ||
+    images[0];
+
+  if (!mainImage) return [];
+
+  const mockupsByIndex = new Map<number, TrelloAttachment>();
+  for (const attachment of images) {
+    if (attachment.id === mainImage.id) continue;
+    const index = mockupIndexFromAttachmentName(attachment.name);
+    if (index === null || index === 1) continue;
+
+    const existing = mockupsByIndex.get(index);
+    const attachmentDate = Date.parse(attachment.date || "");
+    const existingDate = Date.parse(existing?.date || "");
+    if (
+      !existing ||
+      (Number.isFinite(attachmentDate) &&
+        (!Number.isFinite(existingDate) || attachmentDate >= existingDate))
+    ) {
+      mockupsByIndex.set(index, attachment);
+    }
+  }
+
+  const mockups = [...mockupsByIndex.entries()]
+    .sort(([leftIndex], [rightIndex]) => leftIndex - rightIndex)
+    .slice(0, 6)
+    .map(([, attachment]) => attachment);
+
+  return [mainImage, ...mockups];
 }
 
 function sortedAttachmentPreviews(attachment: TrelloAttachment) {

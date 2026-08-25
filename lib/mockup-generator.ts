@@ -286,7 +286,9 @@ export async function generateAllMockups(
   }
 
   const openaiApiKey = process.env.OPENAI_API_KEY;
-  const cheapKeyAIApiKey = process.env.CHEAPKEYAI_API_KEY;
+  const cheapKeyAIApiKey =
+    process.env.CHEAPKEYAI_IMAGE_API_KEY?.trim() ||
+    process.env.CHEAPKEYAI_API_KEY?.trim();
   const geminiApiKey = process.env.GEMINI_API_KEY;
 
   let openaiClient = options.openaiClient || null;
@@ -296,7 +298,7 @@ export async function generateAllMockups(
       if (isCheapKeyAIImageModel(model)) {
         if (!cheapKeyAIApiKey?.trim()) {
           throw new Error(
-            "CHEAPKEYAI_API_KEY chưa được cấu hình để tạo mockup bằng gpt-image-2-c.",
+            "CHEAPKEYAI_IMAGE_API_KEY hoặc CHEAPKEYAI_API_KEY chưa được cấu hình để tạo mockup bằng gpt-image-2-c.",
           );
         }
         openaiClient = new OpenAI({
@@ -371,14 +373,23 @@ export async function generateAllMockups(
           refinementNote,
         );
         const usesCheapKeyAI = isCheapKeyAIImageModel(model);
-        const upstreamModel = usesCheapKeyAI
-          ? process.env.CHEAPKEYAI_UPSTREAM_MODEL?.trim() ||
-            (model === "gpt-image-2-cheapkey" ? "gpt-image-2" : model)
+        const configuredUpstream = process.env.CHEAPKEYAI_UPSTREAM_MODEL?.trim();
+        const primaryUpstreamModel = usesCheapKeyAI
+          ? configuredUpstream || (model === "gpt-image-2-cheapkey" ? "gpt-image-2" : model)
           : model;
+        const fallbackUpstreamModel =
+          usesCheapKeyAI && !configuredUpstream
+            ? primaryUpstreamModel === "gpt-image-2"
+              ? "gpt-image-2-c"
+              : primaryUpstreamModel === "gpt-image-2-c"
+                ? "gpt-image-2"
+                : null
+            : null;
+
         // GPT Image 2 always uses high input fidelity and rejects this field.
         // Only the GPT Image 1 family accepts input_fidelity.
         const inputFidelity =
-          upstreamModel === "gpt-image-1" || upstreamModel === "gpt-image-1.5"
+          primaryUpstreamModel === "gpt-image-1" || primaryUpstreamModel === "gpt-image-1.5"
             ? quality === "low"
               ? "low"
               : "high"
@@ -390,33 +401,66 @@ export async function generateAllMockups(
             provider: isCheapKeyAIImageModel(model)
               ? "cheapkeyai"
               : "openai",
-            model,
+            model: primaryUpstreamModel,
+            fallbackModel: fallbackUpstreamModel,
             quality,
             size: OPENAI_IMAGE_SIZE,
             imageCount: 1,
             inputFidelity,
           }),
         );
-        const response = await openaiClient.images.edit(
-          {
-            model: upstreamModel,
-            image: openaiInput,
-            prompt,
-            n: 1,
-            size: OPENAI_IMAGE_SIZE,
-            quality,
-            input_fidelity: inputFidelity || undefined,
-            output_format: "png",
-            background: "opaque",
-          },
-          {
-            // CheapKeyAI may fan a retry out to another upstream channel. Do
-            // not let the SDK duplicate a slow/overloaded image request too.
-            maxRetries: usesCheapKeyAI ? 0 : configuredOpenAIRetries(),
-            timeout: configuredOpenAITimeout(),
-            signal: options.signal,
-          },
-        );
+        let response;
+        let activeModelUsed = primaryUpstreamModel;
+        try {
+          response = await openaiClient.images.edit(
+            {
+              model: primaryUpstreamModel,
+              image: openaiInput,
+              prompt,
+              n: 1,
+              size: OPENAI_IMAGE_SIZE,
+              quality,
+              input_fidelity: inputFidelity || undefined,
+              output_format: "png",
+              background: "opaque",
+            },
+            {
+              // CheapKeyAI may fan a retry out to another upstream channel. Do
+              // not let the SDK duplicate a slow/overloaded image request too.
+              maxRetries: usesCheapKeyAI ? 0 : configuredOpenAIRetries(),
+              timeout: configuredOpenAITimeout(),
+              signal: options.signal,
+            },
+          );
+        } catch (firstError) {
+          throwIfAborted(options.signal);
+          if (fallbackUpstreamModel) {
+            console.warn(
+              `[CheapKeyAI Image Edit] Model ${primaryUpstreamModel} gặp lỗi (${(firstError as Error)?.message || firstError}). Đang tự động fallback sang ${fallbackUpstreamModel}...`,
+            );
+            activeModelUsed = fallbackUpstreamModel;
+            response = await openaiClient.images.edit(
+              {
+                model: fallbackUpstreamModel,
+                image: openaiInput,
+                prompt,
+                n: 1,
+                size: OPENAI_IMAGE_SIZE,
+                quality,
+                input_fidelity: inputFidelity || undefined,
+                output_format: "png",
+                background: "opaque",
+              },
+              {
+                maxRetries: 0,
+                timeout: configuredOpenAITimeout(),
+                signal: options.signal,
+              },
+            );
+          } else {
+            throw firstError;
+          }
+        }
         throwIfAborted(options.signal);
         const b64 = response?.data?.[0]?.b64_json;
         if (!b64) {

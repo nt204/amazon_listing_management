@@ -244,11 +244,12 @@ async function resolveImageEditClient(
 
   const apiKey =
     options.cheapKeyAIApiKey?.trim() ||
+    process.env.CHEAPKEYAI_IMAGE_API_KEY?.trim() ||
     process.env.CHEAPKEYAI_API_KEY?.trim();
 
   if (!apiKey) {
     throw new Error(
-      "Chưa cấu hình CHEAPKEYAI_API_KEY để tạo Ornament Template Mockup bằng GPT Image 2.",
+      "Chưa cấu hình CHEAPKEYAI_IMAGE_API_KEY hoặc CHEAPKEYAI_API_KEY để tạo Ornament Template Mockup bằng GPT Image 2.",
     );
   }
 
@@ -363,11 +364,41 @@ export async function renderTemplateMockupWithAi(
         timeout: configuredTimeout(),
       },
     );
-  } catch (error) {
-    throw new Error(
-      `AI không thể ghép thiết kế vào template: ${describeProviderError(error)}`,
-      { cause: error },
-    );
+  } catch (firstError) {
+    if (!options.imageEditClient) {
+      // Attempt automatic fallback to gpt-image-2-c
+      try {
+        console.warn(
+          `[CheapKeyAI Template Edit] Model ${GLASS_ORNAMENT_IMAGE_MODEL} lỗi. Thử lại với gpt-image-2-c...`,
+        );
+        response = await client.images.edit(
+          {
+            model: "gpt-image-2-c",
+            image: [templateFile, sourceFile],
+            prompt: buildAiEditPrompt(sourceImageMode, spec.name),
+            n: 1,
+            size: outputSize.value,
+            quality,
+            output_format: "png",
+            background: "opaque",
+          },
+          {
+            maxRetries: 0,
+            timeout: configuredTimeout(),
+          },
+        );
+      } catch {
+        throw new Error(
+          `AI không thể ghép thiết kế vào template: ${describeProviderError(firstError)}`,
+          { cause: firstError },
+        );
+      }
+    } else {
+      throw new Error(
+        `AI không thể ghép thiết kế vào template: ${describeProviderError(firstError)}`,
+        { cause: firstError },
+      );
+    }
   }
 
   const decoded = decodeBase64Image(response.data?.[0]?.b64_json);

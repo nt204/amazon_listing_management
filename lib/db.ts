@@ -9,6 +9,7 @@ import {
   type TrelloImagePreviewVariant,
 } from "@/lib/image-processing";
 import type {
+  AmazonShopSummary,
   BrandProfile,
   ListingContent,
   ListingInput,
@@ -69,7 +70,7 @@ async function ensureSchema() {
     const sql = getDatabase();
     globalForDatabase.listingPostgresSchema = sql<{ name: string }[]>`
         SELECT name FROM schema_migrations
-        WHERE name = '016_parallel_mockup_steps.sql'
+        WHERE name = '022_backfill_template_brands.sql'
         LIMIT 1
       `
       .then((rows) => {
@@ -775,6 +776,7 @@ interface ListingRow {
   input_json: ListingInput | string;
   result_json: ListingResult | string;
   current_listing_json: ListingContent | string;
+  source_trello_card_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -795,6 +797,7 @@ function toStoredListing(row: ListingRow): StoredListing {
     result: parseJson(row.result_json),
     current_listing: parseJson(row.current_listing_json),
     revisions: [],
+    source_trello_card_id: row.source_trello_card_id || null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -816,7 +819,12 @@ function storedInputReferences(input: ListingInput, listingId: string): ListingI
   };
 }
 
-export async function saveGeneratedListing(scope: DataScope, input: ListingInput, result: ListingResult) {
+export async function saveGeneratedListing(
+  scope: DataScope,
+  input: ListingInput,
+  result: ListingResult,
+  options: { sourceTrelloCardId?: string } = {},
+) {
   await ensureSchema();
   const sql = getDatabase();
   const status: ListingStatus = result.policy_validation.passed
@@ -932,11 +940,12 @@ export async function saveGeneratedListing(scope: DataScope, input: ListingInput
       await transaction`
       INSERT INTO listings (
         id, team_id, internal_name, product_type, marketplace, status, model_used,
-        input_json, result_json, current_listing_json
+        input_json, result_json, current_listing_json, source_trello_card_id
       ) VALUES (
         ${result.request_id}, ${scope.teamId}, ${input.internal_name}, ${input.product_type},
         ${input.marketplace}, ${status}, ${result.model_used}, ${transaction.json(toJson(storedInput))},
-        ${transaction.json(toJson(result))}, ${transaction.json(toJson(result.listing))}
+        ${transaction.json(toJson(result))}, ${transaction.json(toJson(result.listing))},
+        ${options.sourceTrelloCardId || null}
       )
       `;
       for (const image of images) {
@@ -1025,6 +1034,7 @@ export async function getListing(scope: DataScope, id: string): Promise<StoredLi
       input_json,
       result_json,
       current_listing_json,
+      source_trello_card_id::text,
       created_at::text,
       updated_at::text
     FROM listings
@@ -1078,6 +1088,34 @@ export async function getListing(scope: DataScope, id: string): Promise<StoredLi
   }
 
   return listing;
+}
+
+export async function getLatestListingForTrelloCard(
+  scope: DataScope,
+  cardId: string,
+  sku?: string,
+): Promise<StoredListing | null> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const rows = await sql<{ id: string }[]>`
+    SELECT id::text
+    FROM listings
+    WHERE team_id = ${scope.teamId}
+      AND (
+        source_trello_card_id = ${cardId}
+        OR (
+          source_trello_card_id IS NULL
+          AND ${sku || ""} <> ''
+          AND (
+            internal_name = ${sku || ""}
+            OR LEFT(internal_name, LENGTH(${sku || ""}) + 1) = ${`${sku || ""}_`}
+          )
+        )
+      )
+    ORDER BY (source_trello_card_id = ${cardId}) DESC, created_at DESC
+    LIMIT 1
+  `;
+  return rows[0] ? getListing(scope, rows[0].id) : null;
 }
 
 export async function getListingWithAiImages(
@@ -1434,6 +1472,180 @@ export async function deleteBrandProfile(scope: DataScope, id: string): Promise<
   return false;
 }
 
+export async function listAmazonShops(scope: DataScope): Promise<AmazonShopSummary[]> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const rows = await sql<AmazonShopSummary[]>`
+    SELECT
+      shop.id::text,
+      shop.name,
+      shop.seller_id,
+      shop.contributor_id,
+      shop.is_unassigned,
+      COUNT(template.id)::int AS template_count,
+      shop.created_at::text,
+      shop.updated_at::text
+    FROM amazon_shops AS shop
+    LEFT JOIN listing_templates AS template
+      ON template.team_id = shop.team_id AND template.shop_id = shop.id
+    WHERE shop.team_id = ${scope.teamId}
+    GROUP BY shop.id
+    ORDER BY shop.is_unassigned ASC, shop.name ASC
+  `;
+  return [...rows];
+}
+
+export async function getAmazonShop(scope: DataScope, id: string): Promise<AmazonShopSummary | null> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const rows = await sql<AmazonShopSummary[]>`
+    SELECT
+      shop.id::text,
+      shop.name,
+      shop.seller_id,
+      shop.contributor_id,
+      shop.is_unassigned,
+      COUNT(template.id)::int AS template_count,
+      shop.created_at::text,
+      shop.updated_at::text
+    FROM amazon_shops AS shop
+    LEFT JOIN listing_templates AS template
+      ON template.team_id = shop.team_id AND template.shop_id = shop.id
+    WHERE shop.team_id = ${scope.teamId} AND shop.id = ${id}
+    GROUP BY shop.id
+    LIMIT 1
+  `;
+  return rows[0] || null;
+}
+
+export async function saveAmazonShop(
+  scope: DataScope,
+  input: { name: string; sellerId?: string; contributorId?: string },
+): Promise<AmazonShopSummary> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const id = crypto.randomUUID();
+  const rows = await sql<AmazonShopSummary[]>`
+    WITH saved AS (
+      INSERT INTO amazon_shops (id, team_id, name, seller_id, contributor_id)
+      VALUES (${id}, ${scope.teamId}, ${input.name}, ${input.sellerId || ""}, ${input.contributorId || ""})
+      ON CONFLICT (team_id, LOWER(name)) DO UPDATE SET
+        seller_id = EXCLUDED.seller_id,
+        contributor_id = CASE
+          WHEN EXCLUDED.contributor_id <> '' THEN EXCLUDED.contributor_id
+          ELSE amazon_shops.contributor_id
+        END,
+        updated_at = NOW()
+      RETURNING id, name, seller_id, contributor_id, is_unassigned, created_at, updated_at
+    )
+    SELECT
+      saved.id::text,
+      saved.name,
+      saved.seller_id,
+      saved.contributor_id,
+      saved.is_unassigned,
+      0::int AS template_count,
+      saved.created_at::text,
+      saved.updated_at::text
+    FROM saved
+  `;
+  await recordAuditEvent(scope, "amazon_shop.saved", "amazon_shop", rows[0].id, {
+    name: rows[0].name,
+  });
+  return rows[0];
+}
+
+export async function resolveAmazonShopFromTemplate(
+  scope: DataScope,
+  input: { contributorId: string; shopKey: string; brandName: string },
+): Promise<AmazonShopSummary> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const contributorId = input.contributorId.trim();
+  const shopKey = input.shopKey.trim();
+  const brandName = input.brandName.trim();
+  if (!contributorId) throw new Error("File không chứa mã nhận diện shop Amazon (contributorId).");
+  if (!brandName) throw new Error("Chưa xác định Brand đang nhận template.");
+
+  const matches = await sql<AmazonShopSummary[]>`
+    SELECT shop.id::text, shop.name, shop.seller_id, shop.contributor_id,
+      shop.is_unassigned, COUNT(template.id)::int AS template_count,
+      shop.created_at::text, shop.updated_at::text
+    FROM amazon_shops AS shop
+    LEFT JOIN listing_templates AS template
+      ON template.team_id = shop.team_id AND template.shop_id = shop.id
+    WHERE shop.team_id = ${scope.teamId}
+      AND shop.is_unassigned = FALSE
+      AND (
+        LOWER(shop.contributor_id) = LOWER(${contributorId})
+        OR (shop.seller_id <> '' AND LOWER(shop.seller_id) IN (LOWER(${contributorId}), LOWER(${shopKey})))
+      )
+    GROUP BY shop.id
+    LIMIT 1
+  `;
+  if (matches[0]) {
+    if (matches[0].name.localeCompare(brandName, undefined, { sensitivity: "accent" }) !== 0) {
+      const updated = await sql<AmazonShopSummary[]>`
+        UPDATE amazon_shops
+        SET name = ${brandName}, updated_at = NOW()
+        WHERE team_id = ${scope.teamId} AND id = ${matches[0].id}
+        RETURNING id::text, name, seller_id, contributor_id, is_unassigned,
+          ${matches[0].template_count}::int AS template_count, created_at::text, updated_at::text
+      `;
+      return updated[0] || matches[0];
+    }
+    return matches[0];
+  }
+
+  const brandAccounts = await sql<AmazonShopSummary[]>`
+    SELECT shop.id::text, shop.name, shop.seller_id, shop.contributor_id,
+      shop.is_unassigned, COUNT(template.id)::int AS template_count,
+      shop.created_at::text, shop.updated_at::text
+    FROM amazon_shops AS shop
+    LEFT JOIN listing_templates AS template
+      ON template.team_id = shop.team_id AND template.shop_id = shop.id
+    WHERE shop.team_id = ${scope.teamId}
+      AND shop.is_unassigned = FALSE
+      AND LOWER(shop.name) = LOWER(${brandName})
+    GROUP BY shop.id
+    ORDER BY shop.created_at ASC
+  `;
+
+  if (brandAccounts[0]) {
+    const bound = await sql<AmazonShopSummary[]>`
+      UPDATE amazon_shops
+      SET contributor_id = ${contributorId},
+          seller_id = CASE WHEN ${shopKey} <> '' THEN ${shopKey} ELSE seller_id END,
+          updated_at = NOW()
+      WHERE team_id = ${scope.teamId} AND id = ${brandAccounts[0].id}
+      RETURNING id::text, name, seller_id, contributor_id, is_unassigned,
+        ${brandAccounts[0].template_count}::int AS template_count, created_at::text, updated_at::text
+    `;
+    if (bound[0]) return bound[0];
+  }
+
+  return saveAmazonShop(scope, { name: brandName, sellerId: shopKey, contributorId });
+}
+
+export async function deleteAmazonShop(scope: DataScope, id: string): Promise<boolean> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const deleted = await sql<{ id: string }[]>`
+    DELETE FROM amazon_shops AS shop
+    WHERE shop.id = ${id}
+      AND shop.team_id = ${scope.teamId}
+      AND shop.is_unassigned = FALSE
+      AND NOT EXISTS (
+        SELECT 1 FROM listing_templates AS template
+        WHERE template.team_id = shop.team_id AND template.shop_id = shop.id
+      )
+    RETURNING shop.id::text
+  `;
+  if (!deleted.length) return false;
+  await recordAuditEvent(scope, "amazon_shop.deleted", "amazon_shop", id);
+  return true;
+}
+
 interface ListingTemplateRow extends ListingTemplateSummary {
   metadata_json: ListingTemplateMetadata | string;
   workbook_bytes?: Buffer | null;
@@ -1441,13 +1653,29 @@ interface ListingTemplateRow extends ListingTemplateSummary {
 }
 
 function toListingTemplateSummary(row: ListingTemplateRow): ListingTemplateSummary {
+  const metadata = parseJson(row.metadata_json) as ListingTemplateMetadata;
+  const isBlank = Boolean(metadata?.is_blank);
+  const isExplicitNotReady = metadata?.is_ready === false;
+  const hasParentChild = Boolean(metadata?.source_parent_row && metadata?.source_child_row);
+  const isReady = !isBlank && !isExplicitNotReady && hasParentChild;
+
   return {
     id: row.id,
+    shop_id: row.shop_id,
+    shop_name: row.shop_name,
+    shop_is_unassigned: row.shop_is_unassigned,
+    brand_profile_id: row.brand_profile_id,
+    brand_name: row.brand_name,
+    phoi_name: row.phoi_name,
+    phoi_key: row.phoi_key,
+    source_template_id: row.source_template_id,
+    is_auto_mapped: row.is_auto_mapped,
+    is_ready: isReady,
     name: row.name,
     original_filename: row.original_filename,
     file_extension: row.file_extension,
     product_type: row.product_type,
-    metadata: parseJson(row.metadata_json),
+    metadata,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -1457,11 +1685,18 @@ export async function listListingTemplates(scope: DataScope): Promise<ListingTem
   await ensureSchema();
   const sql = getDatabase();
   const rows = await sql<ListingTemplateRow[]>`
-    SELECT id::text, name, original_filename, file_extension, product_type,
-      metadata_json, created_at::text, updated_at::text
-    FROM listing_templates
-    WHERE team_id = ${scope.teamId}
-    ORDER BY name ASC
+    SELECT template.id::text, template.shop_id::text, shop.name AS shop_name,
+      shop.is_unassigned AS shop_is_unassigned, template.brand_profile_id::text,
+      template.brand_name, template.phoi_name, template.phoi_key,
+      template.source_template_id::text, template.is_auto_mapped,
+      template.name, template.original_filename,
+      template.file_extension, template.product_type, template.metadata_json,
+      template.created_at::text, template.updated_at::text
+    FROM listing_templates AS template
+    JOIN amazon_shops AS shop
+      ON shop.id = template.shop_id AND shop.team_id = template.team_id
+    WHERE template.team_id = ${scope.teamId}
+    ORDER BY shop.is_unassigned ASC, shop.name ASC, template.name ASC
   `;
   return rows.map(toListingTemplateSummary);
 }
@@ -1470,11 +1705,18 @@ export async function getListingTemplate(scope: DataScope, id: string) {
   await ensureSchema();
   const sql = getDatabase();
   const rows = await sql<ListingTemplateRow[]>`
-    SELECT id::text, name, original_filename, file_extension, product_type,
-      metadata_json, workbook_bytes, workbook_object_key,
-      created_at::text, updated_at::text
-    FROM listing_templates
-    WHERE id = ${id} AND team_id = ${scope.teamId}
+    SELECT template.id::text, template.shop_id::text, shop.name AS shop_name,
+      shop.is_unassigned AS shop_is_unassigned, template.brand_profile_id::text,
+      template.brand_name, template.phoi_name, template.phoi_key,
+      template.source_template_id::text, template.is_auto_mapped,
+      template.name, template.original_filename,
+      template.file_extension, template.product_type, template.metadata_json,
+      template.workbook_bytes, template.workbook_object_key,
+      template.created_at::text, template.updated_at::text
+    FROM listing_templates AS template
+    JOIN amazon_shops AS shop
+      ON shop.id = template.shop_id AND shop.team_id = template.team_id
+    WHERE template.id = ${id} AND template.team_id = ${scope.teamId}
     LIMIT 1
   `;
   if (!rows[0]) return null;
@@ -1489,6 +1731,13 @@ export async function getListingTemplate(scope: DataScope, id: string) {
 export async function saveListingTemplate(
   scope: DataScope,
   input: {
+    shopId: string;
+    brandProfileId?: string | null;
+    brandName: string;
+    phoiName: string;
+    phoiKey: string;
+    sourceTemplateId?: string | null;
+    isAutoMapped?: boolean;
     name: string;
     originalFilename: string;
     fileExtension: string;
@@ -1500,6 +1749,8 @@ export async function saveListingTemplate(
   await ensureSchema();
   const sql = getDatabase();
   const id = crypto.randomUUID();
+  const shop = await getAmazonShop(scope, input.shopId);
+  if (!shop || shop.is_unassigned) throw new Error("Shop Amazon đã chọn không hợp lệ.");
   const useR2 = objectStorageDriver() === "r2";
   const keepDatabaseBytes = !useR2 || retainDatabaseObjectBytes();
   const sha256 = createHash("sha256").update(input.workbook).digest("hex");
@@ -1516,7 +1767,9 @@ export async function saveListingTemplate(
   const oldRows = await sql<{ workbook_object_key: string | null }[]>`
     SELECT workbook_object_key
     FROM listing_templates
-    WHERE team_id = ${scope.teamId} AND LOWER(name) = LOWER(${input.name})
+    WHERE team_id = ${scope.teamId} AND shop_id = ${input.shopId}
+      AND LOWER(brand_name) = LOWER(${input.brandName})
+      AND LOWER(phoi_key) = LOWER(${input.phoiKey})
     LIMIT 1
   `;
   const uploadedKeys = useR2
@@ -1536,25 +1789,44 @@ export async function saveListingTemplate(
   let rows: ListingTemplateRow[];
   try {
     rows = await sql<ListingTemplateRow[]>`
-      INSERT INTO listing_templates (
-        id, team_id, name, original_filename, file_extension, product_type,
-        metadata_json, workbook_bytes, workbook_object_key, workbook_byte_size
-      ) VALUES (
-        ${id}, ${scope.teamId}, ${input.name}, ${input.originalFilename}, ${input.fileExtension},
-        ${input.productType}, ${sql.json(toJson(input.metadata))},
-        ${keepDatabaseBytes ? input.workbook : null}, ${objectKey}, ${input.workbook.byteLength}
+      WITH saved AS (
+        INSERT INTO listing_templates (
+          id, team_id, shop_id, brand_profile_id, brand_name, phoi_name, phoi_key,
+          source_template_id, is_auto_mapped, name, original_filename, file_extension, product_type,
+          metadata_json, workbook_bytes, workbook_object_key, workbook_byte_size
+        ) VALUES (
+          ${id}, ${scope.teamId}, ${input.shopId}, ${input.brandProfileId || null},
+          ${input.brandName}, ${input.phoiName}, ${input.phoiKey},
+          ${input.sourceTemplateId || null}, ${input.isAutoMapped || false},
+          ${input.name}, ${input.originalFilename},
+          ${input.fileExtension}, ${input.productType}, ${sql.json(toJson(input.metadata))},
+          ${keepDatabaseBytes ? input.workbook : null}, ${objectKey}, ${input.workbook.byteLength}
+        )
+        ON CONFLICT (team_id, shop_id, LOWER(brand_name), LOWER(phoi_key)) DO UPDATE SET
+          brand_profile_id = EXCLUDED.brand_profile_id,
+          phoi_name = EXCLUDED.phoi_name,
+          source_template_id = EXCLUDED.source_template_id,
+          is_auto_mapped = EXCLUDED.is_auto_mapped,
+          name = EXCLUDED.name,
+          original_filename = EXCLUDED.original_filename,
+          file_extension = EXCLUDED.file_extension,
+          product_type = EXCLUDED.product_type,
+          metadata_json = EXCLUDED.metadata_json,
+          workbook_bytes = EXCLUDED.workbook_bytes,
+          workbook_object_key = EXCLUDED.workbook_object_key,
+          workbook_byte_size = EXCLUDED.workbook_byte_size,
+          updated_at = NOW()
+        RETURNING id, shop_id, brand_profile_id, brand_name, phoi_name, phoi_key,
+          source_template_id, is_auto_mapped, name, original_filename, file_extension, product_type,
+          metadata_json, created_at, updated_at
       )
-      ON CONFLICT (team_id, LOWER(name)) DO UPDATE SET
-        original_filename = EXCLUDED.original_filename,
-        file_extension = EXCLUDED.file_extension,
-        product_type = EXCLUDED.product_type,
-        metadata_json = EXCLUDED.metadata_json,
-        workbook_bytes = EXCLUDED.workbook_bytes,
-        workbook_object_key = EXCLUDED.workbook_object_key,
-        workbook_byte_size = EXCLUDED.workbook_byte_size,
-        updated_at = NOW()
-      RETURNING id::text, name, original_filename, file_extension, product_type,
-        metadata_json, created_at::text, updated_at::text
+      SELECT saved.id::text, saved.shop_id::text, ${shop.name} AS shop_name,
+        FALSE AS shop_is_unassigned, saved.brand_profile_id::text, saved.brand_name,
+        saved.phoi_name, saved.phoi_key, saved.source_template_id::text, saved.is_auto_mapped,
+        saved.name, saved.original_filename,
+        saved.file_extension, saved.product_type, saved.metadata_json,
+        saved.created_at::text, saved.updated_at::text
+      FROM saved
     `;
   } catch (error) {
     await deleteObjectKeysBestEffort(uploadedKeys);
@@ -1570,16 +1842,55 @@ export async function saveListingTemplate(
   return toListingTemplateSummary(rows[0]);
 }
 
+export async function moveListingTemplateToShop(
+  scope: DataScope,
+  templateId: string,
+  shopId: string,
+): Promise<boolean> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const moved = await sql<{ id: string }[]>`
+    UPDATE listing_templates AS template
+    SET shop_id = shop.id, updated_at = NOW()
+    FROM amazon_shops AS shop
+    WHERE template.id = ${templateId}
+      AND template.team_id = ${scope.teamId}
+      AND shop.id = ${shopId}
+      AND shop.team_id = ${scope.teamId}
+      AND shop.is_unassigned = FALSE
+    RETURNING template.id::text
+  `;
+  if (!moved.length) return false;
+  await recordAuditEvent(scope, "template.shop_changed", "listing_template", templateId, {
+    shop_id: shopId,
+  });
+  return true;
+}
+
 export async function deleteListingTemplate(scope: DataScope, id: string): Promise<boolean> {
   await ensureSchema();
   const sql = getDatabase();
   const deleted = await sql<{ id: string; workbook_object_key: string | null }[]>`
-    DELETE FROM listing_templates
-    WHERE id = ${id} AND team_id = ${scope.teamId}
-    RETURNING id::text, workbook_object_key
+    WITH target AS (
+      SELECT id, shop_id, phoi_key
+      FROM listing_templates
+      WHERE id = ${id} AND team_id = ${scope.teamId}
+    )
+    DELETE FROM listing_templates AS template
+    USING target
+    WHERE template.team_id = ${scope.teamId}
+      AND (
+        template.id = target.id
+        OR (
+          template.shop_id = target.shop_id
+          AND template.phoi_key = target.phoi_key
+          AND template.is_auto_mapped = TRUE
+        )
+      )
+    RETURNING template.id::text, template.workbook_object_key
   `;
   if (deleted.length > 0) {
-    await deleteObjectKeysBestEffort([deleted[0].workbook_object_key]);
+    await deleteObjectKeysBestEffort(deleted.map((row) => row.workbook_object_key));
     await recordAuditEvent(scope, "template.deleted", "listing_template", id);
     return true;
   }

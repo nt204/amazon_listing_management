@@ -245,7 +245,7 @@ export function ListingForm({
         >
           <label
             htmlFor="images"
-            className="flex min-h-32 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-[#b9c1c7] bg-[#fafbfb] px-4 py-5 text-center hover:border-[#b84f1d] hover:bg-[#fff8f4]"
+            className="flex min-h-32 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50/70 px-4 py-5 text-center hover:border-indigo-500 hover:bg-indigo-50/50 transition"
           >
             <UploadSimpleIcon className="mb-2 text-[#65717c]" size={24} />
             <span className="text-sm font-semibold text-[#39444d]">Tải ảnh sản phẩm</span>
@@ -498,15 +498,15 @@ export function ListingForm({
         </Field>
       </div>
 
-      <div className="border-t border-[#dfe3e6] bg-white p-4">
+      <div className="border-t border-slate-200/80 bg-white p-4 shadow-2xs">
         <button
           type="button"
           disabled={loading}
           onClick={onSubmit}
-          className="flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#b84f1d] px-4 text-sm font-bold text-white hover:bg-[#963f17] active:translate-y-px disabled:bg-[#c5c9cc]"
+          className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 px-4 text-xs font-black text-white shadow-sm shadow-indigo-600/20 hover:from-indigo-700 hover:to-indigo-800 active:scale-[0.98] disabled:opacity-50 transition cursor-pointer"
         >
-          {loading ? <FileImageIcon size={19} /> : <MagicWandIcon size={19} weight="bold" />}
-          {loading ? "Đang đọc ảnh và viết listing..." : "Tạo listing"}
+          {loading ? <FileImageIcon size={19} className="animate-spin" /> : <MagicWandIcon size={19} weight="bold" />}
+          {loading ? "Đang đọc ảnh và viết listing..." : "Tạo Listing Mới"}
         </button>
       </div>
     </section>

@@ -29,6 +29,7 @@ import {
   XIcon,
   PlusIcon,
   CopyIcon,
+  CheckIcon,
   TrashIcon,
   PencilIcon,
   DownloadSimpleIcon,
@@ -61,6 +62,7 @@ export function ProductPresetModal({
   const [notice, setNotice] = useState<string>("");
   const [batchModalOpen, setBatchModalOpen] = useState<boolean>(false);
   const [batchInputText, setBatchInputText] = useState<string>("");
+  const [copiedPrompt, setCopiedPrompt] = useState<boolean>(false);
 
   // Edit category modal state
   const [editingCategory, setEditingCategory] = useState<ProductCategoryPreset | null>(null);
@@ -373,14 +375,6 @@ export function ProductPresetModal({
       preset.id === currentPreset.id
         ? {
             ...preset,
-            label:
-              parsed.categoryMeta?.label && !preset.isSystem
-                ? parsed.categoryMeta.label
-                : preset.label,
-            icon:
-              parsed.categoryMeta?.icon && !preset.isSystem
-                ? parsed.categoryMeta.icon
-                : preset.icon,
             contents: limitedContents,
           }
         : preset,
@@ -396,9 +390,15 @@ export function ProductPresetModal({
     );
   };
 
-  const handleCopyChatGPTTemplate = () => {
-    void navigator.clipboard.writeText(CHATGPT_PROMPT_TEMPLATE);
-    setNotice("📋 Đã sao chép Prompt mẫu gửi ChatGPT vào bộ nhớ tạm (Clipboard)!");
+  const handleCopyChatGPTTemplate = async () => {
+    try {
+      await navigator.clipboard.writeText(CHATGPT_PROMPT_TEMPLATE);
+      setCopiedPrompt(true);
+      setNotice("📋 Đã sao chép Prompt mẫu gửi ChatGPT vào bộ nhớ tạm (Clipboard)!");
+      setTimeout(() => setCopiedPrompt(false), 2500);
+    } catch {
+      setNotice("❌ Không thể sao chép vào bộ nhớ tạm.");
+    }
   };
 
   const handleDeleteContent = (id: number) => {
@@ -1007,11 +1007,24 @@ export function ProductPresetModal({
               <button
                 type="button"
                 onClick={handleCopyChatGPTTemplate}
-                className="flex items-center gap-1.5 shrink-0 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 shadow-2xs hover:bg-indigo-100 transition"
+                className={`flex items-center gap-1.5 shrink-0 rounded-xl px-3.5 py-1.5 text-xs font-extrabold transition-all duration-200 cursor-pointer ${
+                  copiedPrompt
+                    ? "bg-emerald-600 text-white shadow-md scale-105"
+                    : "border border-indigo-200 bg-indigo-50 text-indigo-700 shadow-2xs hover:bg-indigo-100 hover:border-indigo-300 active:scale-95"
+                }`}
                 title="Sao chép Prompt mẫu câu lệnh để gửi cho ChatGPT soi sản phẩm"
               >
-                <CopyIcon className="h-4 w-4 text-indigo-600" />
-                <span>Copy Prompt ChatGPT</span>
+                {copiedPrompt ? (
+                  <>
+                    <CheckIcon className="h-4 w-4 text-white animate-in zoom-in-50 duration-150" weight="bold" />
+                    <span>Đã Copy Prompt!</span>
+                  </>
+                ) : (
+                  <>
+                    <CopyIcon className="h-4 w-4 text-indigo-600" weight="bold" />
+                    <span>Copy Prompt ChatGPT</span>
+                  </>
+                )}
               </button>
             </div>
 

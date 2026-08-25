@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { inspectListingTemplate } from "../lib/excel-automation";
-import { saveListingTemplate, checkDatabaseHealth } from "../lib/db";
+import { checkDatabaseHealth, saveAmazonShop, saveListingTemplate } from "../lib/db";
 
 const apiKey = process.env.TRELLO_API_KEY || "";
 const token = process.env.TRELLO_TOKEN || "";
@@ -27,8 +27,16 @@ async function run() {
 
   try {
     await checkDatabaseHealth();
+    const shop = await saveAmazonShop({ teamId: "default", actorId: "system" }, {
+      name: process.env.AMAZON_SHOP_NAME || "Amazon Shop",
+      sellerId: process.env.AMAZON_SELLER_ID,
+    });
     const savedTemplate = await saveListingTemplate({ teamId: "default", actorId: "system" }, {
-      name: "ONVT0607NT01: Nail Tech Ornament Template",
+      shopId: shop.id,
+      brandName: process.env.AMAZON_BRAND_NAME || shop.name,
+      phoiName: "Nail Tech Ornament Template",
+      phoiKey: "nail-tech-ornament-template",
+      name: `${shop.name} - Nail Tech Ornament Template`,
       originalFilename: "GlassOrnament-ONVT0607NT01_TEST.xlsm",
       fileExtension: "xlsm",
       productType: metadata.product_type,

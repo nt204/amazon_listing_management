@@ -4,6 +4,7 @@ import {
   useState,
   useEffect,
   useCallback,
+  useMemo,
   useRef,
   type SyntheticEvent,
 } from "react";
@@ -584,6 +585,22 @@ export function AutoMockupGenerator({
   const [regenModel, setRegenModel] = useState<MockupModel>(
     DEFAULT_MOCKUP_MODEL as MockupModel,
   );
+  const [openHeaderDropdown, setOpenHeaderDropdown] = useState<"model" | "quality" | null>(null);
+
+  const MOCKUP_MODEL_OPTIONS = useMemo<{ value: MockupModel; label: string; tag: string; icon: string }[]>(() => [
+    { value: "gpt-image-2-c", label: "GPT Image 2 C", tag: "CheapKeyAI (Tối ưu)", icon: "💸" },
+    { value: "gpt-image-2-cheapkey", label: "GPT Image 2", tag: "CheapKeyAI", icon: "🤖" },
+    { value: "gpt-image-2", label: "GPT Image 2", tag: "OpenAI Direct (Chuẩn)", icon: "🔑" },
+    { value: "gpt-image-1.5", label: "GPT Image 1.5", tag: "OpenAI Direct (Nhanh)", icon: "⚡" },
+    { value: "gemini-3.1-flash-image", label: "Gemini 3.1 Flash Image", tag: "Google AI", icon: "🎨" },
+    { value: "fast-graphic", label: "Fast Graphic Engine", tag: "Tốc độ cao", icon: "⚡" },
+  ], []);
+
+  const QUALITY_OPTIONS = useMemo(() => [
+    { value: "low" as const, label: "low", tag: "Nhanh / bản nháp", icon: "⚡" },
+    { value: "medium" as const, label: "medium", tag: "Cân bằng tiêu chuẩn", icon: "⚖️" },
+    { value: "high" as const, label: "high", tag: "Cao / bản xuất bản", icon: "💎" },
+  ], []);
   const [singleMockupRegenerationJobs, setSingleMockupRegenerationJobs] = useState<
     Record<string, SingleMockupRegenerationJob>
   >({});
@@ -2373,80 +2390,168 @@ export function AutoMockupGenerator({
       )}
 
       {/* Top Controls Header Bar */}
-      <div className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50/90 via-purple-50/60 to-pink-50/80 p-5 shadow-xs">
+      <div className="rounded-3xl border border-indigo-100/80 bg-gradient-to-br from-indigo-50/80 via-white to-purple-50/60 p-5 shadow-xs transition-all">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
-            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-md shadow-indigo-500/20 shrink-0">
-              <SparkleIcon className="h-6 w-6 text-amber-300" />
+          <div className="flex items-center gap-3.5">
+            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-indigo-700 text-white shadow-sm shadow-indigo-500/25 shrink-0">
+              <SparkleIcon className="h-6 w-6 text-amber-300" weight="fill" />
             </span>
             <div>
-              <h3 className="text-base font-extrabold text-slate-900">
+              <h3 className="text-base font-black text-slate-900 tracking-tight">
                 Auto Mockup Generator
               </h3>
+              <p className="text-xs font-semibold text-slate-400">Tự động tạo bộ 7 mockup bán hàng Amazon từ 1 ảnh thiết kế gốc</p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="relative flex flex-wrap items-center gap-2.5">
+            {/* Backdrop to close dropdown on outside click */}
+            {openHeaderDropdown && (
+              <div
+                className="fixed inset-0 z-30 cursor-default"
+                onClick={() => setOpenHeaderDropdown(null)}
+              />
+            )}
+
             {/* AI Model Selector */}
-            <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-white px-3 py-1.5 shadow-2xs">
-              <SparkleIcon className="h-4 w-4 text-purple-600 shrink-0" />
-              <span className="text-xs font-bold text-slate-600">Model:</span>
-              <select
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value as MockupModel)}
-                className="bg-transparent text-xs font-extrabold text-slate-900 outline-none cursor-pointer pr-1"
+            <div className="relative z-40">
+              <button
+                type="button"
+                onClick={() => setOpenHeaderDropdown((prev) => (prev === "model" ? null : "model"))}
+                className={`flex items-center gap-2 rounded-xl border px-3 py-1.5 shadow-2xs text-left transition-all duration-150 cursor-pointer ${
+                  openHeaderDropdown === "model"
+                    ? "border-purple-400 bg-white ring-2 ring-purple-100 shadow-xs"
+                    : "border-slate-200/90 bg-white/90 hover:border-purple-300 hover:bg-white"
+                }`}
               >
-                <option value="gpt-image-2-c">
-                  💸 GPT Image 2 C (CheapKeyAI)
-                </option>
-                <option value="gpt-image-2-cheapkey">
-                  🤖 GPT Image 2 (CheapKeyAI)
-                </option>
-                <option value="gpt-image-2">
-                  🔑 GPT Image 2 (OpenAI Direct)
-                </option>
-                <option value="gpt-image-1.5">
-                  ⚡ GPT Image 1.5 (OpenAI Direct)
-                </option>
-                <option value="gemini-3.1-flash-image">
-                  🎨 Gemini 3.1 Flash Image
-                </option>
-                <option value="fast-graphic">
-                  ⚡ Fast Graphic Engine
-                </option>
-              </select>
+                <SparkleIcon className="h-4 w-4 text-purple-600 shrink-0" weight="fill" />
+                <span className="text-xs font-bold text-slate-500">Model:</span>
+                <span className="text-xs font-extrabold text-slate-900 truncate max-w-[150px]">
+                  {MOCKUP_MODEL_OPTIONS.find((m) => m.value === selectedModel)?.icon}{" "}
+                  {MOCKUP_MODEL_OPTIONS.find((m) => m.value === selectedModel)?.label || selectedModel}
+                </span>
+                <CaretDownIcon
+                  className={`h-3 w-3 text-slate-400 transition-transform duration-200 ${
+                    openHeaderDropdown === "model" ? "rotate-180 text-purple-600" : ""
+                  }`}
+                  weight="bold"
+                />
+              </button>
+
+              {openHeaderDropdown === "model" && (
+                <div className="absolute left-0 top-full mt-2 w-72 rounded-2xl border border-slate-200/90 bg-white/95 backdrop-blur-md p-1.5 shadow-xl animate-in fade-in zoom-in-95 duration-150 z-50">
+                  <div className="px-3 py-1.5 text-[10px] font-extrabold text-slate-400 uppercase tracking-wider border-b border-slate-100">
+                    Engine Tạo Mockup AI
+                  </div>
+                  <div className="mt-1 space-y-0.5 max-h-64 overflow-y-auto thin-scrollbar">
+                    {MOCKUP_MODEL_OPTIONS.map((item) => {
+                      const active = item.value === selectedModel;
+                      return (
+                        <button
+                          key={item.value}
+                          type="button"
+                          onClick={() => {
+                            setSelectedModel(item.value);
+                            setOpenHeaderDropdown(null);
+                          }}
+                          className={`flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-xs transition cursor-pointer ${
+                            active
+                              ? "bg-purple-50 text-purple-900 font-extrabold"
+                              : "text-slate-700 hover:bg-slate-50 hover:text-slate-900 font-semibold"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-sm">{item.icon}</span>
+                            <div className="min-w-0">
+                              <div className="truncate">{item.label}</div>
+                              <span className="text-[10px] font-medium text-slate-400">{item.tag}</span>
+                            </div>
+                          </div>
+                          {active && <CheckIcon className="h-4 w-4 text-purple-600 shrink-0" weight="bold" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
 
+            {/* Quality Selector */}
             {(selectedModel === "gpt-image-2" ||
               selectedModel === "gpt-image-2-c" ||
               selectedModel === "gpt-image-2-cheapkey" ||
               selectedModel === "gpt-image-1.5") && (
-                <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-white px-3 py-1.5 shadow-2xs">
-                  <span className="text-xs font-bold text-slate-600">Chất lượng:</span>
-                  <select
-                    value={selectedQuality}
-                    onChange={(event) =>
-                      setSelectedQuality(
-                        event.target.value as "low" | "medium" | "high",
-                      )
-                    }
-                    className="bg-transparent text-xs font-extrabold text-slate-900 outline-none cursor-pointer pr-1"
-                  >
-                    <option value="low">low (Nhanh / bản nháp)</option>
-                    <option value="medium">medium (Cân bằng)</option>
-                    <option value="high">high (Cao / bản cuối)</option>
-                  </select>
-                </div>
-              )}
+              <div className="relative z-40">
+                <button
+                  type="button"
+                  onClick={() => setOpenHeaderDropdown((prev) => (prev === "quality" ? null : "quality"))}
+                  className={`flex items-center gap-2 rounded-xl border px-3 py-1.5 shadow-2xs text-left transition-all duration-150 cursor-pointer ${
+                    openHeaderDropdown === "quality"
+                      ? "border-indigo-400 bg-white ring-2 ring-indigo-100 shadow-xs"
+                      : "border-slate-200/90 bg-white/90 hover:border-indigo-300 hover:bg-white"
+                  }`}
+                >
+                  <span className="text-xs font-bold text-slate-500">Chất lượng:</span>
+                  <span className="text-xs font-extrabold text-slate-900 capitalize">
+                    {QUALITY_OPTIONS.find((q) => q.value === selectedQuality)?.icon}{" "}
+                    {selectedQuality}
+                  </span>
+                  <CaretDownIcon
+                    className={`h-3 w-3 text-slate-400 transition-transform duration-200 ${
+                      openHeaderDropdown === "quality" ? "rotate-180 text-indigo-600" : ""
+                    }`}
+                    weight="bold"
+                  />
+                </button>
+
+                {openHeaderDropdown === "quality" && (
+                  <div className="absolute left-0 top-full mt-2 w-60 rounded-2xl border border-slate-200/90 bg-white/95 backdrop-blur-md p-1.5 shadow-xl animate-in fade-in zoom-in-95 duration-150 z-50">
+                    <div className="px-3 py-1.5 text-[10px] font-extrabold text-slate-400 uppercase tracking-wider border-b border-slate-100">
+                      Độ phân giải & chi tiết
+                    </div>
+                    <div className="mt-1 space-y-0.5">
+                      {QUALITY_OPTIONS.map((item) => {
+                        const active = item.value === selectedQuality;
+                        return (
+                          <button
+                            key={item.value}
+                            type="button"
+                            onClick={() => {
+                              setSelectedQuality(item.value);
+                              setOpenHeaderDropdown(null);
+                            }}
+                            className={`flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-xs transition cursor-pointer ${
+                              active
+                                ? "bg-indigo-50 text-indigo-900 font-extrabold"
+                                : "text-slate-700 hover:bg-slate-50 hover:text-slate-900 font-semibold"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-sm">{item.icon}</span>
+                              <div className="min-w-0">
+                                <div className="truncate font-bold capitalize">{item.label}</div>
+                                <span className="text-[10px] font-medium text-slate-400">{item.tag}</span>
+                              </div>
+                            </div>
+                            {active && <CheckIcon className="h-4 w-4 text-indigo-600 shrink-0" weight="bold" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Sync / Refresh Button */}
             <button
               onClick={syncAllColumns}
               disabled={loadingCards}
-              className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-indigo-700 transition disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 px-4 py-2 text-xs font-extrabold text-white shadow-sm shadow-indigo-600/20 hover:from-indigo-700 hover:to-indigo-800 active:scale-[0.98] transition duration-150 disabled:opacity-50 cursor-pointer"
             >
               <ArrowsClockwiseIcon
                 className={`h-4 w-4 ${loadingCards ? "animate-spin" : ""}`}
+                weight="bold"
               />
               <span>Làm Mới</span>
             </button>
@@ -2454,29 +2559,29 @@ export function AutoMockupGenerator({
         </div>
 
         {/* Mockup Content Checkbox Option Section */}
-        <div className="mt-4 border-t border-indigo-100/80 pt-3">
+        <div className="mt-4 border-t border-indigo-100/70 pt-3.5">
           {/* Category Selector Bar */}
-          <div className="mb-3.5 pb-2.5 border-b border-indigo-100/60">
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <span className="text-xs font-black text-slate-700 uppercase tracking-wide flex items-center gap-1.5 shrink-0">
-                <TagIcon className="h-4 w-4 text-indigo-600" />
+          <div className="mb-3.5 pb-3 border-b border-indigo-100/50">
+            <div className="flex items-center justify-between gap-2 mb-2.5">
+              <span className="text-xs font-black text-slate-700 uppercase tracking-wider flex items-center gap-1.5 shrink-0">
+                <TagIcon className="h-4 w-4 text-indigo-600" weight="bold" />
                 Mục Sản Phẩm (Product Category):
               </span>
 
               <button
                 type="button"
                 onClick={() => setShowProductPresetModal(true)}
-                className="flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-extrabold text-amber-800 shadow-2xs hover:bg-amber-100 transition cursor-pointer"
+                className="flex items-center gap-1.5 rounded-xl border border-amber-300/80 bg-amber-50/90 px-3 py-1 text-xs font-extrabold text-amber-900 shadow-2xs hover:bg-amber-100 hover:border-amber-400 transition cursor-pointer"
                 title="Thêm, nhân bản loại sản phẩm mới & chỉnh sửa Content / Prompt AI"
               >
-                <GearIcon className="h-3.5 w-3.5 text-amber-600 shrink-0" />
-                <span>Quản Lý Mẫu SP & Content</span>
+                <GearIcon className="h-3.5 w-3.5 text-amber-700 shrink-0" weight="bold" />
+                <span>Quản Lý Mẫu SP &amp; Content</span>
               </button>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
               {allPresets.length === 0 && (
-                <div className="w-full rounded-xl border border-dashed border-indigo-200 bg-white px-4 py-3 text-xs font-semibold text-slate-500">
+                <div className="w-full rounded-2xl border border-dashed border-indigo-200 bg-white/80 px-4 py-3 text-xs font-semibold text-slate-500">
                   Chưa có mục sản phẩm. Chọn <strong>Quản Lý Mẫu SP &amp; Content</strong> để tạo mục đầu tiên.
                 </div>
               )}
@@ -2487,17 +2592,17 @@ export function AutoMockupGenerator({
                     key={cat.id}
                     type="button"
                     onClick={() => handleSelectCategory(cat.id)}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all duration-150 cursor-pointer ${
+                    className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-extrabold transition-all duration-150 cursor-pointer ${
                       isActive
-                        ? "bg-indigo-600 text-white shadow-xs ring-2 ring-indigo-600/30"
-                        : "bg-slate-100 text-slate-700 hover:bg-slate-200/80 hover:text-slate-900 border border-slate-200/80"
+                        ? "bg-gradient-to-r from-indigo-600 to-indigo-700 text-white shadow-xs ring-2 ring-indigo-500/30 scale-[1.02]"
+                        : "bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-900 border border-slate-200/90 shadow-2xs"
                     }`}
                   >
-                    <span>{cat.icon || "📦"}</span>
+                    <span className="text-sm">{cat.icon || "📦"}</span>
                     <span>{cat.label}</span>
                     <span
-                      className={`text-[10px] font-bold px-1.5 py-0.2 rounded-full ${
-                        isActive ? "bg-white/20 text-white" : "bg-slate-200 text-slate-600"
+                      className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
+                        isActive ? "bg-white/25 text-white" : "bg-slate-100 text-slate-600"
                       }`}
                     >
                       {cat.contents.length} Content
@@ -2510,17 +2615,17 @@ export function AutoMockupGenerator({
 
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-black text-slate-900 uppercase tracking-wide flex items-center gap-1.5">
-                <ImageSquareIcon className="h-4 w-4 text-indigo-600" />
+              <span className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                <ImageSquareIcon className="h-4 w-4 text-indigo-600" weight="duotone" />
                 MOCKUP CONTENT ({mockupContents.filter((c) => c.checked).length}/7 TỐI ĐA SELECTION):
               </span>
             </div>
-            <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
                 onClick={resetToDefaultContents}
                 disabled={!selectedCategory}
-                className="text-xs font-bold text-indigo-600 hover:text-indigo-800 underline disabled:cursor-not-allowed disabled:opacity-40"
+                className="text-xs font-extrabold text-indigo-600 hover:text-indigo-800 underline disabled:cursor-not-allowed disabled:opacity-40 transition"
               >
                 Mặc định (7 Content)
               </button>
@@ -2528,24 +2633,15 @@ export function AutoMockupGenerator({
                 type="button"
                 onClick={deselectAllAiContents}
                 disabled={!selectedCategory}
-                className="text-xs font-bold text-slate-500 hover:text-slate-700 underline disabled:cursor-not-allowed disabled:opacity-40"
+                className="text-xs font-extrabold text-slate-500 hover:text-slate-700 underline disabled:cursor-not-allowed disabled:opacity-40 transition"
               >
                 Bỏ chọn Content AI
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowManageModal(true)}
-                disabled={!selectedCategory}
-                className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-1.5 text-xs font-extrabold text-white shadow-2xs hover:bg-indigo-700 transition disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <GearIcon className="h-4 w-4" />
-                <span>Quản Lý Content</span>
               </button>
             </div>
           </div>
 
           {contentNoticeMsg && (
-            <div className="mb-2.5 rounded-xl bg-sky-50 border border-sky-200 p-2 text-xs font-extrabold text-sky-900 flex items-center gap-2">
+            <div className="mb-2.5 rounded-xl bg-sky-50 border border-sky-200/80 p-2.5 text-xs font-bold text-sky-900 flex items-center gap-2">
               <span>ℹ️</span>
               <span>{contentNoticeMsg}</span>
             </div>
@@ -2553,7 +2649,7 @@ export function AutoMockupGenerator({
 
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
             {mockupContents.length === 0 && (
-              <div className="col-span-full rounded-xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center text-xs font-semibold text-slate-500">
+              <div className="col-span-full rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center text-xs font-semibold text-slate-500">
                 Tạo một mục sản phẩm mới để thiết lập Mockup Content.
               </div>
             )}
@@ -2564,10 +2660,10 @@ export function AutoMockupGenerator({
                   key={content.id}
                   className={`flex items-center gap-2 rounded-xl border p-2.5 text-xs font-bold transition-all duration-150 select-none ${
                     isMandatory
-                      ? "border-sky-400 bg-sky-50/90 text-sky-950 shadow-2xs ring-1 ring-sky-400/30 cursor-not-allowed"
+                      ? "border-sky-300 bg-sky-50/90 text-sky-950 shadow-2xs ring-1 ring-sky-300/40 cursor-not-allowed"
                       : content.checked
-                      ? "border-indigo-500 bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-400/20 hover:border-indigo-600 cursor-pointer"
-                      : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50/50 cursor-pointer"
+                      ? "border-indigo-500 bg-indigo-50/80 text-indigo-950 shadow-xs ring-1 ring-indigo-400/30 hover:border-indigo-600 cursor-pointer"
+                      : "border-slate-200/90 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50/60 cursor-pointer"
                   }`}
                 >
                   <input
@@ -2577,10 +2673,10 @@ export function AutoMockupGenerator({
                     onChange={() => toggleContentCheck(content.id)}
                     className="h-4 w-4 rounded accent-indigo-600 cursor-pointer shrink-0 disabled:opacity-80 disabled:cursor-not-allowed"
                   />
-                  <span className="truncate flex items-center gap-1 min-w-0">
+                  <span className="truncate flex items-center gap-1.5 min-w-0">
                     {content.label}
                     {isMandatory && (
-                      <span className="text-[10px] font-extrabold text-sky-700 bg-sky-200/80 px-1 py-0.5 rounded shrink-0">
+                      <span className="text-[9px] font-black text-sky-800 bg-sky-200/90 px-1.5 py-0.5 rounded-md shrink-0 uppercase tracking-wide">
                         Bắt buộc
                       </span>
                     )}
@@ -2592,116 +2688,7 @@ export function AutoMockupGenerator({
         </div>
       </div>
 
-      {/* Manage Mockup Contents Modal (Add / Delete / Reset) */}
-      {showManageModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
-          <div className="w-full max-w-2xl rounded-2xl bg-white p-5 shadow-2xl space-y-4 max-h-[85vh] flex flex-col">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3 shrink-0">
-              <div className="flex items-center gap-2">
-                <GearIcon className="h-5 w-5 text-indigo-600" />
-                <h3 className="text-base font-extrabold text-slate-900">
-                  Quản Lý Danh Sách Mockup Content
-                </h3>
-              </div>
-              <button
-                onClick={() => setShowManageModal(false)}
-                className="text-slate-400 hover:text-slate-600 p-1"
-              >
-                <XIcon className="h-5 w-5" />
-              </button>
-            </div>
 
-            {/* Quick Add Content Section inside Modal */}
-            <div className="flex items-center gap-2 bg-indigo-50/70 p-2.5 rounded-xl border border-indigo-100 shrink-0">
-              <input
-                type="text"
-                value={newContentLabel}
-                onChange={(e) => setNewContentLabel(e.target.value)}
-                placeholder="Thêm bối cảnh mới (VD: Garden View / Living Room Table)..."
-                className="w-full rounded-lg border border-slate-300 bg-white p-2 text-xs font-semibold outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleAddCustomContent();
-                }}
-              />
-              <button
-                type="button"
-                onClick={handleAddCustomContent}
-                className="flex items-center gap-1 rounded-lg bg-indigo-600 px-3.5 py-2 text-xs font-extrabold text-white shrink-0 hover:bg-indigo-700 transition"
-              >
-                <PlusIcon className="h-3.5 w-3.5" />
-                <span>Thêm Mới</span>
-              </button>
-            </div>
-
-            <div className="text-xs font-semibold text-slate-500 shrink-0">
-              Thêm concept bối cảnh mới hoặc xóa bối cảnh dư thừa. Content 1 là bắt buộc không thể xóa.
-            </div>
-
-            {/* List Table */}
-            <div className="overflow-y-auto space-y-2 pr-1 flex-1">
-              {mockupContents.map((content) => {
-                const isMandatory = content.id === 1;
-                return (
-                  <div
-                    key={content.id}
-                    className="flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-white transition"
-                  >
-                    <div className="flex items-center gap-3 min-w-0 flex-1">
-                      <span className="text-xs font-black text-indigo-700 bg-indigo-100 px-2 py-1 rounded-lg shrink-0">
-                        #{content.id}
-                      </span>
-                      <span className="text-xs font-bold text-slate-800 truncate flex items-center gap-2">
-                        {content.label}
-                        {isMandatory && (
-                          <span className="text-[10px] font-extrabold text-sky-700 bg-sky-200/80 px-1.5 py-0.5 rounded">
-                            Bắt buộc
-                          </span>
-                        )}
-                        {content.checked && (
-                          <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">
-                            Đang chọn
-                          </span>
-                        )}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-2 shrink-0">
-                      {!isMandatory && (
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteContent(content.id)}
-                          className="flex items-center gap-1 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50"
-                        >
-                          <TrashIcon className="h-3.5 w-3.5" />
-                          <span>Xóa</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Modal Footer */}
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-100 shrink-0">
-              <button
-                type="button"
-                onClick={handleResetToSystemDefaults}
-                className="text-xs font-bold text-slate-500 hover:text-slate-800 underline"
-              >
-                🔄 Khôi phục danh sách mặc định (10 Content)
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowManageModal(false)}
-                className="rounded-xl bg-indigo-600 px-5 py-2 text-xs font-extrabold text-white shadow-md hover:bg-indigo-700"
-              >
-                Hoàn Tất / Đóng
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Add Custom Mockup Content Modal */}
       {showAddContentModal && (
@@ -2776,16 +2763,16 @@ export function AutoMockupGenerator({
             setDraggedCardId(null);
             setDraggedFromColumn(null);
           }}
-          className={`flex w-full md:w-1/2 flex-col rounded-2xl border p-5 shadow-sm space-y-4 transition ${draggedFromColumn === "mockup"
-              ? "border-amber-400 bg-amber-50/20 ring-4 ring-amber-400/20"
-              : "border-slate-200 bg-white"
+          className={`flex w-full md:w-1/2 flex-col rounded-3xl border p-5 shadow-xs space-y-4 transition-all duration-200 ${draggedFromColumn === "mockup"
+              ? "border-amber-400 bg-amber-50/30 ring-4 ring-amber-400/20"
+              : "border-slate-200/80 bg-white/90 backdrop-blur-xs"
             }`}
         >
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2.5">
               <button
                 onClick={toggleSelectAllDesign}
-                className="text-slate-400 hover:text-indigo-600 transition"
+                className="text-slate-400 hover:text-indigo-600 transition cursor-pointer p-0.5"
                 title="Chọn / Bỏ chọn tất cả"
               >
                 {selectedCardIds.size > 0 &&
@@ -2798,11 +2785,11 @@ export function AutoMockupGenerator({
                   <SquareIcon className="h-5 w-5" />
                 )}
               </button>
-              <span className="h-3.5 w-3.5 rounded-full bg-amber-500 shadow-xs"></span>
-              <h4 className="text-sm font-extrabold text-slate-900 uppercase tracking-wide">
+              <span className="h-3 w-3 rounded-full bg-amber-500 shadow-xs ring-2 ring-amber-200"></span>
+              <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider">
                 {sourceListName}
               </h4>
-              <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-bold text-amber-700 border border-amber-200">
+              <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-[11px] font-extrabold text-amber-800 border border-amber-200/80 shadow-2xs">
                 {designCards.length} thẻ
               </span>
             </div>
@@ -2810,12 +2797,14 @@ export function AutoMockupGenerator({
 
           <div className="space-y-4">
             {designCards.length === 0 && !loadingCards ? (
-              <div className="flex h-48 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 p-6 text-center">
-                <CheckCircleIcon className="h-10 w-10 text-emerald-400" />
-                <p className="mt-2 text-xs font-bold text-slate-700">
+              <div className="flex h-52 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 p-6 text-center">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600 mb-2 shadow-2xs">
+                  <CheckCircleIcon className="h-7 w-7" weight="duotone" />
+                </div>
+                <p className="text-xs font-black text-slate-800">
                   Không còn thẻ nào trong cột {sourceListName}!
                 </p>
-                <p className="mt-1 text-[11px] text-slate-400">
+                <p className="mt-1 text-[11px] font-medium text-slate-400 max-w-xs leading-relaxed">
                   Tất cả thẻ thiết kế đã được xử lý và chuyển sang cột {targetListName}.
                 </p>
               </div>
@@ -2844,130 +2833,80 @@ export function AutoMockupGenerator({
                       setDraggedCardId(null);
                       setDraggedFromColumn(null);
                     }}
-                    className={`group rounded-2xl border p-4 transition shadow-xs hover:shadow-md cursor-grab active:cursor-grabbing ${isSelected
-                        ? "border-indigo-500 bg-indigo-50/30 ring-2 ring-indigo-400/20"
-                        : "border-slate-200 bg-white hover:border-indigo-300"
+                    className={`group rounded-2xl border p-4.5 transition-all duration-200 shadow-2xs hover:shadow-md cursor-grab active:cursor-grabbing ${isSelected
+                        ? "border-indigo-500 bg-indigo-50/40 ring-2 ring-indigo-400/20"
+                        : "border-slate-200/90 bg-white hover:border-indigo-300 hover:bg-slate-50/30"
                       } ${isGenerating ? "opacity-90" : ""}`}
                   >
-                    <div className="mb-3 flex items-start gap-3">
-                      <button
-                        onClick={() => toggleSelectCard(card.id)}
-                        className="mt-0.5 shrink-0 text-slate-400 hover:text-indigo-600 transition"
-                      >
-                        {isSelected ? (
-                          <CheckSquareIcon
-                            className="h-5 w-5 text-indigo-600"
-                            weight="fill"
-                          />
-                        ) : (
-                          <SquareIcon className="h-5 w-5" />
-                        )}
-                      </button>
-
-                      <div className="flex-1">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="inline-flex items-center gap-1 rounded-md bg-amber-100 px-2.5 py-0.5 text-xs font-extrabold text-amber-800 border border-amber-200 font-mono">
+                    <div className="mb-3 flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center gap-1 rounded-lg bg-indigo-50 border border-indigo-200/80 px-2.5 py-0.5 text-xs font-black text-indigo-900 font-mono">
                             SKU: {card.parsed?.sku || "SKU DESIGN"}
                           </span>
-                          <a
-                            href={card.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-slate-400 hover:text-indigo-600 transition"
-                            title="Xem thẻ trên Trello"
-                          >
-                            <ArrowSquareOutIcon className="h-5 w-5" />
-                          </a>
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500">
+                            {imageAttachments.length} Ảnh Đính Kèm
+                          </span>
                         </div>
-                        <h5 className="mt-1.5 text-base font-extrabold text-slate-900 line-clamp-1">
+                        <h5 className="mt-1.5 text-sm font-black text-slate-900 line-clamp-1 leading-snug">
                           {card.parsed?.itemName || card.name}
                         </h5>
                       </div>
+                      <a
+                        href={card.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-slate-400 hover:text-indigo-600 transition p-1"
+                        title="Xem thẻ trên Trello"
+                      >
+                        <ArrowSquareOutIcon className="h-4.5 w-4.5" weight="bold" />
+                      </a>
                     </div>
 
                     <div className="mb-3 flex items-center gap-2 rounded-xl bg-slate-50 border border-slate-200/80 p-2.5 text-xs text-slate-700 font-mono">
-                      <RulerIcon className="h-4 w-4 text-indigo-600 shrink-0" />
-                      <span>
+                      <RulerIcon className="h-4 w-4 text-indigo-600 shrink-0" weight="bold" />
+                      <span className="truncate">
                         Kích thước / dung tích:{" "}
-                        <strong className="text-slate-900 font-bold">
+                        <strong className="text-slate-900">
                           {dims.formatted || "Chưa có dữ liệu trong description"}
                         </strong>
                       </span>
                     </div>
 
-                    {/* Artwork Preview */}
-                    <div className="mb-4 space-y-1.5">
-                      <div className="text-xs font-bold text-slate-600">
-                        Ảnh thiết kế gốc ({imageAttachments.length}):
+                    {/* Image Attachments */}
+                    <div className="mb-3.5 space-y-1.5">
+                      <div className="text-[11px] font-extrabold text-slate-600 flex items-center justify-between">
+                        <span>Bộ Ảnh Thiết Kế ({imageAttachments.length}):</span>
                       </div>
                       {imageAttachments.length > 0 ? (
-                        <div className="flex flex-wrap gap-2 overflow-x-auto py-1">
-                          {imageAttachments.map((att, idx) => {
-                            const stepId =
-                              mockupIndexFromAttachmentName(att.name) ||
-                              (idx === 0 ? 1 : undefined);
-                            const statusKey = `${card.id}_${att.id}`;
-                            const currentStatus = approvalMap[statusKey];
-                            const isRegeneratingAttachment = stepId
-                              ? Boolean(
-                                  singleMockupRegenerationJobs[
-                                    singleMockupRegenerationKey(card.id, stepId)
-                                  ] ||
-                                    backgroundRegenerationKeys.has(
-                                      singleMockupRegenerationKey(card.id, stepId),
-                                    ),
-                                )
-                              : false;
-
-                            return (
-                              <div
-                                key={att.id}
-                                className={`group relative h-16 w-16 cursor-pointer overflow-hidden rounded-xl border bg-slate-100 shadow-xs transition shrink-0 ${
-                                  currentStatus === "approved"
-                                    ? "border-emerald-500 ring-2 ring-emerald-500/20"
-                                    : currentStatus === "rejected"
-                                      ? "border-rose-500 ring-2 ring-rose-500/20"
-                                      : "border-slate-200 hover:border-indigo-500"
-                                }`}
-                                title={att.name}
-                              >
-                                <img
-                                  src={att.thumbnailUrl || att.previewUrl || att.url}
-                                  alt={att.name}
-                                  className="h-full w-full object-cover transition group-hover:scale-105"
-                                  loading="lazy"
-                                  decoding="async"
-                                  onError={(event) => fallBackToMasterImage(event, att.url)}
-                                  onClick={() => {
-                                    const stepId = mockupIndexFromAttachmentName(att.name) || (idx === 0 ? 1 : undefined);
-                                    setStudioModal({ cardId: card.id, attachmentIndex: idx, stepId, attachmentId: att.id });
-                                    setRegenModel(selectedModel);
-                                    setRegenPromptNote("");
-                                  }}
-                                />
-
-                                {isRegeneratingAttachment && (
-                                  <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-slate-950/65 text-white">
-                                    <SpinnerIcon className="h-6 w-6 animate-spin" />
-                                  </span>
-                                )}
-
-                                {currentStatus === "approved" && (
-                                  <span className="absolute top-1 right-1 h-3.5 w-3.5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[9px] font-bold shadow-xs pointer-events-none">
-                                    ✓
-                                  </span>
-                                )}
-                                {currentStatus === "rejected" && (
-                                  <span className="absolute top-1 right-1 h-3.5 w-3.5 rounded-full bg-rose-600 text-white flex items-center justify-center text-[9px] font-bold shadow-xs pointer-events-none">
-                                    ✕
-                                  </span>
-                                )}
-                              </div>
-                            );
-                          })}
+                        <div className="flex flex-wrap gap-2 overflow-x-auto py-1 thin-scrollbar">
+                          {imageAttachments.map((att, idx) => (
+                            <div
+                              key={att.id}
+                              className="group relative h-16 w-16 cursor-pointer overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xs hover:border-indigo-500 transition shrink-0"
+                              onClick={() => {
+                                const stepId = mockupIndexFromAttachmentName(att.name) || (idx === 0 ? 1 : undefined);
+                                setStudioModal({ cardId: card.id, attachmentIndex: idx, stepId, attachmentId: att.id });
+                                setRegenModel(selectedModel);
+                                setRegenPromptNote("");
+                              }}
+                            >
+                              <img
+                                src={att.thumbnailUrl || att.previewUrl || att.url}
+                                alt={att.name}
+                                className="h-full w-full object-cover transition duration-200 group-hover:scale-105"
+                                loading="lazy"
+                                decoding="async"
+                                onError={(event) => fallBackToMasterImage(event, att.url)}
+                              />
+                              <span className="absolute bottom-1 right-1 rounded-md bg-slate-900/80 px-1 py-0.2 text-[8px] font-black text-white pointer-events-none">
+                                #{idx + 1}
+                              </span>
+                            </div>
+                          ))}
                         </div>
                       ) : (
-                        <div className="text-xs text-slate-400 italic bg-slate-50 p-2 rounded-lg text-center">
+                        <div className="text-xs text-slate-400 italic bg-slate-50 p-2.5 rounded-xl text-center border border-dashed border-slate-200">
                           Chưa có ảnh đính kèm.
                         </div>
                       )}
@@ -2975,7 +2914,7 @@ export function AutoMockupGenerator({
 
                     {isGenerating ? (
                       <div className="flex items-center gap-2">
-                        <div className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-xs font-bold text-white shadow-md">
+                        <div className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-xs">
                           <SpinnerIcon className="h-4 w-4 animate-spin text-white shrink-0" />
                           <span className="truncate">Đang tạo mockup...</span>
                         </div>
@@ -2993,7 +2932,7 @@ export function AutoMockupGenerator({
                                   backgroundJob.status === "cancel_requested"),
                             )
                           }
-                          className="flex items-center gap-1.5 rounded-xl bg-rose-600 px-4 py-3 text-xs font-bold text-white shadow-md hover:bg-rose-700 active:scale-[0.98] transition shrink-0"
+                          className="flex items-center gap-1.5 rounded-xl bg-rose-600 px-3.5 py-2.5 text-xs font-bold text-white shadow-xs hover:bg-rose-700 active:scale-[0.98] transition shrink-0 cursor-pointer"
                           title="Dừng tạo mockup & lưu các ảnh đã đính kèm"
                         >
                           {backgroundJob &&
@@ -3021,10 +2960,10 @@ export function AutoMockupGenerator({
                           batchProcessing ||
                           selectedAiMockupCount === 0
                         }
-                        className="w-full flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-extrabold text-white shadow-md shadow-indigo-600/20 hover:bg-indigo-700 active:scale-[0.98] disabled:opacity-50 transition"
+                        className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 px-4 py-2.5 text-xs font-black text-white shadow-sm shadow-indigo-600/20 hover:from-indigo-700 hover:to-indigo-800 active:scale-[0.98] disabled:opacity-50 transition cursor-pointer"
                       >
-                        <SparkleIcon className="h-4.5 w-4.5 text-amber-300" />
-                        <span>⚡ Tạo {selectedAiMockupCount} Mockup AI</span>
+                        <SparkleIcon className="h-4 w-4 text-amber-300" weight="fill" />
+                        <span>⚡ Tạo {selectedAiMockupCount} Mockup AI Đã Chọn</span>
                       </button>
                     )}
                   </div>
@@ -3052,18 +2991,18 @@ export function AutoMockupGenerator({
             setDraggedCardId(null);
             setDraggedFromColumn(null);
           }}
-          className={`flex w-full md:w-1/2 flex-col rounded-2xl border p-5 shadow-sm space-y-4 transition ${draggedFromColumn === "design"
-              ? "border-emerald-400 bg-emerald-50/20 ring-4 ring-emerald-400/20"
-              : "border-slate-200 bg-white"
+          className={`flex w-full md:w-1/2 flex-col rounded-3xl border p-5 shadow-xs space-y-4 transition-all duration-200 ${draggedFromColumn === "design"
+              ? "border-emerald-400 bg-emerald-50/30 ring-4 ring-emerald-400/20"
+              : "border-slate-200/80 bg-white/90 backdrop-blur-xs"
             }`}
         >
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2.5">
-              <span className="h-3.5 w-3.5 rounded-full bg-emerald-500 shadow-xs"></span>
-              <h4 className="text-base font-black text-slate-900 uppercase tracking-wide">
+              <span className="h-3 w-3 rounded-full bg-emerald-500 shadow-xs ring-2 ring-emerald-200"></span>
+              <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider">
                 {targetListName}
               </h4>
-              <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-extrabold text-emerald-700 border border-emerald-200">
+              <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-extrabold text-emerald-800 border border-emerald-200/80 shadow-2xs">
                 {mockupCards.length} thẻ
               </span>
             </div>
@@ -3071,12 +3010,14 @@ export function AutoMockupGenerator({
 
           <div className="space-y-4">
             {mockupCards.length === 0 && !loadingCards ? (
-              <div className="flex h-48 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 p-6 text-center">
-                <ImageSquareIcon className="h-10 w-10 text-slate-300" />
-                <p className="text-xs font-bold text-slate-500 mt-2">
+              <div className="flex h-52 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 p-6 text-center">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-400 mb-2 shadow-2xs">
+                  <ImageSquareIcon className="h-7 w-7" weight="duotone" />
+                </div>
+                <p className="text-xs font-black text-slate-700 mt-1">
                   Chưa có thẻ nào trong cột {targetListName}
                 </p>
-                <p className="text-[11px] text-slate-400 mt-1">
+                <p className="text-[11px] font-medium text-slate-400 mt-1 max-w-xs leading-relaxed">
                   Bấm nút tạo Mockup hoặc kéo thẻ từ cột {sourceListName} thả vào đây.
                 </p>
               </div>
@@ -3101,22 +3042,22 @@ export function AutoMockupGenerator({
                       setDraggedCardId(null);
                       setDraggedFromColumn(null);
                     }}
-                    className="group rounded-2xl border border-slate-200 bg-emerald-50/20 p-4 transition shadow-xs hover:shadow-md hover:border-emerald-300 cursor-grab active:cursor-grabbing"
+                    className="group rounded-2xl border border-slate-200/90 bg-white p-4.5 transition-all duration-200 shadow-2xs hover:shadow-md hover:border-emerald-300 hover:bg-emerald-50/10 cursor-grab active:cursor-grabbing"
                   >
                     <div className="mb-3 flex items-start justify-between gap-2">
-                      <div>
+                      <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100 px-2.5 py-0.5 text-xs font-extrabold text-emerald-800 border border-emerald-200 font-mono">
+                          <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 border border-emerald-200/80 px-2.5 py-0.5 text-xs font-black text-emerald-900 font-mono">
                             SKU: {card.parsed?.sku || "SKU DESIGN"}
                           </span>
-                          <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700">
-                            <CheckCircleIcon className="h-4 w-4 text-emerald-600" />{" "}
+                          <span className="inline-flex items-center gap-1 text-[11px] font-extrabold text-emerald-700 bg-emerald-50/60 px-2 py-0.5 rounded-md border border-emerald-100">
+                            <CheckCircleIcon className="h-3.5 w-3.5 text-emerald-600" weight="fill" />{" "}
                             {imageAttachments.length >= 7
                               ? "✨ Đã đủ 7/7 Ảnh Chuẩn"
                               : `${imageAttachments.length} Ảnh Đính Kèm`}
                           </span>
                         </div>
-                        <h5 className="mt-1.5 text-base font-extrabold text-slate-900 line-clamp-1">
+                        <h5 className="mt-1.5 text-sm font-black text-slate-900 line-clamp-1 leading-snug">
                           {card.parsed?.itemName || card.name}
                         </h5>
                       </div>
@@ -3124,16 +3065,16 @@ export function AutoMockupGenerator({
                         href={card.url}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-slate-400 hover:text-emerald-600 transition"
+                        className="text-slate-400 hover:text-emerald-600 transition p-1"
                         title="Xem thẻ trên Trello"
                       >
-                        <ArrowSquareOutIcon className="h-5 w-5" />
+                        <ArrowSquareOutIcon className="h-4.5 w-4.5" weight="bold" />
                       </a>
                     </div>
 
-                    <div className="mb-3 flex items-center gap-2 rounded-xl bg-white border border-slate-200/80 p-2.5 text-xs text-slate-700 font-mono">
-                      <RulerIcon className="h-4 w-4 text-emerald-600 shrink-0" />
-                      <span>
+                    <div className="mb-3 flex items-center gap-2 rounded-xl bg-slate-50 border border-slate-200/80 p-2.5 text-xs text-slate-700 font-mono">
+                      <RulerIcon className="h-4 w-4 text-emerald-600 shrink-0" weight="bold" />
+                      <span className="truncate">
                         Kích thước / dung tích:{" "}
                         <strong className="text-slate-900">
                           {dims.formatted || "Chưa có dữ liệu trong description"}
@@ -3143,13 +3084,12 @@ export function AutoMockupGenerator({
 
                     {/* Seven attachments: one original design plus six AI mockups. */}
                     <div className="mb-4 space-y-1.5">
-                      <div className="text-[11px] font-bold text-slate-600 flex items-center justify-between">
+                      <div className="text-[11px] font-extrabold text-slate-600 flex items-center justify-between">
                         <span>
-                          Bộ Ảnh Mockup Đính Kèm Trello (
-                          {imageAttachments.length}):
+                          Bộ Ảnh Mockup Đính Kèm Trello ({imageAttachments.length}):
                         </span>
                       </div>
-                      <div className="flex flex-wrap gap-2 overflow-x-auto py-1">
+                      <div className="flex flex-wrap gap-2 overflow-x-auto py-1 thin-scrollbar">
                         {imageAttachments.map((att, idx) => {
                           const stepId =
                             mockupIndexFromAttachmentName(att.name) ||
@@ -3170,19 +3110,19 @@ export function AutoMockupGenerator({
                           return (
                             <div
                               key={att.id}
-                              className={`group relative h-16 w-16 cursor-pointer overflow-hidden rounded-xl border bg-white shadow-xs transition shrink-0 ${
+                              className={`group relative h-16 w-16 cursor-pointer overflow-hidden rounded-xl border bg-white shadow-2xs transition-all duration-150 shrink-0 ${
                                 currentStatus === "approved"
-                                  ? "border-emerald-500 ring-2 ring-emerald-500/20"
+                                  ? "border-emerald-500 ring-2 ring-emerald-500/30"
                                   : currentStatus === "rejected"
-                                    ? "border-rose-500 ring-2 ring-rose-500/20"
-                                    : "border-slate-200 hover:border-emerald-500"
+                                    ? "border-rose-500 ring-2 ring-rose-500/30"
+                                    : "border-slate-200 hover:border-emerald-500 hover:shadow-xs"
                               }`}
                               title={att.name}
                             >
                               <img
                                 src={att.thumbnailUrl || att.previewUrl || att.url}
                                 alt={att.name}
-                                className="h-full w-full object-cover transition group-hover:scale-105"
+                                className="h-full w-full object-cover transition duration-200 group-hover:scale-105"
                                 loading="lazy"
                                 decoding="async"
                                 onError={(event) => fallBackToMasterImage(event, att.url)}
@@ -3199,12 +3139,12 @@ export function AutoMockupGenerator({
                                 </span>
                               )}
                               {currentStatus === "approved" && (
-                                <span className="absolute top-1 right-1 h-3.5 w-3.5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[9px] font-bold shadow-xs pointer-events-none">
+                                <span className="absolute top-1 right-1 h-4 w-4 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[9px] font-black shadow-xs pointer-events-none">
                                   ✓
                                 </span>
                               )}
                               {currentStatus === "rejected" && (
-                                <span className="absolute top-1 right-1 h-3.5 w-3.5 rounded-full bg-rose-600 text-white flex items-center justify-center text-[9px] font-bold shadow-xs pointer-events-none">
+                                <span className="absolute top-1 right-1 h-4 w-4 rounded-full bg-rose-600 text-white flex items-center justify-center text-[9px] font-black shadow-xs pointer-events-none">
                                   ✕
                                 </span>
                               )}
@@ -3221,7 +3161,7 @@ export function AutoMockupGenerator({
                         backgroundJobCardIds.has(card.id) ||
                         selectedAiMockupCount === 0
                       }
-                      className="w-full flex items-center justify-center gap-2 rounded-xl bg-slate-800 px-4 py-2.5 text-xs font-bold text-white shadow hover:bg-slate-900 active:scale-[0.98] disabled:opacity-50 transition"
+                      className="w-full flex items-center justify-center gap-2 rounded-xl bg-slate-900 hover:bg-slate-800 active:scale-[0.98] px-4 py-2.5 text-xs font-black text-white shadow-xs disabled:opacity-50 transition duration-150 cursor-pointer"
                     >
                       {isGenerating ? (
                         <>
@@ -3230,7 +3170,7 @@ export function AutoMockupGenerator({
                         </>
                       ) : (
                         <>
-                          <LightningIcon className="h-4 w-4 text-amber-400" />
+                          <LightningIcon className="h-4 w-4 text-amber-400" weight="fill" />
                           <span>Tạo {selectedAiMockupCount} Mockup AI Đã Chọn</span>
                         </>
                       )}

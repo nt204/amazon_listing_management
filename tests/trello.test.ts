@@ -8,6 +8,7 @@ import {
   parseTrelloCardTitle,
   selectMissingTrelloImageDerivatives,
   selectTrelloImageAttachments,
+  selectTrelloListingImageAttachments,
   selectLatestTrelloWorkbookAttachment,
   withStoredTrelloImagePreviews,
   type TrelloAttachment,
@@ -77,6 +78,45 @@ test("selectTrelloImageAttachments keeps only uploaded images from the current c
   assert.deepEqual(
     selectTrelloImageAttachments({ id: "card-current", attachments: [linkedOldProduct, spreadsheet, current] }),
     [current],
+  );
+});
+
+test("listing images contain one main image and at most six numbered mockups", () => {
+  const main = attachment({ id: "main", name: "Full Design.png" });
+  const unrelated = attachment({ id: "reference", name: "Reference photo.jpg" });
+  const mockups = Array.from({ length: 8 }, (_, offset) => {
+    const index = offset + 2;
+    return attachment({
+      id: `mockup-${index}`,
+      name: `Mockup${index}_Scene.jpg`,
+      date: `2026-08-${String(index).padStart(2, "0")}T12:00:00.000Z`,
+    });
+  });
+  const oldMockup2 = attachment({
+    id: "old-mockup-2",
+    name: "Mockup2_Old.jpg",
+    date: "2026-07-02T12:00:00.000Z",
+  });
+
+  assert.deepEqual(
+    selectTrelloListingImageAttachments({
+      id: "card-current",
+      attachments: [mockups[5], unrelated, oldMockup2, mockups[0], main, ...mockups.slice(1, 5), ...mockups.slice(6)],
+    }).map((item) => item.id),
+    ["main", "mockup-2", "mockup-3", "mockup-4", "mockup-5", "mockup-6", "mockup-7"],
+  );
+});
+
+test("Mockup1 becomes the main image when the source artwork is unavailable", () => {
+  const mockup1 = attachment({ id: "mockup-1", name: "Mockup1_Main.jpg" });
+  const mockup2 = attachment({ id: "mockup-2", name: "Mockup2_Dimensions.jpg" });
+
+  assert.deepEqual(
+    selectTrelloListingImageAttachments({
+      id: "card-current",
+      attachments: [mockup2, mockup1],
+    }).map((item) => item.id),
+    ["mockup-1", "mockup-2"],
   );
 });
 

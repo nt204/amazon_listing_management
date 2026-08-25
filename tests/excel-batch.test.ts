@@ -58,6 +58,15 @@ const row = {
 
 const template = {
   id: "template-1",
+  shop_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  shop_name: "Shop A",
+  shop_is_unassigned: false,
+  brand_profile_id: null,
+  brand_name: "Limima",
+  phoi_name: "Hanging Ornament",
+  phoi_key: "hanging-ornament",
+  source_template_id: null,
+  is_auto_mapped: false,
   name: "Hanging Ornament",
   original_filename: "HANGING_ORNAMENT.xlsx",
   file_extension: ".xlsx",

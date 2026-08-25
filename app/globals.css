@@ -1,17 +1,19 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f6f7f8;
+  --background: #f8fafc;
   --surface: #ffffff;
-  --surface-muted: #f0f2f4;
-  --text: #1d252c;
-  --text-muted: #65717c;
-  --line: #dfe3e6;
-  --accent: #b84f1d;
-  --accent-hover: #963f17;
-  --accent-soft: #fff0e8;
-  --focus: #d7652f;
-  --radius: 10px;
+  --surface-muted: #f1f5f9;
+  --text: #0f172a;
+  --text-muted: #64748b;
+  --line: #e2e8f0;
+  --line-subtle: #f1f5f9;
+  --primary: #4f46e5;
+  --primary-hover: #4338ca;
+  --primary-soft: #eef2ff;
+  --primary-glow: rgba(79, 70, 229, 0.15);
+  --focus: #6366f1;
+  --radius: 12px;
 }
 
 * {
@@ -20,26 +22,30 @@
 
 html {
   background: var(--background);
-  font-size: 11.5px;
+  font-size: 13px;
 }
 
 body {
   margin: 0;
   color: var(--text);
   background: var(--background);
-  font-family: "Avenir Next", Avenir, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-family: "Plus Jakarta Sans", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.01em;
 }
 
 button,
 input,
 textarea,
 select {
-  font: inherit;
+  font-family: inherit;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
 }
 
 button {
   cursor: pointer;
+  user-select: none;
 }
 
 button:disabled {
@@ -47,58 +53,106 @@ button:disabled {
 }
 
 ::selection {
-  color: #fff8f4;
-  background: var(--accent);
+  color: #ffffff;
+  background: var(--primary);
 }
 
 :focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--focus) 32%, transparent);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 
+/* Modernized Field Controls */
 .field-control {
   width: 100%;
   min-width: 0;
-  min-height: 30px;
-  border: 1px solid #cfd5da;
-  border-radius: 5px;
+  min-height: 34px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
   background: #ffffff;
-  color: var(--text);
-  padding: 4px 8px;
+  color: #0f172a;
+  padding: 6px 10px;
   font-size: 12px;
-  line-height: 1.35;
-  transition: border-color 140ms ease, box-shadow 140ms ease;
+  font-weight: 500;
+  line-height: 1.4;
+  transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03);
 }
 
 .field-control::placeholder {
-  color: #7d8790;
+  color: #94a3b8;
 }
 
 .field-control:hover {
-  border-color: #aeb6bd;
+  border-color: #cbd5e1;
 }
 
 .field-control:focus {
-  border-color: var(--focus);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 14%, transparent);
+  border-color: #6366f1;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
   outline: none;
 }
 
 .field-control[aria-invalid="true"] {
-  border-color: #c7352b;
+  border-color: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15);
 }
 
+/* Custom Scrollbars */
 .thin-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: #c9ced2 transparent;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+.thin-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.thin-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.thin-scrollbar::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+
+.thin-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Modern Glass & UI Utility Helpers */
+.glass-surface {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.card-subtle-lift {
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.card-subtle-lift:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px -4px rgba(0, 0, 0, 0.06), 0 4px 8px -2px rgba(0, 0, 0, 0.03);
+}
+
+.btn-interactive {
+  transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn-interactive:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 @media (prefers-reduced-motion: reduce) {
-
   *,
   *::before,
   *::after {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
   }
 }

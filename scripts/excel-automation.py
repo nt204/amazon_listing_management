@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import re
 import sys
@@ -11,6 +12,7 @@ import unicodedata
 from copy import copy
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import parse_qsl
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.cell.cell import MergedCell
@@ -304,6 +306,8 @@ def restore_row(worksheet: Any, row_index: int, snapshot: list[dict[str, Any]]) 
 
 def setting_row(worksheet: Any, name: str) -> int | None:
     settings = cell_text(worksheet.cell(1, 1).value)
+    if settings.startswith("settings="):
+        settings = settings[len("settings="):]
     match = re.search(rf"(?:^|&){name}=(\d+)(?:&|$)", settings)
     return int(match.group(1)) if match else None
 
@@ -319,7 +323,7 @@ def discover_attribute_row(worksheet: Any) -> int:
         "main_product_image_locator",
     )
     for row_index in range(1, min(worksheet.max_row, 100) + 1):
-        names = [cell_text(worksheet.cell(row_index, column)) for column in range(1, worksheet.max_column + 1)]
+        names = [cell_text(worksheet.cell(row_index, column).value) for column in range(1, worksheet.max_column + 1)]
         score = sum(any(name.startswith(marker) for name in names) for marker in markers)
         if best is None or score > best[0]:
             best = (score, row_index)
@@ -347,6 +351,170 @@ def configured_template_rows(worksheet: Any) -> tuple[int, int, int | None]:
     return attribute_row, discover_label_row(worksheet, attribute_row), setting_row(worksheet, "dataRow")
 
 
+def amazon_template_settings(worksheet: Any) -> dict[str, str]:
+    raw = cell_text(worksheet.cell(1, 1).value)
+    if raw.startswith("settings="):
+        raw = raw[len("settings="):]
+    return {key: value for key, value in parse_qsl(raw, keep_blank_values=True)}
+
+
+def decode_base64_text(value: str) -> str:
+    if not value:
+        return ""
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        return base64.urlsafe_b64decode(padded).decode("utf-8").strip()
+    except (ValueError, UnicodeDecodeError):
+        return ""
+
+
+def format_product_type(value: str) -> str:
+    words = re.sub(r"[_-]+", " ", cell_text(value)).strip().split()
+    return " ".join(word.upper() if len(word) <= 3 else word.capitalize() for word in words)
+
+
+def is_example_or_dummy_row(sku: str, title: str = "", brand: str = "") -> bool:
+    s = sku.strip().casefold()
+    t = title.strip().casefold()
+    b = brand.strip().casefold()
+    combined = f"{s} {t} {b}"
+
+    # Exact or regex match for common dummy/sample SKUs (e.g. ABC123, ABC-123, XYZ123, SAMPLE_SKU)
+    if re.search(r"^(abc|xyz|sample|example|test|demo|dummy|sku|placeholder|temp|none|n/a)[\d_-]*$", s):
+        return True
+
+    dummy_patterns = [
+        "example",
+        "sample",
+        "demo",
+        "test_sku",
+        "test sku",
+        "dummy",
+        "abc123",
+        "xyz123",
+        "sku123",
+        "[required]",
+        "[optional]",
+        "e.g.",
+        "eg.",
+    ]
+    for pat in dummy_patterns:
+        if pat in s:
+            return True
+    if s.startswith("ex_") or s.startswith("sample_") or s.startswith("test_"):
+        return True
+    if any(p in combined for p in ["example product", "example sku", "sample brand", "sample product", "example parent", "example child", "abc123", "dummy"]):
+        return True
+    return False
+
+
+def scan_listing_template(template_path: Path) -> dict[str, Any]:
+    workbook = load_workbook(
+        template_path,
+        read_only=False,
+        data_only=False,
+        keep_vba=template_path.suffix.lower() == ".xlsm",
+    )
+    if "Template" not in workbook.sheetnames:
+        raise ValueError("Workbook không có sheet Template.")
+    worksheet = workbook["Template"]
+    attribute_row, label_row, data_row = configured_template_rows(worksheet)
+    columns = technical_columns(worksheet, attribute_row)
+    settings = amazon_template_settings(worksheet)
+
+    contributor_id = settings.get("contributorId", "").strip()
+    marketplace_id = settings.get("primaryMarketplaceId", "").strip()
+    product_types: list[str] = []
+    decoded_ptds = decode_base64_text(settings.get("ptds", ""))
+    if decoded_ptds:
+        try:
+            parsed_ptds = json.loads(decoded_ptds)
+            candidates = parsed_ptds if isinstance(parsed_ptds, list) else [parsed_ptds]
+            product_types.extend(cell_text(value) for value in candidates if cell_text(value))
+        except json.JSONDecodeError:
+            product_types.append(decoded_ptds)
+
+    decoded_browse = decode_base64_text(settings.get("browseClassifications", ""))
+    if decoded_browse:
+        try:
+            for entry in json.loads(decoded_browse):
+                product_type = cell_text(entry.get("productType")) if isinstance(entry, dict) else ""
+                if product_type:
+                    product_types.append(product_type)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    product_type_column = optional_column(columns, "product_type")
+    if product_type_column is not None:
+        for row_index in range(attribute_row + 1, min(worksheet.max_row, attribute_row + 50) + 1):
+            product_type = cell_text(worksheet.cell(row_index, product_type_column).value)
+            if product_type:
+                product_types.append(product_type)
+
+    product_type = next((value for value in product_types if value), "")
+    if not product_type:
+        raise ValueError("Không nhận diện được loại phôi từ metadata Amazon trong file.")
+    if not contributor_id:
+        raise ValueError("Không nhận diện được shop vì file không có contributorId của Seller Central.")
+
+    store_name = (
+        settings.get("storeName")
+        or settings.get("merchantName")
+        or settings.get("sellerName")
+        or settings.get("accountName")
+        or settings.get("brandName")
+        or settings.get("brand")
+        or settings.get("merchant_name")
+        or settings.get("store_name")
+        or ""
+    ).strip()
+
+    sku_col = None
+    for name, idx in columns.items():
+        if name.startswith("contribution_sku") or name == "item_sku":
+            sku_col = idx
+            break
+
+    if not store_name:
+        for prefix in ("brand[", "brand_name", "merchant_name", "store_name", "manufacturer["):
+            for row_index in range(attribute_row + 1, min(worksheet.max_row, attribute_row + 30) + 1):
+                sku_val = cell_text(worksheet.cell(row_index, sku_col).value) if sku_col else ""
+                if is_example_or_dummy_row(sku_val):
+                    continue
+                val = first_value_with_prefix(worksheet, row_index, columns, prefix)
+                if val and val.casefold() not in ("generic", "na", "n/a", "unknown") and not is_example_or_dummy_row(sku_val, brand=val):
+                    store_name = val
+                    break
+            if store_name:
+                break
+
+    if not store_name:
+        stem = template_path.stem.strip()
+        if " - " in stem:
+            candidate = stem.split(" - ")[0].strip()
+            if candidate and not candidate.lower().startswith("amazon") and not candidate.lower().startswith("flat"):
+                store_name = candidate
+        elif "_" in stem:
+            candidate = stem.split("_")[0].strip()
+            if candidate and not candidate.lower().startswith("amazon") and not candidate.lower().startswith("flat"):
+                store_name = candidate
+
+    return {
+        "sheet_name": worksheet.title,
+        "attribute_row": attribute_row,
+        "label_row": label_row,
+        "data_row": data_row,
+        "column_count": worksheet.max_column,
+        "contributor_id": contributor_id,
+        "shop_key": contributor_id.rsplit(".", 1)[-1],
+        "marketplace_id": marketplace_id.rsplit(".", 1)[-1],
+        "template_identifier": settings.get("templateIdentifier", "").strip(),
+        "store_name": store_name,
+        "product_type": product_type,
+        "phoi_name": format_product_type(product_type),
+    }
+
+
 def technical_columns(worksheet: Any, attribute_row: int | None = None) -> dict[str, int]:
     if attribute_row is None:
         attribute_row = configured_template_rows(worksheet)[0]
@@ -358,27 +526,86 @@ def technical_columns(worksheet: Any, attribute_row: int | None = None) -> dict[
     return result
 
 
+def technical_header_signature(name: str) -> str:
+    """Match the same Amazon field across nearby template revisions."""
+    signature = cell_text(name).casefold()
+    signature = re.sub(
+        r"\[(marketplace_id|language_tag)=[^\]]+\]",
+        lambda match: f"[{match.group(1)}=*]",
+        signature,
+    )
+    return re.sub(r"\s+", "", signature)
+
+
+def destination_column_for_source(
+    source_name: str,
+    destination_columns: dict[str, int],
+    destination_signatures: dict[str, list[int]],
+) -> int | None:
+    if source_name in destination_columns:
+        return destination_columns[source_name]
+    candidates = destination_signatures.get(technical_header_signature(source_name), [])
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def source_template_rows(worksheet: Any, columns: dict[str, int], data_row: int | None = None) -> tuple[int, int]:
     del data_row
     attribute_row = configured_template_rows(worksheet)[0]
     sku_column = find_column(columns, prefix="contribution_sku")
     parentage_column = find_column(columns, prefix="parentage_level[")
     relationship_column = find_column(columns, prefix="child_parent_sku_relationship[")
-    parents: dict[str, int] = {}
+
+    title_col = None
+    for name, idx in columns.items():
+        if name.startswith("item_name[") or name == "item_name":
+            title_col = idx
+            break
+
+    brand_col = None
+    for name, idx in columns.items():
+        if name.startswith("brand[") or name == "brand_name":
+            brand_col = idx
+            break
+
+    parents: dict[str, list[int]] = {}
     children: list[tuple[int, str]] = []
+
     for row_index in range(attribute_row + 1, worksheet.max_row + 1):
         sku = cell_text(worksheet.cell(row_index, sku_column).value)
         parentage = cell_text(worksheet.cell(row_index, parentage_column).value).casefold()
         if not sku:
             continue
         if parentage == "parent" or sku.upper().endswith("_MAIN"):
-            parents.setdefault(sku.casefold(), row_index)
+            parents.setdefault(sku.casefold(), []).append(row_index)
         else:
             parent_sku = cell_text(worksheet.cell(row_index, relationship_column).value)
             children.append((row_index, parent_sku.casefold()))
+
+    valid_pairs: list[tuple[int, int, bool]] = []
     for child_row, parent_sku in children:
         if parent_sku in parents:
-            return parents[parent_sku], child_row
+            for parent_row in parents[parent_sku]:
+                parent_sku_val = cell_text(worksheet.cell(parent_row, sku_column).value)
+                child_sku_val = cell_text(worksheet.cell(child_row, sku_column).value)
+                parent_title = cell_text(worksheet.cell(parent_row, title_col).value) if title_col else ""
+                child_title = cell_text(worksheet.cell(child_row, title_col).value) if title_col else ""
+                parent_brand = cell_text(worksheet.cell(parent_row, brand_col).value) if brand_col else ""
+
+                is_p_dummy = is_example_or_dummy_row(parent_sku_val, parent_title, parent_brand)
+                is_c_dummy = is_example_or_dummy_row(child_sku_val, child_title, parent_brand)
+                is_real = not (is_p_dummy or is_c_dummy)
+
+                valid_pairs.append((parent_row, child_row, is_real))
+
+    # Priority 1: Real user product rows
+    real_pairs = [p for p in valid_pairs if p[2]]
+    if real_pairs:
+        return real_pairs[0][0], real_pairs[0][1]
+
+    # Priority 2: Fallback to any valid pair if no other rows exist
+    if valid_pairs:
+        return valid_pairs[0][0], valid_pairs[0][1]
+
     raise ValueError("Template cần có ít nhất một dòng mẫu Parent và một dòng mẫu Child.")
 
 
@@ -492,6 +719,248 @@ def inspect_template(template_path: Path) -> dict[str, Any]:
     }
 
 
+def extract_valid_options_for_column(
+    workbook: Any,
+    worksheet: Any,
+    column_index: int,
+    column_name: str,
+) -> list[str]:
+    options: list[str] = []
+    try:
+        if hasattr(worksheet, "data_validations") and worksheet.data_validations:
+            for dv in worksheet.data_validations.dataValidation:
+                in_range = False
+                for r in dv.ranges:
+                    if r.min_col <= column_index <= r.max_col:
+                        in_range = True
+                        break
+                if in_range and dv.formula1:
+                    formula_str = str(dv.formula1).strip().lstrip("=")
+                    if formula_str.startswith('"') and formula_str.endswith('"'):
+                        items = [x.strip() for x in formula_str[1:-1].split(",") if x.strip()]
+                        if items:
+                            return items
+                    elif "!" in formula_str:
+                        try:
+                            sheet_ref, range_ref = formula_str.split("!", 1)
+                            sheet_name = sheet_ref.strip("'\"").strip()
+                            range_clean = range_ref.replace("$", "").strip()
+                            if sheet_name in workbook.sheetnames:
+                                ref_sheet = workbook[sheet_name]
+                                cells = ref_sheet[range_clean]
+                                if not isinstance(cells, tuple):
+                                    cells = ((cells,),)
+                                elif len(cells) > 0 and not isinstance(cells[0], tuple):
+                                    cells = (cells,)
+                                for row in cells:
+                                    for cell in row:
+                                        val = cell_text(cell.value).strip()
+                                        if val and val not in options:
+                                            options.append(val)
+                                if options:
+                                    return options
+                        except Exception:
+                            pass
+                    elif hasattr(workbook, "defined_names") and formula_str in workbook.defined_names:
+                        try:
+                            defn = workbook.defined_names[formula_str]
+                            for title, coord in defn.destinations:
+                                if title in workbook.sheetnames:
+                                    ref_sheet = workbook[title]
+                                    range_clean = coord.replace("$", "").strip()
+                                    cells = ref_sheet[range_clean]
+                                    if not isinstance(cells, tuple):
+                                        cells = ((cells,),)
+                                    elif len(cells) > 0 and not isinstance(cells[0], tuple):
+                                        cells = (cells,)
+                                    for row in cells:
+                                        for cell in row:
+                                            val = cell_text(cell.value).strip()
+                                            if val and val not in options:
+                                                options.append(val)
+                                    if options:
+                                        return options
+                        except Exception:
+                            pass
+    except Exception:
+        pass
+
+    for sheet_candidate in ["Valid Values", "ValidValues", "Data Definitions"]:
+        if sheet_candidate in workbook.sheetnames:
+            try:
+                vv_sheet = workbook[sheet_candidate]
+                target_col = None
+                for row_idx in range(1, min(6, vv_sheet.max_row + 1)):
+                    for col_idx in range(1, vv_sheet.max_column + 1):
+                        header_val = cell_text(vv_sheet.cell(row_idx, col_idx).value).casefold()
+                        if (
+                            "merchant_shipping_group_name" in header_val
+                            or ("shipping" in header_val and ("template" in header_val or "group" in header_val or "merchant" in header_val))
+                            or column_name.casefold() in header_val
+                        ):
+                            target_col = col_idx
+                            break
+                    if target_col:
+                        break
+
+                if target_col:
+                    for r in range(2, vv_sheet.max_row + 1):
+                        val = cell_text(vv_sheet.cell(r, target_col).value).strip()
+                        if val and val not in options and not val.startswith("=") and not val.casefold().startswith("example"):
+                            options.append(val)
+                    if options:
+                        return options
+            except Exception:
+                pass
+
+    return options
+
+
+def validate_shipping_for_row(workbook: Any, worksheet: Any, row_index: int, columns: dict[str, int]) -> None:
+    shipping_col = optional_column(columns, "merchant_shipping_group_name")
+    if shipping_col is None:
+        for name, col_idx in columns.items():
+            if "shipping" in name.lower() and ("merchant" in name.lower() or "group" in name.lower() or "template" in name.lower()):
+                shipping_col = col_idx
+                break
+    if shipping_col is not None:
+        current_val = cell_text(worksheet.cell(row_index, shipping_col).value).strip()
+        options = extract_valid_options_for_column(workbook, worksheet, shipping_col, "merchant_shipping_group_name")
+        if options:
+            matched = next((opt for opt in options if opt.casefold() == current_val.casefold()), None)
+            if matched:
+                worksheet.cell(row_index, shipping_col).value = matched
+            else:
+                worksheet.cell(row_index, shipping_col).value = options[0]
+
+
+def map_template_to_blank(
+    source_path: Path,
+    destination_path: Path,
+    output_path: Path,
+    target_brand: str = "",
+) -> dict[str, Any]:
+    """Copy row values by Amazon technical header while retaining destination workbook metadata."""
+    source_workbook = load_workbook(
+        source_path,
+        read_only=False,
+        data_only=False,
+        keep_vba=source_path.suffix.lower() == ".xlsm",
+    )
+    destination_workbook = load_workbook(
+        destination_path,
+        read_only=False,
+        data_only=False,
+        keep_vba=destination_path.suffix.lower() == ".xlsm",
+    )
+    if "Template" not in source_workbook.sheetnames:
+        raise ValueError("Template nguồn không có sheet Template.")
+    if "Template" not in destination_workbook.sheetnames:
+        raise ValueError("Blank template của shop đích không có sheet Template.")
+
+    source_sheet = source_workbook["Template"]
+    destination_sheet = destination_workbook["Template"]
+    source_attribute_row, _, source_data_row = configured_template_rows(source_sheet)
+    destination_attribute_row, _, destination_data_row = configured_template_rows(destination_sheet)
+    source_columns = technical_columns(source_sheet, source_attribute_row)
+    destination_columns = technical_columns(destination_sheet, destination_attribute_row)
+    source_parent_row, source_child_row = source_template_rows(
+        source_sheet,
+        source_columns,
+        source_data_row,
+    )
+    source_rows = [source_parent_row]
+    if source_child_row != source_parent_row:
+        source_rows.append(source_child_row)
+
+    destination_signatures: dict[str, list[int]] = {}
+    for name, column_index in destination_columns.items():
+        destination_signatures.setdefault(technical_header_signature(name), []).append(column_index)
+
+    target_start_row = destination_data_row or destination_attribute_row + 1
+    if target_start_row <= destination_attribute_row:
+        raise ValueError("Dòng bắt đầu dữ liệu của blank template shop đích không hợp lệ.")
+
+    mapped_headers: set[str] = set()
+    unmapped_headers: set[str] = set()
+    source_value_count = 0
+    mapped_value_count = 0
+    for row_offset, source_row_index in enumerate(source_rows):
+        destination_row_index = target_start_row + row_offset
+        for source_name, source_column_index in source_columns.items():
+            source_cell = source_sheet.cell(source_row_index, source_column_index)
+            if source_cell.value is None and source_cell.hyperlink is None:
+                continue
+            if isinstance(source_cell.value, str) and source_cell.value.startswith("="):
+                # Formulas can contain workbook links or references. Mapping copies plain content only.
+                continue
+            source_value_count += 1
+            destination_column_index = destination_column_for_source(
+                source_name,
+                destination_columns,
+                destination_signatures,
+            )
+            if destination_column_index is None:
+                unmapped_headers.add(source_name)
+                continue
+
+            val_to_set = source_cell.value
+            if "shipping" in source_name.lower():
+                options = extract_valid_options_for_column(
+                    destination_workbook,
+                    destination_sheet,
+                    destination_column_index,
+                    source_name,
+                )
+                if options:
+                    matched = next(
+                        (opt for opt in options if opt.casefold() == str(val_to_set).strip().casefold()),
+                        None,
+                    )
+                    if matched:
+                        val_to_set = matched
+                    else:
+                        val_to_set = options[0]
+
+            destination_cell = destination_sheet.cell(destination_row_index, destination_column_index)
+            destination_cell.value = val_to_set
+            destination_cell.hyperlink = source_cell.hyperlink.target if source_cell.hyperlink else None
+            mapped_headers.add(source_name)
+            mapped_value_count += 1
+
+    if not mapped_value_count:
+        raise ValueError("Không tìm thấy cột tương thích giữa template nguồn và blank template shop đích.")
+
+    if target_brand:
+        for row_offset in range(len(source_rows)):
+            destination_row_index = target_start_row + row_offset
+            set_optional_value(
+                destination_sheet,
+                destination_row_index,
+                destination_columns,
+                target_brand,
+                prefix="brand[",
+            )
+            set_optional_value(
+                destination_sheet,
+                destination_row_index,
+                destination_columns,
+                target_brand,
+                prefix="manufacturer[",
+            )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    destination_workbook.save(output_path)
+    return {
+        "source_columns": len(source_columns),
+        "destination_columns": len(destination_columns),
+        "mapped_columns": len(mapped_headers),
+        "source_values": source_value_count,
+        "mapped_values": mapped_value_count,
+        "unmapped_columns": sorted(unmapped_headers)[:50],
+    }
+
+
 def find_column(columns: dict[str, int], exact: str | None = None, prefix: str | None = None) -> int:
     if exact and exact in columns:
         return columns[exact]
@@ -572,6 +1041,38 @@ def listing_text(item: dict[str, Any], key: str, fallback: Any = "") -> Any:
     return item.get("listing", {}).get(key, fallback)
 
 
+def find_image_column(columns: dict[str, int], image_type: str, index: int = 1) -> int | None:
+    if image_type == "main":
+        patterns = ["main_product_image_locator", "main_image_url", "main_image"]
+        for p in patterns:
+            for name, col_idx in columns.items():
+                if name.startswith(p):
+                    return col_idx
+        return None
+    elif image_type == "swatch":
+        patterns = ["swatch_product_image_locator", "swatch_image_url"]
+        for p in patterns:
+            for name, col_idx in columns.items():
+                if name.startswith(p):
+                    return col_idx
+        return None
+    elif image_type == "other":
+        patterns = [
+            f"other_product_image_locator_{index}",
+            f"other_product_image_locator[#{index}.",
+            f"other_product_image_locator{index}",
+            f"other_image_url{index}",
+            f"other_image_url_{index}",
+            f"other_image_locator_{index}",
+        ]
+        for p in patterns:
+            for name, col_idx in columns.items():
+                if name.startswith(p):
+                    return col_idx
+        return None
+    return None
+
+
 def fill_listing_fields(
     worksheet: Any,
     row_index: int,
@@ -605,54 +1106,32 @@ def fill_listing_fields(
         prefix="generic_keyword",
     )
 
-    set_image_locator_value(
-        worksheet,
-        row_index,
-        columns,
-        "",
-        prefix="main_product_image_locator",
-        required=True,
-    )
-    set_image_locator_value(
-        worksheet,
-        row_index,
-        columns,
-        "",
-        prefix="swatch_product_image_locator",
-    )
-    for image_index in range(1, 9):
-        set_image_locator_value(
-            worksheet,
-            row_index,
-            columns,
-            "",
-            prefix=f"other_product_image_locator_{image_index}",
-        )
-    image_urls = list(item.get("image_urls", []))[:9]
-    if image_urls:
-        set_image_locator_value(
-            worksheet,
-            row_index,
-            columns,
-            image_urls[0],
-            prefix="main_product_image_locator",
-            required=True,
-        )
-        set_image_locator_value(
-            worksheet,
-            row_index,
-            columns,
-            image_urls[0],
-            prefix="swatch_product_image_locator",
-        )
-    for image_index, image_url in enumerate(image_urls[1:9], start=1):
-        set_image_locator_value(
-            worksheet,
-            row_index,
-            columns,
-            image_url,
-            prefix=f"other_product_image_locator_{image_index}",
-        )
+    main_col = find_image_column(columns, "main")
+    if main_col:
+        worksheet.cell(row_index, main_col).value = ""
+        worksheet.cell(row_index, main_col).hyperlink = None
+
+    swatch_col = find_image_column(columns, "swatch")
+    if swatch_col:
+        worksheet.cell(row_index, swatch_col).value = ""
+        worksheet.cell(row_index, swatch_col).hyperlink = None
+
+    for i in range(1, 9):
+        other_col = find_image_column(columns, "other", i)
+        if other_col:
+            worksheet.cell(row_index, other_col).value = ""
+            worksheet.cell(row_index, other_col).hyperlink = None
+
+    image_urls = list(item.get("image_urls", []))[:7]
+    if image_urls and main_col:
+        worksheet.cell(row_index, main_col).value = image_urls[0]
+        worksheet.cell(row_index, main_col).hyperlink = image_urls[0] or None
+
+    for image_index, image_url in enumerate(image_urls[1:7], start=1):
+        other_col = find_image_column(columns, "other", image_index)
+        if other_col and image_url:
+            worksheet.cell(row_index, other_col).value = image_url
+            worksheet.cell(row_index, other_col).hyperlink = image_url or None
 
 
 def replace_source_identifier(value: Any, source_sku: str, target_sku: str) -> Any:
@@ -684,6 +1163,19 @@ def sanitize_restored_row(
             if "ABC123" in text:
                 text = text.replace("ABC123", target_sku)
             cell.value = text
+
+
+def clean_sku(raw: Any) -> str:
+    s = cell_text(raw).strip()
+    if not s:
+        return "SKU"
+    if "_" in s:
+        parts = s.split("_")
+        if len(parts) > 1 and " " in parts[1]:
+            return parts[0].strip()
+    elif " - " in s:
+        return s.split(" - ")[0].strip()
+    return s
 
 
 def fill_template(template_path: Path, payload_path: Path, output_path: Path) -> None:
@@ -729,7 +1221,7 @@ def fill_template(template_path: Path, payload_path: Path, output_path: Path) ->
     has_parent_structure = source_parent_row != source_child_row and parentage_col is not None
 
     if has_parent_structure:
-        first_sku = cell_text(items[0].get("sku"))
+        first_sku = clean_sku(items[0].get("sku"))
         parent_sku = f"{first_sku}_MAIN"
         parent_brand = cell_text(items[0].get("brand")) or "Generic"
         parent_row = target_data_row
@@ -745,11 +1237,12 @@ def fill_template(template_path: Path, payload_path: Path, output_path: Path) ->
         set_optional_value(worksheet, parent_row, columns, replace_source_identifier(source_parent_part, source_parent_sku, parent_sku), prefix="part_number")
         parent_color = first_sku if cell_text(source_parent_color).casefold() in {source_child_sku.casefold(), source_parent_sku.casefold()} else source_parent_color
         set_optional_value(worksheet, parent_row, columns, parent_color, prefix="color[")
+        validate_shipping_for_row(workbook, worksheet, parent_row, columns)
         fill_listing_fields(worksheet, parent_row, columns, items[0])
 
         for offset, item in enumerate(items, start=1):
             row_index = target_data_row + offset
-            sku = cell_text(item.get("sku"))
+            sku = clean_sku(item.get("sku"))
             brand = cell_text(item.get("brand")) or parent_brand
             restore_row(worksheet, row_index, child_snapshot)
             sanitize_restored_row(worksheet, row_index, [source_parent_sku, source_child_sku], sku)
@@ -763,11 +1256,12 @@ def fill_template(template_path: Path, payload_path: Path, output_path: Path) ->
             set_optional_value(worksheet, row_index, columns, replace_source_identifier(source_child_part, source_child_sku, sku), prefix="part_number")
             child_color = sku if cell_text(source_child_color).casefold() == source_child_sku.casefold() else source_child_color
             set_optional_value(worksheet, row_index, columns, child_color, prefix="color[")
+            validate_shipping_for_row(workbook, worksheet, row_index, columns)
             fill_listing_fields(worksheet, row_index, columns, item)
     else:
         for offset, item in enumerate(items):
             row_index = target_data_row + offset
-            sku = cell_text(item.get("sku"))
+            sku = clean_sku(item.get("sku"))
             brand = cell_text(item.get("brand")) or "Generic"
             restore_row(worksheet, row_index, child_snapshot)
             sanitize_restored_row(worksheet, row_index, [source_parent_sku, source_child_sku], sku)
@@ -779,6 +1273,7 @@ def fill_template(template_path: Path, payload_path: Path, output_path: Path) ->
             set_optional_value(worksheet, row_index, columns, replace_source_identifier(source_child_part, source_child_sku, sku), prefix="part_number")
             child_color = sku if cell_text(source_child_color).casefold() == source_child_sku.casefold() else source_child_color
             set_optional_value(worksheet, row_index, columns, child_color, prefix="color[")
+            validate_shipping_for_row(workbook, worksheet, row_index, columns)
             fill_listing_fields(worksheet, row_index, columns, item)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -810,6 +1305,9 @@ def create_standard_listing_excel(payload_path: Path, output_path: Path) -> None
         "other-image-url1",
         "other-image-url2",
         "other-image-url3",
+        "other-image-url4",
+        "other-image-url5",
+        "other-image-url6",
     ]
     worksheet.append(headers)
 
@@ -817,7 +1315,7 @@ def create_standard_listing_excel(payload_path: Path, output_path: Path) -> None
         sku = item.get("sku", "")
         listing = item.get("listing", {})
         brand = item.get("brand", "")
-        image_urls = item.get("image_urls", [])
+        image_urls = list(item.get("image_urls", []))[:7]
 
         bullets = listing.get("bullet_points", [])
         while len(bullets) < 5:
@@ -840,8 +1338,14 @@ def create_standard_listing_excel(payload_path: Path, output_path: Path) -> None
             image_urls[1] if len(image_urls) > 1 else "",
             image_urls[2] if len(image_urls) > 2 else "",
             image_urls[3] if len(image_urls) > 3 else "",
+            image_urls[4] if len(image_urls) > 4 else "",
+            image_urls[5] if len(image_urls) > 5 else "",
+            image_urls[6] if len(image_urls) > 6 else "",
         ]
         worksheet.append(row)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    workbook.save(output_path)
 
 def resize_image_for_ai(input_path: Path, output_path: Path, max_dim: int = 1600, quality: int = 82) -> dict[str, Any]:
     from PIL import Image, ImageOps
@@ -873,6 +1377,9 @@ def main() -> None:
     inspect_parser = subparsers.add_parser("inspect")
     inspect_parser.add_argument("source")
 
+    scan_parser = subparsers.add_parser("scan_template")
+    scan_parser.add_argument("source")
+
     sample_parser = subparsers.add_parser("sample")
     sample_parser.add_argument("output")
 
@@ -880,6 +1387,12 @@ def main() -> None:
     fill_parser.add_argument("template")
     fill_parser.add_argument("payload")
     fill_parser.add_argument("output")
+
+    map_template_parser = subparsers.add_parser("map_template")
+    map_template_parser.add_argument("source")
+    map_template_parser.add_argument("destination")
+    map_template_parser.add_argument("output")
+    map_template_parser.add_argument("--brand", default="")
 
     build_excel_parser = subparsers.add_parser("build_excel")
     build_excel_parser.add_argument("payload")
@@ -896,10 +1409,19 @@ def main() -> None:
         print(json.dumps(parse_workbook(Path(args.source)), ensure_ascii=False))
     elif args.command == "inspect":
         print(json.dumps(inspect_template(Path(args.source)), ensure_ascii=False))
+    elif args.command == "scan_template":
+        print(json.dumps(scan_listing_template(Path(args.source)), ensure_ascii=False))
     elif args.command == "sample":
         create_sample(Path(args.output))
     elif args.command == "fill":
         fill_template(Path(args.template), Path(args.payload), Path(args.output))
+    elif args.command == "map_template":
+        print(json.dumps(map_template_to_blank(
+            Path(args.source),
+            Path(args.destination),
+            Path(args.output),
+            args.brand,
+        ), ensure_ascii=False))
     elif args.command == "build_excel":
         create_standard_listing_excel(Path(args.payload), Path(args.output))
     elif args.command == "resize_image":

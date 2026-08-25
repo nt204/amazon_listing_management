@@ -226,7 +226,7 @@ Mở **Batch**, chọn template đã lưu rồi tải file input `.xlsx` hoặc 
 
 Brand được chọn ngay trong modal Batch từ Brand profile đã lưu hoặc nhập thủ công. Brand nhập thủ công có thể lưu ngay tại đây để tái sử dụng cho các batch sau. Hệ thống tải ảnh Trello, nén ảnh cho AI, tạo listing theo prompt/rule hiện tại, sau đó tải về category workbook đã có parent, child, variation và các thuộc tính tĩnh từ template.
 
-Trong modal Batch, upload template Amazon một lần và đặt tên dễ chọn như `Hanging Ornament` hoặc `Glass Ornament`. Hệ thống lưu workbook theo workspace, tự dò dòng technical headers và ghi nhớ vị trí thực tế của Title, Description, Bullet Points, Generic Keywords và ảnh. Các lần sau chỉ cần chọn template đã lưu rồi upload file input SKU.
+Mỗi Brand tương ứng với một tài khoản Seller Central. Khi tải template Amazon, người dùng chỉ chọn file dưới Brand hiện tại; hệ thống đọc `contributorId`, marketplace và product type để xác minh đúng tài khoản và đặt tên `Brand - Tên phôi`. Nếu Brand chưa có phôi này, người dùng phải tải blank từ Seller Central của chính Brand đó. Hệ thống có thể map nội dung mẫu từ Brand khác vào blank, nhưng tuyệt đối giữ metadata, validation, hidden sheet và cấu trúc Amazon của Brand đích. Hệ thống không xuất workbook của Brand này cho tài khoản Brand khác.
 
 Nút **Tải file đầu vào mẫu** tạo sẵn workbook bốn cột. Không có tọa độ cột content nào được cấu hình cố định; cùng một trường `generic_keyword[...]` có thể nằm ở AP, CG hoặc cột khác tùy template.
 
@@ -297,8 +297,9 @@ khung bảo trì vì thao tác đó khóa bảng.
 - `POST /api/listings/batch`
 - `GET|POST /api/import/sku-workbook`
 - `GET /api/import/trello-image`
-- `POST /api/import/amazon-template`
-- `GET|POST /api/templates`
+- `POST /api/import/amazon-template` - yêu cầu đúng cặp `shop_id` và `template_id`
+- `GET|POST|PATCH /api/templates` - `POST` chỉ nhận file; backend tự nhận diện shop + phôi và tự chọn phôi tương thích để map khi cần
+- `GET|POST|DELETE /api/shops`
 - `POST /api/listings/export`
 - `GET|PUT /api/listings/:id`
 - `POST /api/listings/:id/revise`
@@ -307,7 +308,7 @@ khung bảo trì vì thao tác đó khóa bảng.
 - `POST /api/listings/:id/export`
 - `GET|POST /api/brands`
 - `POST /api/references`
-- `POST /api/trello/process-card` - trả JSON như cũ; gửi `Accept: application/x-ndjson`
+- `POST /api/trello/process-card` - yêu cầu `shopId` và `templateId`; trả JSON như cũ; gửi `Accept: application/x-ndjson`
   để nhận tiến độ từng công đoạn, event `listing_ready` trước khi Excel/Trello hoàn tất,
   rồi event `complete` sau hậu xử lý.
 

@@ -45,7 +45,7 @@ export function AccountMenu({ actor }: { actor: RequestActor }) {
       if (!response.ok) throw new Error(body.error || "Không thể đổi mật khẩu.");
       setCurrentPassword("");
       setNewPassword("");
-      setPasswordNotice("Đã đổi mật khẩu.");
+      setPasswordNotice("Đã đổi mật khẩu thành công.");
     } catch (error) {
       setPasswordError(error instanceof Error ? error.message : "Không thể đổi mật khẩu.");
     } finally {
@@ -56,28 +56,28 @@ export function AccountMenu({ actor }: { actor: RequestActor }) {
   return (
     <details className="group relative">
       <summary
-        className="flex cursor-pointer list-none items-center gap-2 rounded-lg border border-slate-200 bg-white py-1 pl-1 pr-2 text-left hover:bg-slate-50"
+        className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-slate-200/80 bg-white/90 py-1 pl-1 pr-2.5 text-left shadow-2xs hover:border-indigo-200 hover:bg-slate-50/80 transition"
         aria-label="Mở menu tài khoản"
       >
-        <span className="grid h-7 w-7 place-items-center rounded-md bg-blue-600 text-[10px] font-black text-white">
+        <span className="grid h-7 w-7 place-items-center rounded-lg bg-gradient-to-br from-indigo-500 to-indigo-700 text-[10px] font-black text-white shadow-xs">
           {initials(actor.displayName)}
         </span>
-        <span className="hidden max-w-28 truncate text-[11px] font-bold text-slate-700 md:block">{actor.displayName}</span>
+        <span className="hidden max-w-28 truncate text-[11px] font-extrabold text-slate-800 md:block">{actor.displayName}</span>
       </summary>
-      <div className="absolute right-0 top-[calc(100%+8px)] z-40 w-64 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
-        <div className="border-b border-slate-100 px-3 py-3">
-          <div className="flex items-center gap-2">
-            <UserCircleIcon className="text-slate-400" size={20} weight="fill" />
+      <div className="absolute right-0 top-[calc(100%+8px)] z-40 w-64 overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-1.5 shadow-xl animate-in fade-in duration-150">
+        <div className="border-b border-slate-100 px-3 py-2.5">
+          <div className="flex items-center gap-2.5">
+            <UserCircleIcon className="text-indigo-600" size={24} weight="duotone" />
             <div className="min-w-0">
-              <p className="truncate text-xs font-extrabold text-slate-900">{actor.displayName}</p>
-              <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">{actor.role}</p>
+              <p className="truncate text-xs font-black text-slate-900">{actor.displayName}</p>
+              <p className="mt-0.5 inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.2 text-[9px] font-extrabold uppercase tracking-wide text-indigo-700">{actor.role}</p>
             </div>
           </div>
         </div>
-        <div className="p-1.5">
+        <div className="pt-1.5 space-y-0.5">
           {actor.role === "admin" ? (
-            <Link href="/admin" className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100">
-              <GearSixIcon size={16} /> Quản trị
+            <Link href="/admin" className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:text-indigo-900 transition">
+              <GearSixIcon size={16} className="text-indigo-600" /> Quản trị
             </Link>
           ) : null}
           <button
@@ -87,13 +87,13 @@ export function AccountMenu({ actor }: { actor: RequestActor }) {
               setPasswordError("");
               setPasswordNotice("");
             }}
-            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100"
+            className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:text-indigo-900 transition"
           >
-            <KeyIcon size={16} /> Đổi mật khẩu
+            <KeyIcon size={16} className="text-indigo-600" /> Đổi mật khẩu
           </button>
           {showPasswordForm ? (
-            <div className="mx-1 my-1 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
-              <label className="block text-[10px] font-bold text-slate-600" htmlFor="account-current-password">Mật khẩu hiện tại</label>
+            <div className="mx-1 my-1.5 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+              <label className="block text-[10px] font-extrabold text-slate-600" htmlFor="account-current-password">Mật khẩu hiện tại</label>
               <input
                 id="account-current-password"
                 type="password"
@@ -102,7 +102,7 @@ export function AccountMenu({ actor }: { actor: RequestActor }) {
                 onChange={(event) => setCurrentPassword(event.target.value)}
                 className="field-control mt-1"
               />
-              <label className="mt-2 block text-[10px] font-bold text-slate-600" htmlFor="account-new-password">Mật khẩu mới</label>
+              <label className="mt-2 block text-[10px] font-extrabold text-slate-600" htmlFor="account-new-password">Mật khẩu mới</label>
               <input
                 id="account-new-password"
                 type="password"
@@ -111,13 +111,13 @@ export function AccountMenu({ actor }: { actor: RequestActor }) {
                 onChange={(event) => setNewPassword(event.target.value)}
                 className="field-control mt-1"
               />
-              {passwordError ? <p className="mt-2 text-[10px] font-semibold leading-4 text-red-700" role="alert">{passwordError}</p> : null}
+              {passwordError ? <p className="mt-2 text-[10px] font-semibold leading-4 text-rose-600" role="alert">{passwordError}</p> : null}
               {passwordNotice ? <p className="mt-2 text-[10px] font-semibold leading-4 text-emerald-700" role="status">{passwordNotice}</p> : null}
               <button
                 type="button"
                 disabled={savingPassword || currentPassword.length < 10 || newPassword.length < 10}
                 onClick={() => void changePassword()}
-                className="mt-2 w-full rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-extrabold text-white hover:bg-blue-700 disabled:bg-slate-300"
+                className="mt-2.5 w-full rounded-xl bg-indigo-600 px-3 py-2 text-xs font-extrabold text-white shadow-xs hover:bg-indigo-700 disabled:bg-slate-300 transition"
               >
                 {savingPassword ? "Đang lưu..." : "Lưu mật khẩu mới"}
               </button>
@@ -127,7 +127,7 @@ export function AccountMenu({ actor }: { actor: RequestActor }) {
             type="button"
             disabled={loggingOut}
             onClick={() => void logout()}
-            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-bold text-red-700 hover:bg-red-50 disabled:opacity-60"
+            className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 transition disabled:opacity-60"
           >
             <SignOutIcon size={16} /> {loggingOut ? "Đang đăng xuất..." : "Đăng xuất"}
           </button>
@@ -136,3 +136,4 @@ export function AccountMenu({ actor }: { actor: RequestActor }) {
     </details>
   );
 }
+

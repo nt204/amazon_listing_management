@@ -12,6 +12,30 @@ const execFileAsync = promisify(execFile);
 const scriptPath = join(process.cwd(), "scripts", "excel-automation.py");
 const supportedExtensions = new Set([".xlsx", ".xlsm"]);
 
+export interface TemplateMappingReport {
+  source_columns: number;
+  destination_columns: number;
+  mapped_columns: number;
+  source_values: number;
+  mapped_values: number;
+  unmapped_columns: string[];
+}
+
+export interface ListingTemplateScan {
+  sheet_name: string;
+  attribute_row: number;
+  label_row: number;
+  data_row: number | null;
+  column_count: number;
+  contributor_id: string;
+  shop_key: string;
+  marketplace_id: string;
+  template_identifier: string;
+  store_name?: string;
+  product_type: string;
+  phoi_name: string;
+}
+
 async function runPython(args: string[]) {
   try {
     const { stdout } = await execFileAsync(process.env.PYTHON_BIN || "python3", [scriptPath, ...args], {
@@ -69,6 +93,54 @@ export async function inspectListingTemplate(
     await writeFile(sourcePath, buffer);
     const output = await runPython(["inspect", sourcePath]);
     return JSON.parse(output) as ListingTemplateMetadata & { product_type: string };
+  });
+}
+
+export async function scanListingTemplate(
+  buffer: Buffer,
+  filename: string,
+): Promise<ListingTemplateScan> {
+  const extension = extname(filename).toLowerCase();
+  if (!supportedExtensions.has(extension)) {
+    throw new Error("Chỉ hỗ trợ template .xlsx hoặc .xlsm.");
+  }
+  return withTempDirectory(async (directory) => {
+    const sourcePath = join(directory, `scan${extension}`);
+    await writeFile(sourcePath, buffer);
+    const output = await runPython(["scan_template", sourcePath]);
+    return JSON.parse(output) as ListingTemplateScan;
+  });
+}
+
+export async function mapListingTemplateToBlank(
+  sourceTemplate: Buffer,
+  sourceFilename: string,
+  destinationBlank: Buffer,
+  destinationFilename: string,
+  options: { brandName?: string } = {},
+): Promise<{ workbook: Buffer; report: TemplateMappingReport }> {
+  const sourceExtension = extname(sourceFilename).toLowerCase();
+  const destinationExtension = extname(destinationFilename).toLowerCase();
+  if (!supportedExtensions.has(sourceExtension) || !supportedExtensions.has(destinationExtension)) {
+    throw new Error("Chỉ hỗ trợ template .xlsx hoặc .xlsm.");
+  }
+  return withTempDirectory(async (directory) => {
+    const sourcePath = join(directory, `source${sourceExtension}`);
+    const destinationPath = join(directory, `destination${destinationExtension}`);
+    const outputPath = join(directory, `mapped${destinationExtension}`);
+    await Promise.all([
+      writeFile(sourcePath, sourceTemplate),
+      writeFile(destinationPath, destinationBlank),
+    ]);
+    const args = ["map_template", sourcePath, destinationPath, outputPath];
+    if (options.brandName?.trim()) {
+      args.push("--brand", options.brandName.trim());
+    }
+    const output = await runPython(args);
+    return {
+      workbook: await readFile(outputPath),
+      report: JSON.parse(output) as TemplateMappingReport,
+    };
   });
 }
 
