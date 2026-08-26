@@ -159,7 +159,7 @@ export function ListingWorkspace({
       {/* MAIN WORKSPACE AREA */}
       <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
         {/* TOP NAVBAR HEADER */}
-        <header className="flex h-13 shrink-0 items-center justify-between border-b border-slate-200/80 bg-white/95 backdrop-blur-md px-5 shadow-2xs z-10">
+        <header className="flex h-13 shrink-0 items-center justify-between border-b border-slate-200/80 bg-white/95 backdrop-blur-md px-5 shadow-2xs relative z-50">
           {/* Active View Title */}
           <div className="flex items-center gap-2.5">
             <span className="flex h-2.5 w-2.5 rounded-full bg-indigo-600 ring-4 ring-indigo-100" />

@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircleIcon, LockKeyIcon, UserPlusIcon } from "@phosphor-icons/react";
+import { CheckCircleIcon, EyeIcon, EyeSlashIcon, LockKeyIcon, UserPlusIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 
 type AuthMode = "login" | "register";
@@ -11,6 +11,8 @@ export function LoginScreen() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
@@ -140,34 +142,56 @@ export function LoginScreen() {
 
             <div>
               <label className="block text-xs font-bold text-[#39444d]" htmlFor="password">Mật khẩu</label>
-              <input
-                id="password"
-                type="password"
-                autoComplete={mode === "login" ? "current-password" : "new-password"}
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                onKeyDown={(event) => { if (event.key === "Enter" && canSubmit) void submit(); }}
-                className="field-control mt-2"
-                minLength={10}
-                maxLength={128}
-              />
+              <div className="relative mt-2">
+                <input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  autoComplete={mode === "login" ? "current-password" : "new-password"}
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  onKeyDown={(event) => { if (event.key === "Enter" && canSubmit) void submit(); }}
+                  className="field-control pr-10"
+                  minLength={10}
+                  maxLength={128}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1 rounded-md transition cursor-pointer"
+                  tabIndex={-1}
+                  title={showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
+                >
+                  {showPassword ? <EyeSlashIcon size={18} /> : <EyeIcon size={18} />}
+                </button>
+              </div>
               {mode === "register" ? <p className="mt-1.5 text-[11px] leading-4 text-[#65717c]">Tối thiểu 10 ký tự.</p> : null}
             </div>
 
             {mode === "register" ? (
               <div>
                 <label className="block text-xs font-bold text-[#39444d]" htmlFor="confirm-password">Nhập lại mật khẩu</label>
-                <input
-                  id="confirm-password"
-                  type="password"
-                  autoComplete="new-password"
-                  value={confirmPassword}
-                  onChange={(event) => setConfirmPassword(event.target.value)}
-                  onKeyDown={(event) => { if (event.key === "Enter" && canSubmit) void submit(); }}
-                  className="field-control mt-2"
-                  minLength={10}
-                  maxLength={128}
-                />
+                <div className="relative mt-2">
+                  <input
+                    id="confirm-password"
+                    type={showConfirmPassword ? "text" : "password"}
+                    autoComplete="new-password"
+                    value={confirmPassword}
+                    onChange={(event) => setConfirmPassword(event.target.value)}
+                    onKeyDown={(event) => { if (event.key === "Enter" && canSubmit) void submit(); }}
+                    className="field-control pr-10"
+                    minLength={10}
+                    maxLength={128}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword((prev) => !prev)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1 rounded-md transition cursor-pointer"
+                    tabIndex={-1}
+                    title={showConfirmPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
+                  >
+                    {showConfirmPassword ? <EyeSlashIcon size={18} /> : <EyeIcon size={18} />}
+                  </button>
+                </div>
               </div>
             ) : null}
           </div>

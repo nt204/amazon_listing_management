@@ -1366,15 +1366,16 @@ export function TrelloBoardView({
       {/* Trello Config Modal Dialog */}
       {(showConfig || showConfigModal) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
-          <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
             <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-3">
-              <div>
-                <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
-                  <GearIcon className="h-5 w-5 text-indigo-600" weight="bold" />
-                  <span>Cấu hình Trello Workflow</span>
-                </h3>
-                <p className="text-xs text-slate-500 mt-0.5">Cấu hình Board và các cột tự động cho cả Listing & Mockup.</p>
-              </div>
+              <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+                <GearIcon className="h-5 w-5 text-indigo-600" weight="bold" />
+                <span>
+                  {activeTab === "listing"
+                    ? "Cấu hình Trello — Listing"
+                    : "Cấu hình Trello — Auto Mockup"}
+                </span>
+              </h3>
               <button
                 type="button"
                 onClick={() => {
@@ -1396,10 +1397,13 @@ export function TrelloBoardView({
                   onChange={(e) => {
                     setBoardId(extractTrelloBoardId(e.target.value));
                     setBoardLists([]);
-                    setListingSourceListId("");
-                    setListingTargetListId("");
-                    setMockupSourceListId("");
-                    setMockupTargetListId("");
+                    if (activeTab === "listing") {
+                      setListingSourceListId("");
+                      setListingTargetListId("");
+                    } else {
+                      setMockupSourceListId("");
+                      setMockupTargetListId("");
+                    }
                   }}
                   placeholder="https://trello.com/b/UaCRcUxZ/test-project hoặc UaCRcUxZ"
                   className="w-full rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-2.5 text-xs font-mono text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
@@ -1408,12 +1412,16 @@ export function TrelloBoardView({
 
               {boardLists.length > 0 && (
                 <div className="grid grid-cols-1 gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-2">
-                  {[
-                    ["Cột đầu — Listing", listingSourceListId, setListingSourceListId],
-                    ["Cột đích — Listing", listingTargetListId, setListingTargetListId],
-                    ["Cột đầu — Mockup", mockupSourceListId, setMockupSourceListId],
-                    ["Cột đích — Mockup", mockupTargetListId, setMockupTargetListId],
-                  ].map(([label, value, setter]) => (
+                  {(activeTab === "listing"
+                    ? [
+                      ["Cột đầu", listingSourceListId, setListingSourceListId],
+                      ["Cột đích", listingTargetListId, setListingTargetListId],
+                    ]
+                    : [
+                      ["Cột đầu", mockupSourceListId, setMockupSourceListId],
+                      ["Cột đích", mockupTargetListId, setMockupTargetListId],
+                    ]
+                  ).map(([label, value, setter]) => (
                     <div key={label as string}>
                       <label className="mb-1 block text-xs font-extrabold text-slate-700">{label as string}</label>
                       <select
@@ -1428,9 +1436,6 @@ export function TrelloBoardView({
                       </select>
                     </div>
                   ))}
-                  <p className="md:col-span-2 text-[11px] font-medium text-slate-500">
-                    Khi hoàn tất, thẻ sẽ được chuyển từ cột đầu sang cột đích của từng chức năng tương ứng.
-                  </p>
                 </div>
               )}
             </div>
@@ -1454,7 +1459,7 @@ export function TrelloBoardView({
                   disabled={loading}
                   className="rounded-xl bg-indigo-600 hover:bg-indigo-700 px-5 py-2 text-xs font-extrabold text-white shadow-xs disabled:opacity-60 cursor-pointer"
                 >
-                  Lưu Cấu Hình
+                  {activeTab === "listing" ? "Lưu Cấu Hình Listing" : "Lưu Cấu Hình Mockup"}
                 </button>
               )}
             </div>
