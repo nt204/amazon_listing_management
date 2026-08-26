@@ -14,6 +14,12 @@ export function normalizePhoiKey(value: string) {
     .replace(/^-+|-+$/g, "");
 }
 
+export function templateVariantKey(
+  template: Pick<ListingTemplateSummary, "phoi_key" | "product_type">,
+) {
+  return `${normalizePhoiKey(template.product_type)}::${normalizePhoiKey(template.phoi_key)}`;
+}
+
 export function inferPhoiName(filename: string, shopName = "", productType = "") {
   let name = filename.replace(/\.(xlsx|xlsm)$/i, "").trim();
   if (shopName) {
@@ -59,7 +65,7 @@ export function findTemplateVariant(
   brand: TemplateBrandIdentity,
 ) {
   return templates.find((template) =>
-    template.phoi_key === selected.phoi_key
+    templateVariantKey(template) === templateVariantKey(selected)
     && templateMatchesBrand(template, brand),
   );
 }
@@ -70,7 +76,8 @@ export function findTemplateMappingSource(
   brand: TemplateBrandIdentity,
 ) {
   const compatible = templates.filter((template) =>
-    !template.shop_is_unassigned && template.phoi_key === selected.phoi_key,
+    !template.shop_is_unassigned
+    && templateVariantKey(template) === templateVariantKey(selected),
   );
   return compatible.find((template) =>
     template.shop_id !== selected.shop_id && templateMatchesBrand(template, brand),

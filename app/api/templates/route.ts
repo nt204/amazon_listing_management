@@ -1,11 +1,10 @@
 import { extname } from "node:path";
 import { ApiError, authorize, dataScope, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
-import { normalizePhoiKey, isTemplateReady } from "@/lib/amazon-template-catalog";
-import { inspectListingTemplate, mapListingTemplateToBlank, scanListingTemplate } from "@/lib/excel-automation";
+import { normalizePhoiKey } from "@/lib/amazon-template-catalog";
+import { inspectListingTemplate, scanListingTemplate } from "@/lib/excel-automation";
 import {
   deleteListingTemplate,
   getBrandProfile,
-  getListingTemplate,
   listBrandProfiles,
   listListingTemplates,
   moveListingTemplateToShop,
@@ -31,6 +30,11 @@ export async function DELETE(request: Request) {
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
+const phoiNameSchema = z.string().trim().min(2).max(120).refine(
+  (value) => Boolean(normalizePhoiKey(value)),
+  "Tên phôi phải có ít nhất một chữ cái hoặc chữ số.",
+);
+
 export async function GET(request: Request) {
   try {
     const scope = dataScope(authorize(request, "read"));
@@ -52,10 +56,17 @@ export async function POST(request: Request) {
     if (![".xlsx", ".xlsm"].includes(extension)) throw new ApiError("Chỉ hỗ trợ .xlsx hoặc .xlsm.", 400);
     const blankWorkbook = Buffer.from(await template.arrayBuffer());
     const scan = await scanListingTemplate(blankWorkbook, template.name);
+    const requestedPhoiName = String(formData.get("phoi_name") || "").trim();
+    const parsedPhoiName = requestedPhoiName
+      ? phoiNameSchema.safeParse(requestedPhoiName)
+      : null;
+    if (parsedPhoiName && !parsedPhoiName.success) {
+      throw new ApiError(parsedPhoiName.error.issues[0]?.message || "Tên phôi không hợp lệ.", 400);
+    }
     if (!scan.contributor_id) {
       throw new ApiError("Không tìm thấy mã shop trong file. Hãy tải đúng template trực tiếp từ Seller Central.", 400);
     }
-    if (!scan.product_type || !scan.phoi_name) {
+    if (!scan.product_type || (!scan.phoi_name && !parsedPhoiName?.data)) {
       throw new ApiError("Không nhận diện được loại phôi trong file template Amazon.", 400);
     }
 
@@ -94,12 +105,10 @@ export async function POST(request: Request) {
     } catch (error) {
       throw new ApiError(error instanceof Error ? error.message : "Không thể xác minh tài khoản của Brand.", 409);
     }
-    const phoiName = scan.phoi_name;
-    const phoiKey = normalizePhoiKey(scan.product_type || phoiName);
+    const phoiName = parsedPhoiName?.data || scan.phoi_name;
+    const phoiKey = normalizePhoiKey(phoiName);
 
     let workbook: Buffer = blankWorkbook;
-    let mapping = null;
-    let sourceTemplate = null;
     let isBlank = false;
     let metadata: ListingTemplateMetadata;
     let productType = scan.product_type;
@@ -109,46 +118,24 @@ export async function POST(request: Request) {
       productType = inspection.product_type || productType;
       const { product_type, ...inspectedMeta } = inspection;
       metadata = inspectedMeta;
+      isBlank = false;
     } catch {
-      const catalog = await listListingTemplates(scope);
-      const sourceSummary = catalog
-        .filter((item) => item.phoi_key === phoiKey && item.shop_id !== shop.id && isTemplateReady(item))
-        .sort((left, right) => Number(left.is_auto_mapped) - Number(right.is_auto_mapped))[0];
-      sourceTemplate = sourceSummary ? await getListingTemplate(scope, sourceSummary.id) : null;
-      if (sourceTemplate && sourceTemplate.workbook) {
-        const mapped = await mapListingTemplateToBlank(
-          sourceTemplate.workbook,
-          sourceTemplate.original_filename,
-          blankWorkbook,
-          template.name,
-          { brandName },
-        );
-        workbook = mapped.workbook;
-        mapping = mapped.report;
-        const inspection = await inspectListingTemplate(workbook, template.name);
-        productType = inspection.product_type || productType;
-        const { product_type, ...inspectedMeta } = inspection;
-        metadata = inspectedMeta;
-      } else {
-        // File is blank and no other shop has a filled template of this phoi yet.
-        // Save as unready blank template so user knows it's registered but needs filling.
-        isBlank = true;
-        metadata = {
-          is_blank: true,
-          is_ready: false,
-          warning_reason: "File blank chưa có dòng mẫu Parent/Child và chưa có template cùng phôi từ shop khác để auto-map.",
-          sheet_name: scan.sheet_name || "Template",
-          attribute_row: scan.attribute_row || 3,
-          label_row: scan.label_row || 2,
-          data_row: scan.data_row || 4,
-          column_count: scan.column_count || 0,
-          last_column: "",
-          source_parent_row: 0,
-          source_child_row: 0,
-          content_columns: { sku: "", title: "", description: "", bullet_points: [], generic_keywords: "", main_image: "" },
-          defaults: { material: "", size_capacity: "", color: "", package_contents: "", features: [], country_of_origin: "" },
-        };
-      }
+      isBlank = true;
+      metadata = {
+        is_blank: true,
+        is_ready: false,
+        warning_reason: "File blank chưa có dòng mẫu Parent/Child. Hãy điền dòng mẫu vào file Excel rồi tải lại.",
+        sheet_name: scan.sheet_name || "Template",
+        attribute_row: scan.attribute_row || 3,
+        label_row: scan.label_row || 2,
+        data_row: scan.data_row || 4,
+        column_count: scan.column_count || 0,
+        last_column: "",
+        source_parent_row: 0,
+        source_child_row: 0,
+        content_columns: { sku: "", title: "", description: "", bullet_points: [], generic_keywords: "", main_image: "" },
+        defaults: { material: "", size_capacity: "", color: "", package_contents: "", features: [], country_of_origin: "" },
+      };
     }
 
     const name = `${shop.name} - ${phoiName}`;
@@ -158,8 +145,8 @@ export async function POST(request: Request) {
       brandName,
       phoiName,
       phoiKey,
-      sourceTemplateId: sourceTemplate?.id || null,
-      isAutoMapped: Boolean(mapping),
+      sourceTemplateId: null,
+      isAutoMapped: false,
       name,
       originalFilename: template.name,
       fileExtension: extension,
@@ -168,60 +155,15 @@ export async function POST(request: Request) {
       workbook,
     });
 
-    // If this saved template is ready, check if any pending blank templates of the same phoi can be auto-mapped!
-    if (!isBlank && isTemplateReady(saved)) {
-      try {
-        const allTemplates = await listListingTemplates(scope);
-        const pendingBlanks = allTemplates.filter(
-          (t) => t.phoi_key === phoiKey && t.id !== saved.id && !isTemplateReady(t),
-        );
-        for (const pending of pendingBlanks) {
-          try {
-            const fullBlank = await getListingTemplate(scope, pending.id);
-            if (!fullBlank?.workbook) continue;
-            const mappedBlank = await mapListingTemplateToBlank(
-              workbook,
-              template.name,
-              fullBlank.workbook,
-              pending.original_filename,
-              { brandName: pending.brand_name },
-            );
-            const mappedInspection = await inspectListingTemplate(mappedBlank.workbook, pending.original_filename);
-            const { product_type: mappedProductType, ...mappedMeta } = mappedInspection;
-            await saveListingTemplate(scope, {
-              shopId: pending.shop_id,
-              brandProfileId: pending.brand_profile_id,
-              brandName: pending.brand_name,
-              phoiName: pending.phoi_name,
-              phoiKey: pending.phoi_key,
-              sourceTemplateId: saved.id,
-              isAutoMapped: true,
-              name: pending.name,
-              originalFilename: pending.original_filename,
-              fileExtension: pending.file_extension,
-              productType: mappedProductType || pending.product_type,
-              metadata: mappedMeta,
-              workbook: mappedBlank.workbook,
-            });
-          } catch (pendingErr) {
-            console.warn(`[Template Auto-Map] Failed to backfill blank template ${pending.id}:`, pendingErr);
-          }
-        }
-      } catch (backfillErr) {
-        console.warn("[Template Auto-Map] Backfill check error:", backfillErr);
-      }
-    }
-
     return Response.json({
       template: saved,
       shop,
       scan,
       brand: resolvedBrand,
-      mapping,
       is_blank: isBlank,
       is_ready: !isBlank,
       warning: isBlank
-        ? `Đã nhận diện store "${shop.name}" và lưu file blank của phôi "${phoiName}". Lưu ý: File này CHƯA THỂ DÙNG vì chưa có dòng mẫu Parent/Child và chưa có phôi cùng loại từ shop khác để tự động điền.`
+        ? `Đã nhận diện store "${shop.name}" và lưu file template của phôi "${phoiName}". Lưu ý: File này CHƯA THỂ DÙNG vì chưa có dòng mẫu Parent/Child. Hãy điền dòng mẫu vào file Excel rồi tải lại.`
         : null,
     }, { status: 201 });
   } catch (error) {

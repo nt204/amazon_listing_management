@@ -7,6 +7,7 @@ import {
   isTemplateReady,
   normalizePhoiKey,
   templateWorkbookDownloadName,
+  templateVariantKey,
   templatesForBrandCatalog,
 } from "@/lib/amazon-template-catalog";
 import type { ListingTemplateSummary } from "@/lib/types";
@@ -51,7 +52,9 @@ function template(overrides: Partial<ListingTemplateSummary>): ListingTemplateSu
 test("template scan names files as shop plus phoi", () => {
   assert.equal(inferPhoiName("AOTT0731: Hanging Ornament.xlsx", "Fastpeace", "ornament"), "Hanging Ornament");
   assert.equal(inferPhoiName("Fastpeace - Glass Ornament.xlsm", "Fastpeace", "ornament"), "Glass Ornament");
+  assert.equal(inferPhoiName("Suncatcher.xlsx", "Fastpeace", "ornament"), "Suncatcher");
   assert.equal(normalizePhoiKey("Glass Ornament"), "glass-ornament");
+  assert.equal(normalizePhoiKey("Suncatcher"), "suncatcher");
 });
 
 test("catalog shows only templates belonging to the selected Brand account", () => {
@@ -84,6 +87,46 @@ test("missing brand and phoi variant finds the same phoi from another shop", () 
 
   assert.equal(findTemplateVariant([selected, existingBrandVariant], selected, brand)?.id, "brand-b-existing");
   assert.equal(findTemplateMappingSource([selected, otherShopSource], selected, brand).id, "shop-a-source");
+});
+
+test("custom phoi names keep variants with the same Amazon product type separated", () => {
+  const glassSource = template({
+    id: "glass-source",
+    phoi_name: "Glass Ornament",
+    phoi_key: "glass-ornament",
+    product_type: "Hanging Ornament",
+  });
+  const suncatcherSource = template({
+    id: "suncatcher-source",
+    phoi_name: "Suncatcher",
+    phoi_key: "suncatcher",
+    product_type: "Hanging Ornament",
+  });
+  const destination = template({
+    id: "glass-destination",
+    shop_id: "shop-c",
+    shop_name: "Shop C",
+    phoi_name: "Glass Ornament",
+    phoi_key: "glass-ornament",
+    product_type: "Hanging Ornament",
+  });
+
+  assert.equal(
+    findTemplateMappingSource([suncatcherSource, glassSource, destination], destination, { name: "Shop C" }).id,
+    "glass-source",
+  );
+  assert.notEqual(templateVariantKey(glassSource), templateVariantKey(suncatcherSource));
+
+  const wrongAmazonType = template({
+    id: "glass-wrong-type",
+    phoi_name: "Glass Ornament",
+    phoi_key: "glass-ornament",
+    product_type: "HOME_DECOR",
+  });
+  assert.equal(
+    findTemplateMappingSource([wrongAmazonType, destination], destination, { name: "Shop C" }).id,
+    "glass-destination",
+  );
 });
 
 test("isTemplateReady distinguishes ready filled templates from unmapped blank templates", () => {

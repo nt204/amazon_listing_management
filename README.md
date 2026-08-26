@@ -228,6 +228,8 @@ Brand được chọn ngay trong modal Batch từ Brand profile đã lưu hoặc
 
 Mỗi Brand tương ứng với một tài khoản Seller Central. Khi tải template Amazon, người dùng chỉ chọn file dưới Brand hiện tại; hệ thống đọc `contributorId`, marketplace và product type để xác minh đúng tài khoản và đặt tên `Brand - Tên phôi`. Nếu Brand chưa có phôi này, người dùng phải tải blank từ Seller Central của chính Brand đó. Hệ thống có thể map nội dung mẫu từ Brand khác vào blank, nhưng tuyệt đối giữ metadata, validation, hidden sheet và cấu trúc Amazon của Brand đích. Hệ thống không xuất workbook của Brand này cho tài khoản Brand khác.
 
+`Tên Phôi` được gợi ý từ tên file nhưng người dùng có thể sửa trước khi lưu. Đây là khóa nhận diện biến thể độc lập với product type Amazon: `Glass Ornament` và `Suncatcher` có thể cùng thuộc `Hanging Ornament` nhưng được lưu riêng. Auto-map chỉ diễn ra giữa các shop có cùng Tên Phôi đã chuẩn hóa **và** cùng product type Amazon; tải lại cùng Tên Phôi trong cùng shop sẽ cập nhật phiên bản hiện có.
+
 Nút **Tải file đầu vào mẫu** tạo sẵn workbook bốn cột. Không có tọa độ cột content nào được cấu hình cố định; cùng một trường `generic_keyword[...]` có thể nằm ở AP, CG hoặc cột khác tùy template.
 
 Auth dùng tài khoản trong PostgreSQL. Mỗi tài khoản có cấu hình Trello riêng theo
