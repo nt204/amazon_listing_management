@@ -7,6 +7,7 @@ import {
   formatRawTrelloKeywords,
   listingMockupIndexFromAttachmentName,
   parseTrelloCardTitle,
+  parseTrelloListingDescription,
   prioritizeTrelloCoverAttachment,
   selectMissingTrelloImageDerivatives,
   selectTrelloImageAttachments,
@@ -52,6 +53,46 @@ test("formatRawTrelloKeywords uses raw keywords from Trello card description", (
   const rawDesc = "Generic keywords: cowgirl pop up card, 3d greeting card for birthday, western theme popup cards";
   const formatted = formatRawTrelloKeywords(rawDesc);
   assert.equal(formatted, "cowgirl pop up card 3d greeting for birthday western theme popup cards");
+});
+
+test("listing description supplies English material, dimensions, and generic keyword phrases", () => {
+  const parsed = parseTrelloListingDescription([
+    "Material: Natural birch wood; Finish: matte",
+    'Dimensions: 3.5" x 3.2" x 0.15"',
+    "Generic Keywords: monster truck ornament, personalized truck gift",
+    "boys holiday decor",
+    "Color: Orange",
+  ].join("\n"));
+
+  assert.equal(parsed.material, "Natural birch wood");
+  assert.equal(parsed.sizeCapacity, '3.5" x 3.2" x 0.15"');
+  assert.deepEqual(parsed.genericKeywords, [
+    "monster truck ornament",
+    "personalized truck gift",
+    "boys holiday decor",
+  ]);
+  assert.equal(
+    parsed.formattedGenericKeywords,
+    "monster truck ornament personalized gift boys holiday decor",
+  );
+});
+
+test("listing description supports Vietnamese material and size labels without template defaults", () => {
+  const parsed = parseTrelloListingDescription([
+    "Chất liệu: Kính",
+    "Kích thước: 24cm x 20cm",
+    "Generic keywords: cat mouse pad; funny orange cat gift",
+  ].join("\n"));
+
+  assert.equal(parsed.material, "Kính");
+  assert.equal(parsed.sizeCapacity, "24cm x 20cm");
+  assert.deepEqual(parsed.genericKeywords, [
+    "cat mouse pad",
+    "funny orange cat gift",
+  ]);
+
+  const missing = parseTrelloListingDescription("Kích thước: 4 x 4 inches");
+  assert.equal(missing.material, "");
 });
 
 const attachment = (overrides: Partial<TrelloAttachment>): TrelloAttachment => ({

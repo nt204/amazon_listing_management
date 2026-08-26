@@ -23,8 +23,8 @@ import {
   attachFileToTrelloCard,
   downloadTrelloAttachment,
   fetchTrelloCardDetail,
-  formatRawTrelloKeywords,
   moveTrelloCard,
+  parseTrelloListingDescription,
   parseTrelloCardTitle,
   selectTrelloListingImageAttachments,
   type TrelloAttachment,
@@ -159,10 +159,8 @@ async function processCardRequest(
 
   // 3. Extract generic keywords from card description
   const rawDesc = (card.desc || "").trim();
-  const genericKwLine = rawDesc.split(/\r?\n/).find((line) => /(?:generic|backend)?\s*keywords?\s*:/i.test(line));
-  const descKeywords = genericKwLine
-    ? genericKwLine.replace(/^.*?(?:generic|backend)?\s*keywords?\s*:\s*/i, "").split(/[,;]/).map((k) => k.trim()).filter((k) => k.length > 1)
-    : [];
+  const descriptionFacts = parseTrelloListingDescription(rawDesc);
+  const descKeywords = descriptionFacts.genericKeywords;
 
   // 4. Resolve Brand
   const profile = await getBrandProfile(scope, brandProfileId);
@@ -203,8 +201,8 @@ async function processCardRequest(
     brand_profile_id: brandProfileId || "",
     brand_guidelines: brandGuidelines,
     product_information: {
-      material: templateDefaults?.material || "",
-      size_capacity: templateDefaults?.size_capacity || "",
+      material: descriptionFacts.material,
+      size_capacity: descriptionFacts.sizeCapacity,
       color: templateDefaults?.color || "",
       package_contents: templateDefaults?.package_contents || "",
       features: [...(templateDefaults?.features || [])],
@@ -256,7 +254,7 @@ async function processCardRequest(
     ...timings,
     ...result.metadata.stage_timings_ms,
   };
-  const exactCardKeywords = formatRawTrelloKeywords(rawDesc);
+  const exactCardKeywords = descriptionFacts.formattedGenericKeywords;
   if (exactCardKeywords) {
     result.listing.backend_search_terms = exactCardKeywords;
   }

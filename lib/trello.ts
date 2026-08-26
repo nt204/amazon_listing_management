@@ -406,33 +406,63 @@ export function extractTrelloBoardId(input: string): string {
   return trimmed.split("/").filter(Boolean).pop() || trimmed;
 }
 
-export function formatRawTrelloKeywords(rawDesc: string): string {
-  if (!rawDesc || !rawDesc.trim()) return "";
-
-  const lines = rawDesc.split(/\r?\n/);
-  const startIdx = lines.findIndex((line) =>
-    /(?:generic|backend)?\s*keywords?\s*:/i.test(line) ||
-    /generic\s*keywords/i.test(line) ||
-    /backend\s*keywords/i.test(line),
+function trelloGenericKeywordPhrases(rawDesc: string): string[] {
+  const lines = (rawDesc || "").split(/\r?\n/);
+  const startIndex = lines.findIndex((line) =>
+    /(?:generic|backend)\s*keywords?\s*:/i.test(line),
   );
+  if (startIndex === -1) return [];
 
-  if (startIdx === -1) return "";
-
-  const extractedLines: string[] = [];
-  const firstLine = lines[startIdx];
-  const labelMatch = firstLine.match(/^(?:.*?(?:generic|backend)?\s*keywords?\s*:?\s*)(.*)$/i);
-  if (labelMatch && labelMatch[1].trim()) {
-    extractedLines.push(labelMatch[1].trim());
+  const values = [
+    lines[startIndex].replace(/^.*?(?:generic|backend)\s*keywords?\s*:\s*/i, ""),
+  ];
+  for (let index = startIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (!line || /^[\p{L}\p{N}_\-\s]{2,40}\s*:/u.test(line)) break;
+    values.push(line);
   }
 
-  for (let i = startIdx + 1; i < lines.length; i += 1) {
-    const line = lines[i].trim();
-    if (!line) break;
-    if (/^[A-Za-z0-9_\-\s]{2,20}\s*:/i.test(line)) break;
-    extractedLines.push(line);
-  }
+  return [...new Map(
+    values
+      .join("\n")
+      .split(/[,;|\n]+/)
+      .map((value) => value.replace(/^[#\s]+/, "").trim())
+      .filter((value) => value.length > 1 && !/https?:\/\//i.test(value))
+      .map((value) => [value.toLowerCase(), value]),
+  ).values()].slice(0, 50);
+}
 
-  const keywordText = extractedLines.join(" ");
+function labeledDescriptionValue(rawDesc: string, labels: string) {
+  const match = (rawDesc || "").match(
+    new RegExp(String.raw`^\s*(?:${labels})\s*[:=\-]\s*(.+?)\s*$`, "imu"),
+  );
+  return (match?.[1] || "")
+    .split(/\s*[;|]\s*(?=[\p{L}\s]{2,30}\s*:)/u)[0]
+    .trim()
+    .slice(0, 500);
+}
+
+export function parseTrelloListingDescription(rawDesc: string) {
+  const dimensions = parseCardDimensions(rawDesc);
+  const explicitSize = labeledDescriptionValue(
+    rawDesc,
+    String.raw`size|dimensions?|capacity|kích\s*thước|kich\s*thuoc|dung\s*tích|dung\s*tich`,
+  );
+  const genericKeywords = trelloGenericKeywordPhrases(rawDesc);
+  return {
+    material: labeledDescriptionValue(
+      rawDesc,
+      String.raw`materials?|chất\s*liệu|chat\s*lieu`,
+    ),
+    sizeCapacity: dimensions.formatted || explicitSize,
+    genericKeywords,
+    formattedGenericKeywords: formatRawTrelloKeywords(rawDesc),
+  };
+}
+
+export function formatRawTrelloKeywords(rawDesc: string): string {
+  const keywordText = trelloGenericKeywordPhrases(rawDesc).join(" ");
+  if (!keywordText) return "";
 
   // Convert commas, semicolons, newlines, quotes into clean single spaces
   const cleaned = keywordText
