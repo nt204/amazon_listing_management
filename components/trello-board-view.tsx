@@ -30,7 +30,10 @@ import {
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BrandProfile, ListingTemplateSummary, StoredListing } from "@/lib/types";
-import { extractTrelloBoardId } from "@/lib/trello";
+import {
+  extractTrelloBoardId,
+  prioritizeTrelloCoverAttachment,
+} from "@/lib/trello";
 import { AutoMockupGenerator } from "@/components/auto-mockup-generator";
 import { downloadOriginalTrelloImage } from "@/lib/trello-image-client";
 import { readNdjsonStream } from "@/lib/read-ndjson-stream";
@@ -70,6 +73,7 @@ interface TrelloCard {
   name: string;
   desc: string;
   idList: string;
+  idAttachmentCover?: string | null;
   url: string;
   dateLastActivity?: string;
   attachments?: TrelloAttachment[];
@@ -1797,8 +1801,11 @@ export function TrelloBoardView({
                 paginatedReviewCards.map((card) => {
                   const isSelected = selectedCardIds.has(card.id);
                   const isProcessing = processingCardIds.has(card.id);
-                  const imageAttachments = (card.attachments || []).filter(
-                    (a) => a.mimeType?.startsWith("image/") || /\.(png|jpe?g|webp)$/i.test(a.url),
+                  const imageAttachments = prioritizeTrelloCoverAttachment(
+                    (card.attachments || []).filter(
+                      (a) => a.mimeType?.startsWith("image/") || /\.(png|jpe?g|webp)$/i.test(a.url),
+                    ),
+                    card.idAttachmentCover,
                   );
 
                   const keywordsList = (() => {
@@ -2194,8 +2201,11 @@ export function TrelloBoardView({
                 paginatedListingCards.map((card) => {
                   const fileUrl = `/api/trello/download-card-excel?cardId=${card.id}&shopId=${encodeURIComponent(shopId)}&templateId=${encodeURIComponent(templateId)}`;
                   const fileName = `${selectedShopName}-${(card.parsed?.sku || "listing").toLowerCase()}.xlsx`;
-                  const imageAttachments = (card.attachments || []).filter(
-                    (a) => a.mimeType?.startsWith("image/") || /\.(png|jpe?g|webp)$/i.test(a.url),
+                  const imageAttachments = prioritizeTrelloCoverAttachment(
+                    (card.attachments || []).filter(
+                      (a) => a.mimeType?.startsWith("image/") || /\.(png|jpe?g|webp)$/i.test(a.url),
+                    ),
+                    card.idAttachmentCover,
                   );
                   const excelAttachments = (card.attachments || []).filter((a) =>
                     /\.(xlsx|xls|csv)$/i.test(a.name) ||

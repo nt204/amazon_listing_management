@@ -106,6 +106,34 @@ export function selectTrelloImageAttachments(card: Pick<TrelloCard, "id" | "atta
   );
 }
 
+export function prioritizeTrelloCoverAttachment<T extends { id: string }>(
+  attachments: readonly T[],
+  idAttachmentCover?: string | null,
+): T[] {
+  if (!idAttachmentCover) return [...attachments];
+  const coverIndex = attachments.findIndex(
+    (attachment) => attachment.id === idAttachmentCover,
+  );
+  if (coverIndex <= 0) return [...attachments];
+  return [
+    attachments[coverIndex],
+    ...attachments.slice(0, coverIndex),
+    ...attachments.slice(coverIndex + 1),
+  ];
+}
+
+/**
+ * Listing workbooks accept only explicitly numbered mockup files as secondary
+ * images. Keep this separate from the mockup-generation parser so legacy MK
+ * files are not treated as generated jobs or deleted during regeneration.
+ */
+export function listingMockupIndexFromAttachmentName(name: string): number | null {
+  const match = name.trim().match(/^(?:MK|Mockup)\s*(\d+)(?=[\s_.-]|$)/i);
+  if (!match) return null;
+  const index = Number(match[1]);
+  return Number.isInteger(index) && index >= 1 && index <= 20 ? index : null;
+}
+
 /**
  * Amazon listing images are one main image plus at most six generated
  * mockups. Ignore extra source/reference images so they cannot displace a
@@ -115,20 +143,26 @@ export function selectTrelloListingImageAttachments(
   card: Pick<TrelloCard, "id" | "idAttachmentCover" | "attachments">,
 ) {
   const images = selectTrelloImageAttachments(card);
+  const coverFirstImages = prioritizeTrelloCoverAttachment(
+    images,
+    card.idAttachmentCover,
+  );
   const preferredSourcePattern =
     /(?:full[\s_.-]*design|(?:^|[\s_.-])(?:source|artwork)(?:[\s_.-]|$))/i;
   const mainImage =
-    images.find((attachment) => attachment.id === card.idAttachmentCover) ||
+    (coverFirstImages[0]?.id === card.idAttachmentCover
+      ? coverFirstImages[0]
+      : undefined) ||
     images.find(
       (attachment) =>
-        mockupIndexFromAttachmentName(attachment.name) === null &&
+        listingMockupIndexFromAttachmentName(attachment.name) === null &&
         preferredSourcePattern.test(attachment.name),
     ) ||
     images.find(
-      (attachment) => mockupIndexFromAttachmentName(attachment.name) === 1,
+      (attachment) => listingMockupIndexFromAttachmentName(attachment.name) === 1,
     ) ||
     images.find(
-      (attachment) => mockupIndexFromAttachmentName(attachment.name) === null,
+      (attachment) => listingMockupIndexFromAttachmentName(attachment.name) === null,
     ) ||
     images[0];
 
@@ -137,8 +171,8 @@ export function selectTrelloListingImageAttachments(
   const mockupsByIndex = new Map<number, TrelloAttachment>();
   for (const attachment of images) {
     if (attachment.id === mainImage.id) continue;
-    const index = mockupIndexFromAttachmentName(attachment.name);
-    if (index === null || index === 1) continue;
+    const index = listingMockupIndexFromAttachmentName(attachment.name);
+    if (index === null) continue;
 
     const existing = mockupsByIndex.get(index);
     const attachmentDate = Date.parse(attachment.date || "");

@@ -5,7 +5,9 @@ import {
   extractTrelloBoardId,
   filterPublicTrelloImageAttachments,
   formatRawTrelloKeywords,
+  listingMockupIndexFromAttachmentName,
   parseTrelloCardTitle,
+  prioritizeTrelloCoverAttachment,
   selectMissingTrelloImageDerivatives,
   selectTrelloImageAttachments,
   selectTrelloListingImageAttachments,
@@ -107,6 +109,27 @@ test("listing images contain one main image and at most six numbered mockups", (
   );
 });
 
+test("listing workbook mockups accept only MK or Mockup filename prefixes", () => {
+  const cover = attachment({ id: "cover", name: "Product Hero.png" });
+  const mk1 = attachment({ id: "mk-1", name: "MK1_Lifestyle.png" });
+  const mockup2 = attachment({ id: "mockup-2", name: "Mockup2_Dimensions.png" });
+  const unrelated = attachment({ id: "unrelated", name: "Reference 3.png" });
+  const embeddedMk = attachment({ id: "embedded-mk", name: "SKU_MK3.png" });
+
+  assert.equal(listingMockupIndexFromAttachmentName(mk1.name), 1);
+  assert.equal(listingMockupIndexFromAttachmentName(mockup2.name), 2);
+  assert.equal(listingMockupIndexFromAttachmentName("mk6.jpg"), 6);
+  assert.equal(listingMockupIndexFromAttachmentName(embeddedMk.name), null);
+  assert.deepEqual(
+    selectTrelloListingImageAttachments({
+      id: "card-current",
+      idAttachmentCover: cover.id,
+      attachments: [unrelated, mockup2, cover, embeddedMk, mk1],
+    }).map((item) => item.id),
+    ["cover", "mk-1", "mockup-2"],
+  );
+});
+
 test("Mockup1 becomes the main image when the source artwork is unavailable", () => {
   const mockup1 = attachment({ id: "mockup-1", name: "Mockup1_Main.jpg" });
   const mockup2 = attachment({ id: "mockup-2", name: "Mockup2_Dimensions.jpg" });
@@ -132,8 +155,21 @@ test("the Trello Make cover attachment takes priority over filename conventions"
       idAttachmentCover: cover.id,
       attachments: [fullDesign, mockup1, mockup2, cover],
     }).map((item) => item.id),
-    ["chosen-cover", "mockup-2"],
+    ["chosen-cover", "mockup-1", "mockup-2"],
   );
+});
+
+test("the Trello Make cover attachment is displayed first without mutating API order", () => {
+  const first = attachment({ id: "first", name: "First upload.png" });
+  const cover = attachment({ id: "cover", name: "Chosen cover.png" });
+  const last = attachment({ id: "last", name: "Last upload.png" });
+  const apiOrder = [first, cover, last];
+
+  assert.deepEqual(
+    prioritizeTrelloCoverAttachment(apiOrder, cover.id).map((item) => item.id),
+    ["cover", "first", "last"],
+  );
+  assert.deepEqual(apiOrder.map((item) => item.id), ["first", "cover", "last"]);
 });
 
 test("an unavailable or non-image Trello cover falls back to the source artwork", () => {
