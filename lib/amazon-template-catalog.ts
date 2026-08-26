@@ -89,6 +89,19 @@ export function isTemplateReady(template: ListingTemplateSummary | null | undefi
   return Boolean(meta.source_parent_row && meta.source_child_row);
 }
 
+export function templateWorkbookDownloadName(
+  template: Pick<ListingTemplateSummary, "name" | "file_extension">,
+) {
+  const extension = template.file_extension.toLowerCase() === ".xlsm" ? ".xlsm" : ".xlsx";
+  const stem = template.name
+    .replace(/\.(?:xlsx|xlsm)$/i, "")
+    .replace(/[\\/:*?"<>|\u0000-\u001F]+/g, "-")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 140) || "Amazon-Template";
+  return `${stem}${extension}`;
+}
+
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

@@ -460,6 +460,26 @@ export function parseTrelloListingDescription(rawDesc: string) {
   };
 }
 
+/**
+ * Product facts sent to the Trello listing writer come only from the card.
+ * Amazon template defaults belong to the exported workbook and must not be
+ * treated as evidence about the current product.
+ */
+export function buildTrelloAiProductInformation(
+  description: ReturnType<typeof parseTrelloListingDescription>,
+) {
+  return {
+    material: description.material,
+    size_capacity: description.sizeCapacity,
+    color: "",
+    package_contents: "",
+    features: [],
+    personalization: "",
+    care_instructions: "",
+    country_of_origin: "",
+  };
+}
+
 export function formatRawTrelloKeywords(rawDesc: string): string {
   const keywordText = trelloGenericKeywordPhrases(rawDesc).join(" ");
   if (!keywordText) return "";

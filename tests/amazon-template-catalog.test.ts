@@ -6,6 +6,7 @@ import {
   inferPhoiName,
   isTemplateReady,
   normalizePhoiKey,
+  templateWorkbookDownloadName,
   templatesForBrandCatalog,
 } from "@/lib/amazon-template-catalog";
 import type { ListingTemplateSummary } from "@/lib/types";
@@ -102,4 +103,15 @@ test("isTemplateReady distinguishes ready filled templates from unmapped blank t
   assert.equal(isTemplateReady(readyTmpl), true);
   assert.equal(isTemplateReady(blankTmpl), false);
   assert.equal(isTemplateReady(null), false);
+});
+
+test("template download names preserve the shop and phoi without unsafe filename characters", () => {
+  assert.equal(
+    templateWorkbookDownloadName({ name: "Warmstorey / Hanging: Ornament", file_extension: ".xlsx" }),
+    "Warmstorey - Hanging- Ornament.xlsx",
+  );
+  assert.equal(
+    templateWorkbookDownloadName({ name: "Fastpeace - Mug.xlsx", file_extension: ".xlsm" }),
+    "Fastpeace - Mug.xlsm",
+  );
 });

@@ -11,7 +11,6 @@ import { resolveListingTemplateForBrand } from "@/lib/listing-template-resolver"
 import { isTemplateReady } from "@/lib/amazon-template-catalog";
 import { DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_MODEL } from "@/lib/models";
 import { listingInputSchema } from "@/lib/schemas";
-import type { ListingTemplateSummary } from "@/lib/types";
 import type { StoredListing } from "@/lib/types";
 import { invalidateCachePattern } from "@/lib/redis";
 import {
@@ -21,6 +20,7 @@ import {
 } from "@/lib/trello-listing-progress";
 import {
   attachFileToTrelloCard,
+  buildTrelloAiProductInformation,
   downloadTrelloAttachment,
   fetchTrelloCardDetail,
   moveTrelloCard,
@@ -186,7 +186,6 @@ async function processCardRequest(
     throw new ApiError("Template không thuộc shop Amazon đã chọn.", 400);
   }
   const resolvedTemplate = { workbook: dbTemplate.workbook, original_filename: dbTemplate.original_filename };
-  const templateDefaults: ListingTemplateSummary["metadata"]["defaults"] = dbTemplate.metadata.defaults;
   emitProgress("template", "completed", Date.now() - templateStartedAt);
 
   // 5. Construct Listing Input
@@ -200,23 +199,14 @@ async function processCardRequest(
     brand: brandName,
     brand_profile_id: brandProfileId || "",
     brand_guidelines: brandGuidelines,
-    product_information: {
-      material: descriptionFacts.material,
-      size_capacity: descriptionFacts.sizeCapacity,
-      color: templateDefaults?.color || "",
-      package_contents: templateDefaults?.package_contents || "",
-      features: [...(templateDefaults?.features || [])],
-      personalization: "",
-      care_instructions: "",
-      country_of_origin: templateDefaults?.country_of_origin || "",
-    },
+    product_information: buildTrelloAiProductInformation(descriptionFacts),
     main_keyword: itemName,
     related_keywords: descKeywords.slice(0, 5),
     backend_keywords: descKeywords,
     research: {
       target_customer: "",
       gift_giver: "",
-      occasion: ["Birthday", "Celebration", "Special Occasion"],
+      occasion: [],
       customer_insight: rawDesc,
       usp: itemName,
       competitor_asins: [],

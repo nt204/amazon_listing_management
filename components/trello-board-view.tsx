@@ -191,6 +191,8 @@ export function TrelloBoardView({
   const [showAddTemplateModal, setShowAddTemplateModal] = useState(false);
   const [showTemplateManager, setShowTemplateManager] = useState(false);
   const [newTemplateFile, setNewTemplateFile] = useState<File | null>(null);
+  const [pendingTemplateUpdate, setPendingTemplateUpdate] = useState<ListingTemplateSummary | null>(null);
+  const templateFileInputRef = useRef<HTMLInputElement>(null);
   const [addingTemplate, setAddingTemplate] = useState(false);
   const selectedBrandName = localBrands.find((brand) => brand.id === brandProfileId)?.name || "";
   const selectedTemplateBrand = useMemo(() => ({
@@ -218,6 +220,20 @@ export function TrelloBoardView({
       })
       .sort((left, right) => left.source.phoi_name.localeCompare(right.source.phoi_name));
   }, [selectedBrandName, selectedTemplateBrand, templates]);
+  const templateById = useMemo(
+    () => new Map(templates.map((template) => [template.id, template])),
+    [templates],
+  );
+  const templateShopGroups = useMemo(() => {
+    const groups = new Map<string, { shopName: string; templates: ListingTemplateSummary[] }>();
+    for (const template of templates) {
+      if (template.shop_is_unassigned) continue;
+      const group = groups.get(template.shop_id) || { shopName: template.shop_name, templates: [] };
+      group.templates.push(template);
+      groups.set(template.shop_id, group);
+    }
+    return [...groups.entries()].map(([shopId, group]) => ({ shopId, ...group }));
+  }, [templates]);
   const selectedTemplate = templates.find((template) => template.id === templateId) || null;
   const selectedShopName = selectedTemplate?.shop_name || "shop";
 
@@ -343,6 +359,8 @@ export function TrelloBoardView({
         }
       }
       setNewTemplateFile(null);
+      setPendingTemplateUpdate(null);
+      if (templateFileInputRef.current) templateFileInputRef.current.value = "";
       setShowAddTemplateModal(false);
       if (data.is_blank || data.template?.is_ready === false) {
         setError(`⚠️ Đã lưu file blank "${data.template?.name || newTemplateFile.name}". Lưu ý: File này CHƯA THỂ DÙNG vì chưa có dòng mẫu Parent/Child và chưa có phôi cùng loại từ shop khác để tự động map. Hãy mở file Excel điền dòng mẫu hoặc tải lên phôi đã điền của shop khác.`);
@@ -401,7 +419,21 @@ export function TrelloBoardView({
 
   const openAddTemplateModal = () => {
     setShowTemplateManager(false);
+    setPendingTemplateUpdate(null);
     setShowAddTemplateModal(true);
+  };
+
+  const prepareTemplateUpdate = (target: ListingTemplateSummary) => {
+    const matchingBrandId = target.brand_profile_id
+      || localBrands.find((brand) =>
+        brand.name.localeCompare(target.brand_name, undefined, { sensitivity: "accent" }) === 0
+      )?.id
+      || "";
+    if (matchingBrandId) setBrandProfileId(matchingBrandId);
+    setPendingTemplateUpdate(target);
+    setNewTemplateFile(null);
+    if (templateFileInputRef.current) templateFileInputRef.current.value = "";
+    templateFileInputRef.current?.click();
   };
 
   const loadCards = useCallback(
@@ -2443,7 +2475,10 @@ export function TrelloBoardView({
               <div className="flex items-center gap-2">
                 <select
                   value={brandProfileId}
-                  onChange={(e) => setBrandProfileId(e.target.value)}
+                  onChange={(e) => {
+                    setBrandProfileId(e.target.value);
+                    setPendingTemplateUpdate(null);
+                  }}
                   className="flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-900 outline-none focus:border-emerald-500"
                 >
                   <option value="">-- Chọn Thương Hiệu --</option>
@@ -2464,6 +2499,107 @@ export function TrelloBoardView({
                 <p className="mt-1.5 text-[11px] font-semibold text-amber-700">
                   ⚠️ Hãy chọn Brand hoặc bấm &quot;+ Thêm Brand&quot; để gán template vào đúng shop.
                 </p>
+              )}
+            </div>
+
+            {/* Compact template library across every Amazon shop */}
+            <div className="mb-4 overflow-hidden rounded-xl border border-indigo-200 bg-indigo-50/50">
+              <button
+                type="button"
+                onClick={() => setShowTemplateManager((current) => !current)}
+                aria-expanded={showTemplateManager}
+                className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-indigo-50 transition cursor-pointer"
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white text-indigo-600 shadow-2xs ring-1 ring-indigo-100">
+                    <FileXlsIcon className="h-4 w-4" weight="duotone" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-xs font-extrabold text-slate-900">Kho template các shop</span>
+                    <span className="block truncate text-[10px] font-medium text-slate-500">
+                      {templateShopGroups.reduce((total, group) => total + group.templates.length, 0)} file · tải về, sửa trong Excel rồi nạp lại
+                    </span>
+                  </span>
+                </span>
+                <CaretDownIcon
+                  className={`h-4 w-4 shrink-0 text-indigo-600 transition-transform ${showTemplateManager ? "rotate-180" : ""}`}
+                  weight="bold"
+                />
+              </button>
+
+              {showTemplateManager && (
+                <div className="border-t border-indigo-100 bg-white p-2.5">
+                  <p className="mb-2 rounded-lg bg-slate-50 px-2.5 py-2 text-[10px] font-medium leading-4 text-slate-600">
+                    File tải về là workbook hệ thống đang dùng. Bản auto-map đã chứa dòng mẫu từ shop nguồn. Khi nạp lại, hệ thống quét contributor ID và phôi trong file để cập nhật đúng template.
+                  </p>
+                  {templateShopGroups.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-slate-200 px-3 py-4 text-center text-[11px] font-semibold text-slate-500">
+                      Chưa có template của shop nào.
+                    </div>
+                  ) : (
+                    <div className="max-h-64 space-y-2 overflow-y-auto pr-1 thin-scrollbar">
+                      {templateShopGroups.map((group) => (
+                        <section key={group.shopId} className="rounded-xl border border-slate-200 bg-slate-50/70 p-2">
+                          <div className="mb-1.5 flex items-center justify-between gap-2 px-1">
+                            <span className="flex min-w-0 items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-slate-600">
+                              <StorefrontIcon className="h-3.5 w-3.5 shrink-0 text-indigo-500" weight="fill" />
+                              <span className="truncate">{group.shopName}</span>
+                            </span>
+                            <span className="text-[9px] font-bold text-slate-400">{group.templates.length} phôi</span>
+                          </div>
+                          <div className="space-y-1.5">
+                            {group.templates.map((template) => {
+                              const ready = isTemplateReady(template);
+                              const source = template.source_template_id
+                                ? templateById.get(template.source_template_id)
+                                : null;
+                              return (
+                                <div key={template.id} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 shadow-2xs">
+                                  <FileXlsIcon className="h-4 w-4 shrink-0 text-emerald-600" weight="duotone" />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex min-w-0 items-center gap-1.5">
+                                      <p className="truncate text-[11px] font-bold text-slate-800">{template.phoi_name}</p>
+                                      <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wide ${
+                                        !ready
+                                          ? "bg-amber-100 text-amber-800"
+                                          : template.is_auto_mapped
+                                            ? "bg-blue-100 text-blue-800"
+                                            : "bg-emerald-100 text-emerald-800"
+                                      }`}>
+                                        {!ready ? "Blank" : template.is_auto_mapped ? "Auto-map" : "Gốc"}
+                                      </span>
+                                    </div>
+                                    <p className="truncate text-[9px] font-medium text-slate-400" title={template.original_filename}>
+                                      {source ? `Nguồn: ${source.shop_name}` : template.original_filename}
+                                    </p>
+                                  </div>
+                                  <a
+                                    href={`/api/templates/${encodeURIComponent(template.id)}/download`}
+                                    download
+                                    className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 text-[10px] font-bold text-indigo-700 hover:bg-indigo-100 transition"
+                                    title={`Tải ${template.name}`}
+                                  >
+                                    <DownloadSimpleIcon className="h-3 w-3" weight="bold" />
+                                    Tải
+                                  </a>
+                                  <button
+                                    type="button"
+                                    onClick={() => prepareTemplateUpdate(template)}
+                                    className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-bold text-slate-700 hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700 transition cursor-pointer"
+                                    title="Chọn file Excel đã sửa để cập nhật template này"
+                                  >
+                                    <ArrowsClockwiseIcon className="h-3 w-3" weight="bold" />
+                                    Nạp lại
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </section>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
 
@@ -2563,9 +2699,37 @@ export function TrelloBoardView({
             )}
 
             <form onSubmit={handleAddTemplate} className="space-y-4">
+              {pendingTemplateUpdate && (
+                <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2.5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-blue-700">Đang chuẩn bị cập nhật</p>
+                      <p className="mt-0.5 truncate text-xs font-bold text-slate-900">{pendingTemplateUpdate.name}</p>
+                      <p className="mt-1 text-[10px] font-medium leading-4 text-slate-600">
+                        Hãy chọn file vừa sửa. Nếu contributor ID hoặc phôi khác, hệ thống sẽ cập nhật theo thông tin thực tế trong file.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPendingTemplateUpdate(null);
+                        setNewTemplateFile(null);
+                        if (templateFileInputRef.current) templateFileInputRef.current.value = "";
+                      }}
+                      className="shrink-0 rounded-lg p-1 text-blue-500 hover:bg-blue-100 hover:text-blue-700 cursor-pointer"
+                      aria-label="Bỏ chế độ cập nhật template"
+                    >
+                      <XIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
               <div>
-                <label htmlFor="new-template-file" className="block text-xs font-bold text-slate-700 mb-1">Tải lên file Blank Template (.xlsx, .xlsm) *</label>
+                <label htmlFor="new-template-file" className="block text-xs font-bold text-slate-700 mb-1">
+                  {pendingTemplateUpdate ? "Chọn file đã sửa (.xlsx, .xlsm) *" : "Tải lên Blank hoặc Template đã điền (.xlsx, .xlsm) *"}
+                </label>
                 <input
+                  ref={templateFileInputRef}
                   id="new-template-file"
                   type="file"
                   required
@@ -2588,7 +2752,7 @@ export function TrelloBoardView({
                   className="flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2 text-xs font-bold text-white shadow-xs hover:bg-emerald-700 active:translate-y-px disabled:opacity-50 cursor-pointer"
                 >
                   {addingTemplate && <SpinnerIcon className="h-4 w-4 animate-spin" />}
-                  Quét và Lưu Template
+                  {pendingTemplateUpdate ? "Quét và Cập nhật" : "Quét và Lưu Template"}
                 </button>
               </div>
             </form>

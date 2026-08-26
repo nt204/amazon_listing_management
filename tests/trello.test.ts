@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { cleanGeneratedTitle } from "../lib/listing-sanitizer";
 import {
+  buildTrelloAiProductInformation,
   extractTrelloBoardId,
   filterPublicTrelloImageAttachments,
   formatRawTrelloKeywords,
@@ -93,6 +94,26 @@ test("listing description supports Vietnamese material and size labels without t
 
   const missing = parseTrelloListingDescription("Kích thước: 4 x 4 inches");
   assert.equal(missing.material, "");
+});
+
+test("Trello AI product facts never inherit Amazon template metadata", () => {
+  const description = parseTrelloListingDescription([
+    "Chất liệu: Kính",
+    'Kích thước: 3.1" x 3.1" x 0.15"',
+    "Color: Blue",
+    "Package contents: Ribbon",
+  ].join("\n"));
+
+  assert.deepEqual(buildTrelloAiProductInformation(description), {
+    material: "Kính",
+    size_capacity: '3.1" x 3.1" x 0.15"',
+    color: "",
+    package_contents: "",
+    features: [],
+    personalization: "",
+    care_instructions: "",
+    country_of_origin: "",
+  });
 });
 
 const attachment = (overrides: Partial<TrelloAttachment>): TrelloAttachment => ({
