@@ -396,11 +396,6 @@ export function TrelloBoardView({
   };
 
   const openAddTemplateModal = () => {
-    if (!brandProfileId || !selectedBrandName) {
-      setError("Hãy chọn hoặc thêm Brand trước khi tải template.");
-      setShowAddBrandModal(true);
-      return;
-    }
     setShowTemplateManager(false);
     setShowAddTemplateModal(true);
   };
@@ -2430,26 +2425,57 @@ export function TrelloBoardView({
               </button>
             </div>
 
-            <div className="mb-4 text-xs leading-5 text-slate-600">
-              Thương hiệu đang chọn: <span className="font-extrabold text-slate-900">{selectedBrandName || "Chưa chọn"}</span>
+            {/* Chọn Brand áp dụng */}
+            <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+                Thương hiệu / Brand áp dụng *
+              </label>
+              <div className="flex items-center gap-2">
+                <select
+                  value={brandProfileId}
+                  onChange={(e) => setBrandProfileId(e.target.value)}
+                  className="flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-900 outline-none focus:border-emerald-500"
+                >
+                  <option value="">-- Chọn Thương Hiệu --</option>
+                  {localBrands.map((b) => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setShowAddBrandModal(true)}
+                  className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-bold text-sky-700 hover:bg-sky-100 transition shrink-0 cursor-pointer shadow-2xs"
+                  title="Tạo Brand mới"
+                >
+                  + Thêm Brand
+                </button>
+              </div>
+              {!brandProfileId && (
+                <p className="mt-1.5 text-[11px] font-semibold text-amber-700">
+                  ⚠️ Hãy chọn Brand hoặc bấm &quot;+ Thêm Brand&quot; để gán template vào đúng shop.
+                </p>
+              )}
             </div>
 
             {/* Danh mục tất cả các Phôi trong hệ thống */}
-            {managedPhoiRows.length > 0 && (
+            {selectedBrandName && managedPhoiRows.length > 0 && (
               <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">
-                  Trạng thái các Phôi đối với {selectedBrandName}
+                  Danh sách Template ({selectedBrandName})
                 </label>
-                <div className="max-h-60 overflow-y-auto space-y-2.5 pr-1 thin-scrollbar">
+                <div className="max-h-60 overflow-y-auto space-y-2 pr-1 thin-scrollbar">
                   {managedPhoiRows.map(({ target, source }) => {
                     const isTargetReady = target ? isTemplateReady(target) : false;
                     const active = target ? target.id === templateId && isTargetReady : false;
+                    const templateDisplayName = target?.name || source.phoi_name;
+                    const shopDisplayName = target?.shop_name || source.shop_name;
+
                     return (
                       <div
                         key={source.phoi_key}
-                        className={`rounded-2xl border p-3.5 bg-white transition shadow-2xs ${
+                        className={`rounded-xl border p-3 bg-white transition shadow-2xs ${
                           active
-                            ? "border-emerald-400 ring-2 ring-emerald-200"
+                            ? "border-emerald-400 ring-2 ring-emerald-200 bg-emerald-50/30"
                             : isTargetReady
                               ? "border-emerald-200 bg-emerald-50/20"
                               : target
@@ -2457,62 +2483,46 @@ export function TrelloBoardView({
                                 : "border-slate-200 bg-slate-50/30"
                         }`}
                       >
-                        <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
-                              {isTargetReady ? (
-                                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 shrink-0">
+                              <span className={`flex h-5 w-5 items-center justify-center rounded-full shrink-0 ${
+                                isTargetReady
+                                  ? "bg-emerald-100 text-emerald-700"
+                                  : target
+                                    ? "bg-amber-100 text-amber-800"
+                                    : "bg-slate-100 text-slate-500"
+                              }`}>
+                                {isTargetReady ? (
                                   <CheckIcon className="h-3 w-3" weight="bold" />
-                                </span>
-                              ) : target ? (
-                                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-100 text-amber-800 shrink-0">
+                                ) : target ? (
                                   <WarningCircleIcon className="h-3.5 w-3.5 text-amber-700" weight="fill" />
-                                </span>
-                              ) : (
-                                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-100 text-slate-500 shrink-0">
+                                ) : (
                                   <StorefrontIcon className="h-3 w-3" />
-                                </span>
-                              )}
-                              <p className="truncate text-xs font-extrabold text-slate-900">{source.phoi_name}</p>
-                              {active && (
-                                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-black text-emerald-800 shrink-0">
-                                  Đang kích hoạt
-                                </span>
-                              )}
+                                )}
+                              </span>
+                              <p className="truncate text-xs font-bold text-slate-900">{templateDisplayName}</p>
                             </div>
-
-                            {isTargetReady ? (
-                              <p className="mt-1 text-[11px] font-semibold text-emerald-800">
-                                Sẵn sàng · {target?.name}
-                              </p>
-                            ) : target ? (
-                              <div className="mt-1.5 rounded-xl bg-amber-100/70 p-2 border border-amber-200 text-amber-950">
-                                <p className="text-[10px] text-amber-900 leading-4">
-                                  ⚠️ Chưa có dòng mẫu Parent/Child. Hãy mở Excel điền mẫu hoặc tải phôi đã điền.
-                                </p>
-                              </div>
-                            ) : (
-                              <p className="mt-1 text-[10px] text-slate-600">
-                                Đã có mẫu từ <span className="font-bold text-slate-800">{source.shop_name}</span> · Tải file blank để auto-map
-                              </p>
-                            )}
+                            <p className="mt-0.5 ml-7 text-[11px] font-medium text-slate-500">
+                              Shop: <span className="font-bold text-slate-700">{shopDisplayName}</span>
+                            </p>
                           </div>
 
                           <span
-                            className={`shrink-0 rounded-full px-2.5 py-1 text-[9px] font-black uppercase tracking-wider ${
+                            className={`shrink-0 rounded-full px-2.5 py-0.5 text-[9px] font-black uppercase tracking-wider ${
                               isTargetReady
                                 ? "bg-emerald-100 text-emerald-900 border border-emerald-300"
                                 : target
-                                  ? "bg-amber-100 text-amber-950 border border-amber-300"
+                                  ? "bg-amber-100 text-amber-900 border border-amber-300"
                                   : "bg-slate-100 text-slate-700 border border-slate-200"
                             }`}
                           >
-                            {isTargetReady ? "Sẵn sàng" : target ? "Chưa điền" : "Chờ blank"}
+                            {active ? "Đang kích hoạt" : isTargetReady ? "Sẵn sàng" : target ? "Chưa kế thừa" : "Chờ blank"}
                           </span>
                         </div>
 
                         {target && (
-                          <div className="mt-2.5 flex items-center justify-end gap-2 border-t border-slate-100 pt-2">
+                          <div className="mt-2 flex items-center justify-end gap-2 border-t border-slate-100 pt-2">
                             {isTargetReady && !active && (
                               <button
                                 type="button"
@@ -2520,7 +2530,7 @@ export function TrelloBoardView({
                                   selectDestination(target.id);
                                   setShowAddTemplateModal(false);
                                 }}
-                                className="rounded-xl bg-emerald-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-700 transition cursor-pointer shadow-2xs"
+                                className="rounded-lg bg-emerald-600 px-3 py-1 text-[11px] font-bold text-white hover:bg-emerald-700 transition cursor-pointer shadow-2xs"
                               >
                                 Chọn dùng
                               </button>
@@ -2528,7 +2538,7 @@ export function TrelloBoardView({
                             <button
                               type="button"
                               onClick={() => void handleDeleteTemplate(target)}
-                              className="rounded-xl bg-rose-50 border border-rose-200 px-2.5 py-1 text-[11px] font-bold text-rose-700 hover:bg-rose-100 transition cursor-pointer"
+                              className="rounded-lg bg-rose-50 border border-rose-200 px-2 py-1 text-[11px] font-bold text-rose-700 hover:bg-rose-100 transition cursor-pointer"
                               title="Xóa template này"
                             >
                               Xóa
@@ -2543,9 +2553,6 @@ export function TrelloBoardView({
             )}
 
             <form onSubmit={handleAddTemplate} className="space-y-4">
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-xs leading-5 text-emerald-900">
-                Tải lên file Blank Template từ Seller Central của <strong>{selectedBrandName || "Brand"}</strong>. Hệ thống sẽ tự động quét và kế thừa (Auto-Map) toàn bộ cấu hình từ phôi mẫu cùng loại của shop khác!
-              </div>
               <div>
                 <label htmlFor="new-template-file" className="block text-xs font-bold text-slate-700 mb-1">Tải lên file Blank Template (.xlsx, .xlsm) *</label>
                 <input
