@@ -112,12 +112,13 @@ export function selectTrelloImageAttachments(card: Pick<TrelloCard, "id" | "atta
  * numbered mockup in the workbook.
  */
 export function selectTrelloListingImageAttachments(
-  card: Pick<TrelloCard, "id" | "attachments">,
+  card: Pick<TrelloCard, "id" | "idAttachmentCover" | "attachments">,
 ) {
   const images = selectTrelloImageAttachments(card);
   const preferredSourcePattern =
     /(?:full[\s_.-]*design|(?:^|[\s_.-])(?:source|artwork)(?:[\s_.-]|$))/i;
   const mainImage =
+    images.find((attachment) => attachment.id === card.idAttachmentCover) ||
     images.find(
       (attachment) =>
         mockupIndexFromAttachmentName(attachment.name) === null &&
@@ -297,6 +298,7 @@ export interface TrelloCard {
   desc: string;
   idList: string;
   idBoard?: string;
+  idAttachmentCover?: string | null;
   url: string;
   dateLastActivity?: string;
   badges: {
@@ -540,7 +542,11 @@ export async function fetchTrelloLists(boardId: string, apiKey: string, token: s
 
 export async function fetchTrelloCards(listId: string, apiKey: string, token: string): Promise<TrelloCard[]> {
   const response = await fetch(
-    buildUrl(`/lists/${listId}/cards`, apiKey, token, { attachments: "true", attachment_fields: "name,url,mimeType,bytes,isUpload,date,previews" }),
+    buildUrl(`/lists/${listId}/cards`, apiKey, token, {
+      fields: "all",
+      attachments: "true",
+      attachment_fields: "name,url,mimeType,bytes,isUpload,date,previews",
+    }),
     { cache: "no-store" },
   );
   if (!response.ok) {
@@ -561,7 +567,11 @@ export async function fetchTrelloCardDetail(
   signal?: AbortSignal,
 ): Promise<TrelloCard> {
   const response = await fetchTrelloWithRetry(
-    buildUrl(`/cards/${cardId}`, apiKey, token, { attachments: "true", attachment_fields: "name,url,mimeType,bytes,isUpload,date,previews" }),
+    buildUrl(`/cards/${cardId}`, apiKey, token, {
+      fields: "all",
+      attachments: "true",
+      attachment_fields: "name,url,mimeType,bytes,isUpload,date,previews",
+    }),
     { cache: "no-store" },
     signal,
     { retryNetworkErrors: true },

@@ -2,8 +2,13 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Listing Desk",
-  description: "Amazon listing workflow and quality control workspace.",
+  title: "NCE HUB",
+  description: "NCE HUB - Amazon listing workflow and quality control workspace.",
+  icons: {
+    icon: "/icon.png",
+    shortcut: "/favicon.ico",
+    apple: "/icon.png",
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

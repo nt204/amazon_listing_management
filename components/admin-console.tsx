@@ -160,11 +160,11 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
-            <Link href="/" className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100" aria-label="Quay lại Listing Desk">
+            <Link href="/" className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100" aria-label="Quay lại NCE HUB">
               <ArrowLeftIcon size={16} />
             </Link>
             <div className="min-w-0">
-              <h1 className="truncate text-sm font-extrabold text-slate-900">Quản trị Listing Desk</h1>
+              <h1 className="truncate text-sm font-extrabold text-slate-900">Quản trị NCE HUB</h1>
               <p className="truncate text-[10px] font-semibold text-slate-500">Tài khoản và lưu trữ ảnh</p>
             </div>
           </div>

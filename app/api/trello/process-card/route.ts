@@ -125,7 +125,7 @@ async function processCardRequest(
   const card = await runStage("card", () => fetchTrelloCardDetail(cardId, apiKey, token, signal));
   const { sku, itemName } = parseTrelloCardTitle(card.name);
 
-  // 2. Load primary cover image attachment (Full Design) from Trello card
+  // 2. Load the Trello "Make cover" attachment, with filename-based fallbacks.
   const imageAttachments = selectTrelloListingImageAttachments(card);
 
   const loadedImages: Array<{ name: string; type: string; data_url: string }> = [];

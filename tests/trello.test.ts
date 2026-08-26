@@ -120,6 +120,41 @@ test("Mockup1 becomes the main image when the source artwork is unavailable", ()
   );
 });
 
+test("the Trello Make cover attachment takes priority over filename conventions", () => {
+  const fullDesign = attachment({ id: "full-design", name: "Full Design.png" });
+  const cover = attachment({ id: "chosen-cover", name: "Mockup3_Lifestyle.jpg" });
+  const mockup1 = attachment({ id: "mockup-1", name: "Mockup1_Main.jpg" });
+  const mockup2 = attachment({ id: "mockup-2", name: "Mockup2_Dimensions.jpg" });
+
+  assert.deepEqual(
+    selectTrelloListingImageAttachments({
+      id: "card-current",
+      idAttachmentCover: cover.id,
+      attachments: [fullDesign, mockup1, mockup2, cover],
+    }).map((item) => item.id),
+    ["chosen-cover", "mockup-2"],
+  );
+});
+
+test("an unavailable or non-image Trello cover falls back to the source artwork", () => {
+  const fullDesign = attachment({ id: "full-design", name: "Full Design.png" });
+  const spreadsheet = attachment({
+    id: "spreadsheet-cover",
+    name: "listing.xlsx",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    url: "https://trello.com/listing.xlsx",
+  });
+
+  assert.deepEqual(
+    selectTrelloListingImageAttachments({
+      id: "card-current",
+      idAttachmentCover: spreadsheet.id,
+      attachments: [spreadsheet, fullDesign],
+    }).map((item) => item.id),
+    ["full-design"],
+  );
+});
+
 test("filterPublicTrelloImageAttachments rejects missing or non-image URLs", async () => {
   const valid = attachment({ id: "valid", url: "https://example.test/valid.jpg" });
   const missing = attachment({ id: "missing", url: "https://example.test/missing.jpg" });

@@ -59,12 +59,13 @@ export function ListingWorkspace({
       <aside className="flex w-56 shrink-0 flex-col justify-between border-r border-slate-200/80 bg-white p-3.5 shadow-xs select-none">
         <div>
           {/* Logo & App Info */}
-          <div className="mb-5 flex items-center gap-3 px-1 pt-1">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-700 text-white shadow-sm shadow-indigo-500/30">
-              <CheckSquareIcon size={20} weight="fill" />
+          <div className="mb-5 flex items-center gap-2.5 px-1 pt-1">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-50 border border-slate-200/80 p-1 shadow-xs">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/logo.png" alt="NCE HUB Logo" className="h-full w-full object-contain" />
             </div>
             <div>
-              <h1 className="text-sm font-black tracking-tight text-slate-900 leading-tight">Listing Desk</h1>
+              <h1 className="text-sm font-black tracking-tight text-slate-900 leading-tight">NCE HUB</h1>
               <p className="text-[10px] font-semibold text-slate-400">Workflow &amp; Trello Automation</p>
             </div>
           </div>

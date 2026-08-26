@@ -76,11 +76,12 @@ export function LoginScreen() {
       <section className="w-full max-w-[420px] overflow-hidden rounded-2xl border border-[#d8dde1] bg-white shadow-[0_24px_70px_rgba(31,41,49,0.14)]">
         <div className="border-b border-[#e2e6e9] px-6 pb-5 pt-6">
           <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-xl bg-blue-600 text-white shadow-sm">
-              <LockKeyIcon size={20} weight="fill" />
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-slate-50 border border-slate-200/80 p-1 shadow-xs">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/logo.png" alt="NCE HUB Logo" className="h-full w-full object-contain" />
             </div>
             <div>
-              <h1 className="text-xl font-extrabold tracking-tight text-[#222b32]">Listing Desk</h1>
+              <h1 className="text-xl font-extrabold tracking-tight text-[#222b32]">NCE HUB</h1>
               <p className="mt-0.5 text-xs font-medium text-[#65717c]">Tài khoản riêng, dữ liệu team dùng chung</p>
             </div>
           </div>
