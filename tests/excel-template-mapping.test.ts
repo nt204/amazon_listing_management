@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -12,6 +12,8 @@ test("maps template A values into shop B blank without copying shop A workbook m
   const source = join(directory, "shop-a.xlsx");
   const destination = join(directory, "shop-b.xlsx");
   const output = join(directory, "mapped-shop-b.xlsx");
+  const listingPayload = join(directory, "listing.json");
+  const standaloneOutput = join(directory, "standalone-output.xlsx");
 
   try {
     const fixtureScript = String.raw`
@@ -135,6 +137,38 @@ print(json.dumps({
     ));
     assert.equal(inspection.product_type, "ornament");
     assert.equal(inspection.main_sku, "SAMPLE");
+
+    writeFileSync(listingPayload, JSON.stringify({ items: [{
+      sku: "ORN-001",
+      brand: "Brand B",
+      image_urls: ["https://shop-b.example/main.jpg"],
+      listing: {
+        title: "Standalone ornament",
+        description: "Standalone description",
+        bullet_points: ["One", "Two", "Three", "Four", "Five"],
+        backend_search_terms: "standalone ornament",
+      },
+    }] }));
+    execFileSync("python3", [automationScript, "fill", output, listingPayload, standaloneOutput]);
+    const standaloneResult = JSON.parse(execFileSync("python3", ["-c", String.raw`
+import json
+import sys
+from openpyxl import load_workbook
+
+workbook = load_workbook(sys.argv[1], data_only=False)
+sheet = workbook["Template"]
+columns = {sheet.cell(3, column).value: column for column in range(1, sheet.max_column + 1)}
+print(json.dumps({
+    "first_sku": sheet.cell(4, columns["contribution_sku"]).value,
+    "second_sku": sheet.cell(5, columns["contribution_sku"]).value,
+    "parentage": sheet.cell(4, columns["parentage_level[marketplace_id=ATVPDKIKX0DER]"]).value,
+    "parent_sku": sheet.cell(4, columns["child_parent_sku_relationship[marketplace_id=ATVPDKIKX0DER].parent_sku"]).value,
+}))
+`, standaloneOutput], { encoding: "utf8" }));
+    assert.equal(standaloneResult.first_sku, "ORN-001");
+    assert.equal(standaloneResult.second_sku, null);
+    assert.equal(standaloneResult.parentage, null);
+    assert.equal(standaloneResult.parent_sku, null);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

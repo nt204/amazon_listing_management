@@ -5,9 +5,12 @@ import {
   ArrowLeftIcon,
   CheckCircleIcon,
   DatabaseIcon,
+  EyeIcon,
+  FilePdfIcon,
   HardDrivesIcon,
   ProhibitIcon,
   ShieldCheckIcon,
+  TrashIcon,
   UserCheckIcon,
   UserMinusIcon,
   UsersThreeIcon,
@@ -17,7 +20,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AccountMenu } from "@/components/account-menu";
 import type { RequestActor } from "@/lib/auth";
-import type { AppUserStatus, AppUserSummary, ImageStorageStats } from "@/lib/db";
+import type { AppUserStatus, AppUserSummary, ImageStorageStats, SystemGuideSummary } from "@/lib/db";
 
 type UserAction = "approve" | "reject" | "disable" | "restore";
 
@@ -57,6 +60,12 @@ function formatDate(value: string | null) {
 export function AdminConsole({ actor }: { actor: RequestActor }) {
   const [users, setUsers] = useState<AppUserSummary[]>([]);
   const [storage, setStorage] = useState<{ driver: string; stats: ImageStorageStats } | null>(null);
+  const [guides, setGuides] = useState<SystemGuideSummary[]>([]);
+  const [showUploadGuideModal, setShowUploadGuideModal] = useState(false);
+  const [guideTitle, setGuideTitle] = useState("");
+  const [guideDesc, setGuideDesc] = useState("");
+  const [guideFile, setGuideFile] = useState<File | null>(null);
+  const [uploadingGuide, setUploadingGuide] = useState(false);
   const [loading, setLoading] = useState(true);
   const [actionKey, setActionKey] = useState("");
   const [error, setError] = useState("");
@@ -66,22 +75,75 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
     setLoading(true);
     setError("");
     try {
-      const [usersResponse, storageResponse] = await Promise.all([
+      const [usersResponse, storageResponse, guidesResponse] = await Promise.all([
         fetch("/api/admin/users", { cache: "no-store" }),
         fetch("/api/admin/storage", { cache: "no-store" }),
+        fetch("/api/guides", { cache: "no-store" }),
       ]);
       const usersBody = await usersResponse.json() as { users?: AppUserSummary[]; error?: string };
       const storageBody = await storageResponse.json() as { driver?: string; stats?: ImageStorageStats; error?: string };
+      const guidesBody = await guidesResponse.json() as { guides?: SystemGuideSummary[]; error?: string };
       if (!usersResponse.ok) throw new Error(usersBody.error || "Không thể tải tài khoản.");
       if (!storageResponse.ok) throw new Error(storageBody.error || "Không thể tải lưu trữ.");
       setUsers(usersBody.users || []);
       setStorage({ driver: storageBody.driver || "unknown", stats: storageBody.stats! });
+      if (guidesResponse.ok && guidesBody.guides) {
+        setGuides(guidesBody.guides);
+      }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Không thể tải dữ liệu quản trị.");
     } finally {
       setLoading(false);
     }
   }, []);
+
+  const handleUploadGuide = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!guideTitle.trim() || !guideFile) return;
+    setUploadingGuide(true);
+    setError("");
+    setNotice("");
+    try {
+      const formData = new FormData();
+      formData.append("title", guideTitle.trim());
+      formData.append("description", guideDesc.trim());
+      formData.append("file", guideFile);
+
+      const res = await fetch("/api/guides", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không thể tải lên tài liệu hướng dẫn.");
+      if (data.guide) {
+        setGuides((prev) => [data.guide, ...prev.filter((g) => g.id !== data.guide.id)]);
+      }
+      setNotice(`Đã tải lên tài liệu "${guideTitle.trim()}" thành công!`);
+      setGuideTitle("");
+      setGuideDesc("");
+      setGuideFile(null);
+      setShowUploadGuideModal(false);
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : "Lỗi tải lên tài liệu.");
+    } finally {
+      setUploadingGuide(false);
+    }
+  };
+
+  const handleDeleteGuide = async (guide: SystemGuideSummary) => {
+    if (!window.confirm(`Xác nhận xóa tài liệu hướng dẫn "${guide.title}"?`)) return;
+    setError("");
+    setNotice("");
+    try {
+      const res = await fetch(`/api/guides/${guide.id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không thể xóa tài liệu.");
+      setGuides((prev) => prev.filter((g) => g.id !== guide.id));
+      setNotice(`Đã xóa tài liệu "${guide.title}".`);
+    } catch (delError) {
+      setError(delError instanceof Error ? delError.message : "Lỗi xóa tài liệu.");
+    }
+  };
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -295,7 +357,7 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
                   type="button"
                   disabled={storage.driver !== "r2" || eligibleBytes <= 0 || Boolean(actionKey)}
                   onClick={() => void cleanupDatabaseImages()}
-                  className="shrink-0 rounded-lg bg-red-700 px-4 py-2.5 text-[11px] font-extrabold text-white hover:bg-red-800 disabled:bg-slate-300"
+                  className="shrink-0 rounded-lg bg-red-700 px-4 py-2.5 text-[11px] font-extrabold text-white hover:bg-red-800 disabled:bg-slate-300 cursor-pointer"
                 >
                   {actionKey === "storage:cleanup" ? "Đang dọn..." : "Xóa bản sao ảnh trong DB"}
                 </button>
@@ -303,6 +365,139 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
             </div>
           ) : (
             <div className="h-44 animate-pulse bg-slate-50" />
+          )}
+        </section>
+
+        {/* Section: Tài liệu Hướng dẫn sử dụng PDF */}
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-4 sm:px-5">
+            <div className="flex items-center gap-3">
+              <div className="grid h-9 w-9 place-items-center rounded-xl bg-indigo-50 text-indigo-700">
+                <FilePdfIcon size={20} weight="fill" />
+              </div>
+              <div>
+                <h2 className="text-sm font-extrabold text-slate-900">Tài liệu Hướng dẫn sử dụng (PDF)</h2>
+                <p className="mt-0.5 text-[11px] font-medium text-slate-500">Tải lên file PDF hướng dẫn cho toàn bộ nhân viên và người dùng xem</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowUploadGuideModal((prev) => !prev)}
+              className="rounded-xl bg-indigo-600 px-3.5 py-1.5 text-[11px] font-bold text-white shadow-xs hover:bg-indigo-700 transition cursor-pointer"
+            >
+              + Tải lên file PDF
+            </button>
+          </div>
+
+          {/* Modal / Form Tải lên PDF */}
+          {showUploadGuideModal && (
+            <form onSubmit={handleUploadGuide} className="border-b border-slate-200 bg-slate-50/80 p-4 sm:p-5 space-y-3">
+              <h3 className="text-xs font-extrabold text-slate-800">Thêm tài liệu hướng dẫn mới</h3>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">Tiêu đề tài liệu *</label>
+                  <input
+                    type="text"
+                    required
+                    value={guideTitle}
+                    onChange={(e) => setGuideTitle(e.target.value)}
+                    placeholder="Ví dụ: Hướng dẫn tạo Listing & Đào Keyword"
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">Chọn file PDF *</label>
+                  <input
+                    type="file"
+                    required
+                    accept=".pdf"
+                    onChange={(e) => setGuideFile(e.target.files?.[0] || null)}
+                    className="w-full text-xs text-slate-600 file:mr-3 file:rounded-xl file:border-0 file:bg-indigo-100 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-indigo-700 hover:file:bg-indigo-200 cursor-pointer"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">Mô tả ngắn</label>
+                <input
+                  type="text"
+                  value={guideDesc}
+                  onChange={(e) => setGuideDesc(e.target.value)}
+                  placeholder="Ví dụ: Quy trình từng bước xuất Excel và đồng bộ Trello..."
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none focus:border-indigo-500"
+                />
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowUploadGuideModal(false)}
+                  className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  disabled={uploadingGuide}
+                  className="rounded-xl bg-indigo-600 px-4 py-1.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-60 cursor-pointer shadow-xs"
+                >
+                  {uploadingGuide ? "Đang tải lên..." : "Lưu tài liệu"}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* Danh sách PDF Guides */}
+          {guides.length === 0 ? (
+            <div className="px-5 py-10 text-center">
+              <FilePdfIcon className="mx-auto text-slate-300" size={36} />
+              <p className="mt-2 text-xs font-bold text-slate-700">Chưa có tài liệu hướng dẫn nào được tải lên.</p>
+              <p className="mt-1 text-[11px] text-slate-500">Bấm nút "+ Tải lên file PDF" ở trên để đưa tài liệu hướng dẫn cho nhân viên.</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {guides.map((guide) => (
+                <article key={guide.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-5 hover:bg-slate-50/50 transition">
+                  <div className="flex items-start gap-3 min-w-0 flex-1">
+                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-rose-50 text-rose-600 border border-rose-100 mt-0.5">
+                      <FilePdfIcon size={22} weight="fill" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h3 className="truncate text-xs font-black text-slate-900">{guide.title}</h3>
+                        <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600 font-mono">
+                          {formatBytes(guide.byteSize)}
+                        </span>
+                      </div>
+                      {guide.description && (
+                        <p className="mt-0.5 text-[11px] text-slate-600 line-clamp-1">{guide.description}</p>
+                      )}
+                      <p className="mt-0.5 text-[10px] text-slate-400 font-mono">
+                        File: {guide.filename} • {formatDate(guide.createdAt)}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <a
+                      href={`/api/guides/${guide.id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition shadow-2xs"
+                    >
+                      <EyeIcon size={14} weight="bold" />
+                      Xem file PDF
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteGuide(guide)}
+                      className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-100 transition cursor-pointer"
+                      title="Xóa tài liệu này"
+                    >
+                      <TrashIcon size={14} weight="bold" />
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
           )}
         </section>
       </div>

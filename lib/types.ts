@@ -382,6 +382,7 @@ export interface ListingTemplateMetadata {
   is_blank?: boolean;
   is_ready?: boolean;
   warning_reason?: string;
+  listing_mode?: "standalone" | "legacy_parent_child";
   sheet_name: string;
   attribute_row: number;
   label_row: number;
@@ -406,6 +407,16 @@ export interface ListingTemplateMetadata {
     features: string[];
     country_of_origin: string;
   };
+}
+
+export interface ListingTemplateRequiredField {
+  id: string;
+  technical_name: string;
+  label: string;
+  column: string;
+  input_type: "text" | "select";
+  options: string[];
+  default_value: string;
 }
 
 export interface ListingTemplateSummary {

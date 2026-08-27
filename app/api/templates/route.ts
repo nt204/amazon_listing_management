@@ -1,10 +1,11 @@
 import { extname } from "node:path";
 import { ApiError, authorize, dataScope, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
 import { normalizePhoiKey } from "@/lib/amazon-template-catalog";
-import { inspectListingTemplate, scanListingTemplate } from "@/lib/excel-automation";
+import { prepareStandaloneListingTemplate, scanStandaloneTemplateFields } from "@/lib/excel-automation";
 import {
   deleteListingTemplate,
   getBrandProfile,
+  listAmazonShops,
   listBrandProfiles,
   listListingTemplates,
   moveListingTemplateToShop,
@@ -35,6 +36,14 @@ const phoiNameSchema = z.string().trim().min(2).max(120).refine(
   "Tên phôi phải có ít nhất một chữ cái hoặc chữ số.",
 );
 
+const templateFieldValuesSchema = z.record(
+  z.string().min(1).max(500),
+  z.string().trim().max(5000),
+).refine(
+  (values) => Object.keys(values).length <= 200,
+  "File template có quá nhiều trường cần lưu.",
+);
+
 export async function GET(request: Request) {
   try {
     const scope = dataScope(authorize(request, "read"));
@@ -55,23 +64,71 @@ export async function POST(request: Request) {
     const extension = extname(template.name).toLowerCase();
     if (![".xlsx", ".xlsm"].includes(extension)) throw new ApiError("Chỉ hỗ trợ .xlsx hoặc .xlsm.", 400);
     const blankWorkbook = Buffer.from(await template.arrayBuffer());
-    const scan = await scanListingTemplate(blankWorkbook, template.name);
+    let currentFieldValues: Record<string, string> | undefined = undefined;
+    const rawFieldsString = formData.get("field_values");
+    if (rawFieldsString) {
+      try {
+        const parsed = JSON.parse(String(rawFieldsString));
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          currentFieldValues = parsed as Record<string, string>;
+        }
+      } catch {
+        // ignore parsing error in scan mode
+      }
+    }
+    const mode = String(formData.get("mode") || "save");
+    const includeSetupFields = mode === "save" || String(formData.get("include_setup_fields") || "") === "true";
+    const showExistingSetupFields = mode === "scan"
+      && String(formData.get("show_existing_setup_fields") || "") === "true";
+    const scan = await scanStandaloneTemplateFields(blankWorkbook, template.name, currentFieldValues, {
+      includeSetupFields,
+      showExistingSetupFields,
+    });
+    if (mode === "scan") {
+      const { required_fields, managed_fields_count, ...templateScan } = scan;
+      const detectedStoreName = scan.store_name?.trim() || "";
+      const allBrands = await listBrandProfiles(scope);
+      let matchedBrand = detectedStoreName
+        ? allBrands.find((b) => b.name.localeCompare(detectedStoreName, undefined, { sensitivity: "accent" }) === 0) || null
+        : null;
+
+      let matchedShop: import("@/lib/types").AmazonShopSummary | null = null;
+      if (scan.contributor_id) {
+        const allShops = await listAmazonShops(scope);
+        matchedShop = allShops.find((s) => s.contributor_id === scan.contributor_id) || null;
+        if (!matchedBrand && matchedShop) {
+          const shopToMatch = matchedShop;
+          matchedBrand = allBrands.find(
+            (b) => b.name.localeCompare(shopToMatch.name, undefined, { sensitivity: "accent" }) === 0,
+          ) || null;
+        }
+      }
+
+      return Response.json({
+        scan: templateScan,
+        required_fields,
+        managed_fields_count,
+        detected_brand: matchedBrand,
+        detected_shop: matchedShop,
+        detected_store_name: detectedStoreName || matchedShop?.name || matchedBrand?.name || "",
+        detected_product_type: scan.product_type || "",
+      });
+    }
+    if (mode !== "save") throw new ApiError("Chế độ xử lý template không hợp lệ.", 400);
     const requestedPhoiName = String(formData.get("phoi_name") || "").trim();
-    const parsedPhoiName = requestedPhoiName
-      ? phoiNameSchema.safeParse(requestedPhoiName)
-      : null;
-    if (parsedPhoiName && !parsedPhoiName.success) {
+    const parsedPhoiName = phoiNameSchema.safeParse(requestedPhoiName);
+    if (!parsedPhoiName.success) {
       throw new ApiError(parsedPhoiName.error.issues[0]?.message || "Tên phôi không hợp lệ.", 400);
     }
     if (!scan.contributor_id) {
       throw new ApiError("Không tìm thấy mã shop trong file. Hãy tải đúng template trực tiếp từ Seller Central.", 400);
     }
-    if (!scan.product_type || (!scan.phoi_name && !parsedPhoiName?.data)) {
+    if (!scan.product_type) {
       throw new ApiError("Không nhận diện được loại phôi trong file template Amazon.", 400);
     }
 
     const detectedStoreName = scan.store_name?.trim() || "";
-    let brandProfileId = String(formData.get("brand_profile_id") || "").trim();
+    const brandProfileId = String(formData.get("brand_profile_id") || "").trim();
     let resolvedBrand: BrandProfile | null = null;
 
     if (detectedStoreName) {
@@ -105,38 +162,60 @@ export async function POST(request: Request) {
     } catch (error) {
       throw new ApiError(error instanceof Error ? error.message : "Không thể xác minh tài khoản của Brand.", 409);
     }
-    const phoiName = parsedPhoiName?.data || scan.phoi_name;
+    const phoiName = parsedPhoiName.data;
     const phoiKey = normalizePhoiKey(phoiName);
 
-    let workbook: Buffer = blankWorkbook;
-    let isBlank = false;
-    let metadata: ListingTemplateMetadata;
-    let productType = scan.product_type;
-
+    let rawFieldValues: unknown = {};
     try {
-      const inspection = await inspectListingTemplate(workbook, template.name);
-      productType = inspection.product_type || productType;
-      const { product_type, ...inspectedMeta } = inspection;
-      metadata = inspectedMeta;
-      isBlank = false;
+      rawFieldValues = JSON.parse(String(formData.get("field_values") || "{}"));
     } catch {
-      isBlank = true;
-      metadata = {
-        is_blank: true,
-        is_ready: false,
-        warning_reason: "File blank chưa có dòng mẫu Parent/Child. Hãy điền dòng mẫu vào file Excel rồi tải lại.",
-        sheet_name: scan.sheet_name || "Template",
-        attribute_row: scan.attribute_row || 3,
-        label_row: scan.label_row || 2,
-        data_row: scan.data_row || 4,
-        column_count: scan.column_count || 0,
-        last_column: "",
-        source_parent_row: 0,
-        source_child_row: 0,
-        content_columns: { sku: "", title: "", description: "", bullet_points: [], generic_keywords: "", main_image: "" },
-        defaults: { material: "", size_capacity: "", color: "", package_contents: "", features: [], country_of_origin: "" },
-      };
+      throw new ApiError("Dữ liệu các trường template không hợp lệ.", 400);
     }
+    const parsedFieldValues = templateFieldValuesSchema.safeParse(rawFieldValues);
+    if (!parsedFieldValues.success) {
+      throw new ApiError(parsedFieldValues.error.issues[0]?.message || "Dữ liệu các trường template không hợp lệ.", 400);
+    }
+    let prepared;
+    try {
+      prepared = await prepareStandaloneListingTemplate(blankWorkbook, template.name, {
+        brandName,
+        fieldValues: parsedFieldValues.data,
+      });
+    } catch (saveError) {
+      let errorMsg = saveError instanceof Error ? saveError.message : "Lỗi lưu template.";
+      let extraRequiredFields: import("@/lib/types").ListingTemplateRequiredField[] = [];
+      if (errorMsg.includes("__REQUIRED_FIELDS_JSON__")) {
+        const parts = errorMsg.split("__REQUIRED_FIELDS_JSON__");
+        errorMsg = parts[0];
+        try {
+          extraRequiredFields = JSON.parse(parts[1]) as import("@/lib/types").ListingTemplateRequiredField[];
+        } catch {
+          // ignore
+        }
+      }
+      const rescan = extraRequiredFields.length > 0
+        ? { required_fields: extraRequiredFields }
+        : await scanStandaloneTemplateFields(blankWorkbook, template.name, parsedFieldValues.data, {
+          includeSetupFields: true,
+          showExistingSetupFields: false,
+        });
+      return Response.json(
+        {
+          error: errorMsg,
+          required_fields: rescan.required_fields || [],
+        },
+        { status: 400 },
+      );
+    }
+    const workbook = prepared.workbook;
+    const { product_type: preparedProductType, ...preparedMetadata } = prepared.metadata;
+    const productType = preparedProductType || scan.product_type;
+    const metadata: ListingTemplateMetadata = {
+      ...preparedMetadata,
+      is_blank: false,
+      is_ready: true,
+      listing_mode: "standalone",
+    };
 
     const name = `${shop.name} - ${phoiName}`;
     const saved = await saveListingTemplate(scope, {
@@ -160,11 +239,9 @@ export async function POST(request: Request) {
       shop,
       scan,
       brand: resolvedBrand,
-      is_blank: isBlank,
-      is_ready: !isBlank,
-      warning: isBlank
-        ? `Đã nhận diện store "${shop.name}" và lưu file template của phôi "${phoiName}". Lưu ý: File này CHƯA THỂ DÙNG vì chưa có dòng mẫu Parent/Child. Hãy điền dòng mẫu vào file Excel rồi tải lại.`
-        : null,
+      is_blank: false,
+      is_ready: true,
+      warning: null,
     }, { status: 201 });
   } catch (error) {
     return routeErrorResponse(error, "Không thể lưu template Amazon.");

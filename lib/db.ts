@@ -70,7 +70,7 @@ async function ensureSchema() {
     const sql = getDatabase();
     globalForDatabase.listingPostgresSchema = sql<{ name: string }[]>`
         SELECT name FROM schema_migrations
-        WHERE name = '022_backfill_template_brands.sql'
+        WHERE name = '023_system_guides.sql'
         LIMIT 1
       `
       .then((rows) => {
@@ -1656,8 +1656,8 @@ function toListingTemplateSummary(row: ListingTemplateRow): ListingTemplateSumma
   const metadata = parseJson(row.metadata_json) as ListingTemplateMetadata;
   const isBlank = Boolean(metadata?.is_blank);
   const isExplicitNotReady = metadata?.is_ready === false;
-  const hasParentChild = Boolean(metadata?.source_parent_row && metadata?.source_child_row);
-  const isReady = !isBlank && !isExplicitNotReady && hasParentChild;
+  const hasSourceListingRow = Boolean(metadata?.source_parent_row && metadata?.source_child_row);
+  const isReady = !isBlank && !isExplicitNotReady && hasSourceListingRow;
 
   return {
     id: row.id,
@@ -2150,4 +2150,127 @@ export async function setAppSetting(key: string, value: Record<string, unknown> 
     ON CONFLICT (key) DO UPDATE
     SET value = EXCLUDED.value, updated_at = NOW()
   `;
+}
+
+export interface SystemGuideSummary {
+  id: string;
+  title: string;
+  description: string;
+  filename: string;
+  byteSize: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SystemGuideDetail extends SystemGuideSummary {
+  pdfBytes: Buffer;
+}
+
+export async function listSystemGuides(): Promise<SystemGuideSummary[]> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const rows = await sql<{
+    id: string;
+    title: string;
+    description: string;
+    filename: string;
+    byte_size: string | number;
+    created_at: Date;
+    updated_at: Date;
+  }[]>`
+    SELECT id, title, description, filename, byte_size, created_at, updated_at
+    FROM system_guides
+    ORDER BY created_at DESC
+  `;
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    description: r.description,
+    filename: r.filename,
+    byteSize: Number(r.byte_size || 0),
+    createdAt: r.created_at.toISOString(),
+    updatedAt: r.updated_at.toISOString(),
+  }));
+}
+
+export async function getSystemGuideById(id: string): Promise<SystemGuideDetail | null> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const rows = await sql<{
+    id: string;
+    title: string;
+    description: string;
+    filename: string;
+    byte_size: string | number;
+    pdf_bytes: Buffer;
+    created_at: Date;
+    updated_at: Date;
+  }[]>`
+    SELECT id, title, description, filename, byte_size, pdf_bytes, created_at, updated_at
+    FROM system_guides
+    WHERE id = ${id}
+    LIMIT 1
+  `;
+  if (!rows[0]) return null;
+  const r = rows[0];
+  return {
+    id: r.id,
+    title: r.title,
+    description: r.description,
+    filename: r.filename,
+    byteSize: Number(r.byte_size || 0),
+    pdfBytes: Buffer.from(r.pdf_bytes),
+    createdAt: r.created_at.toISOString(),
+    updatedAt: r.updated_at.toISOString(),
+  };
+}
+
+export async function saveSystemGuide(guide: {
+  title: string;
+  description: string;
+  filename: string;
+  pdfBytes: Buffer;
+}): Promise<SystemGuideSummary> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const rows = await sql<{
+    id: string;
+    title: string;
+    description: string;
+    filename: string;
+    byte_size: string | number;
+    created_at: Date;
+    updated_at: Date;
+  }[]>`
+    INSERT INTO system_guides (title, description, filename, byte_size, pdf_bytes, created_at, updated_at)
+    VALUES (
+      ${guide.title},
+      ${guide.description},
+      ${guide.filename},
+      ${guide.pdfBytes.byteLength},
+      ${guide.pdfBytes},
+      NOW(),
+      NOW()
+    )
+    RETURNING id, title, description, filename, byte_size, created_at, updated_at
+  `;
+  const r = rows[0];
+  return {
+    id: r.id,
+    title: r.title,
+    description: r.description,
+    filename: r.filename,
+    byteSize: Number(r.byte_size || 0),
+    createdAt: r.created_at.toISOString(),
+    updatedAt: r.updated_at.toISOString(),
+  };
+}
+
+export async function deleteSystemGuide(id: string): Promise<boolean> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const result = await sql`
+    DELETE FROM system_guides WHERE id = ${id}
+  `;
+  return result.count > 0;
 }

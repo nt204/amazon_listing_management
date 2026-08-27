@@ -2,6 +2,9 @@
 
 import {
   CheckSquareIcon,
+  DownloadSimpleIcon,
+  EyeIcon,
+  FilePdfIcon,
   GearIcon,
   ImageSquareIcon,
   KanbanIcon,
@@ -16,6 +19,15 @@ import { AccountMenu } from "@/components/account-menu";
 import type { RequestActor } from "@/lib/auth";
 import type { BrandProfile } from "@/lib/types";
 
+interface SystemGuideItem {
+  id: string;
+  title: string;
+  description: string;
+  filename: string;
+  byteSize: number;
+  createdAt: string;
+}
+
 interface ListingWorkspaceProps {
   initialBrands?: BrandProfile[];
   actor?: RequestActor;
@@ -29,6 +41,9 @@ export function ListingWorkspace({
   const [sidebarTab, setSidebarTab] = useState<"trello" | "mockups">("trello");
   const [viewMode, setViewMode] = useState<"trello" | "sellersprite">("trello");
   const [showTrelloConfigModal, setShowTrelloConfigModal] = useState(false);
+  const [showGuidesModal, setShowGuidesModal] = useState(false);
+  const [guides, setGuides] = useState<SystemGuideItem[]>([]);
+  const [loadingGuides, setLoadingGuides] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -36,6 +51,28 @@ export function ListingWorkspace({
     setToast(message);
     setTimeout(() => setToast(null), 3000);
   }, []);
+
+  const handleOpenGuides = async () => {
+    setLoadingGuides(true);
+    try {
+      const res = await fetch("/api/guides", { cache: "no-store" });
+      const data = await res.json() as { guides?: SystemGuideItem[]; error?: string };
+      if (!res.ok || !data.guides) throw new Error(data.error || "Không thể tải tài liệu.");
+      const list = data.guides;
+      setGuides(list);
+      if (list.length === 0) {
+        notify("Chưa có tài liệu hướng dẫn nào. Vui lòng liên hệ Quản trị viên.");
+      } else if (list.length === 1) {
+        window.open(`/api/guides/${list[0].id}`, "_blank");
+      } else {
+        setShowGuidesModal(true);
+      }
+    } catch {
+      notify("Không thể tải danh sách tài liệu hướng dẫn.");
+    } finally {
+      setLoadingGuides(false);
+    }
+  };
 
   const refreshBrands = useCallback(async () => {
     try {
@@ -148,10 +185,11 @@ export function ListingWorkspace({
             </p>
             <button
               type="button"
-              onClick={() => notify("Liên hệ team kỹ thuật hoặc xem hướng dẫn tại Trello Board.")}
-              className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-indigo-200 bg-white px-3 py-1.5 text-[11px] font-extrabold text-indigo-700 shadow-2xs hover:bg-indigo-50/80 hover:border-indigo-300 transition cursor-pointer"
+              disabled={loadingGuides}
+              onClick={() => void handleOpenGuides()}
+              className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-indigo-200 bg-white px-3 py-1.5 text-[11px] font-extrabold text-indigo-700 shadow-2xs hover:bg-indigo-50/80 hover:border-indigo-300 transition cursor-pointer disabled:opacity-60"
             >
-              <span>📖 Xem hướng dẫn</span>
+              <span>{loadingGuides ? "Đang mở..." : "📖 Xem hướng dẫn"}</span>
             </button>
           </div>
         </div>
@@ -255,6 +293,65 @@ export function ListingWorkspace({
           )}
         </div>
       </div>
+
+      {/* GUIDES MODAL */}
+      {showGuidesModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+          <div className="max-h-[calc(100dvh-4rem)] w-full max-w-xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl animate-in fade-in zoom-in-95 duration-150 flex flex-col">
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 bg-slate-50/50">
+              <div className="flex items-center gap-2.5">
+                <div className="grid h-8 w-8 place-items-center rounded-xl bg-rose-50 text-rose-600 border border-rose-100">
+                  <FilePdfIcon size={18} weight="fill" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-extrabold text-slate-900">Tài liệu Hướng dẫn sử dụng</h3>
+                  <p className="text-[11px] font-medium text-slate-500">{guides.length} tài liệu PDF</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowGuidesModal(false)}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 cursor-pointer"
+              >
+                <XIcon size={16} />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto max-h-96 space-y-2.5 thin-scrollbar">
+              {guides.map((guide) => (
+                <div
+                  key={guide.id}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3.5 hover:border-indigo-300 hover:bg-indigo-50/20 transition shadow-2xs"
+                >
+                  <div className="flex items-start gap-3 min-w-0 flex-1">
+                    <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-rose-50 text-rose-600 border border-rose-100 mt-0.5">
+                      <FilePdfIcon size={20} weight="fill" />
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="text-xs font-extrabold text-slate-900 truncate">{guide.title}</h4>
+                      {guide.description && (
+                        <p className="mt-0.5 text-[11px] text-slate-600 line-clamp-2">{guide.description}</p>
+                      )}
+                      <p className="mt-0.5 text-[10px] text-slate-400 font-mono">
+                        {guide.filename}
+                      </p>
+                    </div>
+                  </div>
+                  <a
+                    href={`/api/guides/${guide.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-indigo-700 transition shrink-0 shadow-xs"
+                  >
+                    <EyeIcon size={14} weight="bold" />
+                    Xem PDF
+                  </a>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

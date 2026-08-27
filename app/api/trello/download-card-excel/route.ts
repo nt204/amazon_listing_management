@@ -160,7 +160,7 @@ export async function GET(request: Request) {
       throw new ApiError(`Brand ${templateItem.brand} chưa có blank cho loại phôi đã chọn. Hãy tải blank từ Seller Central ${templateItem.brand}.`, 400);
     }
     if (!isTemplateReady(resolvedTemplate)) {
-      throw new ApiError(`Template "${resolvedTemplate.name}" là file blank chưa thể dùng. Hãy mở file Excel điền dòng mẫu Parent/Child hoặc tải lên phôi đã điền từ shop khác.`, 400);
+      throw new ApiError(`Template "${resolvedTemplate.name}" chưa được cấu hình đủ các trường bắt buộc. Hãy nạp lại blank template để hoàn tất.`, 400);
     }
     if (!isTemplateForShop(resolvedTemplate, shopId)) {
       throw new ApiError("Template tự động không thuộc shop Amazon đã chọn.", 400);

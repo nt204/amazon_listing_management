@@ -16,12 +16,35 @@ from urllib.parse import parse_qsl
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.cell.cell import MergedCell
-from openpyxl.utils import get_column_letter
+from openpyxl.utils import column_index_from_string, get_column_letter, range_boundaries
 
 
 MAX_IMPORT_ROWS = 100
 MAX_IMAGES = 10
 URL_PATTERN = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+
+SYSTEM_MANAGED_TEMPLATE_PREFIXES = (
+    "contribution_sku",
+    "product_type",
+    "::record_action",
+    "parentage_level[",
+    "child_parent_sku_relationship[",
+    "variation_theme",
+    "item_name[",
+    "item_name",
+    "product_description[",
+    "product_description",
+    "bullet_point[",
+    "generic_keyword[",
+    "generic_keyword",
+    "main_product_image_locator",
+    "other_product_image_locator",
+    "swatch_product_image_locator",
+    "brand[",
+    "brand_name",
+    "manufacturer[",
+    "manufacturer",
+)
 
 
 def normalize(value: Any) -> str:
@@ -552,8 +575,8 @@ def source_template_rows(worksheet: Any, columns: dict[str, int], data_row: int 
     del data_row
     attribute_row = configured_template_rows(worksheet)[0]
     sku_column = find_column(columns, prefix="contribution_sku")
-    parentage_column = find_column(columns, prefix="parentage_level[")
-    relationship_column = find_column(columns, prefix="child_parent_sku_relationship[")
+    parentage_column = optional_column(columns, "parentage_level[")
+    relationship_column = optional_column(columns, "child_parent_sku_relationship[")
 
     title_col = None
     for name, idx in columns.items():
@@ -569,17 +592,33 @@ def source_template_rows(worksheet: Any, columns: dict[str, int], data_row: int 
 
     parents: dict[str, list[int]] = {}
     children: list[tuple[int, str]] = []
+    standalone_rows: list[tuple[int, bool]] = []
 
     for row_index in range(attribute_row + 1, worksheet.max_row + 1):
         sku = cell_text(worksheet.cell(row_index, sku_column).value)
-        parentage = cell_text(worksheet.cell(row_index, parentage_column).value).casefold()
+        parentage = (
+            cell_text(worksheet.cell(row_index, parentage_column).value).casefold()
+            if parentage_column is not None
+            else ""
+        )
         if not sku:
             continue
         if parentage == "parent" or sku.upper().endswith("_MAIN"):
             parents.setdefault(sku.casefold(), []).append(row_index)
         else:
-            parent_sku = cell_text(worksheet.cell(row_index, relationship_column).value)
-            children.append((row_index, parent_sku.casefold()))
+            parent_sku = (
+                cell_text(worksheet.cell(row_index, relationship_column).value)
+                if relationship_column is not None
+                else ""
+            )
+            if parentage == "child" or parent_sku:
+                children.append((row_index, parent_sku.casefold()))
+            else:
+                title = cell_text(worksheet.cell(row_index, title_col).value) if title_col else ""
+                brand = cell_text(worksheet.cell(row_index, brand_col).value) if brand_col else ""
+                standalone_rows.append(
+                    (row_index, not is_example_or_dummy_row(sku, title, brand))
+                )
 
     valid_pairs: list[tuple[int, int, bool]] = []
     for child_row, parent_sku in children:
@@ -602,11 +641,17 @@ def source_template_rows(worksheet: Any, columns: dict[str, int], data_row: int 
     if real_pairs:
         return real_pairs[0][0], real_pairs[0][1]
 
-    # Priority 2: Fallback to any valid pair if no other rows exist
+    real_standalone = [row for row, is_real in standalone_rows if is_real]
+    if real_standalone:
+        return real_standalone[0], real_standalone[0]
+
+    # Fallback to example rows. This keeps Seller Central sample files usable.
     if valid_pairs:
         return valid_pairs[0][0], valid_pairs[0][1]
+    if standalone_rows:
+        return standalone_rows[0][0], standalone_rows[0][0]
 
-    raise ValueError("Template cần có ít nhất một dòng mẫu Parent và một dòng mẫu Child.")
+    raise ValueError("Template cần có ít nhất một dòng mẫu listing lẻ.")
 
 
 def values_with_prefix(
@@ -666,8 +711,6 @@ def inspect_template(template_path: Path) -> dict[str, Any]:
     required_prefixes = [
         "contribution_sku",
         "product_type",
-        "parentage_level[",
-        "child_parent_sku_relationship[",
         "item_name[",
         "product_description[",
         "generic_keyword[",
@@ -699,6 +742,7 @@ def inspect_template(template_path: Path) -> dict[str, Any]:
         "last_column": get_column_letter(worksheet.max_column),
         "source_parent_row": parent_row,
         "source_child_row": child_row,
+        "listing_mode": "standalone" if parent_row == child_row else "legacy_parent_child",
         "product_type": first_value_with_prefix(worksheet, child_row, columns, "product_type"),
         "content_columns": {
             "sku": get_column_letter(find_column(columns, prefix="contribution_sku")),
@@ -724,64 +768,80 @@ def extract_valid_options_for_column(
     worksheet: Any,
     column_index: int,
     column_name: str,
+    product_type: str = "",
 ) -> list[str]:
+    def values_from_range(sheet: Any, coordinate: str) -> list[str]:
+        found: list[str] = []
+        cells = sheet[coordinate.replace("$", "").strip()]
+        if not isinstance(cells, tuple):
+            cells = ((cells,),)
+        elif cells and not isinstance(cells[0], tuple):
+            cells = (cells,)
+        for row in cells:
+            for cell in row:
+                value = cell_text(cell.value).strip()
+                if value and value not in found and not value.startswith("="):
+                    found.append(value)
+        return found
+
+    def values_from_defined_name(name: str) -> list[str]:
+        if not name or not hasattr(workbook, "defined_names") or name not in workbook.defined_names:
+            return []
+        try:
+            definition = workbook.defined_names[name]
+            found: list[str] = []
+            for title, coordinate in definition.destinations:
+                if title in workbook.sheetnames:
+                    for value in values_from_range(workbook[title], coordinate):
+                        if value not in found:
+                            found.append(value)
+            return found
+        except Exception:
+            return []
+
+    def formula_options(formula: str) -> list[str]:
+        formula = formula.strip().lstrip("=")
+        if formula.startswith('"') and formula.endswith('"'):
+            return [value.strip() for value in formula[1:-1].split(",") if value.strip()]
+        direct = values_from_defined_name(formula)
+        if direct:
+            return direct
+        if "!" in formula and not formula.upper().startswith(("IF(", "INDIRECT(")):
+            try:
+                sheet_ref, coordinate = formula.split("!", 1)
+                sheet_name = sheet_ref.strip("'\"").strip()
+                if sheet_name in workbook.sheetnames:
+                    return values_from_range(workbook[sheet_name], coordinate)
+            except Exception:
+                pass
+
+        # Amazon builds validation names as PRODUCT_TYPE + technical header
+        # with brackets, # and = removed. Resolve it without evaluating Excel.
+        if product_type:
+            product_key = re.sub(r"\s+", "", product_type.replace("-", "_"))
+            if product_key[:1].isdigit():
+                product_key = f"_{product_key}"
+            suffix = re.sub(r"[\[\]#=]", "", column_name).replace("-", "_").replace(" ", "")
+            computed = values_from_defined_name(f"{product_key}{suffix}")
+            if computed:
+                return computed
+        return []
+
     options: list[str] = []
     try:
         if hasattr(worksheet, "data_validations") and worksheet.data_validations:
             for dv in worksheet.data_validations.dataValidation:
+                if dv.type != "list":
+                    continue
                 in_range = False
                 for r in dv.ranges:
                     if r.min_col <= column_index <= r.max_col:
                         in_range = True
                         break
                 if in_range and dv.formula1:
-                    formula_str = str(dv.formula1).strip().lstrip("=")
-                    if formula_str.startswith('"') and formula_str.endswith('"'):
-                        items = [x.strip() for x in formula_str[1:-1].split(",") if x.strip()]
-                        if items:
-                            return items
-                    elif "!" in formula_str:
-                        try:
-                            sheet_ref, range_ref = formula_str.split("!", 1)
-                            sheet_name = sheet_ref.strip("'\"").strip()
-                            range_clean = range_ref.replace("$", "").strip()
-                            if sheet_name in workbook.sheetnames:
-                                ref_sheet = workbook[sheet_name]
-                                cells = ref_sheet[range_clean]
-                                if not isinstance(cells, tuple):
-                                    cells = ((cells,),)
-                                elif len(cells) > 0 and not isinstance(cells[0], tuple):
-                                    cells = (cells,)
-                                for row in cells:
-                                    for cell in row:
-                                        val = cell_text(cell.value).strip()
-                                        if val and val not in options:
-                                            options.append(val)
-                                if options:
-                                    return options
-                        except Exception:
-                            pass
-                    elif hasattr(workbook, "defined_names") and formula_str in workbook.defined_names:
-                        try:
-                            defn = workbook.defined_names[formula_str]
-                            for title, coord in defn.destinations:
-                                if title in workbook.sheetnames:
-                                    ref_sheet = workbook[title]
-                                    range_clean = coord.replace("$", "").strip()
-                                    cells = ref_sheet[range_clean]
-                                    if not isinstance(cells, tuple):
-                                        cells = ((cells,),)
-                                    elif len(cells) > 0 and not isinstance(cells[0], tuple):
-                                        cells = (cells,)
-                                    for row in cells:
-                                        for cell in row:
-                                            val = cell_text(cell.value).strip()
-                                            if val and val not in options:
-                                                options.append(val)
-                                    if options:
-                                        return options
-                        except Exception:
-                            pass
+                    options = formula_options(str(dv.formula1))
+                    if options:
+                        return options[:1000]
     except Exception:
         pass
 
@@ -814,6 +874,644 @@ def extract_valid_options_for_column(
                 pass
 
     return options
+
+
+def is_system_managed_template_column(column_name: str) -> bool:
+    return column_name.startswith(SYSTEM_MANAGED_TEMPLATE_PREFIXES)
+
+
+def blank_template_setup_field(column_name: str, label: str) -> tuple[str, str] | None:
+    """Return the one-time setup field for a truly blank Amazon template."""
+    norm_col = column_name.lower().replace("-", "_")
+    norm_label = normalize(label)
+
+    # Additional occurrences remain available when Excel actually renders
+    # them red, but the one-time blank setup asks for only the primary value.
+    if re.search(r'#(?:[2-9]|\d{2,})\b', norm_col):
+        return None
+
+    if (
+        any(norm_col.startswith(prefix) for prefix in (
+            "material[",
+            "material_type[",
+            "outer_material_type[",
+            "material_composition[",
+        ))
+        or norm_col in {"material", "material_type", "outer_material_type"}
+        or norm_label in {"material", "material type", "chat lieu", "vat lieu"}
+    ):
+        return "material", "Material"
+
+    if (
+        norm_col.startswith(("fabric_type[", "fabric_type_"))
+        or norm_col == "fabric_type"
+        or "fabric type" in norm_label
+        or "loai vai" in norm_label
+    ):
+        return "fabric_type", "Fabric Type"
+
+    if (
+        norm_col.startswith(("color[", "color_name[", "colour[", "colour_name["))
+        or norm_col in {"color", "color_name", "colour", "colour_name"}
+        or norm_label in {"color", "color name", "colour", "colour name", "mau sac", "mau"}
+    ):
+        return "color", "Color"
+
+    if (
+        norm_col.startswith(("item_shape[", "shape["))
+        or norm_col in {"item_shape", "shape"}
+        or norm_label in {"item shape", "shape", "hinh dang"}
+    ):
+        return "item_shape", "Item Shape"
+
+    package_dimensions = (
+        (
+            "package_length",
+            "package_dimensions[#1.length",
+            "package_depth_width_height[#1.length.value]",
+            "item_package_length",
+        ),
+        (
+            "package_width",
+            "package_dimensions[#1.width",
+            "package_depth_width_height[#1.width.value]",
+            "item_package_width",
+        ),
+        (
+            "package_height",
+            "package_dimensions[#1.height",
+            "package_depth_width_height[#1.height.value]",
+            "item_package_height",
+        ),
+    )
+    for key, patterns, display_label in (
+        ("package_length", package_dimensions[0], "Package Length (inches)"),
+        ("package_width", package_dimensions[1], "Package Width (inches)"),
+        ("package_height", package_dimensions[2], "Package Height (inches)"),
+    ):
+        label_phrase = key.replace("_", " ")
+        if any(pattern in norm_col for pattern in patterns) or label_phrase in norm_label:
+            if (
+                not norm_col.endswith(".unit")
+                and "unit_of_measure" not in norm_col
+                and "unit" not in norm_label
+            ):
+                return key, display_label
+
+    return None
+
+
+def required_template_fields(template_path: Path, payload_path: Path | None = None) -> dict[str, Any]:
+    keep_vba = template_path.suffix.lower() == ".xlsm"
+    workbook = load_workbook(template_path, read_only=False, data_only=False, keep_vba=keep_vba)
+    if "Template" not in workbook.sheetnames:
+        raise ValueError("Workbook không có sheet Template.")
+    worksheet = workbook["Template"]
+    attribute_row, label_row, data_row = configured_template_rows(worksheet)
+    columns = technical_columns(worksheet, attribute_row)
+    scan = scan_listing_template(template_path)
+    target_row = data_row or attribute_row + 1
+
+    payload_data: dict[str, Any] = {}
+    field_values: dict[str, str] = {}
+    if payload_path is not None and payload_path.exists():
+        try:
+            parsed_payload = json.loads(payload_path.read_text(encoding="utf-8"))
+            if isinstance(parsed_payload, dict):
+                payload_data = parsed_payload
+                field_values = parsed_payload.get("field_values", {})
+        except Exception:
+            pass
+    include_setup_fields = payload_data.get("include_setup_fields") is True
+    show_existing_setup_fields = payload_data.get("show_existing_setup_fields") is True
+
+    if field_values:
+        for column_name, val in field_values.items():
+            if column_name in columns and val is not None and str(val).strip():
+                worksheet.cell(target_row, columns[column_name]).value = str(val).strip()
+
+    def color_is_red(color: Any) -> bool:
+        if color is None or getattr(color, "type", None) != "rgb":
+            return False
+        rgb = cell_text(getattr(color, "rgb", "")).upper()[-6:]
+        if len(rgb) != 6:
+            return False
+        try:
+            red, green, blue = int(rgb[:2], 16), int(rgb[2:4], 16), int(rgb[4:], 16)
+            return red >= 180 and green <= 100 and blue <= 100
+        except ValueError:
+            return False
+
+    def color_is_white(color: Any) -> bool:
+        if color is None or getattr(color, "type", None) != "rgb":
+            return False
+        return cell_text(getattr(color, "rgb", "")).upper()[-6:] == "FFFFFF"
+
+    def border_has_red(border: Any) -> bool:
+        return bool(border) and any(
+            color_is_red(getattr(getattr(border, side_name, None), "color", None))
+            for side_name in ("left", "right", "top", "bottom")
+        )
+
+    def fill_is_white(fill: Any, allow_unset: bool = False) -> bool:
+        if not fill or getattr(fill, "fill_type", None) is None:
+            return allow_unset
+        return color_is_white(getattr(fill, "fgColor", None))
+
+    def border_has_visible_style(border: Any) -> bool:
+        return bool(border) and any(
+            getattr(getattr(border, side_name, None), "style", None)
+            or getattr(getattr(border, side_name, None), "color", None)
+            for side_name in ("left", "right", "top", "bottom")
+        )
+
+    def fill_has_visible_style(fill: Any) -> bool:
+        return bool(fill) and getattr(fill, "fill_type", None) is not None
+
+    def rule_style(rule: Any) -> tuple[Any, Any]:
+        differential_style = getattr(rule, "dxf", None)
+        if differential_style is not None:
+            return (
+                getattr(differential_style, "border", None),
+                getattr(differential_style, "fill", None),
+            )
+        return getattr(rule, "border", None), getattr(rule, "fill", None)
+
+    product_type_column = optional_column(columns, "product_type")
+    effective_product_type = (
+        cell_text(worksheet.cell(target_row, product_type_column).value)
+        if product_type_column is not None
+        else ""
+    ) or cell_text(scan.get("product_type"))
+
+    token_pattern = re.compile(
+        r'''\s*(?:
+            (?P<string>"(?:[^"]|"")*")
+          | (?P<reference>(?:'[^']+'|[A-Za-z_][A-Za-z0-9_ ]*)!\$?[A-Z]{1,3}\$?\d+)
+          | (?P<cell>\$?[A-Z]{1,3}\$?\d+)
+          | (?P<number>\d+(?:\.\d+)?)
+          | (?P<operator><>|>=|<=|=|>|<)
+          | (?P<lparen>\()
+          | (?P<rparen>\))
+          | (?P<comma>,)
+          | (?P<identifier>[A-Za-z_][A-Za-z0-9_.]*)
+        )''',
+        re.VERBOSE,
+    )
+    name_cache: dict[str, Any] = {}
+
+    def named_range_values(name: str) -> list[str]:
+        definition = workbook.defined_names.get(name)
+        if definition is None:
+            return []
+        values: list[str] = []
+        try:
+            for sheet_name, coordinate in definition.destinations:
+                if sheet_name not in workbook.sheetnames:
+                    continue
+                cells = workbook[sheet_name][coordinate.replace("$", "")]
+                if not isinstance(cells, tuple):
+                    cells = ((cells,),)
+                elif cells and not isinstance(cells[0], tuple):
+                    cells = (cells,)
+                for row in cells:
+                    for cell in row:
+                        value = cell_text(cell.value)
+                        if value:
+                            values.append(value)
+        except Exception:
+            return []
+        return values
+
+    def excel_truthy(value: Any) -> bool:
+        if isinstance(value, str):
+            return bool(value)
+        return bool(value)
+
+    def excel_equal(left: Any, right: Any) -> bool:
+        if isinstance(left, str) or isinstance(right, str):
+            return cell_text(left).casefold() == cell_text(right).casefold()
+        return left == right
+
+    def resolve_cell_reference(reference: str, named_formula: bool) -> Any:
+        match = re.search(r"!\$?([A-Z]{1,3})(\$?)(\d+)$", reference)
+        if match:
+            column_name, absolute_row, row_text = match.groups()
+            row_index = int(row_text) if absolute_row else target_row
+            sheet_name = reference.split("!", 1)[0].strip("'")
+            target_sheet = workbook[sheet_name] if sheet_name in workbook.sheetnames else worksheet
+        else:
+            direct = re.fullmatch(r"\$?([A-Z]{1,3})(\$?)(\d+)", reference)
+            if direct is None:
+                raise ValueError(f"Tham chiếu Excel không hỗ trợ: {reference}")
+            column_name, _, row_text = direct.groups()
+            row_index = int(row_text)
+            target_sheet = worksheet
+        column_index = column_index_from_string(column_name)
+        if target_sheet == worksheet and row_index == target_row and column_index == product_type_column:
+            return effective_product_type
+        return target_sheet.cell(row_index, column_index).value or ""
+
+    class FormulaParser:
+        def __init__(self, formula: str, named_formula: bool = False):
+            self.formula = formula.strip().lstrip("=")
+            self.named_formula = named_formula
+            self.tokens: list[tuple[str, str]] = []
+            self.position = 0
+            cursor = 0
+            for match in token_pattern.finditer(self.formula):
+                if self.formula[cursor:match.start()].strip():
+                    raise ValueError(f"Công thức Excel không hỗ trợ: {self.formula}")
+                kind = next(key for key, value in match.groupdict().items() if value is not None)
+                self.tokens.append((kind, match.group(kind)))
+                cursor = match.end()
+            if self.formula[cursor:].strip():
+                raise ValueError(f"Công thức Excel không hỗ trợ: {self.formula}")
+
+        def peek(self, kind: str | None = None) -> tuple[str, str] | None:
+            if self.position >= len(self.tokens):
+                return None
+            token = self.tokens[self.position]
+            return token if kind is None or token[0] == kind else None
+
+        def take(self, kind: str | None = None) -> tuple[str, str]:
+            token = self.peek(kind)
+            if token is None:
+                raise ValueError(f"Công thức Excel không hợp lệ: {self.formula}")
+            self.position += 1
+            return token
+
+        def parse(self) -> Any:
+            value = self.expression()
+            if self.peek() is not None:
+                raise ValueError(f"Công thức Excel còn dữ liệu chưa xử lý: {self.formula}")
+            return value
+
+        def expression(self) -> Any:
+            left = self.primary()
+            operator = self.peek("operator")
+            if operator is None:
+                return left
+            self.take("operator")
+            right = self.primary()
+            op = operator[1]
+            if op == "=":
+                return excel_equal(left, right)
+            if op == "<>":
+                return not excel_equal(left, right)
+            try:
+                left_number, right_number = float(left), float(right)
+            except (TypeError, ValueError):
+                left_number, right_number = cell_text(left).casefold(), cell_text(right).casefold()
+            return {
+                ">": left_number > right_number,
+                "<": left_number < right_number,
+                ">=": left_number >= right_number,
+                "<=": left_number <= right_number,
+            }[op]
+
+        def primary(self) -> Any:
+            token = self.take()
+            kind, value = token
+            if kind == "string":
+                return value[1:-1].replace('""', '"')
+            if kind == "number":
+                return float(value) if "." in value else int(value)
+            if kind in {"reference", "cell"}:
+                return resolve_cell_reference(value, self.named_formula)
+            if kind == "lparen":
+                result = self.expression()
+                self.take("rparen")
+                return result
+            if kind != "identifier":
+                raise ValueError(f"Token Excel không hỗ trợ: {value}")
+            if self.peek("lparen") is not None:
+                self.take("lparen")
+                arguments: list[Any] = []
+                if self.peek("rparen") is None:
+                    while True:
+                        arguments.append(self.expression())
+                        if self.peek("comma") is None:
+                            break
+                        self.take("comma")
+                self.take("rparen")
+                function = value.upper()
+                if function == "AND":
+                    return all(excel_truthy(argument) for argument in arguments)
+                if function == "OR":
+                    return any(excel_truthy(argument) for argument in arguments)
+                if function == "NOT":
+                    return not excel_truthy(arguments[0])
+                if function == "LEN":
+                    return len(cell_text(arguments[0]))
+                if function == "IF":
+                    return arguments[1] if excel_truthy(arguments[0]) else arguments[2]
+                if function == "COUNTIF":
+                    values = arguments[0] if isinstance(arguments[0], list) else []
+                    return sum(excel_equal(item, arguments[1]) for item in values)
+                raise ValueError(f"Hàm Excel không hỗ trợ: {function}")
+            upper_value = value.upper()
+            if upper_value == "TRUE":
+                return True
+            if upper_value == "FALSE":
+                return False
+            cached = name_cache.get(value.casefold(), None)
+            if cached is not None:
+                return cached
+            definition = workbook.defined_names.get(value)
+            if definition is None:
+                raise ValueError(f"Không tìm thấy Excel defined name: {value}")
+            definition_text = cell_text(getattr(definition, "attr_text", ""))
+            if definition_text.startswith("'") and "!" in definition_text and not any(
+                marker in definition_text for marker in ("=", "<>", "(")
+            ):
+                result: Any = named_range_values(value)
+            else:
+                result = FormulaParser(definition_text, named_formula=True).parse()
+            name_cache[value.casefold()] = result
+            return result
+
+    def evaluate_rule(rule: Any) -> bool | None:
+        formula = " ".join(rule.formula or []).strip()
+        try:
+            return excel_truthy(FormulaParser(formula).parse())
+        except Exception:
+            # openpyxl does not calculate Conditional Formatting. If Amazon
+            # introduces a formula we cannot evaluate, do not invent a red
+            # field that Excel may actually render as gray/non-applicable.
+            return None
+
+    product_type_column = optional_column(columns, "product_type")
+    effective_product_type = (
+        cell_text(worksheet.cell(target_row, product_type_column).value)
+        if product_type_column is not None
+        else ""
+    ) or cell_text(scan.get("product_type"))
+
+    brand_name = cell_text(payload_data.get("brand_name")) or "Generic"
+
+    if product_type_column is not None and effective_product_type:
+        worksheet.cell(target_row, product_type_column).value = effective_product_type
+    set_optional_value(worksheet, target_row, columns, brand_name, prefix="brand[")
+    set_optional_value(worksheet, target_row, columns, brand_name, prefix="manufacturer[")
+    set_optional_value(worksheet, target_row, columns, "Sample Title", prefix="item_name")
+    set_optional_value(worksheet, target_row, columns, "SAMPLE_SKU", prefix="contribution_sku")
+    set_optional_value(worksheet, target_row, columns, "Sample Description", prefix="product_description")
+    for occurrence in range(1, 6):
+        try:
+            set_repeated_value(
+                worksheet,
+                target_row,
+                columns,
+                "bullet_point[",
+                occurrence,
+                f"Sample Bullet {occurrence}",
+            )
+        except Exception:
+            pass
+    set_optional_value(worksheet, target_row, columns, "sample keywords", prefix="generic_keyword")
+
+    record_action_column = optional_column(columns, "::record_action")
+    if record_action_column is not None and not cell_text(worksheet.cell(target_row, record_action_column).value):
+        worksheet.cell(target_row, record_action_column).value = "Create or Replace"
+
+    field_values = payload_data.get("field_values", {})
+    if isinstance(field_values, dict):
+        for column_name, val in field_values.items():
+            if column_name in columns and val is not None and str(val).strip():
+                worksheet.cell(target_row, columns[column_name]).value = str(val).strip()
+
+    # Calculate the effective style for every empty cell. Conditional
+    # Formatting has priority over the stored/base style, so a base red border
+    # must not leak through when Excel currently renders a gray rule.
+    active_red_columns: set[int] = set()
+    conditional_rules_by_column: dict[int, list[Any]] = {}
+    if hasattr(worksheet, "conditional_formatting"):
+        for conditional_range in worksheet.conditional_formatting:
+            try:
+                for coordinate in str(conditional_range.sqref).split():
+                    min_col, min_row, max_col, max_row = range_boundaries(coordinate)
+                    if min_row <= target_row <= max_row:
+                        for column_index in range(min_col, max_col + 1):
+                            conditional_rules_by_column.setdefault(column_index, []).extend(
+                                worksheet.conditional_formatting[conditional_range]
+                            )
+            except Exception:
+                continue
+
+    for column_index in range(1, worksheet.max_column + 1):
+        target_cell = worksheet.cell(target_row, column_index)
+        if cell_text(target_cell.value):
+            continue
+
+        effective_border = getattr(target_cell, "border", None)
+        effective_fill = getattr(target_cell, "fill", None)
+        border_resolved = False
+        fill_resolved = False
+        style_is_unknown = False
+
+        for rule in sorted(
+            conditional_rules_by_column.get(column_index, []),
+            key=lambda candidate: candidate.priority,
+        ):
+            applies = evaluate_rule(rule)
+            if applies is None:
+                style_is_unknown = True
+                break
+            if not applies:
+                continue
+
+            rule_border, rule_fill = rule_style(rule)
+            if not border_resolved and border_has_visible_style(rule_border):
+                effective_border = rule_border
+                border_resolved = True
+            if not fill_resolved and fill_has_visible_style(rule_fill):
+                effective_fill = rule_fill
+                fill_resolved = True
+            if rule.stopIfTrue:
+                break
+
+        if style_is_unknown:
+            continue
+        if (
+            border_has_red(effective_border)
+            and fill_is_white(effective_fill, allow_unset=True)
+        ):
+            active_red_columns.add(column_index)
+
+    fields: list[dict[str, Any]] = []
+    managed_count = 0
+    added_blank_setup_fields: set[str] = set()
+    for column_name, column_index in sorted(columns.items(), key=lambda entry: entry[1]):
+        if is_system_managed_template_column(column_name):
+            managed_count += 1
+            continue
+
+        raw_label = cell_text(worksheet.cell(label_row, column_index).value) or column_name
+        setup_field = blank_template_setup_field(column_name, raw_label) if include_setup_fields else None
+        is_blank_setup_field = bool(
+            setup_field and setup_field[0] not in added_blank_setup_fields
+        )
+
+        existing_value = cell_text(worksheet.cell(target_row, column_index).value)
+        if existing_value and not (is_blank_setup_field and show_existing_setup_fields):
+            continue
+
+        if column_index not in active_red_columns and not is_blank_setup_field:
+            continue
+
+        options = extract_valid_options_for_column(
+            workbook,
+            worksheet,
+            column_index,
+            column_name,
+            scan["product_type"],
+        )
+
+        fields.append({
+            "id": column_name,
+            "technical_name": column_name,
+            "label": setup_field[1] if is_blank_setup_field else raw_label,
+            "column": get_column_letter(column_index),
+            "input_type": "select" if options else "text",
+            "options": options,
+            "default_value": existing_value if is_blank_setup_field else "",
+        })
+        if is_blank_setup_field and setup_field:
+            added_blank_setup_fields.add(setup_field[0])
+
+    return {
+        **scan,
+        "required_fields": fields,
+        "managed_fields_count": managed_count,
+    }
+
+
+def prepare_standalone_template(
+    template_path: Path,
+    payload_path: Path,
+    output_path: Path,
+) -> dict[str, Any]:
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    field_values = payload.get("field_values", {})
+    if not isinstance(field_values, dict):
+        raise ValueError("Dữ liệu các trường template không hợp lệ.")
+    brand_name = cell_text(payload.get("brand_name")) or "Generic"
+
+    keep_vba = template_path.suffix.lower() == ".xlsm"
+    workbook = load_workbook(template_path, read_only=False, data_only=False, keep_vba=keep_vba)
+    worksheet = workbook["Template"]
+    attribute_row, _, data_row = configured_template_rows(worksheet)
+    columns = technical_columns(worksheet, attribute_row)
+    target_row = data_row or attribute_row + 1
+    standalone_snapshot = snapshot_row(worksheet, target_row)
+    scan = scan_listing_template(template_path)
+
+    # 1. Normalize supplied field values
+    normalized_values: dict[str, str] = {}
+    for col_id, val in field_values.items():
+        val_str = cell_text(val)
+        if not val_str:
+            continue
+        col_idx = columns.get(col_id)
+        if col_idx is not None:
+            options = extract_valid_options_for_column(workbook, worksheet, col_idx, col_id, scan["product_type"])
+            if options:
+                matched = next((opt for opt in options if opt.casefold() == val_str.casefold()), None)
+                if matched is not None:
+                    val_str = matched
+        normalized_values[col_id] = val_str
+
+    # 2. Re-scan template with current field_values to check for any remaining red cells
+    check_scan = required_template_fields(template_path, payload_path)
+    remaining_missing = check_scan["required_fields"]
+
+    if remaining_missing:
+        missing_labels = [f["label"] for f in remaining_missing]
+        missing_str = ", ".join(f'"{name}"' for name in missing_labels[:5])
+        more = f" và {len(missing_labels) - 5} trường khác" if len(missing_labels) > 5 else ""
+        raise ValueError(f'Còn ô đỏ cần điền nốt trước khi lưu: {missing_str}{more}.')
+
+    keep_vba = template_path.suffix.lower() == ".xlsm"
+    workbook = load_workbook(template_path, read_only=False, data_only=False, keep_vba=keep_vba)
+    worksheet = workbook["Template"]
+    attribute_row, _, data_row = configured_template_rows(worksheet)
+    columns = technical_columns(worksheet, attribute_row)
+    target_row = data_row or attribute_row + 1
+    standalone_snapshot = snapshot_row(worksheet, target_row)
+
+    record_action_column = optional_column(columns, "::record_action")
+    record_action = ""
+    if record_action_column is not None:
+        record_options = extract_valid_options_for_column(
+            workbook,
+            worksheet,
+            record_action_column,
+            "::record_action",
+            scan["product_type"],
+        )
+        record_action = next(
+            (value for value in record_options if "default" in value.casefold() or "create or replace" in value.casefold()),
+            record_options[0] if record_options else "",
+        )
+
+    for row_index in range(attribute_row + 1, worksheet.max_row + 1):
+        for column_index in range(1, worksheet.max_column + 1):
+            cell = worksheet.cell(row_index, column_index)
+            if not isinstance(cell, MergedCell):
+                cell.value = None
+                cell.hyperlink = None
+                cell.comment = None
+
+    # Preserve defaults already configured on the one standalone source row.
+    # Only missing red cells are collected by the upload UI, so deleting this
+    # row would turn valid non-red defaults into new red cells after saving.
+    restore_row(worksheet, target_row, standalone_snapshot)
+
+    set_value(worksheet, target_row, columns, "STANDALONE_TEMPLATE", prefix="contribution_sku")
+    set_value(worksheet, target_row, columns, scan["product_type"], prefix="product_type")
+    if record_action_column is not None and record_action:
+        worksheet.cell(target_row, record_action_column).value = record_action
+    set_optional_value(worksheet, target_row, columns, "", prefix="parentage_level[")
+    set_optional_value(worksheet, target_row, columns, "", prefix="child_parent_sku_relationship[")
+    set_optional_value(worksheet, target_row, columns, "", prefix="variation_theme")
+    set_value(worksheet, target_row, columns, "Standalone template title", prefix="item_name")
+    set_value(worksheet, target_row, columns, "Standalone template description", prefix="product_description")
+    for occurrence in range(1, 6):
+        set_repeated_value(
+            worksheet,
+            target_row,
+            columns,
+            "bullet_point[",
+            occurrence,
+            f"Standalone template bullet {occurrence}",
+        )
+    set_value(worksheet, target_row, columns, "standalone template keywords", prefix="generic_keyword")
+    set_optional_value(worksheet, target_row, columns, brand_name, prefix="brand[")
+    set_optional_value(worksheet, target_row, columns, brand_name, prefix="manufacturer[")
+
+    for column_name, value in normalized_values.items():
+        column_index = columns.get(column_name)
+        if column_index is not None:
+            worksheet.cell(target_row, column_index).value = value
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    workbook.save(output_path)
+
+    # STRICT POST-SAVE VERIFICATION: Scan the saved workbook to verify 0 red cells remain
+    post_scan = required_template_fields(output_path)
+    if post_scan.get("required_fields"):
+        missing_labels = [f["label"] for f in post_scan["required_fields"]]
+        missing_str = ", ".join(f'"{name}"' for name in missing_labels[:5])
+        more = f" và {len(missing_labels) - 5} trường khác" if len(missing_labels) > 5 else ""
+        error_json = json.dumps(post_scan["required_fields"])
+        raise ValueError(f'Còn ô đỏ chưa điền trong file đã lưu: {missing_str}{more}. Vui lòng bổ sung trước khi lưu.__REQUIRED_FIELDS_JSON__{error_json}')
+
+    inspection = inspect_template(output_path)
+    inspection["is_blank"] = False
+    inspection["is_ready"] = True
+    inspection["listing_mode"] = "standalone"
+    return inspection
 
 
 def validate_shipping_for_row(workbook: Any, worksheet: Any, row_index: int, columns: dict[str, int]) -> None:
@@ -1189,9 +1887,7 @@ def fill_template(template_path: Path, payload_path: Path, output_path: Path) ->
     attribute_row, _, data_row = configured_template_rows(worksheet)
     columns = technical_columns(worksheet, attribute_row)
     source_parent_row, source_child_row = source_template_rows(worksheet, columns, data_row)
-    parent_snapshot = snapshot_row(worksheet, source_parent_row)
     child_snapshot = snapshot_row(worksheet, source_child_row)
-    parent_height = worksheet.row_dimensions[source_parent_row].height
     child_height = worksheet.row_dimensions[source_child_row].height
     sku_column = find_column(columns, prefix="contribution_sku")
     source_parent_sku = cell_text(worksheet.cell(source_parent_row, sku_column).value)
@@ -1199,11 +1895,8 @@ def fill_template(template_path: Path, payload_path: Path, output_path: Path) ->
     model_column = optional_column(columns, "model_number")
     part_column = optional_column(columns, "part_number")
     color_column = optional_column(columns, "color[")
-    source_parent_model = worksheet.cell(source_parent_row, model_column).value if model_column else None
     source_child_model = worksheet.cell(source_child_row, model_column).value if model_column else None
-    source_parent_part = worksheet.cell(source_parent_row, part_column).value if part_column else None
     source_child_part = worksheet.cell(source_child_row, part_column).value if part_column else None
-    source_parent_color = worksheet.cell(source_parent_row, color_column).value if color_column else None
     source_child_color = worksheet.cell(source_child_row, color_column).value if color_column else None
 
     target_data_row = data_row or min(source_parent_row, source_child_row)
@@ -1217,64 +1910,27 @@ def fill_template(template_path: Path, payload_path: Path, output_path: Path) ->
                 cell.hyperlink = None
                 cell.comment = None
 
-    parentage_col = optional_column(columns, "parentage_level[")
-    has_parent_structure = source_parent_row != source_child_row and parentage_col is not None
-
-    if has_parent_structure:
-        first_sku = clean_sku(items[0].get("sku"))
-        parent_sku = f"{first_sku}_MAIN"
-        parent_brand = cell_text(items[0].get("brand")) or "Generic"
-        parent_row = target_data_row
-        restore_row(worksheet, parent_row, parent_snapshot)
-        sanitize_restored_row(worksheet, parent_row, [source_parent_sku, source_child_sku], parent_sku)
-        worksheet.row_dimensions[parent_row].height = parent_height
-        set_value(worksheet, parent_row, columns, parent_sku, prefix="contribution_sku")
-        set_value(worksheet, parent_row, columns, "Parent", prefix="parentage_level[")
-        set_value(worksheet, parent_row, columns, "", prefix="child_parent_sku_relationship[")
-        set_optional_value(worksheet, parent_row, columns, parent_brand, prefix="brand[")
-        set_optional_value(worksheet, parent_row, columns, parent_brand, prefix="manufacturer[")
-        set_optional_value(worksheet, parent_row, columns, replace_source_identifier(source_parent_model, source_parent_sku, parent_sku), prefix="model_number")
-        set_optional_value(worksheet, parent_row, columns, replace_source_identifier(source_parent_part, source_parent_sku, parent_sku), prefix="part_number")
-        parent_color = first_sku if cell_text(source_parent_color).casefold() in {source_child_sku.casefold(), source_parent_sku.casefold()} else source_parent_color
-        set_optional_value(worksheet, parent_row, columns, parent_color, prefix="color[")
-        validate_shipping_for_row(workbook, worksheet, parent_row, columns)
-        fill_listing_fields(worksheet, parent_row, columns, items[0])
-
-        for offset, item in enumerate(items, start=1):
-            row_index = target_data_row + offset
-            sku = clean_sku(item.get("sku"))
-            brand = cell_text(item.get("brand")) or parent_brand
-            restore_row(worksheet, row_index, child_snapshot)
-            sanitize_restored_row(worksheet, row_index, [source_parent_sku, source_child_sku], sku)
-            worksheet.row_dimensions[row_index].height = child_height
-            set_value(worksheet, row_index, columns, sku, prefix="contribution_sku")
-            set_value(worksheet, row_index, columns, "Child", prefix="parentage_level[")
-            set_value(worksheet, row_index, columns, parent_sku, prefix="child_parent_sku_relationship[")
-            set_optional_value(worksheet, row_index, columns, brand, prefix="brand[")
-            set_optional_value(worksheet, row_index, columns, brand, prefix="manufacturer[")
-            set_optional_value(worksheet, row_index, columns, replace_source_identifier(source_child_model, source_child_sku, sku), prefix="model_number")
-            set_optional_value(worksheet, row_index, columns, replace_source_identifier(source_child_part, source_child_sku, sku), prefix="part_number")
-            child_color = sku if cell_text(source_child_color).casefold() == source_child_sku.casefold() else source_child_color
-            set_optional_value(worksheet, row_index, columns, child_color, prefix="color[")
-            validate_shipping_for_row(workbook, worksheet, row_index, columns)
-            fill_listing_fields(worksheet, row_index, columns, item)
-    else:
-        for offset, item in enumerate(items):
-            row_index = target_data_row + offset
-            sku = clean_sku(item.get("sku"))
-            brand = cell_text(item.get("brand")) or "Generic"
-            restore_row(worksheet, row_index, child_snapshot)
-            sanitize_restored_row(worksheet, row_index, [source_parent_sku, source_child_sku], sku)
-            worksheet.row_dimensions[row_index].height = child_height
-            set_value(worksheet, row_index, columns, sku, prefix="contribution_sku")
-            set_optional_value(worksheet, row_index, columns, brand, prefix="brand[")
-            set_optional_value(worksheet, row_index, columns, brand, prefix="manufacturer[")
-            set_optional_value(worksheet, row_index, columns, replace_source_identifier(source_child_model, source_child_sku, sku), prefix="model_number")
-            set_optional_value(worksheet, row_index, columns, replace_source_identifier(source_child_part, source_child_sku, sku), prefix="part_number")
-            child_color = sku if cell_text(source_child_color).casefold() == source_child_sku.casefold() else source_child_color
-            set_optional_value(worksheet, row_index, columns, child_color, prefix="color[")
-            validate_shipping_for_row(workbook, worksheet, row_index, columns)
-            fill_listing_fields(worksheet, row_index, columns, item)
+    # Parent/child output is temporarily disabled. Every generated row is an
+    # independent listing, even when the saved legacy template contains a pair.
+    for offset, item in enumerate(items):
+        row_index = target_data_row + offset
+        sku = clean_sku(item.get("sku"))
+        brand = cell_text(item.get("brand")) or "Generic"
+        restore_row(worksheet, row_index, child_snapshot)
+        sanitize_restored_row(worksheet, row_index, [source_parent_sku, source_child_sku], sku)
+        worksheet.row_dimensions[row_index].height = child_height
+        set_value(worksheet, row_index, columns, sku, prefix="contribution_sku")
+        set_optional_value(worksheet, row_index, columns, "", prefix="parentage_level[")
+        set_optional_value(worksheet, row_index, columns, "", prefix="child_parent_sku_relationship[")
+        set_optional_value(worksheet, row_index, columns, "", prefix="variation_theme")
+        set_optional_value(worksheet, row_index, columns, brand, prefix="brand[")
+        set_optional_value(worksheet, row_index, columns, brand, prefix="manufacturer[")
+        set_optional_value(worksheet, row_index, columns, replace_source_identifier(source_child_model, source_child_sku, sku), prefix="model_number")
+        set_optional_value(worksheet, row_index, columns, replace_source_identifier(source_child_part, source_child_sku, sku), prefix="part_number")
+        child_color = sku if cell_text(source_child_color).casefold() == source_child_sku.casefold() else source_child_color
+        set_optional_value(worksheet, row_index, columns, child_color, prefix="color[")
+        validate_shipping_for_row(workbook, worksheet, row_index, columns)
+        fill_listing_fields(worksheet, row_index, columns, item)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(output_path)
@@ -1380,6 +2036,15 @@ def main() -> None:
     scan_parser = subparsers.add_parser("scan_template")
     scan_parser.add_argument("source")
 
+    scan_fields_parser = subparsers.add_parser("scan_required_fields")
+    scan_fields_parser.add_argument("source")
+    scan_fields_parser.add_argument("payload", nargs="?", default=None)
+
+    prepare_standalone_parser = subparsers.add_parser("prepare_standalone")
+    prepare_standalone_parser.add_argument("source")
+    prepare_standalone_parser.add_argument("payload")
+    prepare_standalone_parser.add_argument("output")
+
     sample_parser = subparsers.add_parser("sample")
     sample_parser.add_argument("output")
 
@@ -1411,6 +2076,15 @@ def main() -> None:
         print(json.dumps(inspect_template(Path(args.source)), ensure_ascii=False))
     elif args.command == "scan_template":
         print(json.dumps(scan_listing_template(Path(args.source)), ensure_ascii=False))
+    elif args.command == "scan_required_fields":
+        payload_file = Path(args.payload) if args.payload else None
+        print(json.dumps(required_template_fields(Path(args.source), payload_file), ensure_ascii=False))
+    elif args.command == "prepare_standalone":
+        print(json.dumps(prepare_standalone_template(
+            Path(args.source),
+            Path(args.payload),
+            Path(args.output),
+        ), ensure_ascii=False))
     elif args.command == "sample":
         create_sample(Path(args.output))
     elif args.command == "fill":

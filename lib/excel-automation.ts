@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 import { promisify } from "node:util";
 import type { AmazonTemplateItem, ExcelImportResult } from "@/lib/excel-batch";
-import type { ListingTemplateMetadata } from "@/lib/types";
+import type { ListingTemplateMetadata, ListingTemplateRequiredField } from "@/lib/types";
 
 const execFileAsync = promisify(execFile);
 const scriptPath = join(process.cwd(), "scripts", "excel-automation.py");
@@ -34,6 +34,11 @@ export interface ListingTemplateScan {
   store_name?: string;
   product_type: string;
   phoi_name: string;
+}
+
+export interface StandaloneTemplateFieldScan extends ListingTemplateScan {
+  required_fields: ListingTemplateRequiredField[];
+  managed_fields_count: number;
 }
 
 async function runPython(args: string[]) {
@@ -109,6 +114,68 @@ export async function scanListingTemplate(
     await writeFile(sourcePath, buffer);
     const output = await runPython(["scan_template", sourcePath]);
     return JSON.parse(output) as ListingTemplateScan;
+  });
+}
+
+export async function scanStandaloneTemplateFields(
+  buffer: Buffer,
+  filename: string,
+  fieldValues?: Record<string, string>,
+  options: { includeSetupFields?: boolean; showExistingSetupFields?: boolean } = {},
+): Promise<StandaloneTemplateFieldScan> {
+  const extension = extname(filename).toLowerCase();
+  if (!supportedExtensions.has(extension)) {
+    throw new Error("Chỉ hỗ trợ template .xlsx hoặc .xlsm.");
+  }
+  return withTempDirectory(async (directory) => {
+    const sourcePath = join(directory, `scan-fields${extension}`);
+    await writeFile(sourcePath, buffer);
+    const args = ["scan_required_fields", sourcePath];
+    if (
+      (fieldValues && Object.keys(fieldValues).length > 0)
+      || options.includeSetupFields
+      || options.showExistingSetupFields
+    ) {
+      const payloadPath = join(directory, "field-values.json");
+      await writeFile(payloadPath, JSON.stringify({
+        field_values: fieldValues || {},
+        include_setup_fields: options.includeSetupFields === true,
+        show_existing_setup_fields: options.showExistingSetupFields === true,
+      }), "utf8");
+      args.push(payloadPath);
+    }
+    const output = await runPython(args);
+    return JSON.parse(output) as StandaloneTemplateFieldScan;
+  });
+}
+
+export async function prepareStandaloneListingTemplate(
+  buffer: Buffer,
+  filename: string,
+  input: { brandName: string; fieldValues: Record<string, string> },
+): Promise<{ workbook: Buffer; metadata: ListingTemplateMetadata & { product_type: string } }> {
+  const extension = extname(filename).toLowerCase();
+  if (!supportedExtensions.has(extension)) {
+    throw new Error("Chỉ hỗ trợ template .xlsx hoặc .xlsm.");
+  }
+  return withTempDirectory(async (directory) => {
+    const sourcePath = join(directory, `standalone-source${extension}`);
+    const payloadPath = join(directory, "standalone-fields.json");
+    const outputPath = join(directory, `standalone-template${extension}`);
+    await Promise.all([
+      writeFile(sourcePath, buffer),
+      writeFile(payloadPath, JSON.stringify({
+        brand_name: input.brandName,
+        field_values: input.fieldValues,
+        include_setup_fields: true,
+        show_existing_setup_fields: false,
+      }), "utf8"),
+    ]);
+    const output = await runPython(["prepare_standalone", sourcePath, payloadPath, outputPath]);
+    return {
+      workbook: await readFile(outputPath),
+      metadata: JSON.parse(output) as ListingTemplateMetadata & { product_type: string },
+    };
   });
 }
 
