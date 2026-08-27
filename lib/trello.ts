@@ -406,19 +406,35 @@ export function extractTrelloBoardId(input: string): string {
   return trimmed.split("/").filter(Boolean).pop() || trimmed;
 }
 
+const trelloListMarkerPattern = /^(?:(?:[-*+•◦▪‣⁃]\s*(?:\[[ xX]\]\s*)?)|(?:\d{1,3}[.)]\s+))/u;
+
+function stripTrelloListMarker(value: string) {
+  let line = value.trim();
+  while (trelloListMarkerPattern.test(line)) {
+    line = line.replace(trelloListMarkerPattern, "").trimStart();
+  }
+  return line;
+}
+
+function isTrelloDescriptionLabel(value: string) {
+  return /^[\p{L}\p{N}][\p{L}\p{M}\p{N}\s_()/&+.\-]{1,79}\s*[:=]/u.test(value);
+}
+
 function trelloGenericKeywordPhrases(rawDesc: string): string[] {
-  const lines = (rawDesc || "").split(/\r?\n/);
+  const lines = (rawDesc || "")
+    .split(/\r?\n/)
+    .map(stripTrelloListMarker);
   const startIndex = lines.findIndex((line) =>
-    /(?:generic|backend)\s*keywords?\s*:/i.test(line),
+    /^(?:generic|backend)\s*keywords?\s*:/i.test(line),
   );
   if (startIndex === -1) return [];
 
   const values = [
-    lines[startIndex].replace(/^.*?(?:generic|backend)\s*keywords?\s*:\s*/i, ""),
+    lines[startIndex].replace(/^(?:generic|backend)\s*keywords?\s*:\s*/i, ""),
   ];
   for (let index = startIndex + 1; index < lines.length; index += 1) {
-    const line = lines[index].trim();
-    if (!line || /^[\p{L}\p{N}_\-\s]{2,40}\s*:/u.test(line)) break;
+    const line = lines[index];
+    if (!line || isTrelloDescriptionLabel(line)) break;
     values.push(line);
   }
 
@@ -426,7 +442,7 @@ function trelloGenericKeywordPhrases(rawDesc: string): string[] {
     values
       .join("\n")
       .split(/[,;|\n]+/)
-      .map((value) => value.replace(/^[#\s]+/, "").trim())
+      .map((value) => stripTrelloListMarker(value).replace(/^[#\s]+/, "").trim())
       .filter((value) => value.length > 1 && !/https?:\/\//i.test(value))
       .map((value) => [value.toLowerCase(), value]),
   ).values()].slice(0, 50);
@@ -486,6 +502,7 @@ export function formatRawTrelloKeywords(rawDesc: string): string {
 
   // Convert commas, semicolons, newlines, quotes into clean single spaces
   const cleaned = keywordText
+    .toLowerCase()
     .replace(/[\r\n,;:|"\']/g, " ")
     .replace(/\s+/g, " ")
     .trim();

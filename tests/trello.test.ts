@@ -96,6 +96,25 @@ test("listing description supports Vietnamese material and size labels without t
   assert.equal(missing.material, "");
 });
 
+test("generic keywords stop before bullet-prefixed Trello description labels", () => {
+  const parsed = parseTrelloListingDescription([
+    "• Generic keywords: Paris Glass Ornament, Paris souvenir gift",
+    "• Tên chiến dịch / sản phẩm: Glass Ornament Paris France",
+    "• Niche (thị trường ngách): Paris France",
+    "• Đối tượng khách hàng: Paris France",
+    "• Top KW ranking:",
+  ].join("\n"));
+
+  assert.deepEqual(parsed.genericKeywords, [
+    "Paris Glass Ornament",
+    "Paris souvenir gift",
+  ]);
+  assert.equal(
+    parsed.formattedGenericKeywords,
+    "paris glass ornament souvenir gift",
+  );
+});
+
 test("Trello AI product facts never inherit Amazon template metadata", () => {
   const description = parseTrelloListingDescription([
     "Chất liệu: Kính",
