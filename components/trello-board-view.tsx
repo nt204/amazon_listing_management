@@ -2788,42 +2788,60 @@ export function TrelloBoardView({
 
                     {templateRequiredFields.length > 0 && (
                       <div className="grid max-h-80 grid-cols-1 gap-3 overflow-y-auto pr-1 thin-scrollbar md:grid-cols-2">
-                        {templateRequiredFields.map((field) => (
-                          <div key={field.id} className="space-y-1">
-                            <label htmlFor={`template-field-${field.column}`} className="block text-[11px] font-bold text-slate-700">
-                              {field.label} <span className="font-semibold text-rose-600">*</span>
-                            </label>
-                            {field.input_type === "select" ? (
-                              <select
-                                id={`template-field-${field.column}`}
-                                required
-                                value={templateFieldValues[field.id] || ""}
-                                onChange={(event) => {
-                                  const val = event.target.value;
-                                  setTemplateFieldValues({ ...templateFieldValues, [field.id]: val });
-                                }}
-                                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                        {templateRequiredFields.map((field) => {
+                          const fieldValue = templateFieldValues[field.id] || "";
+                          const hasValue = Boolean(fieldValue.trim());
+                          const fieldStateClassName = hasValue
+                            ? "border-emerald-300 bg-emerald-50/60 hover:border-emerald-400"
+                            : "border-slate-300 bg-white hover:border-slate-400";
+
+                          return (
+                            <div key={field.id} className="space-y-1">
+                              <label
+                                htmlFor={`template-field-${field.column}`}
+                                className="flex min-h-4 items-center justify-between gap-2 text-[11px] font-bold text-slate-700"
                               >
-                                <option value="">Chọn một giá trị</option>
-                                {field.options.map((option) => (
-                                  <option key={option} value={option}>{option}</option>
-                                ))}
-                              </select>
-                            ) : (
-                              <input
-                                id={`template-field-${field.column}`}
-                                type="text"
-                                required
-                                value={templateFieldValues[field.id] || ""}
-                                onChange={(event) => {
-                                  const val = event.target.value;
-                                  setTemplateFieldValues({ ...templateFieldValues, [field.id]: val });
-                                }}
-                                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
-                              />
-                            )}
-                          </div>
-                        ))}
+                                <span>
+                                  {field.label} <span className="font-semibold text-rose-600">*</span>
+                                </span>
+                                {hasValue && (
+                                  <span className="shrink-0 text-emerald-700" title="Đã nhập">
+                                    <CheckIcon className="h-4 w-4" weight="bold" aria-hidden="true" />
+                                  </span>
+                                )}
+                              </label>
+                              {field.input_type === "select" ? (
+                                <select
+                                  id={`template-field-${field.column}`}
+                                  required
+                                  value={fieldValue}
+                                  onChange={(event) => {
+                                    const val = event.target.value;
+                                    setTemplateFieldValues({ ...templateFieldValues, [field.id]: val });
+                                  }}
+                                  className={`w-full rounded-xl border px-3 py-2 text-xs font-semibold text-slate-900 outline-none transition-colors duration-150 motion-reduce:transition-none focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-100 ${fieldStateClassName}`}
+                                >
+                                  <option value="">Chọn một giá trị</option>
+                                  {field.options.map((option) => (
+                                    <option key={option} value={option}>{option}</option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <input
+                                  id={`template-field-${field.column}`}
+                                  type="text"
+                                  required
+                                  value={fieldValue}
+                                  onChange={(event) => {
+                                    const val = event.target.value;
+                                    setTemplateFieldValues({ ...templateFieldValues, [field.id]: val });
+                                  }}
+                                  className={`w-full rounded-xl border px-3 py-2 text-xs font-semibold text-slate-900 outline-none transition-colors duration-150 motion-reduce:transition-none focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-100 ${fieldStateClassName}`}
+                                />
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>

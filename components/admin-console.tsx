@@ -230,7 +230,7 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
               <p className="truncate text-[10px] font-semibold text-slate-500">Tài khoản và lưu trữ ảnh</p>
             </div>
           </div>
-          <AccountMenu actor={actor} />
+          <AccountMenu actor={actor} pendingUserCount={pendingCount} />
         </div>
       </header>
 
@@ -450,7 +450,7 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
             <div className="px-5 py-10 text-center">
               <FilePdfIcon className="mx-auto text-slate-300" size={36} />
               <p className="mt-2 text-xs font-bold text-slate-700">Chưa có tài liệu hướng dẫn nào được tải lên.</p>
-              <p className="mt-1 text-[11px] text-slate-500">Bấm nút "+ Tải lên file PDF" ở trên để đưa tài liệu hướng dẫn cho nhân viên.</p>
+              <p className="mt-1 text-[11px] text-slate-500">Bấm nút &quot;+ Tải lên file PDF&quot; ở trên để đưa tài liệu hướng dẫn cho nhân viên.</p>
             </div>
           ) : (
             <div className="divide-y divide-slate-100">

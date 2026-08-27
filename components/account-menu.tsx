@@ -3,16 +3,23 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { EyeIcon, EyeSlashIcon, GearSixIcon, KeyIcon, SignOutIcon, UserCircleIcon } from "@phosphor-icons/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { RequestActor } from "@/lib/auth";
 
 function initials(name: string) {
   return name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase() || "").join("") || "U";
 }
 
-export function AccountMenu({ actor }: { actor: RequestActor }) {
+export function AccountMenu({
+  actor,
+  pendingUserCount,
+}: {
+  actor: RequestActor;
+  pendingUserCount?: number;
+}) {
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
+  const [loadedPendingUserCount, setLoadedPendingUserCount] = useState(0);
   const [loggingOut, setLoggingOut] = useState(false);
   const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
@@ -22,6 +29,41 @@ export function AccountMenu({ actor }: { actor: RequestActor }) {
   const [passwordError, setPasswordError] = useState("");
   const [passwordNotice, setPasswordNotice] = useState("");
   const [savingPassword, setSavingPassword] = useState(false);
+
+  useEffect(() => {
+    if (actor.role !== "admin" || pendingUserCount !== undefined) return;
+
+    let cancelled = false;
+    const loadPendingUsers = async () => {
+      try {
+        const response = await fetch("/api/admin/users", { cache: "no-store" });
+        const body = await response.json() as {
+          users?: Array<{ status?: string }>;
+        };
+        if (!response.ok || cancelled) return;
+        setLoadedPendingUserCount(
+          (body.users || []).filter((user) => user.status === "pending").length,
+        );
+      } catch {
+        // Giữ trạng thái gần nhất nếu kết nối tạm thời bị gián đoạn.
+      }
+    };
+
+    const initialTimer = window.setTimeout(() => void loadPendingUsers(), 0);
+    const refreshTimer = window.setInterval(() => void loadPendingUsers(), 60_000);
+    const refreshOnFocus = () => void loadPendingUsers();
+    window.addEventListener("focus", refreshOnFocus);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(initialTimer);
+      window.clearInterval(refreshTimer);
+      window.removeEventListener("focus", refreshOnFocus);
+    };
+  }, [actor.role, pendingUserCount]);
+
+  const effectivePendingUserCount = pendingUserCount ?? loadedPendingUserCount;
+  const hasPendingUsers = actor.role === "admin" && effectivePendingUserCount > 0;
 
   const logout = async () => {
     setLoggingOut(true);
@@ -61,10 +103,19 @@ export function AccountMenu({ actor }: { actor: RequestActor }) {
       <button
         type="button"
         onClick={() => setIsOpen((prev) => !prev)}
-        className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-slate-200/80 bg-white py-1 pl-1 pr-2.5 text-left shadow-2xs hover:border-indigo-200 hover:bg-slate-50 transition outline-none focus:ring-2 focus:ring-indigo-100"
-        aria-label="Mở menu tài khoản"
+        className="relative flex cursor-pointer list-none items-center gap-2 rounded-xl border border-slate-200/80 bg-white py-1 pl-1 pr-2.5 text-left shadow-2xs hover:border-indigo-200 hover:bg-slate-50 transition outline-none focus:ring-2 focus:ring-indigo-100"
+        aria-label={hasPendingUsers
+          ? `Mở menu tài khoản, có ${effectivePendingUserCount} người dùng chờ duyệt`
+          : "Mở menu tài khoản"}
         aria-expanded={isOpen}
       >
+        {hasPendingUsers ? (
+          <span
+            className="absolute -left-1 -top-1 h-3 w-3 rounded-full border-2 border-white bg-red-600 shadow-sm"
+            title={`${effectivePendingUserCount} người dùng chờ duyệt`}
+            aria-hidden="true"
+          />
+        ) : null}
         <span className="grid h-7 w-7 place-items-center rounded-lg bg-gradient-to-br from-indigo-500 to-indigo-700 text-[10px] font-black text-white shadow-xs">
           {initials(actor.displayName)}
         </span>
@@ -180,4 +231,3 @@ export function AccountMenu({ actor }: { actor: RequestActor }) {
     </div>
   );
 }
-
