@@ -573,6 +573,19 @@ function abortableDelay(ms: number, signal?: AbortSignal) {
   });
 }
 
+const DEFAULT_TRELLO_HEADERS: Record<string, string> = {
+  Accept: "application/json",
+  "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+};
+
+function formatTrelloErrorMessage(status: number, errText: string, defaultAction: string): string {
+  if (errText.includes("Human Verification") || errText.includes("CaptchaScript") || errText.includes("AwsWafIntegration")) {
+    return `${defaultAction} (${status}): Tường lửa AWS WAF của Trello đang yêu cầu xác minh bảo mật hoặc IP bị chặn. Hãy thử đổi IP/mạng hoặc kiểm tra lại Board ID.`;
+  }
+  const cleanText = errText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 300);
+  return `${defaultAction} (${status})${cleanText ? `: ${cleanText}` : ""}`;
+}
+
 async function fetchTrelloWithRetry(
   input: string | URL,
   init: RequestInit,
@@ -590,6 +603,10 @@ async function fetchTrelloWithRetry(
       const timeoutSignal = AbortSignal.timeout(trelloTimeoutMs());
       const response = await fetch(input, {
         ...init,
+        headers: {
+          ...DEFAULT_TRELLO_HEADERS,
+          ...(init.headers || {}),
+        },
         signal: signal
           ? AbortSignal.any([signal, timeoutSignal])
           : timeoutSignal,
@@ -619,30 +636,35 @@ async function fetchTrelloWithRetry(
 }
 
 export async function fetchTrelloBoards(apiKey: string, token: string): Promise<TrelloBoard[]> {
-  const response = await fetch(buildUrl("/members/me/boards", apiKey, token, { fields: "name,url" }), {
-    cache: "no-store",
-  });
+  const response = await fetchTrelloWithRetry(
+    buildUrl("/members/me/boards", apiKey, token, { fields: "name,url" }),
+    { cache: "no-store" },
+  );
   if (!response.ok) {
     const errText = await response.text().catch(() => "");
-    throw new Error(`Không thể lấy danh sách Board từ Trello (${response.status}): ${errText}`);
+    throw new Error(formatTrelloErrorMessage(response.status, errText, "Không thể lấy danh sách Board từ Trello"));
   }
   return (await response.json()) as TrelloBoard[];
 }
 
 export async function fetchTrelloLists(boardId: string, apiKey: string, token: string): Promise<TrelloList[]> {
   const cleanBoardId = extractTrelloBoardId(boardId);
-  const response = await fetch(buildUrl(`/boards/${cleanBoardId}/lists`, apiKey, token, { fields: "name,closed" }), {
-    cache: "no-store",
-  });
+  if (!cleanBoardId) {
+    throw new Error("Mã Board Trello không hợp lệ hoặc đang để trống.");
+  }
+  const response = await fetchTrelloWithRetry(
+    buildUrl(`/boards/${cleanBoardId}/lists`, apiKey, token, { fields: "name,closed" }),
+    { cache: "no-store" },
+  );
   if (!response.ok) {
     const errText = await response.text().catch(() => "");
-    throw new Error(`Không thể lấy danh sách Cột từ Board Trello (${response.status}): ${errText}`);
+    throw new Error(formatTrelloErrorMessage(response.status, errText, "Không thể lấy danh sách Cột từ Board Trello"));
   }
   return (await response.json()) as TrelloList[];
 }
 
 export async function fetchTrelloCards(listId: string, apiKey: string, token: string): Promise<TrelloCard[]> {
-  const response = await fetch(
+  const response = await fetchTrelloWithRetry(
     buildUrl(`/lists/${listId}/cards`, apiKey, token, {
       fields: "all",
       attachments: "true",
@@ -652,7 +674,7 @@ export async function fetchTrelloCards(listId: string, apiKey: string, token: st
   );
   if (!response.ok) {
     const errText = await response.text().catch(() => "");
-    throw new Error(`Không thể lấy thẻ Trello trong danh sách (${response.status}): ${errText}`);
+    throw new Error(formatTrelloErrorMessage(response.status, errText, "Không thể lấy thẻ Trello trong danh sách"));
   }
   const cards = (await response.json()) as TrelloCard[];
   return cards.map((sourceCard) => ({

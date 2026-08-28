@@ -9,7 +9,11 @@ import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-gu
 import { getBrandProfile, getUserTrelloSettings, saveGeneratedListing } from "@/lib/db";
 import { resolveListingTemplateForBrand } from "@/lib/listing-template-resolver";
 import { isTemplateReady } from "@/lib/amazon-template-catalog";
-import { DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_MODEL } from "@/lib/models";
+import {
+  DEFAULT_GEMINI_MODEL,
+  DEFAULT_OPENAI_MODEL,
+  isCheapKeyTextModel,
+} from "@/lib/models";
 import { listingInputSchema } from "@/lib/schemas";
 import type { StoredListing } from "@/lib/types";
 import { invalidateCachePattern } from "@/lib/redis";
@@ -189,8 +193,8 @@ async function processCardRequest(
   emitProgress("template", "completed", Date.now() - templateStartedAt);
 
   // 5. Construct Listing Input
-  const selectedModel = body.model || "";
-  const isGpt = selectedModel.startsWith("gpt");
+  const selectedModel = body.model || DEFAULT_OPENAI_MODEL;
+  const usesOpenAIAdapter = selectedModel.startsWith("gpt") || isCheapKeyTextModel(selectedModel);
 
   const rawInputPayload = {
     marketplace,
@@ -216,9 +220,9 @@ async function processCardRequest(
     images: loadedImages,
     configuration: {
       rule_profile: actor.ruleProfile || "",
-      ai_provider: isGpt ? "openai" : selectedModel ? "gemini" : "auto",
-      gemini_model: selectedModel && !isGpt ? selectedModel : DEFAULT_GEMINI_MODEL,
-      openai_model: isGpt ? selectedModel : DEFAULT_OPENAI_MODEL,
+      ai_provider: usesOpenAIAdapter ? "openai" : "gemini",
+      gemini_model: selectedModel && !usesOpenAIAdapter ? selectedModel : DEFAULT_GEMINI_MODEL,
+      openai_model: usesOpenAIAdapter ? selectedModel : DEFAULT_OPENAI_MODEL,
       language: "English",
       tone: "Persuasive, benefit-led, natural, and evidence-grounded",
       bullet_count: 5,

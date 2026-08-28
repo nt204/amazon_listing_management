@@ -162,12 +162,11 @@ export function TrelloBoardView({
   const [openDropdown, setOpenDropdown] = useState<"model" | "brand" | "template" | null>(null);
   const AI_MODEL_OPTIONS = useMemo(() => [
     { value: "gemini-3.6-flash", label: "Gemini 3.6 Flash", tag: "Chất lượng cao", icon: "⚡" },
-    { value: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite", tag: "Nhanh", icon: "⚡" },
+    { value: "gemini-3.5-flash-lite-cheapkey", label: "Gemini 3.5 Flash-Lite", tag: "CheapKey AI", icon: "💸" },
     { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash", tag: "Cân bằng", icon: "⚡" },
-    { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro", tag: "Deep Reasoning", icon: "🧠" },
     { value: "gpt-4o", label: "GPT-4o", tag: "Chất lượng cao", icon: "🤖" },
-    { value: "gpt-4o-mini", label: "GPT-4o Mini", tag: "Nhanh & Tối ưu", icon: "⚡" },
     { value: "gpt-5.6-luna", label: "GPT-5.6 Luna", tag: "Mặc định (CheapKey AI)", icon: "💸" },
+    { value: "gemini-3.7-flash-cheapkey", label: "Gemini 3.7 Flash", tag: "CheapKey AI", icon: "💸" },
   ], []);
 
   const [selectedModel, setSelectedModel] = useState("gpt-5.6-luna");

@@ -12,7 +12,12 @@ import {
   trimDescriptionToTarget,
 } from "@/lib/listing-sanitizer";
 import { createMockListing } from "@/lib/mock";
-import { getGeminiModels, getOpenAIModels } from "@/lib/models";
+import {
+  getListingModelCandidates,
+  isCheapKeyGeminiTextModel,
+  isCheapKeyTextModel,
+  resolveCheapKeyUpstreamTextModel,
+} from "@/lib/models";
 import { getPolicy } from "@/lib/policies";
 import { getRuleRegistry } from "@/lib/rules";
 import {
@@ -30,8 +35,6 @@ import type {
   ProductEvidenceItem,
 } from "@/lib/types";
 import type { LocalOcrResult } from "@/lib/ocr";
-
-type Provider = "gemini" | "openai";
 
 export interface GenerationOptions {
   productBrief?: ProductBrief;
@@ -313,7 +316,11 @@ async function callOpenAI(
   prompt: string,
   signal?: AbortSignal,
 ): Promise<ProviderOutput> {
+  const modelSpecificCheapKeyApiKey = isCheapKeyGeminiTextModel(model)
+    ? process.env.CHEAPKEYAI_GEMINI_API_KEY?.trim()
+    : undefined;
   const cheapKeyApiKey =
+    modelSpecificCheapKeyApiKey ||
     process.env.CHEAPKEYAI_TEXT_API_KEY?.trim() ||
     process.env.CHEAPKEYAI_LUNA_API_KEY?.trim() ||
     process.env.CHEAPKEYAI_API_KEY?.trim();
@@ -323,14 +330,14 @@ async function callOpenAI(
     .trim()
     .replace(/\/+$/, "");
 
-  const isCheapKeyModel = model === "gpt-5.6-luna" || model.includes("cheapkey");
+  const isCheapKeyModel = isCheapKeyTextModel(model);
   const usesCheapKey = Boolean(
     cheapKeyApiKey && (isCheapKeyModel || !process.env.OPENAI_API_KEY?.trim()),
   );
 
   if (isCheapKeyModel && !cheapKeyApiKey && !process.env.OPENAI_API_KEY?.trim()) {
     throw new Error(
-      "CHEAPKEYAI_TEXT_API_KEY hoặc CHEAPKEYAI_API_KEY chưa được cấu hình trên server để sử dụng model gpt-5.6-luna (CheapKey AI).",
+      "CHEAPKEYAI_GEMINI_API_KEY, CHEAPKEYAI_TEXT_API_KEY hoặc CHEAPKEYAI_API_KEY chưa được cấu hình trên server để sử dụng model CheapKey AI.",
     );
   }
 
@@ -341,9 +348,7 @@ async function callOpenAI(
       })
     : new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-  const targetModel = isCheapKeyModel
-    ? process.env.CHEAPKEYAI_UPSTREAM_TEXT_MODEL?.trim() || model
-    : model;
+  const targetModel = isCheapKeyModel ? resolveCheapKeyUpstreamTextModel(model) : model;
 
   let rawOutputText = "";
   let usageInputTokens: number | undefined;
@@ -499,7 +504,13 @@ export async function generateListing(
   const titleBlueprint = buildTitleBlueprint(input);
   const prompt = buildPrompt(input, ocr, options, titleBlueprint);
   const hasGemini = Boolean(process.env.GEMINI_API_KEY?.trim());
-  const hasOpenAI = Boolean(process.env.OPENAI_API_KEY?.trim());
+  const hasOpenAI = Boolean(
+    process.env.OPENAI_API_KEY?.trim() ||
+    process.env.CHEAPKEYAI_GEMINI_API_KEY?.trim() ||
+    process.env.CHEAPKEYAI_TEXT_API_KEY?.trim() ||
+    process.env.CHEAPKEYAI_LUNA_API_KEY?.trim() ||
+    process.env.CHEAPKEYAI_API_KEY?.trim(),
+  );
   const mock = !hasGemini && !hasOpenAI && process.env.AI_MOCK_MODE === "true";
   let modelUsed: ListingResult["model_used"] = mock ? "mock" : "gemini";
   let modelName = mock ? "mock-template" : input.configuration.gemini_model;
@@ -512,45 +523,42 @@ export async function generateListing(
       listing: options.currentListing || createMockListing(input),
     }));
   } else {
-    const preferred: Provider = input.configuration.ai_provider === "openai" ? "openai" : "gemini";
-    const providers = [preferred, preferred === "gemini" ? "openai" : "gemini"]
-      .filter((provider, index, values) => values.indexOf(provider) === index)
-      .filter((provider) => provider === "gemini" ? hasGemini : hasOpenAI) as Provider[];
-    if (!providers.length) throw new Error("No AI provider is configured.");
-    let firstError: unknown;
+    const candidates = getListingModelCandidates({
+      preference: input.configuration.ai_provider,
+      geminiModel: input.configuration.gemini_model,
+      openaiModel: input.configuration.openai_model,
+      hasGemini,
+      hasOpenAI,
+    });
+
+    if (!candidates.length) throw new Error("No AI provider is configured.");
     providerOutput = await runStage("ai_writer", async () => {
-      try {
-        const provider = providers[0];
-        modelUsed = provider;
-        modelName = provider === "gemini"
-          ? input.configuration.gemini_model || getGeminiModels()[0].id
-          : input.configuration.openai_model || getOpenAIModels()[0].id;
-        return provider === "gemini"
-          ? await callGemini(input, modelName, prompt, options.signal)
-          : await callOpenAI(input, modelName, prompt, options.signal);
-      } catch (error) {
-        if (options.signal?.aborted) throw options.signal.reason || error;
-        firstError = error;
-        const provider = providers[1];
-        if (!provider) throw error;
-        fallbackUsed = true;
-        fallbackReason = error instanceof Error ? error.message : String(error);
-        modelUsed = provider;
-        modelName = provider === "gemini"
-          ? input.configuration.gemini_model || getGeminiModels()[0].id
-          : input.configuration.openai_model || getOpenAIModels()[0].id;
+      const errors: unknown[] = [];
+      for (const [index, candidate] of candidates.entries()) {
+        modelUsed = candidate.provider;
+        modelName = candidate.model;
         try {
-          return provider === "gemini"
+          return candidate.provider === "gemini"
             ? await callGemini(input, modelName, prompt, options.signal)
             : await callOpenAI(input, modelName, prompt, options.signal);
-        } catch (fallbackError) {
-          throw new AggregateError(
-            [firstError, fallbackError],
-            `All configured AI providers failed. ${providers[0]}: ${firstError instanceof Error ? firstError.message : String(firstError)}; ${provider}: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`,
-          );
+        } catch (error) {
+          if (options.signal?.aborted) throw options.signal.reason || error;
+          errors.push(error);
+          if (index === 0) {
+            fallbackReason = error instanceof Error ? error.message : String(error);
+          }
         }
       }
+
+      fallbackUsed = candidates.length > 1;
+      throw new AggregateError(
+        errors,
+        `All configured AI models failed. ${candidates.map((candidate, index) =>
+          `${candidate.model}: ${errors[index] instanceof Error ? errors[index].message : String(errors[index])}`
+        ).join("; ")}`,
+      );
     });
+    fallbackUsed = modelName !== candidates[0].model;
   }
 
   const { listing, analysis } = await runStage("validation", () => {

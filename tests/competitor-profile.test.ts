@@ -33,7 +33,7 @@ const input: ListingInput = {
   images: [{ name: "cat.png", type: "image/png", data_url: "data:image/png;base64,AA==" }],
   configuration: {
     ai_provider: "auto",
-    gemini_model: "gemini-3.5-flash-lite",
+    gemini_model: "gemini-3.6-flash",
     openai_model: "gpt-5.6-terra",
     language: "English",
     tone: "Clear and factual",

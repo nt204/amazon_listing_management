@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { getGeminiModels, getOpenAIModels, type AiOptions } from "@/lib/models";
+import {
+  DEFAULT_OPENAI_MODEL,
+  getGeminiModels,
+  getOpenAIModels,
+  type AiOptions,
+} from "@/lib/models";
 import { authorize, routeErrorResponse } from "@/lib/api-guard";
 import { getRuleProfile, getRuleRegistry } from "@/lib/rules";
 
@@ -17,7 +22,13 @@ export async function GET(request: Request) {
     const configuredOpenAI = process.env.OPENAI_MODEL?.trim();
     const options: AiOptions = {
       gemini_available: Boolean(process.env.GEMINI_API_KEY?.trim()),
-      openai_available: Boolean(process.env.OPENAI_API_KEY?.trim()),
+      openai_available: Boolean(
+        process.env.OPENAI_API_KEY?.trim() ||
+        process.env.CHEAPKEYAI_GEMINI_API_KEY?.trim() ||
+        process.env.CHEAPKEYAI_TEXT_API_KEY?.trim() ||
+        process.env.CHEAPKEYAI_LUNA_API_KEY?.trim() ||
+        process.env.CHEAPKEYAI_API_KEY?.trim(),
+      ),
       mock_available: process.env.AI_MOCK_MODE === "true",
       gemini_models: geminiModels,
       openai_models: openAIModels,
@@ -25,7 +36,11 @@ export async function GET(request: Request) {
       listing_defaults: {
         rule_profile: ruleProfile,
         gemini_model: geminiModels.some((model) => model.id === configuredGemini) ? configuredGemini! : geminiModels[0].id,
-        openai_model: openAIModels.some((model) => model.id === configuredOpenAI) ? configuredOpenAI! : openAIModels[0].id,
+        openai_model: openAIModels.some((model) => model.id === configuredOpenAI)
+          ? configuredOpenAI!
+          : openAIModels.some((model) => model.id === DEFAULT_OPENAI_MODEL)
+            ? DEFAULT_OPENAI_MODEL
+            : openAIModels[0].id,
         title_length: profile.limits.title_max,
         bullet_length: profile.limits.bullet_max,
         bullet_count: profile.limits.bullet_count,
