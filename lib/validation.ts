@@ -160,8 +160,8 @@ export function analyzeListing(
   if (/\bB0[A-Z0-9]{8}\b/i.test(listing.backend_search_terms)) {
     errors.push({ field: "backend_search_terms", code: "ASIN_NOT_ALLOWED", message: "Remove ASINs from Generic keywords." });
   }
-  if (/[^\p{L}\p{N}\s]/u.test(listing.backend_search_terms)) {
-    errors.push({ field: "backend_search_terms", code: "SEARCH_TERMS_PUNCTUATION", message: "Generic keywords must be space-separated without punctuation." });
+  if (/[^\p{L}\p{N}\s;]/u.test(listing.backend_search_terms)) {
+    errors.push({ field: "backend_search_terms", code: "SEARCH_TERMS_PUNCTUATION", message: "Generic keywords may use semicolons as separators but no other punctuation." });
   }
   const backendWords = normalize(listing.backend_search_terms).split(" ").filter(Boolean);
   if (new Set(backendWords).size !== backendWords.length) {

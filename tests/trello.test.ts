@@ -50,10 +50,10 @@ test("cleanGeneratedTitle removes generic for Gift Buyers filler", () => {
   assert.equal(cleaned, "Limima Hanging Ornament, Glass Ornament Cowgirl 3D, Detailed 3D Pop-Up Design Craftsmanship, Standard 1 Card");
 });
 
-test("formatRawTrelloKeywords uses raw keywords from Trello card description", () => {
-  const rawDesc = "Generic keywords: cowgirl pop up card, 3d greeting card for birthday, western theme popup cards";
+test("formatRawTrelloKeywords only lowercases phrases and uses semicolon separators", () => {
+  const rawDesc = "Generic keywords: Cowgirl Pop Up Card, Father's Day Gift, Cowgirl Pop Up Card";
   const formatted = formatRawTrelloKeywords(rawDesc);
-  assert.equal(formatted, "cowgirl pop up card 3d greeting for birthday western theme popup cards");
+  assert.equal(formatted, "cowgirl pop up card; father's day gift; cowgirl pop up card;");
 });
 
 test("listing description supplies English material, dimensions, and generic keyword phrases", () => {
@@ -74,7 +74,7 @@ test("listing description supplies English material, dimensions, and generic key
   ]);
   assert.equal(
     parsed.formattedGenericKeywords,
-    "monster truck ornament personalized gift boys holiday decor",
+    "monster truck ornament; personalized truck gift; boys holiday decor;",
   );
 });
 
@@ -111,8 +111,76 @@ test("generic keywords stop before bullet-prefixed Trello description labels", (
   ]);
   assert.equal(
     parsed.formattedGenericKeywords,
-    "paris glass ornament souvenir gift",
+    "paris glass ornament; paris souvenir gift;",
   );
+});
+
+test("generic keyword phrases from a Trello description keep duplicate phrases", () => {
+  const parsed = parseTrelloListingDescription(
+    "Generic keywords: Cat Lover Gift, CAT LOVER GIFT; Cat Decor",
+  );
+
+  assert.deepEqual(parsed.genericKeywords, [
+    "Cat Lover Gift",
+    "CAT LOVER GIFT",
+    "Cat Decor",
+  ]);
+  assert.equal(
+    parsed.formattedGenericKeywords,
+    "cat lover gift; cat lover gift; cat decor;",
+  );
+});
+
+test("generic keywords support alternate English and Vietnamese labels", () => {
+  const cases = [
+    ["Generic Keywords = Cat Gift, CAT GIFT", "cat gift; cat gift;"],
+    ["Search terms - Cat Lover Gift | Pet Decor", "cat lover gift; pet decor;"],
+    ["Từ khóa: Quà Tặng Mèo; Trang Trí Thú Cưng", "quà tặng mèo; trang trí thú cưng;"],
+    ["Từ khoá = Quà Tặng Chó", "quà tặng chó;"],
+    ["Tu khoa tim kiem: Cat Dad Mug", "cat dad mug;"],
+  ] as const;
+
+  for (const [description, expected] of cases) {
+    assert.equal(
+      parseTrelloListingDescription(description).formattedGenericKeywords,
+      expected,
+    );
+  }
+});
+
+test("generic keywords stop before prose that is not keyword-like", () => {
+  const parsed = parseTrelloListingDescription([
+    "Generic keywords: cat gift, pet decor",
+    "This product description continues on the next line.",
+  ].join("\n"));
+
+  assert.equal(parsed.formattedGenericKeywords, "cat gift; pet decor;");
+});
+
+test("generic keywords preserve phrase text and punctuation while lowercasing", () => {
+  const parsed = parseTrelloListingDescription(
+    "Generic keywords: Pizza for You, Love Pizza; With Cheese! TRI, 3x12",
+  );
+
+  assert.equal(
+    parsed.formattedGenericKeywords,
+    "pizza for you; love pizza; with cheese! tri; 3x12;",
+  );
+});
+
+test("material supports Trello bullets and common material labels", () => {
+  const cases = [
+    ["• Chất liệu: Kính", "Kính"],
+    ["- Vật liệu = Acrylic", "Acrylic"],
+    ["Material Type - Ceramic", "Ceramic"],
+    ["Made of natural birch wood", "natural birch wood"],
+    ["Made from: stainless steel", "stainless steel"],
+    ["Thành phần chất liệu: 100% cotton", "100% cotton"],
+  ] as const;
+
+  for (const [description, expected] of cases) {
+    assert.equal(parseTrelloListingDescription(description).material, expected);
+  }
 });
 
 test("Trello AI product facts never inherit Amazon template metadata", () => {

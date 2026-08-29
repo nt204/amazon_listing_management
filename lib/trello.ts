@@ -1,7 +1,4 @@
-import {
-  mockupIndexFromAttachmentName,
-  sortMockupAttachments,
-} from "./mockup-types";
+import { sortMockupAttachments } from "./mockup-types";
 
 export interface TrelloConfig {
   apiKey: string;
@@ -416,60 +413,117 @@ function stripTrelloListMarker(value: string) {
   return line;
 }
 
+const genericKeywordLabelPattern = String.raw`(?:generic|backend)\s*(?:keywords?|search\s*terms?)|search\s*(?:terms?|keywords?)|từ\s*(?:khóa|khoá)(?:\s*(?:chung|tìm\s*kiếm))?|tu\s*khoa(?:\s*(?:chung|tim\s*kiem))?`;
+const sizeLabelPattern = String.raw`(?:(?:product|item)?\s*(?:size|dimensions?|measurements?)|kích\s*(?:thước(?:\s*(?:3\s*chiều|sản\s*phẩm))?|cỡ)|kich\s*(?:thuoc(?:\s*(?:3\s*chieu|san\s*pham))?|co)|số\s*đo|so\s*do|dung\s*tích|dung\s*tich|capacity|volume)(?:\s*\([^\r\n)]{1,50}\))?`;
+const materialLabelPattern = String.raw`materials?|material\s*types?|material\s*composition|outer\s*materials?|construction\s*materials?|fabric\s*materials?|chất\s*liệu|chat\s*lieu|vật\s*liệu|vat\s*lieu|thành\s*phần\s*chất\s*liệu|thanh\s*phan\s*chat\s*lieu`;
+
 function isTrelloDescriptionLabel(value: string) {
-  return /^[\p{L}\p{N}][\p{L}\p{M}\p{N}\s_()/&+.\-]{1,79}\s*[:=]/u.test(value);
+  return /^[\p{L}\p{N}][\p{L}\p{M}\p{N}\s_()/&+.\-]{1,79}(?:\s*[:=]|\s+-\s+)/u.test(value);
 }
 
-function trelloGenericKeywordPhrases(rawDesc: string): string[] {
-  const lines = (rawDesc || "")
-    .split(/\r?\n/)
-    .map(stripTrelloListMarker);
-  const startIndex = lines.findIndex((line) =>
-    /^(?:generic|backend)\s*keywords?\s*:/i.test(line),
+function matchTrelloLabeledLine(value: string, labels: string) {
+  return value.match(
+    new RegExp(String.raw`^(?:${labels})(?:\s*[:=]\s*|\s+-\s+)(.*)$`, "iu"),
   );
-  if (startIndex === -1) return [];
+}
 
-  const values = [
-    lines[startIndex].replace(/^(?:generic|backend)\s*keywords?\s*:\s*/i, ""),
-  ];
-  for (let index = startIndex + 1; index < lines.length; index += 1) {
-    const line = lines[index];
-    if (!line || isTrelloDescriptionLabel(line)) break;
-    values.push(line);
-  }
+function trimFollowingInlineField(value: string) {
+  return value
+    .split(
+      /\s*[;|]\s*(?=[\p{L}\p{M}][\p{L}\p{M}\p{N}\s_()/&+.\-]{1,79}(?:\s*[:=]|\s+-\s+))/u,
+    )[0]
+    .trim();
+}
 
-  return [...new Map(
-    values
-      .join("\n")
-      .split(/[,;|\n]+/)
-      .map((value) => stripTrelloListMarker(value).replace(/^[#\s]+/, "").trim())
-      .filter((value) => value.length > 1 && !/https?:\/\//i.test(value))
-      .map((value) => [value.toLowerCase(), value]),
-  ).values()].slice(0, 50);
+function containsDigitalMeasurement(value: string) {
+  return /\b(?:px|pixels?|dpi)\b/i.test(value);
 }
 
 function labeledDescriptionValue(rawDesc: string, labels: string) {
-  const match = (rawDesc || "").match(
-    new RegExp(String.raw`^\s*(?:${labels})\s*[:=\-]\s*(.+?)\s*$`, "imu"),
+  const lines = (rawDesc || "")
+    .split(/\r?\n/)
+    .map(stripTrelloListMarker);
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = matchTrelloLabeledLine(lines[index], labels);
+    if (!match) continue;
+
+    const sameLineValue = trimFollowingInlineField(match[1]);
+    if (sameLineValue) return sameLineValue.slice(0, 500);
+
+    const nextLine = lines[index + 1] || "";
+    if (nextLine && !isTrelloDescriptionLabel(nextLine)) {
+      return trimFollowingInlineField(nextLine).slice(0, 500);
+    }
+    return "";
+  }
+
+  return "";
+}
+
+function materialDescriptionValue(rawDesc: string) {
+  const labeled = labeledDescriptionValue(rawDesc, materialLabelPattern);
+  if (labeled) return labeled;
+
+  const lines = (rawDesc || "")
+    .split(/\r?\n/)
+    .map(stripTrelloListMarker);
+  for (const line of lines) {
+    const match = line.match(/^made\s+(?:of|from)(?:\s*[:=]\s*|\s+-\s+|\s+)(.+)$/iu);
+    if (match) return trimFollowingInlineField(match[1]).slice(0, 500);
+  }
+  return "";
+}
+
+function looksLikeGenericKeywordContinuation(value: string) {
+  if (!value || isTrelloDescriptionLabel(value) || value.length > 300) return false;
+  if (/[.!?](?:\s|$)/u.test(value)) return false;
+  if (/^(?:this|these|those|the\s+product|product\s+details?|description|note|notes?|mô\s*tả|mo\s*ta)\b/iu.test(value)) {
+    return false;
+  }
+  return value.split(/\s+/).filter(Boolean).length <= 20;
+}
+
+function trelloGenericKeywordText(rawDesc: string): string {
+  const lines = (rawDesc || "")
+    .split(/\r?\n/)
+    .map(stripTrelloListMarker);
+  const startIndex = lines.findIndex((line) => Boolean(
+    matchTrelloLabeledLine(line, genericKeywordLabelPattern),
+  ));
+  if (startIndex === -1) return "";
+
+  const startMatch = matchTrelloLabeledLine(
+    lines[startIndex],
+    genericKeywordLabelPattern,
   );
-  return (match?.[1] || "")
-    .split(/\s*[;|]\s*(?=[\p{L}\s]{2,30}\s*:)/u)[0]
-    .trim()
-    .slice(0, 500);
+  const values = [startMatch?.[1] || ""];
+  for (let index = startIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!looksLikeGenericKeywordContinuation(line)) break;
+    values.push(line);
+  }
+
+  return values.join("\n").trim();
+}
+
+function trelloGenericKeywordPhrases(rawDesc: string): string[] {
+  return trelloGenericKeywordText(rawDesc)
+    .split(/[,;|\n]+/)
+    .map((value) => stripTrelloListMarker(value).replace(/^[#\s]+/, "").trim())
+    .filter((value) => value.length > 1 && !/https?:\/\//i.test(value))
+    .slice(0, 50);
 }
 
 export function parseTrelloListingDescription(rawDesc: string) {
   const dimensions = parseCardDimensions(rawDesc);
-  const explicitSize = labeledDescriptionValue(
-    rawDesc,
-    String.raw`size|dimensions?|capacity|kích\s*thước|kich\s*thuoc|dung\s*tích|dung\s*tich`,
-  );
+  const rawExplicitSize = labeledDescriptionValue(rawDesc, sizeLabelPattern);
+  const explicitSize = containsDigitalMeasurement(rawExplicitSize)
+    ? ""
+    : rawExplicitSize;
   const genericKeywords = trelloGenericKeywordPhrases(rawDesc);
   return {
-    material: labeledDescriptionValue(
-      rawDesc,
-      String.raw`materials?|chất\s*liệu|chat\s*lieu`,
-    ),
+    material: materialDescriptionValue(rawDesc),
     sizeCapacity: dimensions.formatted || explicitSize,
     genericKeywords,
     formattedGenericKeywords: formatRawTrelloKeywords(rawDesc),
@@ -497,40 +551,9 @@ export function buildTrelloAiProductInformation(
 }
 
 export function formatRawTrelloKeywords(rawDesc: string): string {
-  const keywordText = trelloGenericKeywordPhrases(rawDesc).join(" ");
-  if (!keywordText) return "";
-
-  // Convert commas, semicolons, newlines, quotes into clean single spaces
-  const cleaned = keywordText
-    .toLowerCase()
-    .replace(/[\r\n,;:|"\']/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (!cleaned) return "";
-
-  // Deduplicate words case-insensitively while preserving original order
-  const words = cleaned.split(" ").filter(Boolean);
-  const uniqueWords: string[] = [];
-  const seen = new Set<string>();
-  for (const w of words) {
-    const wLower = w.toLowerCase();
-    if (!seen.has(wLower)) {
-      seen.add(wLower);
-      uniqueWords.push(w);
-    }
-  }
-
-  const full = uniqueWords.join(" ");
-  if (Buffer.from(full, "utf-8").length <= 249) return full;
-
-  let trimmed = "";
-  for (const word of uniqueWords) {
-    const candidate = trimmed ? `${trimmed} ${word}` : word;
-    if (Buffer.from(candidate, "utf-8").length > 249) break;
-    trimmed = candidate;
-  }
-  return trimmed;
+  const keywords = trelloGenericKeywordPhrases(rawDesc)
+    .map((keyword) => keyword.toLocaleLowerCase());
+  return keywords.length ? `${keywords.join("; ")};` : "";
 }
 
 const TRELLO_BASE_URL = "https://api.trello.com/1";
@@ -909,6 +932,10 @@ const dimensionsPattern = new RegExp(
   String.raw`${measurementPattern}\s*x\s*${measurementPattern}(?:\s*x\s*${measurementPattern})?`,
   "i",
 );
+const exactDimensionsPattern = new RegExp(
+  String.raw`^\s*${dimensionsPattern.source}\s*(?:\([^)]{1,80}\))?\s*$`,
+  "i",
+);
 
 function normalizeDimensionText(value: string) {
   return value
@@ -916,6 +943,7 @@ function normalizeDimensionText(value: string) {
     .replace(/[“”„‟″]/g, '"')
     .replace(/[‘’‛′]/g, "'")
     .replace(/[×✕✖]/g, "x")
+    .replace(/\s*\*\s*/g, " x ")
     .replace(/(\d),(\d)/g, "$1.$2");
 }
 
@@ -945,16 +973,74 @@ function formatMeasurement(measurement: ParsedMeasurement, inheritedUnit = "") {
   return `${measurement.value} ${unit}`;
 }
 
+function normalizedDescriptionLines(desc: string) {
+  return (desc || "")
+    .split(/\r?\n/)
+    .map((line) => normalizeDimensionText(stripTrelloListMarker(line)));
+}
+
+function dimensionDescriptionLines(desc: string) {
+  const result: string[] = [];
+  let insideGenericKeywords = false;
+
+  for (const line of normalizedDescriptionLines(desc)) {
+    if (matchTrelloLabeledLine(line, genericKeywordLabelPattern)) {
+      insideGenericKeywords = true;
+      continue;
+    }
+    if (insideGenericKeywords && looksLikeGenericKeywordContinuation(line)) continue;
+    insideGenericKeywords = false;
+    result.push(line);
+  }
+
+  return result;
+}
+
 function findLabeledMeasurement(desc: string, labels: string) {
-  const match = desc.match(
-    new RegExp(String.raw`(?:${labels})\s*(?:[:=\-]\s*)?${measurementPattern}`, "i"),
+  const searchable = dimensionDescriptionLines(desc).join("\n");
+  const match = searchable.match(
+    new RegExp(
+      String.raw`(?:^|[\n;|])\s*(?:${labels})(?:\s*[:=\-]\s*|\s+)${measurementPattern}`,
+      "iu",
+    ),
   );
   return match ? normalizeMeasurement(match[1], match[2]) : null;
 }
 
+function findCompoundDimensions(desc: string) {
+  for (const line of dimensionDescriptionLines(desc)) {
+    const labeledMatch = matchTrelloLabeledLine(line, sizeLabelPattern);
+    const naturalLabelMatch = line.match(
+      new RegExp(String.raw`^(?:${sizeLabelPattern})\s+(?:is|are|là|la)\s+(.+)$`, "iu"),
+    );
+    const labeledValue = labeledMatch?.[1] || naturalLabelMatch?.[1] || "";
+    if (labeledValue && !containsDigitalMeasurement(labeledValue)) {
+      const match = labeledValue.replace(/\bby\b/gi, "x").match(dimensionsPattern);
+      if (match) return match;
+    }
+
+    const exactMatch = line.replace(/\bby\b/gi, "x").match(exactDimensionsPattern);
+    if (
+      exactMatch &&
+      [exactMatch[2], exactMatch[4], exactMatch[6]]
+        .filter(Boolean)
+        .some((unit) => !isCapacityUnit(normalizeMeasurement("", unit).unit))
+    ) {
+      return exactMatch;
+    }
+  }
+  return null;
+}
+
 export function parseCardDimensions(desc: string): Dimensions3D {
-  const normalizedDesc = normalizeDimensionText(desc || "");
-  const dimMatch = normalizedDesc.match(dimensionsPattern);
+  const dimMatch = findCompoundDimensions(desc);
+  const capacityMeasurement = findLabeledMeasurement(
+    desc,
+    String.raw`dung\s*tích|dung\s*tich|capacity|volume`,
+  );
+  const labeledCapacity = capacityMeasurement && isCapacityUnit(capacityMeasurement.unit)
+    ? formatMeasurement(capacityMeasurement)
+    : "";
   if (dimMatch) {
     const firstMeasurement = normalizeMeasurement(dimMatch[1], dimMatch[2]);
     const secondMeasurement = normalizeMeasurement(dimMatch[3], dimMatch[4]);
@@ -972,10 +1058,11 @@ export function parseCardDimensions(desc: string): Dimensions3D {
     const length = formatMeasurement(firstMeasurement, inheritedDimensionUnit);
     const width = formatMeasurement(secondMeasurement, inheritedDimensionUnit);
     const third = thirdMeasurement;
-    const capacity = third && isCapacityUnit(third.unit)
+    const compoundCapacity = third && isCapacityUnit(third.unit)
       ? formatMeasurement(third)
       : "";
-    const thickness = third && !capacity
+    const capacity = compoundCapacity || labeledCapacity;
+    const thickness = third && !compoundCapacity
       ? formatMeasurement(third, inheritedDimensionUnit)
       : "";
     const formattedDimensions = [length, width, thickness].filter(Boolean).join(" x ");
@@ -992,24 +1079,20 @@ export function parseCardDimensions(desc: string): Dimensions3D {
   }
 
   const lengthMeasurement = findLabeledMeasurement(
-    normalizedDesc,
-    String.raw`chiều\s*dài|dài|chiều\s*cao|cao|length|height`,
+    desc,
+    String.raw`chiều\s*dài|chieu\s*dai|dài|dai|chiều\s*cao|chieu\s*cao|cao|(?:product|item)\s*(?:length|height)|length|height`,
   );
   const widthMeasurement = findLabeledMeasurement(
-    normalizedDesc,
-    String.raw`chiều\s*rộng|rộng|width`,
+    desc,
+    String.raw`chiều\s*rộng|chieu\s*rong|rộng|rong|(?:product|item)\s*width|width`,
   );
   const diameterMeasurement = findLabeledMeasurement(
-    normalizedDesc,
-    String.raw`đường\s*kính|diameter`,
+    desc,
+    String.raw`đường\s*kính|duong\s*kinh|(?:product|item)\s*diameter|diameter`,
   );
   const thicknessMeasurement = findLabeledMeasurement(
-    normalizedDesc,
-    String.raw`độ\s*dày|dày|thickness|depth`,
-  );
-  const capacityMeasurement = findLabeledMeasurement(
-    normalizedDesc,
-    String.raw`dung\s*tích|capacity`,
+    desc,
+    String.raw`độ\s*dày|do\s*day|dày|day|(?:product|item)\s*(?:thickness|depth)|thickness|depth`,
   );
 
   const dimensionMeasurements = [
@@ -1029,9 +1112,7 @@ export function parseCardDimensions(desc: string): Dimensions3D {
   const thickness = dimensionMeasurements[2]
     ? formatMeasurement(dimensionMeasurements[2], inheritedDimensionUnit)
     : "";
-  const capacity = capacityMeasurement && isCapacityUnit(capacityMeasurement.unit)
-    ? formatMeasurement(capacityMeasurement)
-    : "";
+  const capacity = labeledCapacity;
   const formattedDimensions = [length, width, thickness].filter(Boolean).join(" x ");
 
   return {

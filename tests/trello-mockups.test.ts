@@ -7,6 +7,7 @@ import {
   findRecentlyUploadedTrelloAttachment,
   isTrelloRequestTimeoutError,
   parseCardDimensions,
+  parseTrelloListingDescription,
 } from "../lib/trello";
 import {
   MAX_AI_MOCKUPS_PER_PRODUCT,
@@ -144,6 +145,59 @@ test("parseCardDimensions reads labeled measurements and does not invent ornamen
     thickness: "",
     formatted: "",
   });
+});
+
+test("parseCardDimensions accepts broader labeled size formats", () => {
+  assert.deepEqual(parseCardDimensions("Size: 3.1 by 3.1 inches"), {
+    length: '3.1"',
+    width: '3.1"',
+    thickness: "",
+    formatted: '3.1" x 3.1"',
+  });
+  assert.deepEqual(
+    parseCardDimensions("• Product Dimensions (L x W x H) = 8cm * 6cm * 0.4cm"),
+    {
+      length: "8cm",
+      width: "6cm",
+      thickness: "0.4cm",
+      formatted: "8cm x 6cm x 0.4cm",
+    },
+  );
+  assert.deepEqual(parseCardDimensions('3.5" x 3.5" x 0.15"'), {
+    length: '3.5"',
+    width: '3.5"',
+    thickness: '0.15"',
+    formatted: '3.5" x 3.5" x 0.15"',
+  });
+});
+
+test("parseCardDimensions ignores numeric pairs outside a size context", () => {
+  const descriptions = [
+    "Generic keywords: 3 x 5 photo frame",
+    "Generic keywords: photo frame\n3 x 5 inches",
+    "Image resolution: 1200 x 1200 px",
+    "Dimensions: 1200 x 1200 px",
+    "Pack: 2 x 4 photo frames",
+    "Package dimensions: 12 x 8 x 4 inches",
+  ];
+
+  for (const description of descriptions) {
+    assert.deepEqual(parseCardDimensions(description), {
+      length: "",
+      width: "",
+      thickness: "",
+      formatted: "",
+    });
+  }
+
+  assert.equal(
+    parseTrelloListingDescription("Generic keywords: 3 x 5 photo frame").sizeCapacity,
+    "",
+  );
+  assert.equal(
+    parseTrelloListingDescription("Dimensions: 1200 x 1200 px").sizeCapacity,
+    "",
+  );
 });
 
 test("a timed-out Trello upload is recovered only from the matching new attachment", () => {

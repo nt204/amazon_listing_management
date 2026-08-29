@@ -147,6 +147,14 @@ test("validator rejects punctuation, duplicate words, and brands in backend term
   assert.ok(codes.includes("SEARCH_TERMS_BRAND"));
 });
 
+test("validator allows semicolons between generic keyword phrases", () => {
+  const listing = createMockListing(input);
+  listing.backend_search_terms = "healthcare worker; nurse appreciation; medical staff gift;";
+
+  const result = analyzeListing(listing, input);
+  assert.ok(!result.policy_validation.errors.some((issue) => issue.code === "SEARCH_TERMS_PUNCTUATION"));
+});
+
 test("quality summary reports keyword and supplied fact usage without blocking publishing", () => {
   const listing = createMockListing(input);
   listing.description += " Made from ceramic with an 11 oz capacity.";
