@@ -1,7 +1,13 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { ImageEditParamsNonStreaming } from "openai/resources/images";
-import { GLASS_ORNAMENT_TEMPLATES } from "./template-mockup-types";
+import {
+  ALL_BUILTIN_TEMPLATES,
+  BOX_MOCKUP_TEMPLATES,
+  GLASS_ORNAMENT_TEMPLATES,
+  buildAccessoriesPromptInjection,
+  type ProductTemplateSpec,
+} from "./template-mockup-types";
 
 export * from "./template-mockup-types";
 
@@ -16,6 +22,8 @@ export interface RenderTemplateOptions {
   /** Test/custom input seam; production reads the selected template asset. */
   templateBuffer?: Buffer;
   sourceImageMode?: TemplateMockupSourceImageMode;
+  customTemplates?: ProductTemplateSpec[];
+  selectedAccessories?: string[];
 }
 
 export interface TemplateMockupImageEditResponse {
@@ -73,12 +81,19 @@ const DEFAULT_CHEAPKEYAI_BASE_URL = "https://cheapkeyai.shop/v1";
 const DEFAULT_TIMEOUT_MS = 600_000;
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
-function templateById(templateId: string) {
-  const spec = GLASS_ORNAMENT_TEMPLATES.find(
+function templateById(
+  templateId: string,
+  customTemplates?: ProductTemplateSpec[],
+): ProductTemplateSpec {
+  if (customTemplates && customTemplates.length > 0) {
+    const custom = customTemplates.find((template) => template.id === templateId);
+    if (custom) return custom;
+  }
+  const spec = ALL_BUILTIN_TEMPLATES.find(
     (template) => template.id === templateId,
   );
   if (!spec) {
-    throw new Error(`Template Glass Ornament không tồn tại: ${templateId}`);
+    throw new Error(`Template không tồn tại: ${templateId}`);
   }
   return spec;
 }
@@ -188,10 +203,37 @@ function configuredTimeout() {
 
 function buildAiEditPrompt(
   sourceImageMode: TemplateMockupSourceImageMode,
-  _templateName?: string,
+  spec: ProductTemplateSpec,
+  selectedAccessories?: string[],
 ) {
+  let accessoryPrompt = "";
+  if (selectedAccessories !== undefined) {
+    accessoryPrompt = buildAccessoriesPromptInjection(selectedAccessories);
+  } else if (spec.accessories && spec.accessories.length > 0) {
+    accessoryPrompt = buildAccessoriesPromptInjection(spec.accessories);
+  }
+
+  if (spec.category === "box" || spec.promptInstruction) {
+    const customInstruction = spec.promptInstruction
+      ? ` Specific template guidelines: ${spec.promptInstruction}.`
+      : "";
+    const promptParts = [
+      "Image 1 is the AUTHORITATIVE BASE TEMPLATE of a packaging gift box product.",
+      "Image 2 is 2D source artwork or product photo.",
+      "Visually identify the printable lid/surface or designated area of the packaging gift box in Image 1.",
+      "Extract ONLY the 2D artwork graphics/design from Image 2 and fit them naturally onto Image 1's packaging gift box AT ITS EXACT PRE-EXISTING POSITION.",
+      "STRICT COMPOSITION LOCK: Do NOT move, reposition, translate, resize, or alter the gift box, accessories, background, or camera framing of Image 1.",
+      "STRICT PRESERVATION OF BASE TEMPLATE: Keep all pre-existing elements, textures, shadows, and annotations in Image 1 untouched and razor-sharp.",
+      "POD PRINT COLOR FAITHFULNESS: Preserve the exact vibrant colors, contrast, text, typography, and sharp details from Image 2.",
+      customInstruction,
+      accessoryPrompt,
+      "Return the edited Image 1 only.",
+    ].filter(Boolean);
+    return promptParts.join(" ");
+  }
+
   if (sourceImageMode === "artwork") {
-    return [
+    const promptParts = [
       "Image 1 is the AUTHORITATIVE BASE TEMPLATE of a clear glass ornament product.",
       "Image 2 is 2D source artwork.",
       "Visually identify the printable face of the glass ornament in Image 1.",
@@ -204,11 +246,13 @@ function buildAiEditPrompt(
       "MANDATORY ARTWORK ROTATION ALIGNMENT: In Image 1, the glass ornament's top ribbon hole and hanging ribbon are tilted counter-clockwise at a ~15-degree angle (pointing to ~11 o'clock). You MUST rotate the extracted artwork graphics counter-clockwise (~15 degrees) so that the top of the artwork (the star) points directly toward Image 1's top ribbon hole, aligning with the glass ornament's tilted axis of symmetry. Do NOT render the artwork straight vertical at 0 degrees when the ornament itself is tilted.",
       "POD PRINT COLOR FAITHFULNESS: Preserve the exact vibrant colors, contrast, saturation, text, typography, layout, and sharp details of the source artwork from Image 2.",
       "Keep Image 1's base scene, background, and crystal-clear glass transparency unchanged.",
+      accessoryPrompt,
       "Return the edited Image 1 only.",
-    ].join(" ");
+    ].filter(Boolean);
+    return promptParts.join(" ");
   }
 
-  return [
+  const promptParts = [
     "Image 1 is the AUTHORITATIVE BASE TEMPLATE of a clear glass ornament product. Image 1's composition, camera framing, glass ornament position, red box, ribbon, bevel rim, text annotations, and circular geometry are 100% FROZEN and IMMUTABLE.",
     "Image 2 is a sample product photo containing printed artwork on a glass ornament.",
     "Visually analyze Image 2 to separate and distinguish the 2D printed artwork graphics from Image 2's photo background and physical product elements.",
@@ -222,8 +266,10 @@ function buildAiEditPrompt(
     "MANDATORY ARTWORK ROTATION ALIGNMENT: In Image 1, the glass ornament's top ribbon hole and hanging ribbon are tilted counter-clockwise at a ~15-degree angle (pointing to ~11 o'clock). You MUST rotate the extracted artwork graphics counter-clockwise (~15 degrees) so that the top of the artwork (the star) points directly toward Image 1's top ribbon hole, aligning with the glass ornament's tilted axis of symmetry. Do NOT render the artwork straight vertical at 0 degrees when the ornament itself is tilted.",
     "POD PRINT COLOR FAITHFULNESS: Preserve and keep the printed artwork colors, text, typography, and layout vibrant, bright, rich, and high-contrast, matching the exact original colors from Image 2.",
     "STRICT CRYSTAL-CLEAR GLASS TRANSPARENCY: Preserve and keep Image 1's base scene, background, framing, and non-printed glass areas 100% crystal-clear, unchanged, and see-through.",
+    accessoryPrompt,
     "Return the edited Image 1 only.",
-  ].join("\n");
+  ].filter(Boolean);
+  return promptParts.join("\n");
 }
 
 async function resolveImageEditClient(
@@ -312,20 +358,34 @@ function describeProviderError(error: unknown) {
 export async function renderTemplateMockupWithAi(
   options: RenderTemplateWithAiOptions,
 ): Promise<TemplateMockupAiRenderResult> {
-  const spec = templateById(options.templateId);
+  const spec = templateById(options.templateId, options.customTemplates);
   const quality = configuredQuality(options.quality);
   const outputSize = configuredOutputSize(options);
   const sourceImageMode = options.sourceImageMode || "product-photo";
-  const templateBuffer =
-    options.templateBuffer ||
-    (await readFile(path.join(process.cwd(), spec.templateAssetPath)).catch(
-      (error: unknown) => {
-        throw new Error(
-          `Không tìm thấy hoặc không đọc được ảnh template: ${spec.templateAssetPath}`,
-          { cause: error },
-        );
-      },
-    ));
+  
+  let templateBuffer = options.templateBuffer;
+  if (!templateBuffer) {
+    if (spec.templateDataUrl) {
+      const match = spec.templateDataUrl.match(/^data:([^;]+);base64,(.+)$/);
+      if (match) {
+        templateBuffer = Buffer.from(match[2], "base64");
+      }
+    } else if (spec.templateAssetPath) {
+      templateBuffer = await readFile(path.join(process.cwd(), spec.templateAssetPath)).catch(
+        (error: unknown) => {
+          throw new Error(
+            `Không tìm thấy hoặc không đọc được ảnh template: ${spec.templateAssetPath}`,
+            { cause: error },
+          );
+        },
+      );
+    }
+  }
+
+  if (!templateBuffer) {
+    throw new Error(`Không tìm thấy dữ liệu ảnh cho template: ${spec.id}`);
+  }
+
   const templateFormat = detectInputImage(templateBuffer, "Ảnh template");
   const sourceFormat = detectInputImage(
     options.designBuffer,
@@ -350,7 +410,7 @@ export async function renderTemplateMockupWithAi(
       {
         model: GLASS_ORNAMENT_IMAGE_MODEL,
         image: [templateFile, sourceFile],
-        prompt: buildAiEditPrompt(sourceImageMode, spec.name),
+        prompt: buildAiEditPrompt(sourceImageMode, spec, options.selectedAccessories),
         n: 1,
         size: outputSize.value,
         quality,
@@ -375,7 +435,7 @@ export async function renderTemplateMockupWithAi(
           {
             model: "gpt-image-2-c",
             image: [templateFile, sourceFile],
-            prompt: buildAiEditPrompt(sourceImageMode, spec.name),
+            prompt: buildAiEditPrompt(sourceImageMode, spec, options.selectedAccessories),
             n: 1,
             size: outputSize.value,
             quality,

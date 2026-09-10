@@ -5,7 +5,10 @@ import {
   GLASS_ORNAMENT_IMAGE_MODEL,
   renderTemplateMockupWithAi,
 } from "./template-mockup";
-import { GLASS_ORNAMENT_TEMPLATES } from "./template-mockup-types";
+import {
+  ALL_BUILTIN_TEMPLATES,
+  type ProductTemplateSpec,
+} from "./template-mockup-types";
 
 const MAX_IMAGE_BYTES = 25_000_000;
 const MAX_REQUEST_BYTES = 36_000_000;
@@ -14,15 +17,14 @@ const SUPPORTED_MIME_TYPES = new Set([
   "image/png",
   "image/webp",
 ]);
-const templateIds = new Set(
-  GLASS_ORNAMENT_TEMPLATES.map((template) => template.id),
-);
 
 const requestSchema = z.object({
   designDataUrl: z.string().min(1),
   selectedTemplateIds: z
     .array(z.string())
     .min(1, "Vui lòng chọn ít nhất 1 ảnh template."),
+  selectedAccessories: z.array(z.string()).optional(),
+  customTemplates: z.array(z.any()).optional(),
   mode: z.literal("ai").default("ai"),
 });
 
@@ -122,8 +124,14 @@ export function createTemplateMockupPostHandler(
       );
     }
 
+    const allKnownTemplates: ProductTemplateSpec[] = [
+      ...ALL_BUILTIN_TEMPLATES,
+      ...(parsed.data.customTemplates || []),
+    ];
+    const knownIds = new Set(allKnownTemplates.map((template) => template.id));
+
     const invalidTemplateId = parsed.data.selectedTemplateIds.find(
-      (id) => !templateIds.has(id),
+      (id) => !knownIds.has(id),
     );
     if (invalidTemplateId) {
       return jsonError(`Template không tồn tại: ${invalidTemplateId}`, 400);
@@ -143,12 +151,14 @@ export function createTemplateMockupPostHandler(
     try {
       const mockups = await Promise.all(
         parsed.data.selectedTemplateIds.map(async (templateId) => {
-          const template = GLASS_ORNAMENT_TEMPLATES.find(
+          const template = allKnownTemplates.find(
             (candidate) => candidate.id === templateId,
           )!;
           const rendered = await renderWithAi({
             templateId,
             designBuffer: design.bytes,
+            customTemplates: parsed.data.customTemplates,
+            selectedAccessories: parsed.data.selectedAccessories,
           });
 
           return {

@@ -2539,3 +2539,162 @@ export async function deleteSystemGuide(id: string): Promise<boolean> {
   `;
   return result.count > 0;
 }
+
+export interface CustomMockupTemplateRecord {
+  id: string;
+  teamId: string;
+  category: string;
+  name: string;
+  badge: string;
+  description: string;
+  promptInstruction: string;
+  imageData: string;
+  imageContentType: string;
+  accessories: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface CustomMockupTemplateRow {
+  id: string;
+  team_id: string;
+  category: string;
+  name: string;
+  badge: string;
+  description: string;
+  prompt_instruction: string;
+  image_data: string;
+  image_content_type: string;
+  accessories: string[] | string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+function toCustomMockupTemplateRecord(
+  row: CustomMockupTemplateRow,
+): CustomMockupTemplateRecord {
+  let accessories: string[] = [];
+  if (Array.isArray(row.accessories)) {
+    accessories = row.accessories;
+  } else if (typeof row.accessories === "string") {
+    try {
+      accessories = JSON.parse(row.accessories);
+    } catch {
+      accessories = [];
+    }
+  }
+  return {
+    id: row.id,
+    teamId: row.team_id,
+    category: row.category,
+    name: row.name,
+    badge: row.badge,
+    description: row.description,
+    promptInstruction: row.prompt_instruction,
+    imageData: row.image_data,
+    imageContentType: row.image_content_type,
+    accessories,
+    createdAt:
+      row.created_at instanceof Date
+        ? row.created_at.toISOString()
+        : String(row.created_at),
+    updatedAt:
+      row.updated_at instanceof Date
+        ? row.updated_at.toISOString()
+        : String(row.updated_at),
+  };
+}
+
+export async function listCustomMockupTemplates(
+  teamId: string,
+  category?: string,
+): Promise<CustomMockupTemplateRecord[]> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const rows = category
+    ? await sql<CustomMockupTemplateRow[]>`
+        SELECT *
+        FROM custom_mockup_templates
+        WHERE team_id = ${teamId} AND category = ${category}
+        ORDER BY created_at DESC
+      `
+    : await sql<CustomMockupTemplateRow[]>`
+        SELECT *
+        FROM custom_mockup_templates
+        WHERE team_id = ${teamId}
+        ORDER BY created_at DESC
+      `;
+  return rows.map(toCustomMockupTemplateRecord);
+}
+
+export async function saveCustomMockupTemplate(input: {
+  id?: string;
+  teamId: string;
+  category?: string;
+  name: string;
+  badge?: string;
+  description?: string;
+  promptInstruction?: string;
+  accessories?: string[];
+  imageData: string;
+  contentType?: string;
+}): Promise<CustomMockupTemplateRecord> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const category = input.category || "box";
+  const badge = input.badge || "Custom";
+  const description = input.description || "";
+  const promptInstruction = input.promptInstruction || "";
+  const accessoriesJson = JSON.stringify(input.accessories || []);
+  const contentType = input.contentType || "image/png";
+
+  if (input.id) {
+    const rows = await sql<CustomMockupTemplateRow[]>`
+      INSERT INTO custom_mockup_templates (
+        id, team_id, category, name, badge, description, prompt_instruction, image_data, image_content_type, accessories, updated_at
+      ) VALUES (
+        ${input.id}::uuid, ${input.teamId}, ${category}, ${input.name}, ${badge}, ${description}, ${promptInstruction}, ${input.imageData}, ${contentType}, ${accessoriesJson}::jsonb, NOW()
+      )
+      ON CONFLICT (id) DO UPDATE SET
+        name = EXCLUDED.name,
+        category = EXCLUDED.category,
+        badge = EXCLUDED.badge,
+        description = EXCLUDED.description,
+        prompt_instruction = EXCLUDED.prompt_instruction,
+        image_data = EXCLUDED.image_data,
+        image_content_type = EXCLUDED.image_content_type,
+        accessories = EXCLUDED.accessories,
+        updated_at = NOW()
+      WHERE custom_mockup_templates.team_id = ${input.teamId}
+      RETURNING *
+    `;
+    if (!rows[0]) {
+      throw new Error("Không thể cập nhật template hoặc template không tồn tại.");
+    }
+    return toCustomMockupTemplateRecord(rows[0]);
+  } else {
+    const rows = await sql<CustomMockupTemplateRow[]>`
+      INSERT INTO custom_mockup_templates (
+        team_id, category, name, badge, description, prompt_instruction, image_data, image_content_type, accessories
+      ) VALUES (
+        ${input.teamId}, ${category}, ${input.name}, ${badge}, ${description}, ${promptInstruction}, ${input.imageData}, ${contentType}, ${accessoriesJson}::jsonb
+      )
+      RETURNING *
+    `;
+    return toCustomMockupTemplateRecord(rows[0]);
+  }
+}
+
+export async function deleteCustomMockupTemplate(
+  id: string,
+  teamId: string,
+): Promise<boolean> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const result = await sql`
+    DELETE FROM custom_mockup_templates
+    WHERE id = ${id}::uuid AND team_id = ${teamId}
+  `;
+  return result.count > 0;
+}
+
