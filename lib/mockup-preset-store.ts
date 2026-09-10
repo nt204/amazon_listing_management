@@ -301,6 +301,7 @@ export function importPresetsPayload(jsonString: string): ProductCategoryPreset[
           checked: typeof c.checked === "boolean" ? c.checked : true,
           promptKey: c.promptKey,
           customPrompt: c.customPrompt,
+          referenceImages: c.referenceImages,
         })),
       });
     }

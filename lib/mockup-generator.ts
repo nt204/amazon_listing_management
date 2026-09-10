@@ -29,7 +29,7 @@ export interface MockupResult {
     model: MockupModel;
     quality: MockupImageQuality;
     size: string;
-    imageCount: 1;
+    imageCount: number;
     inputFidelity: "low" | "high" | null;
     /** Fixed provider price or an estimate from response usage, in USD. */
     estimatedCostUsd: number | null;
@@ -65,6 +65,11 @@ export interface GenerateMockupsOptions {
   customMockups?: readonly { id: number; label: string; promptKey?: string; customPrompt?: string }[];
   /** Optional custom user refinement prompt notes per mockup index. */
   customRefinementNotes?: Record<number, string>;
+  /** Extra pasted reference images for each mockup index. The source design is always first. */
+  referenceImagesByIndex?: Record<
+    number,
+    readonly { buffer: Buffer; mimeType: string; name: string }[]
+  >;
   /** Cancels queued/provider work when the browser disconnects or the user stops the job. */
   signal?: AbortSignal;
   /** Shared provider semaphore supplied by the API route. */
@@ -351,6 +356,12 @@ export async function generateAllMockups(
       let providerTrace: MockupResult["providerTrace"];
 
       const refinementNote = options.customRefinementNotes?.[meta.index];
+      const referenceImages = await Promise.all(
+        (options.referenceImagesByIndex?.[meta.index] || []).map(async (image) => ({
+          ...await normalizeDesignImage(image.buffer),
+          name: image.name,
+        })),
+      );
       const imagePool = isCheapKeyAIImageModel(model)
         ? "cheapkeyai"
         : model === "gemini-3.1-flash-image" || model === "gemini-3-pro-image"
@@ -365,13 +376,13 @@ export async function generateAllMockups(
 
       try {
         if (isImageApiModel(model) && openaiClient && openaiInput) {
-        const prompt = buildMockupPrompt(
+        const prompt = appendReferenceImageInstructions(buildMockupPrompt(
           meta.promptKey,
           itemName,
           dimensions,
           productContext,
           refinementNote,
-        );
+        ), referenceImages.length);
         const usesCheapKeyAI = isCheapKeyAIImageModel(model);
         const configuredUpstream = process.env.CHEAPKEYAI_UPSTREAM_MODEL?.trim();
         const primaryUpstreamModel = usesCheapKeyAI
@@ -394,6 +405,17 @@ export async function generateAllMockups(
               ? "low"
               : "high"
             : null;
+        const referenceInputs = await Promise.all(
+          referenceImages.map((image, index) =>
+            toFile(
+              image.buffer,
+              `${safeFileStem(image.name || `reference-${index + 2}`)}${image.extension}`,
+              { type: image.mimeType },
+            ),
+          ),
+        );
+        const imageInputs = [openaiInput, ...referenceInputs];
+        const editImageInput = imageInputs.length === 1 ? imageInputs[0] : imageInputs;
         console.info(
           "[Image API edit attempt]",
           JSON.stringify({
@@ -405,7 +427,7 @@ export async function generateAllMockups(
             fallbackModel: fallbackUpstreamModel,
             quality,
             size: OPENAI_IMAGE_SIZE,
-            imageCount: 1,
+            imageCount: imageInputs.length,
             inputFidelity,
           }),
         );
@@ -415,7 +437,7 @@ export async function generateAllMockups(
           response = await openaiClient.images.edit(
             {
               model: primaryUpstreamModel,
-              image: openaiInput,
+              image: editImageInput,
               prompt,
               n: 1,
               size: OPENAI_IMAGE_SIZE,
@@ -442,7 +464,7 @@ export async function generateAllMockups(
             response = await openaiClient.images.edit(
               {
                 model: fallbackUpstreamModel,
-                image: openaiInput,
+                image: editImageInput,
                 prompt,
                 n: 1,
                 size: OPENAI_IMAGE_SIZE,
@@ -481,7 +503,7 @@ export async function generateAllMockups(
           model,
           quality,
           size: response?.size || OPENAI_IMAGE_SIZE,
-          imageCount: 1,
+          imageCount: imageInputs.length,
           inputFidelity,
           estimatedCostUsd: usesCheapKeyAI
             ? CHEAPKEYAI_GPT_IMAGE_2_PRICE_USD
@@ -514,13 +536,13 @@ export async function generateAllMockups(
         );
         mockupBuffer = Buffer.from(b64, "base64");
         } else if (genAI) {
-        const prompt = buildMockupPrompt(
+        const prompt = appendReferenceImageInstructions(buildMockupPrompt(
           meta.promptKey,
           itemName,
           dimensions,
           productContext,
           refinementNote,
-        );
+        ), referenceImages.length);
         const response = await genAI.models.generateContent({
           model,
           contents: [
@@ -529,6 +551,12 @@ export async function generateAllMockups(
               parts: [
                 { text: prompt },
                 { inlineData: { data: base64Design, mimeType: normalizedDesign.mimeType } },
+                ...referenceImages.map((image) => ({
+                  inlineData: {
+                    data: image.buffer.toString("base64"),
+                    mimeType: image.mimeType,
+                  },
+                })),
               ],
             },
           ],
@@ -554,16 +582,29 @@ export async function generateAllMockups(
         }
         mockupBuffer = Buffer.from(imagePart.inlineData.data, "base64");
         } else if (isChatGPTWebModel(model)) {
-        const prompt = buildMockupPrompt(
+        const prompt = appendReferenceImageInstructions(buildMockupPrompt(
           meta.promptKey,
           itemName,
           dimensions,
           productContext,
           refinementNote,
-        );
+        ), referenceImages.length);
         console.info(`[ChatGPT Web Automation] Generating ${meta.name} with prompt: ${prompt.substring(0, 100)}...`);
         mockupBuffer = await raceWithSignal(
-          generateChatGPTWebImage(prompt, { inputImageBuffer: normalizedDesignBuffer }),
+          generateChatGPTWebImage(prompt, {
+            inputImages: [
+              {
+                buffer: normalizedDesignBuffer,
+                mimeType: normalizedDesign.mimeType,
+                name: `${safeFileStem(sku)}-design${normalizedDesign.extension}`,
+              },
+              ...referenceImages.map((image, index) => ({
+                buffer: image.buffer,
+                mimeType: image.mimeType,
+                name: `${safeFileStem(image.name || `reference-${index + 2}`)}${image.extension}`,
+              })),
+            ],
+          }),
           options.signal,
         );
         } else {
@@ -592,6 +633,11 @@ export async function generateAllMockups(
 
   const allResults = mockup1 ? [mockup1, ...generatedResults] : generatedResults;
   return allResults.sort((a, b) => a.index - b.index);
+}
+
+function appendReferenceImageInstructions(prompt: string, extraImageCount: number) {
+  if (extraImageCount === 0) return prompt;
+  return `${prompt}\n\nẢNH THAM CHIẾU BỔ SUNG:\n- Ảnh 1 là ảnh thiết kế/sản phẩm chính và luôn có độ ưu tiên cao nhất.\n- Ảnh 2 đến Ảnh ${extraImageCount + 1} là ảnh tham chiếu bổ sung vừa được người dùng đính kèm. Chỉ dùng chúng để hiểu bối cảnh, bố cục, chi tiết hoặc phong cách được yêu cầu; không được thay thế hay làm sai thiết kế chính ở Ảnh 1.`;
 }
 
 function applyPromptDimensionPlaceholders(

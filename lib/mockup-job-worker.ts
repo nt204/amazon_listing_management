@@ -13,6 +13,7 @@ import {
   pruneOldMockupJobs,
   type MockupJob,
 } from "@/lib/mockup-jobs";
+import { deleteMockupPromptReferenceImages } from "@/lib/db";
 
 const globalForMockupWorker = globalThis as unknown as {
   mockupJobWorkerStarted?: boolean;
@@ -69,6 +70,21 @@ function workerHeaders(job: MockupJob) {
     headers["x-mockup-actor-id"] = job.actorId;
   }
   return headers;
+}
+
+async function cleanupTemporaryPromptImages(job: MockupJob) {
+  const ids = Object.values(job.request.customRefinementImageIds || {}).flat();
+  if (ids.length === 0) return;
+  await deleteMockupPromptReferenceImages(
+    { teamId: job.teamId, actorId: job.actorId },
+    ids,
+    "temporary",
+  ).catch((error) => {
+    console.warn(
+      `[Mockup worker] Không thể dọn ảnh prompt tạm của job ${job.id}:`,
+      error instanceof Error ? error.message : String(error),
+    );
+  });
 }
 
 async function executeJobRequest(
@@ -174,6 +190,7 @@ async function processJob(job: MockupJob, workerId: string) {
     const result = await executeJobRequest(job, workerId, controller.signal);
     await completeMockupJob(job.id, workerId, result);
     await appendMockupJobEvent(job.id, { type: "complete", data: result });
+    await cleanupTemporaryPromptImages(job);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (cancelled || (error instanceof Error && error.name === "AbortError")) {
@@ -182,6 +199,7 @@ async function processJob(job: MockupJob, workerId: string) {
         type: "error",
         error: "Tác vụ tạo mockup đã được hủy. Các ảnh đã upload vẫn được giữ lại.",
       });
+      await cleanupTemporaryPromptImages(job);
       return;
     }
 
@@ -205,6 +223,7 @@ async function processJob(job: MockupJob, workerId: string) {
         type: "error",
         error: message,
       });
+      await cleanupTemporaryPromptImages(job);
     }
   } finally {
     clearInterval(heartbeat);

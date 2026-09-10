@@ -36,6 +36,13 @@ test("clonePreset duplicates an existing category preset", () => {
 
 test("exportPresetsPayload and importPresetsPayload handle JSON roundtrip", () => {
   const custom = createNewPreset("Custom Wood Sign", "🪵");
+  custom.contents[1].referenceImages = [{
+    id: "11111111-1111-4111-8111-111111111111",
+    name: "living-room.png",
+    mimeType: "image/png",
+    bytes: 1234,
+    url: "/api/trello/mockup-prompt-images/11111111-1111-4111-8111-111111111111",
+  }];
   const all = [...SYSTEM_PRESETS, custom];
 
   const payload = exportPresetsPayload(all);
@@ -48,6 +55,7 @@ test("exportPresetsPayload and importPresetsPayload handle JSON roundtrip", () =
   assert.equal(imported.length, 1);
   assert.equal(imported[0].label, "Custom Wood Sign");
   assert.equal(imported[0].icon, "🪵");
+  assert.deepEqual(imported[0].contents[1].referenceImages, custom.contents[1].referenceImages);
 });
 
 test("parseChatGPTBatchInput parses structured text from ChatGPT into items and category meta", () => {

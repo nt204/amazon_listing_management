@@ -163,6 +163,19 @@ export function trelloPreviewObjectKey(input: {
   )}`;
 }
 
+export function mockupPromptReferenceObjectKey(input: {
+  prefix: string;
+  teamId: string;
+  imageId: string;
+  mimeType: string;
+  bytes: Uint8Array;
+}) {
+  const digest = contentIdentity(input.bytes);
+  return `${teamRoot(input.prefix, input.teamId)}/mockup-prompt-references/${safeIdSegment(
+    input.imageId,
+  )}/${digest}.${objectExtension(input.mimeType)}`;
+}
+
 export function listingTemplateObjectKey(input: {
   prefix: string;
   teamId: string;

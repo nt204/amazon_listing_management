@@ -15,6 +15,7 @@ import {
   deleteTrelloImageDerivatives,
   getUserTrelloSettings,
   pruneExpiredTrelloImageDerivatives,
+  resolveMockupPromptReferenceImages,
   saveTrelloImageDerivatives,
   type DataScope,
 } from "@/lib/db";
@@ -497,6 +498,39 @@ async function executeMockupGeneration(
   }
 
   const selectedIndexesForGen = stepsToGenerate;
+  const referenceImagesByIndex = Object.fromEntries(
+    await Promise.all(
+      selectedIndexesForGen.map(async (stepId) => {
+        const sharedIds =
+          input.customContents?.find((content) => content.id === stepId)
+            ?.referenceImageIds || [];
+        const temporaryIds = input.customRefinementImageIds?.[stepId] || [];
+        const [sharedImages, temporaryImages] = await Promise.all([
+          resolveMockupPromptReferenceImages(scope, sharedIds),
+          resolveMockupPromptReferenceImages(scope, temporaryIds),
+        ]);
+        if (
+          sharedImages.length !== sharedIds.length ||
+          temporaryImages.length !== temporaryIds.length ||
+          sharedImages.some((image) => image.storageScope !== "shared") ||
+          temporaryImages.some((image) => image.storageScope !== "temporary")
+        ) {
+          throw new ApiError(
+            `Một hoặc nhiều ảnh tham chiếu của Content ${stepId} không còn khả dụng. Hãy paste lại ảnh rồi thử lại.`,
+            400,
+          );
+        }
+        return [
+          stepId,
+          [...sharedImages, ...temporaryImages].map((image) => ({
+            buffer: image.buffer,
+            mimeType: image.mimeType,
+            name: image.name,
+          })),
+        ] as const;
+      }),
+    ),
+  );
 
   console.log(
     `[API generate-mockups] SKU "${parsedTitle.sku}": đang sinh thêm ${stepsToGenerate.length} concept AI... (đã có ${existingAiCount}/${MAX_AI_MOCKUPS_PER_PRODUCT} AI concept, forceRegenerate=${forceRegenerate})`,
@@ -532,6 +566,7 @@ async function executeMockupGeneration(
         selectedIndexes: selectedIndexesForGen,
         customMockups: input.customContents,
         customRefinementNotes: input.customRefinementNotes,
+        referenceImagesByIndex,
         signal,
         acquireImageSlot: acquireMockupImageSlot,
         onMockupReady: async (mockup) => {

@@ -24,6 +24,7 @@ import type {
 } from "@/lib/types";
 import type {
   MockupContentItem,
+  MockupPromptReferenceImage,
   ProductCategoryPreset,
 } from "@/types/mockup-preset";
 import {
@@ -36,6 +37,7 @@ import {
 import {
   listingImageObjectKey,
   listingTemplateObjectKey,
+  mockupPromptReferenceObjectKey,
   retainDatabaseObjectBytes,
   trelloPreviewObjectKey,
 } from "@/lib/object-storage-core";
@@ -70,7 +72,7 @@ async function ensureSchema() {
     const sql = getDatabase();
     globalForDatabase.listingPostgresSchema = sql<{ name: string }[]>`
         SELECT name FROM schema_migrations
-        WHERE name = '023_system_guides.sql'
+        WHERE name = '026_mockup_prompt_reference_images.sql'
         LIMIT 1
       `
       .then((rows) => {
@@ -1908,6 +1910,230 @@ interface SharedMockupPresetRow {
   updated_by: string;
 }
 
+interface MockupPromptReferenceImageRow {
+  id: string;
+  storage_scope: "shared" | "temporary";
+  preset_id: string | null;
+  content_id: number | null;
+  file_name: string;
+  mime_type: "image/png" | "image/jpeg" | "image/webp";
+  image_bytes: Buffer | null;
+  object_key: string | null;
+  byte_size: number;
+  sha256: string;
+}
+
+function toMockupPromptReferenceImage(
+  row: MockupPromptReferenceImageRow,
+): MockupPromptReferenceImage {
+  return {
+    id: row.id,
+    name: row.file_name,
+    mimeType: row.mime_type,
+    bytes: Number(row.byte_size),
+    url: `/api/trello/mockup-prompt-images/${encodeURIComponent(row.id)}`,
+  };
+}
+
+export async function saveMockupPromptReferenceImage(
+  scope: DataScope,
+  input: {
+    storageScope: "shared" | "temporary";
+    presetId?: string;
+    contentId?: number;
+    fileName: string;
+    mimeType: "image/png" | "image/jpeg" | "image/webp";
+    bytes: Buffer;
+  },
+) {
+  await ensureSchema();
+  const sql = getDatabase();
+  const id = crypto.randomUUID();
+  if (input.storageScope === "shared") {
+    const counts = await sql<{ count: number; preset_exists: boolean }[]>`
+      SELECT
+        (
+          SELECT COUNT(*)::int
+          FROM mockup_prompt_reference_images
+          WHERE team_id = ${scope.teamId}
+            AND storage_scope = 'shared'
+            AND preset_id = ${input.presetId || ""}
+            AND content_id = ${input.contentId || 0}
+        ) AS count,
+        EXISTS (
+          SELECT 1 FROM shared_mockup_presets
+          WHERE team_id = ${scope.teamId}
+            AND preset_id = ${input.presetId || ""}
+        ) AS preset_exists
+    `;
+    if (!counts[0]?.preset_exists) {
+      throw Object.assign(new Error("Không tìm thấy phôi mockup đang dùng."), {
+        status: 404,
+      });
+    }
+    if ((counts[0]?.count || 0) >= 4) {
+      throw Object.assign(
+        new Error("Mỗi prompt chỉ được đính kèm tối đa 4 ảnh tham chiếu."),
+        { status: 400 },
+      );
+    }
+  }
+  const sha256 = createHash("sha256").update(input.bytes).digest("hex");
+  const useR2 = objectStorageDriver() === "r2";
+  const keepDatabaseBytes = !useR2 || retainDatabaseObjectBytes();
+  const objectKey = useR2
+    ? mockupPromptReferenceObjectKey({
+        prefix: r2KeyPrefix(),
+        teamId: scope.teamId,
+        imageId: id,
+        mimeType: input.mimeType,
+        bytes: input.bytes,
+      })
+    : null;
+  const uploadedKeys = useR2
+    ? await uploadObjectsAtomically([
+        {
+          key: objectKey!,
+          bytes: input.bytes,
+          contentType: input.mimeType,
+          sha256,
+          metadata: { kind: "mockup-prompt-reference" },
+        },
+      ])
+    : [];
+  try {
+    const rows = await sql<MockupPromptReferenceImageRow[]>`
+      INSERT INTO mockup_prompt_reference_images (
+        id, team_id, actor_id, storage_scope, preset_id, content_id,
+        file_name, mime_type, image_bytes, object_key, byte_size, sha256,
+        expires_at
+      ) VALUES (
+        ${id}, ${scope.teamId}, ${scope.actorId}, ${input.storageScope},
+        ${input.storageScope === "shared" ? input.presetId || null : null},
+        ${input.storageScope === "shared" ? input.contentId || null : null},
+        ${input.fileName}, ${input.mimeType},
+        ${keepDatabaseBytes ? input.bytes : null}, ${objectKey},
+        ${input.bytes.byteLength}, ${sha256},
+        ${input.storageScope === "temporary" ? new Date(Date.now() + 24 * 60 * 60 * 1_000) : null}
+      )
+      RETURNING id::text, storage_scope, preset_id, content_id, file_name,
+        mime_type, image_bytes, object_key, byte_size, sha256
+    `;
+    if (input.storageScope === "shared") {
+      await sql`
+        UPDATE shared_mockup_presets
+        SET revision = revision + 1, updated_by = ${scope.actorId}, updated_at = NOW()
+        WHERE team_id = ${scope.teamId} AND preset_id = ${input.presetId!}
+      `;
+    }
+    return toMockupPromptReferenceImage(rows[0]);
+  } catch (error) {
+    await deleteObjectKeysBestEffort(uploadedKeys);
+    throw error;
+  }
+}
+
+export async function getMockupPromptReferenceImage(
+  scope: DataScope,
+  id: string,
+) {
+  await ensureSchema();
+  const sql = getDatabase();
+  const rows = await sql<MockupPromptReferenceImageRow[]>`
+    SELECT id::text, storage_scope, preset_id, content_id, file_name,
+      mime_type, image_bytes, object_key, byte_size, sha256
+    FROM mockup_prompt_reference_images
+    WHERE team_id = ${scope.teamId} AND id = ${id}
+      AND (expires_at IS NULL OR expires_at > NOW())
+    LIMIT 1
+  `;
+  if (!rows[0]) return null;
+  return {
+    ...toMockupPromptReferenceImage(rows[0]),
+    buffer: await resolveStoredBytes(
+      rows[0].object_key,
+      rows[0].image_bytes,
+      `Mockup prompt reference ${id}`,
+    ),
+    storageScope: rows[0].storage_scope,
+  };
+}
+
+export async function resolveMockupPromptReferenceImages(
+  scope: DataScope,
+  ids: readonly string[],
+) {
+  const uniqueIds = Array.from(new Set(ids));
+  const resolved = await Promise.all(
+    uniqueIds.map((id) => getMockupPromptReferenceImage(scope, id)),
+  );
+  const byId = new Map(
+    resolved.flatMap((image) => (image ? [[image.id, image] as const] : [])),
+  );
+  return ids.map((id) => byId.get(id)).filter((image) => image !== undefined);
+}
+
+export async function deleteMockupPromptReferenceImages(
+  scope: DataScope,
+  ids: readonly string[],
+  storageScope?: "shared" | "temporary",
+) {
+  if (ids.length === 0) return 0;
+  await ensureSchema();
+  const sql = getDatabase();
+  const deleted = storageScope
+    ? await sql<{
+        object_key: string | null;
+        storage_scope: "shared" | "temporary";
+        preset_id: string | null;
+      }[]>`
+        DELETE FROM mockup_prompt_reference_images
+        WHERE team_id = ${scope.teamId}
+          AND id IN ${sql(Array.from(new Set(ids)))}
+          AND storage_scope = ${storageScope}
+        RETURNING object_key, storage_scope, preset_id
+      `
+    : await sql<{
+        object_key: string | null;
+        storage_scope: "shared" | "temporary";
+        preset_id: string | null;
+      }[]>`
+        DELETE FROM mockup_prompt_reference_images
+        WHERE team_id = ${scope.teamId}
+          AND id IN ${sql(Array.from(new Set(ids)))}
+        RETURNING object_key, storage_scope, preset_id
+      `;
+  const changedSharedPresets = Array.from(
+    new Set(
+      deleted.flatMap((row) =>
+        row.storage_scope === "shared" && row.preset_id ? [row.preset_id] : [],
+      ),
+    ),
+  );
+  if (changedSharedPresets.length > 0) {
+    await sql`
+      UPDATE shared_mockup_presets
+      SET revision = revision + 1, updated_by = ${scope.actorId}, updated_at = NOW()
+      WHERE team_id = ${scope.teamId}
+        AND preset_id IN ${sql(changedSharedPresets)}
+    `;
+  }
+  await deleteObjectKeysBestEffort(deleted.map((row) => row.object_key));
+  return deleted.length;
+}
+
+export async function pruneExpiredMockupPromptReferenceImages() {
+  await ensureSchema();
+  const sql = getDatabase();
+  const deleted = await sql<{ object_key: string | null }[]>`
+    DELETE FROM mockup_prompt_reference_images
+    WHERE storage_scope = 'temporary' AND expires_at <= NOW()
+    RETURNING object_key
+  `;
+  await deleteObjectKeysBestEffort(deleted.map((row) => row.object_key));
+  return deleted.length;
+}
+
 function toSharedMockupPreset(
   row: SharedMockupPresetRow,
 ): ProductCategoryPreset {
@@ -1935,7 +2161,28 @@ export async function listSharedMockupPresets(
     WHERE team_id = ${scope.teamId}
     ORDER BY created_at ASC, preset_id ASC
   `;
-  return rows.map(toSharedMockupPreset);
+  const imageRows = await sql<MockupPromptReferenceImageRow[]>`
+    SELECT id::text, storage_scope, preset_id, content_id, file_name,
+      mime_type, image_bytes, object_key, byte_size, sha256
+    FROM mockup_prompt_reference_images
+    WHERE team_id = ${scope.teamId} AND storage_scope = 'shared'
+    ORDER BY created_at ASC
+  `;
+  const imagesByContent = new Map<string, MockupPromptReferenceImage[]>();
+  for (const row of imageRows) {
+    const key = `${row.preset_id}:${row.content_id}`;
+    imagesByContent.set(key, [
+      ...(imagesByContent.get(key) || []),
+      toMockupPromptReferenceImage(row),
+    ]);
+  }
+  return rows.map(toSharedMockupPreset).map((preset) => ({
+    ...preset,
+    contents: preset.contents.map((content) => ({
+      ...content,
+      referenceImages: imagesByContent.get(`${preset.id}:${content.id}`) || [],
+    })),
+  }));
 }
 
 export async function saveSharedMockupPreset(
@@ -1963,6 +2210,16 @@ export async function saveSharedMockupPreset(
     RETURNING preset_id AS id, label, icon, is_system, contents_json,
       revision::int, updated_at::text, updated_by
   `;
+  const validContentIds = preset.contents.map((content) => content.id);
+  const orphanedImages = await sql<{ object_key: string | null }[]>`
+    DELETE FROM mockup_prompt_reference_images
+    WHERE team_id = ${scope.teamId}
+      AND storage_scope = 'shared'
+      AND preset_id = ${preset.id}
+      AND content_id NOT IN ${sql(validContentIds)}
+    RETURNING object_key
+  `;
+  await deleteObjectKeysBestEffort(orphanedImages.map((row) => row.object_key));
   await recordAuditEvent(
     scope,
     "mockup_preset.saved",
@@ -2014,6 +2271,14 @@ export async function deleteSharedMockupPreset(
     RETURNING preset_id
   `;
   if (deleted.length > 0) {
+    const deletedImages = await sql<{ object_key: string | null }[]>`
+      DELETE FROM mockup_prompt_reference_images
+      WHERE team_id = ${scope.teamId}
+        AND storage_scope = 'shared'
+        AND preset_id = ${presetId}
+      RETURNING object_key
+    `;
+    await deleteObjectKeysBestEffort(deletedImages.map((row) => row.object_key));
     await recordAuditEvent(
       scope,
       "mockup_preset.deleted",

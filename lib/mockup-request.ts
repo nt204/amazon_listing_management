@@ -1,6 +1,13 @@
 import { z } from "zod";
 import { MAX_AI_MOCKUPS_PER_PRODUCT } from "@/lib/mockup-generator";
 
+const referenceImageIdsSchema = z
+  .array(z.string().uuid())
+  .max(4, "Mỗi prompt chỉ được đính kèm tối đa 4 ảnh tham chiếu.")
+  .refine((ids) => new Set(ids).size === ids.length, {
+    message: "Danh sách ảnh tham chiếu không được trùng nhau.",
+  });
+
 export const mockupModelSchema = z.enum([
   "gpt-image-2",
   "gpt-image-2-c",
@@ -37,11 +44,15 @@ export const generateMockupsSchema = z.object({
         label: z.string().trim().min(1).max(200),
         promptKey: z.string().trim().optional(),
         customPrompt: z.string().trim().optional(),
+        referenceImageIds: referenceImageIdsSchema.optional(),
       }),
     )
     .max(20)
     .optional(),
   customRefinementNotes: z.record(z.coerce.number(), z.string()).optional(),
+  customRefinementImageIds: z
+    .record(z.coerce.number(), referenceImageIdsSchema)
+    .optional(),
   forceRegenerate: z.boolean().optional(),
   stream: z.boolean().optional(),
 }).strict();

@@ -6,6 +6,7 @@ import {
   useCallback,
   useMemo,
   useRef,
+  type ClipboardEvent,
   type SyntheticEvent,
 } from "react";
 import {
@@ -56,7 +57,11 @@ import {
   savePresetToServer,
 } from "@/lib/mockup-preset-store";
 import { ProductPresetModal } from "@/components/product-preset-modal";
-import type { ProductCategoryPreset } from "@/types/mockup-preset";
+import type {
+  MockupContentItem,
+  MockupPromptReferenceImage,
+  ProductCategoryPreset,
+} from "@/types/mockup-preset";
 
 interface TrelloCard {
   id: string;
@@ -127,7 +132,7 @@ interface MockupGenerationResponse {
     model: string;
     quality: "low" | "medium" | "high";
     size: string;
-    imageCount: 1;
+    imageCount: number;
     inputFidelity: "low" | "high" | null;
     estimatedCostUsd: number | null;
     usage: {
@@ -184,6 +189,77 @@ interface ImagePromptEditorState {
   draft: string;
   loading: boolean;
   error?: string;
+}
+
+const MAX_PROMPT_REFERENCE_IMAGES = 4;
+
+function clipboardImageFiles(event: ClipboardEvent<HTMLTextAreaElement>) {
+  return Array.from(event.clipboardData.items)
+    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+    .flatMap((item) => {
+      const file = item.getAsFile();
+      return file ? [file] : [];
+    });
+}
+
+async function uploadPromptReferenceImage(input: {
+  file: File;
+  scope: "shared" | "temporary";
+  presetId?: string;
+  contentId?: number;
+}): Promise<MockupPromptReferenceImage> {
+  const form = new FormData();
+  form.set("image", input.file, input.file.name || `clipboard-${Date.now()}.png`);
+  form.set("scope", input.scope);
+  if (input.presetId) form.set("presetId", input.presetId);
+  if (input.contentId) form.set("contentId", String(input.contentId));
+  const response = await fetch("/api/trello/mockup-prompt-images", {
+    method: "POST",
+    body: form,
+  });
+  const payload = (await response.json().catch(() => ({}))) as {
+    image?: MockupPromptReferenceImage;
+    error?: string;
+  };
+  if (!response.ok || !payload.image) {
+    throw new Error(payload.error || `Không thể tải ảnh prompt (HTTP ${response.status}).`);
+  }
+  return payload.image;
+}
+
+function PromptReferenceImageStrip({
+  images,
+  onRemove,
+  busy,
+}: {
+  images: readonly MockupPromptReferenceImage[];
+  onRemove: (image: MockupPromptReferenceImage) => void;
+  busy?: boolean;
+}) {
+  if (images.length === 0) return null;
+  return (
+    <div className="mt-2 grid grid-cols-4 gap-2">
+      {images.map((image) => (
+        <div
+          key={image.id}
+          className="group relative aspect-square overflow-hidden rounded-lg border border-slate-200 bg-slate-100"
+          title={image.name}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={image.url} alt={image.name} className="h-full w-full object-cover" />
+          <button
+            type="button"
+            onClick={() => onRemove(image)}
+            disabled={busy}
+            aria-label={`Xóa ảnh tham chiếu ${image.name}`}
+            className="absolute right-1 top-1 rounded-full bg-slate-950/75 p-1 text-white opacity-90 transition hover:bg-rose-600 disabled:opacity-40 sm:opacity-0 sm:group-hover:opacity-100"
+          >
+            <XIcon className="h-3 w-3" weight="bold" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function singleMockupRegenerationKey(cardId: string, stepId: number) {
@@ -258,14 +334,6 @@ const MOCKUP_STEPS = [
 
 const DEFAULT_MOCKUP_MODEL = "gpt-image-2-cheapkey";
 const DEFAULT_MOCKUP_QUALITY = "low" as const;
-
-export interface MockupContentItem {
-  id: number;
-  label: string;
-  checked: boolean;
-  promptKey?: string;
-  customPrompt?: string;
-}
 
 const MOCKUP_CATEGORY_STORAGE_KEY = "listing_desk_mockup_category_v2";
 const MOCKUP_CONTENTS_STORAGE_KEY = "listing_desk_mockup_contents_v7";
@@ -582,6 +650,10 @@ export function AutoMockupGenerator({
     attachmentId?: string;
   } | null>(null);
   const [regenPromptNote, setRegenPromptNote] = useState<string>("");
+  const [regenPromptImages, setRegenPromptImages] = useState<
+    MockupPromptReferenceImage[]
+  >([]);
+  const [promptImageBusy, setPromptImageBusy] = useState(false);
   const [regenModel, setRegenModel] = useState<MockupModel>(
     DEFAULT_MOCKUP_MODEL as MockupModel,
   );
@@ -617,6 +689,9 @@ export function AutoMockupGenerator({
     string | null
   >(null);
   const [downloadingImage, setDownloadingImage] = useState(false);
+  const [deletingAttachmentId, setDeletingAttachmentId] = useState<
+    string | null
+  >(null);
 
   // Approval status tracking: map of `${cardId}_${attachmentId}` => "approved" | "rejected" | "pending"
   const [approvalMap, setApprovalMap] = useState<
@@ -636,6 +711,11 @@ export function AutoMockupGenerator({
   );
   const activeStudioCard = allBoardCards.find((c) => c.id === studioModal?.cardId);
   const activeCardIndex = allBoardCards.findIndex((c) => c.id === studioModal?.cardId);
+
+  useEffect(() => {
+    setRegenPromptNote("");
+    setRegenPromptImages([]);
+  }, [studioModal?.cardId, studioModal?.attachmentId, studioModal?.stepId]);
 
   // Keyboard navigation for Studio Modal (Left / Right Arrow) with Input Focus Guard
   useEffect(() => {
@@ -1005,6 +1085,7 @@ export function AutoMockupGenerator({
             label: content.label,
             promptKey: content.promptKey,
             customPrompt: content.customPrompt,
+            referenceImageIds: content.referenceImages?.map((image) => image.id),
           })),
           stream: true,
         }),
@@ -1431,11 +1512,142 @@ export function AutoMockupGenerator({
           promptEditor && promptEditor.draft !== promptEditor.original,
         );
         const promptBlocksRegeneration = Boolean(
-          promptEditor?.loading ||
+          promptImageBusy ||
+            promptEditor?.loading ||
             (promptEditor &&
               !promptEditor.error &&
               !promptEditor.draft.trim()),
         );
+
+        const sharedPromptImages = currentContent?.referenceImages || [];
+
+        const pastePromptImages = async (
+          event: ClipboardEvent<HTMLTextAreaElement>,
+          storageScope: "shared" | "temporary",
+        ) => {
+          const files = clipboardImageFiles(event);
+          if (files.length === 0) return;
+          event.preventDefault();
+          if (!stepId || !activePreset) return;
+          const activePresetId = activePreset.id;
+          const existingCount =
+            storageScope === "shared"
+              ? sharedPromptImages.length
+              : regenPromptImages.length;
+          const availableSlots = MAX_PROMPT_REFERENCE_IMAGES - existingCount;
+          if (availableSlots <= 0) {
+            showCompletionNotice({
+              type: "warning",
+              title: "Đã đủ ảnh tham chiếu",
+              message: `Mỗi prompt chỉ nhận tối đa ${MAX_PROMPT_REFERENCE_IMAGES} ảnh paste thêm.`,
+            });
+            return;
+          }
+          const acceptedFiles = files.slice(0, availableSlots);
+          setPromptImageBusy(true);
+          try {
+            const uploaded = [] as MockupPromptReferenceImage[];
+            for (const file of acceptedFiles) {
+              uploaded.push(
+                await uploadPromptReferenceImage({
+                  file,
+                  scope: storageScope,
+                  presetId: storageScope === "shared" ? activePreset.id : undefined,
+                  contentId: storageScope === "shared" ? stepId : undefined,
+                }),
+              );
+            }
+            if (storageScope === "shared") {
+              const appendImages = (contents: MockupContentItem[]) =>
+                contents.map((content) =>
+                  content.id === stepId
+                    ? {
+                        ...content,
+                        referenceImages: [
+                          ...(content.referenceImages || []),
+                          ...uploaded,
+                        ],
+                      }
+                    : content,
+                );
+              setMockupContents(appendImages);
+              setAllPresets((presets) =>
+                presets.map((preset) =>
+                  preset.id === activePresetId
+                    ? { ...preset, contents: appendImages(preset.contents) }
+                    : preset,
+                ),
+              );
+            } else {
+              setRegenPromptImages((current) => [...current, ...uploaded]);
+            }
+            showCompletionNotice({
+              type: "success",
+              title:
+                storageScope === "shared"
+                  ? "Đã lưu ảnh vào prompt chung"
+                  : "Đã thêm ảnh cho lần gen này",
+              message: `${uploaded.length} ảnh sẽ được gửi sau ảnh thiết kế chính khi gọi AI.`,
+            });
+          } catch (error) {
+            showCompletionNotice({
+              type: "error",
+              title: "Không thể thêm ảnh prompt",
+              message: error instanceof Error ? error.message : "Hãy thử paste lại ảnh.",
+            });
+          } finally {
+            setPromptImageBusy(false);
+          }
+        };
+
+        const removePromptImage = async (
+          image: MockupPromptReferenceImage,
+          storageScope: "shared" | "temporary",
+        ) => {
+          if (!activePreset) return;
+          const activePresetId = activePreset.id;
+          setPromptImageBusy(true);
+          try {
+            const response = await fetch(image.url, { method: "DELETE" });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+              throw new Error(payload.error || `Không thể xóa ảnh (HTTP ${response.status}).`);
+            }
+            if (storageScope === "shared") {
+              const removeImage = (contents: MockupContentItem[]) =>
+                contents.map((content) =>
+                  content.id === stepId
+                    ? {
+                        ...content,
+                        referenceImages: (content.referenceImages || []).filter(
+                          (candidate) => candidate.id !== image.id,
+                        ),
+                      }
+                    : content,
+                );
+              setMockupContents(removeImage);
+              setAllPresets((presets) =>
+                presets.map((preset) =>
+                  preset.id === activePresetId
+                    ? { ...preset, contents: removeImage(preset.contents) }
+                    : preset,
+                ),
+              );
+            } else {
+              setRegenPromptImages((images) =>
+                images.filter((candidate) => candidate.id !== image.id),
+              );
+            }
+          } catch (error) {
+            showCompletionNotice({
+              type: "error",
+              title: "Không thể xóa ảnh prompt",
+              message: error instanceof Error ? error.message : "Hãy thử lại.",
+            });
+          } finally {
+            setPromptImageBusy(false);
+          }
+        };
 
         const loadCurrentImagePrompt = async (force = false) => {
           if (!promptEditorKey || (promptEditor && !force)) return;
@@ -1648,6 +1860,75 @@ export function AutoMockupGenerator({
           }
         };
 
+        const deleteCurrentMockup = async () => {
+          if (!stepId || stepId === 1 || deletingAttachmentId) return;
+          const confirmed = window.confirm(
+            `Xóa vĩnh viễn “${currentAtt.name}” khỏi thẻ Trello ${card.parsed?.sku || card.name}?`,
+          );
+          if (!confirmed) return;
+
+          setDeletingAttachmentId(currentAtt.id);
+          try {
+            const response = await fetch(
+              `/api/trello/cards/${encodeURIComponent(card.id)}/attachments/${encodeURIComponent(currentAtt.id)}`,
+              { method: "DELETE" },
+            );
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+              throw new Error(payload.error || `Không thể xóa ảnh (HTTP ${response.status}).`);
+            }
+
+            const remainingAttachments = attachments.filter(
+              (attachment) => attachment.id !== currentAtt.id,
+            );
+            const updateCardAttachments = (cards: TrelloCard[]) =>
+              cards.map((item) =>
+                item.id === card.id
+                  ? { ...item, attachments: remainingAttachments }
+                  : item,
+              );
+            setDesignCards(updateCardAttachments);
+            setMockupCards(updateCardAttachments);
+            setApprovalMap((current) => {
+              const next = { ...current };
+              delete next[`${card.id}_${currentAtt.id}`];
+              return next;
+            });
+
+            if (remainingAttachments.length === 0) {
+              setStudioModal(null);
+            } else {
+              const nextIndex = Math.min(safeIndex, remainingAttachments.length - 1);
+              const nextAttachment = remainingAttachments[nextIndex];
+              const nextStep =
+                mockupIndexFromAttachmentName(nextAttachment.name) ||
+                (nextIndex === 0 ? 1 : undefined);
+              setStudioModal({
+                cardId: card.id,
+                attachmentIndex: nextIndex,
+                stepId: nextStep,
+                attachmentId: nextAttachment.id,
+              });
+            }
+            showCompletionNotice({
+              type: "success",
+              title: `Đã xóa Mockup ${stepId}`,
+              message: "Ảnh đã được xóa khỏi thẻ Trello.",
+            });
+          } catch (error) {
+            showCompletionNotice({
+              type: "error",
+              title: "Không thể xóa ảnh",
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "Không thể xóa ảnh khỏi Trello.",
+            });
+          } finally {
+            setDeletingAttachmentId(null);
+          }
+        };
+
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-3 sm:p-5 backdrop-blur-md">
             <div className="relative flex h-[94vh] w-[96vw] max-w-6xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl border border-slate-200/80">
@@ -1752,6 +2033,31 @@ export function AutoMockupGenerator({
                     )}
                     <span>Tải ảnh gốc</span>
                   </button>
+
+                  {/* Delete generated mockup */}
+                  {stepId && stepId > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => void deleteCurrentMockup()}
+                      disabled={
+                        deletingAttachmentId === currentAtt.id ||
+                        isCurrentImageRegenerating
+                      }
+                      title="Xóa ảnh mockup này khỏi thẻ Trello"
+                      className="flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-1.5 text-xs font-extrabold text-rose-700 transition hover:border-rose-300 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {deletingAttachmentId === currentAtt.id ? (
+                        <SpinnerIcon className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <TrashIcon className="h-4 w-4" />
+                      )}
+                      <span>
+                        {deletingAttachmentId === currentAtt.id
+                          ? "Đang xóa..."
+                          : "Xóa ảnh"}
+                      </span>
+                    </button>
+                  )}
 
                   {/* Close */}
                   <button
@@ -1960,10 +2266,25 @@ export function AutoMockupGenerator({
                                       },
                                     }))
                                   }
+                                  onPaste={(event) =>
+                                    void pastePromptImages(event, "shared")
+                                  }
                                   rows={8}
                                   aria-label={`Prompt tạm của Content ${stepId} cho sản phẩm ${card.parsed?.sku || card.name}`}
                                   className="w-full resize-y rounded-lg border border-slate-300 bg-white p-2.5 text-[11px] font-medium leading-relaxed text-slate-800 outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-600/15"
                                 />
+                                <PromptReferenceImageStrip
+                                  images={sharedPromptImages}
+                                  busy={promptImageBusy}
+                                  onRemove={(image) =>
+                                    void removePromptImage(image, "shared")
+                                  }
+                                />
+                                <p className="mt-1.5 text-[10px] font-semibold text-indigo-600">
+                                  {promptImageBusy
+                                    ? "Đang tải ảnh lên..."
+                                    : "Paste ảnh bằng Ctrl/⌘+V — ảnh ở đây được lưu vào prompt chung ngay lập tức."}
+                                </p>
                                 <div className="mt-2 flex items-center justify-between gap-2">
                                   <span
                                     className={`text-[10px] font-semibold ${
@@ -2038,10 +2359,10 @@ export function AutoMockupGenerator({
                                   </button>
                                 )}
                                 <p className="mt-2 border-t border-slate-100 pt-2 text-[10px] font-medium leading-relaxed text-slate-500">
-                                  Nội dung đang sửa chỉ dùng cho lần gen ảnh này.
-                                  Chỉ khi bấm &quot;Lưu prompt chung&quot;, Content {stepId} của
-                                  phôi {activePreset?.label || selectedCategory} mới được cập
-                                  nhật cho cả team.
+                                  Phần chữ đang sửa chỉ dùng cho lần gen ảnh này.
+                                  Chỉ khi bấm &quot;Lưu prompt chung&quot;, phần chữ của Content {stepId}
+                                  trong phôi {activePreset?.label || selectedCategory} mới được cập
+                                  nhật cho cả team. Ảnh paste tại đây được lưu chung ngay khi tải xong.
                                   <span className="mt-1 block">
                                     Các biến kích thước trong prompt tự lấy dữ liệu
                                     từ từng thẻ sản phẩm.
@@ -2062,13 +2383,24 @@ export function AutoMockupGenerator({
                       <textarea
                         value={regenPromptNote}
                         onChange={(e) => setRegenPromptNote(e.target.value)}
+                        onPaste={(event) =>
+                          void pastePromptImages(event, "temporary")
+                        }
                         placeholder="Ví dụ: Đèn Giáng Sinh sáng hơn, bối cảnh tự nhiên hơn..."
                         rows={4}
                         className="w-full rounded-xl border border-slate-300 p-3 text-xs font-medium text-slate-800 outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-600/20 placeholder:text-slate-400 shadow-2xs leading-relaxed"
                       />
+                      <PromptReferenceImageStrip
+                        images={regenPromptImages}
+                        busy={promptImageBusy}
+                        onRemove={(image) =>
+                          void removePromptImage(image, "temporary")
+                        }
+                      />
                       <p className="mt-1.5 text-[10px] font-semibold leading-relaxed text-slate-500">
-                        Chỉ áp dụng cho ảnh này của sản phẩm đang chọn; không thay
-                        đổi prompt trong phôi dùng chung của team.
+                        {promptImageBusy
+                          ? "Đang tải ảnh lên..."
+                          : "Paste ảnh bằng Ctrl/⌘+V. Chỉ áp dụng cho lần gen này; không lưu vào prompt chung của team."}
                       </p>
                     </div>
                   </div>
@@ -2099,12 +2431,16 @@ export function AutoMockupGenerator({
                         const temporaryPrompt = promptHasChanges
                           ? promptEditor?.draft.trim()
                           : undefined;
+                        const temporaryReferenceImageIds = regenPromptImages.map(
+                          (image) => image.id,
+                        );
                         prepareBrowserNotification();
                         setSingleMockupRegenerationJobs((previous) => ({
                           ...previous,
                           [regenerationKey]: { statusText: "Đang kết nối AI..." },
                         }));
                         setRegenPromptNote("");
+                        setRegenPromptImages([]);
                         setErrorMsg("");
                         try {
                           const res = await fetch("/api/trello/mockup-jobs", {
@@ -2124,10 +2460,17 @@ export function AutoMockupGenerator({
                                   content.id === stepId && temporaryPrompt
                                     ? temporaryPrompt
                                     : content.customPrompt,
+                                referenceImageIds: content.referenceImages?.map(
+                                  (image) => image.id,
+                                ),
                               })),
                               customRefinementNotes: refinementNote
                                 ? { [stepId]: refinementNote }
                                 : undefined,
+                              customRefinementImageIds:
+                                temporaryReferenceImageIds.length > 0
+                                  ? { [stepId]: temporaryReferenceImageIds }
+                                  : undefined,
                               stream: true,
                             }),
                           });

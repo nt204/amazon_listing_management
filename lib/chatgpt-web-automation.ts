@@ -8,6 +8,8 @@ export interface ChatGPTWebAutomationOptions {
   headless?: boolean;
   timeoutMs?: number;
   inputImageBuffer?: Buffer;
+  inputImageBuffers?: Buffer[];
+  inputImages?: Array<{ buffer: Buffer; mimeType: string; name: string }>;
 }
 
 function sanitizePlaywrightCookie(raw: Partial<Cookie> & Record<string, unknown>): Cookie {
@@ -277,18 +279,27 @@ export async function generateChatGPTWebImage(
     }
 
     // Upload optional input reference design image if provided
-    if (options?.inputImageBuffer) {
+    const inputImages = options?.inputImages ||
+      (options?.inputImageBuffers ||
+        (options?.inputImageBuffer ? [options.inputImageBuffer] : [])).map(
+        (buffer, index) => ({
+          buffer,
+          mimeType: "image/png",
+          name: `input-${index + 1}.png`,
+        }),
+      );
+    if (inputImages.length > 0) {
       try {
         const fileInput = page.locator("input[type='file']").first();
         if ((await fileInput.count()) > 0) {
-          console.info("[ChatGPT Web Automation] Attaching input design image to chat...");
-          const fs = await import("fs/promises");
-          const path = await import("path");
-          const os = await import("os");
-          const tmpPath = path.join(os.tmpdir(), `chatgpt_input_${Date.now()}.png`);
-          await fs.writeFile(tmpPath, options.inputImageBuffer);
-          await fileInput.setInputFiles(tmpPath);
-          await fs.unlink(tmpPath).catch(() => {});
+          console.info(`[ChatGPT Web Automation] Attaching ${inputImages.length} input image(s) to chat...`);
+          await fileInput.setInputFiles(
+            inputImages.map((image, index) => ({
+              name: image.name || `input-${index + 1}.png`,
+              mimeType: image.mimeType,
+              buffer: image.buffer,
+            })),
+          );
           await page.waitForTimeout(2000);
         }
       } catch (uploadErr) {

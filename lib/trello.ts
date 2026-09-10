@@ -803,8 +803,8 @@ export async function deleteTrelloCardAttachment(
 
   if (!response.ok) {
     const errText = await response.text().catch(() => "");
-    console.warn(
-      `[Trello] Không thể xóa file đính kèm ${attachmentId} trên thẻ ${cardId} (${response.status}): ${errText}`,
+    throw new Error(
+      `Không thể xóa file đính kèm ${attachmentId} trên thẻ ${cardId} (${response.status}): ${errText}`,
     );
   }
 }

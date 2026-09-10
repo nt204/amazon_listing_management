@@ -59,6 +59,39 @@ test("mockup requests reject browser credentials or target-list overrides and ke
   });
 });
 
+test("queued mockup requests retain shared and temporary prompt image IDs", () => {
+  const sharedId = "11111111-1111-4111-8111-111111111111";
+  const temporaryId = "22222222-2222-4222-8222-222222222222";
+  const input = generateMockupsSchema.parse({
+    cardId: "card-with-reference-images",
+    selectedSteps: [2],
+    customContents: [
+      {
+        id: 2,
+        label: "Lifestyle",
+        referenceImageIds: [sharedId],
+      },
+    ],
+    customRefinementImageIds: { 2: [temporaryId] },
+  });
+
+  const queued = sanitizeQueuedMockupInput(input);
+  assert.deepEqual(queued.customContents?.[0].referenceImageIds, [sharedId]);
+  assert.deepEqual(queued.customRefinementImageIds?.[2], [temporaryId]);
+  assert.equal(
+    generateMockupsSchema.safeParse({
+      cardId: "too-many-images",
+      selectedSteps: [2],
+      customRefinementImageIds: {
+        2: Array.from({ length: 5 }, (_, index) =>
+          `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+        ),
+      },
+    }).success,
+    false,
+  );
+});
+
 test("mockup jobs on one card may run together only when their image steps differ", () => {
   assert.equal(
     mockupRequestsOverlap({ selectedSteps: [2] }, { selectedSteps: [3] }),
@@ -380,6 +413,50 @@ test("GPT Image mockups use the edit API with the source artwork", async () => {
     assert.equal(call.options?.maxRetries, 1);
     assert.equal(call.options?.signal, controller.signal);
   }
+});
+
+test("GPT Image sends the main design first followed by pasted prompt images", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const fakeClient = {
+    images: {
+      edit: async (body: Record<string, unknown>) => {
+        calls.push(body);
+        return { data: [{ b64_json: SAMPLE_PNG.toString("base64") }] };
+      },
+    },
+  } as unknown as OpenAI;
+
+  await generateAllMockups({
+    sku: "REFS",
+    itemName: "Reference Product",
+    dimensions: {
+      length: '3"',
+      width: '3"',
+      thickness: '0.2"',
+      formatted: '3" x 3" x 0.2"',
+    },
+    inputDesignBuffer: SAMPLE_PNG,
+    inputMimeType: "image/png",
+    model: "gpt-image-2",
+    openaiClient: fakeClient,
+    selectedIndexes: [2],
+    referenceImagesByIndex: {
+      2: [
+        { buffer: SAMPLE_PNG, mimeType: "image/png", name: "style.png" },
+        { buffer: SAMPLE_PNG, mimeType: "image/png", name: "layout.png" },
+      ],
+    },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.ok(Array.isArray(calls[0].image));
+  const images = calls[0].image as Array<{ name?: string }>;
+  assert.equal(images.length, 3);
+  assert.match(images[0].name || "", /REFS-design/);
+  assert.match(images[1].name || "", /style/);
+  assert.match(images[2].name || "", /layout/);
+  assert.match(String(calls[0].prompt), /Ảnh 2 đến Ảnh 3/);
+  assert.match(String(calls[0].prompt), /Ảnh 1 là ảnh thiết kế\/sản phẩm chính/);
 });
 
 test("GPT Image 1.5 is forwarded to the same image edit pipeline", async () => {
@@ -1370,6 +1447,48 @@ test("Gemini mockups use bounded retries and report real per-image progress", as
       ["processing", "success"],
     );
   }
+});
+
+test("Gemini sends pasted prompt images only to their selected content", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const fakeClient = {
+    models: {
+      generateContent: async (body: Record<string, unknown>) => {
+        calls.push(body);
+        return {
+          candidates: [{
+            content: {
+              parts: [{ inlineData: { data: SAMPLE_PNG.toString("base64"), mimeType: "image/png" } }],
+            },
+          }],
+        };
+      },
+    },
+  } as unknown as GoogleGenAI;
+
+  await generateAllMockups({
+    sku: "GEMINI-REF",
+    itemName: "Reference Product",
+    dimensions: {
+      length: '3"',
+      width: '3"',
+      thickness: '0.2"',
+      formatted: '3" x 3" x 0.2"',
+    },
+    inputDesignBuffer: SAMPLE_PNG,
+    inputMimeType: "image/png",
+    model: "gemini-3.1-flash-image",
+    geminiClient: fakeClient,
+    selectedIndexes: [2, 3],
+    referenceImagesByIndex: {
+      2: [{ buffer: SAMPLE_PNG, mimeType: "image/png", name: "reference.png" }],
+    },
+  });
+
+  const firstParts = ((calls[0].contents as Array<{ parts: unknown[] }>)[0].parts);
+  const secondParts = ((calls[1].contents as Array<{ parts: unknown[] }>)[0].parts);
+  assert.equal(firstParts.length, 3, "text + main design + pasted reference");
+  assert.equal(secondParts.length, 2, "another content must not receive the pasted reference");
 });
 
 test("transport failures are translated instead of returning a generic 400", () => {

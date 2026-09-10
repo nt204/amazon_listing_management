@@ -33,6 +33,18 @@ const contentSchema = z.object({
   checked: z.boolean(),
   promptKey: z.string().trim().max(200).optional(),
   customPrompt: z.string().trim().max(30_000).optional(),
+  referenceImages: z
+    .array(
+      z.object({
+        id: z.string().uuid(),
+        name: z.string().trim().min(1).max(240),
+        mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
+        bytes: z.number().int().positive().max(10_000_000),
+        url: z.string().trim().min(1).max(500),
+      }),
+    )
+    .max(4)
+    .optional(),
 });
 
 const presetSchema = z
