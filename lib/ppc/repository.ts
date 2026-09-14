@@ -47,6 +47,9 @@ interface SearchTermDbRow {
   cvr: string | number;
   acos: string | number;
   roas: string | number;
+  campaign_id?: string;
+  ad_group_id?: string;
+  keyword_id?: string;
 }
 
 interface SyncLogRow {
@@ -108,6 +111,9 @@ function mapSearchTerm(row: SearchTermDbRow): PpcSearchTermRow {
     cvr: asNumber(row.cvr),
     acos: asNumber(row.acos),
     roas: asNumber(row.roas),
+    campaignId: row.campaign_id || undefined,
+    adGroupId: row.ad_group_id || undefined,
+    keywordId: row.keyword_id || undefined,
   };
 }
 
@@ -133,7 +139,8 @@ export async function listPpcSearchTerms(
       t.portfolio_name, t.campaign_name, t.ad_group_name,
       t.target_keyword, t.customer_search_term, t.match_type,
       t.impressions, t.clicks, t.spend, t.sales, t.orders, t.units,
-      t.cpc, t.ctr, t.cvr, t.acos, t.roas
+      t.cpc, t.ctr, t.cvr, t.acos, t.roas,
+      t.campaign_id, t.ad_group_id, t.keyword_id
     FROM ppc_search_terms t
     JOIN ppc_stores s ON s.id = t.store_id
     WHERE s.team_id = ${scope.teamId}

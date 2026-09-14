@@ -34,15 +34,20 @@ interface SystemGuideItem {
 interface ListingWorkspaceProps {
   initialBrands?: BrandProfile[];
   actor?: RequestActor;
+  initialView?: WorkspaceView;
 }
+
+type WorkspaceView = "listing" | "mockups" | "sellersprite" | "ppc";
 
 export function ListingWorkspace({
   initialBrands = [],
   actor,
+  initialView = "listing",
 }: ListingWorkspaceProps) {
   const [brands, setBrands] = useState<BrandProfile[]>(initialBrands);
-  const [sidebarTab, setSidebarTab] = useState<"trello" | "mockups">("trello");
-  const [viewMode, setViewMode] = useState<"trello" | "sellersprite" | "ppc">("trello");
+  const [activeView, setActiveView] = useState<WorkspaceView>(initialView);
+  const sidebarTab = activeView === "mockups" ? "mockups" : "trello";
+  const viewMode = activeView === "sellersprite" || activeView === "ppc" ? activeView : "trello";
   const [showTrelloConfigModal, setShowTrelloConfigModal] = useState(false);
   const [showGuidesModal, setShowGuidesModal] = useState(false);
   const [guides, setGuides] = useState<SystemGuideItem[]>([]);
@@ -53,6 +58,17 @@ export function ListingWorkspace({
   const notify = useCallback((message: string) => {
     setToast(message);
     setTimeout(() => setToast(null), 3000);
+  }, []);
+
+  const selectView = useCallback((view: WorkspaceView) => {
+    setActiveView(view);
+    const url = new URL(window.location.href);
+    if (view === "listing") {
+      url.searchParams.delete("view");
+    } else {
+      url.searchParams.set("view", view);
+    }
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   }, []);
 
   const handleOpenGuides = async () => {
@@ -114,10 +130,7 @@ export function ListingWorkspace({
           <nav className="space-y-1.5">
             <button
               type="button"
-              onClick={() => {
-                setSidebarTab("trello");
-                setViewMode("trello");
-              }}
+              onClick={() => selectView("listing")}
               className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
                 sidebarTab === "trello" && viewMode === "trello"
                   ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
@@ -134,10 +147,7 @@ export function ListingWorkspace({
 
             <button
               type="button"
-              onClick={() => {
-                setSidebarTab("mockups");
-                setViewMode("trello");
-              }}
+              onClick={() => selectView("mockups")}
               className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
                 sidebarTab === "mockups" && viewMode === "trello"
                   ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
@@ -154,9 +164,7 @@ export function ListingWorkspace({
 
             <button
               type="button"
-              onClick={() => {
-                setViewMode("sellersprite");
-              }}
+              onClick={() => selectView("sellersprite")}
               className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
                 viewMode === "sellersprite"
                   ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
@@ -174,9 +182,7 @@ export function ListingWorkspace({
             {/* Amazon PPC Analytics */}
             <button
               type="button"
-              onClick={() => {
-                setViewMode("ppc");
-              }}
+              onClick={() => selectView("ppc")}
               className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
                 viewMode === "ppc"
                   ? "bg-indigo-600 text-white shadow-xs"
@@ -309,7 +315,7 @@ export function ListingWorkspace({
             <div className="h-full w-full overflow-y-auto p-6 bg-slate-50 thin-scrollbar">
               <SellerSpriteKeywordMiner
                 onImportKeywords={() => {
-                  setViewMode("trello");
+                  selectView("listing");
                   notify("Đã đào xong từ khóa SellerSprite.");
                 }}
               />

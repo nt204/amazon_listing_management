@@ -34,6 +34,9 @@ export interface PpcSearchTermRow {
   cvr: number; // orders / clicks
   acos: number; // spend / sales * 100
   roas: number; // sales / spend
+  campaignId?: string;
+  adGroupId?: string;
+  keywordId?: string;
 }
 
 export interface PpcAlert {

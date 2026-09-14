@@ -257,82 +257,133 @@ export async function syncPpcReportsFromR2(scope: DataScope) {
   };
 }
 
+export const AMAZON_BULKSHEET_SP_COLUMNS = [
+  "Product",                                                    // 1 (A)
+  "Entity",                                                     // 2 (B)
+  "Operation",                                                  // 3 (C)
+  "Campaign ID",                                                // 4 (D)
+  "Ad Group ID",                                                // 5 (E)
+  "Portfolio ID",                                               // 6 (F)
+  "Ad ID",                                                      // 7 (G)
+  "Keyword ID",                                                 // 8 (H)
+  "Product Targeting ID",                                       // 9 (I)
+  "Campaign Name",                                              // 10 (J)
+  "Ad Group Name",                                              // 11 (K)
+  "Campaign Name (Informational only)",                         // 12 (L)
+  "Ad Group Name (Informational only)",                         // 13 (M)
+  "Portfolio Name (Informational only)",                        // 14 (N)
+  "Start Date",                                                 // 15 (O)
+  "End Date",                                                   // 16 (P)
+  "Targeting Type",                                             // 17 (Q)
+  "State",                                                      // 18 (R)
+  "Campaign State (Informational only)",                        // 19 (S)
+  "Ad Group State (Informational only)",                        // 20 (T)
+  "Daily Budget",                                               // 21 (U)
+  "SKU",                                                        // 22 (V)
+  "ASIN (Informational only)",                                  // 23 (W)
+  "Eligibility Status (Informational only)",                    // 24 (X)
+  "Reason for Ineligibility (Informational only)",              // 25 (Y)
+  "Ad Group Default Bid",                                       // 26 (Z)
+  "Ad Group Default Bid (Informational only)",                  // 27 (AA)
+  "Bid",                                                        // 28 (AB)
+  "Keyword Text",                                               // 29 (AC)
+  "Native Language Keyword",                                    // 30 (AD)
+  "Native Language Locale",                                     // 31 (AE)
+  "Match Type",                                                 // 32 (AF)
+  "Bidding Strategy",                                           // 33 (AG)
+  "Placement",                                                  // 34 (AH)
+  "Percentage",                                                 // 35 (AI)
+  "Product Targeting Expression",                               // 36 (AJ)
+  "Resolved Product Targeting Expression (Informational only)", // 37 (AK)
+  "Audience ID",                                                // 38 (AL)
+  "Shopper Cohort Percentage",                                  // 39 (AM)
+  "Shopper Cohort Type",                                        // 40 (AN)
+  "Segment Name (Informational only)",                          // 41 (AO)
+  "Sites",                                                      // 42 (AP)
+  "Off-Amazon ad serving",                                      // 43 (AQ)
+  "Impressions",                                                // 44 (AR)
+  "Clicks",                                                     // 45 (AS)
+  "Click-through Rate",                                         // 46 (AT)
+  "Spend",                                                      // 47 (AU)
+  "Sales",                                                      // 48 (AV)
+  "Orders",                                                     // 49 (AW)
+  "Units",                                                      // 50 (AX)
+  "Conversion Rate",                                            // 51 (AY)
+  "ACOS",                                                       // 52 (AZ)
+  "CPC",                                                        // 53 (BA)
+  "ROAS",                                                       // 54 (BB)
+];
+
 /**
- * Xuất file Excel Bulksheet format chuẩn Amazon với cột Operation = Update / Create
- * để người dùng nạp ngược lại Amazon Advertising Console
+ * Xuất file Excel Bulksheet format chuẩn 100% Amazon Bulk Operations v2.0
+ * với đầy đủ 54 cột và sheet Sponsored Products Campaigns
+ * để nạp trực tiếp lên Amazon Seller Central (Bulk Operations Upload).
  */
 export async function exportBulksheetUpdateExcel(recommendations: PpcRecommendation[]): Promise<Buffer> {
   const ExcelJS = (await import("exceljs")).default;
   const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet("Sponsored Products Campaigns");
+  workbook.creator = "Amazon Advertising";
+  workbook.created = new Date();
 
-  const headers = [
-    "Product",
-    "Entity",
-    "Operation",
-    "Campaign ID",
-    "Ad Group ID",
-    "Keyword ID",
-    "Campaign Name (Informational only)",
-    "Ad Group Name (Informational only)",
-    "Keyword Text",
-    "Match Type",
-    "Bid",
-    "State",
-  ];
+  // 1. Sheet Portfolios (Amazon Bulk Sheet standard tab 1)
+  const portfolioSheet = workbook.addWorksheet("Portfolios");
+  portfolioSheet.addRow(["Portfolio ID", "Portfolio Name", "Currency"]);
 
-  const headerRow = worksheet.addRow(headers);
-  headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
-  headerRow.fill = {
-    type: "pattern",
-    pattern: "solid",
-    fgColor: { argb: "FF232F3E" }, // Amazon Dark Navy
-  };
+  // 2. Sheet Sponsored Products Campaigns (Main operational sheet)
+  const spSheet = workbook.addWorksheet("Sponsored Products Campaigns");
+  const headerRow = spSheet.addRow(AMAZON_BULKSHEET_SP_COLUMNS);
+  headerRow.font = { name: "Arial", size: 10, bold: true };
 
   for (const rec of recommendations) {
     let entity = "Keyword";
     let operation = "Update";
     let matchType = "Exact";
     let state = "enabled";
-    let bid = rec.recommendedBid ? String(rec.recommendedBid) : "";
+    let bidVal: number | string = "";
 
     if (rec.recType === "NEGATIVE_KEYWORD") {
       entity = "Negative Keyword";
       operation = "Create";
       matchType = "Negative Exact";
       state = "enabled";
-      bid = "";
+      bidVal = "";
     } else if (rec.recType === "BID_DECREASE" || rec.recType === "BID_INCREASE") {
       entity = "Keyword";
       operation = "Update";
-      matchType = "Exact";
+      matchType = rec.targetType === "EXACT" ? "Exact" : "Exact";
       state = "enabled";
+      bidVal = rec.recommendedBid ? Number(rec.recommendedBid.toFixed(2)) : "";
     } else if (rec.recType === "HARVEST_KEYWORD") {
       entity = "Keyword";
       operation = "Create";
       matchType = "Exact";
       state = "enabled";
-      bid = String(rec.recommendedBid || 1.0);
+      bidVal = rec.recommendedBid ? Number(rec.recommendedBid.toFixed(2)) : 1.0;
     }
 
-    worksheet.addRow([
-      "Sponsored Products",
-      entity,
-      operation,
-      rec.campaignId || "",
-      rec.adGroupId || "",
-      rec.keywordId || "",
-      rec.campaignName || "",
-      rec.adGroupName || "",
-      rec.keyword,
-      matchType,
-      bid,
-      state,
-    ]);
+    // Build standard 54-column row matching Amazon template
+    const row = new Array(AMAZON_BULKSHEET_SP_COLUMNS.length).fill("");
+    row[0] = "Sponsored Products";                    // A: Product
+    row[1] = entity;                                  // B: Entity
+    row[2] = operation;                               // C: Operation
+    row[3] = rec.campaignId || "";                    // D: Campaign ID
+    row[4] = rec.adGroupId || "";                     // E: Ad Group ID
+    row[7] = entity === "Keyword" ? (rec.keywordId || "") : ""; // H: Keyword ID
+    row[9] = rec.campaignName || "";                  // J: Campaign Name
+    row[10] = rec.adGroupName || "";                  // K: Ad Group Name
+    row[11] = rec.campaignName || "";                 // L: Campaign Name (Informational only)
+    row[12] = rec.adGroupName || "";                 // M: Ad Group Name (Informational only)
+    row[17] = state;                                  // R: State
+    row[27] = bidVal;                                 // AB: Bid
+    row[28] = rec.keyword;                            // AC: Keyword Text
+    row[31] = matchType;                              // AF: Match Type
+
+    spSheet.addRow(row);
   }
 
-  worksheet.columns.forEach((column) => {
-    column.width = 24;
+  // Set default column widths
+  spSheet.columns.forEach((column) => {
+    column.width = 22;
   });
 
   const buffer = await workbook.xlsx.writeBuffer();

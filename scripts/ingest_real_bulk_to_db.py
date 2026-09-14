@@ -119,9 +119,14 @@ def parse_and_ingest_xlsx(fpath, store_id, camp_type="SP"):
                         orders = to_int(row_data.get("orders"))
                         units = to_int(row_data.get("units"))
                         
+                        camp_id = (row_data.get("campaign id") or "").strip()
+                        adgroup_id = (row_data.get("ad group id") or "").strip()
+                        kw_id = (row_data.get("keyword id") or row_data.get("product targeting id") or "").strip()
+
                         if ent == "Campaign" and camp_name:
                             if camp_name not in campaigns or spend > 0 or impressions > 0:
                                 campaigns[camp_name] = {
+                                    "amazon_campaign_id": camp_id,
                                     "campaign_name": camp_name,
                                     "campaign_type": camp_type,
                                     "targeting_type": targeting_type.upper() if targeting_type.upper() in ("AUTO", "MANUAL") else "MANUAL",
@@ -166,7 +171,10 @@ def parse_and_ingest_xlsx(fpath, store_id, camp_type="SP"):
                                     "ctr": ctr,
                                     "cvr": cvr,
                                     "acos": acos,
-                                    "roas": roas
+                                    "roas": roas,
+                                    "campaign_id": camp_id,
+                                    "ad_group_id": adgroup_id,
+                                    "keyword_id": kw_id
                                 })
                     elem.clear()
                     
@@ -200,18 +208,19 @@ def ingest():
     print(f"\n[GHI VÀO DATABASE POSTGRESQL]")
     # Ingest Campaigns
     camp_values = [
-        (store_id, c["campaign_name"], c["campaign_type"], c["targeting_type"], c["daily_budget"], c["status"])
+        (store_id, c["campaign_name"], c["campaign_type"], c["targeting_type"], c["daily_budget"], c["status"], c["amazon_campaign_id"])
         for c in all_campaigns.values()
     ]
     execute_values(
         cur,
         """
-        INSERT INTO ppc_campaigns (store_id, campaign_name, campaign_type, targeting_type, daily_budget, status)
+        INSERT INTO ppc_campaigns (store_id, campaign_name, campaign_type, targeting_type, daily_budget, status, amazon_campaign_id)
         VALUES %s
         ON CONFLICT (store_id, campaign_name) 
         DO UPDATE SET 
             daily_budget = EXCLUDED.daily_budget,
             status = EXCLUDED.status,
+            amazon_campaign_id = COALESCE(NULLIF(EXCLUDED.amazon_campaign_id, ''), ppc_campaigns.amazon_campaign_id),
             updated_at = NOW()
         """,
         camp_values
@@ -225,7 +234,8 @@ def ingest():
             store_id, k["report_date"], k["portfolio_name"], k["campaign_name"], k["ad_group_name"],
             k["target_keyword"], k["customer_search_term"], k["match_type"],
             k["impressions"], k["clicks"], k["spend"], k["sales"], k["orders"], k["units"],
-            k["cpc"], k["ctr"], k["cvr"], k["acos"], k["roas"]
+            k["cpc"], k["ctr"], k["cvr"], k["acos"], k["roas"],
+            k["campaign_id"], k["ad_group_id"], k["keyword_id"]
         )
         for k in all_keywords
     ]
@@ -236,7 +246,8 @@ def ingest():
             store_id, report_date, portfolio_name, campaign_name, ad_group_name,
             target_keyword, customer_search_term, match_type,
             impressions, clicks, spend, sales, orders, units,
-            cpc, ctr, cvr, acos, roas
+            cpc, ctr, cvr, acos, roas,
+            campaign_id, ad_group_id, keyword_id
         ) VALUES %s
         ON CONFLICT ON CONSTRAINT ppc_search_term_identity_unique
         DO UPDATE SET
@@ -251,6 +262,9 @@ def ingest():
             cvr = EXCLUDED.cvr,
             acos = EXCLUDED.acos,
             roas = EXCLUDED.roas,
+            campaign_id = COALESCE(NULLIF(EXCLUDED.campaign_id, ''), ppc_search_terms.campaign_id),
+            ad_group_id = COALESCE(NULLIF(EXCLUDED.ad_group_id, ''), ppc_search_terms.ad_group_id),
+            keyword_id = COALESCE(NULLIF(EXCLUDED.keyword_id, ''), ppc_search_terms.keyword_id),
             updated_at = NOW()
         """,
         kw_values
@@ -260,8 +274,9 @@ def ingest():
 
     # Ghi log sync thành công
     cur.execute("""
-        INSERT INTO ppc_sync_logs (source, file_name, source_version, status, records_count, message)
+        INSERT INTO ppc_sync_logs (team_id, source, file_name, source_version, status, records_count, message)
         VALUES (
+            'default',
             'CLOUDFLARE_R2', 
             'Warmstorey Bulk File SP & SB 20260914 (30 day).xlsx', 
             '20260914', 
