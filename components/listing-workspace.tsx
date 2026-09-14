@@ -1,8 +1,6 @@
 "use client";
 
 import {
-  CheckSquareIcon,
-  DownloadSimpleIcon,
   EyeIcon,
   FilePdfIcon,
   GearIcon,
@@ -13,7 +11,6 @@ import {
   XIcon,
   ChartLineUpIcon,
 } from "@phosphor-icons/react";
-import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { TrelloBoardView } from "@/components/trello-board-view";
 import { SellerSpriteKeywordMiner } from "@/components/sellersprite-keyword-miner";
@@ -106,7 +103,8 @@ export function ListingWorkspace({
   }, []);
 
   useEffect(() => {
-    void refreshBrands();
+    const timer = window.setTimeout(() => void refreshBrands(), 0);
+    return () => window.clearTimeout(timer);
   }, [refreshBrands]);
 
   return (

@@ -315,21 +315,49 @@ export const AMAZON_BULKSHEET_SP_COLUMNS = [
 ];
 
 /**
- * Xuất file Excel Bulksheet format chuẩn 100% Amazon Bulk Operations v2.0
- * với đầy đủ 54 cột và sheet Sponsored Products Campaigns
- * để nạp trực tiếp lên Amazon Seller Central (Bulk Operations Upload).
+ * Xuất file Excel Bulksheet format chuẩn 100% từ chính file mẫu gốc Amazon
+ * (AdvertisingBulksheetTemplate-seller.xlsx) để đảm bảo tương thích tuyệt đối
+ * khi nạp lên Amazon Seller Central (Bulk Operations).
  */
 export async function exportBulksheetUpdateExcel(recommendations: PpcRecommendation[]): Promise<Buffer> {
+  const { spawn } = await import("node:child_process");
+  const path = (await import("node:path")).default;
+  const fs = (await import("node:fs")).default;
+
+  const pythonScript = path.join(process.cwd(), "scripts", "export_amazon_bulksheet.py");
+  const templatePath = path.join(process.cwd(), "templates", "ppc", "AdvertisingBulksheetTemplate-seller.xlsx");
+
+  if (fs.existsSync(pythonScript) && fs.existsSync(templatePath)) {
+    return new Promise((resolve, reject) => {
+      const proc = spawn("python3", [pythonScript], { stdio: ["pipe", "pipe", "pipe"] });
+      const chunks: Buffer[] = [];
+      const errChunks: Buffer[] = [];
+
+      proc.stdout.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      proc.stderr.on("data", (chunk) => errChunks.push(Buffer.from(chunk)));
+
+      proc.on("close", (code) => {
+        if (code !== 0) {
+          const errText = Buffer.concat(errChunks).toString("utf-8");
+          return reject(new Error(`Lỗi khi tạo Bulksheet từ mẫu Amazon: ${errText}`));
+        }
+        resolve(Buffer.concat(chunks));
+      });
+
+      proc.stdin.write(JSON.stringify(recommendations));
+      proc.stdin.end();
+    });
+  }
+
+  // Fallback: Tạo bằng ExcelJS nếu không tìm thấy template gốc
   const ExcelJS = (await import("exceljs")).default;
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Amazon Advertising";
   workbook.created = new Date();
 
-  // 1. Sheet Portfolios (Amazon Bulk Sheet standard tab 1)
   const portfolioSheet = workbook.addWorksheet("Portfolios");
   portfolioSheet.addRow(["Portfolio ID", "Portfolio Name", "Currency"]);
 
-  // 2. Sheet Sponsored Products Campaigns (Main operational sheet)
   const spSheet = workbook.addWorksheet("Sponsored Products Campaigns");
   const headerRow = spSheet.addRow(AMAZON_BULKSHEET_SP_COLUMNS);
   headerRow.font = { name: "Arial", size: 10, bold: true };
@@ -350,7 +378,7 @@ export async function exportBulksheetUpdateExcel(recommendations: PpcRecommendat
     } else if (rec.recType === "BID_DECREASE" || rec.recType === "BID_INCREASE") {
       entity = "Keyword";
       operation = "Update";
-      matchType = rec.targetType === "EXACT" ? "Exact" : "Exact";
+      matchType = "Exact";
       state = "enabled";
       bidVal = rec.recommendedBid ? Number(rec.recommendedBid.toFixed(2)) : "";
     } else if (rec.recType === "HARVEST_KEYWORD") {
@@ -361,30 +389,24 @@ export async function exportBulksheetUpdateExcel(recommendations: PpcRecommendat
       bidVal = rec.recommendedBid ? Number(rec.recommendedBid.toFixed(2)) : 1.0;
     }
 
-    // Build standard 54-column row matching Amazon template
     const row = new Array(AMAZON_BULKSHEET_SP_COLUMNS.length).fill("");
-    row[0] = "Sponsored Products";                    // A: Product
-    row[1] = entity;                                  // B: Entity
-    row[2] = operation;                               // C: Operation
-    row[3] = rec.campaignId || "";                    // D: Campaign ID
-    row[4] = rec.adGroupId || "";                     // E: Ad Group ID
-    row[7] = entity === "Keyword" ? (rec.keywordId || "") : ""; // H: Keyword ID
-    row[9] = rec.campaignName || "";                  // J: Campaign Name
-    row[10] = rec.adGroupName || "";                  // K: Ad Group Name
-    row[11] = rec.campaignName || "";                 // L: Campaign Name (Informational only)
-    row[12] = rec.adGroupName || "";                 // M: Ad Group Name (Informational only)
-    row[17] = state;                                  // R: State
-    row[27] = bidVal;                                 // AB: Bid
-    row[28] = rec.keyword;                            // AC: Keyword Text
-    row[31] = matchType;                              // AF: Match Type
+    row[0] = "Sponsored Products";
+    row[1] = entity;
+    row[2] = operation;
+    row[3] = rec.campaignId || "";
+    row[4] = rec.adGroupId || "";
+    row[7] = entity === "Keyword" ? (rec.keywordId || "") : "";
+    row[9] = rec.campaignName || "";
+    row[10] = rec.adGroupName || "";
+    row[11] = rec.campaignName || "";
+    row[12] = rec.adGroupName || "";
+    row[17] = state;
+    row[27] = bidVal;
+    row[28] = rec.keyword;
+    row[31] = matchType;
 
     spSheet.addRow(row);
   }
-
-  // Set default column widths
-  spSheet.columns.forEach((column) => {
-    column.width = 22;
-  });
 
   const buffer = await workbook.xlsx.writeBuffer();
   return Buffer.from(buffer);
