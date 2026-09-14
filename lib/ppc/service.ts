@@ -4,13 +4,14 @@ import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/clien
 import type { DataScope } from "@/lib/db";
 import {
   calculatePpcSummary,
+  calculatePpcVelocity,
   generatePpcAlerts,
   generatePpcRecommendations,
   groupPpcByCampaign,
   groupPpcByMatchType,
   groupPpcBySku,
 } from "./analytics";
-import { MOCK_STORES, generateMockSearchTerms } from "./mock-data-generator";
+import { generateMockSearchTerms, MOCK_STORES } from "./mock-data-generator";
 import { parseSearchTermWorkbook } from "./parser";
 import {
   hasSuccessfulPpcSync,
@@ -23,7 +24,7 @@ import {
 } from "./repository";
 import type { PpcAlert, PpcRecommendation, PpcSearchTermRow, PpcSkuPerformance, PpcSummaryMetrics } from "./types";
 
-const MAX_R2_FILE_BYTES = 25_000_000;
+const MAX_R2_FILE_BYTES = 150_000_000;
 const DEFAULT_TARGET_ACOS = 30;
 
 export class PpcInputError extends Error {}
@@ -94,10 +95,15 @@ export async function getPpcAnalyticsData(
   const alerts: PpcAlert[] = generatePpcAlerts(rows, targetAcos);
   const recommendations: PpcRecommendation[] = generatePpcRecommendations(rows, targetAcos);
   const availableSkus = Array.from(new Set(storeRows.map((row) => row.portfolioName))).filter(Boolean).sort();
+  const recent7dRows = days !== 7
+    ? await listPpcSearchTerms(scope, { storeName, sku: "ALL", days: 7 })
+    : storeRows;
+  const velocity = calculatePpcVelocity(recent7dRows, storeRows, 7, days);
 
   return {
     stores,
     summary,
+    velocity,
     skuPerformance,
     campaignPerformance,
     matchTypeBreakdown,
@@ -249,4 +255,86 @@ export async function syncPpcReportsFromR2(scope: DataScope) {
     totalNew,
     totalUpdated,
   };
+}
+
+/**
+ * Xuất file Excel Bulksheet format chuẩn Amazon với cột Operation = Update / Create
+ * để người dùng nạp ngược lại Amazon Advertising Console
+ */
+export async function exportBulksheetUpdateExcel(recommendations: PpcRecommendation[]): Promise<Buffer> {
+  const ExcelJS = (await import("exceljs")).default;
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("Sponsored Products Campaigns");
+
+  const headers = [
+    "Product",
+    "Entity",
+    "Operation",
+    "Campaign ID",
+    "Ad Group ID",
+    "Keyword ID",
+    "Campaign Name (Informational only)",
+    "Ad Group Name (Informational only)",
+    "Keyword Text",
+    "Match Type",
+    "Bid",
+    "State",
+  ];
+
+  const headerRow = worksheet.addRow(headers);
+  headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+  headerRow.fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "FF232F3E" }, // Amazon Dark Navy
+  };
+
+  for (const rec of recommendations) {
+    let entity = "Keyword";
+    let operation = "Update";
+    let matchType = "Exact";
+    let state = "enabled";
+    let bid = rec.recommendedBid ? String(rec.recommendedBid) : "";
+
+    if (rec.recType === "NEGATIVE_KEYWORD") {
+      entity = "Negative Keyword";
+      operation = "Create";
+      matchType = "Negative Exact";
+      state = "enabled";
+      bid = "";
+    } else if (rec.recType === "BID_DECREASE" || rec.recType === "BID_INCREASE") {
+      entity = "Keyword";
+      operation = "Update";
+      matchType = "Exact";
+      state = "enabled";
+    } else if (rec.recType === "HARVEST_KEYWORD") {
+      entity = "Keyword";
+      operation = "Create";
+      matchType = "Exact";
+      state = "enabled";
+      bid = String(rec.recommendedBid || 1.0);
+    }
+
+    worksheet.addRow([
+      "Sponsored Products",
+      entity,
+      operation,
+      rec.campaignId || "",
+      rec.adGroupId || "",
+      rec.keywordId || "",
+      rec.campaignName || "",
+      rec.adGroupName || "",
+      rec.keyword,
+      matchType,
+      bid,
+      state,
+    ]);
+  }
+
+  worksheet.columns.forEach((column) => {
+    column.width = 24;
+  });
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  return Buffer.from(buffer);
 }

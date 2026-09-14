@@ -60,6 +60,11 @@ export interface PpcRecommendation {
   targetType: "EXACT" | "PHRASE" | "PRODUCT";
   keyword: string;
   campaignName?: string;
+  adGroupName?: string;
+  campaignId?: string;
+  adGroupId?: string;
+  keywordId?: string;
+  priority?: "P0" | "P1" | "P2";
   currentBid?: number;
   recommendedBid?: number;
   reason: string;
@@ -96,6 +101,9 @@ export interface PpcSkuPerformance {
   roas: number;
   cvr: number;
   statusBadge: "EXCELLENT" | "GOOD" | "WARNING" | "CRITICAL";
+  skuCategory: "HERO" | "BLEEDING" | "POTENTIAL" | "NEUTRAL";
+  revenueShare: number; // % of total store sales
+  spendShare: number;   // % of total store spend
 }
 
 export interface PpcCampaignPerformance {
@@ -128,4 +136,29 @@ export interface PpcMatchTypeBreakdown {
   cvr: number;
   acos: number;
   roas: number;
+}
+
+export interface PpcVelocityComparison {
+  recentDays: number;
+  baselineDays: number;
+  recentDailySpend: number;
+  baselineDailySpend: number;
+  spendGrowthRate: number; // percentage change in daily spend
+  recentAcos: number;
+  baselineAcos: number;
+  acosDelta: number; // percentage points difference
+  trendStatus: "ACCELERATING_EFFICIENCY" | "OVERSPENDING_RISK" | "STABLE" | "COOLING_DOWN";
+}
+
+export interface PpcAnalyticsData {
+  stores: PpcStore[];
+  summary: PpcSummaryMetrics;
+  velocity?: PpcVelocityComparison;
+  skuPerformance: PpcSkuPerformance[];
+  campaigns: PpcCampaignPerformance[];
+  matchTypeBreakdown: PpcMatchTypeBreakdown[];
+  searchTerms: PpcSearchTermRow[];
+  alerts: PpcAlert[];
+  recommendations: PpcRecommendation[];
+  lastSyncedAt?: string | null;
 }

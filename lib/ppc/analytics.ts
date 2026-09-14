@@ -104,18 +104,32 @@ export function groupPpcBySku(
     }
   }
 
+  const totalStoreSpend = Array.from(map.values()).reduce((sum, i) => sum + i.spend, 0);
+  const totalStoreSales = Array.from(map.values()).reduce((sum, i) => sum + i.sales, 0);
   const results: PpcSkuPerformance[] = [];
 
   for (const item of map.values()) {
     const acos = item.sales > 0 ? (item.spend / item.sales) * 100 : item.spend > 0 ? 999 : 0;
     const roas = item.spend > 0 ? item.sales / item.spend : 0;
     const cvr = item.clicks > 0 ? item.orders / item.clicks : 0;
+    const revenueShare = totalStoreSales > 0 ? Math.round((item.sales / totalStoreSales) * 1000) / 10 : 0;
+    const spendShare = totalStoreSpend > 0 ? Math.round((item.spend / totalStoreSpend) * 1000) / 10 : 0;
 
     let statusBadge: "EXCELLENT" | "GOOD" | "WARNING" | "CRITICAL" = "GOOD";
     if (acos <= 20 && item.orders > 0) statusBadge = "EXCELLENT";
     else if (acos <= targetAcos && item.orders > 0) statusBadge = "GOOD";
     else if (acos <= 60 && item.orders > 0) statusBadge = "WARNING";
     else statusBadge = "CRITICAL";
+
+    // Phân loại danh mục SKU
+    let skuCategory: "HERO" | "BLEEDING" | "POTENTIAL" | "NEUTRAL" = "NEUTRAL";
+    if ((item.orders >= 3 && acos <= targetAcos) || (revenueShare >= 8 && acos <= targetAcos + 5)) {
+      skuCategory = "HERO";
+    } else if ((item.spend >= 25 && item.orders === 0) || (item.spend >= 40 && acos > targetAcos + 25)) {
+      skuCategory = "BLEEDING";
+    } else if (item.orders >= 1 && acos <= targetAcos) {
+      skuCategory = "POTENTIAL";
+    }
 
     results.push({
       sku: item.sku,
@@ -128,6 +142,9 @@ export function groupPpcBySku(
       roas: Math.round(roas * 100) / 100,
       cvr: Math.round(cvr * 1000) / 1000,
       statusBadge,
+      skuCategory,
+      revenueShare,
+      spendShare,
     });
   }
 
@@ -192,7 +209,7 @@ export function generatePpcAlerts(
 }
 
 /**
- * Rule Engine: Đưa ra đề xuất tối ưu (Recommendations)
+ * Rule Engine: Đưa ra đề xuất tối ưu (Recommendations) với mức ưu tiên P0/P1/P2
  */
 export function generatePpcRecommendations(
   rows: PpcSearchTermRow[],
@@ -205,56 +222,38 @@ export function generatePpcRecommendations(
       .replace(/\s+/g, "-");
 
   for (const r of rows) {
-    // 1. Đề xuất Phủ định từ khóa (Negative Exact) nếu click >= 9 và 0 orders
+    // P0: Đề xuất Phủ định từ khóa (Negative Exact) nếu click >= 9 và 0 orders (hoặc spend > $15)
     if (r.clicks >= 9 && r.orders === 0) {
       recs.push({
         id: `rec-neg-${rowKey(r)}`,
         storeId: r.storeId || "store-1",
-        storeName: r.storeName || "Bozspacer",
+        storeName: r.storeName || "Warmstorey",
         recType: "NEGATIVE_KEYWORD",
         targetType: "EXACT",
         keyword: r.customerSearchTerm,
         campaignName: r.campaignName,
-        reason: `Đã tốn $${r.spend.toFixed(2)} với ${r.clicks} clicks mà không có đơn. Phủ định sẽ ngăn ngừa lãng phí.`,
+        adGroupName: r.adGroupName,
+        priority: r.spend >= 20 || r.clicks >= 15 ? "P0" : "P1",
+        reason: `Đã tốn $${r.spend.toFixed(2)} với ${r.clicks} clicks mà không có đơn. Phủ định ngay để cắt lỗ lãng phí.`,
         estimatedSavings: r.spend,
         status: "PENDING",
         createdAt: new Date().toISOString(),
       });
     }
 
-    // 2. Đề xuất Thu hoạch từ khóa (Keyword Harvesting): Auto campaign có >= 2 orders, ACOS <= target
-    if (
-      r.campaignName.toLowerCase().includes("auto") &&
-      r.orders >= 2 &&
-      r.acos <= targetAcos
-    ) {
-      recs.push({
-        id: `rec-harvest-${rowKey(r)}`,
-        storeId: r.storeId || "store-1",
-        storeName: r.storeName || "Bozspacer",
-        recType: "HARVEST_KEYWORD",
-        targetType: "EXACT",
-        keyword: r.customerSearchTerm,
-        campaignName: r.campaignName,
-        reason: `Search Term từ chiến dịch Auto có ${r.orders} đơn, ACOS cực tốt (${r.acos.toFixed(1)}%). Nên đưa vào chiến dịch Manual Exact!`,
-        estimatedSavings: 0,
-        status: "PENDING",
-        createdAt: new Date().toISOString(),
-      });
-    }
-
-    // 3. Đề xuất Giảm Bid: Có đơn nhưng ACOS > target + 15%
-    if (r.orders >= 2 && r.acos > targetAcos + 15 && r.cpc > 0.5) {
-      // Công thức: Optimal CPC = (Target ACOS / Current ACOS) * Current CPC
+    // P1: Đề xuất Giảm Bid nếu có đơn nhưng ACOS > target + 15%
+    if (r.orders >= 2 && r.acos > targetAcos + 15 && r.cpc > 0.4) {
       const optimalBid = Math.max(0.15, Math.round((targetAcos / r.acos) * r.cpc * 100) / 100);
       recs.push({
         id: `rec-bid-dec-${rowKey(r)}`,
         storeId: r.storeId || "store-1",
-        storeName: r.storeName || "Bozspacer",
+        storeName: r.storeName || "Warmstorey",
         recType: "BID_DECREASE",
         targetType: "EXACT",
         keyword: r.customerSearchTerm,
         campaignName: r.campaignName,
+        adGroupName: r.adGroupName,
+        priority: "P1",
         currentBid: r.cpc,
         recommendedBid: optimalBid,
         reason: `ACOS đang là ${r.acos.toFixed(1)}% (vượt mục tiêu ${targetAcos}%). Giảm bid từ $${r.cpc.toFixed(2)} xuống $${optimalBid.toFixed(2)} để kéo ACOS về mức mong muốn.`,
@@ -263,9 +262,102 @@ export function generatePpcRecommendations(
         createdAt: new Date().toISOString(),
       });
     }
+
+    // P1: Đề xuất Tăng Bid cho từ khóa siêu sinh lời (ACoS < target - 10%, CVR > 12%)
+    if (r.orders >= 3 && r.acos <= Math.max(12, targetAcos - 10) && r.cvr >= 0.12) {
+      const recommendedBid = Math.round(r.cpc * 1.2 * 100) / 100;
+      recs.push({
+        id: `rec-bid-inc-${rowKey(r)}`,
+        storeId: r.storeId || "store-1",
+        storeName: r.storeName || "Warmstorey",
+        recType: "BID_INCREASE",
+        targetType: "EXACT",
+        keyword: r.customerSearchTerm,
+        campaignName: r.campaignName,
+        adGroupName: r.adGroupName,
+        priority: "P1",
+        currentBid: r.cpc,
+        recommendedBid,
+        reason: `Hiệu suất tuyệt vời (ACoS ${r.acos.toFixed(1)}%, CVR ${(r.cvr * 100).toFixed(1)}%, ${r.orders} đơn). Tăng bid thêm 20% để chiếm trọn Top of Search và mở rộng doanh số!`,
+        estimatedSavings: 0,
+        status: "PENDING",
+        createdAt: new Date().toISOString(),
+      });
+    }
+
+    // P2: Đề xuất Thu hoạch từ khóa (Keyword Harvesting): Auto/Broad có >= 2 orders, ACOS <= target
+    if (
+      (r.campaignName.toLowerCase().includes("auto") || r.matchType === "Broad" || r.matchType === "Auto") &&
+      r.orders >= 2 &&
+      r.acos <= targetAcos
+    ) {
+      recs.push({
+        id: `rec-harvest-${rowKey(r)}`,
+        storeId: r.storeId || "store-1",
+        storeName: r.storeName || "Warmstorey",
+        recType: "HARVEST_KEYWORD",
+        targetType: "EXACT",
+        keyword: r.customerSearchTerm,
+        campaignName: r.campaignName,
+        adGroupName: r.adGroupName,
+        priority: "P2",
+        reason: `Search Term hiệu quả từ chiến dịch ${r.matchType} có ${r.orders} đơn, ACOS cực tốt (${r.acos.toFixed(1)}%). Nên chuyển sang chiến dịch Manual Exact riêng để kiểm soát giá thầu tối ưu!`,
+        estimatedSavings: 0,
+        status: "PENDING",
+        createdAt: new Date().toISOString(),
+      });
+    }
   }
 
-  return recs;
+  const priorityRank: Record<string, number> = { P0: 0, P1: 1, P2: 2 };
+  return recs.sort((a, b) => (priorityRank[a.priority || "P1"] ?? 1) - (priorityRank[b.priority || "P1"] ?? 1));
+}
+
+/**
+ * Tính toán tốc độ đốt tiền và biến động hiệu quả đa chu kỳ (Velocity Run-rate)
+ */
+export function calculatePpcVelocity(
+  recentRows: PpcSearchTermRow[],
+  baselineRows: PpcSearchTermRow[],
+  recentDays = 7,
+  baselineDays = 30
+) {
+  const recentSpend = recentRows.reduce((sum, r) => sum + r.spend, 0);
+  const recentSales = recentRows.reduce((sum, r) => sum + r.sales, 0);
+  const baselineSpend = baselineRows.reduce((sum, r) => sum + r.spend, 0);
+  const baselineSales = baselineRows.reduce((sum, r) => sum + r.sales, 0);
+
+  const recentDailySpend = recentDays > 0 ? recentSpend / recentDays : 0;
+  const baselineDailySpend = baselineDays > 0 ? baselineSpend / baselineDays : 0;
+
+  const spendGrowthRate = baselineDailySpend > 0
+    ? Math.round(((recentDailySpend - baselineDailySpend) / baselineDailySpend) * 1000) / 10
+    : 0;
+
+  const recentAcos = recentSales > 0 ? (recentSpend / recentSales) * 100 : 0;
+  const baselineAcos = baselineSales > 0 ? (baselineSpend / baselineSales) * 100 : 0;
+  const acosDelta = Math.round((recentAcos - baselineAcos) * 10) / 10;
+
+  let trendStatus: "ACCELERATING_EFFICIENCY" | "OVERSPENDING_RISK" | "STABLE" | "COOLING_DOWN" = "STABLE";
+  if (spendGrowthRate > 15 && acosDelta > 5) {
+    trendStatus = "OVERSPENDING_RISK";
+  } else if (spendGrowthRate >= 0 && acosDelta <= -3) {
+    trendStatus = "ACCELERATING_EFFICIENCY";
+  } else if (spendGrowthRate < -15) {
+    trendStatus = "COOLING_DOWN";
+  }
+
+  return {
+    recentDays,
+    baselineDays,
+    recentDailySpend: Math.round(recentDailySpend * 100) / 100,
+    baselineDailySpend: Math.round(baselineDailySpend * 100) / 100,
+    spendGrowthRate,
+    recentAcos: Math.round(recentAcos * 10) / 10,
+    baselineAcos: Math.round(baselineAcos * 10) / 10,
+    acosDelta,
+    trendStatus,
+  };
 }
 
 /**

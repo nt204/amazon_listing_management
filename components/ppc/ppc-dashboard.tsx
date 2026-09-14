@@ -39,6 +39,7 @@ import type {
   PpcSkuPerformance,
   PpcStore,
   PpcSummaryMetrics,
+  PpcVelocityComparison,
 } from "@/lib/ppc/types";
 
 interface PpcDashboardProps {
@@ -77,6 +78,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   const [availableSkus, setAvailableSkus] = useState<string[]>([]);
 
   const [summary, setSummary] = useState<PpcSummaryMetrics | null>(null);
+  const [velocity, setVelocity] = useState<PpcVelocityComparison | null>(null);
   const [skuPerformance, setSkuPerformance] = useState<PpcSkuPerformance[]>([]);
   const [campaignPerformance, setCampaignPerformance] = useState<PpcCampaignPerformance[]>([]);
   const [matchTypeBreakdown, setMatchTypeBreakdown] = useState<PpcMatchTypeBreakdown[]>([]);
@@ -103,6 +105,14 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   const [termPageSize, setTermPageSize] = useState(15);
   const [selectedTerms, setSelectedTerms] = useState<Set<string>>(new Set());
 
+  // SKU category filter
+  const [skuCategoryFilter, setSkuCategoryFilter] = useState<"ALL" | "HERO" | "BLEEDING" | "POTENTIAL">("ALL");
+
+  // Action Center recommendation filters & export
+  const [recPriorityFilter, setRecPriorityFilter] = useState<"ALL" | "P0" | "P1" | "P2">("ALL");
+  const [selectedRecs, setSelectedRecs] = useState<Set<string>>(new Set());
+  const [exportingBulksheet, setExportingBulksheet] = useState(false);
+
   // Campaign search & sort
   const [campaignQuery, setCampaignQuery] = useState("");
   const [campaignSortField, setCampaignSortField] = useState<SortField>("spend");
@@ -117,7 +127,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   const [syncingR2, setSyncingR2] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [uploadStore, setUploadStore] = useState("Bozspacer");
+  const [uploadStore, setUploadStore] = useState("Warmstorey");
   const [uploading, setUploading] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
 
@@ -137,6 +147,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
       const data = await res.json();
       setStores(data.stores || []);
       setSummary(data.summary || null);
+      setVelocity(data.velocity || null);
       setSkuPerformance(data.skuPerformance || []);
       setCampaignPerformance(data.campaignPerformance || []);
       setMatchTypeBreakdown(data.matchTypeBreakdown || []);
@@ -147,6 +158,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
       setTargetAcos(data.targetAcos || 30);
       setLastSyncedAt(data.lastSyncedAt || null);
       setSelectedTerms(new Set());
+      setSelectedRecs(new Set());
       setTermPage(1);
     } catch (err) {
       console.error(err);
@@ -268,6 +280,9 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   // Filtered & Sorted SKUs
   const filteredSortedSkus = useMemo(() => {
     let list = [...skuPerformance];
+    if (skuCategoryFilter !== "ALL") {
+      list = list.filter((s) => s.skuCategory === skuCategoryFilter);
+    }
     if (skuQuery.trim()) {
       const q = skuQuery.toLowerCase();
       list = list.filter((s) => s.sku.toLowerCase().includes(q) || s.storeName.toLowerCase().includes(q));
@@ -278,7 +293,61 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
       return skuSortDir === "asc" ? valA - valB : valB - valA;
     });
     return list;
-  }, [skuPerformance, skuQuery, skuSortField, skuSortDir]);
+  }, [skuPerformance, skuCategoryFilter, skuQuery, skuSortField, skuSortDir]);
+
+  // Filtered Recommendations by Priority
+  const filteredRecommendations = useMemo(() => {
+    let list = [...recommendations];
+    if (recPriorityFilter !== "ALL") {
+      list = list.filter((r) => r.priority === recPriorityFilter);
+    }
+    return list;
+  }, [recommendations, recPriorityFilter]);
+
+  // Export Bulksheet update file
+  const handleExportBulksheet = async (recsToExport?: PpcRecommendation[]) => {
+    const list = recsToExport || recommendations.filter((r) => selectedRecs.has(r.id));
+    const targetList = list.length > 0 ? list : recommendations;
+    if (targetList.length === 0) {
+      notify("Không có đề xuất nào để xuất Bulksheet.", "error");
+      return;
+    }
+    setExportingBulksheet(true);
+    try {
+      const res = await fetch("/api/ppc/export-bulksheet", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recommendations: targetList }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Xuất file thất bại");
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Amazon_Bulksheet_Update_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      notify(`Đã xuất thành công ${targetList.length} đề xuất sang file Bulksheet Amazon!`, "success");
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Lỗi khi xuất file", "error");
+    } finally {
+      setExportingBulksheet(false);
+    }
+  };
+
+  const copyKeyword = async (kw: string) => {
+    try {
+      await navigator.clipboard.writeText(kw);
+      notify(`Đã copy "${kw}" vào clipboard!`, "success");
+    } catch {
+      notify("Trình duyệt không cho phép ghi vào clipboard.", "error");
+    }
+  };
 
   // Chart Data: Top 7 Campaigns by Spend
   const topCampaignChartData = useMemo(() => {
@@ -637,6 +706,61 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             </div>
             <div className="text-[11px] font-semibold text-slate-500 mt-1">
               Hiển thị: <strong className="text-slate-800">{summary.totalImpressions.toLocaleString()}</strong>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* VELOCITY & MULTI-PERIOD COMPARISON MONITOR */}
+      {velocity && (
+        <div className="rounded-xl border border-indigo-100 bg-gradient-to-r from-indigo-50/70 via-white to-sky-50/70 p-4 shadow-2xs">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-lg bg-indigo-600 text-white shadow-xs">
+                <ChartLineUp size={18} weight="bold" />
+              </div>
+              <div>
+                <h4 className="text-xs font-black text-slate-900">
+                  Tốc Độ Đốt Tiền &amp; Biến Động Hiệu Năng (7 ngày gần nhất vs mốc {velocity.baselineDays} ngày)
+                </h4>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Tốc độ chi tiêu: <strong className="text-slate-800">${velocity.recentDailySpend.toFixed(2)}/ngày</strong> (chuẩn ${velocity.baselineDailySpend.toFixed(2)}/ngày)
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3.5">
+              {/* Spend Growth */}
+              <div className="text-right">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Tăng Trưởng Chi Tiêu</span>
+                <span className={`text-xs font-black ${velocity.spendGrowthRate > 15 ? "text-rose-600" : velocity.spendGrowthRate < -10 ? "text-slate-600" : "text-emerald-600"}`}>
+                  {velocity.spendGrowthRate > 0 ? `+${velocity.spendGrowthRate}%` : `${velocity.spendGrowthRate}%`}
+                </span>
+              </div>
+
+              {/* ACOS Delta */}
+              <div className="text-right">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Biến Động ACOS</span>
+                <span className={`text-xs font-black ${velocity.acosDelta > 3 ? "text-rose-600" : velocity.acosDelta < -2 ? "text-emerald-600" : "text-slate-800"}`}>
+                  {velocity.acosDelta > 0 ? `+${velocity.acosDelta}%` : `${velocity.acosDelta}%`} (7d: {velocity.recentAcos.toFixed(1)}%)
+                </span>
+              </div>
+
+              {/* Status Badge */}
+              <span className={`px-2.5 py-1 rounded-lg text-[11px] font-black uppercase tracking-wide border ${
+                velocity.trendStatus === "ACCELERATING_EFFICIENCY"
+                  ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+                  : velocity.trendStatus === "OVERSPENDING_RISK"
+                  ? "bg-rose-100 text-rose-800 border-rose-200"
+                  : velocity.trendStatus === "COOLING_DOWN"
+                  ? "bg-slate-100 text-slate-700 border-slate-200"
+                  : "bg-indigo-50 text-indigo-700 border-indigo-100"
+              }`}>
+                {velocity.trendStatus === "ACCELERATING_EFFICIENCY" && "🚀 Tăng Trưởng Tốt"}
+                {velocity.trendStatus === "OVERSPENDING_RISK" && "⚠️ Nguy Cơ Vượt Ngân Sách"}
+                {velocity.trendStatus === "COOLING_DOWN" && "❄️ Chi Tiêu Giảm"}
+                {velocity.trendStatus === "STABLE" && "⚖️ Hiệu Năng Ổn Định"}
+              </span>
             </div>
           </div>
         </div>
@@ -1071,6 +1195,56 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
       {/* ========================================================================= */}
       {activeTab === "skus" && (
         <div className="space-y-3">
+          {/* Category Filter Chips */}
+          <div className="flex flex-wrap items-center gap-1.5 bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mr-1">Phân Hạng:</span>
+            <button
+              type="button"
+              onClick={() => setSkuCategoryFilter("ALL")}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                skuCategoryFilter === "ALL" ? "bg-slate-900 text-white shadow-xs" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+              }`}
+            >
+              Tất cả ({skuPerformance.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setSkuCategoryFilter("HERO")}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 ${
+                skuCategoryFilter === "HERO"
+                  ? "bg-emerald-600 text-white shadow-xs"
+                  : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-100"
+              }`}
+            >
+              <span>🏆 Hero SKUs</span>
+              <span className="text-[10px] opacity-80">({skuPerformance.filter((s) => s.skuCategory === "HERO").length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSkuCategoryFilter("BLEEDING")}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 ${
+                skuCategoryFilter === "BLEEDING"
+                  ? "bg-rose-600 text-white shadow-xs"
+                  : "bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-100"
+              }`}
+            >
+              <span>⚠️ Bleeding SKUs</span>
+              <span className="text-[10px] opacity-80">({skuPerformance.filter((s) => s.skuCategory === "BLEEDING").length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSkuCategoryFilter("POTENTIAL")}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 ${
+                skuCategoryFilter === "POTENTIAL"
+                  ? "bg-indigo-600 text-white shadow-xs"
+                  : "bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-100"
+              }`}
+            >
+              <span>🌱 Tiềm Năng</span>
+              <span className="text-[10px] opacity-80">({skuPerformance.filter((s) => s.skuCategory === "POTENTIAL").length})</span>
+            </button>
+          </div>
+
           <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
             <div className="relative flex-1 sm:w-72">
               <MagnifyingGlass size={14} className="absolute left-3 top-2.5 text-slate-400" />
@@ -1097,19 +1271,22 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
                 <tr>
                   <th className="py-3 px-3.5">SKU / Portfolio</th>
-                  <th className="py-3 px-3">Store</th>
+                  <th className="py-3 px-2.5 text-center">Phân Hạng</th>
+                  <th className="py-3 px-2.5">Store</th>
                   <th
                     className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() => handleSort("spend", skuSortField, skuSortDir, setSkuSortField, setSkuSortDir)}
                   >
                     Chi Tiêu ($) {skuSortField === "spend" && (skuSortDir === "asc" ? "↑" : "↓")}
                   </th>
+                  <th className="py-3 px-2 text-right">% Chi Phí</th>
                   <th
                     className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() => handleSort("sales", skuSortField, skuSortDir, setSkuSortField, setSkuSortDir)}
                   >
                     Doanh Số ($) {skuSortField === "sales" && (skuSortDir === "asc" ? "↑" : "↓")}
                   </th>
+                  <th className="py-3 px-2 text-right">% Doanh Số</th>
                   <th
                     className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() => handleSort("orders", skuSortField, skuSortDir, setSkuSortField, setSkuSortDir)}
@@ -1134,9 +1311,27 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                       <Tag size={14} className="text-indigo-600" />
                       <span>{s.sku}</span>
                     </td>
-                    <td className="py-2.5 px-3 text-slate-600">{s.storeName}</td>
+                    <td className="py-2.5 px-2.5 text-center">
+                      <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-black uppercase ${
+                        s.skuCategory === "HERO"
+                          ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                          : s.skuCategory === "BLEEDING"
+                          ? "bg-rose-100 text-rose-800 border border-rose-200"
+                          : s.skuCategory === "POTENTIAL"
+                          ? "bg-indigo-100 text-indigo-800 border border-indigo-200"
+                          : "bg-slate-100 text-slate-600"
+                      }`}>
+                        {s.skuCategory === "HERO" && "🏆 Hero"}
+                        {s.skuCategory === "BLEEDING" && "⚠️ Cắn Tiền"}
+                        {s.skuCategory === "POTENTIAL" && "🌱 Tiềm Năng"}
+                        {s.skuCategory === "NEUTRAL" && "Neutral"}
+                      </span>
+                    </td>
+                    <td className="py-2.5 px-2.5 text-slate-600">{s.storeName}</td>
                     <td className="py-2.5 px-3 text-right font-bold text-slate-900">${s.spend.toFixed(2)}</td>
+                    <td className="py-2.5 px-2 text-right text-slate-500 font-bold">{s.spendShare}%</td>
                     <td className="py-2.5 px-3 text-right font-black text-emerald-600">${s.sales.toFixed(2)}</td>
+                    <td className="py-2.5 px-2 text-right text-emerald-700 font-bold">{s.revenueShare}%</td>
                     <td className="py-2.5 px-3 text-right font-black text-slate-900">{s.orders}</td>
                     <td className="py-2.5 px-3 text-right text-slate-600">{s.clicks}</td>
                     <td className="py-2.5 px-3 text-right text-slate-700">{(s.cvr * 100).toFixed(1)}%</td>
@@ -1492,24 +1687,272 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
       )}
 
       {activeTab === "recommendations" && (
-        <div className="space-y-2">
-          {recommendations.length === 0 ? (
-            <div className="rounded-xl border border-slate-200 bg-white p-6 text-center text-xs font-semibold text-slate-500">
-              Không có đề xuất tối ưu trong phạm vi đang lọc.
-            </div>
-          ) : recommendations.map((recommendation) => (
-            <div key={recommendation.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-xs font-black text-slate-900">{recommendation.keyword}</div>
-                <span className="rounded bg-indigo-50 px-2 py-0.5 text-[10px] font-black text-indigo-700">{recommendation.recType}</span>
+        <div className="space-y-4">
+          {/* Shop Action Center Header & Controls */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-black text-slate-900">
+                    Trung Tâm Hành Động & Đề Xuất Tối Ưu (Shop Action Center)
+                  </h3>
+                  <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-bold text-indigo-700 border border-indigo-100">
+                    {recommendations.length} đề xuất
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-slate-500">
+                  Phân tầng ưu tiên tự động: <strong className="text-rose-600">P0</strong> Cắt lỗ khẩn cấp · <strong className="text-emerald-600">P1</strong> Scale sản phẩm thắng · <strong className="text-sky-600">P2</strong> Thu hoạch từ khóa tiềm năng. Xuất file nạp trực tiếp Amazon Bulk Operations.
+                </p>
               </div>
-              <p className="mt-1 text-xs text-slate-600">{recommendation.reason}</p>
-              <div className="mt-2 text-[11px] font-semibold text-slate-400">
-                {recommendation.storeName} · {recommendation.campaignName || "Chưa gán campaign"}
-                {recommendation.recommendedBid !== undefined ? ` · Bid đề xuất $${recommendation.recommendedBid.toFixed(2)}` : ""}
+
+              {/* Action Buttons */}
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (selectedRecs.size === filteredRecommendations.length && filteredRecommendations.length > 0) {
+                      setSelectedRecs(new Set());
+                    } else {
+                      setSelectedRecs(new Set(filteredRecommendations.map((r) => r.id)));
+                    }
+                  }}
+                  className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 transition cursor-pointer"
+                >
+                  {selectedRecs.size === filteredRecommendations.length && filteredRecommendations.length > 0
+                    ? "Bỏ Chọn Tất Cả"
+                    : `Chọn Tất Cả (${filteredRecommendations.length})`}
+                </button>
+
+                <button
+                  type="button"
+                  disabled={exportingBulksheet || recommendations.length === 0}
+                  onClick={() => handleExportBulksheet()}
+                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-2 text-xs font-black text-white shadow-md shadow-emerald-500/20 hover:from-emerald-700 hover:to-teal-700 disabled:opacity-50 transition cursor-pointer"
+                >
+                  {exportingBulksheet ? (
+                    <>
+                      <ArrowsClockwise size={16} className="animate-spin" />
+                      <span>Đang tạo Bulksheet...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Download size={16} weight="bold" />
+                      <span>
+                        Xuất Bulksheet Amazon (.xlsx)
+                        {selectedRecs.size > 0 ? ` (${selectedRecs.size} mục)` : ` (${filteredRecommendations.length})`}
+                      </span>
+                    </>
+                  )}
+                </button>
               </div>
             </div>
-          ))}
+
+            {/* Filter Chips by Priority */}
+            <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mr-1">
+                Lọc mức ưu tiên:
+              </span>
+              <button
+                type="button"
+                onClick={() => setRecPriorityFilter("ALL")}
+                className={`rounded-lg px-3 py-1 text-xs font-bold transition cursor-pointer ${
+                  recPriorityFilter === "ALL"
+                    ? "bg-slate-900 text-white shadow-xs"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                Tất Cả ({recommendations.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setRecPriorityFilter("P0")}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-bold transition cursor-pointer ${
+                  recPriorityFilter === "P0"
+                    ? "bg-rose-600 text-white shadow-xs"
+                    : "bg-rose-50 text-rose-700 border border-rose-200/60 hover:bg-rose-100"
+                }`}
+              >
+                <span>🚨 P0 - Cắt Lỗ Khẩn Cấp</span>
+                <span className="rounded-full bg-white/20 px-1.5 py-0.2 text-[10px]">
+                  {recommendations.filter((r) => r.priority === "P0").length}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setRecPriorityFilter("P1")}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-bold transition cursor-pointer ${
+                  recPriorityFilter === "P1"
+                    ? "bg-emerald-600 text-white shadow-xs"
+                    : "bg-emerald-50 text-emerald-700 border border-emerald-200/60 hover:bg-emerald-100"
+                }`}
+              >
+                <span>📈 P1 - Scale & Tăng Trưởng</span>
+                <span className="rounded-full bg-white/20 px-1.5 py-0.2 text-[10px]">
+                  {recommendations.filter((r) => r.priority === "P1").length}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setRecPriorityFilter("P2")}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-bold transition cursor-pointer ${
+                  recPriorityFilter === "P2"
+                    ? "bg-sky-600 text-white shadow-xs"
+                    : "bg-sky-50 text-sky-700 border border-sky-200/60 hover:bg-sky-100"
+                }`}
+              >
+                <span>🎯 P2 - Thu Hoạch Từ Khóa</span>
+                <span className="rounded-full bg-white/20 px-1.5 py-0.2 text-[10px]">
+                  {recommendations.filter((r) => r.priority === "P2").length}
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {/* List of Recommendation Cards */}
+          {filteredRecommendations.length === 0 ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center shadow-xs">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-400">
+                <CheckCircle size={28} weight="duotone" />
+              </div>
+              <h4 className="mt-3 text-sm font-bold text-slate-800">Không có đề xuất trong nhóm này</h4>
+              <p className="mt-1 text-xs text-slate-500">
+                Tất cả các từ khóa và chiến dịch trong nhóm này đều đang vận hành trong ngưỡng cho phép.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {filteredRecommendations.map((rec) => {
+                const isSelected = selectedRecs.has(rec.id);
+                const priorityBadge =
+                  rec.priority === "P0" ? (
+                    <span className="inline-flex items-center gap-1 rounded-md bg-rose-100 px-2 py-0.5 text-[10px] font-black text-rose-800 border border-rose-200">
+                      🚨 P0: CẮT LỖ KHẨN CẤP
+                    </span>
+                  ) : rec.priority === "P1" ? (
+                    <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-800 border border-emerald-200">
+                      📈 P1: SCALE CHIẾN DỊCH
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 rounded-md bg-sky-100 px-2 py-0.5 text-[10px] font-black text-sky-800 border border-sky-200">
+                      🎯 P2: THU HOẠCH TỪ KHÓA
+                    </span>
+                  );
+
+                const typeBadge =
+                  rec.recType === "NEGATIVE_KEYWORD" ? (
+                    <span className="rounded bg-rose-50 px-2 py-0.5 text-[10px] font-extrabold text-rose-700 border border-rose-100">
+                      PHỦ ĐỊNH CHÍNH XÁC (NEGATIVE EXACT)
+                    </span>
+                  ) : rec.recType === "BID_DECREASE" ? (
+                    <span className="rounded bg-amber-50 px-2 py-0.5 text-[10px] font-extrabold text-amber-700 border border-amber-100">
+                      HẠ GIÁ THẦU (BID REDUCTION)
+                    </span>
+                  ) : rec.recType === "BID_INCREASE" ? (
+                    <span className="rounded bg-emerald-50 px-2 py-0.5 text-[10px] font-extrabold text-emerald-700 border border-emerald-100">
+                      TĂNG GIÁ THẦU (BID INCREASE)
+                    </span>
+                  ) : (
+                    <span className="rounded bg-indigo-50 px-2 py-0.5 text-[10px] font-extrabold text-indigo-700 border border-indigo-100">
+                      THU HOẠCH TỪ KHÓA (HARVEST)
+                    </span>
+                  );
+
+                return (
+                  <div
+                    key={rec.id}
+                    className={`rounded-2xl border transition p-4 shadow-2xs ${
+                      isSelected
+                        ? "border-indigo-400 bg-indigo-50/20 shadow-xs"
+                        : "border-slate-200 bg-white hover:border-slate-300"
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      {/* Checkbox */}
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => {
+                          setSelectedRecs((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(rec.id)) next.delete(rec.id);
+                            else next.add(rec.id);
+                            return next;
+                          });
+                        }}
+                        className="mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                      />
+
+                      <div className="flex-1 min-w-0">
+                        {/* Badges & Meta */}
+                        <div className="flex flex-wrap items-center gap-2">
+                          {priorityBadge}
+                          {typeBadge}
+                          <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">
+                            {rec.storeName}
+                          </span>
+                          {rec.campaignName && (
+                            <span className="truncate max-w-xs text-[11px] font-medium text-slate-400">
+                              {rec.campaignName}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Keyword & Copy */}
+                        <div className="mt-2 flex items-center gap-2">
+                          <span className="font-mono text-xs font-black text-slate-900 bg-slate-50 px-2 py-1 rounded border border-slate-200/80">
+                            {rec.keyword}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => copyKeyword(rec.keyword)}
+                            className="p-1 text-slate-400 hover:text-indigo-600 transition cursor-pointer"
+                            title="Sao chép từ khóa"
+                          >
+                            <Copy size={14} />
+                          </button>
+                        </div>
+
+                        {/* Reason / Logic */}
+                        <div className="mt-2.5 rounded-xl bg-slate-50/80 border border-slate-100 p-3 text-xs text-slate-700">
+                          <p className="leading-relaxed">{rec.reason}</p>
+                        </div>
+
+                        {/* Bid comparison & Action footer */}
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100">
+                          <div className="flex items-center gap-3 text-xs font-semibold text-slate-600">
+                            {rec.recommendedBid !== undefined && (
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-slate-400">Giá thầu đề xuất:</span>
+                                <span className="font-black text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded">
+                                  ${rec.recommendedBid.toFixed(2)}
+                                </span>
+                              </div>
+                            )}
+                            {rec.estimatedSavings !== undefined && rec.estimatedSavings > 0 && (
+                              <div className="flex items-center gap-1 text-emerald-700">
+                                <span>Tiết kiệm dự kiến:</span>
+                                <strong className="font-black">${rec.estimatedSavings.toFixed(2)}/tháng</strong>
+                              </div>
+                            )}
+                          </div>
+
+                          <button
+                            type="button"
+                            disabled={exportingBulksheet}
+                            onClick={() => handleExportBulksheet([rec])}
+                            className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-indigo-600 bg-slate-100 hover:bg-indigo-50 px-3 py-1.5 rounded-lg transition cursor-pointer"
+                          >
+                            <Download size={13} weight="bold" />
+                            <span>Xuất riêng mục này sang Bulksheet</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
