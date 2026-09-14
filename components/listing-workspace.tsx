@@ -11,10 +11,13 @@ import {
   LightningIcon,
   WarningCircleIcon,
   XIcon,
+  ChartLineUpIcon,
 } from "@phosphor-icons/react";
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { TrelloBoardView } from "@/components/trello-board-view";
 import { SellerSpriteKeywordMiner } from "@/components/sellersprite-keyword-miner";
+import { PpcDashboard } from "@/components/ppc/ppc-dashboard";
 import { AccountMenu } from "@/components/account-menu";
 import type { RequestActor } from "@/lib/auth";
 import type { BrandProfile } from "@/lib/types";
@@ -39,7 +42,7 @@ export function ListingWorkspace({
 }: ListingWorkspaceProps) {
   const [brands, setBrands] = useState<BrandProfile[]>(initialBrands);
   const [sidebarTab, setSidebarTab] = useState<"trello" | "mockups">("trello");
-  const [viewMode, setViewMode] = useState<"trello" | "sellersprite">("trello");
+  const [viewMode, setViewMode] = useState<"trello" | "sellersprite" | "ppc">("trello");
   const [showTrelloConfigModal, setShowTrelloConfigModal] = useState(false);
   const [showGuidesModal, setShowGuidesModal] = useState(false);
   const [guides, setGuides] = useState<SystemGuideItem[]>([]);
@@ -167,6 +170,37 @@ export function ListingWorkspace({
               />
               <span>Đào Keyword</span>
             </button>
+
+            {/* Amazon PPC Analytics */}
+            <button
+              type="button"
+              onClick={() => {
+                setViewMode("ppc");
+              }}
+              className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
+                viewMode === "ppc"
+                  ? "bg-indigo-600 text-white shadow-xs"
+                  : "text-slate-700 hover:bg-slate-100 hover:text-slate-900"
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <ChartLineUpIcon
+                  size={17}
+                  weight={viewMode === "ppc" ? "fill" : "duotone"}
+                  className={viewMode === "ppc" ? "text-white" : "text-emerald-600"}
+                />
+                <span>PPC Analytics</span>
+              </div>
+              <span
+                className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded border transition-colors ${
+                  viewMode === "ppc"
+                    ? "bg-white/20 text-white border-white/30"
+                    : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                }`}
+              >
+                MỚI
+              </span>
+            </button>
           </nav>
         </div>
 
@@ -205,6 +239,8 @@ export function ListingWorkspace({
             <h2 className="text-xs font-black uppercase tracking-wider text-slate-800">
               {viewMode === "sellersprite"
                 ? "SellerSprite Keyword Mining"
+                : viewMode === "ppc"
+                ? "Amazon PPC Analytics & Optimization"
                 : sidebarTab === "mockups"
                 ? "Auto Mockup Generator"
                 : "Bảng Trello Kanban & Listing"}
@@ -277,6 +313,10 @@ export function ListingWorkspace({
                   notify("Đã đào xong từ khóa SellerSprite.");
                 }}
               />
+            </div>
+          ) : viewMode === "ppc" ? (
+            <div className="h-full w-full overflow-y-auto p-6 bg-slate-50 thin-scrollbar">
+              <PpcDashboard isEmbedded={true} />
             </div>
           ) : (
             <div className="h-full w-full overflow-hidden">

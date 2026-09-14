@@ -6,3 +6,7 @@ data/
 *.tsbuildinfo
 npm-debug.log*
 .DS_Store
+
+# Windows PPC R2 uploader contains embedded bucket credentials.
+/PPC/sync_r2.py
+/PPC/chay_dong_bo_r2.bat

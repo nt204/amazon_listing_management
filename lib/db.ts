@@ -72,7 +72,7 @@ async function ensureSchema() {
     const sql = getDatabase();
     globalForDatabase.listingPostgresSchema = sql<{ name: string }[]>`
         SELECT name FROM schema_migrations
-        WHERE name = '026_mockup_prompt_reference_images.sql'
+        WHERE name = '027_ppc_analytics.sql'
         LIMIT 1
       `
       .then((rows) => {
@@ -2697,4 +2697,3 @@ export async function deleteCustomMockupTemplate(
   `;
   return result.count > 0;
 }
-

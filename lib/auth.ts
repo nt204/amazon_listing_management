@@ -87,10 +87,10 @@ function credentials(): TeamCredential[] {
   return parsed.map((credential) => {
     if (
       !credential.team_id?.trim() || !credential.user_id?.trim() ||
-      !credential.token || credential.token.length < 24 ||
+      !credential.token || credential.token.length < 12 ||
       !["editor", "reviewer", "admin"].includes(credential.role)
     ) {
-      throw new Error("Each team credential needs team_id, user_id, role, and a token of at least 24 characters.");
+      throw new Error("Each team credential needs team_id, user_id, role, and a token of at least 12 characters.");
     }
     return credential;
   });

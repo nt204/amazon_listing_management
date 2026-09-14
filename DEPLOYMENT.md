@@ -57,6 +57,18 @@ TRELLO_TOKEN=your_trello_token
 GEMINI_API_KEY=your_gemini_api_key
 OPENAI_API_KEY=your_openai_api_key
 
+# Đồng bộ báo cáo PPC từ Cloudflare R2 (server-side only)
+R2_ACCOUNT_ID=your_cloudflare_account_id
+R2_BUCKET_NAME=amazon-listing-production
+R2_ACCESS_KEY_ID=your_r2_access_key_id
+R2_SECRET_ACCESS_KEY=your_r2_secret_access_key
+PPC_R2_PREFIX=ppc-reports
+
+# Tùy chọn: thông báo kết quả sync_r2.py qua Telegram
+PPC_TELEGRAM_BOT_TOKEN=
+PPC_TELEGRAM_CHAT_ID=
+PPC_TELEGRAM_TOPIC_ID=
+
 # Bật bảo mật đăng nhập phân quyền cho Team (Tùy chọn khuyến nghị)
 LISTING_DESK_AUTH_MODE=required
 LISTING_DESK_DEFAULT_TEAM_ID=pod-team-1
@@ -69,6 +81,10 @@ LISTING_DESK_TEAMS_JSON=[{"team_id":"pod-team-1","user_id":"admin-user","role":"
 npm run db:migrate
 npm run auth:bootstrap
 ```
+
+Các file PPC trên R2 cần nằm dưới `ppc-reports/input/<YYYYMMDD>/<TEN_STORE>/...xlsx`
+hoặc `ppc-reports/output/<YYYYMMDD>/<TEN_STORE>/...xlsx`. Tên store được lấy từ thư mục
+`<TEN_STORE>`; không đặt file trực tiếp ngay dưới `input` hoặc `output`.
 
 ---
 
@@ -99,8 +115,11 @@ server {
     listen 80 default_server;
     server_name _;
 
+    # Cho phép tải file Excel báo cáo PPC và mockup dung lượng lớn
+    client_max_body_size 50M;
+
     location / {
-        proxy_pass http://localhost:3000;
+        proxy_pass http://localhost:2411;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
