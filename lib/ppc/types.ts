@@ -1,4 +1,7 @@
-export type MatchType = "Exact" | "Phrase" | "Broad" | "Auto" | "Targeting";
+export type MatchType = "Exact" | "Phrase" | "Broad" | "Auto" | "Targeting" | "Unknown";
+export type PpcAdType = "SP" | "SB" | "SD" | "UNKNOWN";
+export type PpcReportGranularity = "DAILY" | "RANGE";
+export type PpcPerformanceGrain = "CAMPAIGN" | "AD_GROUP" | "TARGET" | "PRODUCT" | "PLACEMENT";
 export type AlertSeverity = "CRITICAL" | "WARNING" | "INFO";
 export type AlertType = "BLEEDING_KEYWORD" | "HIGH_ACOS" | "OUT_OF_BUDGET" | "LOW_CVR";
 export type RecommendationType = "NEGATIVE_KEYWORD" | "BID_DECREASE" | "BID_INCREASE" | "HARVEST_KEYWORD";
@@ -17,6 +20,10 @@ export interface PpcSearchTermRow {
   storeId?: string;
   storeName?: string;
   reportDate: string; // YYYY-MM-DD
+  reportStartDate?: string; // coverage start, YYYY-MM-DD
+  reportEndDate?: string; // coverage end, YYYY-MM-DD
+  reportGranularity?: PpcReportGranularity;
+  adType?: PpcAdType;
   portfolioName: string; // SKU or Portfolio
   campaignName: string;
   adGroupName: string;
@@ -39,6 +46,45 @@ export interface PpcSearchTermRow {
   keywordId?: string;
 }
 
+export interface PpcPerformanceRow {
+  id?: string;
+  storeId?: string;
+  storeName?: string;
+  snapshotDate: string;
+  reportStartDate: string;
+  reportEndDate: string;
+  reportGranularity: PpcReportGranularity;
+  adType: PpcAdType;
+  grain: PpcPerformanceGrain;
+  entityId: string;
+  campaignId: string;
+  campaignName: string;
+  adGroupId: string;
+  adGroupName: string;
+  targetId: string;
+  targetExpression: string;
+  matchType: MatchType;
+  portfolioName: string;
+  sku: string;
+  asin: string;
+  state: string;
+  campaignState: string;
+  adGroupState: string;
+  targetingType: string;
+  biddingStrategy: string;
+  placement: string;
+  dailyBudget: number;
+  bid: number;
+  placementAdjustment: number;
+  isNegative: boolean;
+  impressions: number;
+  clicks: number;
+  spend: number;
+  sales: number;
+  orders: number;
+  units: number;
+}
+
 export interface PpcAlert {
   id: string;
   storeId: string;
@@ -59,6 +105,7 @@ export interface PpcRecommendation {
   id: string;
   storeId: string;
   storeName: string;
+  adType?: PpcAdType;
   recType: RecommendationType;
   targetType: "EXACT" | "PHRASE" | "PRODUCT";
   keyword: string;
@@ -88,6 +135,8 @@ export interface PpcSummaryMetrics {
   avgCpc: number;
   overallCtr: number;
   overallCvr: number;
+  cpa: number;
+  aov: number;
   wastedSpend: number; // spend on clicks with 0 orders
   activeAlertsCount: number;
   pendingRecsCount: number;
@@ -100,19 +149,31 @@ export interface PpcSkuPerformance {
   sales: number;
   orders: number;
   clicks: number;
+  impressions: number;
+  ctr: number;
   acos: number;
   roas: number;
   cvr: number;
-  statusBadge: "EXCELLENT" | "GOOD" | "WARNING" | "CRITICAL";
-  skuCategory: "HERO" | "BLEEDING" | "POTENTIAL" | "NEUTRAL";
+  cpc: number;
+  cpa: number;
+  aov: number;
+  campaignsCount: number;
+  statusBadge: "EXCELLENT" | "GOOD" | "WARNING" | "CRITICAL" | "ZERO_CLICKS" | "INACTIVE";
+  skuCategory: "HERO" | "BLEEDING" | "POTENTIAL" | "NEUTRAL" | "ZERO_CLICKS";
   revenueShare: number; // % of total store sales
   spendShare: number;   // % of total store spend
 }
 
 export interface PpcCampaignPerformance {
+  campaignId?: string;
   campaignName: string;
   storeName: string;
+  adType?: PpcAdType;
   targetingType: "Auto" | "Manual";
+  state?: string;
+  dailyBudget?: number;
+  budgetUtilization?: number;
+  biddingStrategy?: string;
   spend: number;
   sales: number;
   orders: number;
@@ -123,7 +184,119 @@ export interface PpcCampaignPerformance {
   cvr: number;
   acos: number;
   roas: number;
+  cpa: number;
+  aov: number;
   statusBadge: "EXCELLENT" | "GOOD" | "WARNING" | "CRITICAL";
+}
+
+export interface PpcAdGroupPerformance {
+  campaignName: string;
+  adGroupName: string;
+  storeName: string;
+  spend: number;
+  sales: number;
+  orders: number;
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  cpc: number;
+  cvr: number;
+  acos: number;
+  roas: number;
+  cpa: number;
+  aov: number;
+}
+
+export interface PpcTargetPerformance extends PpcAdGroupPerformance {
+  targetId?: string;
+  targetKeyword: string;
+  matchType: MatchType;
+  adType?: PpcAdType;
+  state?: string;
+  currentBid?: number;
+}
+
+export interface PpcDailyTrendPoint {
+  date: string;
+  spend: number;
+  sales: number;
+  orders: number;
+  clicks: number;
+  impressions: number;
+  acos: number;
+  roas: number;
+  cvr: number;
+  ctr: number;
+  cpc: number;
+}
+
+export interface PpcMetricComparison {
+  current: number;
+  previous: number;
+  changePct?: number;
+  changePts?: number;
+}
+
+export interface PpcExecutiveOverview {
+  spend: PpcMetricComparison;
+  sales: PpcMetricComparison;
+  orders: PpcMetricComparison;
+  impressions: PpcMetricComparison;
+  clicks: PpcMetricComparison;
+  acos: PpcMetricComparison;
+  roas: PpcMetricComparison;
+  cvr: PpcMetricComparison;
+  ctr: PpcMetricComparison;
+  cpc: PpcMetricComparison;
+  cpa: PpcMetricComparison;
+  aov: PpcMetricComparison;
+}
+
+export interface PpcSearchTermSummary {
+  totalTerms: number;
+  termsWithOrders: number;
+  termsWithoutOrders: number;
+  candidateBleederTerms: number;
+  observedSpend: number;
+  observedSales: number;
+  observedOrders: number;
+  observedClicks: number;
+  observedAcos: number;
+  observedRoas: number;
+  wastedSpend: number;
+}
+
+export interface PpcAdTypeBreakdown {
+  adType: PpcAdType;
+  spend: number;
+  sales: number;
+  orders: number;
+  clicks: number;
+  impressions: number;
+  acos: number;
+  roas: number;
+}
+
+export interface PpcDataHealth {
+  performanceSource: "BULK" | "NONE";
+  searchTermSource: "SEARCH_TERM" | "NONE";
+  performanceRows: number;
+  searchTermRows: number;
+  campaignRows: number;
+  targetRows: number;
+  productRows: number;
+  placementRows: number;
+  adTypes: PpcAdType[];
+  warnings: string[];
+  strLoaded?: boolean;
+  bulkLoaded?: boolean;
+  dateRangeStart?: string;
+  dateRangeEnd?: string;
+  totalRecords?: number;
+  granularity?: PpcReportGranularity | "N/A";
+  spendCoveragePct?: number;
+  clicksCoveragePct?: number;
+  lastSyncTime?: string | null;
 }
 
 export interface PpcMatchTypeBreakdown {
@@ -159,6 +332,9 @@ export interface PpcAnalyticsData {
   velocity?: PpcVelocityComparison;
   skuPerformance: PpcSkuPerformance[];
   campaigns: PpcCampaignPerformance[];
+  targets?: PpcTargetPerformance[];
+  adTypeBreakdown?: PpcAdTypeBreakdown[];
+  dataHealth?: PpcDataHealth;
   matchTypeBreakdown: PpcMatchTypeBreakdown[];
   searchTerms: PpcSearchTermRow[];
   alerts: PpcAlert[];

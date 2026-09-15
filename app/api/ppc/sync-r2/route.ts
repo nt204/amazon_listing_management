@@ -13,7 +13,7 @@ export async function POST(request: Request) {
     const failureSuffix = result.failed ? ` Có ${result.failed} file lỗi.` : "";
     return Response.json({
       success: true,
-      message: `Đã quét ${result.filesFound} file: ${result.filesProcessed} file được xử lý, ${result.skipped} file không đổi; ${result.totalNew} dòng mới, ${result.totalUpdated} dòng cập nhật.${failureSuffix}`,
+      message: `Đã quét ${result.filesFound} file: xử lý ${result.filesProcessed} báo cáo PPC (${result.bulkFiles} Bulk, ${result.searchTermFiles} Search Term), bỏ qua ${result.ignored} file không nhận diện; ghi ${result.totalNew} dòng mới.${failureSuffix}`,
       result,
     });
   } catch (error) {

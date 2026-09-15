@@ -20,80 +20,60 @@ def export_bulksheet(recommendations, output_path=None):
 
     wb = openpyxl.load_workbook(TEMPLATE_PATH)
     ws = wb["Sponsored Products Campaigns"]
+    headers = {str(cell.value).strip(): cell.column for cell in ws[1] if cell.value}
 
     for rec in recommendations:
         rec_type = rec.get("recType", "")
         target_type = rec.get("targetType", "EXACT")
         rec_bid = rec.get("recommendedBid")
         
-        entity = "Keyword"
+        is_product_target = target_type == "PRODUCT"
+        entity = "Product Targeting" if is_product_target else "Keyword"
         operation = "Update"
         match_type = "Exact"
         state = "enabled"
         bid_val = ""
 
         if rec_type == "NEGATIVE_KEYWORD":
-            entity = "Negative Keyword"
+            entity = "Negative Product Targeting" if is_product_target else "Negative Keyword"
             operation = "Create"
-            match_type = "Negative Exact"
+            match_type = "negativeExact"
             state = "enabled"
             bid_val = ""
         elif rec_type in ("BID_DECREASE", "BID_INCREASE"):
-            entity = "Keyword"
+            entity = "Product Targeting" if is_product_target else "Keyword"
             operation = "Update"
-            match_type = "Exact"
+            match_type = "exact"
             state = "enabled"
             bid_val = round(float(rec_bid), 2) if rec_bid is not None else ""
         elif rec_type == "HARVEST_KEYWORD":
-            entity = "Keyword"
+            entity = "Product Targeting" if is_product_target else "Keyword"
             operation = "Create"
-            match_type = "Exact"
+            match_type = "exact"
             state = "enabled"
             bid_val = round(float(rec_bid), 2) if rec_bid is not None else 1.00
 
-        # Official Amazon template columns (32 columns):
-        # 1: Product, 2: Entity, 3: Operation, 4: Campaign ID, 5: Ad Group ID, 6: Portfolio ID,
-        # 7: Ad ID, 8: Keyword ID, 9: Product Targeting ID, 10: Campaign Name, 11: Ad Group Name,
-        # 12: Start Date, 13: End Date, 14: Targeting Type, 15: State, 16: Daily Budget, 17: SKU,
-        # 18: Ad Group Default Bid, 19: Bid, 20: Keyword Text, 21: Native Language Keyword,
-        # 22: Native Language Locale, 23: Match Type, 24: Bidding Strategy, 25: Placement,
-        # 26: Percentage, 27: Product Targeting Expression, 28: Audience ID,
-        # 29: Shopper Cohort Percentage, 30: Shopper Cohort Type, 31: Sites, 32: Off-Amazon ad serving
-        row = [
-            "Sponsored Products",                       # 1: Product
-            entity,                                     # 2: Entity
-            operation,                                  # 3: Operation
-            str(rec.get("campaignId") or ""),           # 4: Campaign ID
-            str(rec.get("adGroupId") or ""),            # 5: Ad Group ID
-            "",                                         # 6: Portfolio ID
-            "",                                         # 7: Ad ID
-            str(rec.get("keywordId") or "") if entity == "Keyword" else "", # 8: Keyword ID
-            "",                                         # 9: Product Targeting ID
-            rec.get("campaignName") or "",              # 10: Campaign Name
-            rec.get("adGroupName") or "",               # 11: Ad Group Name
-            "",                                         # 12: Start Date
-            "",                                         # 13: End Date
-            "",                                         # 14: Targeting Type
-            state,                                      # 15: State
-            "",                                         # 16: Daily Budget
-            "",                                         # 17: SKU
-            "",                                         # 18: Ad Group Default Bid
-            bid_val,                                    # 19: Bid
-            rec.get("keyword", ""),                     # 20: Keyword Text
-            "",                                         # 21: Native Language Keyword
-            "",                                         # 22: Native Language Locale
-            match_type,                                 # 23: Match Type
-            "",                                         # 24: Bidding Strategy
-            "",                                         # 25: Placement
-            "",                                         # 26: Percentage
-            "",                                         # 27: Product Targeting Expression
-            "",                                         # 28: Audience ID
-            "",                                         # 29: Shopper Cohort Percentage
-            "",                                         # 30: Shopper Cohort Type
-            "",                                         # 31: Sites
-            ""                                          # 32: Off-Amazon ad serving
-        ]
-        ws.append(row)
+        values = {
+            "Product": "Sponsored Products",
+            "Entity": entity,
+            "Operation": operation,
+            "Campaign ID": str(rec.get("campaignId") or ""),
+            "Ad Group ID": str(rec.get("adGroupId") or ""),
+            "Keyword ID": str(rec.get("keywordId") or "") if not is_product_target and operation == "Update" else "",
+            "Product Targeting ID": str(rec.get("keywordId") or "") if is_product_target and operation == "Update" else "",
+            "Campaign Name": rec.get("campaignName") or "",
+            "Ad Group Name": rec.get("adGroupName") or "",
+            "State": state,
+            "Bid": bid_val,
+            "Keyword Text": "" if is_product_target else rec.get("keyword", ""),
+            "Match Type": "" if is_product_target else match_type,
+            "Product Targeting Expression": rec.get("keyword", "") if is_product_target else "",
+        }
+        row_number = ws.max_row + 1
+        for header, value in values.items():
+            column = headers.get(header)
+            if column:
+                ws.cell(row=row_number, column=column, value=value)
 
     if output_path:
         wb.save(output_path)

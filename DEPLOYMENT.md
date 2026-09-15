@@ -82,9 +82,12 @@ npm run db:migrate
 npm run auth:bootstrap
 ```
 
-Các file PPC trên R2 cần nằm dưới `ppc-reports/input/<YYYYMMDD>/<TEN_STORE>/...xlsx`
-hoặc `ppc-reports/output/<YYYYMMDD>/<TEN_STORE>/...xlsx`. Tên store được lấy từ thư mục
-`<TEN_STORE>`; không đặt file trực tiếp ngay dưới `input` hoặc `output`.
+Các file PPC trên R2 cần là báo cáo **Search Term** `.csv` hoặc `.xlsx`, nằm dưới
+`ppc-reports/input/<YYYYMMDD>/<TEN_STORE>/...` hoặc
+`ppc-reports/output/<YYYYMMDD>/<TEN_STORE>/...`. Tên store được lấy từ thư mục
+`<TEN_STORE>`; không đặt file trực tiếp ngay dưới `input` hoặc `output`. File Bulk vẫn có thể
+được lưu trên R2 nhưng không được nhập vào bảng Search Term, tránh gán keyword thành truy vấn
+khách hàng và làm sai chỉ số.
 
 ---
 

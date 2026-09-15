@@ -3,31 +3,44 @@ import "server-only";
 import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 import type { DataScope } from "@/lib/db";
 import {
-  calculatePpcSummary,
-  calculatePpcVelocity,
+  adTypeBreakdownFromFacts,
+  adGroupPerformanceFromFacts,
+  calculatePerformanceSummary,
+  calculateSearchTermFallbackSummary,
+  calculatePpcSearchTermSummary,
+  campaignPerformanceFromFacts,
   generatePpcAlerts,
   generatePpcRecommendations,
-  groupPpcByCampaign,
+  generateTargetBidRecommendations,
   groupPpcByMatchType,
-  groupPpcBySku,
+  performanceDataHealth,
+  skuPerformanceFromFacts,
+  targetPerformanceFromFacts,
 } from "./analytics";
 import { generateMockSearchTerms, MOCK_STORES } from "./mock-data-generator";
-import { parseSearchTermWorkbook } from "./parser";
 import {
-  hasSuccessfulPpcSync,
+  inferPpcReportCoverage,
+  parseBulkWorkbook,
+  parseLargeBulkWorkbook,
+  parseSearchTermCsv,
+  parseSearchTermWorkbook,
+} from "./parser";
+import {
+  listPpcPerformance,
   listPpcSearchTerms,
   listPpcStores,
   listPpcSyncLogs,
   recordPpcSyncLog,
   replacePpcDataWithMock,
   upsertPpcSearchTerms,
+  upsertPpcPerformance,
 } from "./repository";
-import type { PpcAlert, PpcRecommendation, PpcSearchTermRow, PpcSkuPerformance, PpcSummaryMetrics } from "./types";
+import type { PpcAdType, PpcAlert, PpcRecommendation, PpcSearchTermRow } from "./types";
 
 const MAX_R2_FILE_BYTES = 150_000_000;
 const DEFAULT_TARGET_ACOS = 30;
 
-export class PpcInputError extends Error {}
+export class PpcInputError extends Error { }
 
 function cleanStoreName(value: string): string {
   const name = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
@@ -49,7 +62,7 @@ function resolveStoreName(objectKey: string, knownStoreNames: string[]): string 
   if (areaIndex >= 0) {
     const afterArea = segments.slice(areaIndex + 1);
     const candidate = /^\d{8}$/.test(afterArea[0] || "") ? afterArea[1] : afterArea[0];
-    if (candidate && !candidate.toLowerCase().endsWith(".xlsx")) {
+    if (candidate && !/\.(xlsx|csv)$/i.test(candidate)) {
       return cleanStoreName(candidate);
     }
   }
@@ -60,6 +73,31 @@ function r2Version(input: { ETag?: string; Size?: number; LastModified?: Date })
   return [input.ETag || "", input.Size || 0, input.LastModified?.toISOString() || ""].join(":");
 }
 
+function reportAdType(reference: string): PpcAdType {
+  if (/(?:^|[\s_\-/])SP(?:[\s_\-.]|$)/i.test(reference) || /sponsored products/i.test(reference)) return "SP";
+  if (/(?:^|[\s_\-/])SB(?:[\s_\-.]|$)/i.test(reference) || /sponsored brands/i.test(reference)) return "SB";
+  if (/(?:^|[\s_\-/])SD(?:[\s_\-.]|$)/i.test(reference) || /sponsored display/i.test(reference)) return "SD";
+  return "UNKNOWN";
+}
+
+async function parseBulkFile(
+  buffer: Buffer,
+  storeName: string,
+  reference: string,
+  coverageOptions: { days?: number; endDate?: string } = {},
+) {
+  const options = {
+    ...inferPpcReportCoverage(reference, coverageOptions),
+    adType: reportAdType(reference),
+  };
+  try {
+    return await parseLargeBulkWorkbook(buffer, storeName, options);
+  } catch (error) {
+    console.warn("[Bulk Parser] Streaming parser error, falling back to ExcelJS:", error);
+    return parseBulkWorkbook(buffer, storeName, options);
+  }
+}
+
 export async function getPpcAnalyticsData(
   scope: DataScope,
   filters: { storeName?: string; sku?: string; days?: number } = {},
@@ -67,45 +105,76 @@ export async function getPpcAnalyticsData(
   const storeName = filters.storeName || "ALL";
   const sku = filters.sku || "ALL";
   const days = filters.days || 30;
-  let [stores, storeRows, syncLogs] = await Promise.all([
+  const [stores, storeRows, performanceRows, syncLogs] = await Promise.all([
     listPpcStores(scope),
     listPpcSearchTerms(scope, { storeName, sku: "ALL", days }),
+    listPpcPerformance(scope, { storeName, sku: "ALL", days }),
     listPpcSyncLogs(scope),
   ]);
 
-  if (stores.length === 0 && storeRows.length === 0) {
-    await resetPpcToMockData(scope);
-    [stores, storeRows, syncLogs] = await Promise.all([
-      listPpcStores(scope),
-      listPpcSearchTerms(scope, { storeName, sku: "ALL", days }),
-      listPpcSyncLogs(scope),
-    ]);
-  }
-
-  const rows = sku === "ALL"
-    ? storeRows
-    : storeRows.filter((row) => row.portfolioName.toLowerCase() === sku.toLowerCase());
+  const rows = storeRows;
 
   const currentStore = stores.find((store) => store.name.toLowerCase() === storeName.toLowerCase());
   const targetAcos = currentStore?.targetAcos ?? DEFAULT_TARGET_ACOS;
-  const summary: PpcSummaryMetrics = calculatePpcSummary(rows, targetAcos);
-  const skuPerformance: PpcSkuPerformance[] = groupPpcBySku(rows, targetAcos);
-  const campaignPerformance = groupPpcByCampaign(rows, targetAcos);
-  const matchTypeBreakdown = groupPpcByMatchType(rows);
   const alerts: PpcAlert[] = generatePpcAlerts(rows, targetAcos);
-  const recommendations: PpcRecommendation[] = generatePpcRecommendations(rows, targetAcos);
-  const availableSkus = Array.from(new Set(storeRows.map((row) => row.portfolioName))).filter(Boolean).sort();
-  const recent7dRows = days !== 7
-    ? await listPpcSearchTerms(scope, { storeName, sku: "ALL", days: 7 })
-    : storeRows;
-  const velocity = calculatePpcVelocity(recent7dRows, storeRows, 7, days);
-
+  const normalizedTarget = (value: string) => value.trim().toLowerCase().replace(/\s+/g, " ");
+  const targetState = performanceRows.filter((row) => row.grain === "TARGET");
+  const targetKey = (adType: PpcAdType | undefined, value: string) => `${adType || "UNKNOWN"}\u0000${normalizedTarget(value)}`;
+  const existingTargets = new Set(targetState.filter((row) => !row.isNegative).map((row) => targetKey(row.adType, row.targetExpression)));
+  const existingNegatives = new Set(targetState.filter((row) => row.isNegative).map((row) => targetKey(row.adType, row.targetExpression)));
+  const queryRecommendations = generatePpcRecommendations(rows, targetAcos).filter((recommendation) => {
+    if (!recommendation.adType || recommendation.adType === "UNKNOWN") return false;
+    const hasActiveDestination = targetState.some((target) =>
+      target.adType === recommendation.adType &&
+      (!recommendation.campaignId || target.campaignId === recommendation.campaignId) &&
+      (!recommendation.adGroupId || target.adGroupId === recommendation.adGroupId) &&
+      !/paused|archived/i.test(target.state || target.campaignState || target.adGroupState),
+    );
+    if (!hasActiveDestination) return false;
+    const key = targetKey(recommendation.adType, recommendation.keyword);
+    if (recommendation.recType === "HARVEST_KEYWORD") return !existingTargets.has(key);
+    if (recommendation.recType === "NEGATIVE_KEYWORD") return !existingNegatives.has(key);
+    return true;
+  });
+  const recommendations: PpcRecommendation[] = [
+    ...generateTargetBidRecommendations(performanceRows, targetAcos),
+    ...queryRecommendations,
+  ];
+  const searchTermSummary = calculatePpcSearchTermSummary(rows);
+  const campaignRows = performanceRows.filter((row) => row.grain === "CAMPAIGN");
+  const summary = campaignRows.length > 0
+    ? calculatePerformanceSummary(campaignRows, {
+        alerts: alerts.length,
+        recommendations: recommendations.length,
+        wastedSpend: searchTermSummary.wastedSpend,
+      })
+    : calculateSearchTermFallbackSummary(rows, {
+        alerts: alerts.length,
+        recommendations: recommendations.length,
+        wastedSpend: searchTermSummary.wastedSpend,
+      });
+  const allSkuPerformance = skuPerformanceFromFacts(performanceRows, targetAcos);
+  const skuPerformance = sku === "ALL"
+    ? allSkuPerformance
+    : allSkuPerformance.filter((row) => row.sku.toLowerCase() === sku.toLowerCase());
+  const campaignPerformance = campaignPerformanceFromFacts(performanceRows, targetAcos);
+  const adGroups = adGroupPerformanceFromFacts(performanceRows);
+  const targets = targetPerformanceFromFacts(performanceRows);
+  const targetRows = performanceRows.filter((row) => row.grain === "TARGET" && !row.isNegative);
+  const matchTypeBreakdown = targetRows.length ? groupPpcByMatchType(targetRows) : [];
+  const adTypeBreakdown = adTypeBreakdownFromFacts(performanceRows);
+  const dataHealth = performanceDataHealth(performanceRows, rows);
+  const availableSkus = Array.from(new Set(performanceRows.map((row) => row.sku).filter(Boolean))).sort();
   return {
     stores,
     summary,
-    velocity,
     skuPerformance,
     campaignPerformance,
+    adGroups,
+    targets,
+    adTypeBreakdown,
+    dataHealth,
+    searchTermSummary,
     matchTypeBreakdown,
     alerts,
     recommendations,
@@ -123,34 +192,82 @@ export async function ingestPpcExcelFile(
   fileBuffer: Buffer,
   fileName: string,
   storeName: string,
+  coverageOptions: { days?: number; endDate?: string } = {},
 ) {
   const normalizedStore = cleanStoreName(storeName);
-  let parsedRows: PpcSearchTermRow[];
+  const adType = reportAdType(fileName);
+  const isCsv = fileName.toLowerCase().endsWith(".csv");
+  const prefersBulk = /bulk|campaign/i.test(fileName);
+  const prefersSearchTerm = /search|term|str/i.test(fileName);
+
   try {
-    parsedRows = await parseSearchTermWorkbook(fileBuffer, normalizedStore);
+    // 1. If CSV or filename clearly indicates search term, try Search Term first
+    if (isCsv || prefersSearchTerm) {
+      try {
+        const parsedRows = isCsv
+          ? parseSearchTermCsv(fileBuffer, normalizedStore, adType)
+          : await parseSearchTermWorkbook(fileBuffer, normalizedStore, adType);
+        if (parsedRows.length) {
+          const effectiveStore = parsedRows[0]?.storeName || normalizedStore;
+          const saved = await upsertPpcSearchTerms(scope, effectiveStore, parsedRows, { replaceExisting: true });
+          await recordPpcSyncLog(scope, {
+            source: "MANUAL_UPLOAD",
+            fileName,
+            status: "SUCCESS",
+            count: saved.inserted + saved.updated,
+            message: `Search Term ${adType}: ${saved.inserted} dòng mới, ${saved.updated} dòng cập nhật, ${saved.deduplicated} dòng trùng.`,
+          });
+          return { reportType: "SEARCH_TERM", totalParsed: parsedRows.length, newInserted: saved.inserted, updated: saved.updated, deduplicated: saved.deduplicated, fileName, storeName: effectiveStore };
+        }
+      } catch (err) {
+        if (isCsv) throw err;
+      }
+    }
+
+    // 2. Try Bulk
+    if (!isCsv) {
+      try {
+        const rows = await parseBulkFile(fileBuffer, normalizedStore, fileName, coverageOptions);
+        if (rows.length) {
+          const saved = await upsertPpcPerformance(scope, normalizedStore, rows, { replaceExisting: true });
+          await recordPpcSyncLog(scope, {
+            source: "MANUAL_UPLOAD",
+            fileName,
+            status: "SUCCESS",
+            count: saved.inserted + saved.updated,
+            message: `Bulk ${adType}: ${saved.inserted} dòng mới, ${saved.updated} dòng cập nhật, ${saved.deduplicated} dòng trùng.`,
+          });
+          return { reportType: "BULK", totalParsed: rows.length, newInserted: saved.inserted, updated: saved.updated, deduplicated: saved.deduplicated, fileName, storeName: normalizedStore };
+        }
+      } catch (err) {
+        if (prefersBulk) throw err;
+      }
+    }
+
+    // 3. Fallback to Search Term for .xlsx if not already tried
+    if (!isCsv && !prefersSearchTerm) {
+      const parsedRows = await parseSearchTermWorkbook(fileBuffer, normalizedStore, adType);
+      if (parsedRows.length) {
+        const effectiveStore = parsedRows[0]?.storeName || normalizedStore;
+        const saved = await upsertPpcSearchTerms(scope, effectiveStore, parsedRows, { replaceExisting: true });
+        await recordPpcSyncLog(scope, {
+          source: "MANUAL_UPLOAD",
+          fileName,
+          status: "SUCCESS",
+          count: saved.inserted + saved.updated,
+          message: `Search Term ${adType}: ${saved.inserted} dòng mới, ${saved.updated} dòng cập nhật, ${saved.deduplicated} dòng trùng.`,
+        });
+        return { reportType: "SEARCH_TERM", totalParsed: parsedRows.length, newInserted: saved.inserted, updated: saved.updated, deduplicated: saved.deduplicated, fileName, storeName: effectiveStore };
+      }
+    }
+
+    throw new PpcInputError("File không chứa dữ liệu hợp lệ của Bulk Operations hoặc Search Term Report.");
   } catch (error) {
-    const detail = error instanceof Error ? error.message : "";
-    const safeDetail = /^(Sheet|Ngày báo cáo)/.test(detail) ? ` ${detail}` : "";
-    throw new PpcInputError(`File Excel bị hỏng hoặc không đúng cấu trúc .xlsx.${safeDetail}`);
+    console.error("[PPC Ingest Error]", error);
+    if (error instanceof PpcInputError) throw error;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new PpcInputError(`Lỗi xử lý file PPC: ${detail}`);
   }
-  if (!parsedRows.length) {
-    throw new PpcInputError("Không tìm thấy dữ liệu Search Term hợp lệ trong file Excel.");
-  }
-  const saved = await upsertPpcSearchTerms(scope, normalizedStore, parsedRows);
-  await recordPpcSyncLog(scope, {
-    source: "MANUAL_UPLOAD",
-    fileName,
-    status: "SUCCESS",
-    count: saved.inserted + saved.updated,
-    message: `${saved.inserted} dòng mới, ${saved.updated} dòng cập nhật, ${saved.deduplicated} dòng trùng trong file.`,
-  });
-  return {
-    totalParsed: parsedRows.length,
-    newInserted: saved.inserted,
-    updated: saved.updated,
-    deduplicated: saved.deduplicated,
-    fileName,
-  };
 }
 
 export async function resetPpcToMockData(scope: DataScope) {
@@ -192,63 +309,115 @@ export async function syncPpcReportsFromR2(scope: DataScope) {
     continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
   } while (continuationToken);
 
-  const excelFiles = objects
-    .filter((object) => object.Key?.toLowerCase().endsWith(".xlsx"))
-    .sort((first, second) => (first.LastModified?.getTime() || 0) - (second.LastModified?.getTime() || 0));
+  const reportFiles = objects.filter((object) => /\.(xlsx|csv)$/i.test(object.Key || ""));
+  const recognizedFiles = reportFiles.filter((object) => {
+    const key = object.Key || "";
+    return /search[\s_-]*term/i.test(key) || /(?:^|\/|[\s_-])bulk/i.test(key);
+  });
+  const searchTermFiles = recognizedFiles.filter((object) => /search[\s_-]*term/i.test(object.Key || ""));
+  const bulkFiles = recognizedFiles.filter((object) => /(?:^|\/|[\s_-])bulk/i.test(object.Key || "") && !/search[\s_-]*term/i.test(object.Key || ""));
+  const ignored = reportFiles.length - recognizedFiles.length;
   const knownStores = (await listPpcStores(scope)).map((store) => store.name);
+  const grouped = new Map<string, typeof recognizedFiles>();
+  for (const object of recognizedFiles) {
+    const key = object.Key || "";
+    const storeName = resolveStoreName(key, knownStores);
+    if (!storeName) continue;
+    const existing = grouped.get(storeName) || [];
+    existing.push(object);
+    grouped.set(storeName, existing);
+  }
+
   let totalParsed = 0;
   let totalNew = 0;
   let totalUpdated = 0;
-  let skipped = 0;
+  let filesProcessed = 0;
   const failures: Array<{ fileName: string; error: string }> = [];
 
-  for (const object of excelFiles) {
-    const fileName = object.Key || "";
-    const version = r2Version(object);
-    if (await hasSuccessfulPpcSync(scope, "CLOUDFLARE_R2", fileName, version)) {
-      skipped += 1;
-      continue;
-    }
-    try {
-      if ((object.Size || 0) > MAX_R2_FILE_BYTES) {
-        throw new Error("File vượt quá giới hạn 25 MB.");
+  for (const [storeName, storeFiles] of grouped.entries()) {
+    const latestBatch = storeFiles.reduce((latest, object) => {
+      const dates = (object.Key || "").split("/").filter((part) => /^\d{8}$/.test(part));
+      const batch = dates.at(-1) || "00000000";
+      return batch > latest ? batch : latest;
+    }, "00000000");
+    let candidates = storeFiles.filter((object) => (object.Key || "").split("/").includes(latestBatch));
+    const inputCandidates = candidates.filter((object) => (object.Key || "").toLowerCase().includes("/input/"));
+    if (inputCandidates.length) candidates = inputCandidates;
+
+    const selectedFiles = candidates;
+    const parsedSearchTerms: Array<{ object: (typeof selectedFiles)[number]; rows: PpcSearchTermRow[] }> = [];
+    const parsedPerformance: Array<{ object: (typeof selectedFiles)[number]; rows: Awaited<ReturnType<typeof parseBulkWorkbook>> }> = [];
+
+    for (const object of selectedFiles) {
+      const fileName = object.Key || "";
+      try {
+        if ((object.Size || 0) > MAX_R2_FILE_BYTES) {
+          throw new Error(`File vượt quá giới hạn ${Math.round(MAX_R2_FILE_BYTES / 1_000_000)} MB.`);
+        }
+        const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: fileName }));
+        if (!response.Body) throw new Error("R2 trả về file rỗng.");
+        const buffer = Buffer.from(await response.Body.transformToByteArray());
+        const adType = reportAdType(fileName);
+        if (/search[\s_-]*term/i.test(fileName)) {
+          const rows = fileName.toLowerCase().endsWith(".csv")
+            ? parseSearchTermCsv(buffer, storeName, adType)
+            : await parseSearchTermWorkbook(buffer, storeName, adType);
+          if (!rows.length) throw new Error("Không có dữ liệu Search Term hợp lệ.");
+          parsedSearchTerms.push({ object, rows });
+        } else {
+          if (fileName.toLowerCase().endsWith(".csv")) throw new Error("Bulk Operations cần định dạng .xlsx.");
+          const rows = await parseBulkFile(buffer, storeName, fileName);
+          if (!rows.length) throw new Error("Không có entity Bulk hợp lệ.");
+          parsedPerformance.push({ object, rows });
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Lỗi không xác định";
+        failures.push({ fileName, error: message });
+        await recordPpcSyncLog(scope, {
+          source: "CLOUDFLARE_R2",
+          fileName,
+          sourceVersion: r2Version(object),
+          status: "FAILED",
+          message: `Giữ nguyên snapshot cũ của ${storeName}: ${message}`,
+        });
       }
-      const storeName = resolveStoreName(fileName, knownStores);
-      if (!storeName) throw new Error("Không xác định được store từ đường dẫn R2.");
-      const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: fileName }));
-      if (!response.Body) throw new Error("R2 trả về file rỗng.");
-      const buffer = Buffer.from(await response.Body.transformToByteArray());
-      const parsedRows = await parseSearchTermWorkbook(buffer, storeName);
-      if (!parsedRows.length) throw new Error("Không có sheet Search Term hợp lệ.");
-      const saved = await upsertPpcSearchTerms(scope, storeName, parsedRows);
-      totalParsed += parsedRows.length;
+    }
+
+    if (parsedSearchTerms.length) {
+      const mergedRows = parsedSearchTerms.flatMap((item) => item.rows);
+      const saved = await upsertPpcSearchTerms(scope, storeName, mergedRows, { replaceExisting: true });
+      totalParsed += mergedRows.length;
       totalNew += saved.inserted;
       totalUpdated += saved.updated;
+    }
+    if (parsedPerformance.length) {
+      const mergedRows = parsedPerformance.flatMap((item) => item.rows);
+      const saved = await upsertPpcPerformance(scope, storeName, mergedRows, { replaceExisting: true });
+      totalParsed += mergedRows.length;
+      totalNew += saved.inserted;
+      totalUpdated += saved.updated;
+    }
+    const processed = [...parsedSearchTerms, ...parsedPerformance];
+    filesProcessed += processed.length;
+    for (const item of processed) {
       await recordPpcSyncLog(scope, {
         source: "CLOUDFLARE_R2",
-        fileName,
-        sourceVersion: version,
+        fileName: item.object.Key || "",
+        sourceVersion: r2Version(item.object),
         status: "SUCCESS",
-        count: saved.inserted + saved.updated,
-        message: `${saved.inserted} mới, ${saved.updated} cập nhật, ${saved.deduplicated} trùng trong file.`,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Lỗi không xác định";
-      failures.push({ fileName, error: message });
-      await recordPpcSyncLog(scope, {
-        source: "CLOUDFLARE_R2",
-        fileName,
-        sourceVersion: version,
-        status: "FAILED",
-        message,
+        count: item.rows.length,
+        message: `Snapshot PPC ${latestBatch} của ${storeName}; ${item.rows.length} dòng nguồn.`,
       });
     }
   }
 
   return {
-    filesFound: excelFiles.length,
-    filesProcessed: excelFiles.length - skipped - failures.length,
-    skipped,
+    filesFound: reportFiles.length,
+    searchTermFiles: searchTermFiles.length,
+    bulkFiles: bulkFiles.length,
+    filesProcessed,
+    ignored,
+    skipped: ignored,
     failed: failures.length,
     failures: failures.slice(0, 20),
     totalParsed,

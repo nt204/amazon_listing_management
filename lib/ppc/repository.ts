@@ -1,7 +1,15 @@
 import "server-only";
 
 import { getDatabaseClient, type DataScope } from "@/lib/db";
-import type { MatchType, PpcSearchTermRow, PpcStore } from "./types";
+import type {
+  MatchType,
+  PpcAdType,
+  PpcPerformanceGrain,
+  PpcPerformanceRow,
+  PpcReportGranularity,
+  PpcSearchTermRow,
+  PpcStore,
+} from "./types";
 
 export type PpcSyncSource = "CLOUDFLARE_R2" | "MANUAL_UPLOAD" | "MOCK_DATA";
 export type PpcSyncStatus = "SUCCESS" | "FAILED" | "SKIPPED";
@@ -30,6 +38,10 @@ interface SearchTermDbRow {
   store_id: string;
   store_name: string;
   report_date: string | Date;
+  report_start_date: string | Date;
+  report_end_date: string | Date;
+  report_granularity: PpcReportGranularity;
+  ad_type: PpcAdType;
   portfolio_name: string;
   campaign_name: string;
   ad_group_name: string;
@@ -50,6 +62,45 @@ interface SearchTermDbRow {
   campaign_id?: string;
   ad_group_id?: string;
   keyword_id?: string;
+}
+
+interface PerformanceDbRow {
+  id: string;
+  store_id: string;
+  store_name: string;
+  snapshot_date: string | Date;
+  report_start_date: string | Date;
+  report_end_date: string | Date;
+  report_granularity: PpcReportGranularity;
+  ad_type: PpcAdType;
+  grain: PpcPerformanceGrain;
+  entity_id: string;
+  campaign_id: string;
+  campaign_name: string;
+  ad_group_id: string;
+  ad_group_name: string;
+  target_id: string;
+  target_expression: string;
+  match_type: MatchType;
+  portfolio_name: string;
+  sku: string;
+  asin: string;
+  state: string;
+  campaign_state: string;
+  ad_group_state: string;
+  targeting_type: string;
+  bidding_strategy: string;
+  placement: string;
+  daily_budget: string | number;
+  bid: string | number;
+  placement_adjustment: string | number;
+  is_negative: boolean;
+  impressions: number;
+  clicks: number;
+  spend: string | number;
+  sales: string | number;
+  orders: number;
+  units: number;
 }
 
 interface SyncLogRow {
@@ -94,18 +145,22 @@ function mapSearchTerm(row: SearchTermDbRow): PpcSearchTermRow {
     storeId: row.store_id,
     storeName: row.store_name,
     reportDate: asDateString(row.report_date),
+    reportStartDate: asDateString(row.report_start_date),
+    reportEndDate: asDateString(row.report_end_date),
+    reportGranularity: row.report_granularity,
+    adType: row.ad_type,
     portfolioName: row.portfolio_name,
     campaignName: row.campaign_name,
     adGroupName: row.ad_group_name,
     targetKeyword: row.target_keyword,
     customerSearchTerm: row.customer_search_term,
     matchType: row.match_type,
-    impressions: row.impressions,
-    clicks: row.clicks,
+    impressions: asNumber(row.impressions),
+    clicks: asNumber(row.clicks),
     spend: asNumber(row.spend),
     sales: asNumber(row.sales),
-    orders: row.orders,
-    units: row.units,
+    orders: asNumber(row.orders),
+    units: asNumber(row.units),
     cpc: asNumber(row.cpc),
     ctr: asNumber(row.ctr),
     cvr: asNumber(row.cvr),
@@ -114,6 +169,47 @@ function mapSearchTerm(row: SearchTermDbRow): PpcSearchTermRow {
     campaignId: row.campaign_id || undefined,
     adGroupId: row.ad_group_id || undefined,
     keywordId: row.keyword_id || undefined,
+  };
+}
+
+function mapPerformance(row: PerformanceDbRow): PpcPerformanceRow {
+  return {
+    id: row.id,
+    storeId: row.store_id,
+    storeName: row.store_name,
+    snapshotDate: asDateString(row.snapshot_date),
+    reportStartDate: asDateString(row.report_start_date),
+    reportEndDate: asDateString(row.report_end_date),
+    reportGranularity: row.report_granularity,
+    adType: row.ad_type,
+    grain: row.grain,
+    entityId: row.entity_id,
+    campaignId: row.campaign_id,
+    campaignName: row.campaign_name,
+    adGroupId: row.ad_group_id,
+    adGroupName: row.ad_group_name,
+    targetId: row.target_id,
+    targetExpression: row.target_expression,
+    matchType: row.match_type,
+    portfolioName: row.portfolio_name,
+    sku: row.sku,
+    asin: row.asin,
+    state: row.state,
+    campaignState: row.campaign_state,
+    adGroupState: row.ad_group_state,
+    targetingType: row.targeting_type,
+    biddingStrategy: row.bidding_strategy,
+    placement: row.placement,
+    dailyBudget: asNumber(row.daily_budget),
+    bid: asNumber(row.bid),
+    placementAdjustment: asNumber(row.placement_adjustment),
+    isNegative: row.is_negative,
+    impressions: asNumber(row.impressions),
+    clicks: asNumber(row.clicks),
+    spend: asNumber(row.spend),
+    sales: asNumber(row.sales),
+    orders: asNumber(row.orders),
+    units: asNumber(row.units),
   };
 }
 
@@ -136,6 +232,7 @@ export async function listPpcSearchTerms(
   const rows = await sql<SearchTermDbRow[]>`
     SELECT
       t.id, t.store_id, s.name AS store_name, t.report_date,
+      t.report_start_date, t.report_end_date, t.report_granularity, t.ad_type,
       t.portfolio_name, t.campaign_name, t.ad_group_name,
       t.target_keyword, t.customer_search_term, t.match_type,
       t.impressions, t.clicks, t.spend, t.sales, t.orders, t.units,
@@ -146,10 +243,59 @@ export async function listPpcSearchTerms(
     WHERE s.team_id = ${scope.teamId}
       AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
       AND (${filters.sku === "ALL"} OR lower(t.portfolio_name) = lower(${filters.sku}))
-      AND t.report_date >= CURRENT_DATE - ${filters.days - 1}::integer
+      AND (
+        (
+          t.report_granularity = 'DAILY'
+          AND t.report_date >= CURRENT_DATE - ${filters.days}::integer
+          AND t.report_date < CURRENT_DATE
+        )
+        OR
+        (
+          t.report_granularity = 'RANGE'
+          AND abs((t.report_end_date - t.report_start_date + 1) - ${filters.days}::integer) <= 3
+          AND t.report_end_date <= CURRENT_DATE
+        )
+      )
     ORDER BY t.report_date DESC, t.created_at DESC, t.id
   `;
   return rows.map(mapSearchTerm);
+}
+
+export async function listPpcPerformance(
+  scope: DataScope,
+  filters: { storeName: string; sku: string; days: number },
+): Promise<PpcPerformanceRow[]> {
+  const sql = await getDatabaseClient();
+  const rows = await sql<PerformanceDbRow[]>`
+    WITH latest_snapshots AS (
+      SELECT p2.store_id, p2.ad_type, MAX(p2.snapshot_date) AS max_snapshot
+      FROM ppc_performance_facts p2
+      JOIN ppc_stores s2 ON s2.id = p2.store_id
+      WHERE s2.team_id = ${scope.teamId}
+        AND (${filters.storeName === "ALL"} OR lower(s2.name) = lower(${filters.storeName}))
+        AND abs((p2.report_end_date - p2.report_start_date + 1) - ${filters.days}::integer) <= 3
+      GROUP BY p2.store_id, p2.ad_type
+    )
+    SELECT
+      p.id, p.store_id, s.name AS store_name, p.snapshot_date,
+      p.report_start_date, p.report_end_date, p.report_granularity,
+      p.ad_type, p.grain, p.entity_id, p.campaign_id, p.campaign_name,
+      p.ad_group_id, p.ad_group_name, p.target_id, p.target_expression,
+      p.match_type, p.portfolio_name, p.sku, p.asin, p.state,
+      p.campaign_state, p.ad_group_state, p.targeting_type,
+      p.bidding_strategy, p.placement, p.daily_budget, p.bid,
+      p.placement_adjustment, p.is_negative, p.impressions, p.clicks, p.spend,
+      p.sales, p.orders, p.units
+    FROM ppc_performance_facts p
+    JOIN ppc_stores s ON s.id = p.store_id
+    JOIN latest_snapshots ls ON ls.store_id = p.store_id AND ls.ad_type = p.ad_type AND ls.max_snapshot = p.snapshot_date
+    WHERE s.team_id = ${scope.teamId}
+      AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
+      AND (${filters.sku === "ALL"} OR lower(p.sku) = lower(${filters.sku}))
+      AND abs((p.report_end_date - p.report_start_date + 1) - ${filters.days}::integer) <= 3
+    ORDER BY p.ad_type, p.grain, p.spend DESC, p.id
+  `;
+  return rows.map(mapPerformance);
 }
 
 export async function listPpcSyncLogs(scope: DataScope, limit = 10): Promise<PpcSyncLog[]> {
@@ -216,22 +362,28 @@ export async function recordPpcSyncLog(
   `;
 }
 
+function safeSqlString(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  return String(value).replace(/\0/g, "").trim();
+}
+
 function rowIdentity(row: PpcSearchTermRow): string {
   return [
-    row.reportDate,
-    row.portfolioName,
-    row.campaignName,
-    row.adGroupName,
-    row.targetKeyword,
-    row.customerSearchTerm,
-    row.matchType,
-  ].join("\u0000");
+    row.adType || "UNKNOWN", row.reportStartDate || row.reportDate, row.reportEndDate || row.reportDate,
+    safeSqlString(row.portfolioName),
+    safeSqlString(row.campaignName),
+    safeSqlString(row.adGroupName),
+    safeSqlString(row.targetKeyword),
+    safeSqlString(row.customerSearchTerm),
+    safeSqlString(row.matchType),
+  ].join(":::");
 }
 
 export async function upsertPpcSearchTerms(
   scope: DataScope,
   storeName: string,
   rows: PpcSearchTermRow[],
+  options: { replaceExisting?: boolean } = {},
 ): Promise<{ inserted: number; updated: number; deduplicated: number }> {
   const sql = await getDatabaseClient();
   const uniqueRows = Array.from(new Map(rows.map((row) => [rowIdentity(row), row])).values());
@@ -244,19 +396,35 @@ export async function upsertPpcSearchTerms(
       RETURNING id, name, marketplace, target_acos, daily_budget, status
     `;
     const storeId = storeRows[0].id;
+    if (options.replaceExisting) {
+      const scopes = Array.from(new Set(uniqueRows.map((row) => [
+        row.adType || "UNKNOWN", row.reportStartDate || row.reportDate, row.reportEndDate || row.reportDate,
+      ].join(":::"))));
+      for (const item of scopes) {
+        const [adType, startDate, endDate] = item.split(":::");
+        await transaction`
+          DELETE FROM ppc_search_terms
+          WHERE store_id = ${storeId} AND ad_type = ${adType}
+            AND report_start_date = ${startDate} AND report_end_date = ${endDate}
+        `;
+      }
+    }
     let inserted = 0;
     let updated = 0;
-
     for (let start = 0; start < uniqueRows.length; start += 500) {
       const chunk = uniqueRows.slice(start, start + 500).map((row) => ({
         store_id: storeId,
-        report_date: row.reportDate,
-        portfolio_name: row.portfolioName,
-        campaign_name: row.campaignName,
-        ad_group_name: row.adGroupName,
-        target_keyword: row.targetKeyword,
-        customer_search_term: row.customerSearchTerm,
-        match_type: row.matchType,
+        report_date: safeSqlString(row.reportDate),
+        report_start_date: safeSqlString(row.reportStartDate || row.reportDate),
+        report_end_date: safeSqlString(row.reportEndDate || row.reportDate),
+        report_granularity: safeSqlString(row.reportGranularity || "DAILY"),
+        ad_type: safeSqlString(row.adType || "UNKNOWN"),
+        portfolio_name: safeSqlString(row.portfolioName),
+        campaign_name: safeSqlString(row.campaignName),
+        ad_group_name: safeSqlString(row.adGroupName),
+        target_keyword: safeSqlString(row.targetKeyword),
+        customer_search_term: safeSqlString(row.customerSearchTerm),
+        match_type: safeSqlString(row.matchType),
         impressions: row.impressions,
         clicks: row.clicks,
         spend: row.spend,
@@ -267,14 +435,24 @@ export async function upsertPpcSearchTerms(
         ctr: row.ctr,
         cvr: row.cvr,
         acos: row.acos,
-        roas: row.roas,
       }));
       const saved = await transaction<{ inserted: boolean }[]>`
         INSERT INTO ppc_search_terms ${transaction(chunk)}
         ON CONFLICT (
-          store_id, report_date, portfolio_name, campaign_name, ad_group_name,
-          target_keyword, customer_search_term, match_type
-        ) DO UPDATE SET
+          store_id,
+          report_start_date,
+          report_end_date,
+          ad_type,
+          portfolio_name,
+          campaign_name,
+          ad_group_name,
+          target_keyword,
+          customer_search_term,
+          match_type
+        )
+        DO UPDATE SET
+          report_date = EXCLUDED.report_date,
+          report_granularity = EXCLUDED.report_granularity,
           impressions = EXCLUDED.impressions,
           clicks = EXCLUDED.clicks,
           spend = EXCLUDED.spend,
@@ -285,14 +463,137 @@ export async function upsertPpcSearchTerms(
           ctr = EXCLUDED.ctr,
           cvr = EXCLUDED.cvr,
           acos = EXCLUDED.acos,
-          roas = EXCLUDED.roas,
+          updated_at = NOW()
+        RETURNING (xmax = 0) AS inserted
+      `;
+      for (const row of saved) {
+        if (row.inserted) inserted += 1;
+        else updated += 1;
+      }
+    }
+
+    return { inserted, updated, deduplicated: rows.length - uniqueRows.length };
+  });
+}
+
+function performanceIdentity(row: PpcPerformanceRow): string {
+  return [
+    safeSqlString(row.entityId),
+    safeSqlString(row.sku),
+    safeSqlString(row.placement),
+  ].join(":::");
+}
+
+export async function upsertPpcPerformance(
+  scope: DataScope,
+  storeName: string,
+  rows: PpcPerformanceRow[],
+  options: { replaceExisting?: boolean } = {},
+): Promise<{ inserted: number; updated: number; deduplicated: number }> {
+  const sql = await getDatabaseClient();
+  const uniqueRows = Array.from(new Map(rows.map((row) => [
+    [row.snapshotDate, row.reportStartDate, row.reportEndDate, row.adType, row.grain, performanceIdentity(row)].join(":::"),
+    row,
+  ])).values());
+  return sql.begin(async (transaction) => {
+    const storeRows = await transaction<StoreRow[]>`
+      INSERT INTO ppc_stores (team_id, name)
+      VALUES (${scope.teamId}, ${storeName})
+      ON CONFLICT (team_id, name) DO UPDATE SET updated_at = NOW()
+      RETURNING id, name, marketplace, target_acos, daily_budget, status
+    `;
+    const storeId = storeRows[0].id;
+    if (options.replaceExisting) {
+      const scopes = Array.from(new Set(uniqueRows.map((row) => [
+        row.snapshotDate, row.reportStartDate, row.reportEndDate, row.adType,
+      ].join(":::"))));
+      for (const item of scopes) {
+        const [snapshotDate, startDate, endDate, adType] = item.split(":::");
+        await transaction`
+          DELETE FROM ppc_performance_facts
+          WHERE store_id = ${storeId} AND snapshot_date = ${snapshotDate}
+            AND report_start_date = ${startDate} AND report_end_date = ${endDate}
+            AND ad_type = ${adType}
+        `;
+      }
+    }
+    let inserted = 0;
+    let updated = 0;
+    for (let start = 0; start < uniqueRows.length; start += 500) {
+      const chunk = uniqueRows.slice(start, start + 500).map((row) => ({
+        store_id: storeId,
+        snapshot_date: safeSqlString(row.snapshotDate),
+        report_start_date: safeSqlString(row.reportStartDate),
+        report_end_date: safeSqlString(row.reportEndDate),
+        report_granularity: safeSqlString(row.reportGranularity),
+        ad_type: safeSqlString(row.adType),
+        grain: safeSqlString(row.grain),
+        identity_key: performanceIdentity(row),
+        entity_id: safeSqlString(row.entityId),
+        campaign_id: safeSqlString(row.campaignId),
+        campaign_name: safeSqlString(row.campaignName),
+        ad_group_id: safeSqlString(row.adGroupId),
+        ad_group_name: safeSqlString(row.adGroupName),
+        target_id: safeSqlString(row.targetId),
+        target_expression: safeSqlString(row.targetExpression),
+        match_type: safeSqlString(row.matchType),
+        portfolio_name: safeSqlString(row.portfolioName),
+        sku: safeSqlString(row.sku),
+        asin: safeSqlString(row.asin),
+        state: safeSqlString(row.state),
+        campaign_state: safeSqlString(row.campaignState),
+        ad_group_state: safeSqlString(row.adGroupState),
+        targeting_type: safeSqlString(row.targetingType),
+        bidding_strategy: safeSqlString(row.biddingStrategy),
+        placement: safeSqlString(row.placement),
+        daily_budget: row.dailyBudget,
+        bid: row.bid,
+        placement_adjustment: row.placementAdjustment,
+        is_negative: row.isNegative,
+        impressions: row.impressions,
+        clicks: row.clicks,
+        spend: row.spend,
+        sales: row.sales,
+        orders: row.orders,
+        units: row.units,
+      }));
+      const saved = await transaction<{ inserted: boolean }[]>`
+        INSERT INTO ppc_performance_facts ${transaction(chunk)}
+        ON CONFLICT (store_id, snapshot_date, report_start_date, report_end_date, ad_type, grain, identity_key)
+        DO UPDATE SET
+          entity_id = EXCLUDED.entity_id,
+          campaign_id = EXCLUDED.campaign_id,
+          campaign_name = EXCLUDED.campaign_name,
+          ad_group_id = EXCLUDED.ad_group_id,
+          ad_group_name = EXCLUDED.ad_group_name,
+          target_id = EXCLUDED.target_id,
+          target_expression = EXCLUDED.target_expression,
+          match_type = EXCLUDED.match_type,
+          portfolio_name = EXCLUDED.portfolio_name,
+          sku = EXCLUDED.sku,
+          asin = EXCLUDED.asin,
+          state = EXCLUDED.state,
+          campaign_state = EXCLUDED.campaign_state,
+          ad_group_state = EXCLUDED.ad_group_state,
+          targeting_type = EXCLUDED.targeting_type,
+          bidding_strategy = EXCLUDED.bidding_strategy,
+          placement = EXCLUDED.placement,
+          daily_budget = EXCLUDED.daily_budget,
+          bid = EXCLUDED.bid,
+          placement_adjustment = EXCLUDED.placement_adjustment,
+          is_negative = EXCLUDED.is_negative,
+          impressions = EXCLUDED.impressions,
+          clicks = EXCLUDED.clicks,
+          spend = EXCLUDED.spend,
+          sales = EXCLUDED.sales,
+          orders = EXCLUDED.orders,
+          units = EXCLUDED.units,
           updated_at = NOW()
         RETURNING (xmax = 0) AS inserted
       `;
       inserted += saved.filter((row) => row.inserted).length;
       updated += saved.filter((row) => !row.inserted).length;
     }
-
     return { inserted, updated, deduplicated: rows.length - uniqueRows.length };
   });
 }

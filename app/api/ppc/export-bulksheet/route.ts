@@ -1,4 +1,4 @@
-import { authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
+import { ApiError, authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
 import { exportBulksheetUpdateExcel } from "@/lib/ppc/service";
 import type { PpcRecommendation } from "@/lib/ppc/types";
 
@@ -16,6 +16,16 @@ export async function POST(request: Request) {
 
     if (recommendations.length === 0) {
       return Response.json({ error: "Không có đề xuất nào được chọn để xuất file." }, { status: 400 });
+    }
+    if (recommendations.some((recommendation) => recommendation.adType !== "SP")) {
+      throw new ApiError("Exporter hiện chỉ hỗ trợ action Sponsored Products đã được Bulk SP xác minh.", 400);
+    }
+    const incomplete = recommendations.find((recommendation) =>
+      !recommendation.campaignId || !recommendation.adGroupId ||
+      ((recommendation.recType === "BID_DECREASE" || recommendation.recType === "BID_INCREASE") && !recommendation.keywordId),
+    );
+    if (incomplete) {
+      throw new ApiError(`Đề xuất "${incomplete.keyword}" thiếu Amazon ID để thực thi an toàn.`, 400);
     }
 
     const buffer = await exportBulksheetUpdateExcel(recommendations);
