@@ -18,6 +18,7 @@ import {
   ChartPieSlice,
   ListDashes,
 } from "@phosphor-icons/react";
+import { PpcPagination } from "./ppc-pagination";
 import {
   ResponsiveContainer,
   BarChart,
@@ -116,7 +117,17 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   const [termSortField, setTermSortField] = useState<SortField>("spend");
   const [termSortDir, setTermSortDir] = useState<SortDirection>("desc");
   const [termPage, setTermPage] = useState(1);
-  const [termPageSize, setTermPageSize] = useState(15);
+  const [termPageSize, setTermPageSize] = useState(25);
+  const [campaignPage, setCampaignPage] = useState(1);
+  const [campaignPageSize, setCampaignPageSize] = useState(25);
+  const [adGroupPage, setAdGroupPage] = useState(1);
+  const [adGroupPageSize, setAdGroupPageSize] = useState(25);
+  const [targetPage, setTargetPage] = useState(1);
+  const [targetPageSize, setTargetPageSize] = useState(25);
+  const [skuPage, setSkuPage] = useState(1);
+  const [skuPageSize, setSkuPageSize] = useState(25);
+  const [recPage, setRecPage] = useState(1);
+  const [recPageSize, setRecPageSize] = useState(20);
   const [selectedTerms, setSelectedTerms] = useState<Set<string>>(new Set());
 
   // SKU category filter
@@ -191,6 +202,11 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
       setSelectedTerms(new Set());
       setSelectedRecs(new Set());
       setTermPage(1);
+      setCampaignPage(1);
+      setAdGroupPage(1);
+      setTargetPage(1);
+      setSkuPage(1);
+      setRecPage(1);
     } catch (err) {
       console.error(err);
       notify(err instanceof Error ? err.message : "Lỗi khi tải dữ liệu từ máy chủ", "error");
@@ -310,6 +326,13 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
     return list;
   }, [campaignPerformance, campaignQuery, campaignSortField, campaignSortDir]);
 
+  // Paginated Campaigns
+  const totalCampaignPages = Math.max(1, Math.ceil(filteredSortedCampaigns.length / campaignPageSize));
+  const paginatedCampaigns = useMemo(() => {
+    const start = (campaignPage - 1) * campaignPageSize;
+    return filteredSortedCampaigns.slice(start, start + campaignPageSize);
+  }, [filteredSortedCampaigns, campaignPage, campaignPageSize]);
+
   // Filtered & Sorted Ad Groups (Level 3 in hierarchy)
   const filteredSortedAdGroups = useMemo(() => {
     let list = [...adGroupPerformance];
@@ -329,6 +352,13 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
     });
     return list;
   }, [adGroupPerformance, selectedCampaignForDrilldown, adGroupQuery, adGroupSortField, adGroupSortDir]);
+
+  // Paginated Ad Groups
+  const totalAdGroupPages = Math.max(1, Math.ceil(filteredSortedAdGroups.length / adGroupPageSize));
+  const paginatedAdGroups = useMemo(() => {
+    const start = (adGroupPage - 1) * adGroupPageSize;
+    return filteredSortedAdGroups.slice(start, start + adGroupPageSize);
+  }, [filteredSortedAdGroups, adGroupPage, adGroupPageSize]);
 
   // Filtered & Sorted Targets / Keywords (Level 4 in hierarchy)
   const filteredSortedTargets = useMemo(() => {
@@ -356,25 +386,51 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
     return list;
   }, [targetPerformance, selectedCampaignForDrilldown, selectedAdGroupForDrilldown, targetQuery, targetSortField, targetSortDir]);
 
-  // Child Search Terms Lookup for each Target Keyword
+  // Paginated Targets
+  const totalTargetPages = Math.max(1, Math.ceil(filteredSortedTargets.length / targetPageSize));
+  const paginatedTargets = useMemo(() => {
+    const start = (targetPage - 1) * targetPageSize;
+    return filteredSortedTargets.slice(start, start + targetPageSize);
+  }, [filteredSortedTargets, targetPage, targetPageSize]);
+
+  // Pre-indexed Search Terms Map for O(1) group lookup by Campaign and Ad Group
+  const searchTermsByAdGroup = useMemo(() => {
+    const norm = (s: string) => (s || "").trim().toLowerCase();
+    const map = new Map<string, PpcSearchTermRow[]>();
+    for (const term of searchTerms) {
+      const key = `${norm(term.campaignName)}|||${norm(term.adGroupName)}`;
+      const group = map.get(key);
+      if (!group) {
+        map.set(key, [term]);
+      } else {
+        group.push(term);
+      }
+    }
+    return map;
+  }, [searchTerms]);
+
+  // Fast Child Search Terms Lookup for each Target Keyword
   const getChildSearchTerms = useCallback((target: PpcTargetPerformance) => {
     const norm = (s: string) => (s || "").trim().toLowerCase();
     const targetKwNorm = norm(target.targetKeyword);
     const campNorm = norm(target.campaignName);
     const agNorm = norm(target.adGroupName);
 
-    return searchTerms.filter((term) => {
+    const candidates = campNorm && agNorm
+      ? (searchTermsByAdGroup.get(`${campNorm}|||${agNorm}`) || [])
+      : searchTerms;
+
+    return candidates.filter((term) => {
       const termKw = norm(term.targetKeyword);
-      const termCamp = norm(term.campaignName);
-      const termAg = norm(term.adGroupName);
-
       const matchKw = termKw === targetKwNorm || (targetKwNorm && term.customerSearchTerm.toLowerCase().includes(targetKwNorm));
-      const matchCamp = !campNorm || termCamp === campNorm;
-      const matchAg = !agNorm || termAg === agNorm;
-
-      return matchKw && matchCamp && matchAg;
+      if (!campNorm || !agNorm) {
+        const matchCamp = !campNorm || norm(term.campaignName) === campNorm;
+        const matchAg = !agNorm || norm(term.adGroupName) === agNorm;
+        return matchKw && matchCamp && matchAg;
+      }
+      return matchKw;
     });
-  }, [searchTerms]);
+  }, [searchTerms, searchTermsByAdGroup]);
 
   // Filtered & Sorted SKUs
   const activeSkuPerformance = useMemo(() => {
@@ -404,6 +460,13 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
     return list;
   }, [activeSkuPerformance, skuCategoryFilter, skuQuery, skuSortField, skuSortDir]);
 
+  // Paginated SKUs
+  const totalSkuPages = Math.max(1, Math.ceil(filteredSortedSkus.length / skuPageSize));
+  const paginatedSkus = useMemo(() => {
+    const start = (skuPage - 1) * skuPageSize;
+    return filteredSortedSkus.slice(start, start + skuPageSize);
+  }, [filteredSortedSkus, skuPage, skuPageSize]);
+
   // Filtered Recommendations by Priority
   const filteredRecommendations = useMemo(() => {
     let list = [...recommendations];
@@ -412,6 +475,13 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
     }
     return list;
   }, [recommendations, recPriorityFilter]);
+
+  // Paginated Recommendations
+  const totalRecPages = Math.max(1, Math.ceil(filteredRecommendations.length / recPageSize));
+  const paginatedRecommendations = useMemo(() => {
+    const start = (recPage - 1) * recPageSize;
+    return filteredRecommendations.slice(start, start + recPageSize);
+  }, [filteredRecommendations, recPage, recPageSize]);
 
   // Export Bulksheet update file
   const handleExportBulksheet = async (recsToExport?: PpcRecommendation[]) => {
@@ -526,7 +596,8 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
     currentField: SortField,
     currentDir: SortDirection,
     setField: (f: SortField) => void,
-    setDir: (d: SortDirection) => void
+    setDir: (d: SortDirection) => void,
+    resetPage?: () => void
   ) => {
     if (currentField === field) {
       setDir(currentDir === "asc" ? "desc" : "asc");
@@ -534,6 +605,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
       setField(field);
       setDir("desc");
     }
+    resetPage?.();
   };
 
   // Checkbox Selection
@@ -799,117 +871,117 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             </div>
           )}
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5">
-          {/* SPEND */}
-          <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
-            <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
-              SPEND
-            </span>
-            <div className="text-xl font-black text-slate-900 mt-0.5">
-              ${summary.totalSpend.toLocaleString("en-US", { minimumFractionDigits: 2 })}
-            </div>
-            <div className="text-[11px] font-semibold text-slate-500 mt-1">
-              CPC: <strong className="text-slate-800">${summary.avgCpc.toFixed(2)}</strong>
-            </div>
-          </div>
-
-          {/* SALES */}
-          <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
-            <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
-              SALES
-            </span>
-            <div className="text-xl font-black text-emerald-600 mt-0.5">
-              ${summary.totalSales.toLocaleString("en-US", { minimumFractionDigits: 2 })}
-            </div>
-            <div className="text-[11px] font-semibold text-slate-500 mt-1">
-              Orders: <strong className="text-slate-800">{summary.totalOrders}</strong> ({summary.totalUnits} units)
-            </div>
-          </div>
-
-          {/* ACOS */}
-          <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
-            <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
-              ACOS
-            </span>
-            <div className="flex items-baseline gap-1.5 mt-0.5">
-              <span
-                className={`text-xl font-black ${summary.blendedAcos <= targetAcos
-                  ? "text-emerald-600"
-                  : summary.blendedAcos <= 35
-                    ? "text-teal-600"
-                    : summary.blendedAcos <= 50
-                      ? "text-amber-600"
-                      : "text-rose-600"
-                  }`}
-              >
-                {summary.blendedAcos.toFixed(1)}%
+            {/* SPEND */}
+            <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
+              <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
+                SPEND
               </span>
-              <span
-                className={`text-[9px] font-bold px-1 rounded uppercase ${summary.blendedAcos <= targetAcos
-                  ? "bg-emerald-50 text-emerald-700"
-                  : "bg-rose-50 text-rose-700"
-                  }`}
-              >
-                {summary.blendedAcos <= targetAcos ? "PASS" : "HIGH"}
+              <div className="text-xl font-black text-slate-900 mt-0.5">
+                ${summary.totalSpend.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+              </div>
+              <div className="text-[11px] font-semibold text-slate-500 mt-1">
+                CPC: <strong className="text-slate-800">${summary.avgCpc.toFixed(2)}</strong>
+              </div>
+            </div>
+
+            {/* SALES */}
+            <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
+              <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
+                SALES
               </span>
+              <div className="text-xl font-black text-emerald-600 mt-0.5">
+                ${summary.totalSales.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+              </div>
+              <div className="text-[11px] font-semibold text-slate-500 mt-1">
+                Orders: <strong className="text-slate-800">{summary.totalOrders}</strong> ({summary.totalUnits} units)
+              </div>
             </div>
-            <div className="text-[11px] font-semibold text-slate-500 mt-1">
-              Target: <strong className="text-slate-800">{targetAcos.toFixed(1)}%</strong>
-            </div>
-          </div>
 
-          {/* ROAS */}
-          <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
-            <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
-              ROAS
-            </span>
-            <div className="text-xl font-black text-sky-600 mt-0.5">
-              {summary.blendedRoas.toFixed(2)}x
+            {/* ACOS */}
+            <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
+              <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
+                ACOS
+              </span>
+              <div className="flex items-baseline gap-1.5 mt-0.5">
+                <span
+                  className={`text-xl font-black ${summary.blendedAcos <= targetAcos
+                    ? "text-emerald-600"
+                    : summary.blendedAcos <= 35
+                      ? "text-teal-600"
+                      : summary.blendedAcos <= 50
+                        ? "text-amber-600"
+                        : "text-rose-600"
+                    }`}
+                >
+                  {summary.blendedAcos.toFixed(1)}%
+                </span>
+                <span
+                  className={`text-[9px] font-bold px-1 rounded uppercase ${summary.blendedAcos <= targetAcos
+                    ? "bg-emerald-50 text-emerald-700"
+                    : "bg-rose-50 text-rose-700"
+                    }`}
+                >
+                  {summary.blendedAcos <= targetAcos ? "PASS" : "HIGH"}
+                </span>
+              </div>
+              <div className="text-[11px] font-semibold text-slate-500 mt-1">
+                Target: <strong className="text-slate-800">{targetAcos.toFixed(1)}%</strong>
+              </div>
             </div>
-            <div className="text-[11px] font-semibold text-slate-500 mt-1">
-              Target: <strong className="text-slate-800">{(100 / Math.max(targetAcos, 1)).toFixed(2)}x</strong>
-            </div>
-          </div>
 
-          {/* IMPRESSIONS */}
-          <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
-            <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
-              IMPRESSIONS
-            </span>
-            <div className="text-xl font-black text-slate-900 mt-0.5">
-              {summary.totalImpressions.toLocaleString()}
+            {/* ROAS */}
+            <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
+              <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
+                ROAS
+              </span>
+              <div className="text-xl font-black text-sky-600 mt-0.5">
+                {summary.blendedRoas.toFixed(2)}x
+              </div>
+              <div className="text-[11px] font-semibold text-slate-500 mt-1">
+                Target: <strong className="text-slate-800">{(100 / Math.max(targetAcos, 1)).toFixed(2)}x</strong>
+              </div>
             </div>
-            <div className="text-[11px] font-semibold text-slate-500 mt-1">
-              CTR: <strong className="text-slate-800">{(summary.overallCtr * 100).toFixed(2)}%</strong>
-            </div>
-          </div>
 
-          {/* CLICKS */}
-          <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
-            <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
-              CLICKS
-            </span>
-            <div className="text-xl font-black text-slate-800 mt-0.5">
-              {summary.totalClicks.toLocaleString()}
+            {/* IMPRESSIONS */}
+            <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
+              <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
+                IMPRESSIONS
+              </span>
+              <div className="text-xl font-black text-slate-900 mt-0.5">
+                {summary.totalImpressions.toLocaleString()}
+              </div>
+              <div className="text-[11px] font-semibold text-slate-500 mt-1">
+                CTR: <strong className="text-slate-800">{(summary.overallCtr * 100).toFixed(2)}%</strong>
+              </div>
             </div>
-            <div className="text-[11px] font-semibold text-slate-500 mt-1">
-              CPC: <strong className="text-slate-800">${summary.avgCpc.toFixed(2)}</strong>
-            </div>
-          </div>
 
-          {/* CVR */}
-          <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
-            <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
-              CVR
-            </span>
-            <div className="text-xl font-black text-indigo-600 mt-0.5">
-              {(summary.overallCvr * 100).toFixed(1)}%
+            {/* CLICKS */}
+            <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
+              <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
+                CLICKS
+              </span>
+              <div className="text-xl font-black text-slate-800 mt-0.5">
+                {summary.totalClicks.toLocaleString()}
+              </div>
+              <div className="text-[11px] font-semibold text-slate-500 mt-1">
+                CPC: <strong className="text-slate-800">${summary.avgCpc.toFixed(2)}</strong>
+              </div>
             </div>
-            <div className="text-[11px] font-semibold text-slate-500 mt-1">
-              Orders: <strong className="text-slate-800">{summary.totalOrders}</strong>
+
+            {/* CVR */}
+            <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
+              <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
+                CVR
+              </span>
+              <div className="text-xl font-black text-indigo-600 mt-0.5">
+                {(summary.overallCvr * 100).toFixed(1)}%
+              </div>
+              <div className="text-[11px] font-semibold text-slate-500 mt-1">
+                Orders: <strong className="text-slate-800">{summary.totalOrders}</strong>
+              </div>
             </div>
           </div>
         </div>
-      </div>
       )}
 
       {/* VELOCITY & MULTI-PERIOD COMPARISON MONITOR */}
@@ -1306,7 +1378,10 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               <input
                 type="text"
                 value={campaignQuery}
-                onChange={(e) => setCampaignQuery(e.target.value)}
+                onChange={(e) => {
+                  setCampaignQuery(e.target.value);
+                  setCampaignPage(1);
+                }}
                 placeholder="Tìm tên chiến dịch..."
                 className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs outline-none focus:bg-white focus:border-indigo-600"
               />
@@ -1332,7 +1407,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                   <th
                     className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() =>
-                      handleSort("spend", campaignSortField, campaignSortDir, setCampaignSortField, setCampaignSortDir)
+                      handleSort("spend", campaignSortField, campaignSortDir, setCampaignSortField, setCampaignSortDir, () => setCampaignPage(1))
                     }
                   >
                     Spend ($) {campaignSortField === "spend" && (campaignSortDir === "asc" ? "↑" : "↓")}
@@ -1340,7 +1415,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                   <th
                     className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() =>
-                      handleSort("sales", campaignSortField, campaignSortDir, setCampaignSortField, setCampaignSortDir)
+                      handleSort("sales", campaignSortField, campaignSortDir, setCampaignSortField, setCampaignSortDir, () => setCampaignPage(1))
                     }
                   >
                     Sales ($) {campaignSortField === "sales" && (campaignSortDir === "asc" ? "↑" : "↓")}
@@ -1348,7 +1423,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                   <th
                     className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() =>
-                      handleSort("orders", campaignSortField, campaignSortDir, setCampaignSortField, setCampaignSortDir)
+                      handleSort("orders", campaignSortField, campaignSortDir, setCampaignSortField, setCampaignSortDir, () => setCampaignPage(1))
                     }
                   >
                     Orders {campaignSortField === "orders" && (campaignSortDir === "asc" ? "↑" : "↓")}
@@ -1359,7 +1434,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                   <th
                     className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() =>
-                      handleSort("acos", campaignSortField, campaignSortDir, setCampaignSortField, setCampaignSortDir)
+                      handleSort("acos", campaignSortField, campaignSortDir, setCampaignSortField, setCampaignSortDir, () => setCampaignPage(1))
                     }
                   >
                     ACOS (%) {campaignSortField === "acos" && (campaignSortDir === "asc" ? "↑" : "↓")}
@@ -1382,61 +1457,77 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                     </td>
                   </tr>
                 ) : (
-                  filteredSortedCampaigns.map((c, i) => (
-                  <tr key={i} className="hover:bg-slate-50/80 transition">
-                    <td className="py-2.5 px-3.5 font-bold text-slate-900 max-w-xs truncate">
-                      {c.campaignName}
-                    </td>
-                    <td className="py-2.5 px-3 text-slate-500 font-medium">{c.storeName}</td>
-                    <td className="py-2.5 px-3">
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
-                        {c.adType || "?"} · {c.targetingType}
-                      </span>
-                    </td>
-                    <td className="py-2.5 px-3 text-[11px] text-slate-500">
-                      <div className="font-bold text-slate-700">{c.state || "—"}</div>
-                      <div>{c.dailyBudget ? `$${c.dailyBudget.toFixed(2)}/day` : "No budget"}</div>
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-bold text-slate-900">${c.spend.toFixed(2)}</td>
-                    <td className="py-2.5 px-3 text-right font-black text-emerald-600">${c.sales.toFixed(2)}</td>
-                    <td className="py-2.5 px-3 text-right font-black text-slate-900">{c.orders}</td>
-                    <td className="py-2.5 px-3 text-right text-slate-600">{c.clicks}</td>
-                    <td className="py-2.5 px-3 text-right text-slate-600">${c.cpc.toFixed(2)}</td>
-                    <td className="py-2.5 px-3 text-right text-slate-700">{c.cvr.toFixed(1)}%</td>
-                    <td className="py-2.5 px-3 text-right">
-                      <span
-                        className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${c.acos <= Math.min(20, targetAcos)
-                          ? "bg-emerald-50 text-emerald-700"
-                          : c.acos <= targetAcos
-                            ? "bg-teal-50 text-teal-700"
-                            : c.acos <= 50
-                              ? "bg-amber-50 text-amber-700"
-                              : "bg-rose-50 text-rose-700"
-                          }`}
-                      >
-                        {c.acos > 500 ? "0 sales" : `${c.acos.toFixed(1)}%`}
-                      </span>
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-bold text-sky-600">{c.roas.toFixed(2)}x</td>
-                    <td className="py-2.5 px-3 text-center">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedCampaignForDrilldown(c.campaignName);
-                          setActiveTab("ad_groups");
-                        }}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold text-[11px] transition cursor-pointer border border-indigo-200"
-                        title="Drill-down xem các Nhóm QC của chiến dịch này"
-                      >
-                        <span>Nhóm QC</span>
-                        <span>→</span>
-                      </button>
-                    </td>
-                  </tr>
-                ))) }
+                  paginatedCampaigns.map((c, i) => (
+                    <tr key={i} className="hover:bg-slate-50/80 transition">
+                      <td className="py-2.5 px-3.5 font-bold text-slate-900 max-w-xs truncate">
+                        {c.campaignName}
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-500 font-medium">{c.storeName}</td>
+                      <td className="py-2.5 px-3">
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
+                          {c.adType || "?"} · {c.targetingType}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-[11px] text-slate-500">
+                        <div className="font-bold text-slate-700">{c.state || "—"}</div>
+                        <div>{c.dailyBudget ? `$${c.dailyBudget.toFixed(2)}/day` : "No budget"}</div>
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-bold text-slate-900">${c.spend.toFixed(2)}</td>
+                      <td className="py-2.5 px-3 text-right font-black text-emerald-600">${c.sales.toFixed(2)}</td>
+                      <td className="py-2.5 px-3 text-right font-black text-slate-900">{c.orders}</td>
+                      <td className="py-2.5 px-3 text-right text-slate-600">{c.clicks}</td>
+                      <td className="py-2.5 px-3 text-right text-slate-600">${c.cpc.toFixed(2)}</td>
+                      <td className="py-2.5 px-3 text-right text-slate-700">{c.cvr.toFixed(1)}%</td>
+                      <td className="py-2.5 px-3 text-right">
+                        <span
+                          className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${c.acos <= Math.min(20, targetAcos)
+                            ? "bg-emerald-50 text-emerald-700"
+                            : c.acos <= targetAcos
+                              ? "bg-teal-50 text-teal-700"
+                              : c.acos <= 50
+                                ? "bg-amber-50 text-amber-700"
+                                : "bg-rose-50 text-rose-700"
+                            }`}
+                        >
+                          {c.acos > 500 ? "0 sales" : `${c.acos.toFixed(1)}%`}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-bold text-sky-600">{c.roas.toFixed(2)}x</td>
+                      <td className="py-2.5 px-3 text-center">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedCampaignForDrilldown(c.campaignName);
+                            setActiveTab("ad_groups");
+                            setAdGroupPage(1);
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold text-[11px] transition cursor-pointer border border-indigo-200"
+                          title="Drill-down xem các Nhóm QC của chiến dịch này"
+                        >
+                          <span>Nhóm QC</span>
+                          <span>→</span>
+                        </button>
+                      </td>
+                    </tr>
+                  )))}
               </tbody>
             </table>
           </div>
+
+          {/* Pagination Controls */}
+          <PpcPagination
+            currentPage={campaignPage}
+            totalPages={totalCampaignPages}
+            pageSize={campaignPageSize}
+            totalItems={filteredSortedCampaigns.length}
+            pageSizeOptions={[15, 25, 50, 100, 200]}
+            itemName="chiến dịch"
+            onPageChange={setCampaignPage}
+            onPageSizeChange={(size) => {
+              setCampaignPageSize(size);
+              setCampaignPage(1);
+            }}
+          />
         </div>
       )}
 
@@ -1470,7 +1561,10 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               <input
                 type="text"
                 value={adGroupQuery}
-                onChange={(e) => setAdGroupQuery(e.target.value)}
+                onChange={(e) => {
+                  setAdGroupQuery(e.target.value);
+                  setAdGroupPage(1);
+                }}
                 placeholder="Tìm tên nhóm quảng cáo..."
                 className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs outline-none focus:bg-white focus:border-indigo-600"
               />
@@ -1529,12 +1623,20 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               <tbody className="divide-y divide-slate-100 font-medium">
                 {filteredSortedAdGroups.length === 0 ? (
                   <tr>
-                    <td colSpan={12} className="p-8 text-center font-medium text-slate-400">
-                      Không có nhóm quảng cáo nào phù hợp.
+                    <td colSpan={12} className="py-12 text-center text-slate-400">
+                      <div className="flex flex-col items-center justify-center gap-1.5">
+                        <ListDashes size={24} className="text-slate-300" />
+                        <span className="font-semibold text-slate-600">Không tìm thấy Nhóm Quảng Cáo</span>
+                        <span className="text-xs text-slate-400">
+                          {selectedCampaignForDrilldown
+                            ? `Không có nhóm nào thuộc chiến dịch "${selectedCampaignForDrilldown}" phù hợp từ khóa tìm kiếm.`
+                            : "Không có nhóm quảng cáo nào phù hợp điều kiện lọc."}
+                        </span>
+                      </div>
                     </td>
                   </tr>
                 ) : (
-                  filteredSortedAdGroups.map((ag, i) => (
+                  paginatedAdGroups.map((ag, i) => (
                     <tr key={i} className="hover:bg-slate-50/80 transition">
                       <td className="py-2.5 px-3.5 font-bold text-slate-900 max-w-xs truncate">
                         {ag.adGroupName}
@@ -1549,15 +1651,14 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                       <td className="py-2.5 px-3 text-right text-slate-700">{ag.cvr.toFixed(1)}%</td>
                       <td className="py-2.5 px-3 text-right">
                         <span
-                          className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${
-                            ag.acos <= Math.min(20, targetAcos)
+                          className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${ag.acos <= Math.min(20, targetAcos)
                               ? "bg-emerald-50 text-emerald-700"
                               : ag.acos <= targetAcos
                                 ? "bg-teal-50 text-teal-700"
                                 : ag.acos <= 50
                                   ? "bg-amber-50 text-amber-700"
                                   : "bg-rose-50 text-rose-700"
-                          }`}
+                            }`}
                         >
                           {ag.acos > 500 ? "0 sales" : `${ag.acos.toFixed(1)}%`}
                         </span>
@@ -1570,6 +1671,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                             setSelectedCampaignForDrilldown(ag.campaignName);
                             setSelectedAdGroupForDrilldown(ag.adGroupName);
                             setActiveTab("targets");
+                            setTargetPage(1);
                           }}
                           className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold text-[11px] transition cursor-pointer border border-indigo-200"
                           title="Drill-down xem các Targets của nhóm quảng cáo này"
@@ -1584,6 +1686,21 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               </tbody>
             </table>
           </div>
+
+          {/* Pagination Controls */}
+          <PpcPagination
+            currentPage={adGroupPage}
+            totalPages={totalAdGroupPages}
+            pageSize={adGroupPageSize}
+            totalItems={filteredSortedAdGroups.length}
+            pageSizeOptions={[15, 25, 50, 100, 200]}
+            itemName="nhóm QC"
+            onPageChange={setAdGroupPage}
+            onPageSizeChange={(size) => {
+              setAdGroupPageSize(size);
+              setAdGroupPage(1);
+            }}
+          />
         </div>
       )}
 
@@ -1698,7 +1815,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               <tbody className="divide-y divide-slate-100">
                 {filteredSortedTargets.length === 0 ? (
                   <tr><td colSpan={13} className="p-8 text-center font-medium text-slate-400">Chưa có target grain cho kỳ đang chọn.</td></tr>
-                ) : filteredSortedTargets.slice(0, 300).map((target) => {
+                ) : paginatedTargets.map((target) => {
                   const targetKey = `${target.storeName}-${target.adType}-${target.campaignName}-${target.adGroupName}-${target.targetKeyword}`;
                   const childTerms = getChildSearchTerms(target);
                   const isExpanded = expandedTargetKey === targetKey;
@@ -1739,13 +1856,12 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                             <button
                               type="button"
                               onClick={() => setExpandedTargetKey(isExpanded ? null : targetKey)}
-                              className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-extrabold transition cursor-pointer border ${
-                                isExpanded
+                              className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-extrabold transition cursor-pointer border ${isExpanded
                                   ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
                                   : childTerms.length > 0
                                     ? "bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border-indigo-200"
                                     : "bg-slate-100 text-slate-400 border-slate-200 hover:bg-slate-200"
-                              }`}
+                                }`}
                               title="Xem các customer search terms do target này kích hoạt"
                             >
                               <MagnifyingGlass size={11} weight="bold" />
@@ -1863,6 +1979,21 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               </tbody>
             </table>
           </div>
+
+          {/* Pagination Controls */}
+          <PpcPagination
+            currentPage={targetPage}
+            totalPages={totalTargetPages}
+            pageSize={targetPageSize}
+            totalItems={filteredSortedTargets.length}
+            pageSizeOptions={[15, 25, 50, 100]}
+            itemName="targets"
+            onPageChange={setTargetPage}
+            onPageSizeChange={(size) => {
+              setTargetPageSize(size);
+              setTargetPage(1);
+            }}
+          />
         </div>
       )}
 
@@ -1876,7 +2007,10 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mr-1">Phân Hạng:</span>
             <button
               type="button"
-              onClick={() => setSkuCategoryFilter("ALL")}
+              onClick={() => {
+                setSkuCategoryFilter("ALL");
+                setSkuPage(1);
+              }}
               className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${skuCategoryFilter === "ALL" ? "bg-slate-900 text-white shadow-xs" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                 }`}
             >
@@ -1884,7 +2018,10 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             </button>
             <button
               type="button"
-              onClick={() => setSkuCategoryFilter("HERO")}
+              onClick={() => {
+                setSkuCategoryFilter("HERO");
+                setSkuPage(1);
+              }}
               className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 ${skuCategoryFilter === "HERO"
                 ? "bg-emerald-600 text-white shadow-xs"
                 : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-100"
@@ -1895,7 +2032,10 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             </button>
             <button
               type="button"
-              onClick={() => setSkuCategoryFilter("BLEEDING")}
+              onClick={() => {
+                setSkuCategoryFilter("BLEEDING");
+                setSkuPage(1);
+              }}
               className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 ${skuCategoryFilter === "BLEEDING"
                 ? "bg-rose-600 text-white shadow-xs"
                 : "bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-100"
@@ -1906,7 +2046,10 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             </button>
             <button
               type="button"
-              onClick={() => setSkuCategoryFilter("POTENTIAL")}
+              onClick={() => {
+                setSkuCategoryFilter("POTENTIAL");
+                setSkuPage(1);
+              }}
               className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 ${skuCategoryFilter === "POTENTIAL"
                 ? "bg-indigo-600 text-white shadow-xs"
                 : "bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-100"
@@ -1917,7 +2060,10 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             </button>
             <button
               type="button"
-              onClick={() => setSkuCategoryFilter("ZERO_CLICKS")}
+              onClick={() => {
+                setSkuCategoryFilter("ZERO_CLICKS");
+                setSkuPage(1);
+              }}
               className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 ${skuCategoryFilter === "ZERO_CLICKS"
                 ? "bg-amber-600 text-white shadow-xs"
                 : "bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200"
@@ -1934,7 +2080,10 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               <input
                 type="text"
                 value={skuQuery}
-                onChange={(e) => setSkuQuery(e.target.value)}
+                onChange={(e) => {
+                  setSkuQuery(e.target.value);
+                  setSkuPage(1);
+                }}
                 placeholder="Tìm SKU hoặc Store..."
                 className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs outline-none focus:bg-white focus:border-indigo-600"
               />
@@ -2017,7 +2166,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium">
-                {filteredSortedSkus.map((s, i) => (
+                {paginatedSkus.map((s, i) => (
                   <tr key={i} className="hover:bg-slate-50/80 transition">
                     <td className="py-2.5 px-3.5 font-bold text-slate-900 flex items-center gap-2">
                       <Tag size={14} className="text-indigo-600 shrink-0" />
@@ -2084,6 +2233,21 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               </tbody>
             </table>
           </div>
+
+          {/* Pagination Controls */}
+          <PpcPagination
+            currentPage={skuPage}
+            totalPages={totalSkuPages}
+            pageSize={skuPageSize}
+            totalItems={filteredSortedSkus.length}
+            pageSizeOptions={[15, 25, 50, 100]}
+            itemName="SKU"
+            onPageChange={setSkuPage}
+            onPageSizeChange={(size) => {
+              setSkuPageSize(size);
+              setSkuPage(1);
+            }}
+          />
         </div>
       )}
 
@@ -2346,51 +2510,20 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             </table>
           </div>
 
-          {/* Pagination */}
-          <div className="flex items-center justify-between px-2 text-xs font-semibold text-slate-500">
-            <div>
-              Hiển thị {filteredSortedSearchTerms.length ? (termPage - 1) * termPageSize + 1 : 0} -{" "}
-              {Math.min(termPage * termPageSize, filteredSortedSearchTerms.length)} trên tổng số{" "}
-              <strong className="text-slate-900">{filteredSortedSearchTerms.length}</strong> từ khóa
-            </div>
-
-            <div className="flex items-center gap-2">
-              <select
-                value={termPageSize}
-                onChange={(e) => {
-                  setTermPageSize(Number(e.target.value));
-                  setTermPage(1);
-                }}
-                className="py-1 px-2 rounded-lg border border-slate-200 bg-white text-xs outline-none cursor-pointer"
-              >
-                <option value={15}>15 dòng/trang</option>
-                <option value={30}>30 dòng/trang</option>
-                <option value={50}>50 dòng/trang</option>
-              </select>
-
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  disabled={termPage <= 1}
-                  onClick={() => setTermPage((p) => Math.max(1, p - 1))}
-                  className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
-                >
-                  Trước
-                </button>
-                <span className="px-2 py-1 text-slate-700 font-bold">
-                  {termPage} / {totalTermPages}
-                </span>
-                <button
-                  type="button"
-                  disabled={termPage >= totalTermPages}
-                  onClick={() => setTermPage((p) => Math.min(totalTermPages, p + 1))}
-                  className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
-                >
-                  Sau
-                </button>
-              </div>
-            </div>
-          </div>
+          {/* Pagination Controls */}
+          <PpcPagination
+            currentPage={termPage}
+            totalPages={totalTermPages}
+            pageSize={termPageSize}
+            totalItems={filteredSortedSearchTerms.length}
+            pageSizeOptions={[15, 25, 50, 100]}
+            itemName="từ khóa tìm kiếm"
+            onPageChange={setTermPage}
+            onPageSizeChange={(size) => {
+              setTermPageSize(size);
+              setTermPage(1);
+            }}
+          />
         </div>
       )}
 
@@ -2483,7 +2616,10 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               </span>
               <button
                 type="button"
-                onClick={() => setRecPriorityFilter("ALL")}
+                onClick={() => {
+                  setRecPriorityFilter("ALL");
+                  setRecPage(1);
+                }}
                 className={`rounded-lg px-3 py-1 text-xs font-bold transition cursor-pointer ${recPriorityFilter === "ALL"
                   ? "bg-slate-900 text-white shadow-xs"
                   : "bg-slate-100 text-slate-600 hover:bg-slate-200"
@@ -2493,7 +2629,10 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               </button>
               <button
                 type="button"
-                onClick={() => setRecPriorityFilter("P0")}
+                onClick={() => {
+                  setRecPriorityFilter("P0");
+                  setRecPage(1);
+                }}
                 className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-bold transition cursor-pointer ${recPriorityFilter === "P0"
                   ? "bg-rose-600 text-white shadow-xs"
                   : "bg-rose-50 text-rose-700 border border-rose-200/60 hover:bg-rose-100"
@@ -2506,7 +2645,10 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               </button>
               <button
                 type="button"
-                onClick={() => setRecPriorityFilter("P1")}
+                onClick={() => {
+                  setRecPriorityFilter("P1");
+                  setRecPage(1);
+                }}
                 className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-bold transition cursor-pointer ${recPriorityFilter === "P1"
                   ? "bg-emerald-600 text-white shadow-xs"
                   : "bg-emerald-50 text-emerald-700 border border-emerald-200/60 hover:bg-emerald-100"
@@ -2519,7 +2661,10 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               </button>
               <button
                 type="button"
-                onClick={() => setRecPriorityFilter("P2")}
+                onClick={() => {
+                  setRecPriorityFilter("P2");
+                  setRecPage(1);
+                }}
                 className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-bold transition cursor-pointer ${recPriorityFilter === "P2"
                   ? "bg-sky-600 text-white shadow-xs"
                   : "bg-sky-50 text-sky-700 border border-sky-200/60 hover:bg-sky-100"
@@ -2546,7 +2691,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             </div>
           ) : (
             <div className="space-y-3">
-              {filteredRecommendations.map((rec) => {
+              {paginatedRecommendations.map((rec) => {
                 const isSelected = selectedRecs.has(rec.id);
                 const priorityBadge =
                   rec.priority === "P0" ? (
@@ -2675,6 +2820,21 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                   </div>
                 );
               })}
+
+              {/* Pagination Controls */}
+              <PpcPagination
+                currentPage={recPage}
+                totalPages={totalRecPages}
+                pageSize={recPageSize}
+                totalItems={filteredRecommendations.length}
+                pageSizeOptions={[10, 20, 50, 100]}
+                itemName="đề xuất tối ưu"
+                onPageChange={setRecPage}
+                onPageSizeChange={(size) => {
+                  setRecPageSize(size);
+                  setRecPage(1);
+                }}
+              />
             </div>
           )}
         </div>
