@@ -74,6 +74,17 @@ function searchTermKey(term: PpcSearchTermRow): string {
   ].filter(Boolean).join("\u0000");
 }
 
+function formatSyncTime(isoString: string | null): string {
+  if (!isoString) return "--:--:--";
+  try {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return "--:--:--";
+    return d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  } catch {
+    return "--:--:--";
+  }
+}
+
 export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   const mounted = useSyncExternalStore(subscribeToHydration, getClientSnapshot, getServerSnapshot);
 
@@ -131,8 +142,8 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   const [selectedTerms, setSelectedTerms] = useState<Set<string>>(new Set());
 
   // SKU category filter
-  const [skuCategoryFilter, setSkuCategoryFilter] = useState<"ALL" | "HERO" | "BLEEDING" | "POTENTIAL" | "ZERO_CLICKS">("ALL");
-  const [hidePausedSkus, setHidePausedSkus] = useState(true);
+  const [skuCategoryFilter, setSkuCategoryFilter] = useState<"ALL" | "HERO" | "BLEEDING" | "POTENTIAL" | "ZERO_CLICKS" | "ZERO_SPEND">("ALL");
+  const [hidePausedSkus, setHidePausedSkus] = useState(false);
 
   // Action Center recommendation filters & export
   const [recPriorityFilter, setRecPriorityFilter] = useState<"ALL" | "P0" | "P1" | "P2">("ALL");
@@ -444,6 +455,8 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
     if (skuCategoryFilter !== "ALL") {
       if (skuCategoryFilter === "ZERO_CLICKS") {
         list = list.filter((s) => s.clicks === 0);
+      } else if (skuCategoryFilter === "ZERO_SPEND") {
+        list = list.filter((s) => s.spend === 0);
       } else {
         list = list.filter((s) => s.skuCategory === skuCategoryFilter);
       }
@@ -816,33 +829,57 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             </div>
           </div>
 
-          <div className="text-[11px] font-medium text-slate-400 text-right">
-            <div>Attribution: <strong className="text-slate-600">theo cột trong báo cáo</strong></div>
-            <div>{loading ? "Đang tải dữ liệu…" : lastSyncedAt ? `Cập nhật: ${new Date(lastSyncedAt).toLocaleString("vi-VN")}` : "Chưa có lần đồng bộ"}</div>
-          </div>
+          {loading && (
+            <div className="text-[11px] font-medium text-slate-400 text-right animate-pulse">
+              Đang tải dữ liệu…
+            </div>
+          )}
         </div>
       </div>
 
       {!loading && dataHealth && (
-        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-2xs">
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 shadow-2xs">
           <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={`rounded px-2 py-1 font-extrabold ${dataHealth.campaignRows > 0 ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>
-                Performance: {dataHealth.campaignRows > 0 ? `Bulk · ${dataHealth.campaignRows} campaigns` : "Chưa có campaign grain"}
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span className="text-[10px] font-black tracking-wider text-slate-400 uppercase mr-1">
+                DATA STATUS
               </span>
-              <span className={`rounded px-2 py-1 font-extrabold ${dataHealth.searchTermRows > 0 ? "bg-sky-50 text-sky-700" : "bg-slate-100 text-slate-600"}`}>
-                Search Terms: {dataHealth.searchTermRows.toLocaleString()} rows
-              </span>
-              <span className="rounded bg-indigo-50 px-2 py-1 font-extrabold text-indigo-700">
-                Targets: {dataHealth.targetRows.toLocaleString()}
-              </span>
-              {adTypeBreakdown.map((item) => (
-                <span key={item.adType} className="rounded bg-slate-100 px-2 py-1 font-bold text-slate-700">
-                  {item.adType}: ${item.spend.toLocaleString("en-US", { maximumFractionDigits: 0 })} · ACOS {item.acos > 500 ? "0 sales" : `${item.acos.toFixed(1)}%`}
-                </span>
-              ))}
+              <div className="h-3 w-px bg-slate-200 hidden sm:block" />
+
+              <div className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-semibold ${
+                dataHealth.campaignRows > 0 ? "bg-emerald-50 text-emerald-800 border border-emerald-200/60" : "bg-amber-50 text-amber-800 border border-amber-200"
+              }`}>
+                <span className="text-slate-500 font-normal">Bulk Performance</span>
+                {dataHealth.campaignRows > 0 ? (
+                  <span className="font-bold text-emerald-700">✓ {dataHealth.campaignRows.toLocaleString()} campaigns</span>
+                ) : (
+                  <span className="font-bold text-amber-700">Chưa có campaigns</span>
+                )}
+              </div>
+
+              <div className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-semibold ${
+                dataHealth.searchTermRows > 0 ? "bg-sky-50 text-sky-800 border border-sky-200/60" : "bg-slate-50 text-slate-600 border border-slate-200"
+              }`}>
+                <span className="text-slate-500 font-normal">Search Term Report</span>
+                {dataHealth.searchTermRows > 0 ? (
+                  <span className="font-bold text-sky-700">✓ {dataHealth.searchTermRows.toLocaleString()} rows</span>
+                ) : (
+                  <span className="text-slate-400">0 rows</span>
+                )}
+              </div>
+
+              <div className="inline-flex items-center gap-1.5 rounded-md bg-indigo-50/70 border border-indigo-200/60 px-2.5 py-1 text-xs font-semibold text-indigo-800">
+                <span className="text-slate-500 font-normal">Targets</span>
+                <span className="font-bold text-indigo-700">{dataHealth.targetRows.toLocaleString()}</span>
+              </div>
             </div>
-            <span className="font-semibold text-slate-400">Không cộng chéo entity grain</span>
+
+            <div className="flex items-center gap-1.5 text-xs text-slate-500">
+              <span className="text-slate-400 font-medium">Last Sync</span>
+              <span className="font-mono font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                {formatSyncTime(lastSyncedAt)}
+              </span>
+            </div>
           </div>
           {dataHealth.warnings.length > 0 && (
             <div className="mt-2 border-t border-slate-100 pt-2 text-[11px] font-medium text-amber-800">
@@ -981,6 +1018,84 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               </div>
             </div>
           </div>
+
+          {/* AD TYPE BREAKDOWN */}
+          {adTypeBreakdown.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-2.5 shadow-2xs">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black tracking-wider text-slate-400 uppercase">
+                  AD TYPE BREAKDOWN
+                </span>
+                <div className="h-3 w-px bg-slate-200" />
+                <span className="text-[11px] text-slate-400 font-medium">
+                  Phân tách hiệu quả theo loại quảng cáo
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5">
+                {adTypeBreakdown.map((item) => {
+                  const isSp = item.adType === "SP";
+                  const isSb = item.adType === "SB";
+                  const badgeClass = isSp
+                    ? "bg-amber-500 text-white"
+                    : isSb
+                      ? "bg-indigo-600 text-white"
+                      : "bg-slate-700 text-white";
+                  const label = isSp ? "Sponsored Products" : isSb ? "Sponsored Brands" : item.adType;
+
+                  return (
+                    <div
+                      key={item.adType}
+                      className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-1.5 text-xs shadow-2xs"
+                    >
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-[10px] font-black tracking-wider ${badgeClass}`}
+                        title={label}
+                      >
+                        {item.adType}
+                      </span>
+
+                      <div className="flex items-center gap-3">
+                        <div>
+                          <span className="text-slate-400 text-[10px] uppercase font-bold mr-1.5">{item.adType} Spend</span>
+                          <strong className="text-slate-900 font-black">
+                            ${item.spend.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+                          </strong>
+                        </div>
+
+                        <div className="h-3 w-px bg-slate-200" />
+
+                        <div>
+                          <span className="text-slate-400 text-[10px] uppercase font-bold mr-1.5">Sales</span>
+                          <strong className="text-emerald-700 font-black">
+                            ${item.sales.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+                          </strong>
+                        </div>
+
+                        <div className="h-3 w-px bg-slate-200" />
+
+                        <div>
+                          <span className="text-slate-400 text-[10px] uppercase font-bold mr-1.5">ACOS</span>
+                          <strong className={`font-black ${item.acos <= targetAcos ? "text-emerald-600" : "text-amber-600"}`}>
+                            {item.acos > 500 ? "0 sales" : `${item.acos.toFixed(1)}%`}
+                          </strong>
+                        </div>
+
+                        <div className="h-3 w-px bg-slate-200" />
+
+                        <div>
+                          <span className="text-slate-400 text-[10px] uppercase font-bold mr-1.5">Orders</span>
+                          <strong className="text-slate-800 font-bold">
+                            {item.orders.toLocaleString()}
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -2072,6 +2187,20 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               <span>🎯 0 Clicks - Cần Sửa</span>
               <span className="text-[10px] opacity-80">({activeSkuPerformance.filter((s) => s.clicks === 0).length})</span>
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSkuCategoryFilter("ZERO_SPEND");
+                setSkuPage(1);
+              }}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 ${skuCategoryFilter === "ZERO_SPEND"
+                ? "bg-slate-800 text-white shadow-xs"
+                : "bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200"
+                }`}
+            >
+              <span>💤 Chưa Có Spend</span>
+              <span className="text-[10px] opacity-80">({activeSkuPerformance.filter((s) => s.spend === 0).length})</span>
+            </button>
           </div>
 
           <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
@@ -2181,16 +2310,20 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                             ? "bg-indigo-100 text-indigo-800 border border-indigo-200"
                             : s.clicks === 0 && s.impressions > 0
                               ? "bg-amber-100 text-amber-800 border border-amber-300"
-                              : s.clicks === 0
-                                ? "bg-slate-100 text-slate-500 border border-slate-200"
-                                : "bg-slate-100 text-slate-600"
+                              : s.spend === 0
+                                ? "bg-slate-100 text-slate-600 border border-slate-300"
+                                : s.clicks === 0
+                                  ? "bg-slate-100 text-slate-500 border border-slate-200"
+                                  : "bg-slate-100 text-slate-600"
                         }`}>
                         {s.skuCategory === "HERO" && "🏆 Hero"}
                         {s.skuCategory === "BLEEDING" && "⚠️ Cắn Tiền"}
                         {s.skuCategory === "POTENTIAL" && "🌱 Tiềm Năng"}
-                        {s.clicks === 0 && s.impressions > 0 && "🎯 0 Click - Sửa Listing"}
-                        {s.clicks === 0 && s.impressions === 0 && "⏸️ 0 Imp."}
-                        {s.clicks > 0 && s.skuCategory === "NEUTRAL" && "Neutral"}
+                        {s.clicks === 0 && s.impressions > 0 && "🎯 0 Click"}
+                        {s.spend === 0 && s.impressions === 0 && "💤 Chưa Có Spend"}
+                        {s.spend === 0 && s.impressions > 0 && s.clicks === 0 && "🎯 0 Click - Chưa Spend"}
+                        {s.spend === 0 && s.clicks > 0 && "💤 0 Spend"}
+                        {s.spend > 0 && s.clicks > 0 && s.skuCategory === "NEUTRAL" && "Neutral"}
                       </span>
                     </td>
                     <td className="py-2.5 px-2.5 text-slate-600">{s.storeName}</td>

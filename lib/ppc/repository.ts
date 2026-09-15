@@ -295,7 +295,7 @@ export async function listPpcPerformance(
       AND abs((p.report_end_date - p.report_start_date + 1) - ${filters.days}::integer) <= 3
       AND (
         p.spend > 0 OR p.clicks > 0 OR p.impressions > 0
-        OR p.grain IN ('CAMPAIGN', 'AD_GROUP')
+        OR p.grain IN ('CAMPAIGN', 'AD_GROUP', 'PRODUCT')
       )
     ORDER BY p.ad_type, p.grain, p.spend DESC, p.id
   `;
