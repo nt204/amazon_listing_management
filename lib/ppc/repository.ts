@@ -293,6 +293,10 @@ export async function listPpcPerformance(
       AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
       AND (${filters.sku === "ALL"} OR lower(p.sku) = lower(${filters.sku}))
       AND abs((p.report_end_date - p.report_start_date + 1) - ${filters.days}::integer) <= 3
+      AND (
+        p.spend > 0 OR p.clicks > 0 OR p.impressions > 0
+        OR p.grain IN ('CAMPAIGN', 'AD_GROUP')
+      )
     ORDER BY p.ad_type, p.grain, p.spend DESC, p.id
   `;
   return rows.map(mapPerformance);

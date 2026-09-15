@@ -159,7 +159,7 @@ export async function getPpcAnalyticsData(
     : allSkuPerformance.filter((row) => row.sku.toLowerCase() === sku.toLowerCase());
   const campaignPerformance = campaignPerformanceFromFacts(performanceRows, targetAcos);
   const adGroups = adGroupPerformanceFromFacts(performanceRows);
-  const targets = targetPerformanceFromFacts(performanceRows);
+  const targets = targetPerformanceFromFacts(performanceRows).slice(0, 5000);
   const targetRows = performanceRows.filter((row) => row.grain === "TARGET" && !row.isNegative);
   const matchTypeBreakdown = targetRows.length ? groupPpcByMatchType(targetRows) : [];
   const adTypeBreakdown = adTypeBreakdownFromFacts(performanceRows);
