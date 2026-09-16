@@ -12,7 +12,9 @@ import {
   generatePpcAlerts,
   generatePpcRecommendations,
   generateTargetBidRecommendations,
+  groupPpcByKeywordMatchType,
   groupPpcByMatchType,
+  groupPpcByTargetType,
   performanceDataHealth,
   skuPerformanceFromFacts,
   targetPerformanceFromFacts,
@@ -162,6 +164,8 @@ export async function getPpcAnalyticsData(
   const targets = targetPerformanceFromFacts(performanceRows).slice(0, 5000);
   const targetRows = performanceRows.filter((row) => row.grain === "TARGET" && !row.isNegative);
   const matchTypeBreakdown = targetRows.length ? groupPpcByMatchType(targetRows) : [];
+  const targetTypeBreakdown = targetRows.length ? groupPpcByTargetType(targetRows) : [];
+  const keywordMatchTypeBreakdown = targetRows.length ? groupPpcByKeywordMatchType(targetRows) : [];
   const adTypeBreakdown = adTypeBreakdownFromFacts(performanceRows);
   const dataHealth = performanceDataHealth(performanceRows, rows);
   const availableSkus = Array.from(new Set(performanceRows.map((row) => row.sku).filter(Boolean))).sort();
@@ -175,6 +179,8 @@ export async function getPpcAnalyticsData(
     adTypeBreakdown,
     dataHealth,
     searchTermSummary,
+    targetTypeBreakdown,
+    keywordMatchTypeBreakdown,
     matchTypeBreakdown,
     alerts,
     recommendations,

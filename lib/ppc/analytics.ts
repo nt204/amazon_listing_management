@@ -7,6 +7,8 @@ import type {
   PpcDailyTrendPoint,
   PpcDataHealth,
   PpcExecutiveOverview,
+  PpcKeywordMatchType,
+  PpcKeywordMatchTypeBreakdown,
   PpcMatchTypeBreakdown,
   PpcMetricComparison,
   PpcPerformanceRow,
@@ -16,6 +18,8 @@ import type {
   PpcSkuPerformance,
   PpcSummaryMetrics,
   PpcTargetPerformance,
+  PpcTargetType,
+  PpcTargetTypeBreakdown,
 } from "./types";
 
 /**
@@ -745,6 +749,187 @@ export function groupPpcByMatchType(rows: Array<Pick<
 
   const results: PpcMatchTypeBreakdown[] = [];
 
+  for (const [matchType, data] of map.entries()) {
+    const acos = data.sales > 0 ? (data.spend / data.sales) * 100 : data.spend > 0 ? 999 : 0;
+    const roas = data.spend > 0 ? data.sales / data.spend : 0;
+    const cvr = data.clicks > 0 ? (data.orders / data.clicks) * 100 : 0;
+    const cpc = data.clicks > 0 ? data.spend / data.clicks : 0;
+    const spendShare = totalSpend > 0 ? (data.spend / totalSpend) * 100 : 0;
+    const salesShare = totalSales > 0 ? (data.sales / totalSales) * 100 : 0;
+
+    results.push({
+      matchType,
+      spend: Math.round(data.spend * 100) / 100,
+      spendShare: Math.round(spendShare * 10) / 10,
+      sales: Math.round(data.sales * 100) / 100,
+      salesShare: Math.round(salesShare * 10) / 10,
+      orders: data.orders,
+      clicks: data.clicks,
+      impressions: data.impressions,
+      cpc: Math.round(cpc * 100) / 100,
+      cvr: Math.round(cvr * 100) / 100,
+      acos: Math.round(acos * 10) / 10,
+      roas: Math.round(roas * 100) / 100,
+    });
+  }
+
+  return results.sort((a, b) => b.spend - a.spend);
+}
+
+/**
+ * Phân loại Target Type: Keyword, Auto, hoặc Product Targeting
+ */
+export function classifyPpcTargetType(row: {
+  matchType?: string;
+  targetExpression?: string;
+  targetKeyword?: string;
+  targetingType?: string;
+}): PpcTargetType {
+  const match = (row.matchType || "").toUpperCase();
+  const expr = (row.targetExpression || "").toLowerCase();
+  const kw = (row.targetKeyword || "").toLowerCase();
+
+  // Auto targeting
+  if (
+    match === "AUTO" ||
+    expr === "close-match" ||
+    expr === "loose-match" ||
+    expr === "substitutes" ||
+    expr === "complements" ||
+    expr.includes("auto targeting") ||
+    kw.includes("close-match") ||
+    kw.includes("loose-match") ||
+    kw.includes("substitutes") ||
+    kw.includes("complements")
+  ) {
+    return "Auto";
+  }
+
+  // Product targeting (PAT)
+  if (
+    match === "TARGETING" ||
+    expr.startsWith("asin=") ||
+    expr.startsWith("asin-expanded=") ||
+    expr.startsWith("category=") ||
+    expr.includes("asin") ||
+    expr.includes("category") ||
+    kw.startsWith("asin=") ||
+    kw.startsWith("category=")
+  ) {
+    return "Product Targeting";
+  }
+
+  // Keyword targeting
+  if (match === "EXACT" || match === "PHRASE" || match === "BROAD") {
+    return "Keyword";
+  }
+
+  return "Keyword";
+}
+
+/**
+ * Phân loại Keyword Match Type: Exact, Phrase, Broad
+ */
+export function classifyPpcKeywordMatchType(row: {
+  matchType?: string;
+  targetKeyword?: string;
+}): PpcKeywordMatchType {
+  const match = (row.matchType || "").toUpperCase();
+  if (match.includes("EXACT")) return "Exact";
+  if (match.includes("PHRASE")) return "Phrase";
+  if (match.includes("BROAD")) return "Broad";
+  return "Unknown";
+}
+
+/**
+ * Nhóm số liệu theo Target Type (Keyword, Auto, Product Targeting)
+ */
+export function groupPpcByTargetType(
+  rows: Array<Pick<PpcPerformanceRow, "matchType" | "targetExpression" | "targetingType" | "spend" | "sales" | "orders" | "clicks" | "impressions">>
+): PpcTargetTypeBreakdown[] {
+  const map = new Map<PpcTargetType, { spend: number; sales: number; orders: number; clicks: number; impressions: number }>();
+  const types: PpcTargetType[] = ["Keyword", "Auto", "Product Targeting"];
+  for (const t of types) {
+    map.set(t, { spend: 0, sales: 0, orders: 0, clicks: 0, impressions: 0 });
+  }
+
+  let totalSpend = 0;
+  let totalSales = 0;
+
+  for (const r of rows) {
+    const t = classifyPpcTargetType(r);
+    const bucket = map.get(t) || map.get("Keyword")!;
+    bucket.spend += r.spend;
+    bucket.sales += r.sales;
+    bucket.orders += r.orders;
+    bucket.clicks += r.clicks;
+    bucket.impressions += r.impressions;
+    totalSpend += r.spend;
+    totalSales += r.sales;
+  }
+
+  const results: PpcTargetTypeBreakdown[] = [];
+  for (const [targetType, data] of map.entries()) {
+    const acos = data.sales > 0 ? (data.spend / data.sales) * 100 : data.spend > 0 ? 999 : 0;
+    const roas = data.spend > 0 ? data.sales / data.spend : 0;
+    const cvr = data.clicks > 0 ? (data.orders / data.clicks) * 100 : 0;
+    const cpc = data.clicks > 0 ? data.spend / data.clicks : 0;
+    const spendShare = totalSpend > 0 ? (data.spend / totalSpend) * 100 : 0;
+    const salesShare = totalSales > 0 ? (data.sales / totalSales) * 100 : 0;
+
+    results.push({
+      targetType,
+      spend: Math.round(data.spend * 100) / 100,
+      spendShare: Math.round(spendShare * 10) / 10,
+      sales: Math.round(data.sales * 100) / 100,
+      salesShare: Math.round(salesShare * 10) / 10,
+      orders: data.orders,
+      clicks: data.clicks,
+      impressions: data.impressions,
+      cpc: Math.round(cpc * 100) / 100,
+      cvr: Math.round(cvr * 100) / 100,
+      acos: Math.round(acos * 10) / 10,
+      roas: Math.round(roas * 100) / 100,
+    });
+  }
+
+  return results.sort((a, b) => b.spend - a.spend);
+}
+
+/**
+ * Nhóm số liệu theo Keyword Match Type (Exact, Phrase, Broad) - Chỉ dành riêng cho Keyword Targeting
+ */
+export function groupPpcByKeywordMatchType(
+  rows: Array<Pick<PpcPerformanceRow, "matchType" | "targetExpression" | "targetingType" | "spend" | "sales" | "orders" | "clicks" | "impressions">>
+): PpcKeywordMatchTypeBreakdown[] {
+  const map = new Map<PpcKeywordMatchType, { spend: number; sales: number; orders: number; clicks: number; impressions: number }>();
+  const matchTypes: PpcKeywordMatchType[] = ["Exact", "Phrase", "Broad"];
+  for (const m of matchTypes) {
+    map.set(m, { spend: 0, sales: 0, orders: 0, clicks: 0, impressions: 0 });
+  }
+
+  let totalSpend = 0;
+  let totalSales = 0;
+
+  for (const r of rows) {
+    if (classifyPpcTargetType(r) !== "Keyword") continue;
+
+    const mt = classifyPpcKeywordMatchType(r);
+    if (mt === "Unknown") continue;
+
+    const bucket = map.get(mt);
+    if (!bucket) continue;
+
+    bucket.spend += r.spend;
+    bucket.sales += r.sales;
+    bucket.orders += r.orders;
+    bucket.clicks += r.clicks;
+    bucket.impressions += r.impressions;
+    totalSpend += r.spend;
+    totalSales += r.sales;
+  }
+
+  const results: PpcKeywordMatchTypeBreakdown[] = [];
   for (const [matchType, data] of map.entries()) {
     const acos = data.sales > 0 ? (data.spend / data.sales) * 100 : data.spend > 0 ? 999 : 0;
     const roas = data.spend > 0 ? data.sales / data.spend : 0;

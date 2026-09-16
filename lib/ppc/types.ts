@@ -299,6 +299,39 @@ export interface PpcDataHealth {
   lastSyncTime?: string | null;
 }
 
+export type PpcTargetType = "Keyword" | "Auto" | "Product Targeting" | "Other";
+export type PpcKeywordMatchType = "Exact" | "Phrase" | "Broad" | "Unknown";
+
+export interface PpcTargetTypeBreakdown {
+  targetType: PpcTargetType;
+  spend: number;
+  spendShare: number;
+  sales: number;
+  salesShare: number;
+  orders: number;
+  clicks: number;
+  impressions: number;
+  cpc: number;
+  cvr: number;
+  acos: number;
+  roas: number;
+}
+
+export interface PpcKeywordMatchTypeBreakdown {
+  matchType: PpcKeywordMatchType;
+  spend: number;
+  spendShare: number;
+  sales: number;
+  salesShare: number;
+  orders: number;
+  clicks: number;
+  impressions: number;
+  cpc: number;
+  cvr: number;
+  acos: number;
+  roas: number;
+}
+
 export interface PpcMatchTypeBreakdown {
   matchType: MatchType;
   spend: number;
@@ -335,6 +368,8 @@ export interface PpcAnalyticsData {
   targets?: PpcTargetPerformance[];
   adTypeBreakdown?: PpcAdTypeBreakdown[];
   dataHealth?: PpcDataHealth;
+  targetTypeBreakdown?: PpcTargetTypeBreakdown[];
+  keywordMatchTypeBreakdown?: PpcKeywordMatchTypeBreakdown[];
   matchTypeBreakdown: PpcMatchTypeBreakdown[];
   searchTerms: PpcSearchTermRow[];
   alerts: PpcAlert[];

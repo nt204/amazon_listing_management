@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useSyncExternalStore } from "react";
+import { useState, useEffect, useCallback, useMemo, useSyncExternalStore, Fragment } from "react";
 import Link from "next/link";
 import {
   ArrowsClockwise,
@@ -19,6 +19,8 @@ import {
   ListDashes,
 } from "@phosphor-icons/react";
 import { PpcPagination } from "./ppc-pagination";
+import { PpcTimeSeriesChart } from "./ppc-time-series-chart";
+import { PpcPerformanceRankingChart } from "./ppc-performance-ranking-chart";
 import {
   ResponsiveContainer,
   BarChart,
@@ -38,6 +40,7 @@ import type {
   PpcCampaignPerformance,
   PpcAdGroupPerformance,
   PpcDataHealth,
+  PpcKeywordMatchTypeBreakdown,
   PpcMatchTypeBreakdown,
   PpcRecommendation,
   PpcSearchTermRow,
@@ -45,6 +48,7 @@ import type {
   PpcStore,
   PpcSummaryMetrics,
   PpcTargetPerformance,
+  PpcTargetTypeBreakdown,
   PpcVelocityComparison,
 } from "@/lib/ppc/types";
 
@@ -55,12 +59,26 @@ interface PpcDashboardProps {
 type SortField = "spend" | "sales" | "orders" | "clicks" | "impressions" | "ctr" | "acos" | "cvr" | "roas";
 type SortDirection = "asc" | "desc";
 
-const MATCH_TYPE_COLORS: Record<string, string> = {
-  Exact: "#4f46e5", // Indigo
+const TARGET_TYPE_COLORS: Record<string, string> = {
+  Keyword: "#6366f1", // Indigo
+  Auto: "#f59e0b", // Amber
+  "Product Targeting": "#8b5cf6", // Violet
+  Other: "#94a3b8", // Slate
+};
+
+const KEYWORD_MATCH_TYPE_COLORS: Record<string, string> = {
+  Exact: "#2563eb", // Blue
   Phrase: "#0284c7", // Sky
-  Broad: "#059669", // Emerald
-  Auto: "#d97706", // Amber
-  Targeting: "#7c3aed", // Violet
+  Broad: "#10b981", // Emerald
+  Unknown: "#94a3b8", // Slate
+};
+
+const MATCH_TYPE_COLORS: Record<string, string> = {
+  Exact: "#2563eb", // Blue
+  Phrase: "#0284c7", // Sky
+  Broad: "#10b981", // Emerald
+  Auto: "#f59e0b", // Amber
+  Targeting: "#8b5cf6", // Violet
 };
 
 const subscribeToHydration = () => () => undefined;
@@ -102,6 +120,8 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   const [targetPerformance, setTargetPerformance] = useState<PpcTargetPerformance[]>([]);
   const [adTypeBreakdown, setAdTypeBreakdown] = useState<PpcAdTypeBreakdown[]>([]);
   const [dataHealth, setDataHealth] = useState<PpcDataHealth | null>(null);
+  const [targetTypeBreakdown, setTargetTypeBreakdown] = useState<PpcTargetTypeBreakdown[]>([]);
+  const [keywordMatchTypeBreakdown, setKeywordMatchTypeBreakdown] = useState<PpcKeywordMatchTypeBreakdown[]>([]);
   const [matchTypeBreakdown, setMatchTypeBreakdown] = useState<PpcMatchTypeBreakdown[]>([]);
   const [searchTerms, setSearchTerms] = useState<PpcSearchTermRow[]>([]);
   const [alerts, setAlerts] = useState<PpcAlert[]>([]);
@@ -150,10 +170,12 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   const [selectedRecs, setSelectedRecs] = useState<Set<string>>(new Set());
   const [exportingBulksheet, setExportingBulksheet] = useState(false);
 
-  // Campaign search & sort
+  // Campaign search & sort & status filter
   const [campaignQuery, setCampaignQuery] = useState("");
   const [campaignSortField, setCampaignSortField] = useState<SortField>("spend");
   const [campaignSortDir, setCampaignSortDir] = useState<SortDirection>("desc");
+  const [campaignStatusFilter, setCampaignStatusFilter] = useState<"ALL" | "ACTIVE" | "PAUSED">("ALL");
+  const [campaignGroupFilter, setCampaignGroupFilter] = useState<"ALL" | "BLEEDING" | "HIGH_ACOS" | "GOOD">("ALL");
 
   // Ad Group search & sort
   const [adGroupQuery, setAdGroupQuery] = useState("");
@@ -203,6 +225,8 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
       setTargetPerformance(data.targets || []);
       setAdTypeBreakdown(data.adTypeBreakdown || []);
       setDataHealth(data.dataHealth || null);
+      setTargetTypeBreakdown(data.targetTypeBreakdown || []);
+      setKeywordMatchTypeBreakdown(data.keywordMatchTypeBreakdown || []);
       setMatchTypeBreakdown(data.matchTypeBreakdown || []);
       setSearchTerms(data.searchTerms || []);
       setAlerts(data.alerts || []);
@@ -329,13 +353,25 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
         (c) => c.campaignName.toLowerCase().includes(q) || c.storeName.toLowerCase().includes(q)
       );
     }
+    if (campaignStatusFilter === "ACTIVE") {
+      list = list.filter((c) => !/pause/i.test(c.state || "") && !/archive/i.test(c.state || ""));
+    } else if (campaignStatusFilter === "PAUSED") {
+      list = list.filter((c) => /pause/i.test(c.state || "") || /archive/i.test(c.state || ""));
+    }
+    if (campaignGroupFilter === "BLEEDING") {
+      list = list.filter((c) => c.orders === 0 && c.spend >= 10);
+    } else if (campaignGroupFilter === "HIGH_ACOS") {
+      list = list.filter((c) => c.orders > 0 && c.acos > targetAcos);
+    } else if (campaignGroupFilter === "GOOD") {
+      list = list.filter((c) => c.orders > 0 && c.acos <= targetAcos && c.spend >= 5);
+    }
     list.sort((a, b) => {
       const valA = a[campaignSortField];
       const valB = b[campaignSortField];
       return campaignSortDir === "asc" ? valA - valB : valB - valA;
     });
     return list;
-  }, [campaignPerformance, campaignQuery, campaignSortField, campaignSortDir]);
+  }, [campaignPerformance, campaignQuery, campaignStatusFilter, campaignGroupFilter, targetAcos, campaignSortField, campaignSortDir]);
 
   // Paginated Campaigns
   const totalCampaignPages = Math.max(1, Math.ceil(filteredSortedCampaigns.length / campaignPageSize));
@@ -571,23 +607,42 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
       .slice(0, 7);
   }, [campaignPerformance, searchTerms]);
 
-  // Chart Data: Match Type Spend & Sales Share
-  const matchTypePieData = useMemo(() => {
-    if (matchTypeBreakdown.length > 0) {
-      return matchTypeBreakdown.map((m) => ({
-        name: m.matchType,
-        value: m.spend,
-        sales: m.sales,
-        spendShare: m.spendShare,
-        color: MATCH_TYPE_COLORS[m.matchType] || "#94a3b8",
-      }));
+  // Chart Data: Target Type Spend Distribution
+  const targetTypePieData = useMemo(() => {
+    if (targetTypeBreakdown.length > 0) {
+      return targetTypeBreakdown
+        .filter((t) => t.spend > 0)
+        .map((t) => ({
+          name: t.targetType,
+          value: t.spend,
+          sales: t.sales,
+          spendShare: t.spendShare,
+          color: TARGET_TYPE_COLORS[t.targetType] || "#94a3b8",
+        }));
+    }
+    return [];
+  }, [targetTypeBreakdown]);
+
+  // Chart Data: Keyword Match Type Spend Distribution (Exact, Phrase, Broad)
+  const keywordMatchTypePieData = useMemo(() => {
+    if (keywordMatchTypeBreakdown.length > 0) {
+      return keywordMatchTypeBreakdown
+        .filter((m) => m.spend > 0)
+        .map((m) => ({
+          name: m.matchType,
+          value: m.spend,
+          sales: m.sales,
+          spendShare: m.spendShare,
+          color: KEYWORD_MATCH_TYPE_COLORS[m.matchType] || "#94a3b8",
+        }));
     }
     // Fallback from searchTerms when Bulk is not yet ingested
     const map = new Map<string, { spend: number; sales: number }>();
     let totalSpend = 0;
     for (const st of searchTerms) {
       const mt = st.matchType ? st.matchType.toUpperCase() : "UNKNOWN";
-      const key = mt.includes("EXACT") ? "Exact" : mt.includes("PHRASE") ? "Phrase" : mt.includes("BROAD") ? "Broad" : "Other";
+      if (!mt.includes("EXACT") && !mt.includes("PHRASE") && !mt.includes("BROAD")) continue;
+      const key = mt.includes("EXACT") ? "Exact" : mt.includes("PHRASE") ? "Phrase" : "Broad";
       const cur = map.get(key) || { spend: 0, sales: 0 };
       cur.spend += st.spend;
       cur.sales += st.sales;
@@ -599,9 +654,23 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
       value: Math.round(val.spend * 100) / 100,
       sales: Math.round(val.sales * 100) / 100,
       spendShare: totalSpend > 0 ? Math.round((val.spend / totalSpend) * 1000) / 10 : 0,
-      color: MATCH_TYPE_COLORS[name] || "#94a3b8",
+      color: KEYWORD_MATCH_TYPE_COLORS[name] || "#94a3b8",
     }));
-  }, [matchTypeBreakdown, searchTerms]);
+  }, [keywordMatchTypeBreakdown, searchTerms]);
+
+  // Chart Data: Legacy Match Type Spend & Sales Share
+  const matchTypePieData = useMemo(() => {
+    if (matchTypeBreakdown.length > 0) {
+      return matchTypeBreakdown.map((m) => ({
+        name: m.matchType,
+        value: m.spend,
+        sales: m.sales,
+        spendShare: m.spendShare,
+        color: MATCH_TYPE_COLORS[m.matchType] || "#94a3b8",
+      }));
+    }
+    return [];
+  }, [matchTypeBreakdown]);
 
   // Sort Handler Helper
   const handleSort = (
@@ -769,9 +838,9 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
           </div>
         </div>
 
-        {/* Filters: Store & SKU */}
-        <div className="pt-3 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex flex-wrap items-center gap-2.5">
+        {/* Filters: Store, SKU & Compact Data Status */}
+        <div className="pt-2 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+          <div className="flex flex-wrap items-center gap-2">
             {/* Store Filter */}
             <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1">
               <Storefront size={15} className="text-indigo-600" weight="duotone" />
@@ -801,7 +870,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                 <select
                   value={selectedSku}
                   onChange={(e) => setSelectedSku(e.target.value)}
-                  className="bg-transparent text-slate-900 font-bold outline-none cursor-pointer text-xs max-w-[200px] truncate"
+                  className="bg-transparent text-slate-900 font-bold outline-none cursor-pointer text-xs max-w-[180px] truncate"
                 >
                   <option value="ALL">All SKUs ({availableSkus.length})</option>
                   {availableSkus.map((sku) => (
@@ -814,7 +883,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             )}
 
             <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1">
-              <span className="text-slate-500 font-semibold text-[11px]">Date Range:</span>
+              <span className="text-slate-500 font-semibold text-[11px]">Date:</span>
               <select
                 value={selectedDays}
                 onChange={(event) => setSelectedDays(Number(event.target.value))}
@@ -829,65 +898,46 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             </div>
           </div>
 
-          {loading && (
+          {/* Right: Compact Data Status */}
+          {loading ? (
             <div className="text-[11px] font-medium text-slate-400 text-right animate-pulse">
               Đang tải dữ liệu…
             </div>
-          )}
+          ) : dataHealth ? (
+            <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+              <div className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-medium border ${
+                dataHealth.campaignRows > 0
+                  ? "bg-emerald-50/80 text-emerald-800 border-emerald-200/60"
+                  : "bg-amber-50 text-amber-800 border-amber-200"
+              }`} title="Bulk Performance Campaigns">
+                <span className="text-slate-500 font-normal">Bulk:</span>
+                <span className="font-bold">{dataHealth.campaignRows.toLocaleString()} camps</span>
+              </div>
+
+              <div className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-medium border ${
+                dataHealth.searchTermRows > 0
+                  ? "bg-sky-50/80 text-sky-800 border-sky-200/60"
+                  : "bg-slate-50 text-slate-600 border-slate-200"
+              }`} title="Search Term Report Rows">
+                <span className="text-slate-500 font-normal">Search:</span>
+                <span className="font-bold">{dataHealth.searchTermRows.toLocaleString()}</span>
+              </div>
+
+              <div className="inline-flex items-center gap-1 rounded-md bg-indigo-50/70 border border-indigo-200/60 px-2 py-0.5 font-medium text-indigo-800" title="Targets Active">
+                <span className="text-slate-500 font-normal">Targets:</span>
+                <span className="font-bold">{dataHealth.targetRows.toLocaleString()}</span>
+              </div>
+
+              <div className="inline-flex items-center gap-1 text-slate-500 ml-1">
+                <span className="text-[10px] text-slate-400">Sync:</span>
+                <span className="font-mono font-bold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 text-[10px]">
+                  {formatSyncTime(lastSyncedAt)}
+                </span>
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
-
-      {!loading && dataHealth && (
-        <div className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 shadow-2xs">
-          <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
-            <div className="flex flex-wrap items-center gap-2.5">
-              <span className="text-[10px] font-black tracking-wider text-slate-400 uppercase mr-1">
-                DATA STATUS
-              </span>
-              <div className="h-3 w-px bg-slate-200 hidden sm:block" />
-
-              <div className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-semibold ${
-                dataHealth.campaignRows > 0 ? "bg-emerald-50 text-emerald-800 border border-emerald-200/60" : "bg-amber-50 text-amber-800 border border-amber-200"
-              }`}>
-                <span className="text-slate-500 font-normal">Bulk Performance</span>
-                {dataHealth.campaignRows > 0 ? (
-                  <span className="font-bold text-emerald-700">✓ {dataHealth.campaignRows.toLocaleString()} campaigns</span>
-                ) : (
-                  <span className="font-bold text-amber-700">Chưa có campaigns</span>
-                )}
-              </div>
-
-              <div className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-semibold ${
-                dataHealth.searchTermRows > 0 ? "bg-sky-50 text-sky-800 border border-sky-200/60" : "bg-slate-50 text-slate-600 border border-slate-200"
-              }`}>
-                <span className="text-slate-500 font-normal">Search Term Report</span>
-                {dataHealth.searchTermRows > 0 ? (
-                  <span className="font-bold text-sky-700">✓ {dataHealth.searchTermRows.toLocaleString()} rows</span>
-                ) : (
-                  <span className="text-slate-400">0 rows</span>
-                )}
-              </div>
-
-              <div className="inline-flex items-center gap-1.5 rounded-md bg-indigo-50/70 border border-indigo-200/60 px-2.5 py-1 text-xs font-semibold text-indigo-800">
-                <span className="text-slate-500 font-normal">Targets</span>
-                <span className="font-bold text-indigo-700">{dataHealth.targetRows.toLocaleString()}</span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-1.5 text-xs text-slate-500">
-              <span className="text-slate-400 font-medium">Last Sync</span>
-              <span className="font-mono font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-                {formatSyncTime(lastSyncedAt)}
-              </span>
-            </div>
-          </div>
-          {dataHealth.warnings.length > 0 && (
-            <div className="mt-2 border-t border-slate-100 pt-2 text-[11px] font-medium text-amber-800">
-              {dataHealth.warnings.join(" · ")}
-            </div>
-          )}
-        </div>
-      )}
 
       {!loading && searchTerms.length === 0 && (!dataHealth || dataHealth.performanceRows === 0) && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
@@ -907,17 +957,17 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               </span>
             </div>
           )}
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5">
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5">
             {/* SPEND */}
             <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
               <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
                 SPEND
               </span>
-              <div className="text-xl font-black text-slate-900 mt-0.5">
+              <div className="text-xl font-black text-slate-900 mt-0.5 truncate">
                 ${summary.totalSpend.toLocaleString("en-US", { minimumFractionDigits: 2 })}
               </div>
               <div className="text-[11px] font-semibold text-slate-500 mt-1">
-                CPC: <strong className="text-slate-800">${summary.avgCpc.toFixed(2)}</strong>
+                Avg: <strong className="text-slate-800">${(summary.totalSpend / Math.max(selectedDays, 1)).toFixed(1)}/d</strong>
               </div>
             </div>
 
@@ -926,11 +976,24 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
                 SALES
               </span>
-              <div className="text-xl font-black text-emerald-600 mt-0.5">
+              <div className="text-xl font-black text-emerald-600 mt-0.5 truncate">
                 ${summary.totalSales.toLocaleString("en-US", { minimumFractionDigits: 2 })}
               </div>
               <div className="text-[11px] font-semibold text-slate-500 mt-1">
-                Orders: <strong className="text-slate-800">{summary.totalOrders}</strong> ({summary.totalUnits} units)
+                Avg: <strong className="text-slate-800">${(summary.totalSales / Math.max(selectedDays, 1)).toFixed(1)}/d</strong>
+              </div>
+            </div>
+
+            {/* ORDERS */}
+            <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
+              <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
+                ORDERS
+              </span>
+              <div className="text-xl font-black text-slate-900 mt-0.5">
+                {summary.totalOrders.toLocaleString()}
+              </div>
+              <div className="text-[11px] font-semibold text-slate-500 mt-1">
+                Units: <strong className="text-slate-800">{summary.totalUnits.toLocaleString()}</strong>
               </div>
             </div>
 
@@ -979,19 +1042,6 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               </div>
             </div>
 
-            {/* IMPRESSIONS */}
-            <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
-              <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
-                IMPRESSIONS
-              </span>
-              <div className="text-xl font-black text-slate-900 mt-0.5">
-                {summary.totalImpressions.toLocaleString()}
-              </div>
-              <div className="text-[11px] font-semibold text-slate-500 mt-1">
-                CTR: <strong className="text-slate-800">{(summary.overallCtr * 100).toFixed(2)}%</strong>
-              </div>
-            </div>
-
             {/* CLICKS */}
             <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
               <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
@@ -1001,7 +1051,20 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                 {summary.totalClicks.toLocaleString()}
               </div>
               <div className="text-[11px] font-semibold text-slate-500 mt-1">
-                CPC: <strong className="text-slate-800">${summary.avgCpc.toFixed(2)}</strong>
+                Avg: <strong className="text-slate-800">{(summary.totalClicks / Math.max(selectedDays, 1)).toFixed(1)}/d</strong>
+              </div>
+            </div>
+
+            {/* CPC */}
+            <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
+              <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
+                CPC
+              </span>
+              <div className="text-xl font-black text-slate-900 mt-0.5">
+                ${summary.avgCpc.toFixed(2)}
+              </div>
+              <div className="text-[11px] font-semibold text-slate-500 mt-1">
+                Cost / Click
               </div>
             </div>
 
@@ -1014,88 +1077,105 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                 {(summary.overallCvr * 100).toFixed(1)}%
               </div>
               <div className="text-[11px] font-semibold text-slate-500 mt-1">
-                Orders: <strong className="text-slate-800">{summary.totalOrders}</strong>
+                Conv. Rate
               </div>
             </div>
           </div>
 
-          {/* AD TYPE BREAKDOWN */}
-          {adTypeBreakdown.length > 0 && (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-2.5 shadow-2xs">
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-black tracking-wider text-slate-400 uppercase">
-                  AD TYPE BREAKDOWN
-                </span>
-                <div className="h-3 w-px bg-slate-200" />
-                <span className="text-[11px] text-slate-400 font-medium">
-                  Phân tách hiệu quả theo loại quảng cáo
-                </span>
-              </div>
+          {/* AD TYPE BREAKDOWN & TRAFFIC ROW (1 dòng tinh gọn) */}
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3.5 py-2 shadow-2xs overflow-x-auto">
+            {/* Left: Ad Type Pills */}
+            <div className="flex items-center gap-2 shrink-0">
+              {adTypeBreakdown.map((item) => {
+                const isSp = item.adType === "SP";
+                const isSb = item.adType === "SB";
+                const badgeClass = isSp
+                  ? "bg-amber-500 text-white"
+                  : isSb
+                    ? "bg-indigo-600 text-white"
+                    : "bg-slate-700 text-white";
+                const label = isSp ? "Sponsored Products" : isSb ? "Sponsored Brands" : item.adType;
 
-              <div className="flex flex-wrap items-center gap-2.5">
-                {adTypeBreakdown.map((item) => {
-                  const isSp = item.adType === "SP";
-                  const isSb = item.adType === "SB";
-                  const badgeClass = isSp
-                    ? "bg-amber-500 text-white"
-                    : isSb
-                      ? "bg-indigo-600 text-white"
-                      : "bg-slate-700 text-white";
-                  const label = isSp ? "Sponsored Products" : isSb ? "Sponsored Brands" : item.adType;
-
-                  return (
-                    <div
-                      key={item.adType}
-                      className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-1.5 text-xs shadow-2xs"
+                return (
+                  <div
+                    key={item.adType}
+                    className="flex items-center gap-2.5 rounded-lg border border-slate-200 bg-slate-50/70 px-2.5 py-1.5 text-xs shadow-2xs"
+                  >
+                    <span
+                      className={`rounded px-1.5 py-0.5 text-[10px] font-black tracking-wider ${badgeClass}`}
+                      title={label}
                     >
-                      <span
-                        className={`rounded px-1.5 py-0.5 text-[10px] font-black tracking-wider ${badgeClass}`}
-                        title={label}
-                      >
-                        {item.adType}
-                      </span>
+                      {item.adType}
+                    </span>
 
-                      <div className="flex items-center gap-3">
-                        <div>
-                          <span className="text-slate-400 text-[10px] uppercase font-bold mr-1.5">{item.adType} Spend</span>
-                          <strong className="text-slate-900 font-black">
-                            ${item.spend.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-                          </strong>
-                        </div>
+                    <div className="flex items-center gap-2.5">
+                      <div>
+                        <span className="text-slate-400 text-[10px] uppercase font-bold mr-1">{item.adType} Spend</span>
+                        <strong className="text-slate-900 font-black">
+                          ${item.spend.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+                        </strong>
+                      </div>
 
-                        <div className="h-3 w-px bg-slate-200" />
+                      <div className="h-3 w-px bg-slate-200" />
 
-                        <div>
-                          <span className="text-slate-400 text-[10px] uppercase font-bold mr-1.5">Sales</span>
-                          <strong className="text-emerald-700 font-black">
-                            ${item.sales.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-                          </strong>
-                        </div>
+                      <div>
+                        <span className="text-slate-400 text-[10px] uppercase font-bold mr-1">Sales</span>
+                        <strong className="text-emerald-700 font-black">
+                          ${item.sales.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+                        </strong>
+                      </div>
 
-                        <div className="h-3 w-px bg-slate-200" />
+                      <div className="h-3 w-px bg-slate-200" />
 
-                        <div>
-                          <span className="text-slate-400 text-[10px] uppercase font-bold mr-1.5">ACOS</span>
-                          <strong className={`font-black ${item.acos <= targetAcos ? "text-emerald-600" : "text-amber-600"}`}>
-                            {item.acos > 500 ? "0 sales" : `${item.acos.toFixed(1)}%`}
-                          </strong>
-                        </div>
+                      <div>
+                        <span className="text-slate-400 text-[10px] uppercase font-bold mr-1">ACOS</span>
+                        <strong className={`font-black ${item.acos <= targetAcos ? "text-emerald-600" : "text-amber-600"}`}>
+                          {item.acos > 500 ? "0 sales" : `${item.acos.toFixed(1)}%`}
+                        </strong>
+                      </div>
 
-                        <div className="h-3 w-px bg-slate-200" />
+                      <div className="h-3 w-px bg-slate-200" />
 
-                        <div>
-                          <span className="text-slate-400 text-[10px] uppercase font-bold mr-1.5">Orders</span>
-                          <strong className="text-slate-800 font-bold">
-                            {item.orders.toLocaleString()}
-                          </strong>
-                        </div>
+                      <div>
+                        <span className="text-slate-400 text-[10px] uppercase font-bold mr-1">Orders</span>
+                        <strong className="text-slate-800 font-bold">
+                          {item.orders.toLocaleString()}
+                        </strong>
                       </div>
                     </div>
-                  );
-                })}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Right: Traffic Group (Impressions + CTR) */}
+            <div className="flex items-center gap-2.5 shrink-0 pl-3 border-l border-slate-200">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black tracking-wider text-slate-400 uppercase">
+                  TRAFFIC
+                </span>
+                <div className="h-3 w-px bg-slate-200" />
+              </div>
+
+              <div className="flex items-center gap-2.5 rounded-lg border border-slate-200 bg-slate-50/70 px-2.5 py-1.5 text-xs shadow-2xs">
+                <div>
+                  <span className="text-slate-400 text-[10px] uppercase font-bold mr-1.5">Impressions</span>
+                  <strong className="text-slate-900 font-black">
+                    {summary.totalImpressions.toLocaleString()}
+                  </strong>
+                </div>
+
+                <div className="h-3 w-px bg-slate-200" />
+
+                <div>
+                  <span className="text-slate-400 text-[10px] uppercase font-bold mr-1.5">CTR</span>
+                  <strong className="text-indigo-600 font-black">
+                    {(summary.overallCtr * 100).toFixed(2)}%
+                  </strong>
+                </div>
               </div>
             </div>
-          )}
+          </div>
         </div>
       )}
 
@@ -1153,110 +1233,26 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
         </div>
       )}
 
-      {/* VISUAL CHARTS ROW (Using Recharts) */}
+      {/* 2 BIỂU ĐỒ CỐT LÕI PPC DASHBOARD THEO SPEC KỸ THUẬT */}
       {mounted && summary && ((dataHealth?.campaignRows || 0) > 0 || searchTerms.length > 0) && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
-          {/* Chart 1: Top Campaigns Spend vs Sales */}
-          <div className="lg:col-span-8 rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100 mb-3">
-              <h3 className="text-xs font-black uppercase tracking-wider text-slate-800">
-                Chi Tiêu &amp; Doanh Số Theo Chiến Dịch Hàng Đầu
-              </h3>
-              <span className="text-[11px] text-slate-400 font-semibold">Top {topCampaignChartData.length} Campaigns</span>
-            </div>
+        <div className="space-y-4">
+          {/* BIỂU ĐỒ 1: Spend vs Revenue / ROAS theo thời gian */}
+          <PpcTimeSeriesChart
+            summary={summary}
+            selectedDays={selectedDays}
+            onDaysChange={setSelectedDays}
+            adTypeBreakdown={adTypeBreakdown}
+            searchTerms={searchTerms}
+            targetAcos={targetAcos}
+            currency="$"
+          />
 
-            <div className="h-64 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={topCampaignChartData} margin={{ top: 10, right: 10, left: -10, bottom: 25 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis
-                    dataKey="name"
-                    tick={{ fontSize: 11, fill: "#64748b" }}
-                    angle={-15}
-                    textAnchor="end"
-                    interval={0}
-                  />
-                  <YAxis tick={{ fontSize: 11, fill: "#64748b" }} />
-                  <Tooltip
-                    formatter={(value, name) => {
-                      if (name === "Chi Tiêu") return [`$${Number(value).toFixed(2)}`, name];
-                      if (name === "Doanh Số") return [`$${Number(value).toFixed(2)}`, name];
-                      return [value, name];
-                    }}
-                    contentStyle={{
-                      backgroundColor: "#ffffff",
-                      borderRadius: "10px",
-                      borderColor: "#e2e8f0",
-                      fontSize: "12px",
-                      boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
-                    }}
-                  />
-                  <Legend wrapperStyle={{ fontSize: "11px", paddingTop: "5px" }} />
-                  <Bar dataKey="spend" name="Spend" fill="#6366f1" radius={[4, 4, 0, 0]} maxBarSize={30} />
-                  <Bar dataKey="sales" name="Sales" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={30} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          {/* Chart 2: Match Type Spend Distribution */}
-          <div className="lg:col-span-4 rounded-xl border border-slate-200 bg-white p-4 shadow-2xs flex flex-col">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100 mb-2">
-              <h3 className="text-xs font-black uppercase tracking-wider text-slate-800">
-                Tỷ Trọng Chi Tiêu Theo Match Type
-              </h3>
-              <ChartPieSlice size={16} className="text-indigo-600" />
-            </div>
-
-            <div className="h-44 w-full relative">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={matchTypePieData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={45}
-                    outerRadius={70}
-                    paddingAngle={3}
-                    dataKey="value"
-                  >
-                    {matchTypePieData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    formatter={(value) => [`$${Number(value).toFixed(2)}`, "Chi Tiêu"]}
-                    contentStyle={{
-                      backgroundColor: "#ffffff",
-                      borderRadius: "8px",
-                      borderColor: "#e2e8f0",
-                      fontSize: "11px",
-                    }}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                <span className="text-[10px] font-bold text-slate-400">TOTAL SPEND</span>
-                <span className="text-xs font-black text-slate-800">${summary.totalSpend.toFixed(0)}</span>
-              </div>
-            </div>
-
-            {/* Concise Legend */}
-            <div className="mt-auto grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 text-xs">
-              {matchTypeBreakdown.map((m) => (
-                <div key={m.matchType} className="flex items-center justify-between p-1.5 rounded-lg bg-slate-50">
-                  <div className="flex items-center gap-1.5">
-                    <span
-                      className="w-2.5 h-2.5 rounded-full"
-                      style={{ backgroundColor: MATCH_TYPE_COLORS[m.matchType] || "#94a3b8" }}
-                    />
-                    <span className="font-bold text-slate-700">{m.matchType}</span>
-                  </div>
-                  <span className="font-mono font-extrabold text-slate-900">{m.spendShare}%</span>
-                </div>
-              ))}
-            </div>
-          </div>
+          {/* BIỂU ĐỒ 2: So sánh hiệu suất theo dạng chạy */}
+          <PpcPerformanceRankingChart
+            campaigns={campaignPerformance}
+            targetAcos={targetAcos}
+            currency="$"
+          />
         </div>
       )}
 
@@ -1283,19 +1279,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             }`}
         >
           <FolderSimple size={15} weight={activeTab === "campaigns" ? "bold" : "regular"} />
-          <span>2. Chiến Dịch ({campaignPerformance.length})</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab("ad_groups")}
-          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${activeTab === "ad_groups"
-            ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
-            : "text-slate-600 hover:text-slate-900"
-            }`}
-        >
-          <ListDashes size={15} weight={activeTab === "ad_groups" ? "bold" : "regular"} />
-          <span>3. Nhóm QC ({filteredSortedAdGroups.length})</span>
+          <span>2. Campaign ({campaignPerformance.length})</span>
         </button>
 
         <button
@@ -1307,7 +1291,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             }`}
         >
           <Crosshair size={15} weight={activeTab === "targets" ? "bold" : "regular"} />
-          <span>4. Target / Keyword ({filteredSortedTargets.length})</span>
+          <span>3. Target / Keyword ({filteredSortedTargets.length})</span>
         </button>
 
         <button
@@ -1319,7 +1303,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             }`}
         >
           <MagnifyingGlass size={15} weight={activeTab === "search_terms" ? "bold" : "regular"} />
-          <span>5. Search Terms ({searchTerms.length})</span>
+          <span>4. Search Terms ({searchTerms.length})</span>
         </button>
 
         <button
@@ -1332,19 +1316,6 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
         >
           <Tag size={15} weight={activeTab === "skus" ? "bold" : "regular"} />
           <span>Sản Phẩm (SKU / ASIN)</span>
-          <span className="text-[9px] px-1 py-0.2 bg-indigo-50 text-indigo-600 rounded font-bold border border-indigo-100">Dimension riêng</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab("match_types")}
-          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${activeTab === "match_types"
-            ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
-            : "text-slate-600 hover:text-slate-900"
-            }`}
-        >
-          <ChartPieSlice size={15} weight={activeTab === "match_types" ? "bold" : "regular"} />
-          <span>Loại Khớp ({matchTypeBreakdown.length})</span>
         </button>
 
         <button
@@ -1486,26 +1457,93 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
       {/* VIEW 2: BREAKDOWN BY CAMPAIGN */}
       {/* ========================================================================= */}
       {activeTab === "campaigns" && (
-        <div className="space-y-3">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
-            <div className="relative flex-1 sm:w-72">
-              <MagnifyingGlass size={14} className="absolute left-3 top-2.5 text-slate-400" />
-              <input
-                type="text"
-                value={campaignQuery}
-                onChange={(e) => {
-                  setCampaignQuery(e.target.value);
-                  setCampaignPage(1);
-                }}
-                placeholder="Tìm tên chiến dịch..."
-                className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs outline-none focus:bg-white focus:border-indigo-600"
-              />
+        <div id="ppc-campaigns-section" className="space-y-3 scroll-mt-6">
+          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+            <div className="flex flex-wrap items-center gap-2.5 flex-1">
+              <div className="relative flex-1 min-w-[200px] max-w-sm">
+                <MagnifyingGlass size={14} className="absolute left-3 top-2.5 text-slate-400" />
+                <input
+                  type="text"
+                  value={campaignQuery}
+                  onChange={(e) => {
+                    setCampaignQuery(e.target.value);
+                    setCampaignPage(1);
+                  }}
+                  placeholder="Tìm tên campaign..."
+                  className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs outline-none focus:bg-white focus:border-indigo-600"
+                />
+              </div>
+
+              {/* Lọc nhanh trạng thái: Tất cả / Active / Paused */}
+              <div className="flex items-center bg-slate-100 rounded-lg p-0.5 text-xs font-bold shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCampaignStatusFilter("ALL");
+                    setCampaignPage(1);
+                  }}
+                  className={`px-2.5 py-1 rounded-md transition cursor-pointer ${campaignStatusFilter === "ALL" ? "bg-white text-indigo-700 shadow-2xs font-extrabold" : "text-slate-600 hover:text-slate-900"}`}
+                >
+                  Tất cả ({campaignPerformance.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCampaignStatusFilter("ACTIVE");
+                    setCampaignPage(1);
+                  }}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition cursor-pointer ${campaignStatusFilter === "ACTIVE" ? "bg-white text-emerald-700 shadow-2xs font-extrabold" : "text-slate-600 hover:text-slate-900"}`}
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  <span>Active ({campaignPerformance.filter((c) => !/pause|archive/i.test(c.state || "")).length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCampaignStatusFilter("PAUSED");
+                    setCampaignPage(1);
+                  }}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition cursor-pointer ${campaignStatusFilter === "PAUSED" ? "bg-white text-amber-700 shadow-2xs font-extrabold" : "text-slate-600 hover:text-slate-900"}`}
+                >
+                  <span className="w-2 h-2 rounded-full bg-amber-500" />
+                  <span>Paused ({campaignPerformance.filter((c) => /pause|archive/i.test(c.state || "")).length})</span>
+                </button>
+              </div>
+
+              {/* Chỉ báo lọc nhóm vấn đề (kèm nút hủy lọc) */}
+              {campaignGroupFilter !== "ALL" && (
+                <div className={`flex items-center gap-2 px-2.5 py-1 rounded-lg text-xs font-bold border ${
+                  campaignGroupFilter === "BLEEDING"
+                    ? "bg-rose-50 text-rose-800 border-rose-200"
+                    : campaignGroupFilter === "HIGH_ACOS"
+                    ? "bg-amber-50 text-amber-900 border-amber-200"
+                    : "bg-emerald-50 text-emerald-800 border-emerald-200"
+                }`}>
+                  <span>
+                    {campaignGroupFilter === "BLEEDING"
+                      ? "🛑 Đang lọc: Đốt tiền không đơn"
+                      : campaignGroupFilter === "HIGH_ACOS"
+                      ? "⚠️ Đang lọc: ACOS cao"
+                      : "⚡ Đang lọc: Hiệu suất tốt"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCampaignGroupFilter("ALL");
+                      setCampaignPage(1);
+                    }}
+                    className="underline text-[11px] hover:text-slate-900 cursor-pointer font-extrabold"
+                  >
+                    ✕ Xem tất cả
+                  </button>
+                </div>
+              )}
             </div>
 
             <button
               type="button"
               onClick={() => handleExportCsv("campaigns")}
-              className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 transition flex items-center gap-1.5 cursor-pointer self-end sm:self-auto"
+              className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 transition flex items-center gap-1.5 cursor-pointer self-end md:self-auto shrink-0"
             >
               <Download size={14} /> Xuất CSV
             </button>
@@ -1555,7 +1593,6 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                     ACOS (%) {campaignSortField === "acos" && (campaignSortDir === "asc" ? "↑" : "↓")}
                   </th>
                   <th className="py-3 px-3 text-right">ROAS</th>
-                  <th className="py-3 px-3 text-center">Nhóm QC</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium">
@@ -1564,9 +1601,9 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                     <td colSpan={10} className="py-12 text-center text-slate-400">
                       <div className="flex flex-col items-center justify-center gap-1.5">
                         <FolderSimple size={24} className="text-slate-300" />
-                        <span className="font-semibold text-slate-600">Chưa có dữ liệu Chiến Dịch</span>
+                        <span className="font-semibold text-slate-600">Chưa có dữ liệu Campaign</span>
                         <span className="text-xs text-slate-400 max-w-md">
-                          Dữ liệu Chiến Dịch được trích xuất từ báo cáo Bulk Operations. Vui lòng nhấn &quot;Nạp báo cáo PPC&quot; hoặc &quot;Đồng bộ R2&quot; để tải file Bulk.
+                          Dữ liệu Campaign được trích xuất từ báo cáo Bulk Operations. Vui lòng nhấn &quot;Nạp báo cáo PPC&quot; hoặc &quot;Đồng bộ R2&quot; để tải file Bulk.
                         </span>
                       </div>
                     </td>
@@ -1574,7 +1611,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                 ) : (
                   paginatedCampaigns.map((c, i) => (
                     <tr key={i} className="hover:bg-slate-50/80 transition">
-                      <td className="py-2.5 px-3.5 font-bold text-slate-900 max-w-xs truncate">
+                      <td className="py-2.5 px-3.5 font-bold text-slate-900 min-w-[280px] max-w-[550px] break-words">
                         {c.campaignName}
                       </td>
                       <td className="py-2.5 px-3 text-slate-500 font-medium">{c.storeName}</td>
@@ -1608,21 +1645,6 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                         </span>
                       </td>
                       <td className="py-2.5 px-3 text-right font-bold text-sky-600">{c.roas.toFixed(2)}x</td>
-                      <td className="py-2.5 px-3 text-center">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedCampaignForDrilldown(c.campaignName);
-                            setActiveTab("ad_groups");
-                            setAdGroupPage(1);
-                          }}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold text-[11px] transition cursor-pointer border border-indigo-200"
-                          title="Drill-down xem các Nhóm QC của chiến dịch này"
-                        >
-                          <span>Nhóm QC</span>
-                          <span>→</span>
-                        </button>
-                      </td>
                     </tr>
                   )))}
               </tbody>
@@ -1636,7 +1658,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             pageSize={campaignPageSize}
             totalItems={filteredSortedCampaigns.length}
             pageSizeOptions={[15, 25, 50, 100, 200]}
-            itemName="chiến dịch"
+            itemName="campaign"
             onPageChange={setCampaignPage}
             onPageSizeChange={(size) => {
               setCampaignPageSize(size);
@@ -1646,178 +1668,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* VIEW: BREAKDOWN BY AD GROUP (Level 3 Hierarchy) */}
-      {/* ========================================================================= */}
-      {activeTab === "ad_groups" && (
-        <div className="space-y-3">
-          {/* Breadcrumb / Active drilldown banner */}
-          {selectedCampaignForDrilldown && (
-            <div className="flex items-center justify-between gap-2 p-3 rounded-xl bg-indigo-50/90 border border-indigo-200 text-xs">
-              <div className="flex items-center gap-2 text-indigo-900 font-semibold">
-                <span>📍 Đang lọc theo Chiến Dịch:</span>
-                <span className="font-black text-indigo-950 bg-white px-2.5 py-1 rounded-lg border border-indigo-200 shadow-2xs">
-                  {selectedCampaignForDrilldown}
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedCampaignForDrilldown(null)}
-                className="text-xs font-bold text-indigo-700 hover:text-indigo-950 underline cursor-pointer"
-              >
-                ✕ Xem tất cả Nhóm QC ({adGroupPerformance.length})
-              </button>
-            </div>
-          )}
 
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
-            <div className="relative flex-1 sm:w-72">
-              <MagnifyingGlass size={14} className="absolute left-3 top-2.5 text-slate-400" />
-              <input
-                type="text"
-                value={adGroupQuery}
-                onChange={(e) => {
-                  setAdGroupQuery(e.target.value);
-                  setAdGroupPage(1);
-                }}
-                placeholder="Tìm tên nhóm quảng cáo..."
-                className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs outline-none focus:bg-white focus:border-indigo-600"
-              />
-            </div>
-            <div className="text-xs font-bold text-slate-500">
-              Hiển thị: <strong className="text-slate-900">{filteredSortedAdGroups.length}</strong> nhóm QC
-            </div>
-          </div>
-
-          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
-            <table className="w-full text-left text-xs text-slate-700">
-              <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
-                <tr>
-                  <th className="py-3 px-3.5">Ad Group Name</th>
-                  <th className="py-3 px-3">Campaign Name</th>
-                  <th className="py-3 px-3">Store</th>
-                  <th
-                    className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
-                    onClick={() =>
-                      handleSort("spend", adGroupSortField, adGroupSortDir, setAdGroupSortField, setAdGroupSortDir)
-                    }
-                  >
-                    Spend ($) {adGroupSortField === "spend" && (adGroupSortDir === "asc" ? "↑" : "↓")}
-                  </th>
-                  <th
-                    className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
-                    onClick={() =>
-                      handleSort("sales", adGroupSortField, adGroupSortDir, setAdGroupSortField, setAdGroupSortDir)
-                    }
-                  >
-                    Sales ($) {adGroupSortField === "sales" && (adGroupSortDir === "asc" ? "↑" : "↓")}
-                  </th>
-                  <th
-                    className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
-                    onClick={() =>
-                      handleSort("orders", adGroupSortField, adGroupSortDir, setAdGroupSortField, setAdGroupSortDir)
-                    }
-                  >
-                    Orders {adGroupSortField === "orders" && (adGroupSortDir === "asc" ? "↑" : "↓")}
-                  </th>
-                  <th className="py-3 px-3 text-right">Clicks</th>
-                  <th className="py-3 px-3 text-right">CPC</th>
-                  <th className="py-3 px-3 text-right">CVR</th>
-                  <th
-                    className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
-                    onClick={() =>
-                      handleSort("acos", adGroupSortField, adGroupSortDir, setAdGroupSortField, setAdGroupSortDir)
-                    }
-                  >
-                    ACOS (%) {adGroupSortField === "acos" && (adGroupSortDir === "asc" ? "↑" : "↓")}
-                  </th>
-                  <th className="py-3 px-3 text-right">ROAS</th>
-                  <th className="py-3 px-3 text-center">Mục Tiêu</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 font-medium">
-                {filteredSortedAdGroups.length === 0 ? (
-                  <tr>
-                    <td colSpan={12} className="py-12 text-center text-slate-400">
-                      <div className="flex flex-col items-center justify-center gap-1.5">
-                        <ListDashes size={24} className="text-slate-300" />
-                        <span className="font-semibold text-slate-600">Không tìm thấy Nhóm Quảng Cáo</span>
-                        <span className="text-xs text-slate-400">
-                          {selectedCampaignForDrilldown
-                            ? `Không có nhóm nào thuộc chiến dịch "${selectedCampaignForDrilldown}" phù hợp từ khóa tìm kiếm.`
-                            : "Không có nhóm quảng cáo nào phù hợp điều kiện lọc."}
-                        </span>
-                      </div>
-                    </td>
-                  </tr>
-                ) : (
-                  paginatedAdGroups.map((ag, i) => (
-                    <tr key={i} className="hover:bg-slate-50/80 transition">
-                      <td className="py-2.5 px-3.5 font-bold text-slate-900 max-w-xs truncate">
-                        {ag.adGroupName}
-                      </td>
-                      <td className="py-2.5 px-3 font-medium text-slate-600 max-w-xs truncate">{ag.campaignName}</td>
-                      <td className="py-2.5 px-3 text-slate-500 font-medium">{ag.storeName}</td>
-                      <td className="py-2.5 px-3 text-right font-bold text-slate-900">${ag.spend.toFixed(2)}</td>
-                      <td className="py-2.5 px-3 text-right font-black text-emerald-600">${ag.sales.toFixed(2)}</td>
-                      <td className="py-2.5 px-3 text-right font-black text-slate-900">{ag.orders}</td>
-                      <td className="py-2.5 px-3 text-right text-slate-600">{ag.clicks}</td>
-                      <td className="py-2.5 px-3 text-right text-slate-600">${ag.cpc.toFixed(2)}</td>
-                      <td className="py-2.5 px-3 text-right text-slate-700">{ag.cvr.toFixed(1)}%</td>
-                      <td className="py-2.5 px-3 text-right">
-                        <span
-                          className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${ag.acos <= Math.min(20, targetAcos)
-                              ? "bg-emerald-50 text-emerald-700"
-                              : ag.acos <= targetAcos
-                                ? "bg-teal-50 text-teal-700"
-                                : ag.acos <= 50
-                                  ? "bg-amber-50 text-amber-700"
-                                  : "bg-rose-50 text-rose-700"
-                            }`}
-                        >
-                          {ag.acos > 500 ? "0 sales" : `${ag.acos.toFixed(1)}%`}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-bold text-sky-600">{ag.roas.toFixed(2)}x</td>
-                      <td className="py-2.5 px-3 text-center">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedCampaignForDrilldown(ag.campaignName);
-                            setSelectedAdGroupForDrilldown(ag.adGroupName);
-                            setActiveTab("targets");
-                            setTargetPage(1);
-                          }}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold text-[11px] transition cursor-pointer border border-indigo-200"
-                          title="Drill-down xem các Targets của nhóm quảng cáo này"
-                        >
-                          <span>Xem Targets</span>
-                          <span>→</span>
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Pagination Controls */}
-          <PpcPagination
-            currentPage={adGroupPage}
-            totalPages={totalAdGroupPages}
-            pageSize={adGroupPageSize}
-            totalItems={filteredSortedAdGroups.length}
-            pageSizeOptions={[15, 25, 50, 100, 200]}
-            itemName="nhóm QC"
-            onPageChange={setAdGroupPage}
-            onPageSizeChange={(size) => {
-              setAdGroupPageSize(size);
-              setAdGroupPage(1);
-            }}
-          />
-        </div>
-      )}
 
       {/* ========================================================================= */}
       {/* VIEW: BREAKDOWN BY TARGET / KEYWORD (Level 4 Hierarchy + Search Term 2-Layer) */}
@@ -1853,30 +1704,20 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             </div>
           )}
 
-          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-2xs">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-              <div>
-                <h3 className="text-xs font-black text-slate-900 flex items-center gap-2">
-                  <span>Target Performance &amp; Search Term Intelligence</span>
-                  <span className="rounded bg-indigo-50 px-2 py-0.5 text-[10px] font-extrabold text-indigo-700 border border-indigo-200">
-                    2 Lớp Dữ Liệu
-                  </span>
-                </h3>
-                <p className="mt-0.5 text-[11px] font-medium text-slate-500">
-                  Lớp 1 (Bulk Target Grain): Hiệu suất &amp; Bid thực thi. Lớp 2 (Search Term Breakdown): Nhấp vào từng Target để xem các truy vấn thực tế, Harvest candidate và Negative candidate.
-                </p>
-              </div>
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+            <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
+              Target / Keyword Performance
+            </h3>
 
-              <div className="relative w-full sm:w-64">
-                <MagnifyingGlass size={14} className="absolute left-3 top-2.5 text-slate-400" />
-                <input
-                  type="text"
-                  value={targetQuery}
-                  onChange={(e) => setTargetQuery(e.target.value)}
-                  placeholder="Tìm keyword / target..."
-                  className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs outline-none focus:bg-white focus:border-indigo-600"
-                />
-              </div>
+            <div className="relative w-full sm:w-72">
+              <MagnifyingGlass size={14} className="absolute left-3 top-2.5 text-slate-400" />
+              <input
+                type="text"
+                value={targetQuery}
+                onChange={(e) => setTargetQuery(e.target.value)}
+                placeholder="Tìm keyword / target..."
+                className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs outline-none focus:bg-white focus:border-indigo-600"
+              />
             </div>
           </div>
 
@@ -1884,10 +1725,10 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             <table className="w-full min-w-[1100px] text-left text-xs text-slate-700">
               <thead className="border-b border-slate-200 bg-slate-50 text-[10px] font-extrabold uppercase text-slate-500">
                 <tr>
-                  <th className="px-3.5 py-3">Target / Keyword</th>
-                  <th className="px-3 py-3">Campaign / Ad Group</th>
-                  <th className="px-3 py-3">Type</th>
-                  <th className="px-3 py-3">State</th>
+                  <th className="px-3.5 py-3 text-left">Target / Keyword</th>
+                  <th className="px-3 py-3 text-left">Campaign</th>
+                  <th className="px-3 py-3 text-left">Type</th>
+                  <th className="px-3 py-3 text-left">State</th>
                   <th className="px-3 py-3 text-right">Bid</th>
                   <th
                     className="px-3 py-3 text-right cursor-pointer hover:text-indigo-600"
@@ -1941,54 +1782,51 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                   const bleederSpend = bleederCandidates.reduce((sum, t) => sum + t.spend, 0);
 
                   return (
-                    <tr key={targetKey} className="group">
-                      <td colSpan={13} className="p-0">
-                        {/* Primary Target Row */}
-                        <div className={`grid grid-cols-[minmax(220px,1.5fr)_minmax(200px,1.2fr)_80px_70px_65px_75px_80px_60px_65px_65px_75px_65px_110px] items-center px-3.5 py-2.5 transition ${isExpanded ? "bg-indigo-50/40" : "hover:bg-slate-50/80"}`}>
-                          <div className="font-bold text-slate-900 truncate pr-2">
-                            <div className="truncate">{target.targetKeyword}</div>
-                            <div className="text-[10px] font-medium text-slate-400">{target.targetId || "No target ID"}</div>
-                          </div>
-                          <div className="truncate pr-2">
-                            <div className="truncate font-semibold text-slate-700">{target.campaignName}</div>
-                            <div className="truncate text-[10px] text-slate-400">{target.adGroupName}</div>
-                          </div>
-                          <div>
-                            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-700">{target.adType} · {target.matchType}</span>
-                          </div>
-                          <div className="text-[11px] font-bold text-slate-500">{target.state || "—"}</div>
-                          <div className="text-right font-mono font-black text-slate-800">{target.currentBid ? `$${target.currentBid.toFixed(2)}` : "—"}</div>
-                          <div className="text-right font-mono font-bold text-slate-900">${target.spend.toFixed(2)}</div>
-                          <div className="text-right font-mono font-black text-emerald-600">${target.sales.toFixed(2)}</div>
-                          <div className="text-right font-mono font-bold text-slate-900">{target.orders}</div>
-                          <div className="text-right font-mono text-slate-600">${target.cpc.toFixed(2)}</div>
-                          <div className="text-right font-mono text-slate-700">{target.cvr.toFixed(1)}%</div>
-                          <div className={`text-right font-mono font-black ${target.acos <= targetAcos ? "text-emerald-700" : "text-rose-700"}`}>
-                            {target.acos > 500 ? "0 sales" : `${target.acos.toFixed(1)}%`}
-                          </div>
-                          <div className="text-right font-mono font-bold text-sky-600">{target.roas.toFixed(2)}x</div>
-                          <div className="text-center pl-2">
-                            <button
-                              type="button"
-                              onClick={() => setExpandedTargetKey(isExpanded ? null : targetKey)}
-                              className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-extrabold transition cursor-pointer border ${isExpanded
-                                  ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
-                                  : childTerms.length > 0
-                                    ? "bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border-indigo-200"
-                                    : "bg-slate-100 text-slate-400 border-slate-200 hover:bg-slate-200"
-                                }`}
-                              title="Xem các customer search terms do target này kích hoạt"
-                            >
-                              <MagnifyingGlass size={11} weight="bold" />
-                              <span>{childTerms.length} Terms</span>
-                              <span>{isExpanded ? "▲" : "▼"}</span>
-                            </button>
-                          </div>
-                        </div>
+                    <Fragment key={targetKey}>
+                      <tr className={`group transition ${isExpanded ? "bg-indigo-50/40" : "hover:bg-slate-50/80"}`}>
+                        <td className="px-3.5 py-2.5 font-bold text-slate-900 max-w-[280px]">
+                          <div className="truncate" title={target.targetKeyword}>{target.targetKeyword}</div>
+                        </td>
+                        <td className="px-3 py-2.5 font-semibold text-slate-700 max-w-[240px]">
+                          <div className="truncate" title={target.campaignName}>{target.campaignName}</div>
+                        </td>
+                        <td className="px-3 py-2.5 whitespace-nowrap">
+                          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-700">{target.adType} · {target.matchType}</span>
+                        </td>
+                        <td className="px-3 py-2.5 whitespace-nowrap text-[11px] font-bold text-slate-500">{target.state || "—"}</td>
+                        <td className="px-3 py-2.5 text-right font-mono font-black text-slate-800 whitespace-nowrap">{target.currentBid ? `$${target.currentBid.toFixed(2)}` : "—"}</td>
+                        <td className="px-3 py-2.5 text-right font-mono font-bold text-slate-900 whitespace-nowrap">${target.spend.toFixed(2)}</td>
+                        <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-600 whitespace-nowrap">${target.sales.toFixed(2)}</td>
+                        <td className="px-3 py-2.5 text-right font-mono font-bold text-slate-900 whitespace-nowrap">{target.orders}</td>
+                        <td className="px-3 py-2.5 text-right font-mono text-slate-600 whitespace-nowrap">${target.cpc.toFixed(2)}</td>
+                        <td className="px-3 py-2.5 text-right font-mono text-slate-700 whitespace-nowrap">{target.cvr.toFixed(1)}%</td>
+                        <td className={`px-3 py-2.5 text-right font-mono font-black whitespace-nowrap ${target.acos <= targetAcos ? "text-emerald-700" : "text-rose-700"}`}>
+                          {target.acos > 500 ? "0 sales" : `${target.acos.toFixed(1)}%`}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono font-bold text-sky-600 whitespace-nowrap">{target.roas.toFixed(2)}x</td>
+                        <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => setExpandedTargetKey(isExpanded ? null : targetKey)}
+                            className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-extrabold transition cursor-pointer border ${isExpanded
+                                ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
+                                : childTerms.length > 0
+                                  ? "bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border-indigo-200"
+                                  : "bg-slate-100 text-slate-400 border-slate-200 hover:bg-slate-200"
+                              }`}
+                            title="Xem các customer search terms do target này kích hoạt"
+                          >
+                            <MagnifyingGlass size={11} weight="bold" />
+                            <span>{childTerms.length} Terms</span>
+                            <span>{isExpanded ? "▲" : "▼"}</span>
+                          </button>
+                        </td>
+                      </tr>
 
-                        {/* Inline Expandable Layer 2: Search Term Breakdown */}
-                        {isExpanded && (
-                          <div className="bg-slate-50/90 p-3.5 border-t border-indigo-100 space-y-2.5 animate-in fade-in duration-150">
+                      {/* Inline Expandable Layer 2: Search Term Breakdown */}
+                      {isExpanded && (
+                        <tr className="bg-slate-50/90 border-b border-indigo-100">
+                          <td colSpan={13} className="p-3.5 space-y-2.5 animate-in fade-in duration-150">
                             {/* Header Context & Intelligence Insight */}
                             <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2 p-2.5 rounded-lg bg-white border border-indigo-100 shadow-2xs">
                               <div>
@@ -1999,7 +1837,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                                   </span>
                                 </div>
                                 <div className="text-[11px] text-slate-500 mt-0.5">
-                                  Chiến dịch: <strong className="text-slate-700">{target.campaignName}</strong> • Nhóm QC: <strong className="text-slate-700">{target.adGroupName}</strong> • Giá thầu hiện tại: <strong className="text-indigo-700">${target.currentBid?.toFixed(2) || "—"}</strong>
+                                  Campaign: <strong className="text-slate-700">{target.campaignName}</strong> • Giá thầu hiện tại: <strong className="text-indigo-700">${target.currentBid?.toFixed(2) || "—"}</strong>
                                 </div>
                               </div>
 
@@ -2085,10 +1923,10 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                                 </table>
                               </div>
                             )}
-                          </div>
-                        )}
-                      </td>
-                    </tr>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 })}
               </tbody>
@@ -2384,55 +2222,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* VIEW 4: BREAKDOWN BY MATCH TYPE */}
-      {/* ========================================================================= */}
-      {activeTab === "match_types" && (
-        <div className="space-y-3">
-          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
-            <table className="w-full text-left text-xs text-slate-700">
-              <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
-                <tr>
-                  <th className="py-3 px-3.5">Match Type</th>
-                  <th className="py-3 px-3 text-right">Spend ($)</th>
-                  <th className="py-3 px-3 text-right">% Spend</th>
-                  <th className="py-3 px-3 text-right">Sales ($)</th>
-                  <th className="py-3 px-3 text-right">% Sales</th>
-                  <th className="py-3 px-3 text-right">Orders</th>
-                  <th className="py-3 px-3 text-right">Clicks</th>
-                  <th className="py-3 px-3 text-right">CPC ($)</th>
-                  <th className="py-3 px-3 text-right">CVR (%)</th>
-                  <th className="py-3 px-3 text-right">ACOS (%)</th>
-                  <th className="py-3 px-3 text-right">ROAS</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 font-medium">
-                {matchTypeBreakdown.map((m) => (
-                  <tr key={m.matchType} className="hover:bg-slate-50/80 transition">
-                    <td className="py-3 px-3.5 font-bold text-slate-900 flex items-center gap-2">
-                      <span
-                        className="w-2.5 h-2.5 rounded-full"
-                        style={{ backgroundColor: MATCH_TYPE_COLORS[m.matchType] || "#94a3b8" }}
-                      />
-                      <span>{m.matchType}</span>
-                    </td>
-                    <td className="py-3 px-3 text-right font-bold text-slate-900">${m.spend.toFixed(2)}</td>
-                    <td className="py-3 px-3 text-right font-mono text-slate-500">{m.spendShare}%</td>
-                    <td className="py-3 px-3 text-right font-black text-emerald-600">${m.sales.toFixed(2)}</td>
-                    <td className="py-3 px-3 text-right font-mono text-slate-500">{m.salesShare}%</td>
-                    <td className="py-3 px-3 text-right font-black text-slate-900">{m.orders}</td>
-                    <td className="py-3 px-3 text-right text-slate-600">{m.clicks}</td>
-                    <td className="py-3 px-3 text-right text-slate-600">${m.cpc.toFixed(2)}</td>
-                    <td className="py-3 px-3 text-right text-slate-700">{m.cvr.toFixed(1)}%</td>
-                    <td className="py-3 px-3 text-right font-black text-slate-900">{m.acos.toFixed(1)}%</td>
-                    <td className="py-3 px-3 text-right font-bold text-sky-600">{m.roas.toFixed(2)}x</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+
 
       {/* ========================================================================= */}
       {/* VIEW 5: CUSTOMER SEARCH TERMS REPORT (Full Drill-Down) */}
@@ -2683,22 +2473,12 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
 
       {activeTab === "recommendations" && (
         <div className="space-y-4">
-          {/* Shop Action Center Header & Controls */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-base font-black text-slate-900">
-                    Trung Tâm Hành Động & Đề Xuất Tối Ưu (Shop Action Center)
-                  </h3>
-                  <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-bold text-indigo-700 border border-indigo-100">
-                    {recommendations.length} đề xuất
-                  </span>
-                </div>
-                <p className="mt-1 text-xs text-slate-500">
-                  Phân tầng ưu tiên tự động: <strong className="text-rose-600">P0</strong> Cắt lỗ khẩn cấp · <strong className="text-emerald-600">P1</strong> Scale sản phẩm thắng · <strong className="text-sky-600">P2</strong> Thu hoạch từ khóa tiềm năng. Xuất file nạp trực tiếp Amazon Bulk Operations.
-                </p>
-              </div>
+          {/* Recommendations Header & Controls */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
+                Đề Xuất Tối Ưu
+              </h3>
 
               {/* Action Buttons */}
               <div className="flex items-center gap-2.5 flex-wrap">
