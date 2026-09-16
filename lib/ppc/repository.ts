@@ -242,7 +242,8 @@ export async function listPpcSearchTerms(
       SELECT store_id, ad_type, MAX(report_end_date) as max_end_date
       FROM ppc_search_terms
       WHERE report_granularity = 'RANGE'
-        AND abs((report_end_date - report_start_date + 1) - ${filters.days}::integer) <= 3
+        AND (report_end_date - report_start_date + 1)
+          BETWEEN ${filters.days - 3}::integer AND ${filters.days + 3}::integer
         AND report_end_date <= CURRENT_DATE
       GROUP BY store_id, ad_type
     )
@@ -260,7 +261,11 @@ export async function listPpcSearchTerms(
     LEFT JOIN latest_range lr ON lr.store_id = t.store_id AND lr.ad_type = t.ad_type
     WHERE s.team_id = ${scope.teamId}
       AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
-      AND (${filters.sku === "ALL"} OR lower(t.portfolio_name) = lower(${filters.sku}))
+      AND (
+        ${filters.sku === "ALL"}
+        OR lower(t.portfolio_name) = lower(${filters.sku})
+        OR position(lower(${filters.sku}) in lower(t.campaign_name)) > 0
+      )
       AND (
         (
           t.report_granularity = 'DAILY'
@@ -286,13 +291,26 @@ export async function listPpcPerformance(
   const sql = await getDatabaseClient();
   const rows = await sql<PerformanceDbRow[]>`
     WITH latest_snapshots AS (
-      SELECT p2.store_id, p2.ad_type, MAX(p2.snapshot_date) AS max_snapshot
+      SELECT DISTINCT ON (p2.store_id, p2.ad_type)
+        p2.store_id, p2.ad_type, p2.snapshot_date AS max_snapshot,
+        p2.report_end_date AS max_report_end
       FROM ppc_performance_facts p2
       JOIN ppc_stores s2 ON s2.id = p2.store_id
       WHERE s2.team_id = ${scope.teamId}
         AND (${filters.storeName === "ALL"} OR lower(s2.name) = lower(${filters.storeName}))
-        AND abs((p2.report_end_date - p2.report_start_date + 1) - ${filters.days}::integer) <= 3
-      GROUP BY p2.store_id, p2.ad_type
+        AND (p2.report_end_date - p2.report_start_date + 1)
+          BETWEEN ${filters.days - 3}::integer AND ${filters.days + 3}::integer
+      ORDER BY p2.store_id, p2.ad_type, p2.snapshot_date DESC, p2.report_end_date DESC
+    ), sku_campaigns AS (
+      SELECT DISTINCT p3.store_id, p3.ad_type, p3.campaign_id
+      FROM ppc_performance_facts p3
+      JOIN latest_snapshots ls3
+        ON ls3.store_id = p3.store_id
+        AND ls3.ad_type = p3.ad_type
+        AND ls3.max_snapshot = p3.snapshot_date
+        AND ls3.max_report_end = p3.report_end_date
+      WHERE ${filters.sku !== "ALL"}
+        AND lower(p3.sku) = lower(${filters.sku})
     )
     SELECT
       p.id, p.store_id, s.name AS store_name, p.snapshot_date,
@@ -306,18 +324,44 @@ export async function listPpcPerformance(
       p.sales, p.orders, p.units
     FROM ppc_performance_facts p
     JOIN ppc_stores s ON s.id = p.store_id
-    JOIN latest_snapshots ls ON ls.store_id = p.store_id AND ls.ad_type = p.ad_type AND ls.max_snapshot = p.snapshot_date
+    JOIN latest_snapshots ls
+      ON ls.store_id = p.store_id
+      AND ls.ad_type = p.ad_type
+      AND ls.max_snapshot = p.snapshot_date
+      AND ls.max_report_end = p.report_end_date
     WHERE s.team_id = ${scope.teamId}
       AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
-      AND (${filters.sku === "ALL"} OR lower(p.sku) = lower(${filters.sku}))
-      AND abs((p.report_end_date - p.report_start_date + 1) - ${filters.days}::integer) <= 3
+      AND (
+        ${filters.sku === "ALL"}
+        OR lower(p.sku) = lower(${filters.sku})
+        OR EXISTS (
+          SELECT 1 FROM sku_campaigns sc
+          WHERE sc.store_id = p.store_id
+            AND sc.ad_type = p.ad_type
+            AND sc.campaign_id = p.campaign_id
+        )
+      )
+      AND (p.report_end_date - p.report_start_date + 1)
+        BETWEEN ${filters.days - 3}::integer AND ${filters.days + 3}::integer
       AND (
         p.spend > 0 OR p.clicks > 0 OR p.impressions > 0
         OR p.grain IN ('CAMPAIGN', 'AD_GROUP', 'PRODUCT')
         OR (
           p.grain = 'TARGET'
           AND p.state = 'enabled'
-          AND (p.campaign_name ILIKE '%GO%' OR p.sku ILIKE '%GO%')
+          AND (
+            p.campaign_name ILIKE '%GO%' OR p.sku ILIKE '%GO%'
+            OR EXISTS (
+              SELECT 1 FROM ppc_performance_facts c_act
+              WHERE c_act.store_id = p.store_id
+                AND c_act.ad_type = p.ad_type
+                AND c_act.snapshot_date = p.snapshot_date
+                AND c_act.report_end_date = p.report_end_date
+                AND c_act.grain = 'CAMPAIGN'
+                AND c_act.campaign_id = p.campaign_id
+                AND (c_act.state = 'enabled' OR c_act.spend > 0 OR c_act.impressions > 0)
+            )
+          )
         )
       )
     ORDER BY p.ad_type, p.grain, p.spend DESC, p.id

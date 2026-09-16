@@ -18,7 +18,6 @@ import {
   ArrowSquareOut,
   Lightning,
   ListPlus,
-  Info,
   Trophy,
 } from "@phosphor-icons/react";
 import type { AutocompleteSeedResult } from "@/lib/amazon-autocomplete";
@@ -49,7 +48,6 @@ export function AmazonAutocompleteSeedMiner({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [selectedSeeds, setSelectedSeeds] = useState<Set<string>>(new Set());
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
-  const [showGuide, setShowGuide] = useState(true);
   const [showAsinSection, setShowAsinSection] = useState(true);
   const [activeSeedForAsins, setActiveSeedForAsins] = useState<string>("Retirement Coffee Mug");
 
@@ -233,16 +231,6 @@ export function AmazonAutocompleteSeedMiner({
               </p>
             </div>
           </div>
-
-          <button
-            type="button"
-            onClick={() => setShowGuide(!showGuide)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 transition"
-          >
-            <Info size={15} />
-            {showGuide ? "Ẩn Tiêu Chuẩn Chọn ASIN" : "Xem Tiêu Chuẩn Chọn ASIN"}
-            {showGuide ? <CaretUp size={12} /> : <CaretDown size={12} />}
-          </button>
         </div>
 
         {/* Input Form */}
@@ -324,60 +312,6 @@ export function AmazonAutocompleteSeedMiner({
         </div>
       </div>
 
-      {/* Guide Box (Accordion) */}
-      {showGuide && (
-        <div className="rounded-xl border border-indigo-100 bg-gradient-to-r from-slate-900 to-indigo-950 p-4 text-white shadow-xs">
-          <div className="flex items-start justify-between gap-3 pb-3 border-b border-indigo-900/60">
-            <div className="flex items-center gap-2">
-              <span className="p-1 rounded bg-indigo-800 text-indigo-300">
-                <Info size={15} weight="bold" />
-              </span>
-              <h3 className="text-xs font-bold uppercase tracking-wider text-indigo-200">
-                Chiến Lược Chọn ASIN Đối Thủ Chuẩn Để Reverse (Từ 10-13 Seeds)
-              </h3>
-            </div>
-            <span className="text-[11px] text-indigo-300 font-medium">
-              Đảm bảo Coverage % phản ánh đúng toàn ngách
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-3 text-[11px] leading-relaxed">
-            <div className="space-y-1.5 bg-white/5 p-3 rounded-lg border border-white/10">
-              <div className="font-bold text-amber-300 flex items-center gap-1.5">
-                <span>1. Nguồn tìm ASIN ứng viên (20-30 ASIN)</span>
-              </div>
-              <ul className="list-disc list-inside space-y-1 text-slate-300">
-                <li>Search 10-13 seeds trên Amazon US (lấy cả organic &amp; sponsored trang 1).</li>
-                <li>Mở rộng thêm từ &quot;Customers also bought&quot; / Related products.</li>
-                <li>Lấy Best Seller / Amazon&apos;s Choice trong Category tree.</li>
-              </ul>
-            </div>
-
-            <div className="space-y-1.5 bg-white/5 p-3 rounded-lg border border-white/10">
-              <div className="font-bold text-emerald-300 flex items-center gap-1.5">
-                <span>2. Tiêu chí lọc &amp; Loại bỏ</span>
-              </div>
-              <ul className="list-disc list-inside space-y-1 text-slate-300">
-                <li><strong className="text-white">Review count:</strong> ≥ 100-500 reviews (bán ổn định).</li>
-                <li><strong className="text-white">BSR:</strong> Top 1-5% category (rank càng nhỏ bán càng tốt).</li>
-                <li><strong className="text-white">Loại bỏ:</strong> Brand độc quyền (Yeti, Stanley), hàng lỗi, combo/bundle lệch cấu trúc.</li>
-              </ul>
-            </div>
-
-            <div className="space-y-1.5 bg-white/5 p-3 rounded-lg border border-white/10">
-              <div className="font-bold text-sky-300 flex items-center gap-1.5">
-                <span>3. Cơ cấu 10-15 ASIN đa dạng</span>
-              </div>
-              <ul className="list-disc list-inside space-y-1 text-slate-300">
-                <li><strong className="text-white">5-7 ASIN:</strong> Top organic ranking cho seed chính.</li>
-                <li><strong className="text-white">2-3 ASIN:</strong> Bán chạy nhất category (BSR thấp).</li>
-                <li><strong className="text-white">2-3 ASIN:</strong> Cùng tầm giá &amp; target customer.</li>
-                <li><strong className="text-white">1-2 ASIN:</strong> Outlier phát hiện cross-niche keywords.</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Results View */}
       {result && (

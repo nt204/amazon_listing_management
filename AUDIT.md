@@ -1,154 +1,42 @@
-Đo thực tế cho thấy PPC Analytics lag chủ yếu do kiến trúc tải dữ liệu, không phải do CSS:
+**Kết quả audit**
 
-| Hiện trạng | Số liệu |
-|---|---:|
-| Thời gian xử lý server | khoảng 5,7 giây |
-| Payload JSON | khoảng 10,3 MB |
-| Campaign gửi xuống trình duyệt | 10.754 |
-| Ad group | 7.420 |
-| Target | 1.755 |
-| Search term | 2.771 |
-| Bảng performance trong DB | 1.177.772 dòng, khoảng 1,52 GB |
-| Riêng truy vấn DB | khoảng 3,9 giây |
+Hiện tại hệ thống **chưa tối ưu hoàn toàn**. Những vấn đề đáng ưu tiên:
 
-Trình duyệt phải parse 10 MB JSON, giữ nhiều bản sao dữ liệu trong memory, tạo hàng loạt `Map`, lọc, sắp xếp và tính chart. Vì vậy máy yếu sẽ rất dễ giật.
+1. **P1 – PDF riêng tư đang được cache công khai.** Route kiểm tra đăng nhập nhưng trả `Cache-Control: public`, nên proxy/CDN dùng chung có thể lưu và phục vụ tài liệu mà không gọi lại bước xác thực. Đổi thành `private` và bổ sung `ETag` hoặc `no-store` tùy yêu cầu.  
+[app/api/guides/[id]/route.ts:12](/Users/macbook/Desktop/Amazon%20Listing%20Management/app/api/guides/%5Bid%5D/route.ts:12)  
+[app/api/guides/[id]/route.ts:26](/Users/macbook/Desktop/Amazon%20Listing%20Management/app/api/guides/%5Bid%5D/route.ts:26)
 
-## Hướng tối ưu phù hợp nhất
+2. **P1 – PPC có nguy cơ tăng RAM rất mạnh.** Upload cho phép 150 MB, `request.formData()` giữ file trong bộ nhớ, sau đó tạo `ArrayBuffer`, `Buffer`, giải nén workbook và giữ toàn bộ rows. Đồng bộ R2 cũng đọc toàn bộ file và giữ kết quả của nhiều file trước khi ghi DB. Nên stream upload xuống file tạm/object storage, parse theo dòng/chunk và ghi DB từng batch.  
+[app/api/ppc/upload/route.ts:6](/Users/macbook/Desktop/Amazon%20Listing%20Management/app/api/ppc/upload/route.ts:6)  
+[app/api/ppc/upload/route.ts:12](/Users/macbook/Desktop/Amazon%20Listing%20Management/app/api/ppc/upload/route.ts:12)  
+[lib/ppc/service.ts:411](/Users/macbook/Desktop/Amazon%20Listing%20Management/lib/ppc/service.ts:411)
 
-### 1. Không tải toàn bộ PPC trong lần mở đầu
+3. **P1 – API dashboard PPC tải toàn bộ dataset.** Hai truy vấn không có `LIMIT`, server tính toán trên toàn bộ rows rồi gửi cả `searchTerms`, campaign, ad group và tối đa 20.000 targets về browser. Pagination hiện chỉ ở client nên không giảm SQL, RAM, JSON hay network. Cần aggregate và paginate phía server theo từng tab.  
+[lib/ppc/repository.ts:227](/Users/macbook/Desktop/Amazon%20Listing%20Management/lib/ppc/repository.ts:227)  
+[lib/ppc/repository.ts:287](/Users/macbook/Desktop/Amazon%20Listing%20Management/lib/ppc/repository.ts:287)  
+[lib/ppc/service.ts:228](/Users/macbook/Desktop/Amazon%20Listing%20Management/lib/ppc/service.ts:228)
 
-Lần đầu chỉ nên tải:
+4. **P2 – Bundle trang chính còn nặng.** Build cho thấy riêng các chunk gắn với `/` khoảng **140 KB gzip**, chưa tính framework/shared vendor. Trello, SellerSprite và PPC đều import tĩnh dù chỉ một view được render. Nên chuyển các view sang `next/dynamic`; đặc biệt `TrelloBoardView` và `PpcDashboard` lần lượt khoảng 2.876 và 3.760 dòng.  
+[components/listing-workspace.tsx:13](/Users/macbook/Desktop/Amazon%20Listing%20Management/components/listing-workspace.tsx:13)  
+[components/listing-workspace.tsx:312](/Users/macbook/Desktop/Amazon%20Listing%20Management/components/listing-workspace.tsx:312)
 
-- Summary
-- Breakdown tổng
-- 20–50 campaign đầu tiên
-- Số lượng cảnh báo/recommendation
-- Danh sách store/SKU
+5. **P2 – Ảnh Trello ngoài viewport vẫn tải ngay.** Các gallery dùng `<img>` không có `loading="lazy"`/`decoding="async"`. Với board nhiều card, số request và dữ liệu tải ban đầu tăng nhanh.  
+[components/trello-board-view.tsx:1951](/Users/macbook/Desktop/Amazon%20Listing%20Management/components/trello-board-view.tsx:1951)  
+[components/trello-board-view.tsx:2051](/Users/macbook/Desktop/Amazon%20Listing%20Management/components/trello-board-view.tsx:2051)
 
-Không tải ngay:
+6. **P2 – Redis invalidation có thể block server.** Runtime vẫn dùng `KEYS` + `DEL` và cache miss không có single-flight. Repo đã có `SCAN` + `UNLINK` và helper single-flight kèm test, nhưng chưa được nối vào `redis.ts`.  
+[lib/redis.ts:74](/Users/macbook/Desktop/Amazon%20Listing%20Management/lib/redis.ts:74)  
+[lib/redis.ts:108](/Users/macbook/Desktop/Amazon%20Listing%20Management/lib/redis.ts:108)  
+[lib/redis-core.ts:12](/Users/macbook/Desktop/Amazon%20Listing%20Management/lib/redis-core.ts:12)
 
-- 7.420 ad group
-- 1.755 target
-- 2.771 search term
-- Toàn bộ recommendation chi tiết
+7. **P2 – Font production bị CSP chặn.** Layout tải Google Fonts nhưng CSP chỉ cho stylesheet/font từ chính domain. Trình duyệt sẽ dùng fallback font và vẫn tốn kết nối thất bại. Nên dùng `next/font` self-hosted hoặc mở CSP đầy đủ.  
+[next.config.ts:11](/Users/macbook/Desktop/Amazon%20Listing%20Management/next.config.ts:11)  
+[app/layout.tsx:18](/Users/macbook/Desktop/Amazon%20Listing%20Management/app/layout.tsx:18)
 
-Khi người dùng mở từng tab mới gọi API tương ứng:
+8. **P3 – R2 vẫn mặc định lưu thêm bản sao trong PostgreSQL.** `OBJECT_STORAGE_RETAIN_DATABASE_BYTES` mặc định là `true`, khiến ảnh nằm cả R2 lẫn `BYTEA`. Hợp lý khi migration, nhưng sau khi xác nhận R2 ổn định nên chuyển sang `false` và chạy maintenance để giảm DB size, backup time và RAM query.  
+[lib/object-storage-core.ts:83](/Users/macbook/Desktop/Amazon%20Listing%20Management/lib/object-storage-core.ts:83)  
+[lib/db.ts:551](/Users/macbook/Desktop/Amazon%20Listing%20Management/lib/db.ts:551)
 
-```text
-/ppc/overview
-/ppc/campaigns?page=1&pageSize=50
-/ppc/ad-groups?campaignId=...
-/ppc/targets?campaignId=...&adGroupId=...
-/ppc/search-terms?targetId=...
-/ppc/recommendations?page=1
-```
+Điểm tốt: ảnh listing/Trello đã có derivative giới hạn kích thước, content-addressed key, `ETag`, cache immutable và giới hạn concurrency. Download client cũng thu hồi object URL đúng cách.
 
-Đây là thay đổi có hiệu quả lớn nhất. Payload mở đầu nên giảm từ 10,3 MB xuống dưới khoảng 100–300 KB.
-
-### 2. Phân trang, lọc và sắp xếp ở database
-
-Hiện dashboard nhận toàn bộ dữ liệu rồi mới:
-
-- Tìm kiếm
-- Lọc trạng thái
-- Lọc chi tiêu
-- Sắp xếp
-- Phân trang
-
-Nên chuyển tất cả xuống SQL:
-
-```sql
-ORDER BY spend DESC
-LIMIT 50 OFFSET 0
-```
-
-Dashboard chỉ giữ 50 dòng đang hiển thị, thay vì giữ hơn 10.000 campaign trong RAM.
-
-### 3. Chỉ tải cấp con khi người dùng mở
-
-Luồng nên là:
-
-```text
-Campaign
-  → mở campaign mới tải Ad Group
-    → mở Ad Group mới tải Target
-      → mở Target mới tải Search Term
-```
-
-Không cần tải tất cả cấp con ngay từ đầu. Cách này vừa nhẹ vừa tránh việc map search term cho hàng nghìn target không được xem.
-
-### 4. Sửa bộ lọc SKU hiện tại
-
-Hiện tại khi chọn SKU, server vẫn truy vấn:
-
-```ts
-listPpcSearchTerms(... sku: "ALL")
-listPpcPerformance(... sku: "ALL")
-```
-
-Sau đó chỉ lọc `skuPerformance`, còn campaign, ad group, target và search term vẫn lấy toàn store.
-
-Đây vừa là vấn đề hiệu năng vừa có thể khiến người dùng tưởng bộ lọc SKU áp dụng cho toàn dashboard. Cần truyền SKU thật xuống truy vấn SQL.
-
-### 5. Tính tổng hợp trực tiếp bằng SQL
-
-Không nên lấy hơn 30.000 performance rows về Node.js rồi mới tính:
-
-- Campaign totals
-- Match type breakdown
-- ACOS/ROAS
-- Ad type breakdown
-- SKU totals
-
-Các thống kê này nên dùng `GROUP BY` trong PostgreSQL. Node chỉ nhận vài chục dòng tổng hợp.
-
-### 6. Tách dữ liệu hiện tại và lịch sử
-
-Bảng `ppc_performance_facts` đang hơn 1,17 triệu dòng. Nên có hai lớp:
-
-- `ppc_current_state`: chỉ giữ snapshot mới nhất của từng entity.
-- `ppc_performance_history`: giữ lịch sử để xem biểu đồ và so sánh.
-
-Dashboard thường ngày đọc từ `current_state`, không quét bảng lịch sử 1,5 GB.
-
-Ngoài ra nên:
-
-- Dọn snapshot trùng hoặc quá cũ.
-- Giữ dữ liệu chi tiết theo chính sách 90–180 ngày.
-- Dữ liệu cũ hơn chuyển thành bảng tổng hợp ngày/tuần.
-- Thêm index theo `team_id/store_id/snapshot_date/grain`.
-- Thêm partial index riêng cho campaign, target đang active.
-
-### 7. Cache theo phiên bản dữ liệu
-
-API hiện dùng `private, no-store`, nên mỗi lần đổi tab hoặc quay lại đều tính lại hoàn toàn.
-
-Nên cache theo khóa:
-
-```text
-team + store + SKU + days + latestSyncVersion
-```
-
-Khi chưa có file đồng bộ mới, có thể dùng lại kết quả cũ. Cache 30–60 giây cũng đã cải thiện rõ rệt.
-
-### 8. Làm trải nghiệm tải mượt hơn
-
-- Giữ dữ liệu cũ trong lúc đổi bộ lọc, không xóa trắng màn hình.
-- Hiển thị skeleton riêng cho bảng đang tải.
-- Hủy request cũ bằng `AbortController` khi người dùng đổi filter liên tục.
-- Debounce ô tìm kiếm khoảng 250–300 ms.
-- Dùng `useDeferredValue` cho tìm kiếm client nhỏ.
-- Chỉ import/render chart khi tab Overview được mở.
-- Không render DOM cho hàng chưa nằm trong trang hiện tại.
-
-## Thứ tự nên triển khai
-
-1. Tách API theo tab và server-side pagination.
-2. Truyền đúng SKU xuống database.
-3. Chuyển summary/breakdown sang SQL aggregation.
-4. Lazy-load Ad Group → Target → Search Term.
-5. Thêm cache và giữ dữ liệu cũ khi refetch.
-6. Cuối cùng mới tối ưu `useMemo`, chart và component render.
-7. Sau đó xử lý retention và bảng lịch sử để giảm dung lượng database.
-
-Nếu làm ba mục đầu, thời gian mở trang có thể giảm từ khoảng 5–6 giây xuống gần dưới 1 giây trong điều kiện local, đồng thời bộ nhớ trình duyệt giảm rất mạnh.
+Xác minh: production build thành công; 13/13 test cache, object storage và image processing đều pass. Audit không sửa code hay các thay đổi PPC đang có trong working tree.

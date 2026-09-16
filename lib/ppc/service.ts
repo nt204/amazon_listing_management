@@ -130,8 +130,8 @@ export async function getPpcAnalyticsData(
   const days = filters.days || 30;
   const [stores, storeRows, performanceRows, syncLogs] = await Promise.all([
     listPpcStores(scope),
-    listPpcSearchTerms(scope, { storeName, sku: "ALL", days }),
-    listPpcPerformance(scope, { storeName, sku: "ALL", days }),
+    listPpcSearchTerms(scope, { storeName, sku, days }),
+    listPpcPerformance(scope, { storeName, sku, days }),
     listPpcSyncLogs(scope),
   ]);
 
@@ -203,7 +203,7 @@ export async function getPpcAnalyticsData(
     : allSkuPerformance.filter((row) => row.sku.toLowerCase() === sku.toLowerCase());
   const campaignPerformance = campaignPerformanceFromFacts(performanceRows, targetAcos);
   const adGroups = adGroupPerformanceFromFacts(performanceRows);
-  const targets = targetPerformanceFromFacts(performanceRows).slice(0, 5000);
+  const targets = targetPerformanceFromFacts(performanceRows).slice(0, 20000);
   const targetRows = performanceRows.filter((row) => row.grain === "TARGET" && !row.isNegative);
   const matchTypeBreakdown = targetRows.length ? groupPpcByMatchType(targetRows) : [];
   const targetTypeBreakdown = targetRows.length ? groupPpcByTargetType(targetRows) : [];

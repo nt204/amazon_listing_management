@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useSyncExternalStore, Fragment } from "react";
+import { startTransition, useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore, Fragment } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import {
   ArrowsClockwise,
   ChartLineUp,
@@ -22,27 +23,11 @@ import {
   CalendarBlank,
 } from "@phosphor-icons/react";
 import { PpcPagination } from "./ppc-pagination";
-import { PpcTimeSeriesChart } from "./ppc-time-series-chart";
-import { PpcPerformanceRankingChart } from "./ppc-performance-ranking-chart";
 import {
   extractSkuFromText,
   extractCampaignDate,
-  detectProductType,
   formatPpcExportFilename,
 } from "@/lib/ppc/sku-extractor";
-import {
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  Legend,
-  CartesianGrid,
-  PieChart,
-  Pie,
-  Cell,
-} from "recharts";
 import type {
   PpcAlert,
   PpcAdTypeBreakdown,
@@ -95,6 +80,16 @@ const subscribeToHydration = () => () => undefined;
 const getClientSnapshot = () => true;
 const getServerSnapshot = () => false;
 
+const PpcTimeSeriesChart = dynamic(
+  () => import("./ppc-time-series-chart").then((module) => module.PpcTimeSeriesChart),
+  { loading: () => <div className="h-[360px] animate-pulse rounded-xl bg-slate-100" /> },
+);
+
+const PpcPerformanceRankingChart = dynamic(
+  () => import("./ppc-performance-ranking-chart").then((module) => module.PpcPerformanceRankingChart),
+  { loading: () => <div className="h-[420px] animate-pulse rounded-xl bg-slate-100" /> },
+);
+
 function searchTermKey(term: PpcSearchTermRow): string {
   return [
     term.id, term.storeName, term.adType, term.reportDate, term.portfolioName, term.campaignName,
@@ -119,7 +114,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   const [stores, setStores] = useState<PpcStore[]>([]);
   const [selectedStore, setSelectedStore] = useState<string>("ALL");
   const [selectedSku, setSelectedSku] = useState<string>("ALL");
-  const [selectedDays, setSelectedDays] = useState(30);
+  const [selectedDays, setSelectedDays] = useState(7);
   const [availableSkus, setAvailableSkus] = useState<string[]>([]);
 
   const [summary, setSummary] = useState<PpcSummaryMetrics | null>(null);
@@ -220,6 +215,8 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   const [dateRangeEnd, setDateRangeEnd] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const metricsRequestRef = useRef<{ controller: AbortController; id: number } | null>(null);
+  const metricsRequestIdRef = useRef(0);
 
   // Notification helper
   const notify = (message: string, type: "success" | "error" = "success") => {
@@ -227,54 +224,67 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
     setTimeout(() => setToast(null), 3500);
   };
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (refresh = false) => {
+    metricsRequestRef.current?.controller.abort();
+    const controller = new AbortController();
+    const requestId = ++metricsRequestIdRef.current;
+    metricsRequestRef.current = { controller, id: requestId };
     setLoading(true);
     try {
       const res = await fetch(
-        `/api/ppc/metrics?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}`,
-        { cache: "no-store" }
+        `/api/ppc/metrics?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}${refresh ? "&refresh=1" : ""}`,
+        { cache: "no-store", signal: controller.signal }
       );
       if (!res.ok) throw new Error("Không thể tải số liệu PPC");
       const data = await res.json();
-      setStores(data.stores || []);
-      setSummary(data.summary || null);
-      setVelocity(data.velocity || null);
-      setSkuPerformance(data.skuPerformance || []);
-      setCampaignPerformance(data.campaignPerformance || []);
-      setAdGroupPerformance(data.adGroups || []);
-      setTargetPerformance(data.targets || []);
-      setAdTypeBreakdown(data.adTypeBreakdown || []);
-      setDataHealth(data.dataHealth || null);
-      setTargetTypeBreakdown(data.targetTypeBreakdown || []);
-      setKeywordMatchTypeBreakdown(data.keywordMatchTypeBreakdown || []);
-      setMatchTypeBreakdown(data.matchTypeBreakdown || []);
-      setSearchTerms(data.searchTerms || []);
-      setAlerts(data.alerts || []);
-      setRecommendations(data.recommendations || []);
-      setAvailableSkus(data.availableSkus || []);
-      setTargetAcos(data.targetAcos || 30);
-      setDateRangeStart(data.dateRangeStart || null);
-      setDateRangeEnd(data.dateRangeEnd || null);
-      setLastSyncedAt(data.lastSyncedAt || null);
-      setSelectedTerms(new Set());
-      setSelectedRecs(new Set());
-      setTermPage(1);
-      setCampaignPage(1);
-      setAdGroupPage(1);
-      setTargetPage(1);
-      setSkuPage(1);
-      setRecPage(1);
+      startTransition(() => {
+        setStores(data.stores || []);
+        setSummary(data.summary || null);
+        setVelocity(data.velocity || null);
+        setSkuPerformance(data.skuPerformance || []);
+        setCampaignPerformance(data.campaignPerformance || []);
+        setAdGroupPerformance(data.adGroups || []);
+        setTargetPerformance(data.targets || []);
+        setAdTypeBreakdown(data.adTypeBreakdown || []);
+        setDataHealth(data.dataHealth || null);
+        setTargetTypeBreakdown(data.targetTypeBreakdown || []);
+        setKeywordMatchTypeBreakdown(data.keywordMatchTypeBreakdown || []);
+        setMatchTypeBreakdown(data.matchTypeBreakdown || []);
+        setSearchTerms(data.searchTerms || []);
+        setAlerts(data.alerts || []);
+        setRecommendations(data.recommendations || []);
+        setAvailableSkus(data.availableSkus || []);
+        setTargetAcos(data.targetAcos || 30);
+        setDateRangeStart(data.dateRangeStart || null);
+        setDateRangeEnd(data.dateRangeEnd || null);
+        setLastSyncedAt(data.lastSyncedAt || null);
+        setSelectedTerms(new Set());
+        setSelectedRecs(new Set());
+        setTermPage(1);
+        setCampaignPage(1);
+        setAdGroupPage(1);
+        setTargetPage(1);
+        setSkuPage(1);
+        setRecPage(1);
+      });
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       console.error(err);
       notify(err instanceof Error ? err.message : "Lỗi khi tải dữ liệu từ máy chủ", "error");
     } finally {
-      setLoading(false);
+      if (metricsRequestRef.current?.id === requestId) {
+        metricsRequestRef.current = null;
+        setLoading(false);
+      }
     }
   }, [selectedStore, selectedSku, selectedDays]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadData(), 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      metricsRequestRef.current?.controller.abort();
+    };
   }, [loadData]);
 
   const handleSyncR2 = async () => {
@@ -287,7 +297,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
         data.message || "Đã đồng bộ báo cáo mới nhất từ Cloudflare R2!",
         data.result?.failed ? "error" : "success",
       );
-      await loadData();
+      await loadData(true);
     } catch (err) {
       notify(err instanceof Error ? err.message : "Đồng bộ R2 thất bại", "error");
     } finally {
@@ -310,7 +320,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
         data.message || `Đã tự động tải và nạp báo cáo mới cho shop ${targetStore}!`,
         data.success ? "success" : "error",
       );
-      await loadData();
+      await loadData(true);
     } catch (err) {
       notify(err instanceof Error ? err.message : "Tự động tải AdsPower thất bại", "error");
     } finally {
@@ -339,7 +349,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
       notify(data.message || "Nạp báo cáo PPC thành công!");
       setShowUploadModal(false);
       setUploadFile(null);
-      await loadData();
+      await loadData(true);
     } catch (err) {
       notify(err instanceof Error ? err.message : "Lỗi nạp file", "error");
     } finally {
@@ -2341,16 +2351,11 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                           </button>
                         </div>
                       ) : selectedCampaignForDrilldown ? (
-                        <div className="flex flex-col items-center gap-1 max-w-lg mx-auto">
-                          <span className="font-semibold text-slate-600">
-                            Chiến dịch này chưa có dòng target trong dữ liệu báo cáo.
-                          </span>
-                          <span className="text-[11px] text-slate-400">
-                            Nguyên nhân thường gặp: Chiến dịch Auto (không định nghĩa keyword thủ công), chiến dịch chưa phát sinh lượt hiển thị (impression) trong kỳ báo cáo, hoặc chiến dịch Brands/Display dùng định dạng quảng cáo không theo keyword.
-                          </span>
-                        </div>
+                        <span className="font-semibold text-slate-500">
+                          Chiến dịch này chưa có target trong kỳ đang chọn.
+                        </span>
                       ) : (
-                        <span>Chưa có target grain cho kỳ đang chọn.</span>
+                        <span>Chưa có target trong kỳ đang chọn.</span>
                       )}
                     </td>
                   </tr>
