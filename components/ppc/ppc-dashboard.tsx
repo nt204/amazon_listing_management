@@ -2100,6 +2100,8 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                             onClick={() => {
                               setSelectedCampaignForDrilldown(c.campaignName);
                               setSelectedAdGroupForDrilldown(null);
+                              setTargetQuery("");
+                              setTargetPage(1);
                               setActiveTab("targets");
                             }}
                             className="text-left font-bold text-slate-900 hover:text-indigo-600 hover:underline cursor-pointer transition leading-snug break-words block"
@@ -2243,15 +2245,31 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               Target / Keyword Performance
             </h3>
 
-            <div className="relative w-full sm:w-72">
+            <div className="relative w-full sm:w-80">
               <MagnifyingGlass size={14} className="absolute left-3 top-2.5 text-slate-400" />
               <input
                 type="text"
                 value={targetQuery}
-                onChange={(e) => setTargetQuery(e.target.value)}
-                placeholder="Tìm keyword / target..."
-                className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs outline-none focus:bg-white focus:border-indigo-600"
+                onChange={(e) => {
+                  setTargetQuery(e.target.value);
+                  setTargetPage(1);
+                }}
+                placeholder="Tìm theo keyword, tên campaign hoặc SKU..."
+                className="w-full pl-8 pr-7 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs outline-none focus:bg-white focus:border-indigo-600 transition"
               />
+              {targetQuery && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTargetQuery("");
+                    setTargetPage(1);
+                  }}
+                  className="absolute right-2 top-2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                  title="Xóa tìm kiếm"
+                >
+                  <X size={13} weight="bold" />
+                </button>
+              )}
             </div>
           </div>
 
@@ -2304,7 +2322,38 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredSortedTargets.length === 0 ? (
-                  <tr><td colSpan={13} className="p-8 text-center font-medium text-slate-400">Chưa có target grain cho kỳ đang chọn.</td></tr>
+                  <tr>
+                    <td colSpan={13} className="p-8 text-center text-xs text-slate-400">
+                      {targetQuery ? (
+                        <div className="flex flex-col items-center gap-1.5">
+                          <span className="font-semibold text-slate-600">
+                            Không tìm thấy target nào khớp với &quot;{targetQuery}&quot;
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTargetQuery("");
+                              setTargetPage(1);
+                            }}
+                            className="text-xs text-indigo-600 hover:text-indigo-800 font-bold underline cursor-pointer"
+                          >
+                            ✕ Xóa từ khóa tìm kiếm
+                          </button>
+                        </div>
+                      ) : selectedCampaignForDrilldown ? (
+                        <div className="flex flex-col items-center gap-1 max-w-lg mx-auto">
+                          <span className="font-semibold text-slate-600">
+                            Chiến dịch này chưa có dòng target trong dữ liệu báo cáo.
+                          </span>
+                          <span className="text-[11px] text-slate-400">
+                            Nguyên nhân thường gặp: Chiến dịch Auto (không định nghĩa keyword thủ công), chiến dịch chưa phát sinh lượt hiển thị (impression) trong kỳ báo cáo, hoặc chiến dịch Brands/Display dùng định dạng quảng cáo không theo keyword.
+                          </span>
+                        </div>
+                      ) : (
+                        <span>Chưa có target grain cho kỳ đang chọn.</span>
+                      )}
+                    </td>
+                  </tr>
                 ) : paginatedTargets.map((target) => {
                   const targetKey = [
                     target.storeId || target.storeName,
@@ -2321,11 +2370,11 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                   return (
                     <Fragment key={targetKey}>
                       <tr className={`group transition ${isExpanded ? "bg-indigo-50/40" : "hover:bg-slate-50/80"}`}>
-                        <td className="px-3.5 py-2.5 font-bold text-slate-900 max-w-[280px]">
-                          <div className="truncate" title={target.targetKeyword}>{target.targetKeyword}</div>
+                        <td className="px-3.5 py-2.5 font-bold text-slate-900 min-w-[180px]">
+                          <div className="break-words leading-snug" title={target.targetKeyword}>{target.targetKeyword}</div>
                         </td>
-                        <td className="px-3 py-2.5 font-semibold text-slate-700 max-w-[240px]">
-                          <div className="truncate" title={target.campaignName}>{target.campaignName}</div>
+                        <td className="px-3 py-2.5 font-semibold text-slate-700 min-w-[260px]">
+                          <div className="break-words leading-snug" title={target.campaignName}>{target.campaignName}</div>
                         </td>
                         <td className="px-3 py-2.5 whitespace-nowrap">
                           <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-700">{target.adType} · {target.matchType}</span>
@@ -2882,7 +2931,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                             className="rounded border-slate-300 accent-indigo-600"
                           />
                         </td>
-                        <td className="py-2.5 px-3 font-sans font-bold text-slate-900 max-w-xs truncate">
+                        <td className="py-2.5 px-3 font-sans font-bold text-slate-900 min-w-[180px] break-words">
                           {t.customerSearchTerm}
                         </td>
                         <td className="py-2.5 px-3 font-sans text-[10px] font-black text-indigo-700">{t.adType || "?"}</td>
@@ -2891,7 +2940,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                             {t.matchType}
                           </span>
                         </td>
-                        <td className="py-2.5 px-3 text-slate-500 font-sans max-w-[180px] truncate">
+                        <td className="py-2.5 px-3 text-slate-600 font-sans min-w-[240px] break-words leading-snug">
                           {t.campaignName}
                         </td>
                         <td className="py-2.5 px-3 text-right font-bold text-slate-800">{t.clicks}</td>
