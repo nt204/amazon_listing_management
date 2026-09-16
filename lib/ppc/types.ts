@@ -249,6 +249,16 @@ export interface PpcDailyTrendPoint {
   cvr: number;
   ctr: number;
   cpc: number;
+  spSpend?: number;
+  spSales?: number;
+  spOrders?: number;
+  spClicks?: number;
+  spImpressions?: number;
+  sbSpend?: number;
+  sbSales?: number;
+  sbOrders?: number;
+  sbClicks?: number;
+  sbImpressions?: number;
 }
 
 export interface PpcMetricComparison {

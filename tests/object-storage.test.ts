@@ -47,8 +47,12 @@ test("R2 mode rejects incomplete credentials before making a request", () => {
   );
 });
 
-test("database byte retention is opt-out during the R2 rollout", () => {
-  assert.equal(retainDatabaseObjectBytes({}), true);
+test("database byte retention is opt-in during the R2 rollout", () => {
+  assert.equal(retainDatabaseObjectBytes({}), false);
+  assert.equal(
+    retainDatabaseObjectBytes({ OBJECT_STORAGE_RETAIN_DATABASE_BYTES: "true" }),
+    true,
+  );
   assert.equal(
     retainDatabaseObjectBytes({ OBJECT_STORAGE_RETAIN_DATABASE_BYTES: "false" }),
     false,

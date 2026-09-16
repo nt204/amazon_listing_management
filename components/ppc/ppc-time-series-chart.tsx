@@ -20,7 +20,7 @@ import {
   TrendUp,
   TrendDown,
 } from "@phosphor-icons/react";
-import type { PpcSummaryMetrics, PpcAdTypeBreakdown, PpcSearchTermRow } from "@/lib/ppc/types";
+import type { PpcSummaryMetrics, PpcAdTypeBreakdown, PpcSearchTermRow, PpcDailyTrendPoint } from "@/lib/ppc/types";
 
 interface PpcTimeSeriesChartProps {
   summary: PpcSummaryMetrics;
@@ -30,6 +30,7 @@ interface PpcTimeSeriesChartProps {
   dateRangeEnd?: string;
   adTypeBreakdown: PpcAdTypeBreakdown[];
   searchTerms: PpcSearchTermRow[];
+  dailyTrends?: PpcDailyTrendPoint[];
   targetAcos?: number;
   currency?: string;
 }
@@ -63,6 +64,7 @@ export function PpcTimeSeriesChart({
   dateRangeEnd,
   adTypeBreakdown,
   searchTerms,
+  dailyTrends,
   targetAcos = 30,
   currency = "$",
 }: PpcTimeSeriesChartProps) {
@@ -74,8 +76,9 @@ export function PpcTimeSeriesChart({
 
   // Check if real daily search terms data exists
   const hasRealDaily = useMemo(() => {
+    if (dailyTrends && dailyTrends.length > 0) return true;
     return searchTerms?.some((t) => t.reportGranularity === "DAILY") ?? false;
-  }, [searchTerms]);
+  }, [dailyTrends, searchTerms]);
 
   // Filter multiplier based on channel (All vs SP vs SB)
   const channelMultiplier = useMemo(() => {
@@ -101,34 +104,60 @@ export function PpcTimeSeriesChart({
 
   // Generate continuous daily time-series matching the actual totals
   const dailyData = useMemo(() => {
-    // 1. Tích hợp dữ liệu ngày thực tế từ searchTerms (nếu có granularity DAILY)
-    const dailySearchMap = new Map<string, { spend: number; revenue: number; orders: number; clicks: number; impressions: number }>();
-    if (searchTerms && searchTerms.length > 0) {
+    // 1. Tích hợp dữ liệu ngày thực tế từ dailyTrends (pre-aggregated từ server) hoặc searchTerms
+    const dailyMap = new Map<string, { spend: number; revenue: number; orders: number; clicks: number; impressions: number }>();
+    let hasDaily = false;
+
+    if (dailyTrends && dailyTrends.length > 0) {
+      hasDaily = true;
+      for (const pt of dailyTrends) {
+        let spend = pt.spend;
+        let revenue = pt.sales;
+        let orders = pt.orders;
+        let clicks = pt.clicks;
+        let impressions = pt.impressions;
+        if (channel === "SP") {
+          spend = pt.spSpend ?? 0;
+          revenue = pt.spSales ?? 0;
+          orders = pt.spOrders ?? 0;
+          clicks = pt.spClicks ?? 0;
+          impressions = pt.spImpressions ?? 0;
+        } else if (channel === "SB") {
+          spend = pt.sbSpend ?? 0;
+          revenue = pt.sbSales ?? 0;
+          orders = pt.sbOrders ?? 0;
+          clicks = pt.sbClicks ?? 0;
+          impressions = pt.sbImpressions ?? 0;
+        }
+        dailyMap.set(pt.date.slice(0, 10), { spend, revenue, orders, clicks, impressions });
+      }
+    } else if (searchTerms && searchTerms.length > 0) {
       for (const term of searchTerms) {
         if (term.reportGranularity === "DAILY" && term.reportDate) {
           if (channel === "SP" && term.adType !== "SP") continue;
           if (channel === "SB" && term.adType !== "SB") continue;
+          hasDaily = true;
           const key = term.reportDate.slice(0, 10);
-          const current = dailySearchMap.get(key) || { spend: 0, revenue: 0, orders: 0, clicks: 0, impressions: 0 };
+          const current = dailyMap.get(key) || { spend: 0, revenue: 0, orders: 0, clicks: 0, impressions: 0 };
           current.spend += term.spend || 0;
           current.revenue += term.sales || 0;
           current.orders += term.orders || 0;
           current.clicks += term.clicks || 0;
           current.impressions += term.impressions || 0;
-          dailySearchMap.set(key, current);
+          dailyMap.set(key, current);
         }
       }
     }
 
-    // 2. Xác định ngày kết thúc chính xác (ưu tiên dateRangeEnd hoặc ngày mới nhất có dữ liệu)
+    // 2. Xác định ngày kết thúc chính xác (ưu tiên ngày mới nhất có dữ liệu thực tế)
     let end: Date;
-    if (dateRangeEnd) {
-      const parts = dateRangeEnd.split("-").map(Number);
-      end = new Date(parts[0], parts[1] - 1, parts[2]);
-    } else if (dailySearchMap.size > 0) {
-      const sortedDates = Array.from(dailySearchMap.keys()).sort();
+    if (dailyMap.size > 0) {
+      const sortedDates = Array.from(dailyMap.keys()).sort();
       const lastDate = sortedDates[sortedDates.length - 1];
       const parts = lastDate.split("-").map(Number);
+      end = new Date(parts[0], parts[1] - 1, parts[2]);
+    } else if (dateRangeEnd) {
+      const parts = dateRangeEnd.split("-").map(Number);
       end = new Date(parts[0], parts[1] - 1, parts[2]);
     } else {
       end = new Date();
@@ -163,7 +192,7 @@ export function PpcTimeSeriesChart({
     for (let i = 0; i < dateWeights.length; i++) {
       const { date, weight, isoDate } = dateWeights[i];
       const displayDate = `${date.getDate().toString().padStart(2, "0")}/${(date.getMonth() + 1).toString().padStart(2, "0")}`;
-      const realDay = dailySearchMap.get(isoDate);
+      const realDay = dailyMap.get(isoDate);
 
       let daySpend: number;
       let dayRevenue: number;
@@ -171,12 +200,12 @@ export function PpcTimeSeriesChart({
       let dayClicks: number;
       let dayImpressions: number;
 
-      if (hasRealDaily && realDay) {
-        daySpend = Math.round(realDay.spend * 100) / 100;
-        dayRevenue = Math.round(realDay.revenue * 100) / 100;
-        dayOrders = realDay.orders;
-        dayClicks = realDay.clicks;
-        dayImpressions = realDay.impressions;
+      if (hasDaily) {
+        daySpend = realDay ? Math.round(realDay.spend * 100) / 100 : 0;
+        dayRevenue = realDay ? Math.round(realDay.revenue * 100) / 100 : 0;
+        dayOrders = realDay ? realDay.orders : 0;
+        dayClicks = realDay ? realDay.clicks : 0;
+        dayImpressions = realDay ? realDay.impressions : 0;
       } else {
         const share = weight / totalWeight;
         daySpend = Math.round(totalSpend * share * 100) / 100;
@@ -214,7 +243,7 @@ export function PpcTimeSeriesChart({
     }
 
     return points;
-  }, [selectedDays, dateRangeEnd, summary, channelMultiplier, targetAcos]);
+  }, [selectedDays, dateRangeEnd, summary, channelMultiplier, targetAcos, dailyTrends, searchTerms, channel]);
 
   // Aggregate by Granularity (Day / Week / Month)
   const chartData = useMemo(() => {
@@ -508,7 +537,7 @@ export function PpcTimeSeriesChart({
             <XAxis
               dataKey="displayDate"
               tick={{ fontSize: 10, fill: "#64748b" }}
-              interval={granularity === "day" ? Math.ceil(chartData.length / 10) : 0}
+              interval={granularity === "day" ? "preserveStartEnd" : 0}
               angle={granularity === "day" ? -15 : 0}
               textAnchor="end"
               height={36}

@@ -44,10 +44,20 @@ import type {
   PpcTargetPerformance,
   PpcTargetTypeBreakdown,
   PpcVelocityComparison,
+  PpcDailyTrendPoint,
 } from "@/lib/ppc/types";
 
 interface PpcDashboardProps {
   isEmbedded?: boolean;
+}
+
+interface PpcDetailCounts {
+  campaigns: number;
+  adGroups: number;
+  targets: number;
+  skus: number;
+  searchTerms: number;
+  recommendations: number;
 }
 
 type SortField = "spend" | "sales" | "orders" | "clicks" | "impressions" | "ctr" | "acos" | "cvr" | "roas";
@@ -133,6 +143,9 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   const [recommendations, setRecommendations] = useState<PpcRecommendation[]>([]);
   const [targetAcos, setTargetAcos] = useState(30);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const [detailCounts, setDetailCounts] = useState<PpcDetailCounts | null>(null);
+  const loadedSectionsRef = useRef(new Set<string>());
+  const detailRequestIdRef = useRef(0);
 
   // Drill-down hierarchy state: Campaign -> Ad Group -> Target/Keyword -> Search Terms
   const [selectedCampaignForDrilldown, setSelectedCampaignForDrilldown] = useState<string | null>(null);
@@ -213,6 +226,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   const [uploadEndDate, setUploadEndDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [dateRangeStart, setDateRangeStart] = useState<string | null>(null);
   const [dateRangeEnd, setDateRangeEnd] = useState<string | null>(null);
+  const [dailyTrends, setDailyTrends] = useState<PpcDailyTrendPoint[]>([]);
   const [uploading, setUploading] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const metricsRequestRef = useRef<{ controller: AbortController; id: number } | null>(null);
@@ -225,6 +239,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   };
 
   const loadData = useCallback(async (refresh = false) => {
+    detailRequestIdRef.current += 1;
     metricsRequestRef.current?.controller.abort();
     const controller = new AbortController();
     const requestId = ++metricsRequestIdRef.current;
@@ -237,6 +252,8 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
       );
       if (!res.ok) throw new Error("Không thể tải số liệu PPC");
       const data = await res.json();
+      loadedSectionsRef.current.clear();
+      loadedSectionsRef.current.add("overview");
       startTransition(() => {
         setStores(data.stores || []);
         setSummary(data.summary || null);
@@ -257,7 +274,9 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
         setTargetAcos(data.targetAcos || 30);
         setDateRangeStart(data.dateRangeStart || null);
         setDateRangeEnd(data.dateRangeEnd || null);
+        setDailyTrends(data.dailyTrends || []);
         setLastSyncedAt(data.lastSyncedAt || null);
+        setDetailCounts(data.detailCounts || null);
         setSelectedTerms(new Set());
         setSelectedRecs(new Set());
         setTermPage(1);
@@ -279,6 +298,26 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
     }
   }, [selectedStore, selectedSku, selectedDays]);
 
+  const loadSection = useCallback(async (section: string, page: number, pageSize: number) => {
+    const requestId = ++detailRequestIdRef.current;
+    const res = await fetch(
+      `/api/ppc/metrics?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}&section=${encodeURIComponent(section)}&page=${page}&pageSize=${pageSize}`,
+      { cache: "no-store" },
+    );
+    if (!res.ok) throw new Error("Không thể tải bảng dữ liệu PPC");
+    const data = await res.json();
+    if (requestId !== detailRequestIdRef.current) return;
+    startTransition(() => {
+      if (section === "campaigns") setCampaignPerformance(data.campaignPerformance || []);
+      if (section === "ad_groups") setAdGroupPerformance(data.adGroups || []);
+      if (section === "targets") setTargetPerformance(data.targets || []);
+      if (section === "skus") setSkuPerformance(data.skuPerformance || []);
+      if (section === "search_terms") setSearchTerms(data.searchTerms || []);
+      if (section === "recommendations") setRecommendations(data.recommendations || []);
+      setDetailCounts((current) => data.detailCounts ? { ...current, ...data.detailCounts } : current);
+    });
+  }, [selectedStore, selectedSku, selectedDays]);
+
   useEffect(() => {
     const timer = window.setTimeout(() => void loadData(), 0);
     return () => {
@@ -286,6 +325,35 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
       metricsRequestRef.current?.controller.abort();
     };
   }, [loadData]);
+
+  useEffect(() => {
+    const request = activeTab === "campaigns" ? [activeTab, campaignPage, campaignPageSize] as const
+      : activeTab === "ad_groups" ? [activeTab, adGroupPage, adGroupPageSize] as const
+        : activeTab === "targets" ? [activeTab, targetPage, targetPageSize] as const
+          : activeTab === "skus" ? [activeTab, skuPage, skuPageSize] as const
+            : activeTab === "search_terms" ? [activeTab, termPage, termPageSize] as const
+              : activeTab === "recommendations" ? [activeTab, recPage, recPageSize] as const
+                : null;
+    if (!request) return;
+    void loadSection(request[0], request[1], request[2]).catch((error) => {
+      notify(error instanceof Error ? error.message : "Không thể tải bảng dữ liệu PPC", "error");
+    });
+  }, [
+    activeTab,
+    loadSection,
+    campaignPage,
+    campaignPageSize,
+    adGroupPage,
+    adGroupPageSize,
+    targetPage,
+    targetPageSize,
+    skuPage,
+    skuPageSize,
+    termPage,
+    termPageSize,
+    recPage,
+    recPageSize,
+  ]);
 
   const handleSyncR2 = async () => {
     setSyncingR2(true);
@@ -393,11 +461,8 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   }, [searchTerms, matchTypeFilter, termPerformanceFilter, searchTermQuery, termSortField, termSortDir]);
 
   // Paginated Search Terms
-  const totalTermPages = Math.max(1, Math.ceil(filteredSortedSearchTerms.length / termPageSize));
-  const paginatedSearchTerms = useMemo(() => {
-    const start = (termPage - 1) * termPageSize;
-    return filteredSortedSearchTerms.slice(start, start + termPageSize);
-  }, [filteredSortedSearchTerms, termPage, termPageSize]);
+  const totalTermPages = Math.max(1, Math.ceil((detailCounts?.searchTerms ?? filteredSortedSearchTerms.length) / termPageSize));
+  const paginatedSearchTerms = filteredSortedSearchTerms;
 
   // Targets count per campaign map (for instant 1-click drilldown)
   const targetsPerCampaign = useMemo(() => {
@@ -516,11 +581,8 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   }, [filteredSortedCampaigns]);
 
   // Paginated Campaigns
-  const totalCampaignPages = Math.max(1, Math.ceil(filteredSortedCampaigns.length / campaignPageSize));
-  const paginatedCampaigns = useMemo(() => {
-    const start = (campaignPage - 1) * campaignPageSize;
-    return filteredSortedCampaigns.slice(start, start + campaignPageSize);
-  }, [filteredSortedCampaigns, campaignPage, campaignPageSize]);
+  const totalCampaignPages = Math.max(1, Math.ceil((detailCounts?.campaigns ?? filteredSortedCampaigns.length) / campaignPageSize));
+  const paginatedCampaigns = filteredSortedCampaigns;
 
   // Filtered & Sorted Ad Groups (Level 3 in hierarchy)
   const filteredSortedAdGroups = useMemo(() => {
@@ -543,11 +605,8 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   }, [adGroupPerformance, selectedCampaignForDrilldown, adGroupQuery, adGroupSortField, adGroupSortDir]);
 
   // Paginated Ad Groups
-  const totalAdGroupPages = Math.max(1, Math.ceil(filteredSortedAdGroups.length / adGroupPageSize));
-  const paginatedAdGroups = useMemo(() => {
-    const start = (adGroupPage - 1) * adGroupPageSize;
-    return filteredSortedAdGroups.slice(start, start + adGroupPageSize);
-  }, [filteredSortedAdGroups, adGroupPage, adGroupPageSize]);
+  const totalAdGroupPages = Math.max(1, Math.ceil((detailCounts?.adGroups ?? filteredSortedAdGroups.length) / adGroupPageSize));
+  const paginatedAdGroups = filteredSortedAdGroups;
 
   // Filtered & Sorted Targets / Keywords (Level 4 in hierarchy)
   const filteredSortedTargets = useMemo(() => {
@@ -576,11 +635,8 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   }, [targetPerformance, selectedCampaignForDrilldown, selectedAdGroupForDrilldown, targetQuery, targetSortField, targetSortDir]);
 
   // Paginated Targets
-  const totalTargetPages = Math.max(1, Math.ceil(filteredSortedTargets.length / targetPageSize));
-  const paginatedTargets = useMemo(() => {
-    const start = (targetPage - 1) * targetPageSize;
-    return filteredSortedTargets.slice(start, start + targetPageSize);
-  }, [filteredSortedTargets, targetPage, targetPageSize]);
+  const totalTargetPages = Math.max(1, Math.ceil((detailCounts?.targets ?? filteredSortedTargets.length) / targetPageSize));
+  const paginatedTargets = filteredSortedTargets;
 
   // Pre-index search terms by stable Amazon IDs first, with normalized names as
   // a fallback for reports that omit those IDs.
@@ -787,11 +843,8 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   }, [activeSkuPerformance, skuCategoryFilter, skuQuery, skuSortField, skuSortDir]);
 
   // Paginated SKUs
-  const totalSkuPages = Math.max(1, Math.ceil(filteredSortedSkus.length / skuPageSize));
-  const paginatedSkus = useMemo(() => {
-    const start = (skuPage - 1) * skuPageSize;
-    return filteredSortedSkus.slice(start, start + skuPageSize);
-  }, [filteredSortedSkus, skuPage, skuPageSize]);
+  const totalSkuPages = Math.max(1, Math.ceil((detailCounts?.skus ?? filteredSortedSkus.length) / skuPageSize));
+  const paginatedSkus = filteredSortedSkus;
 
   // Unique Campaigns and SKUs in Recommendations
   const uniqueRecCampaigns = useMemo(() => {
@@ -851,11 +904,8 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   }, [recommendations, recPriorityFilter, recProductFilter, recCampaignFilter, recSkuFilter, recSearchQuery]);
 
   // Paginated Recommendations
-  const totalRecPages = Math.max(1, Math.ceil(filteredRecommendations.length / recPageSize));
-  const paginatedRecommendations = useMemo(() => {
-    const start = (recPage - 1) * recPageSize;
-    return filteredRecommendations.slice(start, start + recPageSize);
-  }, [filteredRecommendations, recPage, recPageSize]);
+  const totalRecPages = Math.max(1, Math.ceil((detailCounts?.recommendations ?? filteredRecommendations.length) / recPageSize));
+  const paginatedRecommendations = filteredRecommendations;
 
   // Export Bulksheet update file
   const handleExportBulksheet = async (recsToExport?: PpcRecommendation[]) => {
@@ -1600,6 +1650,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
           {/* BIỂU ĐỒ 1: Spend vs Revenue / ROAS theo thời gian */}
           <PpcTimeSeriesChart
             summary={summary}
+            dailyTrends={dailyTrends}
             selectedDays={selectedDays}
             onDaysChange={setSelectedDays}
             dateRangeStart={dateRangeStart || undefined}
@@ -1642,7 +1693,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             }`}
         >
           <FolderSimple size={15} weight={activeTab === "campaigns" ? "bold" : "regular"} />
-          <span>2. Campaign ({campaignPerformance.length})</span>
+          <span>2. Campaign ({detailCounts?.campaigns !== undefined ? detailCounts.campaigns.toLocaleString("vi-VN") : (loading ? "..." : campaignPerformance.length.toLocaleString("vi-VN"))})</span>
         </button>
 
         <button
@@ -1654,7 +1705,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             }`}
         >
           <Crosshair size={15} weight={activeTab === "targets" ? "bold" : "regular"} />
-          <span>3. Target / Keyword ({filteredSortedTargets.length})</span>
+          <span>3. Target / Keyword ({detailCounts?.targets !== undefined ? detailCounts.targets.toLocaleString("vi-VN") : (loading ? "..." : targetPerformance.length.toLocaleString("vi-VN"))})</span>
         </button>
 
         <button
@@ -1666,7 +1717,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             }`}
         >
           <MagnifyingGlass size={15} weight={activeTab === "search_terms" ? "bold" : "regular"} />
-          <span>4. Search Terms ({searchTerms.length})</span>
+          <span>4. Search Terms ({detailCounts?.searchTerms !== undefined ? detailCounts.searchTerms.toLocaleString("vi-VN") : (loading ? "..." : searchTerms.length.toLocaleString("vi-VN"))})</span>
         </button>
 
         <button
@@ -1689,7 +1740,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             : "text-slate-600 hover:text-slate-900"
             }`}
         >
-          <span>Cảnh Báo ({alerts.length})</span>
+          <span>Cảnh Báo ({alerts.length.toLocaleString("vi-VN")})</span>
         </button>
 
         <button
@@ -1700,7 +1751,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             : "text-slate-600 hover:text-slate-900"
             }`}
         >
-          <span>Đề Xuất ({recommendations.length})</span>
+          <span>Đề Xuất ({detailCounts?.recommendations !== undefined ? detailCounts.recommendations.toLocaleString("vi-VN") : (loading ? "..." : recommendations.length.toLocaleString("vi-VN"))})</span>
         </button>
       </div>
 
@@ -1859,11 +1910,10 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                     setCampaignStatusFilter("ACTIVE");
                     setCampaignPage(1);
                   }}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition cursor-pointer ${
-                    campaignStatusFilter === "ACTIVE"
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition cursor-pointer ${campaignStatusFilter === "ACTIVE"
                       ? "bg-white text-emerald-700 shadow-2xs font-extrabold"
                       : "text-slate-600 hover:text-slate-900"
-                  }`}
+                    }`}
                 >
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                   <span>Active ({campaignPerformance.filter((c) => !/pause|archive/i.test(c.state || "")).length})</span>
@@ -1875,11 +1925,10 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                     setCampaignStatusFilter("PAUSED");
                     setCampaignPage(1);
                   }}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition cursor-pointer ${
-                    campaignStatusFilter === "PAUSED"
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition cursor-pointer ${campaignStatusFilter === "PAUSED"
                       ? "bg-white text-amber-700 shadow-2xs font-extrabold"
                       : "text-slate-600 hover:text-slate-900"
-                  }`}
+                    }`}
                 >
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
                   <span>Paused ({campaignPerformance.filter((c) => /pause|archive/i.test(c.state || "")).length})</span>
@@ -1891,11 +1940,10 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                     setCampaignStatusFilter("ALL");
                     setCampaignPage(1);
                   }}
-                  className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
-                    campaignStatusFilter === "ALL"
+                  className={`px-2.5 py-1 rounded-md transition cursor-pointer ${campaignStatusFilter === "ALL"
                       ? "bg-white text-indigo-700 shadow-2xs font-extrabold"
                       : "text-slate-600 hover:text-slate-900"
-                  }`}
+                    }`}
                 >
                   Tất cả ({campaignPerformance.length})
                 </button>
@@ -1944,24 +1992,24 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                 campaignSpendFilter !== "ALL" ||
                 campaignSortField !== "date" ||
                 campaignSortDir !== "desc") && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCampaignQuery("");
-                    setCampaignStatusFilter("ACTIVE");
-                    setCampaignGroupFilter("ALL");
-                    setCampaignFormatFilter("ALL");
-                    setCampaignSpendFilter("ALL");
-                    setCampaignSortField("date");
-                    setCampaignSortDir("desc");
-                    setCampaignPage(1);
-                  }}
-                  className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 cursor-pointer"
-                  title="Đặt lại bộ lọc về mặc định"
-                >
-                  <X size={13} weight="bold" /> Đặt lại
-                </button>
-              )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCampaignQuery("");
+                      setCampaignStatusFilter("ACTIVE");
+                      setCampaignGroupFilter("ALL");
+                      setCampaignFormatFilter("ALL");
+                      setCampaignSpendFilter("ALL");
+                      setCampaignSortField("date");
+                      setCampaignSortDir("desc");
+                      setCampaignPage(1);
+                    }}
+                    className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 cursor-pointer"
+                    title="Đặt lại bộ lọc về mặc định"
+                  >
+                    <X size={13} weight="bold" /> Đặt lại
+                  </button>
+                )}
             </div>
 
             <button
@@ -2004,13 +2052,12 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
               <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">ACOS Trung Bình</div>
               <div
-                className={`text-base font-black mt-0.5 ${
-                  filteredCampaignTotals.acos <= targetAcos
+                className={`text-base font-black mt-0.5 ${filteredCampaignTotals.acos <= targetAcos
                     ? "text-emerald-600"
                     : filteredCampaignTotals.acos <= 50
-                    ? "text-amber-600"
-                    : "text-rose-600"
-                }`}
+                      ? "text-amber-600"
+                      : "text-rose-600"
+                  }`}
               >
                 {filteredCampaignTotals.sales > 0 ? `${filteredCampaignTotals.acos.toFixed(1)}%` : "N/A"}
               </div>
@@ -2132,9 +2179,8 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                         <td className="py-2.5 px-3 text-[11px] text-slate-500 whitespace-nowrap">
                           <div className="font-bold text-slate-700 flex items-center gap-1">
                             <span
-                              className={`w-1.5 h-1.5 rounded-full ${
-                                !/pause|archive/i.test(c.state || "") ? "bg-emerald-500" : "bg-amber-500"
-                              }`}
+                              className={`w-1.5 h-1.5 rounded-full ${!/pause|archive/i.test(c.state || "") ? "bg-emerald-500" : "bg-amber-500"
+                                }`}
                             />
                             <span>{c.state || "—"}</span>
                           </div>
@@ -2164,15 +2210,14 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                         <td className="py-2.5 px-3 text-right text-slate-700 whitespace-nowrap">{c.cvr.toFixed(1)}%</td>
                         <td className="py-2.5 px-3 text-right whitespace-nowrap">
                           <span
-                            className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${
-                              c.acos <= Math.min(20, targetAcos)
+                            className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${c.acos <= Math.min(20, targetAcos)
                                 ? "bg-emerald-50 text-emerald-700"
                                 : c.acos <= targetAcos
-                                ? "bg-teal-50 text-teal-700"
-                                : c.acos <= 50
-                                ? "bg-amber-50 text-amber-700"
-                                : "bg-rose-50 text-rose-700"
-                            }`}
+                                  ? "bg-teal-50 text-teal-700"
+                                  : c.acos <= 50
+                                    ? "bg-amber-50 text-amber-700"
+                                    : "bg-rose-50 text-rose-700"
+                              }`}
                           >
                             {c.acos > 500 ? "0 sales" : `${c.acos.toFixed(1)}%`}
                           </span>
@@ -2193,7 +2238,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             currentPage={campaignPage}
             totalPages={totalCampaignPages}
             pageSize={campaignPageSize}
-            totalItems={filteredSortedCampaigns.length}
+            totalItems={detailCounts?.campaigns ?? filteredSortedCampaigns.length}
             pageSizeOptions={[15, 25, 50, 100, 200]}
             itemName="campaign"
             onPageChange={setCampaignPage}
@@ -2244,7 +2289,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                   }}
                   className="px-2.5 py-1.5 text-slate-500 hover:text-slate-900 text-xs font-semibold cursor-pointer underline"
                 >
-                  ✕ Xem tất cả Targets ({targetPerformance.length})
+                  ✕ Xem tất cả Targets ({detailCounts?.targets ?? targetPerformance.length})
                 </button>
               </div>
             </div>
@@ -2447,13 +2492,12 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                                         <td className="py-2 px-2.5 text-right font-mono text-slate-600">{(term.cvr * 100).toFixed(1)}%</td>
                                         <td className="py-2 px-2.5 text-right font-mono">
                                           <span
-                                            className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${
-                                              term.orders === 0
+                                            className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${term.orders === 0
                                                 ? "text-rose-600 bg-rose-50"
                                                 : term.acos <= targetAcos
-                                                ? "text-emerald-700 bg-emerald-50"
-                                                : "text-amber-700 bg-amber-50"
-                                            }`}
+                                                  ? "text-emerald-700 bg-emerald-50"
+                                                  : "text-amber-700 bg-amber-50"
+                                              }`}
                                           >
                                             {term.orders === 0 ? "0 sales" : `${term.acos.toFixed(1)}%`}
                                           </span>
@@ -2479,7 +2523,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             currentPage={targetPage}
             totalPages={totalTargetPages}
             pageSize={targetPageSize}
-            totalItems={filteredSortedTargets.length}
+            totalItems={detailCounts?.targets ?? filteredSortedTargets.length}
             pageSizeOptions={[15, 25, 50, 100]}
             itemName="targets"
             onPageChange={setTargetPage}
@@ -2751,7 +2795,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             currentPage={skuPage}
             totalPages={totalSkuPages}
             pageSize={skuPageSize}
-            totalItems={filteredSortedSkus.length}
+            totalItems={detailCounts?.skus ?? filteredSortedSkus.length}
             pageSizeOptions={[15, 25, 50, 100]}
             itemName="SKU"
             onPageChange={setSkuPage}
@@ -2816,7 +2860,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                 }}
                 className="py-1.5 px-2.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 outline-none cursor-pointer"
               >
-                <option value="ALL">Tất cả Hiệu Suất ({searchTerms.length})</option>
+                <option value="ALL">Tất cả Hiệu Suất ({detailCounts?.searchTerms ?? searchTerms.length})</option>
                 <option value="WITH_ORDERS">Đã Ra Đơn (Orders &gt; 0)</option>
                 <option value="ZERO_ORDERS_BLEEDING">Cắn Tiền 0 Đơn (Clicks &ge; 9)</option>
                 <option value="HIGH_ACOS">ACOS Cao (&gt; 60%)</option>
@@ -2979,7 +3023,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             currentPage={termPage}
             totalPages={totalTermPages}
             pageSize={termPageSize}
-            totalItems={filteredSortedSearchTerms.length}
+            totalItems={detailCounts?.searchTerms ?? filteredSortedSearchTerms.length}
             pageSizeOptions={[15, 25, 50, 100]}
             itemName="từ khóa tìm kiếm"
             onPageChange={setTermPage}
@@ -3060,7 +3104,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                 >
                   {selectedRecs.size === filteredRecommendations.length && filteredRecommendations.length > 0
                     ? "Bỏ Chọn"
-                    : `Chọn Tất Cả (${filteredRecommendations.length})`}
+                    : `Chọn Trang Này (${filteredRecommendations.length})`}
                 </button>
 
                 <button
@@ -3471,7 +3515,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                 currentPage={recPage}
                 totalPages={totalRecPages}
                 pageSize={recPageSize}
-                totalItems={filteredRecommendations.length}
+                totalItems={detailCounts?.recommendations ?? filteredRecommendations.length}
                 pageSizeOptions={[10, 20, 50, 100]}
                 itemName="đề xuất tối ưu"
                 onPageChange={setRecPage}
@@ -3645,7 +3689,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                 currentPage={recPage}
                 totalPages={totalRecPages}
                 pageSize={recPageSize}
-                totalItems={filteredRecommendations.length}
+                totalItems={detailCounts?.recommendations ?? filteredRecommendations.length}
                 pageSizeOptions={[10, 20, 50, 100]}
                 itemName="đề xuất tối ưu"
                 onPageChange={setRecPage}

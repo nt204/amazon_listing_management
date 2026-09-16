@@ -6,6 +6,7 @@ import {
   adTypeBreakdownFromFacts,
   adGroupPerformanceFromFacts,
   calculatePerformanceSummary,
+  calculatePpcDailyTrends,
   calculateSearchTermFallbackSummary,
   calculatePpcSearchTermSummary,
   campaignPerformanceFromFacts,
@@ -24,6 +25,7 @@ import {
   inferPpcReportCoverage,
   parseBulkWorkbook,
   parseLargeBulkWorkbook,
+  streamLargeBulkWorkbookFile,
   parseSearchTermCsv,
   parseSearchTermWorkbook,
 } from "./parser";
@@ -41,7 +43,14 @@ import {
   evaluateOrnamentTargetBid,
   isGlassOrnamentTarget,
 } from "./rules-ornament";
-import type { PpcAdType, PpcAlert, PpcPerformanceRow, PpcRecommendation, PpcSearchTermRow } from "./types";
+import type {
+  PpcAdType,
+  PpcAlert,
+  PpcPerformanceGrain,
+  PpcPerformanceRow,
+  PpcRecommendation,
+  PpcSearchTermRow,
+} from "./types";
 
 const MAX_R2_FILE_BYTES = 150_000_000;
 const DEFAULT_TARGET_ACOS = 30;
@@ -122,18 +131,40 @@ export async function parseBulkFile(
 export async function getPpcAnalyticsData(
   scope: DataScope,
   filters: { storeName?: string; sku?: string; days?: number } = {},
+  options: { grains?: PpcPerformanceGrain[] } = {},
 ) {
   const storeName = filters.storeName && filters.storeName !== "ALL"
     ? canonicalStoreName(filters.storeName)
     : "ALL";
   const sku = filters.sku || "ALL";
   const days = filters.days || 30;
-  const [stores, storeRows, performanceRows, syncLogs] = await Promise.all([
+  const requestedGrains = new Set<PpcPerformanceGrain>(options.grains ?? [
+    "CAMPAIGN",
+    "AD_GROUP",
+    "TARGET",
+    "PRODUCT",
+    "PLACEMENT",
+  ]);
+  const performanceQuery = (grain: PpcPerformanceGrain, limit: number) => requestedGrains.has(grain)
+    ? listPpcPerformance(scope, { storeName, sku, days }, { grain, limit })
+    : Promise.resolve([] as PpcPerformanceRow[]);
+  const [stores, storeRows, campaignRowsRaw, adGroupRows, targetRowsRaw, productRows, placementRows, syncLogs] = await Promise.all([
     listPpcStores(scope),
     listPpcSearchTerms(scope, { storeName, sku, days }),
-    listPpcPerformance(scope, { storeName, sku, days }),
+    performanceQuery("CAMPAIGN", 15_000),
+    performanceQuery("AD_GROUP", 10_000),
+    performanceQuery("TARGET", 25_000),
+    performanceQuery("PRODUCT", 10_000),
+    performanceQuery("PLACEMENT", 5_000),
     listPpcSyncLogs(scope),
   ]);
+  const performanceRows = [
+    ...campaignRowsRaw,
+    ...adGroupRows,
+    ...targetRowsRaw,
+    ...productRows,
+    ...placementRows,
+  ];
 
   const rows = storeRows;
 
@@ -211,14 +242,19 @@ export async function getPpcAnalyticsData(
   const adTypeBreakdown = adTypeBreakdownFromFacts(performanceRows);
   const dataHealth = performanceDataHealth(performanceRows, rows);
   const availableSkus = Array.from(new Set(performanceRows.map((row) => row.sku).filter(Boolean))).sort();
+  const dailyTrends = calculatePpcDailyTrends(rows);
   let maxDate: string | null = null;
-  for (const r of performanceRows) {
-    const d = r.reportEndDate || r.snapshotDate;
-    if (d && (!maxDate || d > maxDate)) maxDate = d;
-  }
-  for (const r of rows) {
-    const d = r.reportEndDate || r.reportDate;
-    if (d && (!maxDate || d > maxDate)) maxDate = d;
+  if (dailyTrends.length > 0) {
+    maxDate = dailyTrends[dailyTrends.length - 1].date;
+  } else {
+    for (const r of performanceRows) {
+      const d = r.reportEndDate || r.snapshotDate;
+      if (d && (!maxDate || d > maxDate)) maxDate = d;
+    }
+    for (const r of rows) {
+      const d = r.reportEndDate || r.reportDate;
+      if (d && (!maxDate || d > maxDate)) maxDate = d;
+    }
   }
   const dateRangeEnd = maxDate || new Date().toISOString().slice(0, 10);
   const startObj = new Date(dateRangeEnd);
@@ -238,6 +274,7 @@ export async function getPpcAnalyticsData(
     targetTypeBreakdown,
     keywordMatchTypeBreakdown,
     matchTypeBreakdown,
+    dailyTrends,
     alerts,
     recommendations,
     searchTerms: rows,
@@ -328,6 +365,66 @@ export async function ingestPpcExcelFile(
     throw new PpcInputError("File không chứa dữ liệu hợp lệ của Bulk Operations hoặc Search Term Report.");
   } catch (error) {
     console.error("[PPC Ingest Error]", error);
+    if (error instanceof PpcInputError) throw error;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new PpcInputError(`Lỗi xử lý file PPC: ${detail}`);
+  }
+}
+
+export async function ingestPpcFilePath(
+  scope: DataScope,
+  filePath: string,
+  fileName: string,
+  storeName: string,
+  coverageOptions: { days?: number; endDate?: string } = {},
+) {
+  if (!fileName.toLowerCase().endsWith(".xlsx") || /search|term|str/i.test(fileName)) {
+    const { readFile } = await import("node:fs/promises");
+    return ingestPpcExcelFile(scope, await readFile(filePath), fileName, storeName, coverageOptions);
+  }
+
+  const normalizedStore = canonicalStoreName(storeName);
+  const options = {
+    ...inferPpcReportCoverage(fileName, coverageOptions),
+    adType: reportAdType(fileName),
+  };
+  try {
+    let firstBatch = true;
+    let inserted = 0;
+    let updated = 0;
+    let deduplicated = 0;
+    const totalParsed = await streamLargeBulkWorkbookFile(
+      filePath,
+      normalizedStore,
+      options,
+      async (rows) => {
+        const saved = await upsertPpcPerformance(scope, normalizedStore, rows, {
+          replaceExisting: firstBatch,
+        });
+        firstBatch = false;
+        inserted += saved.inserted;
+        updated += saved.updated;
+        deduplicated += saved.deduplicated;
+      },
+    );
+    if (!totalParsed) throw new PpcInputError("File không chứa dữ liệu Bulk Operations hợp lệ.");
+    await recordPpcSyncLog(scope, {
+      source: "MANUAL_UPLOAD",
+      fileName,
+      status: "SUCCESS",
+      count: inserted + updated,
+      message: `Bulk ${options.adType}: ${inserted} dòng mới, ${updated} dòng cập nhật, ${deduplicated} dòng trùng.`,
+    });
+    return {
+      reportType: "BULK",
+      totalParsed,
+      newInserted: inserted,
+      updated,
+      deduplicated,
+      fileName,
+      storeName: normalizedStore,
+    };
+  } catch (error) {
     if (error instanceof PpcInputError) throw error;
     const detail = error instanceof Error ? error.message : String(error);
     throw new PpcInputError(`Lỗi xử lý file PPC: ${detail}`);

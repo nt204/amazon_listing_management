@@ -83,7 +83,7 @@ export function readObjectStorageConfig(
 export function retainDatabaseObjectBytes(
   environment: Environment = process.env,
 ) {
-  return (environment.OBJECT_STORAGE_RETAIN_DATABASE_BYTES || "true")
+  return (environment.OBJECT_STORAGE_RETAIN_DATABASE_BYTES || "false")
     .trim()
     .toLowerCase() !== "false";
 }

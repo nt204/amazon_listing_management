@@ -1,11 +1,17 @@
 import "server-only";
 import Redis from "ioredis";
+import { keyedSingleFlight } from "@/lib/async-cache";
+import { scanAndUnlinkKeys } from "@/lib/redis-core";
 
 const globalForRedis = globalThis as unknown as {
   redisClient?: Redis | null;
   redisConnected?: boolean;
   redisConnection?: Promise<boolean>;
+  redisCacheLoads?: Map<string, Promise<unknown>>;
 };
+
+const cacheLoads = globalForRedis.redisCacheLoads || new Map<string, Promise<unknown>>();
+globalForRedis.redisCacheLoads = cacheLoads;
 
 export function getRedisClient(): Redis | null {
   if (globalForRedis.redisClient !== undefined) {
@@ -76,9 +82,9 @@ export async function getCachedOrFetch<T>(
   ttlSeconds: number,
   fallbackFn: () => Promise<T>,
 ): Promise<T> {
-  const redis = getRedisClient();
+  const redis = await getReadyRedisClient();
 
-  if (redis && globalForRedis.redisConnected) {
+  if (redis) {
     try {
       const cached = await redis.get(key);
       if (cached) {
@@ -89,32 +95,29 @@ export async function getCachedOrFetch<T>(
     }
   }
 
-  const freshData = await fallbackFn();
-
-  if (redis && globalForRedis.redisConnected && freshData !== undefined && freshData !== null) {
-    try {
-      await redis.set(key, JSON.stringify(freshData), "EX", ttlSeconds);
-    } catch {
-      // Ignore Redis write error
+  return keyedSingleFlight(cacheLoads, key, async () => {
+    const freshData = await fallbackFn();
+    if (redis && freshData !== undefined && freshData !== null) {
+      try {
+        await redis.set(key, JSON.stringify(freshData), "EX", ttlSeconds);
+      } catch {
+        // Ignore Redis write error
+      }
     }
-  }
-
-  return freshData;
+    return freshData;
+  });
 }
 
 /**
  * Invalidate cached keys by exact key or wildcards (e.g. "trello:board:*")
  */
 export async function invalidateCachePattern(pattern: string): Promise<void> {
-  const redis = getRedisClient();
-  if (!redis || !globalForRedis.redisConnected) return;
+  const redis = await getReadyRedisClient();
+  if (!redis) return;
 
   try {
-    const keys = await redis.keys(pattern);
-    if (keys.length > 0) {
-      await redis.del(...keys);
-      console.log(`[Redis] Invalidated ${keys.length} cached keys matching pattern "${pattern}".`);
-    }
+    const deleted = await scanAndUnlinkKeys(redis, pattern);
+    if (deleted > 0) console.log(`[Redis] Invalidated ${deleted} cached keys matching pattern "${pattern}".`);
   } catch (err) {
     console.warn(`[Redis] Error invalidating pattern "${pattern}":`, err);
   }

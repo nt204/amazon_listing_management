@@ -227,6 +227,7 @@ export async function listPpcStores(scope: DataScope): Promise<PpcStore[]> {
 export async function listPpcSearchTerms(
   scope: DataScope,
   filters: { storeName: string; sku: string; days: number },
+  options: { limit?: number; offset?: number } = {},
 ): Promise<PpcSearchTermRow[]> {
   const sql = await getDatabaseClient();
   const rows = await sql<SearchTermDbRow[]>`
@@ -280,6 +281,8 @@ export async function listPpcSearchTerms(
         )
       )
     ORDER BY t.report_date DESC, t.created_at DESC, t.id
+    LIMIT ${Math.min(50_000, Math.max(1, options.limit || 20_000))}
+    OFFSET ${Math.max(0, options.offset || 0)}
   `;
   return rows.map(mapSearchTerm);
 }
@@ -287,6 +290,7 @@ export async function listPpcSearchTerms(
 export async function listPpcPerformance(
   scope: DataScope,
   filters: { storeName: string; sku: string; days: number },
+  options: { grain?: PpcPerformanceGrain; limit?: number; offset?: number } = {},
 ): Promise<PpcPerformanceRow[]> {
   const sql = await getDatabaseClient();
   const rows = await sql<PerformanceDbRow[]>`
@@ -330,6 +334,7 @@ export async function listPpcPerformance(
       AND ls.max_snapshot = p.snapshot_date
       AND ls.max_report_end = p.report_end_date
     WHERE s.team_id = ${scope.teamId}
+      AND (${!options.grain} OR p.grain = ${options.grain || "CAMPAIGN"})
       AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
       AND (
         ${filters.sku === "ALL"}
@@ -365,6 +370,8 @@ export async function listPpcPerformance(
         )
       )
     ORDER BY p.ad_type, p.grain, p.spend DESC, p.id
+    LIMIT ${Math.min(50_000, Math.max(1, options.limit || 50_000))}
+    OFFSET ${Math.max(0, options.offset || 0)}
   `;
   return rows.map(mapPerformance);
 }

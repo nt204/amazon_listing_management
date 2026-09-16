@@ -626,59 +626,96 @@ export async function parseLargeBulkWorkbook(
   storeName: string,
   options: PpcReportCoverage & { adType?: PpcAdType },
 ): Promise<PpcPerformanceRow[]> {
-  const [{ spawn }, readline, fs, os, path] = await Promise.all([
-    import("node:child_process"),
-    import("node:readline"),
+  const [fs, os, path] = await Promise.all([
     import("node:fs/promises"),
     import("node:os"),
     import("node:path"),
   ]);
   const tempDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "ppc-bulk-"));
   const workbookPath = path.join(tempDirectory, "report.xlsx");
-  const scriptPath = path.join(process.cwd(), "scripts", "parse_amazon_bulk.py");
   await fs.writeFile(workbookPath, buffer);
   try {
-    return await new Promise<PpcPerformanceRow[]>((resolve, reject) => {
-      const rows: PpcPerformanceRow[] = [];
-      let stderr = "";
-      const child = spawn("python3", [
-        scriptPath,
-        workbookPath,
-        storeName,
-        options.snapshotDate,
-        options.reportStartDate,
-        options.reportEndDate,
-        options.reportGranularity,
-        options.adType || "UNKNOWN",
-      ], { stdio: ["ignore", "pipe", "pipe"] });
-
-      const rl = readline.createInterface({
-        input: child.stdout,
-        crlfDelay: Infinity,
-      });
-
-      rl.on("line", (line: string) => {
-        const trimmed = line.trim();
-        if (!trimmed) return;
-        try {
-          rows.push(JSON.parse(trimmed) as PpcPerformanceRow);
-        } catch {
-          // ignore corrupted lines
-        }
-      });
-
-      child.stderr.setEncoding("utf8");
-      child.stderr.on("data", (chunk: string) => {
-        if (stderr.length < 8_000) stderr += chunk;
-      });
-
-      child.on("error", reject);
-      child.on("close", (code) => {
-        if (code !== 0) return reject(new Error(stderr.trim() || `Bulk parser exited with code ${code}.`));
-        resolve(rows);
-      });
-    });
+    return await parseLargeBulkWorkbookFile(workbookPath, storeName, options);
   } finally {
     await fs.rm(tempDirectory, { recursive: true, force: true });
+  }
+}
+
+export async function parseLargeBulkWorkbookFile(
+  workbookPath: string,
+  storeName: string,
+  options: PpcReportCoverage & { adType?: PpcAdType },
+): Promise<PpcPerformanceRow[]> {
+  const rows: PpcPerformanceRow[] = [];
+  await streamLargeBulkWorkbookFile(workbookPath, storeName, options, async (batch) => {
+    rows.push(...batch);
+  });
+  return rows;
+}
+
+export async function streamLargeBulkWorkbookFile(
+  workbookPath: string,
+  storeName: string,
+  options: PpcReportCoverage & { adType?: PpcAdType },
+  onBatch: (rows: PpcPerformanceRow[]) => Promise<void>,
+  batchSize = 500,
+): Promise<number> {
+  const [{ spawn }, readline, path] = await Promise.all([
+    import("node:child_process"),
+    import("node:readline"),
+    import("node:path"),
+  ]);
+  const scriptPath = path.join(process.cwd(), "scripts", "parse_amazon_bulk.py");
+  let stderr = "";
+  let total = 0;
+  let batch: PpcPerformanceRow[] = [];
+  const child = spawn("python3", [
+    scriptPath,
+    workbookPath,
+    storeName,
+    options.snapshotDate,
+    options.reportStartDate,
+    options.reportEndDate,
+    options.reportGranularity,
+    options.adType || "UNKNOWN",
+  ], { stdio: ["ignore", "pipe", "pipe"] });
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk: string) => {
+    if (stderr.length < 8_000) stderr += chunk;
+  });
+
+  const exit = new Promise<number | null>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", resolve);
+  });
+  const rl = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
+  try {
+    for await (const line of rl) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        batch.push(JSON.parse(trimmed) as PpcPerformanceRow);
+      } catch {
+        continue;
+      }
+      if (batch.length >= Math.max(1, batchSize)) {
+        const current = batch;
+        batch = [];
+        await onBatch(current);
+        total += current.length;
+      }
+    }
+    if (batch.length) {
+      await onBatch(batch);
+      total += batch.length;
+    }
+    const code = await exit;
+    if (code !== 0) throw new Error(stderr.trim() || `Bulk parser exited with code ${code}.`);
+    return total;
+  } catch (error) {
+    child.kill("SIGTERM");
+    throw error;
+  } finally {
+    rl.close();
   }
 }

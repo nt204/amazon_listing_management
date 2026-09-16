@@ -1,5 +1,6 @@
 import { ApiError, authorize, routeErrorResponse } from "@/lib/api-guard";
 import { deleteSystemGuide, getSystemGuideById } from "@/lib/db";
+import { createHash } from "node:crypto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,6 +17,18 @@ export async function GET(
       return new Response("Không tìm thấy tài liệu hướng dẫn.", { status: 404 });
     }
 
+    const etag = `"${createHash("sha256").update(guide.pdfBytes).digest("base64url")}"`;
+    if (request.headers.get("if-none-match") === etag) {
+      return new Response(null, {
+        status: 304,
+        headers: {
+          ETag: etag,
+          "Cache-Control": "private, max-age=3600",
+          Vary: "Cookie, Authorization",
+        },
+      });
+    }
+
     const encodedFilename = encodeURIComponent(guide.filename);
     return new Response(new Uint8Array(guide.pdfBytes), {
       status: 200,
@@ -23,7 +36,9 @@ export async function GET(
         "Content-Type": "application/pdf",
         "Content-Disposition": `inline; filename="${encodedFilename}"; filename*=UTF-8''${encodedFilename}`,
         "Content-Length": String(guide.pdfBytes.byteLength),
-        "Cache-Control": "public, max-age=3600",
+        "Cache-Control": "private, max-age=3600",
+        ETag: etag,
+        Vary: "Cookie, Authorization",
       },
     });
   } catch (error) {

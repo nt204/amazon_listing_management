@@ -1836,7 +1836,7 @@ export function TrelloBoardView({
                               key={opt.id}
                               type="button"
                               onClick={() => {
-                                setReviewSort(opt.id as any);
+                                setReviewSort(opt.id as typeof reviewSort);
                                 setIsSortOpen(false);
                                 setReviewPage(1);
                               }}
@@ -1951,6 +1951,8 @@ export function TrelloBoardView({
                               <img
                                 src={imageAttachments[0].previewUrl || imageAttachments[0].url}
                                 alt={card.name}
+                                loading="lazy"
+                                decoding="async"
                                 className="h-full w-full object-cover"
                               />
                             </div>
@@ -2051,6 +2053,8 @@ export function TrelloBoardView({
                               <img
                                 src={img.previewUrl || img.url}
                                 alt={img.name}
+                                loading="lazy"
+                                decoding="async"
                                 className="h-full w-full object-cover transition group-hover/img:scale-105"
                               />
                               <span className="absolute bottom-0.5 right-0.5 rounded bg-slate-900/80 px-1 py-0.2 text-[10px] font-bold text-white">
@@ -2255,7 +2259,7 @@ export function TrelloBoardView({
                               key={f.id}
                               type="button"
                               onClick={() => {
-                                setListingFilter(f.id as any);
+                                setListingFilter(f.id as typeof listingFilter);
                                 setIsListingFilterOpen(false);
                                 setListingPage(1);
                               }}
@@ -2328,6 +2332,8 @@ export function TrelloBoardView({
                             <img
                               src={imageAttachments[0].previewUrl || imageAttachments[0].url}
                               alt={card.name}
+                              loading="lazy"
+                              decoding="async"
                               className="h-full w-full object-cover"
                             />
                           </div>

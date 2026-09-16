@@ -658,26 +658,61 @@ export function calculatePpcDailyTrends(rows: PpcSearchTermRow[]): PpcDailyTrend
       orders: number;
       clicks: number;
       impressions: number;
+      spSpend: number;
+      spSales: number;
+      spOrders: number;
+      spClicks: number;
+      spImpressions: number;
+      sbSpend: number;
+      sbSales: number;
+      sbOrders: number;
+      sbClicks: number;
+      sbImpressions: number;
     }
   >();
 
   for (const r of rows) {
-    const date = r.reportDate || "Unknown";
-    const existing = map.get(date);
+    if (!r.reportDate) continue;
+    const date = r.reportDate.slice(0, 10);
+    let existing = map.get(date);
     if (!existing) {
-      map.set(date, {
-        spend: r.spend,
-        sales: r.sales,
-        orders: r.orders,
-        clicks: r.clicks,
-        impressions: r.impressions,
-      });
-    } else {
-      existing.spend += r.spend;
-      existing.sales += r.sales;
-      existing.orders += r.orders;
-      existing.clicks += r.clicks;
-      existing.impressions += r.impressions;
+      existing = {
+        spend: 0,
+        sales: 0,
+        orders: 0,
+        clicks: 0,
+        impressions: 0,
+        spSpend: 0,
+        spSales: 0,
+        spOrders: 0,
+        spClicks: 0,
+        spImpressions: 0,
+        sbSpend: 0,
+        sbSales: 0,
+        sbOrders: 0,
+        sbClicks: 0,
+        sbImpressions: 0,
+      };
+      map.set(date, existing);
+    }
+    existing.spend += r.spend || 0;
+    existing.sales += r.sales || 0;
+    existing.orders += r.orders || 0;
+    existing.clicks += r.clicks || 0;
+    existing.impressions += r.impressions || 0;
+
+    if (r.adType === "SP") {
+      existing.spSpend += r.spend || 0;
+      existing.spSales += r.sales || 0;
+      existing.spOrders += r.orders || 0;
+      existing.spClicks += r.clicks || 0;
+      existing.spImpressions += r.impressions || 0;
+    } else if (r.adType === "SB") {
+      existing.sbSpend += r.spend || 0;
+      existing.sbSales += r.sales || 0;
+      existing.sbOrders += r.orders || 0;
+      existing.sbClicks += r.clicks || 0;
+      existing.sbImpressions += r.impressions || 0;
     }
   }
 
@@ -702,6 +737,16 @@ export function calculatePpcDailyTrends(rows: PpcSearchTermRow[]): PpcDailyTrend
       cvr: Math.round(cvr * 100) / 100,
       ctr: Math.round(ctr * 100) / 100,
       cpc: Math.round(cpc * 100) / 100,
+      spSpend: Math.round(data.spSpend * 100) / 100,
+      spSales: Math.round(data.spSales * 100) / 100,
+      spOrders: data.spOrders,
+      spClicks: data.spClicks,
+      spImpressions: data.spImpressions,
+      sbSpend: Math.round(data.sbSpend * 100) / 100,
+      sbSales: Math.round(data.sbSales * 100) / 100,
+      sbOrders: data.sbOrders,
+      sbClicks: data.sbClicks,
+      sbImpressions: data.sbImpressions,
     });
   }
 

@@ -12,12 +12,25 @@ import {
   ChartLineUpIcon,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
-import { TrelloBoardView } from "@/components/trello-board-view";
-import { SellerSpriteKeywordMiner } from "@/components/sellersprite-keyword-miner";
-import { PpcDashboard } from "@/components/ppc/ppc-dashboard";
+import dynamic from "next/dynamic";
 import { AccountMenu } from "@/components/account-menu";
 import type { RequestActor } from "@/lib/auth";
 import type { BrandProfile } from "@/lib/types";
+
+const ViewLoading = () => <div className="h-full w-full animate-pulse bg-slate-100" />;
+
+const TrelloBoardView = dynamic(
+  () => import("@/components/trello-board-view").then((module) => module.TrelloBoardView),
+  { loading: ViewLoading },
+);
+const SellerSpriteKeywordMiner = dynamic(
+  () => import("@/components/sellersprite-keyword-miner").then((module) => module.SellerSpriteKeywordMiner),
+  { loading: ViewLoading },
+);
+const PpcDashboard = dynamic(
+  () => import("@/components/ppc/ppc-dashboard").then((module) => module.PpcDashboard),
+  { loading: ViewLoading },
+);
 
 interface SystemGuideItem {
   id: string;

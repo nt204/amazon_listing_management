@@ -11,16 +11,22 @@ export async function POST(request: Request) {
     await enforceRateLimit(actor, "ppc-adspower-sync", 5, 60);
     
     let storeName = "HSOSTORE";
+    let profileId: string | undefined = undefined;
     try {
       const body = await request.json().catch(() => ({}));
-      if (body && typeof body === "object" && "storeName" in body && typeof body.storeName === "string") {
-        storeName = canonicalStoreName(body.storeName);
+      if (body && typeof body === "object") {
+        if ("storeName" in body && typeof body.storeName === "string") {
+          storeName = canonicalStoreName(body.storeName);
+        }
+        if ("profileId" in body && typeof body.profileId === "string") {
+          profileId = body.profileId.trim() || undefined;
+        }
       }
     } catch {
       // Dùng default
     }
 
-    const result = await syncPpcFromAdsPower(dataScope(actor), { storeName });
+    const result = await syncPpcFromAdsPower(dataScope(actor), { storeName, profileId });
 
     return Response.json({
       success: result.success,
