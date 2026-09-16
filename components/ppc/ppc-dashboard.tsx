@@ -17,10 +17,19 @@ import {
   FolderSimple,
   ChartPieSlice,
   ListDashes,
+  ArrowRight,
+  ArrowSquareOut,
+  CalendarBlank,
 } from "@phosphor-icons/react";
 import { PpcPagination } from "./ppc-pagination";
 import { PpcTimeSeriesChart } from "./ppc-time-series-chart";
 import { PpcPerformanceRankingChart } from "./ppc-performance-ranking-chart";
+import {
+  extractSkuFromText,
+  extractCampaignDate,
+  detectProductType,
+  formatPpcExportFilename,
+} from "@/lib/ppc/sku-extractor";
 import {
   ResponsiveContainer,
   BarChart,
@@ -57,6 +66,7 @@ interface PpcDashboardProps {
 }
 
 type SortField = "spend" | "sales" | "orders" | "clicks" | "impressions" | "ctr" | "acos" | "cvr" | "roas";
+type CampaignSortField = SortField | "date";
 type SortDirection = "asc" | "desc";
 
 const TARGET_TYPE_COLORS: Record<string, string> = {
@@ -167,15 +177,22 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
 
   // Action Center recommendation filters & export
   const [recPriorityFilter, setRecPriorityFilter] = useState<"ALL" | "P0" | "P1" | "P2">("ALL");
+  const [recProductFilter, setRecProductFilter] = useState<"ALL" | "ORNAMENT" | "GENERAL">("ALL");
+  const [recCampaignFilter, setRecCampaignFilter] = useState<string>("ALL");
+  const [recSkuFilter, setRecSkuFilter] = useState<string>("ALL");
+  const [recSearchQuery, setRecSearchQuery] = useState<string>("");
+  const [recCompactMode, setRecCompactMode] = useState<boolean>(true);
   const [selectedRecs, setSelectedRecs] = useState<Set<string>>(new Set());
   const [exportingBulksheet, setExportingBulksheet] = useState(false);
 
-  // Campaign search & sort & status filter
+  // Campaign search & sort & multi-dimension filters
   const [campaignQuery, setCampaignQuery] = useState("");
-  const [campaignSortField, setCampaignSortField] = useState<SortField>("spend");
+  const [campaignSortField, setCampaignSortField] = useState<CampaignSortField>("date");
   const [campaignSortDir, setCampaignSortDir] = useState<SortDirection>("desc");
-  const [campaignStatusFilter, setCampaignStatusFilter] = useState<"ALL" | "ACTIVE" | "PAUSED">("ALL");
+  const [campaignStatusFilter, setCampaignStatusFilter] = useState<"ALL" | "ACTIVE" | "PAUSED">("ACTIVE");
   const [campaignGroupFilter, setCampaignGroupFilter] = useState<"ALL" | "BLEEDING" | "HIGH_ACOS" | "GOOD">("ALL");
+  const [campaignFormatFilter, setCampaignFormatFilter] = useState<string>("ALL");
+  const [campaignSpendFilter, setCampaignSpendFilter] = useState<"ALL" | "HAS_SPEND" | "ZERO_SPEND" | "SPEND_GT_50" | "SPEND_GT_100">("ALL");
 
   // Ad Group search & sort
   const [adGroupQuery, setAdGroupQuery] = useState("");
@@ -194,10 +211,13 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
 
   const [loading, setLoading] = useState(true);
   const [syncingR2, setSyncingR2] = useState(false);
+  const [syncingAdsPower, setSyncingAdsPower] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [uploadStore, setUploadStore] = useState("Warmstorey");
+  const [uploadStore, setUploadStore] = useState("HSOSTORE");
   const [uploadEndDate, setUploadEndDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dateRangeStart, setDateRangeStart] = useState<string | null>(null);
+  const [dateRangeEnd, setDateRangeEnd] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
 
@@ -233,6 +253,8 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
       setRecommendations(data.recommendations || []);
       setAvailableSkus(data.availableSkus || []);
       setTargetAcos(data.targetAcos || 30);
+      setDateRangeStart(data.dateRangeStart || null);
+      setDateRangeEnd(data.dateRangeEnd || null);
       setLastSyncedAt(data.lastSyncedAt || null);
       setSelectedTerms(new Set());
       setSelectedRecs(new Set());
@@ -270,6 +292,29 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
       notify(err instanceof Error ? err.message : "Đồng bộ R2 thất bại", "error");
     } finally {
       setSyncingR2(false);
+    }
+  };
+
+  const handleSyncAdsPower = async () => {
+    setSyncingAdsPower(true);
+    try {
+      const targetStore = selectedStore !== "ALL" ? selectedStore : (stores[0]?.name || "HSOSTORE");
+      const res = await fetch("/api/ppc/adspower-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storeName: targetStore }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Lỗi tự động tải từ AdsPower");
+      notify(
+        data.message || `Đã tự động tải và nạp báo cáo mới cho shop ${targetStore}!`,
+        data.success ? "success" : "error",
+      );
+      await loadData();
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Tự động tải AdsPower thất bại", "error");
+    } finally {
+      setSyncingAdsPower(false);
     }
   };
 
@@ -324,7 +369,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
         (t) =>
           t.customerSearchTerm.toLowerCase().includes(q) ||
           t.campaignName.toLowerCase().includes(q) ||
-          t.portfolioName.toLowerCase().includes(q)
+          (t.portfolioName && t.portfolioName.toLowerCase().includes(q))
       );
     }
 
@@ -344,20 +389,69 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
     return filteredSortedSearchTerms.slice(start, start + termPageSize);
   }, [filteredSortedSearchTerms, termPage, termPageSize]);
 
-  // Filtered & Sorted Campaigns
+  // Targets count per campaign map (for instant 1-click drilldown)
+  const targetsPerCampaign = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const t of targetPerformance) {
+      if (t.campaignName) {
+        map.set(t.campaignName, (map.get(t.campaignName) || 0) + 1);
+      }
+    }
+    return map;
+  }, [targetPerformance]);
+
+  // Recommendations count per campaign map
+  const recsPerCampaign = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of recommendations) {
+      if (r.campaignName) {
+        map.set(r.campaignName, (map.get(r.campaignName) || 0) + 1);
+      }
+    }
+    return map;
+  }, [recommendations]);
+
+  // Filtered & Sorted Campaigns (Default: Active only, sorted Newest to Oldest)
   const filteredSortedCampaigns = useMemo(() => {
     let list = [...campaignPerformance];
     if (campaignQuery.trim()) {
-      const q = campaignQuery.toLowerCase();
-      list = list.filter(
-        (c) => c.campaignName.toLowerCase().includes(q) || c.storeName.toLowerCase().includes(q)
-      );
+      const q = campaignQuery.toLowerCase().trim();
+      list = list.filter((c) => {
+        const sku = extractSkuFromText(c.campaignName) || "";
+        return (
+          c.campaignName.toLowerCase().includes(q) ||
+          c.storeName.toLowerCase().includes(q) ||
+          sku.toLowerCase().includes(q)
+        );
+      });
     }
+    // Status Filter: ACTIVE (default) | PAUSED | ALL
     if (campaignStatusFilter === "ACTIVE") {
       list = list.filter((c) => !/pause/i.test(c.state || "") && !/archive/i.test(c.state || ""));
     } else if (campaignStatusFilter === "PAUSED") {
       list = list.filter((c) => /pause/i.test(c.state || "") || /archive/i.test(c.state || ""));
     }
+
+    // Ad Format Filter (SP, SB, SD)
+    if (campaignFormatFilter !== "ALL") {
+      list = list.filter((c) => {
+        const adType = (c.adType || "").toUpperCase();
+        return adType.includes(campaignFormatFilter);
+      });
+    }
+
+    // Spend Filter
+    if (campaignSpendFilter === "HAS_SPEND") {
+      list = list.filter((c) => c.spend > 0);
+    } else if (campaignSpendFilter === "ZERO_SPEND") {
+      list = list.filter((c) => c.spend === 0);
+    } else if (campaignSpendFilter === "SPEND_GT_50") {
+      list = list.filter((c) => c.spend >= 50);
+    } else if (campaignSpendFilter === "SPEND_GT_100") {
+      list = list.filter((c) => c.spend >= 100);
+    }
+
+    // Problem / Opportunity Group Filter
     if (campaignGroupFilter === "BLEEDING") {
       list = list.filter((c) => c.orders === 0 && c.spend >= 10);
     } else if (campaignGroupFilter === "HIGH_ACOS") {
@@ -365,13 +459,51 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
     } else if (campaignGroupFilter === "GOOD") {
       list = list.filter((c) => c.orders > 0 && c.acos <= targetAcos && c.spend >= 5);
     }
+
+    // Sorting: Chronological by default (newest creation date to oldest)
     list.sort((a, b) => {
+      if (campaignSortField === "date") {
+        const dateA = extractCampaignDate(a.campaignName);
+        const dateB = extractCampaignDate(b.campaignName);
+        if (dateA !== dateB) {
+          return campaignSortDir === "asc" ? dateA - dateB : dateB - dateA;
+        }
+        return b.spend - a.spend; // Secondary tie-breaker
+      }
       const valA = a[campaignSortField];
       const valB = b[campaignSortField];
       return campaignSortDir === "asc" ? valA - valB : valB - valA;
     });
+
     return list;
-  }, [campaignPerformance, campaignQuery, campaignStatusFilter, campaignGroupFilter, targetAcos, campaignSortField, campaignSortDir]);
+  }, [
+    campaignPerformance,
+    campaignQuery,
+    campaignStatusFilter,
+    campaignFormatFilter,
+    campaignSpendFilter,
+    campaignGroupFilter,
+    targetAcos,
+    campaignSortField,
+    campaignSortDir,
+  ]);
+
+  // Aggregated totals for currently filtered campaigns
+  const filteredCampaignTotals = useMemo(() => {
+    let spend = 0;
+    let sales = 0;
+    let orders = 0;
+    let clicks = 0;
+    for (const c of filteredSortedCampaigns) {
+      spend += c.spend || 0;
+      sales += c.sales || 0;
+      orders += c.orders || 0;
+      clicks += c.clicks || 0;
+    }
+    const acos = sales > 0 ? (spend / sales) * 100 : 0;
+    const roas = spend > 0 ? sales / spend : 0;
+    return { spend, sales, orders, clicks, acos, roas, count: filteredSortedCampaigns.length };
+  }, [filteredSortedCampaigns]);
 
   // Paginated Campaigns
   const totalCampaignPages = Math.max(1, Math.ceil(filteredSortedCampaigns.length / campaignPageSize));
@@ -440,44 +572,179 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
     return filteredSortedTargets.slice(start, start + targetPageSize);
   }, [filteredSortedTargets, targetPage, targetPageSize]);
 
-  // Pre-indexed Search Terms Map for O(1) group lookup by Campaign and Ad Group
-  const searchTermsByAdGroup = useMemo(() => {
-    const norm = (s: string) => (s || "").trim().toLowerCase();
-    const map = new Map<string, PpcSearchTermRow[]>();
+  // Pre-index search terms by stable Amazon IDs first, with normalized names as
+  // a fallback for reports that omit those IDs.
+  const { searchTermsByAdGroup, searchTermsByCampaign, searchTermsByCampaignId, searchTermsByAdGroupId } = useMemo(() => {
+    const norm = (s: string) => (s || "").toLowerCase().replace(/\s+/g, " ").trim();
+    const byAg = new Map<string, PpcSearchTermRow[]>();
+    const byCamp = new Map<string, PpcSearchTermRow[]>();
+    const byCampId = new Map<string, PpcSearchTermRow[]>();
+    const byAgId = new Map<string, PpcSearchTermRow[]>();
+    const append = (map: Map<string, PpcSearchTermRow[]>, key: string, term: PpcSearchTermRow) => {
+      const list = map.get(key);
+      if (list) list.push(term);
+      else map.set(key, [term]);
+    };
     for (const term of searchTerms) {
-      const key = `${norm(term.campaignName)}|||${norm(term.adGroupName)}`;
-      const group = map.get(key);
-      if (!group) {
-        map.set(key, [term]);
-      } else {
-        group.push(term);
+      const camp = norm(term.campaignName);
+      const ag = norm(term.adGroupName);
+      const campaignId = (term.campaignId || "").trim();
+      const adGroupId = (term.adGroupId || "").trim();
+
+      if (campaignId) append(byCampId, campaignId, term);
+      if (campaignId && adGroupId) append(byAgId, `${campaignId}\u0000${adGroupId}`, term);
+      if (camp) append(byCamp, camp, term);
+
+      if (camp && ag) {
+        append(byAg, `${camp}|||${ag}`, term);
       }
     }
-    return map;
+    return {
+      searchTermsByAdGroup: byAg,
+      searchTermsByCampaign: byCamp,
+      searchTermsByCampaignId: byCampId,
+      searchTermsByAdGroupId: byAgId,
+    };
   }, [searchTerms]);
 
-  // Fast Child Search Terms Lookup for each Target Keyword
+  // Search terms are shown in two layers: confirmed source attribution first,
+  // then a conservative inference only when one target is the sole match.
   const getChildSearchTerms = useCallback((target: PpcTargetPerformance) => {
-    const norm = (s: string) => (s || "").trim().toLowerCase();
+    const norm = (s: string) => (s || "").toLowerCase().replace(/\s+/g, " ").trim();
+    const lexicalNorm = (s: string) => norm(s)
+      .replace(/['’]s\b/g, "")
+      .replace(/\+/g, " ")
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const id = (value: string | undefined) => (value || "").trim();
+    const stopWords = new Set(["a", "an", "the", "for", "to", "my"]);
+    const canonicalTokens = (value: string) => lexicalNorm(value)
+      .split(" ")
+      .filter((word) => word && !stopWords.has(word))
+      .map((word) => word.endsWith("ies") ? `${word.slice(0, -3)}y` : word.endsWith("s") && !word.endsWith("ss") ? word.slice(0, -1) : word)
+      .sort();
     const targetKwNorm = norm(target.targetKeyword);
+    const targetId = id(target.targetId);
+    const targetCampaignId = id(target.campaignId);
+    const targetAdGroupId = id(target.adGroupId);
     const campNorm = norm(target.campaignName);
     const agNorm = norm(target.adGroupName);
+    const isSb = target.adType === "SB";
+    const isNumericAg = /^\d+$/.test(agNorm);
 
-    const candidates = campNorm && agNorm
-      ? (searchTermsByAdGroup.get(`${campNorm}|||${agNorm}`) || [])
-      : searchTerms;
+    // Determine candidates:
+    // 1. If real named ad group in SP, look up by campaign + adGroup
+    // 2. Otherwise (SB or numeric fallback ad group ID), look up by campaign
+    // 3. Fallback to all search terms if not found
+    let candidates: PpcSearchTermRow[];
+    const idAgKey = `${targetCampaignId}\u0000${targetAdGroupId}`;
+    const agKey = `${campNorm}|||${agNorm}`;
+    if (targetCampaignId && targetAdGroupId && searchTermsByAdGroupId.has(idAgKey)) {
+      candidates = searchTermsByAdGroupId.get(idAgKey)!;
+    } else if (targetCampaignId && searchTermsByCampaignId.has(targetCampaignId)) {
+      candidates = searchTermsByCampaignId.get(targetCampaignId)!;
+    } else if (campNorm && agNorm && !isNumericAg && !isSb && searchTermsByAdGroup.has(agKey)) {
+      candidates = searchTermsByAdGroup.get(agKey)!;
+    } else if (campNorm && searchTermsByCampaign.has(campNorm)) {
+      candidates = searchTermsByCampaign.get(campNorm)!;
+    } else {
+      candidates = searchTerms;
+    }
 
-    return candidates.filter((term) => {
-      const termKw = norm(term.targetKeyword);
-      const matchKw = termKw === targetKwNorm || (targetKwNorm && term.customerSearchTerm.toLowerCase().includes(targetKwNorm));
-      if (!campNorm || !agNorm) {
-        const matchCamp = !campNorm || norm(term.campaignName) === campNorm;
-        const matchAg = !agNorm || norm(term.adGroupName) === agNorm;
-        return matchKw && matchCamp && matchAg;
+    const isInTargetScope = (term: PpcSearchTermRow, candidate: PpcTargetPerformance) => {
+      const termStoreId = id(term.storeId);
+      const candidateStoreId = id(candidate.storeId);
+      if (termStoreId && candidateStoreId && termStoreId !== candidateStoreId) return false;
+      if ((!termStoreId || !candidateStoreId) && norm(term.storeName || "") && norm(candidate.storeName) && norm(term.storeName || "") !== norm(candidate.storeName)) return false;
+
+      if (term.adType && term.adType !== "UNKNOWN" && candidate.adType && candidate.adType !== "UNKNOWN" && term.adType !== candidate.adType) return false;
+
+      const termCampaignId = id(term.campaignId);
+      const candidateCampaignId = id(candidate.campaignId);
+      const candidateCamp = norm(candidate.campaignName);
+      if (termCampaignId && candidateCampaignId) {
+        if (termCampaignId !== candidateCampaignId) return false;
+      } else if (candidateCamp && norm(term.campaignName) !== candidateCamp) {
+        return false;
       }
-      return matchKw;
-    });
-  }, [searchTerms, searchTermsByAdGroup]);
+
+      const termAdGroupId = id(term.adGroupId);
+      const candidateAdGroupId = id(candidate.adGroupId);
+      const candidateAg = norm(candidate.adGroupName);
+      const candidateIsSb = candidate.adType === "SB";
+      const candidateIsNumericAg = /^\d+$/.test(candidateAg);
+      if (!candidateIsSb) {
+        if (termAdGroupId && candidateAdGroupId) {
+          if (termAdGroupId !== candidateAdGroupId) return false;
+        } else if (candidateAg && !candidateIsNumericAg && norm(term.adGroupName) !== candidateAg) {
+          return false;
+        }
+      }
+      return true;
+    };
+
+    const matchesByRule = (term: PpcSearchTermRow, candidate: PpcTargetPerformance) => {
+      const candidateTokens = canonicalTokens(candidate.targetKeyword);
+      const queryTokens = canonicalTokens(term.customerSearchTerm);
+      if (!candidateTokens.length || !queryTokens.length) return false;
+      const candidateMatchType = (candidate.matchType || "").toLowerCase();
+      if (candidateMatchType === "exact") {
+        return candidateTokens.length === queryTokens.length && candidateTokens.every((word, index) => word === queryTokens[index]);
+      }
+      if (candidateMatchType === "phrase") {
+        return lexicalNorm(term.customerSearchTerm).includes(lexicalNorm(candidate.targetKeyword));
+      }
+      if (candidateMatchType === "broad") {
+        return candidateTokens.every((word) => queryTokens.includes(word));
+      }
+      return false;
+    };
+
+    const confirmed: PpcSearchTermRow[] = [];
+    const inferred: PpcSearchTermRow[] = [];
+    for (const term of candidates) {
+      if (!isInTargetScope(term, target)) continue;
+
+      const termKw = norm(term.targetKeyword);
+      const termTargetId = id(term.keywordId);
+
+      // Only a stable Amazon ID is strong enough to confirm attribution.
+      if (targetId && termTargetId) {
+        if (targetId === termTargetId) confirmed.push(term);
+        continue;
+      }
+
+      // Target text without an ID is not sufficient on its own: some SB
+      // exports associate unrelated queries with an Exact keyword. Keep it
+      // only when the shopper query also satisfies that target's match rule.
+      if (termKw) {
+        const termMatchType = (term.matchType || "Unknown").toLowerCase();
+        const targetMatchType = (target.matchType || "Unknown").toLowerCase();
+        const matchTypeCompatible = termMatchType === "unknown" || targetMatchType === "unknown" || termMatchType === targetMatchType;
+        if (termKw === targetKwNorm && matchTypeCompatible && matchesByRule(term, target)) inferred.push(term);
+        continue;
+      }
+
+      // Without a source key, infer only when this is the sole matching target
+      // in the same campaign/ad group. Ambiguous terms remain unassigned.
+      const plausibleTargets = targetPerformance.filter((candidate) =>
+        isInTargetScope(term, candidate) && matchesByRule(term, candidate),
+      );
+      const uniqueTargets = new Map<string, PpcTargetPerformance>();
+      for (const candidate of plausibleTargets) {
+        const key = id(candidate.targetId) || [
+          id(candidate.campaignId), id(candidate.adGroupId), norm(candidate.targetKeyword), candidate.matchType,
+        ].join("\u0000");
+        if (!uniqueTargets.has(key)) uniqueTargets.set(key, candidate);
+      }
+      const soleTarget = uniqueTargets.size === 1 ? Array.from(uniqueTargets.values())[0] : undefined;
+      if (soleTarget && (id(soleTarget.targetId) || norm(soleTarget.targetKeyword)) === (targetId || targetKwNorm)) {
+        inferred.push(term);
+      }
+    }
+    return { confirmed, inferred };
+  }, [searchTerms, searchTermsByAdGroup, searchTermsByCampaign, searchTermsByCampaignId, searchTermsByAdGroupId, targetPerformance]);
 
   // Filtered & Sorted SKUs
   const activeSkuPerformance = useMemo(() => {
@@ -516,14 +783,62 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
     return filteredSortedSkus.slice(start, start + skuPageSize);
   }, [filteredSortedSkus, skuPage, skuPageSize]);
 
-  // Filtered Recommendations by Priority
+  // Unique Campaigns and SKUs in Recommendations
+  const uniqueRecCampaigns = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of recommendations) {
+      const camp = r.campaignName?.trim();
+      if (camp) {
+        map.set(camp, (map.get(camp) || 0) + 1);
+      }
+    }
+    return Array.from(map.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count]) => ({ name, count }));
+  }, [recommendations]);
+
+  const uniqueRecSkus = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of recommendations) {
+      const sku = r.sku?.trim();
+      if (sku) {
+        map.set(sku, (map.get(sku) || 0) + 1);
+      }
+    }
+    return Array.from(map.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count]) => ({ name, count }));
+  }, [recommendations]);
+
+  // Filtered Recommendations by Priority, Product Rule, Campaign, SKU & Search Query
   const filteredRecommendations = useMemo(() => {
     let list = [...recommendations];
     if (recPriorityFilter !== "ALL") {
       list = list.filter((r) => r.priority === recPriorityFilter);
     }
+    if (recProductFilter === "ORNAMENT") {
+      list = list.filter((r) => r.productType === "Glass Ornament");
+    } else if (recProductFilter === "GENERAL") {
+      list = list.filter((r) => r.productType !== "Glass Ornament");
+    }
+    if (recCampaignFilter !== "ALL") {
+      list = list.filter((r) => r.campaignName === recCampaignFilter);
+    }
+    if (recSkuFilter !== "ALL") {
+      list = list.filter((r) => r.sku === recSkuFilter);
+    }
+    if (recSearchQuery.trim()) {
+      const q = recSearchQuery.trim().toLowerCase();
+      list = list.filter(
+        (r) =>
+          (r.keyword && r.keyword.toLowerCase().includes(q)) ||
+          (r.campaignName && r.campaignName.toLowerCase().includes(q)) ||
+          (r.sku && r.sku.toLowerCase().includes(q)) ||
+          (r.ruleProfile && r.ruleProfile.toLowerCase().includes(q))
+      );
+    }
     return list;
-  }, [recommendations, recPriorityFilter]);
+  }, [recommendations, recPriorityFilter, recProductFilter, recCampaignFilter, recSkuFilter, recSearchQuery]);
 
   // Paginated Recommendations
   const totalRecPages = Math.max(1, Math.ceil(filteredRecommendations.length / recPageSize));
@@ -534,18 +849,27 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
 
   // Export Bulksheet update file
   const handleExportBulksheet = async (recsToExport?: PpcRecommendation[]) => {
-    const list = recsToExport || recommendations.filter((r) => selectedRecs.has(r.id));
+    const list = recsToExport || (selectedRecs.size > 0 ? recommendations.filter((r) => selectedRecs.has(r.id)) : filteredRecommendations);
     const targetList = list.length > 0 ? list : recommendations;
     if (targetList.length === 0) {
       notify("Không có đề xuất nào để xuất Bulksheet.", "error");
       return;
     }
+    const exportList = targetList.map((recommendation) => {
+      if (recommendation.targetType === "PRODUCT") return recommendation;
+      const sourceTarget = targetPerformance.find((target) =>
+        target.targetId === recommendation.keywordId &&
+        (!recommendation.campaignId || target.campaignId === recommendation.campaignId) &&
+        (!recommendation.adGroupId || target.adGroupId === recommendation.adGroupId),
+      );
+      return sourceTarget ? { ...recommendation, matchType: sourceTarget.matchType } : recommendation;
+    });
     setExportingBulksheet(true);
     try {
       const res = await fetch("/api/ppc/export-bulksheet", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ recommendations: targetList }),
+        body: JSON.stringify({ recommendations: exportList }),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -555,12 +879,19 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `Amazon_Bulksheet_Update_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}.xlsx`;
+
+      const disposition = res.headers.get("Content-Disposition") || "";
+      const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+      const fallbackName = disposition.match(/filename="([^"]+)"/i)?.[1];
+      a.download = encodedName
+        ? decodeURIComponent(encodedName)
+        : fallbackName || "Update.xlsx";
+
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-      notify(`Đã xuất thành công ${targetList.length} đề xuất sang file Bulksheet Amazon!`, "success");
+      notify(`Đã xuất thành công ${targetList.length} đề xuất sang file ${a.download}!`, "success");
     } catch (err) {
       notify(err instanceof Error ? err.message : "Lỗi khi xuất file", "error");
     } finally {
@@ -673,11 +1004,11 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   }, [matchTypeBreakdown]);
 
   // Sort Handler Helper
-  const handleSort = (
-    field: SortField,
-    currentField: SortField,
+  const handleSort = <T extends string>(
+    field: T,
+    currentField: T,
     currentDir: SortDirection,
-    setField: (f: SortField) => void,
+    setField: (f: T) => void,
     setDir: (d: SortDirection) => void,
     resetPage?: () => void
   ) => {
@@ -733,7 +1064,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
       header = "Customer Search Term,Match Type,SKU / Portfolio,Campaign,Clicks,Spend ($),Sales ($),Orders,CTR (%),CVR (%),ACOS (%)\n";
       rows = filteredSortedSearchTerms.map((t) => {
         const termSafe = `"${t.customerSearchTerm.replace(/"/g, '""')}"`;
-        const portSafe = `"${t.portfolioName.replace(/"/g, '""')}"`;
+        const portSafe = `"${(t.portfolioName || "").replace(/"/g, '""')}"`;
         const campSafe = `"${t.campaignName.replace(/"/g, '""')}"`;
         return `${termSafe},"${t.matchType}",${portSafe},${campSafe},${t.clicks},${t.spend.toFixed(2)},${t.sales.toFixed(2)},${t.orders},${(t.ctr * 100).toFixed(2)},${(t.cvr * 100).toFixed(1)},${t.acos.toFixed(1)}`;
       });
@@ -744,7 +1075,18 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
         const campSafe = `"${c.campaignName.replace(/"/g, '""')}"`;
         return `${campSafe},"${c.storeName}","${c.targetingType}",${c.spend.toFixed(2)},${c.sales.toFixed(2)},${c.orders},${c.clicks},${c.cpc.toFixed(2)},${c.ctr.toFixed(2)},${c.cvr.toFixed(1)},${c.acos.toFixed(1)},${c.roas.toFixed(2)}`;
       });
-      filename = `ppc-campaigns-${Date.now()}.csv`;
+      const firstCamp = filteredSortedCampaigns[0];
+      const autoSku = selectedSku !== "ALL" ? selectedSku : (firstCamp ? extractSkuFromText(firstCamp.campaignName) || "" : "");
+      const autoTitle = firstCamp?.campaignName ? firstCamp.campaignName.replace(/^([A-Z0-9]+\s+)+/, "").trim() : "Campaigns";
+      filename = formatPpcExportFilename({
+        title: autoTitle || "Campaigns",
+        sku: autoSku || undefined,
+        campaignName: firstCamp?.campaignName,
+        adType: firstCamp?.adType || "SP",
+        days: selectedDays,
+        fileType: "Campaign File",
+        extension: "csv",
+      });
     } else {
       header = "SKU,Store,Tier,Impressions,Clicks,CTR (%),Spend ($),Sales ($),Orders,CVR (%),ACOS (%),ROAS\n";
       rows = filteredSortedSkus.map((s) => {
@@ -809,6 +1151,17 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
 
             <button
               type="button"
+              onClick={handleSyncAdsPower}
+              disabled={syncingAdsPower}
+              className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-extrabold text-white shadow-xs hover:bg-emerald-700 transition cursor-pointer disabled:opacity-60"
+              title="Tự động kết nối trình duyệt AdsPower, click tải báo cáo mới nhất từ Amazon và nạp thẳng vào Dashboard"
+            >
+              <ArrowsClockwise size={14} className={syncingAdsPower ? "animate-spin" : ""} weight="bold" />
+              <span>{syncingAdsPower ? "Đang tải AdsPower..." : "Tự động AdsPower"}</span>
+            </button>
+
+            <button
+              type="button"
               onClick={handleSyncR2}
               disabled={syncingR2}
               className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-extrabold text-white shadow-xs hover:bg-indigo-700 transition cursor-pointer disabled:opacity-60"
@@ -856,7 +1209,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                 <option value="ALL">All Stores ({stores.length})</option>
                 {stores.map((s) => (
                   <option key={s.id} value={s.name}>
-                    {s.name} ({s.marketplace}) - Target {s.targetAcos}%
+                    {s.name === "HSOSTORE" ? "HSOSTORE (Brand: Warmstorey)" : s.name} ({s.marketplace}) - Target {s.targetAcos}%
                   </option>
                 ))}
               </select>
@@ -905,20 +1258,18 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             </div>
           ) : dataHealth ? (
             <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-              <div className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-medium border ${
-                dataHealth.campaignRows > 0
-                  ? "bg-emerald-50/80 text-emerald-800 border-emerald-200/60"
-                  : "bg-amber-50 text-amber-800 border-amber-200"
-              }`} title="Bulk Performance Campaigns">
+              <div className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-medium border ${dataHealth.campaignRows > 0
+                ? "bg-emerald-50/80 text-emerald-800 border-emerald-200/60"
+                : "bg-amber-50 text-amber-800 border-amber-200"
+                }`} title="Bulk Performance Campaigns">
                 <span className="text-slate-500 font-normal">Bulk:</span>
                 <span className="font-bold">{dataHealth.campaignRows.toLocaleString()} camps</span>
               </div>
 
-              <div className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-medium border ${
-                dataHealth.searchTermRows > 0
-                  ? "bg-sky-50/80 text-sky-800 border-sky-200/60"
-                  : "bg-slate-50 text-slate-600 border-slate-200"
-              }`} title="Search Term Report Rows">
+              <div className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-medium border ${dataHealth.searchTermRows > 0
+                ? "bg-sky-50/80 text-sky-800 border-sky-200/60"
+                : "bg-slate-50 text-slate-600 border-slate-200"
+                }`} title="Search Term Report Rows">
                 <span className="text-slate-500 font-normal">Search:</span>
                 <span className="font-bold">{dataHealth.searchTermRows.toLocaleString()}</span>
               </div>
@@ -1241,6 +1592,8 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             summary={summary}
             selectedDays={selectedDays}
             onDaysChange={setSelectedDays}
+            dateRangeStart={dateRangeStart || undefined}
+            dateRangeEnd={dateRangeEnd || undefined}
             adTypeBreakdown={adTypeBreakdown}
             searchTerms={searchTerms}
             targetAcos={targetAcos}
@@ -1457,10 +1810,12 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
       {/* VIEW 2: BREAKDOWN BY CAMPAIGN */}
       {/* ========================================================================= */}
       {activeTab === "campaigns" && (
-        <div id="ppc-campaigns-section" className="space-y-3 scroll-mt-6">
-          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
-            <div className="flex flex-wrap items-center gap-2.5 flex-1">
-              <div className="relative flex-1 min-w-[200px] max-w-sm">
+        <div id="ppc-campaigns-section" className="space-y-3.5 scroll-mt-6">
+          {/* Campaign Search & Filter Toolbar (Single Clean Row) */}
+          <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-2.5 bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs text-xs">
+            <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 flex-1 min-w-0">
+              {/* Search input with clear button */}
+              <div className="relative min-w-[220px] flex-1">
                 <MagnifyingGlass size={14} className="absolute left-3 top-2.5 text-slate-400" />
                 <input
                   type="text"
@@ -1469,94 +1824,213 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                     setCampaignQuery(e.target.value);
                     setCampaignPage(1);
                   }}
-                  placeholder="Tìm tên campaign..."
-                  className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs outline-none focus:bg-white focus:border-indigo-600"
+                  placeholder="Tìm tên campaign hoặc SKU..."
+                  className="w-full pl-8 pr-7 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs outline-none focus:bg-white focus:border-indigo-600 transition"
                 />
+                {campaignQuery && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCampaignQuery("");
+                      setCampaignPage(1);
+                    }}
+                    className="absolute right-2 top-2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                  >
+                    <X size={13} weight="bold" />
+                  </button>
+                )}
               </div>
 
-              {/* Lọc nhanh trạng thái: Tất cả / Active / Paused */}
+              {/* Status segmented control: Active (default) / Paused / Tất cả */}
               <div className="flex items-center bg-slate-100 rounded-lg p-0.5 text-xs font-bold shrink-0">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCampaignStatusFilter("ALL");
-                    setCampaignPage(1);
-                  }}
-                  className={`px-2.5 py-1 rounded-md transition cursor-pointer ${campaignStatusFilter === "ALL" ? "bg-white text-indigo-700 shadow-2xs font-extrabold" : "text-slate-600 hover:text-slate-900"}`}
-                >
-                  Tất cả ({campaignPerformance.length})
-                </button>
                 <button
                   type="button"
                   onClick={() => {
                     setCampaignStatusFilter("ACTIVE");
                     setCampaignPage(1);
                   }}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition cursor-pointer ${campaignStatusFilter === "ACTIVE" ? "bg-white text-emerald-700 shadow-2xs font-extrabold" : "text-slate-600 hover:text-slate-900"}`}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition cursor-pointer ${
+                    campaignStatusFilter === "ACTIVE"
+                      ? "bg-white text-emerald-700 shadow-2xs font-extrabold"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
                 >
-                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                   <span>Active ({campaignPerformance.filter((c) => !/pause|archive/i.test(c.state || "")).length})</span>
                 </button>
+
                 <button
                   type="button"
                   onClick={() => {
                     setCampaignStatusFilter("PAUSED");
                     setCampaignPage(1);
                   }}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition cursor-pointer ${campaignStatusFilter === "PAUSED" ? "bg-white text-amber-700 shadow-2xs font-extrabold" : "text-slate-600 hover:text-slate-900"}`}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition cursor-pointer ${
+                    campaignStatusFilter === "PAUSED"
+                      ? "bg-white text-amber-700 shadow-2xs font-extrabold"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
                 >
-                  <span className="w-2 h-2 rounded-full bg-amber-500" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
                   <span>Paused ({campaignPerformance.filter((c) => /pause|archive/i.test(c.state || "")).length})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCampaignStatusFilter("ALL");
+                    setCampaignPage(1);
+                  }}
+                  className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
+                    campaignStatusFilter === "ALL"
+                      ? "bg-white text-indigo-700 shadow-2xs font-extrabold"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  Tất cả ({campaignPerformance.length})
                 </button>
               </div>
 
-              {/* Chỉ báo lọc nhóm vấn đề (kèm nút hủy lọc) */}
-              {campaignGroupFilter !== "ALL" && (
-                <div className={`flex items-center gap-2 px-2.5 py-1 rounded-lg text-xs font-bold border ${
-                  campaignGroupFilter === "BLEEDING"
-                    ? "bg-rose-50 text-rose-800 border-rose-200"
-                    : campaignGroupFilter === "HIGH_ACOS"
-                    ? "bg-amber-50 text-amber-900 border-amber-200"
-                    : "bg-emerald-50 text-emerald-800 border-emerald-200"
-                }`}>
-                  <span>
-                    {campaignGroupFilter === "BLEEDING"
-                      ? "🛑 Đang lọc: Đốt tiền không đơn"
-                      : campaignGroupFilter === "HIGH_ACOS"
-                      ? "⚠️ Đang lọc: ACOS cao"
-                      : "⚡ Đang lọc: Hiệu suất tốt"}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCampaignGroupFilter("ALL");
-                      setCampaignPage(1);
-                    }}
-                    className="underline text-[11px] hover:text-slate-900 cursor-pointer font-extrabold"
-                  >
-                    ✕ Xem tất cả
-                  </button>
-                </div>
+              {/* Format Filter */}
+              <select
+                value={campaignFormatFilter}
+                onChange={(e) => {
+                  setCampaignFormatFilter(e.target.value);
+                  setCampaignPage(1);
+                }}
+                className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 outline-none focus:bg-white focus:border-indigo-600 cursor-pointer shrink-0 hidden sm:block"
+              >
+                <option value="ALL">Định dạng (Tất cả)</option>
+                <option value="SP">Sponsored Products (SP)</option>
+                <option value="SB">Sponsored Brands (SB)</option>
+                <option value="SD">Sponsored Display (SD)</option>
+              </select>
+
+              {/* Sort Dropdown */}
+              <select
+                value={`${campaignSortField}_${campaignSortDir}`}
+                onChange={(e) => {
+                  const [f, d] = e.target.value.split("_") as [SortField, SortDirection];
+                  setCampaignSortField(f);
+                  setCampaignSortDir(d);
+                  setCampaignPage(1);
+                }}
+                className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 outline-none focus:bg-white focus:border-indigo-600 cursor-pointer shrink-0"
+              >
+                <option value="date_desc">Ngày tạo: Mới nhất</option>
+                <option value="date_asc">Ngày tạo: Cũ nhất</option>
+                <option value="spend_desc">Chi tiêu: Cao → Thấp</option>
+                <option value="sales_desc">Doanh số: Cao → Thấp</option>
+                <option value="orders_desc">Đơn hàng: Nhiều → Ít</option>
+                <option value="acos_desc">ACOS: Cao → Thấp</option>
+                <option value="roas_desc">ROAS: Cao → Thấp</option>
+              </select>
+
+              {/* Reset button if filter active */}
+              {(campaignQuery ||
+                campaignStatusFilter !== "ACTIVE" ||
+                campaignGroupFilter !== "ALL" ||
+                campaignFormatFilter !== "ALL" ||
+                campaignSpendFilter !== "ALL" ||
+                campaignSortField !== "date" ||
+                campaignSortDir !== "desc") && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCampaignQuery("");
+                    setCampaignStatusFilter("ACTIVE");
+                    setCampaignGroupFilter("ALL");
+                    setCampaignFormatFilter("ALL");
+                    setCampaignSpendFilter("ALL");
+                    setCampaignSortField("date");
+                    setCampaignSortDir("desc");
+                    setCampaignPage(1);
+                  }}
+                  className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 cursor-pointer"
+                  title="Đặt lại bộ lọc về mặc định"
+                >
+                  <X size={13} weight="bold" /> Đặt lại
+                </button>
               )}
             </div>
 
             <button
               type="button"
               onClick={() => handleExportCsv("campaigns")}
-              className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 transition flex items-center gap-1.5 cursor-pointer self-end md:self-auto shrink-0"
+              className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 transition flex items-center gap-1.5 cursor-pointer shrink-0"
             >
               <Download size={14} /> Xuất CSV
             </button>
           </div>
 
+          {/* Live Metrics Strip for Filtered Campaigns (Tone Xanh - Trắng) */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 p-2.5 rounded-xl bg-gradient-to-r from-blue-50/80 via-indigo-50/50 to-sky-50/60 border border-blue-100 shadow-2xs text-xs">
+            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Hiển thị</div>
+              <div className="text-base font-black text-slate-900 mt-0.5">{filteredCampaignTotals.count.toLocaleString()}</div>
+              <div className="text-[10px] text-slate-500 font-medium">
+                {campaignStatusFilter === "ACTIVE" ? "Active" : campaignStatusFilter === "PAUSED" ? "Paused" : "Tất cả"}
+              </div>
+            </div>
+            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Tổng Chi Tiêu</div>
+              <div className="text-base font-black text-rose-600 mt-0.5">${filteredCampaignTotals.spend.toFixed(2)}</div>
+              <div className="text-[10px] text-slate-500 font-medium">{filteredCampaignTotals.clicks.toLocaleString()} clicks</div>
+            </div>
+            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Doanh Số</div>
+              <div className="text-base font-black text-emerald-600 mt-0.5">${filteredCampaignTotals.sales.toFixed(2)}</div>
+              <div className="text-[10px] text-slate-500 font-medium">{filteredCampaignTotals.orders} đơn hàng</div>
+            </div>
+            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Đơn Hàng</div>
+              <div className="text-base font-black text-indigo-700 mt-0.5">{filteredCampaignTotals.orders}</div>
+              <div className="text-[10px] text-slate-500 font-medium">
+                {filteredCampaignTotals.clicks > 0
+                  ? `${((filteredCampaignTotals.orders / filteredCampaignTotals.clicks) * 100).toFixed(1)}% CVR`
+                  : "0% CVR"}
+              </div>
+            </div>
+            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">ACOS Trung Bình</div>
+              <div
+                className={`text-base font-black mt-0.5 ${
+                  filteredCampaignTotals.acos <= targetAcos
+                    ? "text-emerald-600"
+                    : filteredCampaignTotals.acos <= 50
+                    ? "text-amber-600"
+                    : "text-rose-600"
+                }`}
+              >
+                {filteredCampaignTotals.sales > 0 ? `${filteredCampaignTotals.acos.toFixed(1)}%` : "N/A"}
+              </div>
+              <div className="text-[10px] text-slate-500 font-medium">Mục tiêu ≤ {targetAcos}%</div>
+            </div>
+            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">ROAS Trung Bình</div>
+              <div className="text-base font-black text-sky-600 mt-0.5">{filteredCampaignTotals.roas.toFixed(2)}x</div>
+              <div className="text-[10px] text-slate-500 font-medium">Doanh số / Chi tiêu</div>
+            </div>
+          </div>
+
+          {/* Campaigns Data Table */}
           <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
             <table className="w-full text-left text-xs text-slate-700">
               <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
                 <tr>
-                  <th className="py-3 px-3.5">Campaign Name</th>
+                  <th className="py-3 px-3.5 min-w-[280px]">Campaign Name</th>
                   <th className="py-3 px-3">Store</th>
                   <th className="py-3 px-3">Ad / Targeting</th>
                   <th className="py-3 px-3">State / Budget</th>
+                  <th
+                    className="py-3 px-3 cursor-pointer hover:text-indigo-600"
+                    onClick={() =>
+                      handleSort("date", campaignSortField, campaignSortDir, setCampaignSortField, setCampaignSortDir, () => setCampaignPage(1))
+                    }
+                    title="Nhấn để sắp xếp theo ngày tạo"
+                  >
+                    Ngày tạo {campaignSortField === "date" && (campaignSortDir === "asc" ? "↑" : "↓")}
+                  </th>
                   <th
                     className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() =>
@@ -1598,55 +2072,106 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               <tbody className="divide-y divide-slate-100 font-medium">
                 {filteredSortedCampaigns.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="py-12 text-center text-slate-400">
+                    <td colSpan={13} className="py-12 text-center text-slate-400">
                       <div className="flex flex-col items-center justify-center gap-1.5">
                         <FolderSimple size={24} className="text-slate-300" />
-                        <span className="font-semibold text-slate-600">Chưa có dữ liệu Campaign</span>
+                        <span className="font-semibold text-slate-600">Không tìm thấy campaign phù hợp bộ lọc</span>
                         <span className="text-xs text-slate-400 max-w-md">
-                          Dữ liệu Campaign được trích xuất từ báo cáo Bulk Operations. Vui lòng nhấn &quot;Nạp báo cáo PPC&quot; hoặc &quot;Đồng bộ R2&quot; để tải file Bulk.
+                          Thử đổi bộ lọc sang &quot;Paused&quot; hoặc &quot;Tất cả&quot;, hoặc xóa từ khóa tìm kiếm.
                         </span>
                       </div>
                     </td>
                   </tr>
                 ) : (
-                  paginatedCampaigns.map((c, i) => (
-                    <tr key={i} className="hover:bg-slate-50/80 transition">
-                      <td className="py-2.5 px-3.5 font-bold text-slate-900 min-w-[280px] max-w-[550px] break-words">
-                        {c.campaignName}
-                      </td>
-                      <td className="py-2.5 px-3 text-slate-500 font-medium">{c.storeName}</td>
-                      <td className="py-2.5 px-3">
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
-                          {c.adType || "?"} · {c.targetingType}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3 text-[11px] text-slate-500">
-                        <div className="font-bold text-slate-700">{c.state || "—"}</div>
-                        <div>{c.dailyBudget ? `$${c.dailyBudget.toFixed(2)}/day` : "No budget"}</div>
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-bold text-slate-900">${c.spend.toFixed(2)}</td>
-                      <td className="py-2.5 px-3 text-right font-black text-emerald-600">${c.sales.toFixed(2)}</td>
-                      <td className="py-2.5 px-3 text-right font-black text-slate-900">{c.orders}</td>
-                      <td className="py-2.5 px-3 text-right text-slate-600">{c.clicks}</td>
-                      <td className="py-2.5 px-3 text-right text-slate-600">${c.cpc.toFixed(2)}</td>
-                      <td className="py-2.5 px-3 text-right text-slate-700">{c.cvr.toFixed(1)}%</td>
-                      <td className="py-2.5 px-3 text-right">
-                        <span
-                          className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${c.acos <= Math.min(20, targetAcos)
-                            ? "bg-emerald-50 text-emerald-700"
-                            : c.acos <= targetAcos
-                              ? "bg-teal-50 text-teal-700"
-                              : c.acos <= 50
+                  paginatedCampaigns.map((c, i) => {
+                    const rawDate = extractCampaignDate(c.campaignName);
+                    const dateStr = rawDate > 0 ? String(rawDate) : "";
+                    const formattedDate =
+                      dateStr.length === 8
+                        ? `${dateStr.slice(0, 4)}-${dateStr.slice(4, 6)}-${dateStr.slice(6, 8)}`
+                        : "—";
+
+                    return (
+                      <tr key={i} className="hover:bg-slate-50/80 transition group">
+                        {/* Campaign Name: Clickable to view Targets directly */}
+                        <td className="py-2.5 px-3.5 min-w-[280px] max-w-[550px]">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedCampaignForDrilldown(c.campaignName);
+                              setSelectedAdGroupForDrilldown(null);
+                              setActiveTab("targets");
+                            }}
+                            className="text-left font-bold text-slate-900 hover:text-indigo-600 hover:underline cursor-pointer transition leading-snug break-words block"
+                            title="Nhấn để xem các Target / Keyword của Campaign này"
+                          >
+                            {c.campaignName}
+                          </button>
+                        </td>
+
+                        <td className="py-2.5 px-3 text-slate-500 font-medium whitespace-nowrap">{c.storeName}</td>
+
+                        <td className="py-2.5 px-3 whitespace-nowrap">
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
+                            {c.adType || "?"} · {c.targetingType}
+                          </span>
+                        </td>
+
+                        <td className="py-2.5 px-3 text-[11px] text-slate-500 whitespace-nowrap">
+                          <div className="font-bold text-slate-700 flex items-center gap-1">
+                            <span
+                              className={`w-1.5 h-1.5 rounded-full ${
+                                !/pause|archive/i.test(c.state || "") ? "bg-emerald-500" : "bg-amber-500"
+                              }`}
+                            />
+                            <span>{c.state || "—"}</span>
+                          </div>
+                          <div>{c.dailyBudget ? `$${c.dailyBudget.toFixed(2)}/day` : "No budget"}</div>
+                        </td>
+
+                        {/* Creation Date */}
+                        <td className="py-2.5 px-3 whitespace-nowrap text-[11px] font-mono text-slate-600">
+                          {formattedDate !== "—" ? (
+                            <span className="px-1.5 py-0.5 rounded bg-slate-50 border border-slate-200 text-slate-700 font-bold">
+                              {formattedDate}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+
+                        <td className="py-2.5 px-3 text-right font-bold text-slate-900 whitespace-nowrap">
+                          ${c.spend.toFixed(2)}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-black text-emerald-600 whitespace-nowrap">
+                          ${c.sales.toFixed(2)}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-black text-slate-900 whitespace-nowrap">{c.orders}</td>
+                        <td className="py-2.5 px-3 text-right text-slate-600 whitespace-nowrap">{c.clicks}</td>
+                        <td className="py-2.5 px-3 text-right text-slate-600 whitespace-nowrap">${c.cpc.toFixed(2)}</td>
+                        <td className="py-2.5 px-3 text-right text-slate-700 whitespace-nowrap">{c.cvr.toFixed(1)}%</td>
+                        <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                          <span
+                            className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${
+                              c.acos <= Math.min(20, targetAcos)
+                                ? "bg-emerald-50 text-emerald-700"
+                                : c.acos <= targetAcos
+                                ? "bg-teal-50 text-teal-700"
+                                : c.acos <= 50
                                 ? "bg-amber-50 text-amber-700"
                                 : "bg-rose-50 text-rose-700"
                             }`}
-                        >
-                          {c.acos > 500 ? "0 sales" : `${c.acos.toFixed(1)}%`}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-bold text-sky-600">{c.roas.toFixed(2)}x</td>
-                    </tr>
-                  )))}
+                          >
+                            {c.acos > 500 ? "0 sales" : `${c.acos.toFixed(1)}%`}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-bold text-sky-600 whitespace-nowrap">
+                          {c.roas.toFixed(2)}x
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
@@ -1668,8 +2193,6 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
         </div>
       )}
 
-
-
       {/* ========================================================================= */}
       {/* VIEW: BREAKDOWN BY TARGET / KEYWORD (Level 4 Hierarchy + Search Term 2-Layer) */}
       {/* ========================================================================= */}
@@ -1677,30 +2200,41 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
         <div className="space-y-3">
           {/* Active drilldown banner */}
           {(selectedCampaignForDrilldown || selectedAdGroupForDrilldown) && (
-            <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-indigo-50/90 border border-indigo-200 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-indigo-50 border border-indigo-200 text-xs shadow-2xs">
               <div className="flex flex-wrap items-center gap-2 text-indigo-900 font-semibold">
-                <span>📍 Đang lọc theo:</span>
+                <span className="px-2 py-0.5 rounded bg-indigo-600 text-white font-black text-[11px]">
+                  🎯 Đang xem Target / Keyword của:
+                </span>
                 {selectedCampaignForDrilldown && (
-                  <span className="font-bold text-indigo-950 bg-white px-2 py-0.5 rounded border border-indigo-200 shadow-2xs">
+                  <span className="font-extrabold text-indigo-950 bg-white px-2.5 py-1 rounded-md border border-indigo-200 shadow-2xs">
                     Chiến dịch: {selectedCampaignForDrilldown}
                   </span>
                 )}
                 {selectedAdGroupForDrilldown && (
-                  <span className="font-bold text-indigo-950 bg-white px-2 py-0.5 rounded border border-indigo-200 shadow-2xs">
+                  <span className="font-extrabold text-indigo-950 bg-white px-2.5 py-1 rounded-md border border-indigo-200 shadow-2xs">
                     Nhóm QC: {selectedAdGroupForDrilldown}
                   </span>
                 )}
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedCampaignForDrilldown(null);
-                  setSelectedAdGroupForDrilldown(null);
-                }}
-                className="text-xs font-bold text-indigo-700 hover:text-indigo-950 underline cursor-pointer"
-              >
-                ✕ Xem tất cả Targets ({targetPerformance.length})
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("campaigns")}
+                  className="px-3 py-1.5 rounded-lg bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-100 font-bold text-xs flex items-center gap-1 shadow-2xs cursor-pointer transition"
+                >
+                  ← Quay lại Campaign
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedCampaignForDrilldown(null);
+                    setSelectedAdGroupForDrilldown(null);
+                  }}
+                  className="px-2.5 py-1.5 text-slate-500 hover:text-slate-900 text-xs font-semibold cursor-pointer underline"
+                >
+                  ✕ Xem tất cả Targets ({targetPerformance.length})
+                </button>
+              </div>
             </div>
           )}
 
@@ -1772,14 +2306,17 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                 {filteredSortedTargets.length === 0 ? (
                   <tr><td colSpan={13} className="p-8 text-center font-medium text-slate-400">Chưa có target grain cho kỳ đang chọn.</td></tr>
                 ) : paginatedTargets.map((target) => {
-                  const targetKey = `${target.storeName}-${target.adType}-${target.campaignName}-${target.adGroupName}-${target.targetKeyword}`;
-                  const childTerms = getChildSearchTerms(target);
+                  const targetKey = [
+                    target.storeId || target.storeName,
+                    target.adType,
+                    target.campaignId || target.campaignName,
+                    target.adGroupId || target.adGroupName,
+                    target.targetId || target.targetKeyword,
+                    target.matchType,
+                  ].join("\u0000");
+                  const childSearchTerms = getChildSearchTerms(target);
+                  const childTerms = [...childSearchTerms.confirmed, ...childSearchTerms.inferred];
                   const isExpanded = expandedTargetKey === targetKey;
-
-                  // Intelligence calculation for child queries
-                  const harvestCandidates = childTerms.filter((t) => t.orders > 0 && t.acos <= targetAcos);
-                  const bleederCandidates = childTerms.filter((t) => t.orders === 0 && (t.clicks >= 9 || t.spend >= 15));
-                  const bleederSpend = bleederCandidates.reduce((sum, t) => sum + t.spend, 0);
 
                   return (
                     <Fragment key={targetKey}>
@@ -1809,10 +2346,10 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                             type="button"
                             onClick={() => setExpandedTargetKey(isExpanded ? null : targetKey)}
                             className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-extrabold transition cursor-pointer border ${isExpanded
-                                ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
-                                : childTerms.length > 0
-                                  ? "bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border-indigo-200"
-                                  : "bg-slate-100 text-slate-400 border-slate-200 hover:bg-slate-200"
+                              ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
+                              : childTerms.length > 0
+                                ? "bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border-indigo-200"
+                                : "bg-slate-100 text-slate-400 border-slate-200 hover:bg-slate-200"
                               }`}
                             title="Xem các customer search terms do target này kích hoạt"
                           >
@@ -1823,102 +2360,52 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                         </td>
                       </tr>
 
-                      {/* Inline Expandable Layer 2: Search Term Breakdown */}
+                      {/* Inline Expandable Layer 2: Search Term Breakdown (Clean & Minimalist) */}
                       {isExpanded && (
-                        <tr className="bg-slate-50/90 border-b border-indigo-100">
-                          <td colSpan={13} className="p-3.5 space-y-2.5 animate-in fade-in duration-150">
-                            {/* Header Context & Intelligence Insight */}
-                            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2 p-2.5 rounded-lg bg-white border border-indigo-100 shadow-2xs">
-                              <div>
-                                <div className="text-xs font-black text-slate-900 flex items-center gap-2">
-                                  <span>🎯 Search Terms kích hoạt bởi &quot;{target.targetKeyword}&quot; ({target.matchType})</span>
-                                  <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-600 rounded font-semibold">
-                                    Target ACOS: {target.acos > 500 ? "0 sales" : `${target.acos.toFixed(1)}%`}
-                                  </span>
-                                </div>
-                                <div className="text-[11px] text-slate-500 mt-0.5">
-                                  Campaign: <strong className="text-slate-700">{target.campaignName}</strong> • Giá thầu hiện tại: <strong className="text-indigo-700">${target.currentBid?.toFixed(2) || "—"}</strong>
-                                </div>
-                              </div>
-
-                              <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-extrabold">
-                                {harvestCandidates.length > 0 && (
-                                  <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                    🟢 {harvestCandidates.length} Harvest Candidate
-                                  </span>
-                                )}
-                                {bleederCandidates.length > 0 && (
-                                  <span className="px-2 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200">
-                                    🔴 {bleederCandidates.length} Negative Candidate (-${bleederSpend.toFixed(2)})
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-
-                            {/* 2-Layer Intelligence Tip */}
-                            {bleederCandidates.length > 0 ? (
-                              <div className="p-2.5 rounded-lg bg-amber-50/80 border border-amber-200 text-[11px] text-amber-900 font-medium">
-                                💡 <strong>Gợi ý thông minh (Recommendation Engine):</strong> Target ACOS {target.acos}% không hẳn do cả keyword xấu! Đang có <strong>${bleederSpend.toFixed(2)}</strong> bị lãng phí từ {bleederCandidates.length} query 0 đơn. <strong>Không nên giảm bid toàn bộ target ngay</strong>, hãy thêm Negative các query này trước, ACOS target cha sẽ tự động hạ xuống!
-                              </div>
-                            ) : harvestCandidates.length > 0 ? (
-                              <div className="p-2.5 rounded-lg bg-emerald-50/80 border border-emerald-200 text-[11px] text-emerald-900 font-medium">
-                                🚀 <strong>Gợi ý mở rộng:</strong> Có {harvestCandidates.length} search term chuyển đổi rất tốt với ACOS thấp. Nên tách (Harvest) thành Exact Target riêng để tăng ngân sách và kiểm soát giá thầu tối ưu.
-                              </div>
-                            ) : null}
-
-                            {/* Sub-table: Queries */}
+                        <tr className="bg-slate-50/70 border-b border-slate-200">
+                          <td colSpan={13} className="p-3">
                             {childTerms.length === 0 ? (
-                              <div className="p-4 text-center text-xs text-slate-400 font-medium bg-white rounded-lg border border-slate-200">
-                                Chưa ghi nhận customer search term nào phát sinh click trong kỳ báo cáo cho target này.
+                              <div className="p-3 text-center text-xs text-slate-400 bg-white rounded-lg border border-slate-200">
+                                Không có customer search term nào phát sinh click trong kỳ báo cáo.
                               </div>
                             ) : (
-                              <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                              <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-2xs">
                                 <table className="w-full text-left text-xs text-slate-700">
-                                  <thead className="bg-slate-100/75 text-[10px] uppercase font-bold text-slate-500 border-b border-slate-200">
+                                  <thead className="bg-slate-50 text-[10px] uppercase font-bold text-slate-500 border-b border-slate-200">
                                     <tr>
-                                      <th className="py-2 px-3">Customer Search Term</th>
+                                      <th className="py-2 px-3.5">Customer Search Term</th>
                                       <th className="py-2 px-2.5 text-right">Clicks</th>
                                       <th className="py-2 px-2.5 text-right">Spend ($)</th>
                                       <th className="py-2 px-2.5 text-right">Sales ($)</th>
                                       <th className="py-2 px-2.5 text-right">Orders</th>
                                       <th className="py-2 px-2.5 text-right">CVR</th>
                                       <th className="py-2 px-2.5 text-right">ACOS</th>
-                                      <th className="py-2 px-3 text-center">Khuyến Nghị (Action)</th>
                                     </tr>
                                   </thead>
                                   <tbody className="divide-y divide-slate-100 font-medium">
-                                    {childTerms.map((term, tIdx) => {
-                                      const isHarvest = term.orders > 0 && term.acos <= targetAcos;
-                                      const isBleeder = term.orders === 0 && (term.clicks >= 9 || term.spend >= 15);
-                                      return (
-                                        <tr key={tIdx} className="hover:bg-slate-50/60">
-                                          <td className="py-2 px-3 font-bold text-slate-900">{term.customerSearchTerm}</td>
-                                          <td className="py-2 px-2.5 text-right font-mono">{term.clicks}</td>
-                                          <td className="py-2 px-2.5 text-right font-mono">${term.spend.toFixed(2)}</td>
-                                          <td className="py-2 px-2.5 text-right font-mono font-bold text-emerald-600">${term.sales.toFixed(2)}</td>
-                                          <td className="py-2 px-2.5 text-right font-mono font-bold">{term.orders}</td>
-                                          <td className="py-2 px-2.5 text-right font-mono">{term.cvr.toFixed(1)}%</td>
-                                          <td className="py-2 px-2.5 text-right font-mono font-bold">
+                                    {childTerms.map((term, tIdx) => (
+                                      <tr key={`${searchTermKey(term)}-${tIdx}`} className="hover:bg-slate-50/80 transition">
+                                        <td className="py-2 px-3.5 font-bold text-slate-900">{term.customerSearchTerm}</td>
+                                        <td className="py-2 px-2.5 text-right font-mono text-slate-600">{term.clicks}</td>
+                                        <td className="py-2 px-2.5 text-right font-mono text-slate-900">${term.spend.toFixed(2)}</td>
+                                        <td className="py-2 px-2.5 text-right font-mono font-bold text-emerald-600">${term.sales.toFixed(2)}</td>
+                                        <td className="py-2 px-2.5 text-right font-mono font-bold text-slate-900">{term.orders}</td>
+                                        <td className="py-2 px-2.5 text-right font-mono text-slate-600">{(term.cvr * 100).toFixed(1)}%</td>
+                                        <td className="py-2 px-2.5 text-right font-mono">
+                                          <span
+                                            className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${
+                                              term.orders === 0
+                                                ? "text-rose-600 bg-rose-50"
+                                                : term.acos <= targetAcos
+                                                ? "text-emerald-700 bg-emerald-50"
+                                                : "text-amber-700 bg-amber-50"
+                                            }`}
+                                          >
                                             {term.orders === 0 ? "0 sales" : `${term.acos.toFixed(1)}%`}
-                                          </td>
-                                          <td className="py-2 px-3 text-center">
-                                            {isHarvest ? (
-                                              <span className="inline-block px-2 py-0.5 rounded text-[10px] font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                                🟢 Harvest sang Exact
-                                              </span>
-                                            ) : isBleeder ? (
-                                              <span className="inline-block px-2 py-0.5 rounded text-[10px] font-extrabold bg-rose-50 text-rose-700 border border-rose-200">
-                                                🔴 Thêm Negative
-                                              </span>
-                                            ) : (
-                                              <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600">
-                                                🟡 Keep / Theo dõi
-                                              </span>
-                                            )}
-                                          </td>
-                                        </tr>
-                                      );
-                                    })}
+                                          </span>
+                                        </td>
+                                      </tr>
+                                    ))}
                                   </tbody>
                                 </table>
                               </div>
@@ -2474,14 +2961,38 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
       {activeTab === "recommendations" && (
         <div className="space-y-4">
           {/* Recommendations Header & Controls */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs space-y-3.5">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
-                Đề Xuất Tối Ưu
-              </h3>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
+                    Đề Xuất Tối Ưu
+                  </h3>
+                  <span className="rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200/60 px-2 py-0.5 text-[10px] font-black">
+                    {filteredRecommendations.length}/{recommendations.length}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Lọc theo Campaign, SKU hoặc từ khóa để kiểm tra và xuất Bulksheet cho từng nhóm chiến dịch.
+                </p>
+              </div>
 
               {/* Action Buttons */}
-              <div className="flex items-center gap-2.5 flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Toggle Compact / Expanded mode */}
+                <button
+                  type="button"
+                  onClick={() => setRecCompactMode(!recCompactMode)}
+                  className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold transition cursor-pointer ${recCompactMode
+                    ? "border-indigo-300 bg-indigo-50/70 text-indigo-700 hover:bg-indigo-100"
+                    : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                    }`}
+                  title="Chuyển đổi giữa chế độ xem thu gọn và chi tiết"
+                >
+                  <ListDashes size={14} weight="bold" />
+                  <span>{recCompactMode ? "Chế độ: Thu Gọn" : "Chế độ: Chi Tiết"}</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => {
@@ -2491,10 +3002,10 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                       setSelectedRecs(new Set(filteredRecommendations.map((r) => r.id)));
                     }
                   }}
-                  className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 transition cursor-pointer"
+                  className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 transition cursor-pointer"
                 >
                   {selectedRecs.size === filteredRecommendations.length && filteredRecommendations.length > 0
-                    ? "Bỏ Chọn Tất Cả"
+                    ? "Bỏ Chọn"
                     : `Chọn Tất Cả (${filteredRecommendations.length})`}
                 </button>
 
@@ -2502,19 +3013,19 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                   type="button"
                   disabled={exportingBulksheet || recommendations.length === 0}
                   onClick={() => handleExportBulksheet()}
-                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-2 text-xs font-black text-white shadow-md shadow-emerald-500/20 hover:from-emerald-700 hover:to-teal-700 disabled:opacity-50 transition cursor-pointer"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-3.5 py-1.5 text-xs font-black text-white shadow-md shadow-emerald-500/20 hover:from-emerald-700 hover:to-teal-700 disabled:opacity-50 transition cursor-pointer"
                 >
                   {exportingBulksheet ? (
                     <>
-                      <ArrowsClockwise size={16} className="animate-spin" />
+                      <ArrowsClockwise size={15} className="animate-spin" />
                       <span>Đang tạo Bulksheet...</span>
                     </>
                   ) : (
                     <>
-                      <Download size={16} weight="bold" />
+                      <Download size={15} weight="bold" />
                       <span>
-                        Xuất Bulksheet Amazon (.xlsx)
-                        {selectedRecs.size > 0 ? ` (${selectedRecs.size} mục)` : ` (${filteredRecommendations.length})`}
+                        Xuất Bulksheet (.xlsx)
+                        {selectedRecs.size > 0 ? ` (${selectedRecs.size} mục chọn)` : ` (${filteredRecommendations.length} mục)`}
                       </span>
                     </>
                   )}
@@ -2522,87 +3033,402 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               </div>
             </div>
 
-            {/* Filter Chips by Priority */}
-            <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mr-1">
-                Lọc mức ưu tiên:
-              </span>
-              <button
-                type="button"
-                onClick={() => {
-                  setRecPriorityFilter("ALL");
-                  setRecPage(1);
-                }}
-                className={`rounded-lg px-3 py-1 text-xs font-bold transition cursor-pointer ${recPriorityFilter === "ALL"
-                  ? "bg-slate-900 text-white shadow-xs"
-                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                  }`}
-              >
-                Tất Cả ({recommendations.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setRecPriorityFilter("P0");
-                  setRecPage(1);
-                }}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-bold transition cursor-pointer ${recPriorityFilter === "P0"
-                  ? "bg-rose-600 text-white shadow-xs"
-                  : "bg-rose-50 text-rose-700 border border-rose-200/60 hover:bg-rose-100"
-                  }`}
-              >
-                <span>🚨 P0 - Cắt Lỗ Khẩn Cấp</span>
-                <span className="rounded-full bg-white/20 px-1.5 py-0.2 text-[10px]">
-                  {recommendations.filter((r) => r.priority === "P0").length}
+            {/* Search & Campaign / SKU Filters Toolbar */}
+            <div className="flex flex-wrap items-center gap-2.5 bg-slate-50/90 p-2.5 rounded-xl border border-slate-200/80">
+              {/* Search text input */}
+              <div className="relative flex-1 min-w-[200px]">
+                <MagnifyingGlass size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Tìm theo từ khóa, Campaign, SKU..."
+                  value={recSearchQuery}
+                  onChange={(e) => {
+                    setRecSearchQuery(e.target.value);
+                    setRecPage(1);
+                  }}
+                  className="w-full rounded-lg border border-slate-200 bg-white pl-8 pr-7 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:outline-none"
+                />
+                {recSearchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRecSearchQuery("");
+                      setRecPage(1);
+                    }}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+
+              {/* Campaign Dropdown Filter */}
+              <div className="flex items-center gap-1.5 min-w-[210px] max-w-xs">
+                <span className="text-[11px] font-bold text-slate-400 shrink-0">Camp:</span>
+                <select
+                  value={recCampaignFilter}
+                  onChange={(e) => {
+                    setRecCampaignFilter(e.target.value);
+                    setRecPage(1);
+                  }}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-indigo-500 transition cursor-pointer truncate"
+                >
+                  <option value="ALL">Tất Cả Campaign ({uniqueRecCampaigns.length})</option>
+                  {uniqueRecCampaigns.map((c) => (
+                    <option key={c.name} value={c.name}>
+                      {c.name} ({c.count} đề xuất)
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* SKU Dropdown Filter */}
+              <div className="flex items-center gap-1.5 min-w-[150px] max-w-[200px]">
+                <span className="text-[11px] font-bold text-slate-400 shrink-0">SKU:</span>
+                <select
+                  value={recSkuFilter}
+                  onChange={(e) => {
+                    setRecSkuFilter(e.target.value);
+                    setRecPage(1);
+                  }}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-indigo-500 transition cursor-pointer truncate"
+                >
+                  <option value="ALL">Tất Cả SKU ({uniqueRecSkus.length})</option>
+                  {uniqueRecSkus.map((s) => (
+                    <option key={s.name} value={s.name}>
+                      {s.name} ({s.count})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Reset Filters button */}
+              {(recSearchQuery || recCampaignFilter !== "ALL" || recSkuFilter !== "ALL" || recPriorityFilter !== "ALL" || recProductFilter !== "ALL") && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRecSearchQuery("");
+                    setRecCampaignFilter("ALL");
+                    setRecSkuFilter("ALL");
+                    setRecPriorityFilter("ALL");
+                    setRecProductFilter("ALL");
+                    setRecPage(1);
+                  }}
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 px-2.5 py-1.5 rounded-lg transition cursor-pointer shrink-0"
+                >
+                  <X size={12} weight="bold" />
+                  <span>Đặt lại</span>
+                </button>
+              )}
+            </div>
+
+            {/* Filter Chips by Product Rule & Priority */}
+            <div className="flex flex-wrap items-center justify-between gap-y-2 gap-x-4 border-t border-slate-100 pt-2.5">
+              {/* Product Rule Filter */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1">
+                  Quy tắc:
                 </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setRecPriorityFilter("P1");
-                  setRecPage(1);
-                }}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-bold transition cursor-pointer ${recPriorityFilter === "P1"
-                  ? "bg-emerald-600 text-white shadow-xs"
-                  : "bg-emerald-50 text-emerald-700 border border-emerald-200/60 hover:bg-emerald-100"
-                  }`}
-              >
-                <span>📈 P1 - Scale & Tăng Trưởng</span>
-                <span className="rounded-full bg-white/20 px-1.5 py-0.2 text-[10px]">
-                  {recommendations.filter((r) => r.priority === "P1").length}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRecProductFilter("ALL");
+                    setRecPage(1);
+                  }}
+                  className={`rounded-md px-2.5 py-1 text-[11px] font-bold transition cursor-pointer ${recProductFilter === "ALL"
+                    ? "bg-slate-900 text-white shadow-xs"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                >
+                  Tất Cả ({recommendations.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRecProductFilter("ORNAMENT");
+                    setRecPage(1);
+                  }}
+                  className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-bold transition cursor-pointer ${recProductFilter === "ORNAMENT"
+                    ? "bg-purple-600 text-white shadow-xs"
+                    : "bg-purple-50 text-purple-700 border border-purple-200/60 hover:bg-purple-100"
+                    }`}
+                >
+                  <span>🔮 Glass Ornament</span>
+                  <span className="rounded-full bg-white/20 px-1.5 py-0.2 text-[9px]">
+                    {recommendations.filter((r) => r.productType === "Glass Ornament").length}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRecProductFilter("GENERAL");
+                    setRecPage(1);
+                  }}
+                  className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-bold transition cursor-pointer ${recProductFilter === "GENERAL"
+                    ? "bg-slate-700 text-white shadow-xs"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                >
+                  <span>Chiến dịch chung</span>
+                  <span className="rounded-full bg-white/20 px-1.5 py-0.2 text-[9px]">
+                    {recommendations.filter((r) => r.productType !== "Glass Ornament").length}
+                  </span>
+                </button>
+              </div>
+
+              {/* Priority Filter */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1">
+                  Ưu tiên:
                 </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setRecPriorityFilter("P2");
-                  setRecPage(1);
-                }}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-bold transition cursor-pointer ${recPriorityFilter === "P2"
-                  ? "bg-sky-600 text-white shadow-xs"
-                  : "bg-sky-50 text-sky-700 border border-sky-200/60 hover:bg-sky-100"
-                  }`}
-              >
-                <span>🎯 P2 - Thu Hoạch Từ Khóa</span>
-                <span className="rounded-full bg-white/20 px-1.5 py-0.2 text-[10px]">
-                  {recommendations.filter((r) => r.priority === "P2").length}
-                </span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRecPriorityFilter("ALL");
+                    setRecPage(1);
+                  }}
+                  className={`rounded-md px-2 py-0.5 text-[11px] font-bold transition cursor-pointer ${recPriorityFilter === "ALL"
+                    ? "bg-slate-900 text-white"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                >
+                  Tất Cả
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRecPriorityFilter("P0");
+                    setRecPage(1);
+                  }}
+                  className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold transition cursor-pointer ${recPriorityFilter === "P0"
+                    ? "bg-rose-600 text-white"
+                    : "bg-rose-50 text-rose-700 border border-rose-200/60 hover:bg-rose-100"
+                    }`}
+                >
+                  <span>🚨 P0</span>
+                  <span className="text-[9px]">
+                    ({recommendations.filter((r) => r.priority === "P0").length})
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRecPriorityFilter("P1");
+                    setRecPage(1);
+                  }}
+                  className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold transition cursor-pointer ${recPriorityFilter === "P1"
+                    ? "bg-emerald-600 text-white"
+                    : "bg-emerald-50 text-emerald-700 border border-emerald-200/60 hover:bg-emerald-100"
+                    }`}
+                >
+                  <span>📈 P1</span>
+                  <span className="text-[9px]">
+                    ({recommendations.filter((r) => r.priority === "P1").length})
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRecPriorityFilter("P2");
+                    setRecPage(1);
+                  }}
+                  className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold transition cursor-pointer ${recPriorityFilter === "P2"
+                    ? "bg-sky-600 text-white"
+                    : "bg-sky-50 text-sky-700 border border-sky-200/60 hover:bg-sky-100"
+                    }`}
+                >
+                  <span>🎯 P2</span>
+                  <span className="text-[9px]">
+                    ({recommendations.filter((r) => r.priority === "P2").length})
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
 
-          {/* List of Recommendation Cards */}
+          {/* List of Recommendation Items */}
           {filteredRecommendations.length === 0 ? (
             <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center shadow-xs">
               <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-400">
                 <CheckCircle size={28} weight="duotone" />
               </div>
-              <h4 className="mt-3 text-sm font-bold text-slate-800">Không có đề xuất trong nhóm này</h4>
+              <h4 className="mt-3 text-sm font-bold text-slate-800">Không có đề xuất phù hợp với bộ lọc</h4>
               <p className="mt-1 text-xs text-slate-500">
-                Tất cả các từ khóa và chiến dịch trong nhóm này đều đang vận hành trong ngưỡng cho phép.
+                Không tìm thấy đề xuất nào khớp với từ khóa, Campaign hoặc SKU đã chọn.
               </p>
             </div>
+          ) : recCompactMode ? (
+            /* COMPACT MODE: Streamlined, high-density, modern list */
+            <div className="space-y-2">
+              {paginatedRecommendations.map((rec) => {
+                const isSelected = selectedRecs.has(rec.id);
+                const priorityBadge =
+                  rec.priority === "P0" ? (
+                    <span className="rounded bg-rose-100 px-1.5 py-0.2 text-[9px] font-black text-rose-800 border border-rose-200 shrink-0">
+                      P0
+                    </span>
+                  ) : rec.priority === "P1" ? (
+                    <span className="rounded bg-emerald-100 px-1.5 py-0.2 text-[9px] font-black text-emerald-800 border border-emerald-200 shrink-0">
+                      P1
+                    </span>
+                  ) : (
+                    <span className="rounded bg-sky-100 px-1.5 py-0.2 text-[9px] font-black text-sky-800 border border-sky-200 shrink-0">
+                      P2
+                    </span>
+                  );
+
+                const typeBadge =
+                  rec.recType === "PAUSE_TARGET" || rec.actionState === "PAUSED" ? (
+                    <span className="rounded bg-rose-100 px-1.5 py-0.2 text-[9px] font-black text-rose-800 border border-rose-200 shrink-0">
+                      DỪNG TARGET
+                    </span>
+                  ) : rec.recType === "NEGATIVE_KEYWORD" ? (
+                    <span className="rounded bg-rose-50 px-1.5 py-0.2 text-[9px] font-extrabold text-rose-700 border border-rose-100 shrink-0">
+                      PHỦ ĐỊNH
+                    </span>
+                  ) : rec.recType === "BID_DECREASE" ? (
+                    <span className="rounded bg-amber-50 px-1.5 py-0.2 text-[9px] font-extrabold text-amber-700 border border-amber-100 shrink-0">
+                      HẠ BID
+                    </span>
+                  ) : rec.recType === "BID_INCREASE" ? (
+                    <span className="rounded bg-emerald-50 px-1.5 py-0.2 text-[9px] font-extrabold text-emerald-700 border border-emerald-100 shrink-0">
+                      TĂNG BID
+                    </span>
+                  ) : (
+                    <span className="rounded bg-indigo-50 px-1.5 py-0.2 text-[9px] font-extrabold text-indigo-700 border border-indigo-100 shrink-0">
+                      HARVEST
+                    </span>
+                  );
+
+                return (
+                  <div
+                    key={rec.id}
+                    className={`rounded-xl border transition px-3 py-2.5 shadow-2xs ${isSelected
+                      ? "border-indigo-400 bg-indigo-50/25 shadow-xs"
+                      : "border-slate-200 bg-white hover:border-slate-300"
+                      }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      {/* Checkbox */}
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => {
+                          setSelectedRecs((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(rec.id)) next.delete(rec.id);
+                            else next.add(rec.id);
+                            return next;
+                          });
+                        }}
+                        className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0"
+                      />
+
+                      <div className="flex-1 min-w-0">
+                        {/* Top Line: Badges + Keyword + Bids + Quick Export */}
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+                            {priorityBadge}
+                            {typeBadge}
+                            {rec.productType === "Glass Ornament" && (
+                              <span className="inline-flex items-center rounded bg-purple-50 text-purple-700 border border-purple-200/80 px-1.5 py-0.2 text-[10px] font-black shrink-0">
+                                🔮 {rec.ruleProfile?.replace("Glass Ornament ", "") || "Ornament"}
+                              </span>
+                            )}
+                            {rec.sku && (
+                              <span className="rounded bg-slate-100 text-slate-700 px-1.5 py-0.2 text-[10px] font-bold shrink-0">
+                                SKU: {rec.sku}
+                              </span>
+                            )}
+
+                            {/* Keyword Tag */}
+                            <span className="font-mono text-xs font-black text-slate-900 bg-slate-100/90 border border-slate-200 px-2 py-0.5 rounded inline-flex items-center gap-1">
+                              {rec.keyword}
+                              <button
+                                type="button"
+                                onClick={() => copyKeyword(rec.keyword)}
+                                className="text-slate-400 hover:text-indigo-600 transition"
+                                title="Sao chép từ khóa"
+                              >
+                                <Copy size={12} />
+                              </button>
+                            </span>
+                          </div>
+
+                          {/* Right: Bid change & Quick Export */}
+                          <div className="flex items-center gap-2 shrink-0">
+                            {rec.actionState === "PAUSED" ? (
+                              <span className="rounded bg-rose-50 border border-rose-200 px-2 py-0.5 text-xs font-black text-rose-700">
+                                🛑 State: paused
+                              </span>
+                            ) : rec.recommendedBid !== undefined ? (
+                              <div className="flex items-center gap-1.5 text-xs">
+                                {rec.currentBid !== undefined && (
+                                  <span className="text-slate-400 line-through text-[11px] font-medium">
+                                    ${rec.currentBid.toFixed(2)}
+                                  </span>
+                                )}
+                                <span className="text-slate-400 text-[10px]">➔</span>
+                                <span className="font-mono font-black text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded text-xs">
+                                  ${rec.recommendedBid.toFixed(2)}
+                                </span>
+                              </div>
+                            ) : null}
+
+                            <button
+                              type="button"
+                              disabled={exportingBulksheet}
+                              title="Xuất riêng mục này sang Bulksheet"
+                              onClick={() => handleExportBulksheet([rec])}
+                              className="inline-flex items-center p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
+                            >
+                              <Download size={14} weight="bold" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Bottom Line: Campaign & Reason */}
+                        <div className="mt-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[11px] text-slate-500">
+                          <div className="flex items-center gap-1.5 min-w-0 max-w-[85%]">
+                            <span className="font-bold text-slate-400 shrink-0">Camp:</span>
+                            <span className="truncate max-w-[280px] text-slate-700 font-medium" title={rec.campaignName}>
+                              {rec.campaignName}
+                            </span>
+                            <span className="text-slate-300">·</span>
+                            <span className="truncate text-slate-500" title={rec.reason}>
+                              {rec.reason}
+                            </span>
+                          </div>
+
+                          {rec.estimatedSavings !== undefined && rec.estimatedSavings > 0 && (
+                            <div className="shrink-0 text-emerald-700 font-bold text-[10px] bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-100">
+                              Tiết kiệm: ${rec.estimatedSavings.toFixed(2)}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Pagination Controls */}
+              <PpcPagination
+                currentPage={recPage}
+                totalPages={totalRecPages}
+                pageSize={recPageSize}
+                totalItems={filteredRecommendations.length}
+                pageSizeOptions={[10, 20, 50, 100]}
+                itemName="đề xuất tối ưu"
+                onPageChange={setRecPage}
+                onPageSizeChange={(size) => {
+                  setRecPageSize(size);
+                  setRecPage(1);
+                }}
+              />
+            </div>
           ) : (
+            /* EXPANDED MODE: Full detail cards */
             <div className="space-y-3">
               {paginatedRecommendations.map((rec) => {
                 const isSelected = selectedRecs.has(rec.id);
@@ -2622,7 +3448,11 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                   );
 
                 const typeBadge =
-                  rec.recType === "NEGATIVE_KEYWORD" ? (
+                  rec.recType === "PAUSE_TARGET" || rec.actionState === "PAUSED" ? (
+                    <span className="rounded bg-rose-100 px-2 py-0.5 text-[10px] font-black text-rose-800 border border-rose-300">
+                      🛑 TẠM DỪNG TARGET (0 ĐƠN)
+                    </span>
+                  ) : rec.recType === "NEGATIVE_KEYWORD" ? (
                     <span className="rounded bg-rose-50 px-2 py-0.5 text-[10px] font-extrabold text-rose-700 border border-rose-100">
                       PHỦ ĐỊNH CHÍNH XÁC (NEGATIVE EXACT)
                     </span>
@@ -2669,11 +3499,21 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                         <div className="flex flex-wrap items-center gap-2">
                           {priorityBadge}
                           {typeBadge}
+                          {rec.productType === "Glass Ornament" && (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-purple-100 px-2 py-0.5 text-[10px] font-black text-purple-800 border border-purple-200">
+                              🔮 {rec.ruleProfile || "Glass Ornament"}
+                            </span>
+                          )}
+                          {rec.sku && (
+                            <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-700">
+                              SKU: {rec.sku}
+                            </span>
+                          )}
                           <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">
                             {rec.storeName}
                           </span>
                           {rec.campaignName && (
-                            <span className="truncate max-w-xs text-[11px] font-medium text-slate-400">
+                            <span className="truncate max-w-xs text-[11px] font-medium text-slate-400" title={rec.campaignName}>
                               {rec.campaignName}
                             </span>
                           )}
@@ -2702,14 +3542,26 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                         {/* Bid comparison & Action footer */}
                         <div className="mt-3 flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100">
                           <div className="flex items-center gap-3 text-xs font-semibold text-slate-600">
-                            {rec.recommendedBid !== undefined && (
+                            {rec.actionState === "PAUSED" ? (
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-slate-400">Hành động Bulksheet:</span>
+                                <span className="font-black text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                                  State: paused (Tạm dừng)
+                                </span>
+                              </div>
+                            ) : rec.recommendedBid !== undefined ? (
                               <div className="flex items-center gap-1.5">
                                 <span className="text-slate-400">Giá thầu đề xuất:</span>
                                 <span className="font-black text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded">
                                   ${rec.recommendedBid.toFixed(2)}
                                 </span>
+                                {rec.currentBid !== undefined && (
+                                  <span className="text-[11px] text-slate-400 font-normal">
+                                    (Hiện tại: ${rec.currentBid.toFixed(2)})
+                                  </span>
+                                )}
                               </div>
-                            )}
+                            ) : null}
                             {rec.estimatedSavings !== undefined && rec.estimatedSavings > 0 && (
                               <div className="flex items-center gap-1 text-emerald-700">
                                 <span>Chi phí kỳ báo cáo có thể tránh:</span>
@@ -2790,7 +3642,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                 <datalist id="ppc-store-options">
                   {stores.map((s) => (
                     <option key={s.id} value={s.name}>
-                      {s.name} ({s.marketplace})
+                      {s.name === "HSOSTORE" ? "HSOSTORE (Brand: Warmstorey)" : s.name} ({s.marketplace})
                     </option>
                   ))}
                 </datalist>

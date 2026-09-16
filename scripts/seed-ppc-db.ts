@@ -88,7 +88,7 @@ async function main() {
             target_keyword, customer_search_term, match_type, impressions, clicks,
             spend, sales, orders, units, cpc, ctr, cvr, acos, roas, updated_at
           ) VALUES (
-            ${storeId}, ${row.reportDate}, ${row.portfolioName}, ${row.campaignName}, ${row.adGroupName},
+            ${storeId}, ${row.reportDate}, ${row.portfolioName ?? null}, ${row.campaignName}, ${row.adGroupName},
             ${row.targetKeyword}, ${row.customerSearchTerm}, ${row.matchType}, ${row.impressions}, ${row.clicks},
             ${row.spend}, ${row.sales}, ${row.orders}, ${row.units}, ${row.cpc}, ${row.ctr}, ${row.cvr}, ${row.acos}, ${row.roas}, NOW()
           )

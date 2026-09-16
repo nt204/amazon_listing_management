@@ -4,6 +4,46 @@ import type { PpcRecommendation } from "@/lib/ppc/types";
 
 export const runtime = "nodejs";
 
+function exportTimestamp(date: Date): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const value = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value || "00";
+  return `${value("year")}${value("month")}${value("day")}_${value("hour")}${value("minute")}${value("second")}`;
+}
+
+function exportFileName(recommendations: PpcRecommendation[], date = new Date()): string {
+  const campaignNames = Array.from(new Set(
+    recommendations.map((recommendation) => recommendation.campaignName?.trim()).filter(Boolean),
+  )) as string[];
+  const campaignLabel = campaignNames.length > 1
+    ? `Multi Campaigns (${campaignNames.length})`
+    : campaignNames[0] || "Unknown Campaign";
+  const safeCampaignLabel = campaignLabel
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120) || "Unknown Campaign";
+  return `Update - ${safeCampaignLabel} - ${exportTimestamp(date)}.xlsx`;
+}
+
+function contentDisposition(fileName: string): string {
+  const asciiFileName = fileName
+    .normalize("NFKD")
+    .replace(/[^A-Za-z0-9 ._+()-]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim() || "Update.xlsx";
+  return `attachment; filename="${asciiFileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
+}
+
 export async function POST(request: Request) {
   try {
     authorize(request, "export");
@@ -27,16 +67,23 @@ export async function POST(request: Request) {
     if (incomplete) {
       throw new ApiError(`Đề xuất "${incomplete.keyword}" thiếu Amazon ID để thực thi an toàn.`, 400);
     }
+    const missingMatchType = recommendations.find((recommendation) =>
+      recommendation.targetType !== "PRODUCT" &&
+      (recommendation.recType === "BID_DECREASE" || recommendation.recType === "BID_INCREASE" || recommendation.recType === "PAUSE_TARGET") &&
+      recommendation.matchType !== "Exact" && recommendation.matchType !== "Phrase" && recommendation.matchType !== "Broad",
+    );
+    if (missingMatchType) {
+      throw new ApiError(`Target "${missingMatchType.keyword}" thiếu Match Type nguồn. Hãy tải lại dashboard trước khi xuất.`, 400);
+    }
 
     const buffer = await exportBulksheetUpdateExcel(recommendations);
-    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-    const fileName = `Amazon_Bulksheet_Update_${dateStr}.xlsx`;
+    const fileName = exportFileName(recommendations);
 
     return new Response(new Uint8Array(buffer), {
       status: 200,
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition": `attachment; filename="${fileName}"`,
+        "Content-Disposition": contentDisposition(fileName),
         "Cache-Control": "no-store",
       },
     });

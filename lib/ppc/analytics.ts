@@ -1174,6 +1174,9 @@ export function adGroupPerformanceFromFacts(rows: PpcPerformanceRow[]): PpcAdGro
 
 export function targetPerformanceFromFacts(rows: PpcPerformanceRow[]): PpcTargetPerformance[] {
   return rows.filter((row) => row.grain === "TARGET" && !row.isNegative).map((row) => ({
+    storeId: row.storeId,
+    campaignId: row.campaignId,
+    adGroupId: row.adGroupId,
     campaignName: row.campaignName || row.campaignId,
     adGroupName: row.adGroupName || row.adGroupId,
     targetId: row.targetId,
@@ -1356,6 +1359,7 @@ export function generatePpcRecommendations(
         keyword: r.customerSearchTerm,
         campaignName: r.campaignName,
         adGroupName: r.adGroupName,
+        sku: r.portfolioName || (r.campaignName ? r.campaignName.trim().split(/\s+/)[0] : ""),
         campaignId: r.campaignId,
         adGroupId: r.adGroupId,
         keywordId: r.keywordId,
@@ -1384,6 +1388,7 @@ export function generatePpcRecommendations(
         keyword: r.customerSearchTerm,
         campaignName: r.campaignName,
         adGroupName: r.adGroupName,
+        sku: r.portfolioName || (r.campaignName ? r.campaignName.trim().split(/\s+/)[0] : ""),
         campaignId: r.campaignId,
         adGroupId: r.adGroupId,
         keywordId: r.keywordId,
@@ -1433,9 +1438,11 @@ export function generateTargetBidRecommendations(
       adType: row.adType,
       recType,
       targetType: /asin|category|brand/i.test(row.targetExpression) ? "PRODUCT" : "EXACT",
+      matchType: row.matchType,
       keyword: row.targetExpression || row.targetId,
       campaignName: row.campaignName,
       adGroupName: row.adGroupName,
+      sku: row.sku || (row.campaignName ? row.campaignName.trim().split(/\s+/)[0] : ""),
       campaignId: row.campaignId,
       adGroupId: row.adGroupId,
       keywordId: row.targetId,

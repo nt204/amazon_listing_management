@@ -153,11 +153,21 @@ export async function parseSearchTermWorkbook(
       return undefined;
     };
 
+    const findExactCol = (possibleNames: string[]): number | undefined => {
+      for (const name of possibleNames) {
+        const found = colIndexMap.get(normalizeHeader(name));
+        if (found !== undefined) return found;
+      }
+      return undefined;
+    };
+
     const dateCol = findCol(["date", "report date"]);
     const portfolioCol = findCol(["portfolio name", "portfolio"]);
     const campaignCol = findCol(["campaign name", "campaign"]);
     const adGroupCol = findCol(["ad group name", "ad group"]);
-    const targetCol = findCol(["targeting", "keyword", "keyword text"]);
+    // Exact header matching prevents "Keyword ID" from being mistaken for the
+    // target keyword text when an export does not include a keyword column.
+    const targetCol = findExactCol(["targeting", "targeting expression", "keyword text", "keyword"]);
     const termCol = findCol(["customer search term", "search term"]);
     const matchTypeCol = findCol(["match type"]);
     const impressionsCol = findCol(["impressions"]);

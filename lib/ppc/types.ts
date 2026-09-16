@@ -4,7 +4,7 @@ export type PpcReportGranularity = "DAILY" | "RANGE";
 export type PpcPerformanceGrain = "CAMPAIGN" | "AD_GROUP" | "TARGET" | "PRODUCT" | "PLACEMENT";
 export type AlertSeverity = "CRITICAL" | "WARNING" | "INFO";
 export type AlertType = "BLEEDING_KEYWORD" | "HIGH_ACOS" | "OUT_OF_BUDGET" | "LOW_CVR";
-export type RecommendationType = "NEGATIVE_KEYWORD" | "BID_DECREASE" | "BID_INCREASE" | "HARVEST_KEYWORD";
+export type RecommendationType = "NEGATIVE_KEYWORD" | "BID_DECREASE" | "BID_INCREASE" | "HARVEST_KEYWORD" | "PAUSE_TARGET";
 
 export interface PpcStore {
   id: string;
@@ -24,7 +24,7 @@ export interface PpcSearchTermRow {
   reportEndDate?: string; // coverage end, YYYY-MM-DD
   reportGranularity?: PpcReportGranularity;
   adType?: PpcAdType;
-  portfolioName: string; // SKU or Portfolio
+  portfolioName?: string;
   campaignName: string;
   adGroupName: string;
   targetKeyword: string;
@@ -37,10 +37,10 @@ export interface PpcSearchTermRow {
   orders: number;
   units: number;
   cpc: number;
-  ctr: number; // clicks / impressions
-  cvr: number; // orders / clicks
-  acos: number; // spend / sales * 100
-  roas: number; // sales / spend
+  ctr: number;
+  cvr: number;
+  acos: number;
+  roas: number;
   campaignId?: string;
   adGroupId?: string;
   keywordId?: string;
@@ -50,9 +50,9 @@ export interface PpcPerformanceRow {
   id?: string;
   storeId?: string;
   storeName?: string;
-  snapshotDate: string;
-  reportStartDate: string;
-  reportEndDate: string;
+  snapshotDate: string; // YYYY-MM-DD
+  reportStartDate: string; // YYYY-MM-DD
+  reportEndDate: string; // YYYY-MM-DD
   reportGranularity: PpcReportGranularity;
   adType: PpcAdType;
   grain: PpcPerformanceGrain;
@@ -83,20 +83,32 @@ export interface PpcPerformanceRow {
   sales: number;
   orders: number;
   units: number;
+  cpc?: number;
+  ctr?: number;
+  cvr?: number;
+  acos?: number;
+  roas?: number;
 }
 
 export interface PpcAlert {
   id: string;
   storeId: string;
   storeName: string;
-  alertType: AlertType;
+  adType?: PpcAdType;
   severity: AlertSeverity;
-  title: string;
-  message: string;
+  alertType: AlertType;
+  title?: string;
   sku?: string;
   searchTerm?: string;
+  targetType?: "CAMPAIGN" | "KEYWORD" | "SEARCH_TERM" | "PRODUCT";
+  entityName?: string;
+  campaignName?: string;
+  adGroupName?: string;
+  metricName?: string;
   metricValue: number;
   thresholdValue: number;
+  message: string;
+  recommendedAction?: string;
   status: "ACTIVE" | "RESOLVED" | "DISMISSED";
   createdAt: string;
 }
@@ -108,9 +120,12 @@ export interface PpcRecommendation {
   adType?: PpcAdType;
   recType: RecommendationType;
   targetType: "EXACT" | "PHRASE" | "PRODUCT";
+  matchType?: MatchType;
   keyword: string;
   campaignName?: string;
+  portfolioName?: string;
   adGroupName?: string;
+  sku?: string;
   campaignId?: string;
   adGroupId?: string;
   keywordId?: string;
@@ -120,6 +135,9 @@ export interface PpcRecommendation {
   reason: string;
   estimatedSavings: number;
   status: "PENDING" | "APPLIED" | "DISMISSED";
+  productType?: string;
+  ruleProfile?: string;
+  actionState?: "ENABLE" | "PAUSED";
   createdAt: string;
 }
 
@@ -208,6 +226,9 @@ export interface PpcAdGroupPerformance {
 }
 
 export interface PpcTargetPerformance extends PpcAdGroupPerformance {
+  storeId?: string;
+  campaignId?: string;
+  adGroupId?: string;
   targetId?: string;
   targetKeyword: string;
   matchType: MatchType;

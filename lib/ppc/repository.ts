@@ -230,6 +230,22 @@ export async function listPpcSearchTerms(
 ): Promise<PpcSearchTermRow[]> {
   const sql = await getDatabaseClient();
   const rows = await sql<SearchTermDbRow[]>`
+    WITH daily_counts AS (
+      SELECT store_id, ad_type, COUNT(*) as cnt
+      FROM ppc_search_terms
+      WHERE report_granularity = 'DAILY'
+        AND report_date >= CURRENT_DATE - ${filters.days}::integer
+        AND report_date <= CURRENT_DATE
+      GROUP BY store_id, ad_type
+    ),
+    latest_range AS (
+      SELECT store_id, ad_type, MAX(report_end_date) as max_end_date
+      FROM ppc_search_terms
+      WHERE report_granularity = 'RANGE'
+        AND abs((report_end_date - report_start_date + 1) - ${filters.days}::integer) <= 3
+        AND report_end_date <= CURRENT_DATE
+      GROUP BY store_id, ad_type
+    )
     SELECT
       t.id, t.store_id, s.name AS store_name, t.report_date,
       t.report_start_date, t.report_end_date, t.report_granularity, t.ad_type,
@@ -240,6 +256,8 @@ export async function listPpcSearchTerms(
       t.campaign_id, t.ad_group_id, t.keyword_id
     FROM ppc_search_terms t
     JOIN ppc_stores s ON s.id = t.store_id
+    LEFT JOIN daily_counts dc ON dc.store_id = t.store_id AND dc.ad_type = t.ad_type
+    LEFT JOIN latest_range lr ON lr.store_id = t.store_id AND lr.ad_type = t.ad_type
     WHERE s.team_id = ${scope.teamId}
       AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
       AND (${filters.sku === "ALL"} OR lower(t.portfolio_name) = lower(${filters.sku}))
@@ -247,13 +265,13 @@ export async function listPpcSearchTerms(
         (
           t.report_granularity = 'DAILY'
           AND t.report_date >= CURRENT_DATE - ${filters.days}::integer
-          AND t.report_date < CURRENT_DATE
+          AND t.report_date <= CURRENT_DATE
         )
         OR
         (
           t.report_granularity = 'RANGE'
-          AND abs((t.report_end_date - t.report_start_date + 1) - ${filters.days}::integer) <= 3
-          AND t.report_end_date <= CURRENT_DATE
+          AND (dc.cnt IS NULL OR dc.cnt = 0)
+          AND t.report_end_date = lr.max_end_date
         )
       )
     ORDER BY t.report_date DESC, t.created_at DESC, t.id
@@ -296,6 +314,11 @@ export async function listPpcPerformance(
       AND (
         p.spend > 0 OR p.clicks > 0 OR p.impressions > 0
         OR p.grain IN ('CAMPAIGN', 'AD_GROUP', 'PRODUCT')
+        OR (
+          p.grain = 'TARGET'
+          AND p.state = 'enabled'
+          AND (p.campaign_name ILIKE '%GO%' OR p.sku ILIKE '%GO%')
+        )
       )
     ORDER BY p.ad_type, p.grain, p.spend DESC, p.id
   `;

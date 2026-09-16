@@ -72,6 +72,11 @@ export function PpcTimeSeriesChart({
   const [rightMetric, setRightMetric] = useState<RightAxisMetric>("ACOS");
   const [comparePrevious, setComparePrevious] = useState<boolean>(false);
 
+  // Check if real daily search terms data exists
+  const hasRealDaily = useMemo(() => {
+    return searchTerms?.some((t) => t.reportGranularity === "DAILY") ?? false;
+  }, [searchTerms]);
+
   // Filter multiplier based on channel (All vs SP vs SB)
   const channelMultiplier = useMemo(() => {
     if (channel === "ALL" || !adTypeBreakdown.length) return { spend: 1, revenue: 1, orders: 1 };
@@ -96,7 +101,39 @@ export function PpcTimeSeriesChart({
 
   // Generate continuous daily time-series matching the actual totals
   const dailyData = useMemo(() => {
-    const end = dateRangeEnd ? new Date(dateRangeEnd) : new Date(2026, 8, 13);
+    // 1. Tích hợp dữ liệu ngày thực tế từ searchTerms (nếu có granularity DAILY)
+    const dailySearchMap = new Map<string, { spend: number; revenue: number; orders: number; clicks: number; impressions: number }>();
+    if (searchTerms && searchTerms.length > 0) {
+      for (const term of searchTerms) {
+        if (term.reportGranularity === "DAILY" && term.reportDate) {
+          if (channel === "SP" && term.adType !== "SP") continue;
+          if (channel === "SB" && term.adType !== "SB") continue;
+          const key = term.reportDate.slice(0, 10);
+          const current = dailySearchMap.get(key) || { spend: 0, revenue: 0, orders: 0, clicks: 0, impressions: 0 };
+          current.spend += term.spend || 0;
+          current.revenue += term.sales || 0;
+          current.orders += term.orders || 0;
+          current.clicks += term.clicks || 0;
+          current.impressions += term.impressions || 0;
+          dailySearchMap.set(key, current);
+        }
+      }
+    }
+
+    // 2. Xác định ngày kết thúc chính xác (ưu tiên dateRangeEnd hoặc ngày mới nhất có dữ liệu)
+    let end: Date;
+    if (dateRangeEnd) {
+      const parts = dateRangeEnd.split("-").map(Number);
+      end = new Date(parts[0], parts[1] - 1, parts[2]);
+    } else if (dailySearchMap.size > 0) {
+      const sortedDates = Array.from(dailySearchMap.keys()).sort();
+      const lastDate = sortedDates[sortedDates.length - 1];
+      const parts = lastDate.split("-").map(Number);
+      end = new Date(parts[0], parts[1] - 1, parts[2]);
+    } else {
+      end = new Date();
+    }
+
     const daysCount = Math.max(selectedDays, 7);
     const points: DataPoint[] = [];
 
@@ -105,49 +142,58 @@ export function PpcTimeSeriesChart({
     const totalRevenue = summary.totalSales * channelMultiplier.revenue;
     const totalOrders = Math.round(summary.totalOrders * channelMultiplier.orders);
 
-    // E-commerce day-of-week seasonality factors (Sun = 1.25, Mon = 1.20, Tue = 1.05, Wed = 0.95, Thu = 0.90, Fri = 0.80, Sat = 0.95)
+    // Seasonality weights for synthetic fallback if real daily not available
     const dayOfWeekWeights = [1.25, 1.2, 1.05, 0.95, 0.9, 0.8, 0.95];
-
     let totalWeight = 0;
-    const dateWeights: { date: Date; weight: number }[] = [];
+    const dateWeights: { date: Date; weight: number; isoDate: string }[] = [];
 
     for (let i = daysCount - 1; i >= 0; i--) {
       const d = new Date(end);
       d.setDate(end.getDate() - i);
       const dow = d.getDay();
-      // Add a subtle wave for realistic seasonality
       const wave = 1 + 0.15 * Math.sin((i / daysCount) * Math.PI * 3);
       const w = dayOfWeekWeights[dow] * wave;
-      dateWeights.push({ date: d, weight: w });
+      const iso = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, "0")}-${d.getDate().toString().padStart(2, "0")}`;
+      dateWeights.push({ date: d, weight: w, isoDate: iso });
       totalWeight += w;
     }
 
-    // Previous period ratio for comparison (~12% lower baseline typical for growing period)
     const prevFactor = 0.88;
 
     for (let i = 0; i < dateWeights.length; i++) {
-      const { date, weight } = dateWeights[i];
-      const share = weight / totalWeight;
+      const { date, weight, isoDate } = dateWeights[i];
+      const displayDate = `${date.getDate().toString().padStart(2, "0")}/${(date.getMonth() + 1).toString().padStart(2, "0")}`;
+      const realDay = dailySearchMap.get(isoDate);
 
-      const daySpend = Math.round(totalSpend * share * 100) / 100;
-      // Revenue has natural variance around blended ROAS
-      const roasVariation = 1 + 0.22 * Math.sin(i * 1.3) + 0.08 * Math.cos(i * 0.7);
-      const dayRevenue = Math.round(daySpend * (summary.blendedRoas || 2.68) * roasVariation * 100) / 100;
-      const dayOrders = Math.max(0, Math.round(totalOrders * share * (0.9 + 0.2 * Math.sin(i * 1.5))));
-      const dayClicks = Math.round(daySpend / Math.max(summary.avgCpc || 1.15, 0.1));
-      const dayImpressions = Math.round(dayClicks / Math.max(summary.overallCtr || 0.0036, 0.001));
+      let daySpend: number;
+      let dayRevenue: number;
+      let dayOrders: number;
+      let dayClicks: number;
+      let dayImpressions: number;
+
+      if (hasRealDaily && realDay) {
+        daySpend = Math.round(realDay.spend * 100) / 100;
+        dayRevenue = Math.round(realDay.revenue * 100) / 100;
+        dayOrders = realDay.orders;
+        dayClicks = realDay.clicks;
+        dayImpressions = realDay.impressions;
+      } else {
+        const share = weight / totalWeight;
+        daySpend = Math.round(totalSpend * share * 100) / 100;
+        const roasVariation = 1 + 0.22 * Math.sin(i * 1.3) + 0.08 * Math.cos(i * 0.7);
+        dayRevenue = Math.round(daySpend * (summary.blendedRoas || 2.68) * roasVariation * 100) / 100;
+        dayOrders = Math.max(0, Math.round(totalOrders * share * (0.9 + 0.2 * Math.sin(i * 1.5))));
+        dayClicks = Math.round(daySpend / Math.max(summary.avgCpc || 1.15, 0.1));
+        dayImpressions = Math.round(dayClicks / Math.max(summary.overallCtr || 0.0036, 0.001));
+      }
 
       const roas = daySpend > 0 ? Math.round((dayRevenue / daySpend) * 100) / 100 : 0;
       const acos = dayRevenue > 0 ? Math.round((daySpend / dayRevenue) * 1000) / 10 : daySpend > 0 ? 100 : 0;
 
-      // Previous period values (shifted by daysCount)
       const prevSpend = Math.round(daySpend * prevFactor * (1 + 0.1 * Math.cos(i * 2)) * 100) / 100;
       const prevRevenue = Math.round(dayRevenue * prevFactor * 0.94 * 100) / 100;
       const prevRoas = prevSpend > 0 ? Math.round((prevRevenue / prevSpend) * 100) / 100 : 0;
       const prevAcos = prevRevenue > 0 ? Math.round((prevSpend / prevRevenue) * 1000) / 10 : 0;
-
-      const isoDate = date.toISOString().split("T")[0];
-      const displayDate = `${date.getDate().toString().padStart(2, "0")}/${(date.getMonth() + 1).toString().padStart(2, "0")}`;
 
       points.push({
         rawDate: isoDate,
@@ -636,7 +682,7 @@ export function PpcTimeSeriesChart({
           )}
         </div>
         <div className="text-slate-400 font-medium">
-          Dữ liệu: Chuỗi liên tục snapshot {selectedDays} ngày {selectedDays === 7 ? "(1 tuần gần nhất)" : ""}
+          Dữ liệu: {hasRealDaily ? `Dữ liệu thực tế hàng ngày (${selectedDays} ngày)` : `Chuỗi liên tục snapshot ${selectedDays} ngày`}
         </div>
       </div>
     </div>

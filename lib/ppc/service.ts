@@ -37,7 +37,11 @@ import {
   upsertPpcSearchTerms,
   upsertPpcPerformance,
 } from "./repository";
-import type { PpcAdType, PpcAlert, PpcRecommendation, PpcSearchTermRow } from "./types";
+import {
+  evaluateOrnamentTargetBid,
+  isGlassOrnamentTarget,
+} from "./rules-ornament";
+import type { PpcAdType, PpcAlert, PpcPerformanceRow, PpcRecommendation, PpcSearchTermRow } from "./types";
 
 const MAX_R2_FILE_BYTES = 150_000_000;
 const DEFAULT_TARGET_ACOS = 30;
@@ -49,6 +53,21 @@ function cleanStoreName(value: string): string {
   if (!name) throw new PpcInputError("Tên store không được để trống.");
   if (name.length > 80) throw new PpcInputError("Tên store không được vượt quá 80 ký tự.");
   return name;
+}
+
+export function canonicalStoreName(value?: string | null): string {
+  if (!value) return "HSOSTORE";
+  const cleaned = cleanStoreName(value);
+  const lower = cleaned.toLowerCase();
+  if (
+    lower === "warmstorey" ||
+    lower === "dev03_warmstorey" ||
+    lower === "hsostore" ||
+    (lower.includes("warmstorey") && lower.includes("hsostore"))
+  ) {
+    return "HSOSTORE";
+  }
+  return cleaned;
 }
 
 function resolveStoreName(objectKey: string, knownStoreNames: string[]): string | null {
@@ -75,14 +94,14 @@ function r2Version(input: { ETag?: string; Size?: number; LastModified?: Date })
   return [input.ETag || "", input.Size || 0, input.LastModified?.toISOString() || ""].join(":");
 }
 
-function reportAdType(reference: string): PpcAdType {
+export function reportAdType(reference: string): PpcAdType {
   if (/(?:^|[\s_\-/])SP(?:[\s_\-.]|$)/i.test(reference) || /sponsored products/i.test(reference)) return "SP";
   if (/(?:^|[\s_\-/])SB(?:[\s_\-.]|$)/i.test(reference) || /sponsored brands/i.test(reference)) return "SB";
   if (/(?:^|[\s_\-/])SD(?:[\s_\-.]|$)/i.test(reference) || /sponsored display/i.test(reference)) return "SD";
   return "UNKNOWN";
 }
 
-async function parseBulkFile(
+export async function parseBulkFile(
   buffer: Buffer,
   storeName: string,
   reference: string,
@@ -104,7 +123,9 @@ export async function getPpcAnalyticsData(
   scope: DataScope,
   filters: { storeName?: string; sku?: string; days?: number } = {},
 ) {
-  const storeName = filters.storeName || "ALL";
+  const storeName = filters.storeName && filters.storeName !== "ALL"
+    ? canonicalStoreName(filters.storeName)
+    : "ALL";
   const sku = filters.sku || "ALL";
   const days = filters.days || 30;
   const [stores, storeRows, performanceRows, syncLogs] = await Promise.all([
@@ -138,8 +159,29 @@ export async function getPpcAnalyticsData(
     if (recommendation.recType === "NEGATIVE_KEYWORD") return !existingNegatives.has(key);
     return true;
   });
+  const ornamentRows: PpcPerformanceRow[] = [];
+  const standardRows: PpcPerformanceRow[] = [];
+  for (const row of performanceRows) {
+    if (row.grain === "TARGET") {
+      if (isGlassOrnamentTarget(row)) {
+        ornamentRows.push(row);
+      } else {
+        standardRows.push(row);
+      }
+    }
+  }
+
+  const ornamentRecs: PpcRecommendation[] = [];
+  for (const row of ornamentRows) {
+    const rec = evaluateOrnamentTargetBid(row);
+    if (rec) ornamentRecs.push(rec);
+  }
+
+  const standardRecs = generateTargetBidRecommendations(standardRows, targetAcos);
+
   const recommendations: PpcRecommendation[] = [
-    ...generateTargetBidRecommendations(performanceRows, targetAcos),
+    ...ornamentRecs,
+    ...standardRecs,
     ...queryRecommendations,
   ];
   const searchTermSummary = calculatePpcSearchTermSummary(rows);
@@ -169,6 +211,20 @@ export async function getPpcAnalyticsData(
   const adTypeBreakdown = adTypeBreakdownFromFacts(performanceRows);
   const dataHealth = performanceDataHealth(performanceRows, rows);
   const availableSkus = Array.from(new Set(performanceRows.map((row) => row.sku).filter(Boolean))).sort();
+  let maxDate: string | null = null;
+  for (const r of performanceRows) {
+    const d = r.reportEndDate || r.snapshotDate;
+    if (d && (!maxDate || d > maxDate)) maxDate = d;
+  }
+  for (const r of rows) {
+    const d = r.reportEndDate || r.reportDate;
+    if (d && (!maxDate || d > maxDate)) maxDate = d;
+  }
+  const dateRangeEnd = maxDate || new Date().toISOString().slice(0, 10);
+  const startObj = new Date(dateRangeEnd);
+  startObj.setDate(startObj.getDate() - (days - 1));
+  const dateRangeStart = startObj.toISOString().slice(0, 10);
+
   return {
     stores,
     summary,
@@ -188,6 +244,8 @@ export async function getPpcAnalyticsData(
     availableSkus,
     days,
     targetAcos,
+    dateRangeStart,
+    dateRangeEnd,
     lastSyncedAt: syncLogs[0]?.time ?? null,
     syncLogs,
   };
@@ -200,7 +258,7 @@ export async function ingestPpcExcelFile(
   storeName: string,
   coverageOptions: { days?: number; endDate?: string } = {},
 ) {
-  const normalizedStore = cleanStoreName(storeName);
+  const normalizedStore = canonicalStoreName(storeName);
   const adType = reportAdType(fileName);
   const isCsv = fileName.toLowerCase().endsWith(".csv");
   const prefersBulk = /bulk|campaign/i.test(fileName);
@@ -540,7 +598,7 @@ export async function exportBulksheetUpdateExcel(recommendations: PpcRecommendat
   for (const rec of recommendations) {
     let entity = "Keyword";
     let operation = "Update";
-    let matchType = "Exact";
+    let matchType = "";
     let state = "enabled";
     let bidVal: number | string = "";
 
@@ -553,8 +611,18 @@ export async function exportBulksheetUpdateExcel(recommendations: PpcRecommendat
     } else if (rec.recType === "BID_DECREASE" || rec.recType === "BID_INCREASE") {
       entity = "Keyword";
       operation = "Update";
-      matchType = "Exact";
+      matchType = rec.matchType === "Exact" || rec.matchType === "Phrase" || rec.matchType === "Broad"
+        ? rec.matchType
+        : "";
       state = "enabled";
+      bidVal = rec.recommendedBid ? Number(rec.recommendedBid.toFixed(2)) : "";
+    } else if (rec.recType === "PAUSE_TARGET") {
+      entity = "Keyword";
+      operation = "Update";
+      matchType = rec.matchType === "Exact" || rec.matchType === "Phrase" || rec.matchType === "Broad"
+        ? rec.matchType
+        : "";
+      state = "paused";
       bidVal = rec.recommendedBid ? Number(rec.recommendedBid.toFixed(2)) : "";
     } else if (rec.recType === "HARVEST_KEYWORD") {
       entity = "Keyword";

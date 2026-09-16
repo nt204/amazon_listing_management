@@ -30,7 +30,7 @@ def export_bulksheet(recommendations, output_path=None):
         is_product_target = target_type == "PRODUCT"
         entity = "Product Targeting" if is_product_target else "Keyword"
         operation = "Update"
-        match_type = "Exact"
+        match_type = ""
         state = "enabled"
         bid_val = ""
 
@@ -43,8 +43,16 @@ def export_bulksheet(recommendations, output_path=None):
         elif rec_type in ("BID_DECREASE", "BID_INCREASE"):
             entity = "Product Targeting" if is_product_target else "Keyword"
             operation = "Update"
-            match_type = "exact"
+            source_match_type = str(rec.get("matchType") or "").strip().lower()
+            match_type = source_match_type if source_match_type in ("exact", "phrase", "broad") else ""
             state = "enabled"
+            bid_val = round(float(rec_bid), 2) if rec_bid is not None else ""
+        elif rec_type == "PAUSE_TARGET":
+            entity = "Product Targeting" if is_product_target else "Keyword"
+            operation = "Update"
+            source_match_type = str(rec.get("matchType") or "").strip().lower()
+            match_type = source_match_type if source_match_type in ("exact", "phrase", "broad") else ""
+            state = "paused"
             bid_val = round(float(rec_bid), 2) if rec_bid is not None else ""
         elif rec_type == "HARVEST_KEYWORD":
             entity = "Product Targeting" if is_product_target else "Keyword"
