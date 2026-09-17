@@ -37,12 +37,7 @@ function overviewSearchTerms(rows: PpcSearchTermRow[], targetAcos: number): PpcS
   ])).values());
 }
 
-function pageRows<T>(rows: T[], page: number, pageSize: number): T[] {
-  const start = (page - 1) * pageSize;
-  return rows.slice(start, start + pageSize);
-}
-
-function projectMetrics(data: MetricsData, section: MetricsSection, page = 1, pageSize = 25) {
+function projectMetrics(data: MetricsData, section: MetricsSection) {
   const detailCounts = section === "overview"
     ? {
       campaigns: data.campaignPerformance.length,
@@ -72,15 +67,13 @@ function projectMetrics(data: MetricsData, section: MetricsSection, page = 1, pa
   }
   return {
     stores: data.stores,
-    campaignPerformance: section === "campaigns" ? pageRows(data.campaignPerformance, page, pageSize) : [],
-    adGroups: section === "ad_groups" ? pageRows(data.adGroups, page, pageSize) : [],
-    targets: section === "targets" ? pageRows(data.targets, page, pageSize) : [],
-    skuPerformance: section === "skus" ? pageRows(data.skuPerformance, page, pageSize) : [],
-    searchTerms: section === "search_terms" ? pageRows(data.searchTerms, page, pageSize) : [],
-    recommendations: section === "recommendations" ? pageRows(data.recommendations, page, pageSize) : [],
+    campaignPerformance: section === "campaigns" ? data.campaignPerformance : [],
+    adGroups: section === "ad_groups" ? data.adGroups : [],
+    targets: section === "targets" ? data.targets : [],
+    skuPerformance: section === "skus" ? data.skuPerformance : [],
+    searchTerms: section === "search_terms" ? data.searchTerms : [],
+    recommendations: section === "recommendations" ? data.recommendations : [],
     detailCounts,
-    page,
-    pageSize,
   };
 }
 
@@ -105,8 +98,6 @@ export async function GET(request: Request) {
     const days = Number(searchParams.get("days") || 7);
     const refresh = searchParams.get("refresh") === "1";
     const requestedSection = searchParams.get("section") || "overview";
-    const page = Number(searchParams.get("page") || 1);
-    const pageSize = Number(searchParams.get("pageSize") || 25);
     const validSections: MetricsSection[] = ["overview", "campaigns", "ad_groups", "targets", "skus", "search_terms", "recommendations"];
     if (!validSections.includes(requestedSection as MetricsSection)) {
       throw new ApiError("Phần dữ liệu PPC không hợp lệ.", 400);
@@ -115,14 +106,11 @@ export async function GET(request: Request) {
     if (!Number.isInteger(days) || days < 1 || days > 3650) {
       throw new ApiError("Số ngày phải là số nguyên từ 1 đến 3650.", 400);
     }
-    if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 200) {
-      throw new ApiError("Thông tin phân trang PPC không hợp lệ.", 400);
-    }
     if (storeName.length > 80 || sku.length > 200) {
       throw new ApiError("Bộ lọc PPC không hợp lệ.", 400);
     }
 
-    const cacheKey = `${scope.teamId}\u0000${storeName}\u0000${sku}\u0000${days}\u0000${section}\u0000${page}\u0000${pageSize}`;
+    const cacheKey = `${scope.teamId}\u0000${storeName}\u0000${sku}\u0000${days}\u0000${section}`;
     const cached = refresh ? undefined : metricsCache.get(cacheKey);
     let data: MetricsResponse;
     if (cached && cached.expiresAt > Date.now()) {
@@ -135,7 +123,7 @@ export async function GET(request: Request) {
           scope,
           { storeName, sku, days },
           { grains: SECTION_GRAINS[section] },
-        ).then((result) => projectMetrics(result, section, page, pageSize));
+        ).then((result) => projectMetrics(result, section));
         metricsInFlight.set(cacheKey, pending);
       }
       try {

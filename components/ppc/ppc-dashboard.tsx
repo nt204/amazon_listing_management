@@ -298,15 +298,17 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
     }
   }, [selectedStore, selectedSku, selectedDays]);
 
-  const loadSection = useCallback(async (section: string, page: number, pageSize: number) => {
+  const loadSection = useCallback(async (section: string) => {
+    if (loadedSectionsRef.current.has(section)) return;
     const requestId = ++detailRequestIdRef.current;
     const res = await fetch(
-      `/api/ppc/metrics?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}&section=${encodeURIComponent(section)}&page=${page}&pageSize=${pageSize}`,
+      `/api/ppc/metrics?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}&section=${encodeURIComponent(section)}`,
       { cache: "no-store" },
     );
     if (!res.ok) throw new Error("Không thể tải bảng dữ liệu PPC");
     const data = await res.json();
     if (requestId !== detailRequestIdRef.current) return;
+    loadedSectionsRef.current.add(section);
     startTransition(() => {
       if (section === "campaigns") setCampaignPerformance(data.campaignPerformance || []);
       if (section === "ad_groups") setAdGroupPerformance(data.adGroups || []);
@@ -327,33 +329,13 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   }, [loadData]);
 
   useEffect(() => {
-    const request = activeTab === "campaigns" ? [activeTab, campaignPage, campaignPageSize] as const
-      : activeTab === "ad_groups" ? [activeTab, adGroupPage, adGroupPageSize] as const
-        : activeTab === "targets" ? [activeTab, targetPage, targetPageSize] as const
-          : activeTab === "skus" ? [activeTab, skuPage, skuPageSize] as const
-            : activeTab === "search_terms" ? [activeTab, termPage, termPageSize] as const
-              : activeTab === "recommendations" ? [activeTab, recPage, recPageSize] as const
-                : null;
-    if (!request) return;
-    void loadSection(request[0], request[1], request[2]).catch((error) => {
-      notify(error instanceof Error ? error.message : "Không thể tải bảng dữ liệu PPC", "error");
-    });
-  }, [
-    activeTab,
-    loadSection,
-    campaignPage,
-    campaignPageSize,
-    adGroupPage,
-    adGroupPageSize,
-    targetPage,
-    targetPageSize,
-    skuPage,
-    skuPageSize,
-    termPage,
-    termPageSize,
-    recPage,
-    recPageSize,
-  ]);
+    if (activeTab === "overview") return;
+    if (["campaigns", "ad_groups", "targets", "skus", "search_terms", "recommendations"].includes(activeTab)) {
+      void loadSection(activeTab).catch((error) => {
+        notify(error instanceof Error ? error.message : "Không thể tải bảng dữ liệu PPC", "error");
+      });
+    }
+  }, [activeTab, loadSection]);
 
   const handleSyncR2 = async () => {
     setSyncingR2(true);
@@ -461,8 +443,11 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   }, [searchTerms, matchTypeFilter, termPerformanceFilter, searchTermQuery, termSortField, termSortDir]);
 
   // Paginated Search Terms
-  const totalTermPages = Math.max(1, Math.ceil((detailCounts?.searchTerms ?? filteredSortedSearchTerms.length) / termPageSize));
-  const paginatedSearchTerms = filteredSortedSearchTerms;
+  const totalTermPages = Math.max(1, Math.ceil(filteredSortedSearchTerms.length / termPageSize));
+  const paginatedSearchTerms = useMemo(() => {
+    const start = (termPage - 1) * termPageSize;
+    return filteredSortedSearchTerms.slice(start, start + termPageSize);
+  }, [filteredSortedSearchTerms, termPage, termPageSize]);
 
   // Targets count per campaign map (for instant 1-click drilldown)
   const targetsPerCampaign = useMemo(() => {
@@ -581,8 +566,11 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   }, [filteredSortedCampaigns]);
 
   // Paginated Campaigns
-  const totalCampaignPages = Math.max(1, Math.ceil((detailCounts?.campaigns ?? filteredSortedCampaigns.length) / campaignPageSize));
-  const paginatedCampaigns = filteredSortedCampaigns;
+  const totalCampaignPages = Math.max(1, Math.ceil(filteredSortedCampaigns.length / campaignPageSize));
+  const paginatedCampaigns = useMemo(() => {
+    const start = (campaignPage - 1) * campaignPageSize;
+    return filteredSortedCampaigns.slice(start, start + campaignPageSize);
+  }, [filteredSortedCampaigns, campaignPage, campaignPageSize]);
 
   // Filtered & Sorted Ad Groups (Level 3 in hierarchy)
   const filteredSortedAdGroups = useMemo(() => {
@@ -605,8 +593,11 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   }, [adGroupPerformance, selectedCampaignForDrilldown, adGroupQuery, adGroupSortField, adGroupSortDir]);
 
   // Paginated Ad Groups
-  const totalAdGroupPages = Math.max(1, Math.ceil((detailCounts?.adGroups ?? filteredSortedAdGroups.length) / adGroupPageSize));
-  const paginatedAdGroups = filteredSortedAdGroups;
+  const totalAdGroupPages = Math.max(1, Math.ceil(filteredSortedAdGroups.length / adGroupPageSize));
+  const paginatedAdGroups = useMemo(() => {
+    const start = (adGroupPage - 1) * adGroupPageSize;
+    return filteredSortedAdGroups.slice(start, start + adGroupPageSize);
+  }, [filteredSortedAdGroups, adGroupPage, adGroupPageSize]);
 
   // Filtered & Sorted Targets / Keywords (Level 4 in hierarchy)
   const filteredSortedTargets = useMemo(() => {
@@ -635,8 +626,11 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   }, [targetPerformance, selectedCampaignForDrilldown, selectedAdGroupForDrilldown, targetQuery, targetSortField, targetSortDir]);
 
   // Paginated Targets
-  const totalTargetPages = Math.max(1, Math.ceil((detailCounts?.targets ?? filteredSortedTargets.length) / targetPageSize));
-  const paginatedTargets = filteredSortedTargets;
+  const totalTargetPages = Math.max(1, Math.ceil(filteredSortedTargets.length / targetPageSize));
+  const paginatedTargets = useMemo(() => {
+    const start = (targetPage - 1) * targetPageSize;
+    return filteredSortedTargets.slice(start, start + targetPageSize);
+  }, [filteredSortedTargets, targetPage, targetPageSize]);
 
   // Pre-index search terms by stable Amazon IDs first, with normalized names as
   // a fallback for reports that omit those IDs.
@@ -843,8 +837,11 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   }, [activeSkuPerformance, skuCategoryFilter, skuQuery, skuSortField, skuSortDir]);
 
   // Paginated SKUs
-  const totalSkuPages = Math.max(1, Math.ceil((detailCounts?.skus ?? filteredSortedSkus.length) / skuPageSize));
-  const paginatedSkus = filteredSortedSkus;
+  const totalSkuPages = Math.max(1, Math.ceil(filteredSortedSkus.length / skuPageSize));
+  const paginatedSkus = useMemo(() => {
+    const start = (skuPage - 1) * skuPageSize;
+    return filteredSortedSkus.slice(start, start + skuPageSize);
+  }, [filteredSortedSkus, skuPage, skuPageSize]);
 
   // Unique Campaigns and SKUs in Recommendations
   const uniqueRecCampaigns = useMemo(() => {
@@ -904,8 +901,11 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   }, [recommendations, recPriorityFilter, recProductFilter, recCampaignFilter, recSkuFilter, recSearchQuery]);
 
   // Paginated Recommendations
-  const totalRecPages = Math.max(1, Math.ceil((detailCounts?.recommendations ?? filteredRecommendations.length) / recPageSize));
-  const paginatedRecommendations = filteredRecommendations;
+  const totalRecPages = Math.max(1, Math.ceil(filteredRecommendations.length / recPageSize));
+  const paginatedRecommendations = useMemo(() => {
+    const start = (recPage - 1) * recPageSize;
+    return filteredRecommendations.slice(start, start + recPageSize);
+  }, [filteredRecommendations, recPage, recPageSize]);
 
   // Export Bulksheet update file
   const handleExportBulksheet = async (recsToExport?: PpcRecommendation[]) => {
@@ -1916,7 +1916,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                     }`}
                 >
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                  <span>Active ({campaignPerformance.filter((c) => !/pause|archive/i.test(c.state || "")).length})</span>
+                  <span>Active ({campaignPerformance.filter((c) => !/pause|archive/i.test(c.state || "")).length.toLocaleString("vi-VN")})</span>
                 </button>
 
                 <button
@@ -1931,7 +1931,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                     }`}
                 >
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                  <span>Paused ({campaignPerformance.filter((c) => /pause|archive/i.test(c.state || "")).length})</span>
+                  <span>Paused ({campaignPerformance.filter((c) => /pause|archive/i.test(c.state || "")).length.toLocaleString("vi-VN")})</span>
                 </button>
 
                 <button
@@ -1945,7 +1945,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                       : "text-slate-600 hover:text-slate-900"
                     }`}
                 >
-                  Tất cả ({campaignPerformance.length})
+                  Tất cả ({campaignPerformance.length.toLocaleString("vi-VN")})
                 </button>
               </div>
 
@@ -2238,7 +2238,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             currentPage={campaignPage}
             totalPages={totalCampaignPages}
             pageSize={campaignPageSize}
-            totalItems={detailCounts?.campaigns ?? filteredSortedCampaigns.length}
+            totalItems={filteredSortedCampaigns.length}
             pageSizeOptions={[15, 25, 50, 100, 200]}
             itemName="campaign"
             onPageChange={setCampaignPage}
@@ -2523,7 +2523,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             currentPage={targetPage}
             totalPages={totalTargetPages}
             pageSize={targetPageSize}
-            totalItems={detailCounts?.targets ?? filteredSortedTargets.length}
+            totalItems={filteredSortedTargets.length}
             pageSizeOptions={[15, 25, 50, 100]}
             itemName="targets"
             onPageChange={setTargetPage}
@@ -2795,7 +2795,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             currentPage={skuPage}
             totalPages={totalSkuPages}
             pageSize={skuPageSize}
-            totalItems={detailCounts?.skus ?? filteredSortedSkus.length}
+            totalItems={filteredSortedSkus.length}
             pageSizeOptions={[15, 25, 50, 100]}
             itemName="SKU"
             onPageChange={setSkuPage}
@@ -3023,7 +3023,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             currentPage={termPage}
             totalPages={totalTermPages}
             pageSize={termPageSize}
-            totalItems={detailCounts?.searchTerms ?? filteredSortedSearchTerms.length}
+            totalItems={filteredSortedSearchTerms.length}
             pageSizeOptions={[15, 25, 50, 100]}
             itemName="từ khóa tìm kiếm"
             onPageChange={setTermPage}
@@ -3515,7 +3515,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                 currentPage={recPage}
                 totalPages={totalRecPages}
                 pageSize={recPageSize}
-                totalItems={detailCounts?.recommendations ?? filteredRecommendations.length}
+                totalItems={filteredRecommendations.length}
                 pageSizeOptions={[10, 20, 50, 100]}
                 itemName="đề xuất tối ưu"
                 onPageChange={setRecPage}
@@ -3689,7 +3689,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                 currentPage={recPage}
                 totalPages={totalRecPages}
                 pageSize={recPageSize}
-                totalItems={detailCounts?.recommendations ?? filteredRecommendations.length}
+                totalItems={filteredRecommendations.length}
                 pageSizeOptions={[10, 20, 50, 100]}
                 itemName="đề xuất tối ưu"
                 onPageChange={setRecPage}

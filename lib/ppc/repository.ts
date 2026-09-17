@@ -297,6 +297,7 @@ export async function listPpcPerformance(
     WITH latest_snapshots AS (
       SELECT DISTINCT ON (p2.store_id, p2.ad_type)
         p2.store_id, p2.ad_type, p2.snapshot_date AS max_snapshot,
+        p2.report_start_date AS max_report_start,
         p2.report_end_date AS max_report_end
       FROM ppc_performance_facts p2
       JOIN ppc_stores s2 ON s2.id = p2.store_id
@@ -312,6 +313,7 @@ export async function listPpcPerformance(
         ON ls3.store_id = p3.store_id
         AND ls3.ad_type = p3.ad_type
         AND ls3.max_snapshot = p3.snapshot_date
+        AND ls3.max_report_start = p3.report_start_date
         AND ls3.max_report_end = p3.report_end_date
       WHERE ${filters.sku !== "ALL"}
         AND lower(p3.sku) = lower(${filters.sku})
@@ -332,6 +334,7 @@ export async function listPpcPerformance(
       ON ls.store_id = p.store_id
       AND ls.ad_type = p.ad_type
       AND ls.max_snapshot = p.snapshot_date
+      AND ls.max_report_start = p.report_start_date
       AND ls.max_report_end = p.report_end_date
     WHERE s.team_id = ${scope.teamId}
       AND (${!options.grain} OR p.grain = ${options.grain || "CAMPAIGN"})
