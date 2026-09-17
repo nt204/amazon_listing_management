@@ -54,30 +54,33 @@ export function PpcPerformanceRankingChart({
       let key = "OTHER";
       let formatName = "Khác";
 
-      if (/SP03/i.test(name)) {
-        key = "SP03";
-        formatName = "SP03 · KW (product-keyword)";
-      } else if (/SP04|Auto/i.test(name)) {
-        key = "SP04";
-        formatName = "SP04 · Auto";
-      } else if (/SB05|VIDEO/i.test(name)) {
+      // 1. Sponsored Brands & Display
+      if (/SB05|\bVIDEO\b/i.test(name)) {
         key = "SB05";
         formatName = "SB05 · Video";
       } else if (/SB01|Collection/i.test(name)) {
         key = "SB01";
         formatName = "SB01 · Collection";
+      } else if (c.adType === "SB" || /\bSB\b|Sponsored Brands/i.test(name)) {
+        key = "SB_GEN";
+        formatName = "SB · Sponsored Brands";
+      } else if (c.adType === "SD" || /\bSD\b|Sponsored Display/i.test(name)) {
+        key = "SD";
+        formatName = "SD · Display";
+      // 2. Sponsored Products (SP01, SP02, SP03, SP04 Auto)
+      } else if (/SP03/i.test(name)) {
+        key = "SP03";
+        formatName = "SP03 · KW (product-keyword)";
       } else if (/SP01/i.test(name)) {
         key = "SP01";
         formatName = "SP01 · Broad";
       } else if (/SP02/i.test(name)) {
         key = "SP02";
         formatName = "SP02 · Exact";
-      } else if (/SB/i.test(name)) {
-        key = "SB_GEN";
-        formatName = "SB · Sponsored Brands";
-      } else if (/SD/i.test(name)) {
-        key = "SD";
-        formatName = "SD · Display";
+      } else if (/SP04|\bauto\b/i.test(name)) {
+        // Sử dụng \bauto\b để không bắt nhầm các từ như Automotive
+        key = "SP04";
+        formatName = "SP04 · Auto";
       }
 
       if (!buckets[key]) {

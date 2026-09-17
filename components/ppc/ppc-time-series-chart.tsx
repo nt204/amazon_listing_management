@@ -15,10 +15,6 @@ import {
 } from "recharts";
 import {
   ChartLineUp,
-  ArrowsClockwise,
-  WarningCircle,
-  TrendUp,
-  TrendDown,
 } from "@phosphor-icons/react";
 import type { PpcSummaryMetrics, PpcAdTypeBreakdown, PpcSearchTermRow, PpcDailyTrendPoint } from "@/lib/ppc/types";
 
@@ -49,10 +45,6 @@ interface DataPoint {
   impressions: number;
   roas: number;
   acos: number;
-  prevSpend?: number;
-  prevRevenue?: number;
-  prevRoas?: number;
-  prevAcos?: number;
   isLossWarning?: boolean;
 }
 
@@ -72,7 +64,6 @@ export function PpcTimeSeriesChart({
   const [granularity, setGranularity] = useState<Granularity>("day");
   const [channel, setChannel] = useState<ChannelFilter>("ALL");
   const [rightMetric, setRightMetric] = useState<RightAxisMetric>("ACOS");
-  const [comparePrevious, setComparePrevious] = useState<boolean>(false);
 
   // Check if real daily search terms data exists
   const hasRealDaily = useMemo(() => {
@@ -80,29 +71,41 @@ export function PpcTimeSeriesChart({
     return searchTerms?.some((t) => t.reportGranularity === "DAILY") ?? false;
   }, [dailyTrends, searchTerms]);
 
-  // Filter multiplier based on channel (All vs SP vs SB)
-  const channelMultiplier = useMemo(() => {
-    if (channel === "ALL" || !adTypeBreakdown.length) return { spend: 1, revenue: 1, orders: 1 };
+  // Target totals after channel filter - ĐỒNG BỘ CHÍNH XÁC THEO BULK FILE (summary & adTypeBreakdown)
+  const channelTotals = useMemo(() => {
+    if (channel === "ALL") {
+      return {
+        spend: summary.totalSpend,
+        revenue: summary.totalSales,
+        orders: summary.totalOrders,
+        acos: summary.blendedAcos,
+        roas: summary.blendedRoas,
+      };
+    }
+    const targetBreakdown = adTypeBreakdown.find((a) => a.adType === channel);
+    if (targetBreakdown) {
+      return {
+        spend: targetBreakdown.spend,
+        revenue: targetBreakdown.sales,
+        orders: targetBreakdown.orders,
+        acos: targetBreakdown.acos,
+        roas: targetBreakdown.roas,
+      };
+    }
     const sp = adTypeBreakdown.find((a) => a.adType === "SP");
     const sb = adTypeBreakdown.find((a) => a.adType === "SB");
-    const target = channel === "SP" ? sp : sb;
     const totalSpend = (sp?.spend || 0) + (sb?.spend || 0);
-    const totalSales = (sp?.sales || 0) + (sb?.sales || 0);
-    const totalOrders = (sp?.orders || 0) + (sb?.orders || 0);
-    if (!target || totalSpend === 0) return { spend: 1, revenue: 1, orders: 1 };
+    const mult = totalSpend > 0 && channel === "SP" ? (sp?.spend || 0) / totalSpend : 1;
     return {
-      spend: target.spend / totalSpend,
-      revenue: totalSales > 0 ? target.sales / totalSales : target.spend / totalSpend,
-      orders: totalOrders > 0 ? target.orders / totalOrders : target.spend / totalSpend,
+      spend: Math.round(summary.totalSpend * mult * 100) / 100,
+      revenue: Math.round(summary.totalSales * mult * 100) / 100,
+      orders: Math.round(summary.totalOrders * mult),
+      acos: summary.blendedAcos,
+      roas: summary.blendedRoas,
     };
-  }, [channel, adTypeBreakdown]);
+  }, [channel, summary, adTypeBreakdown]);
 
-  // Target ROAS from Target ACOS
-  const targetRoas = useMemo(() => {
-    return targetAcos > 0 ? Math.round((100 / targetAcos) * 100) / 100 : 3.33;
-  }, [targetAcos]);
-
-  // Generate continuous daily time-series matching the actual totals
+  // Generate continuous daily time-series matching the actual Bulk File totals
   const dailyData = useMemo(() => {
     // 1. Tích hợp dữ liệu ngày thực tế từ dailyTrends (pre-aggregated từ server) hoặc searchTerms
     const dailyMap = new Map<string, { spend: number; revenue: number; orders: number; clicks: number; impressions: number }>();
@@ -149,7 +152,7 @@ export function PpcTimeSeriesChart({
       }
     }
 
-    // 2. Xác định ngày kết thúc chính xác (ưu tiên ngày mới nhất có dữ liệu thực tế)
+    // 2. Xác định ngày kết thúc chính xác
     let end: Date;
     if (dailyMap.size > 0) {
       const sortedDates = Array.from(dailyMap.keys()).sort();
@@ -164,14 +167,6 @@ export function PpcTimeSeriesChart({
     }
 
     const daysCount = Math.max(selectedDays, 7);
-    const points: DataPoint[] = [];
-
-    // Target totals after channel filter
-    const totalSpend = summary.totalSpend * channelMultiplier.spend;
-    const totalRevenue = summary.totalSales * channelMultiplier.revenue;
-    const totalOrders = Math.round(summary.totalOrders * channelMultiplier.orders);
-
-    // Seasonality weights for synthetic fallback if real daily not available
     const dayOfWeekWeights = [1.25, 1.2, 1.05, 0.95, 0.9, 0.8, 0.95];
     let totalWeight = 0;
     const dateWeights: { date: Date; weight: number; isoDate: string }[] = [];
@@ -187,7 +182,7 @@ export function PpcTimeSeriesChart({
       totalWeight += w;
     }
 
-    const prevFactor = 0.88;
+    const points: DataPoint[] = [];
 
     for (let i = 0; i < dateWeights.length; i++) {
       const { date, weight, isoDate } = dateWeights[i];
@@ -201,28 +196,28 @@ export function PpcTimeSeriesChart({
       let dayImpressions: number;
 
       if (hasDaily) {
+        // Giữ nguyên số liệu thực tế cố định của từng ngày (không nhân hệ số co giãn thay đổi theo số ngày lọc)
         daySpend = realDay ? Math.round(realDay.spend * 100) / 100 : 0;
         dayRevenue = realDay ? Math.round(realDay.revenue * 100) / 100 : 0;
         dayOrders = realDay ? realDay.orders : 0;
         dayClicks = realDay ? realDay.clicks : 0;
         dayImpressions = realDay ? realDay.impressions : 0;
       } else {
+        // Fallback phân bổ khi chưa có dữ liệu chi tiết từng ngày
         const share = weight / totalWeight;
-        daySpend = Math.round(totalSpend * share * 100) / 100;
+        daySpend = Math.round(channelTotals.spend * share * 100) / 100;
         const roasVariation = 1 + 0.22 * Math.sin(i * 1.3) + 0.08 * Math.cos(i * 0.7);
-        dayRevenue = Math.round(daySpend * (summary.blendedRoas || 2.68) * roasVariation * 100) / 100;
-        dayOrders = Math.max(0, Math.round(totalOrders * share * (0.9 + 0.2 * Math.sin(i * 1.5))));
+        dayRevenue = Math.round(daySpend * (channelTotals.roas || 2.68) * roasVariation * 100) / 100;
+        dayOrders = Math.max(0, Math.round(channelTotals.orders * share * (0.9 + 0.2 * Math.sin(i * 1.5))));
         dayClicks = Math.round(daySpend / Math.max(summary.avgCpc || 1.15, 0.1));
         dayImpressions = Math.round(dayClicks / Math.max(summary.overallCtr || 0.0036, 0.001));
       }
 
       const roas = daySpend > 0 ? Math.round((dayRevenue / daySpend) * 100) / 100 : 0;
-      const acos = dayRevenue > 0 ? Math.round((daySpend / dayRevenue) * 1000) / 10 : daySpend > 0 ? 100 : 0;
+      const acos = dayRevenue > 0 ? Math.round((daySpend / dayRevenue) * 1000) / 10 : 0;
 
-      const prevSpend = Math.round(daySpend * prevFactor * (1 + 0.1 * Math.cos(i * 2)) * 100) / 100;
-      const prevRevenue = Math.round(dayRevenue * prevFactor * 0.94 * 100) / 100;
-      const prevRoas = prevSpend > 0 ? Math.round((prevRevenue / prevSpend) * 100) / 100 : 0;
-      const prevAcos = prevRevenue > 0 ? Math.round((prevSpend / prevRevenue) * 1000) / 10 : 0;
+      // Cảnh báo tổn thất: có spend nhưng 0 sales, hoặc ACOS thực tế vượt mục tiêu
+      const isLossWarning = (daySpend > 0 && dayRevenue === 0) || (dayRevenue > 0 && acos > targetAcos);
 
       points.push({
         rawDate: isoDate,
@@ -234,16 +229,12 @@ export function PpcTimeSeriesChart({
         impressions: dayImpressions,
         roas,
         acos,
-        prevSpend,
-        prevRevenue,
-        prevRoas,
-        prevAcos,
-        isLossWarning: daySpend > 30 && acos > targetAcos,
+        isLossWarning,
       });
     }
 
     return points;
-  }, [selectedDays, dateRangeEnd, summary, channelMultiplier, targetAcos, dailyTrends, searchTerms, channel]);
+  }, [selectedDays, dateRangeEnd, summary, channelTotals, targetAcos, dailyTrends, searchTerms, channel]);
 
   // Aggregate by Granularity (Day / Week / Month)
   const chartData = useMemo(() => {
@@ -263,13 +254,10 @@ export function PpcTimeSeriesChart({
         const orders = chunk.reduce((s, c) => s + c.orders, 0);
         const clicks = chunk.reduce((s, c) => s + c.clicks, 0);
         const impressions = chunk.reduce((s, c) => s + c.impressions, 0);
-        const prevSpend = chunk.reduce((s, c) => s + (c.prevSpend || 0), 0);
-        const prevRevenue = chunk.reduce((s, c) => s + (c.prevRevenue || 0), 0);
 
         const roas = spend > 0 ? Math.round((revenue / spend) * 100) / 100 : 0;
         const acos = revenue > 0 ? Math.round((spend / revenue) * 1000) / 10 : 0;
-        const prevRoas = prevSpend > 0 ? Math.round((prevRevenue / prevSpend) * 100) / 100 : 0;
-        const prevAcos = prevRevenue > 0 ? Math.round((prevSpend / prevRevenue) * 1000) / 10 : 0;
+        const isLossWarning = (spend > 0 && revenue === 0) || (revenue > 0 && acos > targetAcos);
 
         weeks.push({
           rawDate: first.rawDate,
@@ -281,11 +269,7 @@ export function PpcTimeSeriesChart({
           impressions,
           roas,
           acos,
-          prevSpend: Math.round(prevSpend * 100) / 100,
-          prevRevenue: Math.round(prevRevenue * 100) / 100,
-          prevRoas,
-          prevAcos,
-          isLossWarning: acos > targetAcos,
+          isLossWarning,
         });
       }
       return weeks;
@@ -307,8 +291,6 @@ export function PpcTimeSeriesChart({
           impressions: d.impressions,
           roas: 0,
           acos: 0,
-          prevSpend: d.prevSpend,
-          prevRevenue: d.prevRevenue,
         });
       } else {
         existing.spend += d.spend;
@@ -316,46 +298,33 @@ export function PpcTimeSeriesChart({
         existing.orders += d.orders;
         existing.clicks += d.clicks;
         existing.impressions += d.impressions;
-        existing.prevSpend = (existing.prevSpend || 0) + (d.prevSpend || 0);
-        existing.prevRevenue = (existing.prevRevenue || 0) + (d.prevRevenue || 0);
       }
     }
 
     return Array.from(monthMap.values()).map((m) => {
       const roas = m.spend > 0 ? Math.round((m.revenue / m.spend) * 100) / 100 : 0;
       const acos = m.revenue > 0 ? Math.round((m.spend / m.revenue) * 1000) / 10 : 0;
-      const prevRoas = (m.prevSpend || 0) > 0 ? Math.round(((m.prevRevenue || 0) / (m.prevSpend || 1)) * 100) / 100 : 0;
-      const prevAcos = (m.prevRevenue || 0) > 0 ? Math.round(((m.prevSpend || 0) / (m.prevRevenue || 1)) * 1000) / 10 : 0;
+      const isLossWarning = (m.spend > 0 && m.revenue === 0) || (m.revenue > 0 && acos > targetAcos);
       return {
         ...m,
         spend: Math.round(m.spend * 100) / 100,
         revenue: Math.round(m.revenue * 100) / 100,
-        prevSpend: Math.round((m.prevSpend || 0) * 100) / 100,
-        prevRevenue: Math.round((m.prevRevenue || 0) * 100) / 100,
         roas,
         acos,
-        prevRoas,
-        prevAcos,
-        isLossWarning: acos > targetAcos,
+        isLossWarning,
       };
     });
   }, [dailyData, granularity, targetAcos]);
 
-  // Aggregated KPI Cards at the top of the chart
-  const currentTotalSpend = useMemo(() => chartData.reduce((s, c) => s + c.spend, 0), [chartData]);
-  const currentTotalRevenue = useMemo(() => chartData.reduce((s, c) => s + c.revenue, 0), [chartData]);
-  const currentTotalOrders = useMemo(() => chartData.reduce((s, c) => s + c.orders, 0), [chartData]);
-  const currentBlendedAcos = currentTotalRevenue > 0 ? (currentTotalSpend / currentTotalRevenue) * 100 : 0;
+  // Aggregated KPI Cards at the top of the chart - ĐỒNG BỘ 100% THEO BULK FILE
+  const currentTotalSpend = channelTotals.spend;
+  const currentTotalRevenue = channelTotals.revenue;
+  const currentTotalOrders = channelTotals.orders;
+  const currentBlendedAcos = channelTotals.acos;
+  const currentBlendedRoas = channelTotals.roas;
 
-  const prevTotalSpend = useMemo(() => chartData.reduce((s, c) => s + (c.prevSpend || 0), 0), [chartData]);
-  const prevTotalRevenue = useMemo(() => chartData.reduce((s, c) => s + (c.prevRevenue || 0), 0), [chartData]);
-  const prevTotalOrders = Math.round(currentTotalOrders * 0.88);
-  const prevBlendedAcos = prevTotalRevenue > 0 ? (prevTotalSpend / prevTotalRevenue) * 100 : 0;
-
-  const spendGrowth = prevTotalSpend > 0 ? ((currentTotalSpend - prevTotalSpend) / prevTotalSpend) * 100 : 0;
-  const revenueGrowth = prevTotalRevenue > 0 ? ((currentTotalRevenue - prevTotalRevenue) / prevTotalRevenue) * 100 : 0;
-  const acosDiff = currentBlendedAcos - prevBlendedAcos;
-  const ordersGrowth = prevTotalOrders > 0 ? ((currentTotalOrders - prevTotalOrders) / prevTotalOrders) * 100 : 0;
+  const avgDailySpend = currentTotalSpend / Math.max(selectedDays, 1);
+  const avgOrderValue = currentTotalOrders > 0 ? currentTotalRevenue / currentTotalOrders : 0;
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs space-y-4">
@@ -457,34 +426,19 @@ export function PpcTimeSeriesChart({
               <option value="Revenue">Revenue ($)</option>
             </select>
           </div>
-
-          {/* Compare Previous Period Toggle */}
-          <button
-            type="button"
-            onClick={() => setComparePrevious(!comparePrevious)}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer ${
-              comparePrevious
-                ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
-                : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
-            }`}
-          >
-            <ArrowsClockwise size={13} weight="bold" />
-            <span>So sánh kỳ trước</span>
-          </button>
         </div>
       </div>
 
-      {/* Summary KPI Mini-Cards */}
+      {/* Summary KPI Mini-Cards - Khớp 100% với Bulk File */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         <div className="rounded-lg bg-slate-50 p-2.5 border border-slate-100">
           <span className="text-[10px] font-bold text-slate-400 uppercase block">Tổng Spend (Kỳ này)</span>
           <div className="flex items-baseline justify-between mt-0.5">
             <span className="text-base font-black text-slate-900">
-              {currency}{currentTotalSpend.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+              {currency}{currentTotalSpend.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
-            <span className={`text-[10px] font-bold flex items-center gap-0.5 ${spendGrowth >= 0 ? "text-amber-600" : "text-emerald-600"}`}>
-              {spendGrowth >= 0 ? <TrendUp size={11} weight="bold" /> : <TrendDown size={11} weight="bold" />}
-              {spendGrowth >= 0 ? `+${spendGrowth.toFixed(1)}%` : `${spendGrowth.toFixed(1)}%`}
+            <span className="text-[10px] font-bold text-slate-500">
+              Avg: {currency}{avgDailySpend.toFixed(1)}/d
             </span>
           </div>
         </div>
@@ -493,11 +447,10 @@ export function PpcTimeSeriesChart({
           <span className="text-[10px] font-bold text-slate-400 uppercase block">Tổng Revenue</span>
           <div className="flex items-baseline justify-between mt-0.5">
             <span className="text-base font-black text-emerald-600">
-              {currency}{currentTotalRevenue.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+              {currency}{currentTotalRevenue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
-            <span className={`text-[10px] font-bold flex items-center gap-0.5 ${revenueGrowth >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-              {revenueGrowth >= 0 ? <TrendUp size={11} weight="bold" /> : <TrendDown size={11} weight="bold" />}
-              {revenueGrowth >= 0 ? `+${revenueGrowth.toFixed(1)}%` : `${revenueGrowth.toFixed(1)}%`}
+            <span className="text-[10px] font-bold text-emerald-600">
+              ROAS: {currentBlendedRoas.toFixed(2)}x
             </span>
           </div>
         </div>
@@ -505,12 +458,25 @@ export function PpcTimeSeriesChart({
         <div className="rounded-lg bg-slate-50 p-2.5 border border-slate-100">
           <span className="text-[10px] font-bold text-slate-400 uppercase block">ACOS Trung Bình</span>
           <div className="flex items-baseline justify-between mt-0.5">
-            <span className={`text-base font-black ${currentBlendedAcos <= targetAcos ? "text-emerald-600" : "text-rose-600"}`}>
-              {currentBlendedAcos.toFixed(1)}%
+            <span className={`text-base font-black ${
+              currentTotalRevenue === 0
+                ? currentTotalSpend > 0 ? "text-rose-600" : "text-slate-400"
+                : currentBlendedAcos <= targetAcos ? "text-emerald-600" : "text-rose-600"
+            }`}>
+              {currentTotalRevenue > 0 ? `${currentBlendedAcos.toFixed(1)}%` : currentTotalSpend > 0 ? "N/A (0 Sales)" : "—"}
             </span>
-            <span className={`text-[10px] font-bold flex items-center gap-0.5 ${acosDiff <= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-              {acosDiff <= 0 ? <TrendDown size={11} weight="bold" /> : <TrendUp size={11} weight="bold" />}
-              {acosDiff <= 0 ? `${acosDiff.toFixed(1)}%` : `+${acosDiff.toFixed(1)}%`}
+            <span className={`text-[10px] font-bold ${
+              currentTotalRevenue > 0 && currentBlendedAcos <= targetAcos
+                ? "text-emerald-600"
+                : currentTotalRevenue > 0 && currentBlendedAcos > targetAcos
+                ? "text-rose-600"
+                : "text-slate-400"
+            }`}>
+              {currentTotalRevenue > 0 && currentBlendedAcos <= targetAcos
+                ? `✓ Đạt KPI (≤${targetAcos}%)`
+                : currentTotalRevenue > 0
+                ? `+${(currentBlendedAcos - targetAcos).toFixed(1)}%`
+                : `Mục tiêu ≤${targetAcos}%`}
             </span>
           </div>
         </div>
@@ -521,9 +487,8 @@ export function PpcTimeSeriesChart({
             <span className="text-base font-black text-slate-900">
               {currentTotalOrders.toLocaleString()}
             </span>
-            <span className={`text-[10px] font-bold flex items-center gap-0.5 ${ordersGrowth >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-              {ordersGrowth >= 0 ? <TrendUp size={11} weight="bold" /> : <TrendDown size={11} weight="bold" />}
-              {ordersGrowth >= 0 ? `+${ordersGrowth.toFixed(1)}%` : `${ordersGrowth.toFixed(1)}%`}
+            <span className="text-[10px] font-bold text-slate-500">
+              AOV: {currency}{avgOrderValue.toFixed(1)}
             </span>
           </div>
         </div>
@@ -562,7 +527,7 @@ export function PpcTimeSeriesChart({
             />
 
             <Tooltip
-              content={({ active, payload, label }) => {
+              content={({ active, payload }) => {
                 if (!active || !payload || !payload.length) return null;
                 const d = payload[0]?.payload as DataPoint;
                 if (!d) return null;
@@ -573,7 +538,7 @@ export function PpcTimeSeriesChart({
                       <span>{d.displayDate}</span>
                       {d.isLossWarning && (
                         <span className="px-1.5 py-0.5 rounded bg-rose-50 text-rose-600 text-[10px] font-bold">
-                          ACOS Cao
+                          {d.revenue === 0 && d.spend > 0 ? "0 Doanh Thu" : "ACOS Cao"}
                         </span>
                       )}
                     </div>
@@ -585,19 +550,27 @@ export function PpcTimeSeriesChart({
                       <strong className="text-emerald-700 text-right">{currency}{d.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
 
                       <span className="text-slate-500">ACOS:</span>
-                      <strong className={`text-right font-black ${d.acos <= targetAcos ? "text-emerald-600" : "text-rose-600"}`}>
-                        {d.acos.toFixed(1)}%
+                      <strong className={`text-right font-black ${
+                        d.revenue === 0
+                          ? d.spend > 0
+                            ? "text-rose-600"
+                            : "text-slate-400"
+                          : d.acos <= targetAcos
+                          ? "text-emerald-600"
+                          : "text-rose-600"
+                      }`}>
+                        {d.revenue > 0 ? `${d.acos.toFixed(1)}%` : d.spend > 0 ? "N/A (0 Sales)" : "—"}
                       </strong>
 
                       <span className="text-slate-500">Conversions:</span>
                       <strong className="text-slate-800 text-right">{d.orders} orders</strong>
-                    </div>
 
-                    {comparePrevious && d.prevSpend !== undefined && (
-                      <div className="border-t border-slate-100 pt-1 text-[10px] text-slate-400">
-                        <span>Kỳ trước: {currency}{d.prevSpend.toFixed(0)} spend · {currency}{d.prevRevenue?.toFixed(0)} rev · {d.prevAcos?.toFixed(1)}% ACOS</span>
-                      </div>
-                    )}
+                      <span className="text-slate-500">Clicks:</span>
+                      <strong className="text-slate-700 text-right">{d.clicks.toLocaleString()}</strong>
+
+                      <span className="text-slate-500">CPC:</span>
+                      <strong className="text-slate-700 text-right">{currency}{(d.clicks > 0 ? d.spend / d.clicks : 0).toFixed(2)}</strong>
+                    </div>
                   </div>
                 );
               }}
@@ -662,33 +635,6 @@ export function PpcTimeSeriesChart({
                 stroke="#10b981"
                 strokeWidth={2.5}
                 dot={{ r: 2.5, fill: "#10b981" }}
-              />
-            )}
-
-            {/* Overlay Previous Period Line (if comparePrevious is enabled) */}
-            {comparePrevious && rightMetric === "ACOS" && (
-              <Line
-                yAxisId="right"
-                type="monotone"
-                dataKey="prevAcos"
-                name="ACOS (Kỳ trước)"
-                stroke="#94a3b8"
-                strokeWidth={1.8}
-                strokeDasharray="4 4"
-                dot={false}
-              />
-            )}
-
-            {comparePrevious && rightMetric === "Revenue" && (
-              <Line
-                yAxisId="right"
-                type="monotone"
-                dataKey="prevRevenue"
-                name={`Revenue Kỳ trước (${currency})`}
-                stroke="#94a3b8"
-                strokeWidth={1.8}
-                strokeDasharray="4 4"
-                dot={false}
               />
             )}
           </ComposedChart>
