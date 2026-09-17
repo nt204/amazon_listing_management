@@ -355,3 +355,72 @@ test("Auto Upload AdsPower: Zero-Spend SKU action filtering logic", () => {
   assert.equal(activeActions.length, 1);
   assert.equal(activeActions[0].sku, "SKU_ACTIVE_1");
 });
+
+test("Bulksheet Export preserves all 7 sheets and accurately maps columns from official template", async () => {
+  const { spawn } = await import("node:child_process");
+  const path = (await import("node:path")).default;
+  const fs = (await import("node:fs")).default;
+
+  const pythonScript = path.join(process.cwd(), "scripts", "export_amazon_bulksheet.py");
+  const templatePath = path.join(process.cwd(), "templates", "ppc", "AdvertisingBulksheetTemplate-seller.xlsx");
+  assert.ok(fs.existsSync(templatePath), "Official template must exist");
+
+  const mockActions = [
+    {
+      action_type: "UPDATE_BID",
+      entity_type: "KEYWORD",
+      campaign_id: "35881769512493",
+      ad_group_id: "277534746727028",
+      target_id: "138723997757825",
+      campaign_name: "GOL1006YG01 SP03 KW Phrase",
+      ad_group_name: "GOL1006YG01 SP03 KW Phrase",
+      target_keyword: "christmas gifts for yoga lovers",
+      match_type: "phrase",
+      final_value: 0.81,
+    },
+  ];
+
+  const buffer = await new Promise<Buffer>((resolve, reject) => {
+    const proc = spawn("python3", [pythonScript], { stdio: ["pipe", "pipe", "pipe"] });
+    const chunks: Buffer[] = [];
+    const errChunks: Buffer[] = [];
+    proc.stdout.on("data", (c) => chunks.push(Buffer.from(c)));
+    proc.stderr.on("data", (c) => errChunks.push(Buffer.from(c)));
+    proc.on("close", (code) => {
+      if (code !== 0) return reject(new Error(Buffer.concat(errChunks).toString("utf-8")));
+      resolve(Buffer.concat(chunks));
+    });
+    proc.stdin.write(JSON.stringify(mockActions));
+    proc.stdin.end();
+  });
+
+  assert.ok(buffer.length > 5000, "Buffer should not be empty");
+  const tempTestPath = path.join(process.cwd(), "scratch", "test_integrity.xlsx");
+  fs.writeFileSync(tempTestPath, buffer);
+
+  // Inspect with python openpyxl
+  const openpyxlCheck = await new Promise<string>((resolve, reject) => {
+    const p = spawn("python3", ["-c", `
+import openpyxl
+wb = openpyxl.load_workbook('${tempTestPath}')
+ws = wb['Sponsored Products Campaigns']
+assert wb.sheetnames == ['Portfolios', 'Sponsored Products Campaigns', 'Sponsored Display Campaigns', 'Sponsored Brands Campaigns', 'SB Multi Ad Group Campaigns', 'RAS Campaigns', 'Config']
+assert ws.cell(2, 1).value == 'Sponsored Products'
+assert ws.cell(2, 2).value == 'Keyword'
+assert ws.cell(2, 3).value == 'Update'
+assert str(ws.cell(2, 4).value) == '35881769512493'
+assert str(ws.cell(2, 8).value) == '138723997757825'
+assert ws.cell(2, 15).value == 'enabled'
+assert float(ws.cell(2, 19).value) == 0.81
+assert ws.cell(2, 20).value == 'christmas gifts for yoga lovers'
+assert ws.cell(2, 23).value == 'phrase'
+print('INTEGRITY_OK')
+    `]);
+    let out = "";
+    p.stdout.on("data", (d) => out += d);
+    p.on("close", (code) => code === 0 ? resolve(out.trim()) : reject(new Error("Python check failed")));
+  });
+
+  assert.equal(openpyxlCheck, "INTEGRITY_OK");
+});
+

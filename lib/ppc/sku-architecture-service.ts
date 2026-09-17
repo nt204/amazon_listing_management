@@ -1089,7 +1089,7 @@ export async function approveRecommendationsToActionQueue(
         SELECT id, action_type, status FROM ppc_actions
         WHERE store_id = ${storeId}
           AND campaign_id = ${campaignId}
-          AND target_id = ${targetId}
+          AND (target_id = ${targetId} OR (target_keyword = ${rec.keyword} AND match_type = ${rec.matchType || 'Exact'}))
           AND status IN ('PENDING', 'APPROVED', 'QUEUED')
       `;
 
@@ -1231,17 +1231,36 @@ export async function exportBulkFromQueue(
     throw new Error(`Action "${missingId.target_keyword}" thiếu Campaign ID, Ad Group ID hoặc Target ID để xuất an toàn.`);
   }
 
-  const ExcelJS = (await import("exceljs")).default;
-  const workbook = new ExcelJS.Workbook();
-  workbook.creator = "Amazon Advertising";
-  workbook.created = new Date();
+  const { spawn } = await import("node:child_process");
+  const path = (await import("node:path")).default;
+  const fs = (await import("node:fs")).default;
 
-  const portfolioSheet = workbook.addWorksheet("Portfolios");
-  portfolioSheet.addRow(["Portfolio ID", "Portfolio Name", "Currency"]);
+  const pythonScript = path.join(process.cwd(), "scripts", "export_amazon_bulksheet.py");
+  const templatePath = path.join(process.cwd(), "templates", "ppc", "AdvertisingBulksheetTemplate-seller.xlsx");
 
-  const spSheet = workbook.addWorksheet("Sponsored Products Campaigns");
-  const headerRow = spSheet.addRow(AMAZON_BULKSHEET_SP_COLUMNS);
-  headerRow.font = { name: "Arial", size: 10, bold: true };
+  if (!fs.existsSync(templatePath)) {
+    throw new Error(`Template Amazon không tồn tại tại: ${templatePath}`);
+  }
+
+  const buffer = await new Promise<Buffer>((resolve, reject) => {
+    const proc = spawn("python3", [pythonScript], { stdio: ["pipe", "pipe", "pipe"] });
+    const chunks: Buffer[] = [];
+    const errChunks: Buffer[] = [];
+
+    proc.stdout.on("data", (c) => chunks.push(Buffer.from(c)));
+    proc.stderr.on("data", (c) => errChunks.push(Buffer.from(c)));
+
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        const errText = Buffer.concat(errChunks).toString("utf-8");
+        return reject(new Error(`Lỗi khi tạo Bulksheet từ mẫu Amazon: ${errText}`));
+      }
+      resolve(Buffer.concat(chunks));
+    });
+
+    proc.stdin.write(JSON.stringify(actions));
+    proc.stdin.end();
+  });
 
   let updateBidCount = 0;
   let pauseCount = 0;
@@ -1250,50 +1269,40 @@ export async function exportBulkFromQueue(
   const exportItemsData: Array<{ actionId: string; entityType: string; op: string; row: any }> = [];
 
   for (const act of actions) {
-    let entity = "Keyword";
-    let operation = "Update";
-    let state = act.action_type === "PAUSE_TARGET" ? "paused" : "enabled";
-    let bidVal: number | string = "";
-
-    if (act.action_type === "UPDATE_BID") {
+    const isProduct = act.entity_type === "PRODUCT" || (act.target_keyword && (act.target_keyword.includes("asin=") || act.target_keyword.includes("category=")));
+    const entity = isProduct ? "Product Targeting" : (act.action_type === "UPDATE_BUDGET" ? "Campaign" : "Keyword");
+    const op = "Update";
+    if (act.action_type === "UPDATE_BID" || act.action_type === "BID_DECREASE" || act.action_type === "BID_INCREASE") {
       updateBidCount++;
-      bidVal = act.final_value ? Number(Number(act.final_value).toFixed(2)) : "";
     } else if (act.action_type === "PAUSE_TARGET") {
       pauseCount++;
-      bidVal = "";
     } else if (act.action_type === "UPDATE_BUDGET") {
       budgetCount++;
-      entity = "Campaign";
     }
 
-    const row = new Array(AMAZON_BULKSHEET_SP_COLUMNS.length).fill("");
-    row[0] = "Sponsored Products";
-    row[1] = entity;
-    row[2] = operation;
-    row[3] = act.campaign_id || "";
-    row[4] = act.ad_group_id || "";
-    row[7] = act.target_id || "";
-    row[9] = act.campaign_name || "";
-    row[10] = act.ad_group_name || "";
-    row[11] = act.campaign_name || "";
-    row[12] = act.ad_group_name || "";
-    row[15] = act.target_keyword || "";
-    row[16] = act.match_type || "Exact";
-    row[19] = state;
-    row[21] = bidVal;
-
-    spSheet.addRow(row);
     exportItemsData.push({
       actionId: act.id,
       entityType: entity,
-      op: operation,
-      row,
+      op,
+      row: {
+        product: "Sponsored Products",
+        entity,
+        operation: op,
+        campaignId: act.campaign_id,
+        adGroupId: act.ad_group_id,
+        targetId: act.target_id,
+        campaignName: act.campaign_name,
+        adGroupName: act.ad_group_name,
+        targetKeyword: act.target_keyword,
+        matchType: act.match_type,
+        bid: act.final_value,
+        state: act.action_type === "PAUSE_TARGET" ? "paused" : "enabled",
+      },
     });
   }
 
   const dateStr = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
   const fileName = `bulk_export_${dateStr}.xlsx`;
-  const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
 
   await sql.begin(async (tx: any) => {
     const bulkInsert = await tx`

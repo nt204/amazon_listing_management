@@ -1143,16 +1143,33 @@ export async function uploadBulkFileToAmazonAds(options: {
     throw new Error("Không tìm thấy context trình duyệt trong AdsPower.");
   }
 
-  // Tìm hoặc mở trang Amazon Ads để lấy entityId
-  let page = context.pages().find((p) => p.url().includes("advertising.amazon.com"));
-  if (!page) {
-    page = await context.newPage();
-    await page.goto("https://advertising.amazon.com/bulk-operations", { waitUntil: "domcontentloaded" });
+  // Tìm entityId từ bất kỳ tab Amazon Ads nào đang mở
+  let entityId = "";
+  for (const p of context.pages()) {
+    const m = p.url().match(/entityId=([A-Z0-9]+)/);
+    if (m && m[1]) {
+      entityId = m[1];
+      break;
+    }
   }
 
-  const entityMatch = page.url().match(/entityId=([A-Z0-9]+)/);
-  const entityId = entityMatch ? entityMatch[1] : "";
+  // Nếu chưa có, mở trang reports để lấy entityId
+  if (!entityId) {
+    let p = context.pages().find((x) => x.url().includes("advertising.amazon.com"));
+    let created = false;
+    if (!p) {
+      p = await context.newPage();
+      created = true;
+      await p.goto("https://advertising.amazon.com/reports", { waitUntil: "domcontentloaded" });
+      await p.waitForTimeout(2000);
+    }
+    const m = p.url().match(/entityId=([A-Z0-9]+)/);
+    if (m) entityId = m[1];
+    if (created) await p.close().catch(() => {});
+  }
+
   const entityParam = entityId ? `?entityId=${entityId}` : "";
+  console.log(`[AdsPower Upload] Sử dụng entityId: "${entityId}"`);
 
   // Tìm hoặc mở trang bulk-operations
   let bulkPage = context.pages().find((p) => p.url().includes("bulk-operations"));
@@ -1161,50 +1178,68 @@ export async function uploadBulkFileToAmazonAds(options: {
     await bulkPage.goto(`https://advertising.amazon.com/bulk-operations${entityParam}`, { waitUntil: "domcontentloaded" });
   } else {
     await bulkPage.bringToFront();
-    if (!bulkPage.url().includes("bulk-operations")) {
+    if (!bulkPage.url().includes("bulk-operations") || (entityId && !bulkPage.url().includes(entityId))) {
       await bulkPage.goto(`https://advertising.amazon.com/bulk-operations${entityParam}`, { waitUntil: "domcontentloaded" });
     }
   }
 
-  await bulkPage.waitForTimeout(2000);
-
   console.log(`[AdsPower Upload] Bắt đầu upload file: ${fileName}...`);
 
-  // Bắt sự kiện filechooser hoặc set thẳng vào input[type=file]
-  let uploaded = false;
-  const fileInput = await bulkPage.$("input[type='file']");
-  if (fileInput) {
-    await fileInput.setInputFiles(options.filePath);
-    uploaded = true;
-  } else {
-    // Click nút Upload campaigns
-    const uploadBtnSelector = "button:has-text('Upload campaigns'), [data-takt-id*='upload_campaigns'], button:has-text('Upload')";
-    const uploadBtn = await bulkPage.$(uploadBtnSelector);
-    if (uploadBtn) {
-      const [fileChooser] = await Promise.all([
-        bulkPage.waitForEvent("filechooser", { timeout: 10000 }),
-        uploadBtn.click(),
-      ]);
-      await fileChooser.setFiles(options.filePath);
-      uploaded = true;
+  try {
+    // 1. Kiểm tra xem modal upload đã mở sẵn chưa
+    let fileInput = await bulkPage.$("input[type='file']");
+    if (!fileInput) {
+      console.log("[AdsPower Upload] Chờ nút 'Upload campaigns' xuất hiện trên trang...");
+      const openUploadBtn = await bulkPage.waitForSelector(
+        "button[data-takt-id='Bulksheet_home_upload_campaigns_button'], button:has-text('Upload campaigns')",
+        { timeout: 30000 }
+      ).catch(() => null);
+
+      if (!openUploadBtn) {
+        throw new Error("Trang Amazon Ads Bulk Operations tải quá lâu hoặc không tìm thấy nút 'Upload campaigns'.");
+      }
+
+      console.log("[AdsPower Upload] Bấm nút 'Upload campaigns' để mở popup tải file...");
+      await openUploadBtn.click();
+      fileInput = await bulkPage.waitForSelector("input[type='file']", { state: "attached", timeout: 15000 }).catch(() => null);
     }
-  }
 
-  if (!uploaded) {
-    throw new Error("Không tìm thấy nút hoặc ô Upload campaigns trên trang Amazon Ads Bulk Operations.");
-  }
+    if (!fileInput) {
+      throw new Error("Không tìm thấy ô chọn file sau khi mở popup Upload campaigns.");
+    }
 
-  // Đợi 3.5 giây để Amazon Ads tiếp nhận file
-  await bulkPage.waitForTimeout(3500);
-
-  // Nếu có nút Submit hoặc Xác nhận upload thì click tiếp
-  const confirmBtn = await bulkPage.$("button:has-text('Submit'), button[data-takt-id*='submit'], button:has-text('Confirm')");
-  if (confirmBtn && (await confirmBtn.isVisible())) {
-    await confirmBtn.click();
+    // 2. Tải file lên input file chooser
+    console.log(`[AdsPower Upload] Đang nạp file ${fileName} vào input file chooser...`);
+    await fileInput.setInputFiles(options.filePath);
     await bulkPage.waitForTimeout(2000);
-  }
 
-  console.log(`[AdsPower Upload] Đã upload thành công file ${fileName} lên Amazon Ads Bulk Operations!`);
+    // 3. Chờ nút xác nhận 'Upload' trong modal sáng lên và bấm
+    const uploadConfirmBtnSelector = "button[data-takt-id='adz_bulkSheets_unifiedUploadModal_upload_button'], button:has-text('Upload'):not([data-takt-id*='home'])";
+    
+    // Chờ tối đa 25s để Amazon Ads xác thực file xong và kích hoạt nút Upload
+    console.log("[AdsPower Upload] Đang chờ Amazon Ads xác thực file Bulk...");
+    const uploadConfirmBtn = await bulkPage.waitForSelector(
+      `${uploadConfirmBtnSelector}:not([disabled]):not([aria-disabled='true'])`,
+      { timeout: 25000 }
+    ).catch(async () => {
+      return await bulkPage.$(uploadConfirmBtnSelector);
+    });
+
+    if (uploadConfirmBtn) {
+      console.log("[AdsPower Upload] Bấm nút xác nhận Upload trong modal...");
+      await uploadConfirmBtn.click();
+      console.log("[AdsPower Upload] Chờ hệ thống Amazon tiếp nhận file...");
+      await bulkPage.waitForTimeout(5000);
+    } else {
+      console.warn("[AdsPower Upload] Không thấy nút xác nhận Upload riêng, file có thể đã tự động tiếp nhận.");
+    }
+
+    console.log(`[AdsPower Upload] Đã upload thành công file ${fileName} lên Amazon Ads Bulk Operations!`);
+  } finally {
+    // Xong tab nào thì xóa/đóng tab đó đi cho nhẹ trình duyệt theo yêu cầu của user
+    console.log("[AdsPower Upload] Đóng tab Bulk Operations sau khi xong việc để giải phóng RAM...");
+    await bulkPage.close().catch(() => {});
+  }
 
   const profileId = getAdsPowerProfileId(options.profileId, storeName);
 
