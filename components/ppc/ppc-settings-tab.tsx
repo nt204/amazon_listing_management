@@ -39,6 +39,26 @@ interface PpcSettingsTabProps {
   onRefreshBulkHistory: () => void;
 }
 
+function formatAcosTier(tier: PpcRuleVersion["ruleJson"]["hasOrder"][number]): string {
+  if (tier.minRef === "break_even_acos_pct") return "> BE ACoS";
+  if (tier.maxRef === "min_40_break_even_acos_pct") {
+    return `${tier.minAcos}% – min(40%, BE ACoS)`;
+  }
+  if (tier.maxRef === "break_even_acos_pct") {
+    return `> ${tier.minAcos}% – BE ACoS${tier.activeWhen ? " (khi BE > 40%)" : ""}`;
+  }
+  const left = tier.minInclusive === false ? ">" : "≥";
+  const right = tier.maxInclusive === true ? "≤" : "<";
+  return `${left} ${tier.minAcos}% và ${right} ${tier.maxAcos}%`;
+}
+
+function formatClickTier(tier: PpcRuleVersion["ruleJson"]["noOrder"][number]): string {
+  const min = tier.minClicks + (tier.minInclusive === false ? 1 : 0);
+  if (tier.maxClicks > 9000) return `Click ≥ ${min}`;
+  const max = tier.maxClicks - (tier.maxInclusive === false ? 1 : 0);
+  return min === max ? `Click = ${min}` : `Click ${min} – ${max}`;
+}
+
 export function PpcSettingsTab({
   costMasters,
   ruleVersions,
@@ -119,7 +139,10 @@ export function PpcSettingsTab({
 
   // Active Rule for selected tab
   const currentRule = useMemo(() => {
-    return ruleVersions.find((r) => r.campaignType === selectedRuleType) || ruleVersions[0];
+    return ruleVersions.find((r) => r.campaignType === selectedRuleType && r.status === "PUBLISHED")
+      || ruleVersions.find((r) => r.campaignType === selectedRuleType)
+      || ruleVersions.find((r) => r.status === "PUBLISHED")
+      || ruleVersions[0];
   }, [ruleVersions, selectedRuleType]);
 
   return (
@@ -337,9 +360,7 @@ export function PpcSettingsTab({
                       {currentRule.ruleJson.hasOrder.map((tier, idx) => (
                         <tr key={idx} className="hover:bg-slate-50/60">
                           <td className="py-2.5 px-3 text-slate-700 font-semibold">
-                            {tier.maxAcos > 9000
-                              ? `> ${tier.minAcos}% (hoặc > BE ACoS)`
-                              : `${tier.minAcos}% – ${tier.maxAcos}%`}
+                            {formatAcosTier(tier)}
                           </td>
                           <td className="py-2.5 px-3">
                             <span
@@ -370,9 +391,6 @@ export function PpcSettingsTab({
                   <h4 className="text-xs font-black text-rose-700 uppercase tracking-wider">
                     KHI KHÔNG CÓ ĐƠN (NO ORDER)
                   </h4>
-                  <span className="text-[11px] text-slate-600 font-mono font-bold bg-slate-100 px-2 py-0.5 rounded">
-                    Giới hạn Bid: ${currentRule.ruleJson.limits.minBid.toFixed(2)} – ${currentRule.ruleJson.limits.maxBid.toFixed(2)}
-                  </span>
                 </div>
 
                 <div className="overflow-x-auto">
@@ -388,11 +406,7 @@ export function PpcSettingsTab({
                       {currentRule.ruleJson.noOrder.map((tier, idx) => (
                         <tr key={idx} className="hover:bg-slate-50/60">
                           <td className="py-2.5 px-3 text-slate-700 font-semibold">
-                            {tier.maxClicks > 9000
-                              ? `Click > ${tier.minClicks - 1}`
-                              : tier.minClicks === 0
-                              ? "Click < 1 (0 click)"
-                              : `Click ${tier.minClicks} – ${tier.maxClicks}`}
+                            {formatClickTier(tier)}
                           </td>
                           <td className="py-2.5 px-3">
                             <span
@@ -1149,6 +1163,32 @@ export function PpcRuleManagerStandalone() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"rules" | "history">("rules");
   const [selectedRuleType, setSelectedRuleType] = useState<"SB01" | "SB05" | "SP03">("SB01");
+  const ruleFileInputRef = useRef<HTMLInputElement>(null);
+  const [importingRule, setImportingRule] = useState(false);
+
+  const handleExportRule = () => {
+    window.location.href = "/api/ppc/rules?download=1";
+  };
+
+  const handleImportRule = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      setImportingRule(true);
+      const formData = new FormData();
+      formData.append("file", file);
+      const response = await fetch("/api/ppc/rules", { method: "POST", body: formData });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || payload?.message || "Import rule thất bại.");
+      if (payload?.data) setRuleVersions(payload.data);
+      alert("Đã kiểm tra và áp dụng rule PPC mới.");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Import rule thất bại.");
+    } finally {
+      setImportingRule(false);
+    }
+  };
 
   const loadData = async () => {
     try {
@@ -1177,7 +1217,10 @@ export function PpcRuleManagerStandalone() {
   }, []);
 
   const currentRule = useMemo(() => {
-    return ruleVersions.find((r) => r.campaignType === selectedRuleType) || ruleVersions[0];
+    return ruleVersions.find((r) => r.campaignType === selectedRuleType && r.status === "PUBLISHED")
+      || ruleVersions.find((r) => r.campaignType === selectedRuleType)
+      || ruleVersions.find((r) => r.status === "PUBLISHED")
+      || ruleVersions[0];
   }, [ruleVersions, selectedRuleType]);
 
   return (
@@ -1197,6 +1240,30 @@ export function PpcRuleManagerStandalone() {
         </div>
 
         <div className="flex items-center gap-2">
+          <input
+            ref={ruleFileInputRef}
+            type="file"
+            accept="application/json,.json"
+            onChange={handleImportRule}
+            className="hidden"
+          />
+          <button
+            type="button"
+            onClick={handleExportRule}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-bold transition cursor-pointer"
+          >
+            <DownloadSimple size={15} weight="bold" />
+            Xuất Rule
+          </button>
+          <button
+            type="button"
+            onClick={() => ruleFileInputRef.current?.click()}
+            disabled={importingRule}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition cursor-pointer disabled:opacity-50"
+          >
+            <UploadSimple size={15} weight="bold" />
+            {importingRule ? "Đang đọc..." : "Nhập Rule"}
+          </button>
           {/* Subtab Buttons */}
           <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
             <button
@@ -1280,9 +1347,7 @@ export function PpcRuleManagerStandalone() {
                         {currentRule.ruleJson.hasOrder.map((tier, idx) => (
                           <tr key={idx} className="hover:bg-slate-50/60">
                             <td className="py-2.5 px-3 text-slate-700 font-semibold">
-                              {tier.maxAcos > 9000
-                                ? `> ${tier.minAcos}% (hoặc > BE ACoS)`
-                                : `${tier.minAcos}% – ${tier.maxAcos}%`}
+                              {formatAcosTier(tier)}
                             </td>
                             <td className="py-2.5 px-3">
                               <span
@@ -1313,9 +1378,6 @@ export function PpcRuleManagerStandalone() {
                     <h4 className="text-xs font-black text-rose-700 uppercase tracking-wider">
                       KHI KHÔNG CÓ ĐƠN (NO ORDER)
                     </h4>
-                    <span className="text-[11px] text-slate-600 font-mono font-bold bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-                      Giới hạn Bid: ${currentRule.ruleJson.limits.minBid.toFixed(2)} – ${currentRule.ruleJson.limits.maxBid.toFixed(2)}
-                    </span>
                   </div>
 
                   <div className="overflow-x-auto">
@@ -1331,11 +1393,7 @@ export function PpcRuleManagerStandalone() {
                         {currentRule.ruleJson.noOrder.map((tier, idx) => (
                           <tr key={idx} className="hover:bg-slate-50/60">
                             <td className="py-2.5 px-3 text-slate-700 font-semibold">
-                              {tier.maxClicks > 9000
-                                ? `Click > ${tier.minClicks - 1}`
-                                : tier.minClicks === 0
-                                ? "Click < 1 (0 click)"
-                                : `Click ${tier.minClicks} – ${tier.maxClicks}`}
+                              {formatClickTier(tier)}
                             </td>
                             <td className="py-2.5 px-3">
                               <span
@@ -1371,7 +1429,7 @@ export function PpcRuleManagerStandalone() {
                   <ul className="text-xs text-slate-600 space-y-1.5 list-disc pl-4 font-medium">
                     <li><strong>Tăng Bid:</strong> Tính trên gốc <code>Current Bid</code> (Ví dụ: +8% hoặc +5% Current Bid).</li>
                     <li><strong>Giảm Bid:</strong> Tính trên gốc <code>Avg CPC</code> (Ví dụ: -8%, -10%, -15% Avg CPC thực tế).</li>
-                    <li><strong>Chặn Trần/Sàn:</strong> <code>final_bid = min(max(calculated_bid, min_bid), max_bid)</code>.</li>
+                    <li><strong>Trần động theo SKU/phôi:</strong> Bid cuối không vượt <code>Max Bid SKU = CR × Profit Before Ads</code>.</li>
                     <li><strong>Ưu Tiên Tạm Dừng:</strong> <code>PAUSE</code> luôn có độ ưu tiên cao nhất, khử trùng lặp các hành động khác.</li>
                   </ul>
                 </div>
@@ -1389,7 +1447,7 @@ export function PpcRuleManagerStandalone() {
                     )}
                   </p>
                   <div className="p-2.5 rounded-xl bg-indigo-50/60 border border-indigo-100 text-[11px] text-indigo-900 font-semibold">
-                    Mã bộ luật: <code>amazon_ppc_common_bid_rules (v1.0.0)</code> • Tối ưu cấp độ Target/Keyword
+                    Mã bộ luật: <code>amazon_ppc_common_bid_rules ({currentRule.version})</code> • Tối ưu cấp độ Target/Keyword
                   </div>
                 </div>
               </div>

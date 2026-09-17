@@ -58,6 +58,12 @@ export interface RuleHasOrderTier {
   pct: number; // e.g. 8 for +8%, -8 for -8%
   base: "CURRENT_BID" | "AVG_CPC" | "NONE";
   description: string;
+  ruleId?: string;
+  minInclusive?: boolean;
+  maxInclusive?: boolean;
+  minRef?: "break_even_acos_pct";
+  maxRef?: "break_even_acos_pct" | "min_40_break_even_acos_pct";
+  activeWhen?: "break_even_acos_pct > 40";
 }
 
 export interface RuleNoOrderTier {
@@ -67,6 +73,9 @@ export interface RuleNoOrderTier {
   pct: number;
   base: "CURRENT_BID" | "AVG_CPC" | "MIN_BID" | "NONE";
   description: string;
+  ruleId?: string;
+  minInclusive?: boolean;
+  maxInclusive?: boolean;
 }
 
 export interface RuleLimits {
@@ -117,8 +126,23 @@ export interface PpcAction {
   status: ActionStatus;
   approvedBy?: string | null;
   approvedAt?: string | null;
+  isZeroSpend?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface PpcAutoUploadLog {
+  id: string;
+  storeId: string;
+  fileName: string;
+  adspowerProfileId?: string | null;
+  adspowerProfileName?: string | null;
+  actionCount: number;
+  skus: string[];
+  status: "SUCCESS" | "FAILED" | "RUNNING";
+  errorMessage?: string | null;
+  durationMs: number;
+  createdAt: string;
 }
 
 export interface BulkExportItem {

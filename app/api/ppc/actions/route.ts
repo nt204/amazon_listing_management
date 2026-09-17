@@ -4,6 +4,7 @@ import {
   approveRecommendationsToActionQueue,
   getActionQueue,
   removeActionFromQueue,
+  removeActionsFromQueue,
   resolveStoreId,
 } from "@/lib/ppc/sku-architecture-service";
 
@@ -52,14 +53,31 @@ export async function DELETE(request: Request) {
     authorize(request, "write");
     const { searchParams } = new URL(request.url);
     const storeId = await resolveStoreId(searchParams.get("storeId"));
-    const actionId = searchParams.get("actionId");
 
-    if (!actionId) {
-      throw new ApiError("Thiếu actionId cần xóa.", 400);
+    let bodyActionIds: string[] | undefined;
+    try {
+      const body = await request.json();
+      if (Array.isArray(body?.actionIds)) bodyActionIds = body.actionIds;
+      else if (body?.actionId) bodyActionIds = [body.actionId];
+    } catch {}
+
+    const queryActionId = searchParams.get("actionId") || searchParams.get("id");
+    const queryActionIds = searchParams.get("actionIds")
+      ? searchParams.get("actionIds")!.split(",").map((s) => s.trim()).filter(Boolean)
+      : undefined;
+
+    const actionIds = bodyActionIds || queryActionIds || (queryActionId ? [queryActionId] : []);
+
+    if (actionIds.length === 0) {
+      throw new ApiError("Thiếu actionId hoặc actionIds cần xóa.", 400);
     }
 
-    await removeActionFromQueue(storeId, actionId);
-    return Response.json({ success: true, message: "Đã xóa hành động khỏi Action Queue." });
+    const count = await removeActionsFromQueue(storeId, actionIds);
+    return Response.json({
+      success: true,
+      count,
+      message: `Đã xóa ${count} hành động khỏi Action Queue.`,
+    });
   } catch (error) {
     return routeErrorResponse(error, "Lỗi khi xóa hành động.", 500);
   }

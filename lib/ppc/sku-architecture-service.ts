@@ -1,5 +1,6 @@
-// lib/ppc/sku-architecture-service.ts
 import "server-only";
+import fs from "node:fs";
+import path from "node:path";
 
 import { getDatabaseClient } from "@/lib/db";
 import {
@@ -13,6 +14,7 @@ import {
   type CostSource,
   type CrSource,
   type PpcAction,
+  type PpcAutoUploadLog,
   type PpcRuleDefinition,
   type PpcRuleVersion,
   type ProductCostMaster,
@@ -22,6 +24,12 @@ import {
 import type { PpcPerformanceRow, PpcRecommendation } from "./types";
 import { extractSkuFromText } from "./sku-extractor";
 import { AMAZON_BULKSHEET_SP_COLUMNS } from "./service";
+import {
+  commonRuleToDefinitions,
+  parseAmazonPpcCommonRuleSet,
+  type AmazonPpcCommonRuleSet,
+} from "./common-rule-parser";
+import { uploadBulkFileToAmazonAds } from "./adspower-service";
 
 export async function resolveStoreId(storeIdOrName?: string | null): Promise<string> {
   const sql = await getDatabaseClient();
@@ -700,7 +708,7 @@ export async function getRuleVersions(): Promise<PpcRuleVersion[]> {
   const rows = await sql<any[]>`
     SELECT id, campaign_type, version, status, rule_json, effective_from, created_at
     FROM ppc_rule_versions
-    ORDER BY campaign_type ASC, version DESC
+    ORDER BY campaign_type ASC, (status = 'PUBLISHED') DESC, created_at DESC
   `;
 
   return rows.map((r: any) => ({
@@ -712,6 +720,48 @@ export async function getRuleVersions(): Promise<PpcRuleVersion[]> {
     effectiveFrom: r.effective_from ? new Date(r.effective_from).toISOString().split("T")[0] : "",
     createdAt: r.created_at ? new Date(r.created_at).toISOString() : "",
   }));
+}
+
+export async function getAmazonPpcCommonRuleSet(): Promise<AmazonPpcCommonRuleSet> {
+  const sql = await getDatabaseClient();
+  const rows = await sql<{ config_json: unknown }[]>`
+    SELECT config_json FROM ppc_sku_mapping_rules
+    WHERE rule_set_id = 'amazon_ppc_common_bid_rules'
+    LIMIT 1
+  `;
+  if (!rows[0]) throw new Error("Chưa có amazon_ppc_common_bid_rules.");
+  return parseAmazonPpcCommonRuleSet(rows[0].config_json);
+}
+
+export async function replaceAmazonPpcCommonRuleSet(input: unknown): Promise<PpcRuleVersion[]> {
+  const ruleSet = parseAmazonPpcCommonRuleSet(input);
+  const definitions = commonRuleToDefinitions(ruleSet);
+  const sql = await getDatabaseClient();
+  await sql.begin(async (tx) => {
+    await tx`
+      INSERT INTO ppc_sku_mapping_rules (rule_set_id, config_json, version)
+      VALUES ('amazon_ppc_common_bid_rules', ${tx.json(ruleSet as any)}, ${ruleSet.schema_version})
+      ON CONFLICT (rule_set_id) DO UPDATE
+      SET config_json = EXCLUDED.config_json, version = EXCLUDED.version, updated_at = NOW()
+    `;
+    for (const definition of definitions) {
+      await tx`
+        INSERT INTO ppc_rule_versions (campaign_type, version, status, rule_json, effective_from)
+        VALUES (${definition.campaignType}, ${ruleSet.schema_version}, 'PUBLISHED', ${tx.json(definition as any)}, CURRENT_DATE)
+        ON CONFLICT (campaign_type, version) DO UPDATE
+        SET status = 'PUBLISHED', rule_json = EXCLUDED.rule_json, effective_from = CURRENT_DATE
+      `;
+      await tx`
+        UPDATE ppc_rule_versions SET status = 'ARCHIVED'
+        WHERE campaign_type = ${definition.campaignType} AND version <> ${ruleSet.schema_version} AND status = 'PUBLISHED'
+      `;
+    }
+  });
+  return getRuleVersions();
+}
+
+function inRuleRange(value: number, min: number, max: number, minInclusive: boolean, maxInclusive: boolean) {
+  return (minInclusive ? value >= min : value > min) && (maxInclusive ? value <= max : value < max);
 }
 
 export function evaluateRowWithRuleEngine(
@@ -746,7 +796,7 @@ export function evaluateRowWithRuleEngine(
 
   const econ = econMap.get(sku);
   // Không được áp kinh tế của một phôi mặc định cho SKU chưa được ánh xạ.
-  if (!econ || econ.productType === SKU_PREFIX_ERROR_PRODUCT_TYPE) return null;
+  if (!econ || econ.productType === SKU_PREFIX_ERROR_PRODUCT_TYPE || econ.maxBid <= 0) return null;
 
   const baseCpc = typeof row.cpc === "number" && row.cpc > 0 ? row.cpc : 0;
   const currentBid = (row.bid && row.bid > 0) ? row.bid : (baseCpc > 0 ? baseCpc : rule.limits.minBid);
@@ -761,117 +811,44 @@ export function evaluateRowWithRuleEngine(
   let actionState: "ENABLE" | "PAUSED" = "ENABLE";
 
   const beAcos = econ.breakEvenAcos > 0 ? econ.breakEvenAcos : 45.5;
-  const skuMaxBid = econ.maxBid > 0 ? econ.maxBid : rule.limits.maxBid;
+  const skuMaxBid = econ.maxBid;
   const effectiveMaxBid = Math.min(rule.limits.maxBid, skuMaxBid);
   // Khi trần kinh tế thấp hơn sàn rule, ưu tiên trần để không bid vượt khả năng sinh lời.
   const effectiveMinBid = Math.min(rule.limits.minBid, effectiveMaxBid);
 
-  if (hasOrders) {
-    if (isSponsoredProduct) {
-      if (actualAcos > 0 && actualAcos < 20) {
-        recType = "BID_INCREASE";
-        targetBid = currentBid * 1.08;
-        reason = `[${format}] ACOS ${actualAcos.toFixed(1)}% (< 20%) -> Tăng bid +8% so với Bid hiện tại ($${currentBid.toFixed(2)}).`;
-      } else if (actualAcos >= 20 && actualAcos < 30) {
-        recType = "BID_INCREASE";
-        targetBid = currentBid * 1.05;
-        reason = `[${format}] ACOS ${actualAcos.toFixed(1)}% (20% - 30%) -> Tăng bid +5% so với Bid hiện tại ($${currentBid.toFixed(2)}).`;
-      } else if (actualAcos >= 30 && actualAcos <= 40) {
-        // HOLD; phần kiểm tra trần bid bên dưới vẫn có thể yêu cầu giảm.
-      } else if (actualAcos > 40 && actualAcos <= beAcos) {
-        recType = "BID_DECREASE";
-        targetBid = avgCpc * 0.92;
-        priority = "P1";
-        reason = `[${format}] ACOS ${actualAcos.toFixed(1)}% (40% đến ACoS hòa vốn ${beAcos}%) -> Giảm bid -8% so với CPC TB ($${avgCpc.toFixed(2)}).`;
-      } else if (actualAcos > beAcos) {
-        recType = "BID_DECREASE";
-        targetBid = avgCpc * 0.85;
-        priority = "P0";
-        reason = `[${format}] ACOS ${actualAcos.toFixed(1)}% vượt ACoS hòa vốn ${beAcos}% -> Giảm bid mạnh -15% so với CPC TB ($${avgCpc.toFixed(2)}).`;
-      }
-    } else {
-      // SB01 and SB05
-      if (actualAcos > 0 && actualAcos < 15) {
-        recType = "BID_INCREASE";
-        targetBid = currentBid * 1.08;
-        reason = `[${format}] ACOS ${actualAcos.toFixed(1)}% (< 15%) -> Tăng bid +8% so với Bid hiện tại ($${currentBid.toFixed(2)}).`;
-      } else if (actualAcos >= 15 && actualAcos < 25) {
-        recType = "BID_INCREASE";
-        targetBid = currentBid * 1.05;
-        reason = `[${format}] ACOS ${actualAcos.toFixed(1)}% (15% - 25%) -> Tăng bid +5% so với Bid hiện tại ($${currentBid.toFixed(2)}).`;
-      } else if (actualAcos >= 25 && actualAcos <= 40) {
-        // HOLD; phần kiểm tra trần bid bên dưới vẫn có thể yêu cầu giảm.
-      } else if (actualAcos > 40 && actualAcos <= beAcos) {
-        recType = "BID_DECREASE";
-        targetBid = avgCpc * 0.92;
-        priority = "P1";
-        reason = `[${format}] ACOS ${actualAcos.toFixed(1)}% (40% đến ACoS hòa vốn ${beAcos}%) -> Giảm bid -8% so với CPC TB ($${avgCpc.toFixed(2)}).`;
-      } else if (actualAcos > beAcos) {
-        recType = "BID_DECREASE";
-        targetBid = avgCpc * 0.85;
-        priority = "P0";
-        reason = `[${format}] ACOS ${actualAcos.toFixed(1)}% (vượt ACoS hòa vốn ${beAcos}%) -> Giảm bid mạnh -15% so với CPC TB ($${avgCpc.toFixed(2)}).`;
-      }
-    }
-  } else {
-    // No orders (orders == 0)
-    if (isSponsoredProduct) {
-      if (row.clicks < 1) {
-        recType = "BID_INCREASE";
-        targetBid = currentBid * 1.05;
-        reason = `[${format}] 0 clicks trong kỳ -> Tăng bid +5% so với Bid hiện tại ($${currentBid.toFixed(2)}) kích traffic.`;
-      } else if (row.clicks >= 1 && row.clicks <= 7) {
-        // HOLD; phần kiểm tra trần bid bên dưới vẫn có thể yêu cầu giảm.
-      } else if (row.clicks > 7 && row.clicks <= 10) {
-        recType = "BID_DECREASE";
-        targetBid = avgCpc * 0.90;
-        reason = `[${format}] Đã tiêu ${row.clicks} clicks ($${row.spend.toFixed(2)}) không ra đơn -> Giảm bid -10% so với CPC TB ($${avgCpc.toFixed(2)}).`;
-      } else if (row.clicks > 10) {
-        recType = "PAUSE_TARGET";
-        actionState = "PAUSED";
-        priority = "P0";
-        targetBid = rule.limits.minBid;
-        reason = `[${format}] Đã tiêu ${row.clicks} clicks (> 10 clicks) không ra đơn -> Đề xuất Tạm dừng (Pause).`;
-      }
-    } else if (format === "SB05") {
-      if (row.clicks < 1) {
-        recType = "BID_INCREASE";
-        targetBid = currentBid * 1.05;
-        reason = `[SB05] 0 clicks trong kỳ -> Tăng bid +5% so với Bid hiện tại ($${currentBid.toFixed(2)}) kích traffic.`;
-      } else if (row.clicks >= 1 && row.clicks <= 8) {
-        // HOLD; phần kiểm tra trần bid bên dưới vẫn có thể yêu cầu giảm.
-      } else if (row.clicks > 8 && row.clicks <= 11) {
-        recType = "BID_DECREASE";
-        targetBid = avgCpc * 0.90;
-        reason = `[SB05] Đã tiêu ${row.clicks} clicks ($${row.spend.toFixed(2)}) không ra đơn -> Giảm bid -10% so với CPC TB ($${avgCpc.toFixed(2)}).`;
-      } else if (row.clicks > 11) {
-        recType = "PAUSE_TARGET";
-        actionState = "PAUSED";
-        priority = "P0";
-        targetBid = rule.limits.minBid;
-        reason = `[SB05] Đã tiêu ${row.clicks} clicks (> 11 clicks) không ra đơn -> Đề xuất Tạm dừng (Pause).`;
-      }
-    } else {
-      // SB01
-      if (row.clicks < 1) {
-        recType = "BID_INCREASE";
-        targetBid = currentBid * 1.05;
-        reason = `[SB01] 0 clicks trong kỳ -> Tăng bid +5% so với Bid hiện tại ($${currentBid.toFixed(2)}) kích traffic.`;
-      } else if (row.clicks >= 1 && row.clicks <= 9) {
-        // HOLD; phần kiểm tra trần bid bên dưới vẫn có thể yêu cầu giảm.
-      } else if (row.clicks > 9 && row.clicks <= 13) {
-        recType = "BID_DECREASE";
-        targetBid = avgCpc * 0.90;
-        reason = `[SB01] Đã tiêu ${row.clicks} clicks ($${row.spend.toFixed(2)}) không ra đơn -> Giảm bid -10% so với CPC TB ($${avgCpc.toFixed(2)}).`;
-      } else if (row.clicks > 13) {
-        recType = "PAUSE_TARGET";
-        actionState = "PAUSED";
-        priority = "P0";
-        targetBid = rule.limits.minBid;
-        reason = `[SB01] Đã tiêu ${row.clicks} clicks (> 13 clicks) không ra đơn -> Đề xuất Tạm dừng (Pause).`;
-      }
-    }
+  const tiers = hasOrders ? rule.hasOrder : rule.noOrder;
+  const metric = hasOrders ? actualAcos : row.clicks;
+  const matches = tiers.filter((tier) => {
+    if ("activeWhen" in tier && tier.activeWhen && beAcos <= 40) return false;
+    const min = "minRef" in tier && tier.minRef ? beAcos : ("minAcos" in tier ? tier.minAcos : tier.minClicks);
+    const max = "maxRef" in tier && tier.maxRef
+      ? (tier.maxRef === "min_40_break_even_acos_pct" ? Math.min(40, beAcos) : beAcos)
+      : ("maxAcos" in tier ? tier.maxAcos : tier.maxClicks);
+    return inRuleRange(metric, min, max, tier.minInclusive ?? true, tier.maxInclusive ?? true);
+  });
+
+  // Parser contract: mỗi input chỉ được khớp đúng một zone đang hoạt động.
+  if (matches.length !== 1) return null;
+  const matched = matches[0];
+  if (matched.action === "BID_INCREASE") {
+    recType = "BID_INCREASE";
+    targetBid = currentBid * (1 + matched.pct / 100);
+  } else if (matched.action === "BID_DECREASE") {
+    recType = "BID_DECREASE";
+    targetBid = avgCpc * (1 + matched.pct / 100);
+    priority = matched.pct <= -15 ? "P0" : "P1";
+  } else if (matched.action === "PAUSE_TARGET") {
+    recType = "PAUSE_TARGET";
+    actionState = "PAUSED";
+    priority = "P0";
+    targetBid = rule.limits.minBid;
   }
+  const metricReason = hasOrders
+    ? (matched.action === "BID_DECREASE" && actualAcos > beAcos
+        ? `ACoS ${actualAcos.toFixed(1)}% vượt ACoS hòa vốn ${beAcos}%`
+        : `ACoS ${actualAcos.toFixed(1)}%, ACoS hòa vốn ${beAcos}%`)
+    : `${row.clicks} clicks, không có đơn`;
+  reason = `[${format}] ${matched.ruleId || "MATCHED_RULE"}: ${metricReason} -> ${matched.description}.`;
 
   if (!recType) {
     if (currentBid <= effectiveMaxBid) return null;
@@ -1155,10 +1132,19 @@ export async function approveRecommendationsToActionQueue(
 export async function getActionQueue(storeId: string): Promise<PpcAction[]> {
   const sql = await getDatabaseClient();
   const rows = await sql<any[]>`
-    SELECT * FROM ppc_actions
-    WHERE store_id = ${storeId}
-      AND status IN ('APPROVED', 'QUEUED')
-    ORDER BY created_at DESC
+    SELECT 
+      a.*,
+      COALESCE(p.total_spend, 0) as sku_spend
+    FROM ppc_actions a
+    LEFT JOIN (
+      SELECT UPPER(TRIM(sku)) as sku_code, SUM(spend) as total_spend
+      FROM ppc_performance_facts
+      WHERE store_id = ${storeId} AND grain = 'PRODUCT' AND sku IS NOT NULL
+      GROUP BY UPPER(TRIM(sku))
+    ) p ON UPPER(TRIM(a.sku)) = p.sku_code
+    WHERE a.store_id = ${storeId}
+      AND a.status IN ('APPROVED', 'QUEUED')
+    ORDER BY a.created_at DESC
   `;
 
   return rows.map((r: any) => ({
@@ -1184,18 +1170,25 @@ export async function getActionQueue(storeId: string): Promise<PpcAction[]> {
     status: r.status,
     approvedBy: r.approved_by,
     approvedAt: r.approved_at ? new Date(r.approved_at).toISOString() : null,
+    isZeroSpend: Number(r.sku_spend || 0) <= 0,
     createdAt: new Date(r.created_at).toISOString(),
     updatedAt: new Date(r.updated_at).toISOString(),
   }));
 }
 
-export async function removeActionFromQueue(storeId: string, actionId: string): Promise<void> {
+export async function removeActionsFromQueue(storeId: string, actionIds: string[]): Promise<number> {
+  if (!actionIds || actionIds.length === 0) return 0;
   const sql = await getDatabaseClient();
-  await sql`
+  const res = await sql`
     UPDATE ppc_actions
     SET status = 'IGNORED', updated_at = NOW()
-    WHERE store_id = ${storeId} AND id = ${actionId}
+    WHERE store_id = ${storeId} AND id = ANY(${actionIds})
   `;
+  return res.count;
+}
+
+export async function removeActionFromQueue(storeId: string, actionId: string): Promise<void> {
+  await removeActionsFromQueue(storeId, [actionId]);
 }
 
 /* =========================================================================
@@ -1360,4 +1353,142 @@ export async function getBulkExportHistory(storeId: string): Promise<BulkExport[
     status: r.status,
     createdAt: new Date(r.created_at).toISOString(),
   }));
+}
+
+export async function getAutoUploadLogs(storeId: string): Promise<PpcAutoUploadLog[]> {
+  const sql = await getDatabaseClient();
+  const rows = await sql<any[]>`
+    SELECT id, store_id, file_name, adspower_profile_id, adspower_profile_name,
+           action_count, skus, status, error_message, duration_ms, created_at
+    FROM ppc_auto_upload_logs
+    WHERE store_id = ${storeId}
+    ORDER BY created_at DESC
+    LIMIT 50
+  `;
+
+  return rows.map((r: any) => ({
+    id: r.id,
+    storeId: r.store_id,
+    fileName: r.file_name,
+    adspowerProfileId: r.adspower_profile_id,
+    adspowerProfileName: r.adspower_profile_name,
+    actionCount: Number(r.action_count || 0),
+    skus: Array.isArray(r.skus) ? r.skus : (typeof r.skus === "string" ? JSON.parse(r.skus) : []),
+    status: r.status,
+    errorMessage: r.error_message,
+    durationMs: Number(r.duration_ms || 0),
+    createdAt: new Date(r.created_at).toISOString(),
+  }));
+}
+
+export async function executeAutoUploadZeroSpendActions(
+  storeId: string,
+  selectedActionIds?: string[],
+): Promise<{
+  success: boolean;
+  log: PpcAutoUploadLog;
+  message: string;
+}> {
+  const sql = await getDatabaseClient();
+  const startTime = Date.now();
+
+  // 1. Get all pending/approved actions in the queue
+  const queueActions = await getActionQueue(storeId);
+  let candidateActions = queueActions;
+  if (selectedActionIds && selectedActionIds.length > 0) {
+    const idSet = new Set(selectedActionIds);
+    candidateActions = queueActions.filter((a) => idSet.has(a.id));
+  }
+
+  // 2. Filter ONLY actions belonging to Zero-Spend SKUs (chưa cắn tiền)
+  const zeroSpendActions = candidateActions.filter((a) => a.isZeroSpend);
+  if (zeroSpendActions.length === 0) {
+    throw new Error(
+      "Không có hành động nào thuộc SKU chưa cắn tiền (Zero Spend). Chức năng Auto Upload AdsPower chỉ áp dụng cho SKU chưa cắn tiền.",
+    );
+  }
+
+  const zeroSpendActionIds = zeroSpendActions.map((a) => a.id);
+  const distinctSkus = Array.from(new Set(zeroSpendActions.map((a) => a.sku).filter(Boolean)));
+
+  // 3. Export Bulk file using canonical function
+  const exportResult = await exportBulkFromQueue(storeId, zeroSpendActionIds);
+
+  // 4. Save file to scratch directory
+  const scratchDir = path.join(process.cwd(), "scratch");
+  if (!fs.existsSync(scratchDir)) {
+    fs.mkdirSync(scratchDir, { recursive: true });
+  }
+  const tempFilePath = path.join(scratchDir, exportResult.fileName);
+  fs.writeFileSync(tempFilePath, exportResult.buffer);
+
+  // 5. Get store name for AdsPower
+  const storeRows = await sql<{ id: string; name: string }[]>`
+    SELECT id, name FROM ppc_stores WHERE id = ${storeId} LIMIT 1
+  `;
+  const storeName = storeRows.length > 0 ? storeRows[0].name : "HSOSTORE";
+
+  // 6. Record initial RUNNING log
+  const initialLog = await sql<any[]>`
+    INSERT INTO ppc_auto_upload_logs (
+      store_id, file_name, action_count, skus, status
+    ) VALUES (
+      ${storeId}, ${exportResult.fileName}, ${zeroSpendActions.length},
+      ${JSON.stringify(distinctSkus)}::jsonb, 'RUNNING'
+    )
+    RETURNING id, created_at
+  `;
+  const logId = initialLog[0].id;
+
+  try {
+    // 7. Upload to Amazon Ads via AdsPower
+    const uploadRes = await uploadBulkFileToAmazonAds({
+      filePath: tempFilePath,
+      storeName,
+    });
+
+    const durationMs = Date.now() - startTime;
+
+    // 8. Update log as SUCCESS
+    await sql`
+      UPDATE ppc_auto_upload_logs
+      SET status = 'SUCCESS',
+          adspower_profile_id = ${uploadRes.profileId || null},
+          adspower_profile_name = ${uploadRes.profileName || storeName},
+          duration_ms = ${durationMs},
+          error_message = NULL
+      WHERE id = ${logId}
+    `;
+
+    return {
+      success: true,
+      log: {
+        id: logId,
+        storeId,
+        fileName: exportResult.fileName,
+        adspowerProfileId: uploadRes.profileId || null,
+        adspowerProfileName: uploadRes.profileName || storeName,
+        actionCount: zeroSpendActions.length,
+        skus: distinctSkus,
+        status: "SUCCESS",
+        errorMessage: null,
+        durationMs,
+        createdAt: new Date(initialLog[0].created_at).toISOString(),
+      },
+      message: `Đã tự động xuất và upload thành công ${zeroSpendActions.length} actions của ${distinctSkus.length} SKU chưa cắn tiền lên Amazon Ads!`,
+    };
+  } catch (err: any) {
+    const durationMs = Date.now() - startTime;
+    const errorMsg = String(err?.message || err);
+
+    await sql`
+      UPDATE ppc_auto_upload_logs
+      SET status = 'FAILED',
+          duration_ms = ${durationMs},
+          error_message = ${errorMsg}
+      WHERE id = ${logId}
+    `;
+
+    throw new Error(`Auto Upload thất bại: ${errorMsg}`);
+  }
 }

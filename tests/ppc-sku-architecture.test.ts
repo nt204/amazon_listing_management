@@ -105,25 +105,27 @@ test("evaluateRowWithRuleEngine evaluates common rules for SP01, SP03, SP04, SB0
     ],
   ]);
 
+  const makeRule = (campaignType: string, strongMax: number, increaseMax: number, holdMin: number, noOrderHoldMax: number, noOrderDecreaseMax: number, minBid: number, maxBid: number) => ({
+    campaignType,
+    hasOrder: [
+      { minAcos: 0, maxAcos: strongMax, minInclusive: false, maxInclusive: false, action: "BID_INCREASE", pct: 8, base: "CURRENT_BID", description: "+8% Current Bid" },
+      { minAcos: strongMax, maxAcos: increaseMax, minInclusive: true, maxInclusive: false, action: "BID_INCREASE", pct: 5, base: "CURRENT_BID", description: "+5% Current Bid" },
+      { minAcos: holdMin, maxAcos: 9999, minInclusive: true, maxInclusive: true, maxRef: "min_40_break_even_acos_pct", action: "HOLD", pct: 0, base: "NONE", description: "Hold" },
+      { minAcos: 40, maxAcos: 9999, minInclusive: false, maxInclusive: true, maxRef: "break_even_acos_pct", activeWhen: "break_even_acos_pct > 40", action: "BID_DECREASE", pct: -8, base: "AVG_CPC", description: "-8% Avg CPC" },
+      { minAcos: 0, maxAcos: 9999, minInclusive: false, maxInclusive: false, minRef: "break_even_acos_pct", action: "BID_DECREASE", pct: -15, base: "AVG_CPC", description: "-15% Avg CPC" },
+    ],
+    noOrder: [
+      { minClicks: 0, maxClicks: 1, minInclusive: true, maxInclusive: false, action: "BID_INCREASE", pct: 5, base: "CURRENT_BID", description: "+5% Current Bid" },
+      { minClicks: 1, maxClicks: noOrderHoldMax, minInclusive: true, maxInclusive: true, action: "HOLD", pct: 0, base: "NONE", description: "Hold" },
+      { minClicks: noOrderHoldMax, maxClicks: noOrderDecreaseMax, minInclusive: false, maxInclusive: true, action: "BID_DECREASE", pct: -10, base: "AVG_CPC", description: "-10% Avg CPC" },
+      { minClicks: noOrderDecreaseMax, maxClicks: 9999, minInclusive: false, maxInclusive: true, action: "PAUSE_TARGET", pct: 0, base: "NONE", description: "Pause" },
+    ],
+    limits: { minBid, maxBid },
+  });
   const ruleMap = new Map<string, any>([
-    [
-      "SP03",
-      {
-        limits: { minBid: 0.5, maxBid: 1.85 },
-      },
-    ],
-    [
-      "SB01",
-      {
-        limits: { minBid: 0.1, maxBid: 1.5 },
-      },
-    ],
-    [
-      "SB05",
-      {
-        limits: { minBid: 0.25, maxBid: 1.75 },
-      },
-    ],
+    ["SP03", makeRule("SP03", 20, 30, 30, 7, 10, 0.5, 1.85)],
+    ["SB01", makeRule("SB01", 15, 25, 25, 9, 13, 0.1, 1.5)],
+    ["SB05", makeRule("SB05", 15, 25, 25, 8, 11, 0.25, 1.75)],
   ]);
 
   function makeRow(overrides: Record<string, any>) {
@@ -247,6 +249,26 @@ test("evaluateRowWithRuleEngine evaluates common rules for SP01, SP03, SP04, SB0
   assert.equal(skuBreakEven?.recType, "BID_DECREASE");
   assert.match(skuBreakEven?.reason || "", /vượt ACoS hòa vốn 42%/);
 
+  const lowBreakEvenEconomics = new Map(cappedEconomics);
+  lowBreakEvenEconomics.set("BHL180660A01", {
+    ...cappedEconomics.get("BHL180660A01"),
+    breakEvenAcos: 35,
+    maxBid: 1.85,
+  });
+  const exactLowBreakEven = evaluateRowWithRuleEngine(
+    makeRow({ bid: 1, spend: 35, sales: 100, clicks: 50, orders: 1 }),
+    ruleMap,
+    lowBreakEvenEconomics,
+  );
+  assert.equal(exactLowBreakEven, null, "ACoS đúng BE phải nằm trong vùng HOLD");
+  const aboveLowBreakEven = evaluateRowWithRuleEngine(
+    makeRow({ bid: 1, spend: 36, sales: 100, clicks: 50, orders: 1 }),
+    ruleMap,
+    lowBreakEvenEconomics,
+  );
+  assert.equal(aboveLowBreakEven?.recType, "BID_DECREASE");
+  assert.equal(aboveLowBreakEven?.recommendedBid, 0.61);
+
   const missingEconomics = evaluateRowWithRuleEngine(
     makeRow({ sku: "UNKNOWN-SKU", campaignName: "UNKNOWN-SKU SP03 Exact" }),
     ruleMap,
@@ -314,4 +336,22 @@ test("evaluateRowWithRuleEngine evaluates common rules for SP01, SP03, SP04, SB0
     econMap,
   );
   assert.equal(sb05Pause?.recType, "PAUSE_TARGET");
+});
+
+test("Auto Upload AdsPower: Zero-Spend SKU action filtering logic", () => {
+  const actions = [
+    { id: "act-1", sku: "SKU_ZERO_1", isZeroSpend: true, finalValue: 0.72 },
+    { id: "act-2", sku: "SKU_ACTIVE_1", isZeroSpend: false, finalValue: 0.85 },
+    { id: "act-3", sku: "SKU_ZERO_2", isZeroSpend: true, finalValue: 0.65 },
+  ];
+
+  // Only zero spend actions must be targeted by the RPA automation
+  const zeroSpendActions = actions.filter((a) => a.isZeroSpend);
+  assert.equal(zeroSpendActions.length, 2);
+  assert.deepEqual(zeroSpendActions.map(a => a.sku), ["SKU_ZERO_1", "SKU_ZERO_2"]);
+
+  // Active spend action must NOT be included in auto-upload candidate list
+  const activeActions = actions.filter((a) => !a.isZeroSpend);
+  assert.equal(activeActions.length, 1);
+  assert.equal(activeActions[0].sku, "SKU_ACTIVE_1");
 });

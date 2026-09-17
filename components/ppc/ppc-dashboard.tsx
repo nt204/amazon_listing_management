@@ -475,6 +475,19 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     notify("Đã xóa hành động khỏi Action Queue.", "success");
   };
 
+  const handleRemoveActions = async (actionIds: string[]) => {
+    if (!actionIds || actionIds.length === 0) return;
+    const targetStore = stores.find((s) => s.name === selectedStore)?.id || stores[0]?.id;
+    const res = await fetch(`/api/ppc/actions?storeId=${encodeURIComponent(targetStore || "")}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actionIds }),
+    });
+    if (!res.ok) throw new Error("Không thể xóa các hành động đã chọn.");
+    void loadActionQueue();
+    notify(`Đã xóa ${actionIds.length} hành động khỏi Action Queue.`, "success");
+  };
+
   const handleExportBulk = async (selectedActionIds?: string[]) => {
     const res = await fetch("/api/ppc/bulk-export", {
       method: "POST",
@@ -4029,10 +4042,13 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
         onClose={() => setIsActionQueueOpen(false)}
         actions={actionQueue}
         onRemoveAction={handleRemoveAction}
+        onRemoveActions={handleRemoveActions}
         onExportBulk={handleExportBulk}
         bulkHistory={bulkHistory}
         onRefreshBulkHistory={() => void loadSettingsData()}
-        storeName={selectedStore === "ALL" ? "Tất cả shop" : selectedStore}
+        storeName={selectedStore === "ALL" ? (stores[0]?.name || "HSOSTORE") : selectedStore}
+        storeId={stores.find((s) => s.name === selectedStore)?.id || stores[0]?.id}
+        onRefreshActionQueue={() => void loadActionQueue()}
       />
     </div>
   );
