@@ -36,6 +36,8 @@ export async function POST(request: Request) {
     return Response.json({
       success: true,
       data: result.log,
+      fileName: result.fileName,
+      fileBase64: result.fileBase64,
       message: result.message,
     });
   } catch (error: any) {

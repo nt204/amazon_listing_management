@@ -1301,8 +1301,20 @@ export async function exportBulkFromQueue(
     });
   }
 
-  const dateStr = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
-  const fileName = `bulk_export_${dateStr}.xlsx`;
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const timeStr = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+
+    // Format: Upload + tên camp + time
+    const rawCampName = actions.find((a: any) => a.campaign_name)?.campaign_name || actions[0]?.sku || "AmazonAds";
+    const cleanCamp = rawCampName
+      .replace(/[/\\?%*:|"<>]/g, "_")
+      .trim()
+      .replace(/\s+/g, "_")
+      .slice(0, 70)
+      .replace(/_+$/, "");
+
+    const fileName = `Upload_${cleanCamp}_${timeStr}.xlsx`;
 
   await sql.begin(async (tx: any) => {
     const bulkInsert = await tx`
@@ -1397,6 +1409,8 @@ export async function executeAutoUploadZeroSpendActions(
   success: boolean;
   log: PpcAutoUploadLog;
   message: string;
+  fileName?: string;
+  fileBase64?: string;
 }> {
   const sql = await getDatabaseClient();
   const startTime = Date.now();
@@ -1484,6 +1498,8 @@ export async function executeAutoUploadZeroSpendActions(
         durationMs,
         createdAt: new Date(initialLog[0].created_at).toISOString(),
       },
+      fileName: exportResult.fileName,
+      fileBase64: exportResult.buffer.toString("base64"),
       message: `Đã tự động xuất và upload thành công ${zeroSpendActions.length} actions của ${distinctSkus.length} SKU chưa cắn tiền lên Amazon Ads!`,
     };
   } catch (err: any) {

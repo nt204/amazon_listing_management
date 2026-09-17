@@ -3286,6 +3286,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                 onApproveToQueue={handleApproveToQueue}
                 onOpenActionQueue={() => setIsActionQueueOpen(true)}
                 pendingQueueCount={actionQueue.length}
+                actionQueue={actionQueue}
               />
             </div>
           ) : (

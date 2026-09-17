@@ -22,8 +22,9 @@ import {
   TrendUp,
   TrendDown,
   Sparkle,
+  Lightning,
 } from "@phosphor-icons/react";
-import type { SkuRecommendationGroup } from "@/lib/ppc/sku-architecture-types";
+import type { SkuRecommendationGroup, PpcAction } from "@/lib/ppc/sku-architecture-types";
 import type { PpcRecommendation } from "@/lib/ppc/types";
 
 interface PpcSkuRecommendationGroupProps {
@@ -33,6 +34,7 @@ interface PpcSkuRecommendationGroupProps {
   onApproveToQueue: (items: Array<{ recommendation: PpcRecommendation; userFinalBid?: number }>) => Promise<void>;
   onOpenActionQueue: () => void;
   pendingQueueCount: number;
+  actionQueue?: PpcAction[];
 }
 
 export type QuickFilterType =
@@ -65,6 +67,7 @@ export function PpcSkuRecommendationGroupView({
   onApproveToQueue,
   onOpenActionQueue,
   pendingQueueCount,
+  actionQueue,
 }: PpcSkuRecommendationGroupProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedPhôi, setSelectedPhôi] = useState("ALL");
@@ -79,6 +82,12 @@ export function PpcSkuRecommendationGroupView({
   const [isApproving, setIsApproving] = useState(false);
   const [modalSearch, setModalSearch] = useState("");
   const [modalActionFilter, setModalActionFilter] = useState<"ALL" | "BID_INCREASE" | "BID_DECREASE" | "PAUSE_TARGET">("ALL");
+  const [recentlyApprovedIds, setRecentlyApprovedIds] = useState<Set<string>>(new Set());
+
+  const handleOpenActionQueueModal = () => {
+    setSelectedSkuGroup(null);
+    onOpenActionQueue();
+  };
 
   // Dynamic available Phôi list with counts
   const phôiOptions = useMemo(() => {
@@ -231,11 +240,27 @@ export function PpcSkuRecommendationGroupView({
     }));
   };
 
+  // Targets already present in actionQueue
+  const queuedTargetSet = useMemo(() => {
+    const set = new Set<string>();
+    if (actionQueue) {
+      for (const act of actionQueue) {
+        if (act.targetId) set.add(String(act.targetId));
+        if (act.recommendationId) set.add(String(act.recommendationId));
+        if (act.targetKeyword && act.campaignId) {
+          set.add(`${act.campaignId}___${act.targetKeyword.trim().toLowerCase()}`);
+        }
+      }
+    }
+    return set;
+  }, [actionQueue]);
+
   // Approve selected into Action Queue
   const handleApproveSelected = async () => {
     if (selectedRecIds.size === 0) return;
     try {
       setIsApproving(true);
+      const approvedIds = Array.from(selectedRecIds);
       const itemsToApprove = currentSkuRecs
         .filter((r) => selectedRecIds.has(r.id))
         .map((r) => ({
@@ -244,6 +269,7 @@ export function PpcSkuRecommendationGroupView({
         }));
 
       await onApproveToQueue(itemsToApprove);
+      setRecentlyApprovedIds((prev) => new Set([...prev, ...approvedIds]));
       setSelectedRecIds(new Set());
     } catch (err) {
       alert("Lỗi khi duyệt đề xuất: " + String(err));
@@ -262,6 +288,7 @@ export function PpcSkuRecommendationGroupView({
           userFinalBid: userFinalBids[rec.id] ?? rec.recommendedBid ?? rec.currentBid ?? 0,
         },
       ]);
+      setRecentlyApprovedIds((prev) => new Set([...prev, rec.id]));
     } catch (err) {
       alert("Lỗi khi duyệt đề xuất: " + String(err));
     } finally {
@@ -635,7 +662,11 @@ export function PpcSkuRecommendationGroupView({
                 return (
                   <tr
                     key={group.sku}
-                    onClick={() => setSelectedSkuGroup(group)}
+                    onClick={() => {
+                      setSelectedSkuGroup(group);
+                      setRecentlyApprovedIds(new Set());
+                      setSelectedRecIds(new Set());
+                    }}
                     className="hover:bg-indigo-50/30 transition cursor-pointer group"
                   >
                     <td className="py-3 px-3 font-bold text-slate-900 group-hover:text-indigo-600 transition">
@@ -721,6 +752,8 @@ export function PpcSkuRecommendationGroupView({
                   setSelectedSkuGroup(null);
                   setModalSearch("");
                   setModalActionFilter("ALL");
+                  setRecentlyApprovedIds(new Set());
+                  setSelectedRecIds(new Set());
                 }}
                 className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer"
               >
@@ -879,14 +912,25 @@ export function PpcSkuRecommendationGroupView({
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <button
-                      onClick={handleApproveSelected}
-                      disabled={selectedRecIds.size === 0 || isApproving}
-                      className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition shadow-2xs disabled:opacity-40 cursor-pointer"
-                    >
-                      <CheckCircle size={14} weight="bold" />
-                      <span>{isApproving ? "Đang xử lý..." : `Duyệt ${selectedRecIds.size} mục đã chọn`}</span>
-                    </button>
+                    {recentlyApprovedIds.size > 0 && selectedRecIds.size === 0 ? (
+                      <button
+                        onClick={handleOpenActionQueueModal}
+                        className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black transition shadow-2xs cursor-pointer animate-in fade-in duration-200"
+                        title="Đã duyệt vào Action Queue. Bấm vào đây để mở Action Queue"
+                      >
+                        <Lightning size={14} weight="fill" className="text-amber-300" />
+                        <span>Action ({recentlyApprovedIds.size})</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleApproveSelected}
+                        disabled={selectedRecIds.size === 0 || isApproving}
+                        className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition shadow-2xs disabled:opacity-40 cursor-pointer"
+                      >
+                        <CheckCircle size={14} weight="bold" />
+                        <span>{isApproving ? "Đang xử lý..." : `Duyệt ${selectedRecIds.size} mục đã chọn`}</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -928,6 +972,7 @@ export function PpcSkuRecommendationGroupView({
                         currentSkuRecs.map((rec) => {
                           const isSelected = selectedRecIds.has(rec.id);
                           const finalBid = userFinalBids[rec.id] ?? rec.recommendedBid ?? rec.currentBid ?? 0;
+                          const isApproved = recentlyApprovedIds.has(rec.id);
 
                           return (
                             <tr
@@ -985,13 +1030,24 @@ export function PpcSkuRecommendationGroupView({
                                 {rec.ruleProfile || "v1.0"}
                               </td>
                               <td className={`sticky right-0 z-[5] border-l border-slate-100 py-2.5 px-2 text-center shadow-[-6px_0_10px_-8px_rgba(15,23,42,0.3)] ${isSelected ? "bg-indigo-50" : "bg-white"}`}>
-                                <button
-                                  onClick={() => handleApproveSingle(rec)}
-                                  disabled={isApproving}
-                                  className="whitespace-nowrap px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold text-[11px] border border-indigo-200 transition cursor-pointer"
-                                >
-                                  Duyệt
-                                </button>
+                                {isApproved ? (
+                                  <button
+                                    onClick={handleOpenActionQueueModal}
+                                    className="whitespace-nowrap px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[11px] shadow-2xs transition cursor-pointer flex items-center justify-center gap-1 mx-auto"
+                                    title="Mục này đã được duyệt vào hàng đợi. Bấm vào đây để mở Action Queue"
+                                  >
+                                    <Lightning size={12} weight="fill" className="text-amber-300" />
+                                    <span>Action</span>
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => handleApproveSingle(rec)}
+                                    disabled={isApproving}
+                                    className="whitespace-nowrap px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold text-[11px] border border-indigo-200 transition cursor-pointer"
+                                  >
+                                    Duyệt
+                                  </button>
+                                )}
                               </td>
                             </tr>
                           );
@@ -1009,7 +1065,11 @@ export function PpcSkuRecommendationGroupView({
                 Lưu ý: Hành động duyệt sẽ đẩy đề xuất vào <strong>Action Queue</strong> để kiểm tra trùng lặp trước khi xuất Amazon Bulk File.
               </span>
               <button
-                onClick={() => setSelectedSkuGroup(null)}
+                onClick={() => {
+                  setSelectedSkuGroup(null);
+                  setRecentlyApprovedIds(new Set());
+                  setSelectedRecIds(new Set());
+                }}
                 className="px-4 py-2 rounded-lg bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-bold transition cursor-pointer shadow-2xs"
               >
                 Đóng

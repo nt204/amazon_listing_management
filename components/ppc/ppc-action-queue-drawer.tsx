@@ -439,8 +439,33 @@ export function PpcActionQueueDrawer({
         throw new Error(data.error || data.message || "Tự động upload thất bại.");
       }
 
+      // Tự động tải file về máy tính người dùng theo chuẩn: Upload + tên camp + time
+      if (data.fileBase64 && data.fileName) {
+        try {
+          const binaryStr = atob(data.fileBase64);
+          const len = binaryStr.length;
+          const bytes = new Uint8Array(len);
+          for (let i = 0; i < len; i++) {
+            bytes[i] = binaryStr.charCodeAt(i);
+          }
+          const blob = new Blob([bytes], {
+            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          });
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = data.fileName;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          window.URL.revokeObjectURL(url);
+        } catch (downloadErr) {
+          console.error("Lỗi tự động tải file về browser:", downloadErr);
+        }
+      }
+
       setAutoUploadStep(4); // 4. Hoàn thành
-      setAutoUploadSuccess(data.message || "Đã tải file lên Amazon Ads Bulk Operations thành công!");
+      setAutoUploadSuccess(data.message || `Đã tải file ${data.fileName || ""} về máy và upload lên Amazon Ads Bulk Operations thành công!`);
 
       // Refresh dữ liệu
       void loadAutoLogs();
