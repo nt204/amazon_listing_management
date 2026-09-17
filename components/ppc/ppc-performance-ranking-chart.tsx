@@ -14,10 +14,12 @@ export interface PpcPerformanceRankingChartProps {
 interface FormatGroupRow {
   key: string;
   name: string;
+  impressions: number;
+  clicks: number;
+  ctr: number;
   spend: number;
   sales: number;
   orders: number;
-  clicks: number;
   cpc: number;
   cvr: number;
   acos: number;
@@ -46,6 +48,7 @@ export function PpcPerformanceRankingChart({
         sales: number;
         orders: number;
         clicks: number;
+        impressions: number;
       }
     > = {};
 
@@ -84,34 +87,38 @@ export function PpcPerformanceRankingChart({
       }
 
       if (!buckets[key]) {
-        buckets[key] = { name: formatName, spend: 0, sales: 0, orders: 0, clicks: 0 };
+        buckets[key] = { name: formatName, spend: 0, sales: 0, orders: 0, clicks: 0, impressions: 0 };
       }
-      buckets[key].spend += c.spend;
-      buckets[key].sales += c.sales;
-      buckets[key].orders += c.orders;
-      buckets[key].clicks += c.clicks;
+      buckets[key].spend += c.spend || 0;
+      buckets[key].sales += c.sales || 0;
+      buckets[key].orders += c.orders || 0;
+      buckets[key].clicks += c.clicks || 0;
+      buckets[key].impressions += c.impressions || 0;
     });
 
     return Object.entries(buckets)
       .map(([key, b]) => {
         const cpc = b.clicks > 0 ? b.spend / b.clicks : 0;
+        const ctr = b.impressions > 0 ? (b.clicks / b.impressions) * 100 : 0;
         const cvr = b.clicks > 0 ? (b.orders / b.clicks) * 100 : 0;
         const acos = b.sales > 0 ? (b.spend / b.sales) * 100 : b.spend > 0 ? 999 : 0;
         const spendShare = (b.spend / totalAllSpend) * 100;
         return {
           key,
           name: b.name,
+          impressions: b.impressions,
+          clicks: b.clicks,
+          ctr,
           spend: b.spend,
           sales: b.sales,
           orders: b.orders,
-          clicks: b.clicks,
           cpc,
           cvr,
           acos,
           spendShare,
         };
       })
-      .filter((r) => r.spend > 0 || r.orders > 0)
+      .filter((r) => r.spend > 0 || r.orders > 0 || r.impressions > 0)
       .sort((a, b) => b.spend - a.spend);
   }, [campaigns, totalAllSpend]);
 
@@ -122,7 +129,7 @@ export function PpcPerformanceRankingChart({
           SO SÁNH DẠNG CHẠY (SP03 · SP04 AUTO · SB01 · SB05...)
         </h4>
         <span className="text-[11px] font-bold text-slate-400">
-          {formatRows.length} dạng chạy đang phát sinh chi tiêu
+          {formatRows.length} dạng chạy đang phát sinh chi tiêu / hiển thị
         </span>
       </div>
 
@@ -132,13 +139,16 @@ export function PpcPerformanceRankingChart({
           <thead className="bg-slate-50 text-[10px] font-extrabold uppercase text-slate-500 border-b border-slate-200">
             <tr>
               <th className="py-2.5 px-3.5">Dạng Chạy</th>
+              <th className="py-2.5 px-2.5 text-right font-bold text-slate-700">Impressions</th>
+              <th className="py-2.5 px-2.5 text-right">Clicks</th>
+              <th className="py-2.5 px-2.5 text-right">CTR</th>
               <th className="py-2.5 px-2.5 text-right">Spend</th>
               <th className="py-2.5 px-2.5 text-right font-black text-emerald-700">Sales</th>
               <th className="py-2.5 px-2.5 text-right">Orders</th>
               <th className="py-2.5 px-2.5 text-right">ACOS</th>
               <th className="py-2.5 px-2.5 text-right">CVR</th>
               <th className="py-2.5 px-2.5 text-right">CPC</th>
-              <th className="py-2.5 px-3.5 text-left w-40">Tỉ Trọng Spend</th>
+              <th className="py-2.5 px-3.5 text-left w-36">Tỉ Trọng Spend</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 font-medium">
@@ -148,6 +158,15 @@ export function PpcPerformanceRankingChart({
                 <tr key={row.key} className="hover:bg-slate-50/60 transition">
                   <td className="py-2.5 px-3.5 font-bold text-slate-900">
                     {row.name}
+                  </td>
+                  <td className="py-2.5 px-2.5 text-right font-mono font-bold text-slate-700">
+                    {row.impressions.toLocaleString()}
+                  </td>
+                  <td className="py-2.5 px-2.5 text-right font-mono text-slate-600">
+                    {row.clicks.toLocaleString()}
+                  </td>
+                  <td className="py-2.5 px-2.5 text-right font-mono text-slate-600">
+                    {row.impressions > 0 ? `${row.ctr.toFixed(2)}%` : "—"}
                   </td>
                   <td className="py-2.5 px-2.5 text-right font-mono font-bold text-slate-900">
                     {currency}{row.spend.toFixed(2)}

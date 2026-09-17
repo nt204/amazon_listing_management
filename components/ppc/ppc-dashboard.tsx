@@ -434,8 +434,8 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
     }
 
     list.sort((a, b) => {
-      const valA = a[termSortField];
-      const valB = b[termSortField];
+      const valA = a[termSortField] ?? 0;
+      const valB = b[termSortField] ?? 0;
       return termSortDir === "asc" ? valA - valB : valB - valA;
     });
 
@@ -530,8 +530,8 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
         }
         return b.spend - a.spend; // Secondary tie-breaker
       }
-      const valA = a[campaignSortField];
-      const valB = b[campaignSortField];
+      const valA = a[campaignSortField] ?? 0;
+      const valB = b[campaignSortField] ?? 0;
       return campaignSortDir === "asc" ? valA - valB : valB - valA;
     });
 
@@ -554,15 +554,18 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
     let sales = 0;
     let orders = 0;
     let clicks = 0;
+    let impressions = 0;
     for (const c of filteredSortedCampaigns) {
       spend += c.spend || 0;
       sales += c.sales || 0;
       orders += c.orders || 0;
       clicks += c.clicks || 0;
+      impressions += c.impressions || 0;
     }
     const acos = sales > 0 ? (spend / sales) * 100 : 0;
     const roas = spend > 0 ? sales / spend : 0;
-    return { spend, sales, orders, clicks, acos, roas, count: filteredSortedCampaigns.length };
+    const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+    return { spend, sales, orders, clicks, impressions, ctr, acos, roas, count: filteredSortedCampaigns.length };
   }, [filteredSortedCampaigns]);
 
   // Paginated Campaigns
@@ -618,8 +621,8 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
       );
     }
     list.sort((a, b) => {
-      const valA = a[targetSortField];
-      const valB = b[targetSortField];
+      const valA = a[targetSortField] ?? 0;
+      const valB = b[targetSortField] ?? 0;
       return targetSortDir === "asc" ? valA - valB : valB - valA;
     });
     return list;
@@ -1440,16 +1443,16 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               </div>
             </div>
 
-            {/* ROAS */}
+            {/* IMPRESSIONS */}
             <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
               <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
-                ROAS
+                IMPRESSIONS
               </span>
-              <div className="text-xl font-black text-sky-600 mt-0.5">
-                {summary.blendedRoas.toFixed(2)}x
+              <div className="text-xl font-black text-slate-900 mt-0.5">
+                {summary.totalImpressions.toLocaleString()}
               </div>
               <div className="text-[11px] font-semibold text-slate-500 mt-1">
-                Target: <strong className="text-slate-800">{(100 / Math.max(targetAcos, 1)).toFixed(2)}x</strong>
+                Avg: <strong className="text-slate-800">{(summary.totalImpressions / Math.max(selectedDays, 1)).toLocaleString(undefined, { maximumFractionDigits: 0 })}/d</strong>
               </div>
             </div>
 
@@ -1981,7 +1984,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                 <option value="sales_desc">Doanh số: Cao → Thấp</option>
                 <option value="orders_desc">Đơn hàng: Nhiều → Ít</option>
                 <option value="acos_desc">ACOS: Cao → Thấp</option>
-                <option value="roas_desc">ROAS: Cao → Thấp</option>
+                <option value="impressions_desc">Hiển thị: Nhiều → Ít</option>
               </select>
 
               {/* Reset button if filter active */}
@@ -2024,16 +2027,25 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
           {/* Live Metrics Strip for Filtered Campaigns (Tone Xanh - Trắng) */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 p-2.5 rounded-xl bg-gradient-to-r from-blue-50/80 via-indigo-50/50 to-sky-50/60 border border-blue-100 shadow-2xs text-xs">
             <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
-              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Hiển thị</div>
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Số Campaign</div>
               <div className="text-base font-black text-slate-900 mt-0.5">{filteredCampaignTotals.count.toLocaleString()}</div>
               <div className="text-[10px] text-slate-500 font-medium">
                 {campaignStatusFilter === "ACTIVE" ? "Active" : campaignStatusFilter === "PAUSED" ? "Paused" : "Tất cả"}
               </div>
             </div>
             <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Lượt Hiển Thị (Impr)</div>
+              <div className="text-base font-black text-slate-900 mt-0.5">{filteredCampaignTotals.impressions.toLocaleString()}</div>
+              <div className="text-[10px] text-slate-500 font-medium">
+                CTR {filteredCampaignTotals.ctr.toFixed(2)}% · {filteredCampaignTotals.clicks.toLocaleString()} clicks
+              </div>
+            </div>
+            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
               <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Tổng Chi Tiêu</div>
               <div className="text-base font-black text-rose-600 mt-0.5">${filteredCampaignTotals.spend.toFixed(2)}</div>
-              <div className="text-[10px] text-slate-500 font-medium">{filteredCampaignTotals.clicks.toLocaleString()} clicks</div>
+              <div className="text-[10px] text-slate-500 font-medium">
+                CPC ${filteredCampaignTotals.clicks > 0 ? (filteredCampaignTotals.spend / filteredCampaignTotals.clicks).toFixed(2) : "0.00"}
+              </div>
             </div>
             <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
               <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Doanh Số</div>
@@ -2063,11 +2075,6 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               </div>
               <div className="text-[10px] text-slate-500 font-medium">Mục tiêu ≤ {targetAcos}%</div>
             </div>
-            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
-              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">ROAS Trung Bình</div>
-              <div className="text-base font-black text-sky-600 mt-0.5">{filteredCampaignTotals.roas.toFixed(2)}x</div>
-              <div className="text-[10px] text-slate-500 font-medium">Doanh số / Chi tiêu</div>
-            </div>
           </div>
 
           {/* Campaigns Data Table */}
@@ -2087,6 +2094,32 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                     title="Nhấn để sắp xếp theo ngày tạo"
                   >
                     Ngày tạo {campaignSortField === "date" && (campaignSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th
+                    className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
+                    onClick={() =>
+                      handleSort("impressions", campaignSortField, campaignSortDir, setCampaignSortField, setCampaignSortDir, () => setCampaignPage(1))
+                    }
+                    title="Nhấn để sắp xếp theo lượt hiển thị (Impressions)"
+                  >
+                    Hiển Thị {campaignSortField === "impressions" && (campaignSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th
+                    className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
+                    onClick={() =>
+                      handleSort("clicks", campaignSortField, campaignSortDir, setCampaignSortField, setCampaignSortDir, () => setCampaignPage(1))
+                    }
+                  >
+                    Clicks {campaignSortField === "clicks" && (campaignSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th
+                    className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
+                    onClick={() =>
+                      handleSort("ctr", campaignSortField, campaignSortDir, setCampaignSortField, setCampaignSortDir, () => setCampaignPage(1))
+                    }
+                    title="Tỷ lệ click trên lượt hiển thị (CTR = Clicks / Impressions)"
+                  >
+                    CTR (%) {campaignSortField === "ctr" && (campaignSortDir === "asc" ? "↑" : "↓")}
                   </th>
                   <th
                     className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
@@ -2112,7 +2145,6 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                   >
                     Orders {campaignSortField === "orders" && (campaignSortDir === "asc" ? "↑" : "↓")}
                   </th>
-                  <th className="py-3 px-3 text-right">Clicks</th>
                   <th className="py-3 px-3 text-right">CPC</th>
                   <th className="py-3 px-3 text-right">CVR</th>
                   <th
@@ -2123,13 +2155,12 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                   >
                     ACOS (%) {campaignSortField === "acos" && (campaignSortDir === "asc" ? "↑" : "↓")}
                   </th>
-                  <th className="py-3 px-3 text-right">ROAS</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium">
                 {filteredSortedCampaigns.length === 0 ? (
                   <tr>
-                    <td colSpan={13} className="py-12 text-center text-slate-400">
+                    <td colSpan={14} className="py-12 text-center text-slate-400">
                       <div className="flex flex-col items-center justify-center gap-1.5">
                         <FolderSimple size={24} className="text-slate-300" />
                         <span className="font-semibold text-slate-600">Không tìm thấy campaign phù hợp bộ lọc</span>
@@ -2198,6 +2229,21 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                           )}
                         </td>
 
+                        {/* Impressions */}
+                        <td className="py-2.5 px-3 text-right text-slate-700 whitespace-nowrap font-mono">
+                          {(c.impressions || 0).toLocaleString()}
+                        </td>
+
+                        {/* Clicks */}
+                        <td className="py-2.5 px-3 text-right text-slate-600 whitespace-nowrap font-mono">
+                          {(c.clicks || 0).toLocaleString()}
+                        </td>
+
+                        {/* CTR */}
+                        <td className="py-2.5 px-3 text-right text-slate-700 whitespace-nowrap font-mono">
+                          {c.ctr ? `${c.ctr.toFixed(2)}%` : "0.00%"}
+                        </td>
+
                         <td className="py-2.5 px-3 text-right font-bold text-slate-900 whitespace-nowrap">
                           ${c.spend.toFixed(2)}
                         </td>
@@ -2205,7 +2251,6 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                           ${c.sales.toFixed(2)}
                         </td>
                         <td className="py-2.5 px-3 text-right font-black text-slate-900 whitespace-nowrap">{c.orders}</td>
-                        <td className="py-2.5 px-3 text-right text-slate-600 whitespace-nowrap">{c.clicks}</td>
                         <td className="py-2.5 px-3 text-right text-slate-600 whitespace-nowrap">${c.cpc.toFixed(2)}</td>
                         <td className="py-2.5 px-3 text-right text-slate-700 whitespace-nowrap">{c.cvr.toFixed(1)}%</td>
                         <td className="py-2.5 px-3 text-right whitespace-nowrap">
@@ -2221,9 +2266,6 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                           >
                             {c.acos > 500 ? "0 sales" : `${c.acos.toFixed(1)}%`}
                           </span>
-                        </td>
-                        <td className="py-2.5 px-3 text-right font-bold text-sky-600 whitespace-nowrap">
-                          {c.roas.toFixed(2)}x
                         </td>
                       </tr>
                     );
@@ -2340,6 +2382,32 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                   <th
                     className="px-3 py-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() =>
+                      handleSort("impressions", targetSortField, targetSortDir, setTargetSortField, setTargetSortDir)
+                    }
+                    title="Nhấn để sắp xếp theo lượt hiển thị (Impressions)"
+                  >
+                    Hiển Thị {targetSortField === "impressions" && (targetSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th
+                    className="px-3 py-3 text-right cursor-pointer hover:text-indigo-600"
+                    onClick={() =>
+                      handleSort("clicks", targetSortField, targetSortDir, setTargetSortField, setTargetSortDir)
+                    }
+                  >
+                    Clicks {targetSortField === "clicks" && (targetSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th
+                    className="px-3 py-3 text-right cursor-pointer hover:text-indigo-600"
+                    onClick={() =>
+                      handleSort("ctr", targetSortField, targetSortDir, setTargetSortField, setTargetSortDir)
+                    }
+                    title="Tỷ lệ click trên lượt hiển thị (CTR = Clicks / Impressions)"
+                  >
+                    CTR (%) {targetSortField === "ctr" && (targetSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th
+                    className="px-3 py-3 text-right cursor-pointer hover:text-indigo-600"
+                    onClick={() =>
                       handleSort("spend", targetSortField, targetSortDir, setTargetSortField, setTargetSortDir)
                     }
                   >
@@ -2371,14 +2439,13 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                   >
                     ACOS (%) {targetSortField === "acos" && (targetSortDir === "asc" ? "↑" : "↓")}
                   </th>
-                  <th className="px-3 py-3 text-right">ROAS</th>
                   <th className="px-3 py-3 text-center">Search Terms</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredSortedTargets.length === 0 ? (
                   <tr>
-                    <td colSpan={13} className="p-8 text-center text-xs text-slate-400">
+                    <td colSpan={15} className="p-8 text-center text-xs text-slate-400">
                       {targetQuery ? (
                         <div className="flex flex-col items-center gap-1.5">
                           <span className="font-semibold text-slate-600">
@@ -2431,6 +2498,9 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                         </td>
                         <td className="px-3 py-2.5 whitespace-nowrap text-[11px] font-bold text-slate-500">{target.state || "—"}</td>
                         <td className="px-3 py-2.5 text-right font-mono font-black text-slate-800 whitespace-nowrap">{target.currentBid ? `$${target.currentBid.toFixed(2)}` : "—"}</td>
+                        <td className="px-3 py-2.5 text-right font-mono text-slate-700 whitespace-nowrap">{(target.impressions || 0).toLocaleString()}</td>
+                        <td className="px-3 py-2.5 text-right font-mono text-slate-600 whitespace-nowrap">{(target.clicks || 0).toLocaleString()}</td>
+                        <td className="px-3 py-2.5 text-right font-mono text-slate-700 whitespace-nowrap">{target.ctr ? `${target.ctr.toFixed(2)}%` : "0.00%"}</td>
                         <td className="px-3 py-2.5 text-right font-mono font-bold text-slate-900 whitespace-nowrap">${target.spend.toFixed(2)}</td>
                         <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-600 whitespace-nowrap">${target.sales.toFixed(2)}</td>
                         <td className="px-3 py-2.5 text-right font-mono font-bold text-slate-900 whitespace-nowrap">{target.orders}</td>
@@ -2439,7 +2509,6 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                         <td className={`px-3 py-2.5 text-right font-mono font-black whitespace-nowrap ${target.acos <= targetAcos ? "text-emerald-700" : "text-rose-700"}`}>
                           {target.acos > 500 ? "0 sales" : `${target.acos.toFixed(1)}%`}
                         </td>
-                        <td className="px-3 py-2.5 text-right font-mono font-bold text-sky-600 whitespace-nowrap">{target.roas.toFixed(2)}x</td>
                         <td className="px-3 py-2.5 text-center whitespace-nowrap">
                           <button
                             type="button"
@@ -2462,7 +2531,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                       {/* Inline Expandable Layer 2: Search Term Breakdown (Clean & Minimalist) */}
                       {isExpanded && (
                         <tr className="bg-slate-50/70 border-b border-slate-200">
-                          <td colSpan={13} className="p-3">
+                          <td colSpan={15} className="p-3">
                             {childTerms.length === 0 ? (
                               <div className="p-3 text-center text-xs text-slate-400 bg-white rounded-lg border border-slate-200">
                                 Không có customer search term nào phát sinh click trong kỳ báo cáo.
@@ -2473,6 +2542,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                                   <thead className="bg-slate-50 text-[10px] uppercase font-bold text-slate-500 border-b border-slate-200">
                                     <tr>
                                       <th className="py-2 px-3.5">Customer Search Term</th>
+                                      <th className="py-2 px-2.5 text-right">Hiển Thị</th>
                                       <th className="py-2 px-2.5 text-right">Clicks</th>
                                       <th className="py-2 px-2.5 text-right">Spend ($)</th>
                                       <th className="py-2 px-2.5 text-right">Sales ($)</th>
@@ -2485,6 +2555,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                                     {childTerms.map((term, tIdx) => (
                                       <tr key={`${searchTermKey(term)}-${tIdx}`} className="hover:bg-slate-50/80 transition">
                                         <td className="py-2 px-3.5 font-bold text-slate-900">{term.customerSearchTerm}</td>
+                                        <td className="py-2 px-2.5 text-right font-mono text-slate-600">{(term.impressions || 0).toLocaleString()}</td>
                                         <td className="py-2 px-2.5 text-right font-mono text-slate-600">{term.clicks}</td>
                                         <td className="py-2 px-2.5 text-right font-mono text-slate-900">${term.spend.toFixed(2)}</td>
                                         <td className="py-2 px-2.5 text-right font-mono font-bold text-emerald-600">${term.sales.toFixed(2)}</td>
@@ -2714,7 +2785,6 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                   >
                     ACOS (%) {skuSortField === "acos" && (skuSortDir === "asc" ? "↑" : "↓")}
                   </th>
-                  <th className="py-3 px-3 text-right">ROAS</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium">
@@ -2780,9 +2850,6 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                       >
                         {s.spend === 0 ? "-" : s.acos > 500 ? "0 sales" : `${s.acos.toFixed(1)}%`}
                       </span>
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-bold text-sky-600">
-                      {s.spend === 0 ? "-" : `${s.roas.toFixed(2)}x`}
                     </td>
                   </tr>
                 ))}
@@ -2908,10 +2975,28 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                   <th
                     className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() =>
+                      handleSort("impressions", termSortField, termSortDir, setTermSortField, setTermSortDir)
+                    }
+                    title="Nhấn để sắp xếp theo lượt hiển thị (Impressions)"
+                  >
+                    Hiển Thị {termSortField === "impressions" && (termSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th
+                    className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
+                    onClick={() =>
                       handleSort("clicks", termSortField, termSortDir, setTermSortField, setTermSortDir)
                     }
                   >
                     Clicks {termSortField === "clicks" && (termSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th
+                    className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
+                    onClick={() =>
+                      handleSort("ctr", termSortField, termSortDir, setTermSortField, setTermSortDir)
+                    }
+                    title="Tỷ lệ click trên lượt hiển thị (CTR = Clicks / Impressions)"
+                  >
+                    CTR (%) {termSortField === "ctr" && (termSortDir === "asc" ? "↑" : "↓")}
                   </th>
                   <th
                     className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
@@ -2937,7 +3022,6 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                   >
                     Orders {termSortField === "orders" && (termSortDir === "asc" ? "↑" : "↓")}
                   </th>
-                  <th className="py-3 px-3 text-right">CTR (%)</th>
                   <th
                     className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() =>
@@ -2959,7 +3043,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
                 {paginatedSearchTerms.length === 0 ? (
                   <tr>
-                    <td colSpan={12} className="p-8 text-center text-slate-400 font-sans font-medium">
+                    <td colSpan={13} className="p-8 text-center text-slate-400 font-sans font-medium">
                       Không tìm thấy từ khóa nào phù hợp bộ lọc.
                     </td>
                   </tr>
@@ -2992,11 +3076,12 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                         <td className="py-2.5 px-3 text-slate-600 font-sans min-w-[240px] break-words leading-snug">
                           {t.campaignName}
                         </td>
+                        <td className="py-2.5 px-3 text-right font-bold text-slate-700">{(t.impressions || 0).toLocaleString()}</td>
                         <td className="py-2.5 px-3 text-right font-bold text-slate-800">{t.clicks}</td>
+                        <td className="py-2.5 px-3 text-right text-slate-500">{t.ctr ? `${(t.ctr * 100).toFixed(2)}%` : "0.00%"}</td>
                         <td className="py-2.5 px-3 text-right font-bold text-slate-900">${t.spend.toFixed(2)}</td>
                         <td className="py-2.5 px-3 text-right font-black text-emerald-600">${t.sales.toFixed(2)}</td>
                         <td className="py-2.5 px-3 text-right font-black text-slate-900">{t.orders}</td>
-                        <td className="py-2.5 px-3 text-right text-slate-500">{(t.ctr * 100).toFixed(2)}%</td>
                         <td className="py-2.5 px-3 text-right text-slate-700">{(t.cvr * 100).toFixed(1)}%</td>
                         <td className="py-2.5 px-3 text-right font-bold">
                           <span
