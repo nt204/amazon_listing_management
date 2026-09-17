@@ -243,23 +243,31 @@ export async function getPpcAnalyticsData(
   const dataHealth = performanceDataHealth(performanceRows, rows);
   const availableSkus = Array.from(new Set(performanceRows.map((row) => row.sku).filter(Boolean))).sort();
   const dailyTrends = calculatePpcDailyTrends(rows);
-  let maxDate: string | null = null;
-  if (dailyTrends.length > 0) {
-    maxDate = dailyTrends[dailyTrends.length - 1].date;
+  const bulkSample = performanceRows.find((r) => r.reportStartDate && r.reportEndDate);
+  let dateRangeStart: string;
+  let dateRangeEnd: string;
+  if (bulkSample && bulkSample.reportStartDate && bulkSample.reportEndDate) {
+    dateRangeStart = bulkSample.reportStartDate;
+    dateRangeEnd = bulkSample.reportEndDate;
   } else {
-    for (const r of performanceRows) {
-      const d = r.reportEndDate || r.snapshotDate;
-      if (d && (!maxDate || d > maxDate)) maxDate = d;
+    let maxDate: string | null = null;
+    if (dailyTrends.length > 0) {
+      maxDate = dailyTrends[dailyTrends.length - 1].date;
+    } else {
+      for (const r of performanceRows) {
+        const d = r.reportEndDate || r.snapshotDate;
+        if (d && (!maxDate || d > maxDate)) maxDate = d;
+      }
+      for (const r of rows) {
+        const d = r.reportEndDate || r.reportDate;
+        if (d && (!maxDate || d > maxDate)) maxDate = d;
+      }
     }
-    for (const r of rows) {
-      const d = r.reportEndDate || r.reportDate;
-      if (d && (!maxDate || d > maxDate)) maxDate = d;
-    }
+    dateRangeEnd = maxDate || new Date().toISOString().slice(0, 10);
+    const startObj = new Date(dateRangeEnd);
+    startObj.setDate(startObj.getDate() - (days - 1));
+    dateRangeStart = startObj.toISOString().slice(0, 10);
   }
-  const dateRangeEnd = maxDate || new Date().toISOString().slice(0, 10);
-  const startObj = new Date(dateRangeEnd);
-  startObj.setDate(startObj.getDate() - (days - 1));
-  const dateRangeStart = startObj.toISOString().slice(0, 10);
 
   return {
     stores,

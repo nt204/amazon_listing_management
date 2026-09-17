@@ -1312,6 +1312,15 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                 <option value={90}>Last 90 Days</option>
               </select>
             </div>
+
+            {dateRangeStart && dateRangeEnd && (
+              <div className="flex items-center gap-1.5 bg-indigo-50/80 border border-indigo-200/80 rounded-lg px-2.5 py-1 text-xs text-indigo-950 font-bold" title="Khoảng thời gian dữ liệu thực tế đang phân tích">
+                <CalendarBlank size={14} className="text-indigo-600 shrink-0" weight="bold" />
+                <span>
+                  {dateRangeStart.split("-").reverse().join("/")} — {dateRangeEnd.split("-").reverse().join("/")}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Right: Compact Data Status */}
