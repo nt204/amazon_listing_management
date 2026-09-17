@@ -10,6 +10,7 @@ import {
   WarningCircleIcon,
   XIcon,
   ChartLineUpIcon,
+  CaretDownIcon,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
@@ -29,6 +30,14 @@ const SellerSpriteKeywordMiner = dynamic(
 );
 const PpcDashboard = dynamic(
   () => import("@/components/ppc/ppc-dashboard").then((module) => module.PpcDashboard),
+  { loading: ViewLoading },
+);
+const PpcCostMasterStandalone = dynamic(
+  () => import("@/components/ppc/ppc-settings-tab").then((module) => module.PpcCostMasterStandalone),
+  { loading: ViewLoading },
+);
+const PpcRuleManagerStandalone = dynamic(
+  () => import("@/components/ppc/ppc-settings-tab").then((module) => module.PpcRuleManagerStandalone),
   { loading: ViewLoading },
 );
 
@@ -56,6 +65,7 @@ export function ListingWorkspace({
 }: ListingWorkspaceProps) {
   const [brands, setBrands] = useState<BrandProfile[]>(initialBrands);
   const [activeView, setActiveView] = useState<WorkspaceView>(initialView);
+  const [ppcSection, setPpcSection] = useState<"dashboard" | "phoi" | "rules">("dashboard");
   const sidebarTab = activeView === "mockups" ? "mockups" : "trello";
   const viewMode = activeView === "sellersprite" || activeView === "ppc" ? activeView : "trello";
   const [showTrelloConfigModal, setShowTrelloConfigModal] = useState(false);
@@ -190,34 +200,116 @@ export function ListingWorkspace({
               <span>Đào Keyword</span>
             </button>
 
-            {/* Amazon PPC Analytics */}
-            <button
-              type="button"
-              onClick={() => selectView("ppc")}
-              className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
-                viewMode === "ppc"
-                  ? "bg-indigo-600 text-white shadow-xs"
-                  : "text-slate-700 hover:bg-slate-100 hover:text-slate-900"
-              }`}
-            >
-              <div className="flex items-center gap-2.5">
-                <ChartLineUpIcon
-                  size={17}
-                  weight={viewMode === "ppc" ? "fill" : "duotone"}
-                  className={viewMode === "ppc" ? "text-white" : "text-emerald-600"}
-                />
-                <span>PPC Analytics</span>
-              </div>
-              <span
-                className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded border transition-colors ${
+            {/* Amazon PPC Analytics Group */}
+            <div className="space-y-1">
+              <button
+                type="button"
+                onClick={() => {
+                  selectView("ppc");
+                  setPpcSection("dashboard");
+                }}
+                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
                   viewMode === "ppc"
-                    ? "bg-white/20 text-white border-white/30"
-                    : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                    ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
+                    : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                 }`}
               >
-                MỚI
-              </span>
-            </button>
+                <div className="flex items-center gap-2.5">
+                  <ChartLineUpIcon
+                    size={17}
+                    weight={viewMode === "ppc" ? "fill" : "duotone"}
+                    className={viewMode === "ppc" ? "text-indigo-600" : "text-emerald-600"}
+                  />
+                  <span>PPC Analytics</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded border transition-colors ${
+                      viewMode === "ppc"
+                        ? "bg-indigo-100/70 text-indigo-700 border-indigo-200"
+                        : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                    }`}
+                  >
+                    MỚI
+                  </span>
+                  <CaretDownIcon
+                    size={12}
+                    weight="bold"
+                    className={`transition-transform duration-200 ${
+                      viewMode === "ppc" ? "rotate-0 text-indigo-600" : "-rotate-90 text-slate-400"
+                    }`}
+                  />
+                </div>
+              </button>
+
+              {/* Sub-items under PPC Analytics */}
+              {viewMode === "ppc" && (
+                <div className="ml-3 pl-2.5 border-l-2 border-indigo-100 space-y-0.5 pt-0.5 animate-in fade-in slide-in-from-top-1 duration-150">
+                  {/* Mục to: PPC Dashboard */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      selectView("ppc");
+                      setPpcSection("dashboard");
+                    }}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs transition-all cursor-pointer ${
+                      ppcSection === "dashboard"
+                        ? "bg-indigo-100/70 text-indigo-900 font-black shadow-2xs"
+                        : "text-slate-600 font-bold hover:bg-slate-100 hover:text-slate-900"
+                    }`}
+                  >
+                    <span
+                      className={`h-2 w-2 rounded-full transition-colors ${
+                        ppcSection === "dashboard" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                      }`}
+                    />
+                    <span>PPC Dashboard</span>
+                  </button>
+
+                  {/* Mục con 1: Quản lý Phôi */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      selectView("ppc");
+                      setPpcSection("phoi");
+                    }}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
+                      ppcSection === "phoi"
+                        ? "bg-indigo-100/70 text-indigo-900 font-black shadow-2xs"
+                        : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
+                    }`}
+                  >
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ml-0.5 transition-colors ${
+                        ppcSection === "phoi" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                      }`}
+                    />
+                    <span>Quản lý Phôi</span>
+                  </button>
+
+                  {/* Mục con 2: Quản lý Rule */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      selectView("ppc");
+                      setPpcSection("rules");
+                    }}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
+                      ppcSection === "rules"
+                        ? "bg-indigo-100/70 text-indigo-900 font-black shadow-2xs"
+                        : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
+                    }`}
+                  >
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ml-0.5 transition-colors ${
+                        ppcSection === "rules" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                      }`}
+                    />
+                    <span>Quản lý Rule</span>
+                  </button>
+                </div>
+              )}
+            </div>
           </nav>
         </div>
 
@@ -257,7 +349,11 @@ export function ListingWorkspace({
               {viewMode === "sellersprite"
                 ? "SellerSprite Keyword Mining"
                 : viewMode === "ppc"
-                ? "Amazon PPC Analytics & Optimization"
+                ? ppcSection === "phoi"
+                  ? "Amazon PPC - Quản Lý Phôi (Cost Master)"
+                  : ppcSection === "rules"
+                  ? "Amazon PPC - Quản Lý Rule PPC"
+                  : "Amazon PPC Dashboard & Analytics"
                 : sidebarTab === "mockups"
                 ? "Auto Mockup Generator"
                 : "Bảng Trello Kanban & Listing"}
@@ -333,7 +429,13 @@ export function ListingWorkspace({
             </div>
           ) : viewMode === "ppc" ? (
             <div className="h-full w-full overflow-y-auto p-6 bg-slate-50 thin-scrollbar">
-              <PpcDashboard isEmbedded={true} />
+              {ppcSection === "phoi" ? (
+                <PpcCostMasterStandalone />
+              ) : ppcSection === "rules" ? (
+                <PpcRuleManagerStandalone />
+              ) : (
+                <PpcDashboard isEmbedded={true} />
+              )}
             </div>
           ) : (
             <div className="h-full w-full overflow-hidden">

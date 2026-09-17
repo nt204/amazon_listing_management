@@ -12,7 +12,6 @@ import {
   campaignPerformanceFromFacts,
   generatePpcAlerts,
   generatePpcRecommendations,
-  generateTargetBidRecommendations,
   groupPpcByKeywordMatchType,
   groupPpcByMatchType,
   groupPpcByTargetType,
@@ -39,10 +38,7 @@ import {
   upsertPpcSearchTerms,
   upsertPpcPerformance,
 } from "./repository";
-import {
-  evaluateOrnamentTargetBid,
-  isGlassOrnamentTarget,
-} from "./rules-ornament";
+import { getCommonTargetRecommendations } from "./sku-architecture-service";
 import type {
   PpcAdType,
   PpcAlert,
@@ -190,29 +186,16 @@ export async function getPpcAnalyticsData(
     if (recommendation.recType === "NEGATIVE_KEYWORD") return !existingNegatives.has(key);
     return true;
   });
-  const ornamentRows: PpcPerformanceRow[] = [];
-  const standardRows: PpcPerformanceRow[] = [];
-  for (const row of performanceRows) {
-    if (row.grain === "TARGET") {
-      if (isGlassOrnamentTarget(row)) {
-        ornamentRows.push(row);
-      } else {
-        standardRows.push(row);
-      }
-    }
-  }
-
-  const ornamentRecs: PpcRecommendation[] = [];
-  for (const row of ornamentRows) {
-    const rec = evaluateOrnamentTargetBid(row);
-    if (rec) ornamentRecs.push(rec);
-  }
-
-  const standardRecs = generateTargetBidRecommendations(standardRows, targetAcos);
+  const commonTargetRecs = targetState.length > 0
+    ? (await getCommonTargetRecommendations(
+        targetState[0]?.storeId || stores[0]?.id || "",
+        targetState,
+        days,
+      )).recommendations
+    : [];
 
   const recommendations: PpcRecommendation[] = [
-    ...ornamentRecs,
-    ...standardRecs,
+    ...commonTargetRecs,
     ...queryRecommendations,
   ];
   const searchTermSummary = calculatePpcSearchTermSummary(rows);

@@ -1,0 +1,1023 @@
+"use client";
+
+import { useState, useMemo } from "react";
+import {
+  Tag,
+  Funnel,
+  CheckCircle,
+  X,
+  CaretRight,
+  ArrowUpRight,
+  ArrowDownRight,
+  Pause,
+  Clock,
+  CheckSquare,
+  Square,
+  MagnifyingGlass,
+  ArrowsDownUp,
+  CaretUp,
+  CaretDown,
+  Fire,
+  WarningCircle,
+  TrendUp,
+  TrendDown,
+  Sparkle,
+} from "@phosphor-icons/react";
+import type { SkuRecommendationGroup } from "@/lib/ppc/sku-architecture-types";
+import type { PpcRecommendation } from "@/lib/ppc/types";
+
+interface PpcSkuRecommendationGroupProps {
+  groups: SkuRecommendationGroup[];
+  allRecommendations: PpcRecommendation[];
+  isLoading: boolean;
+  onApproveToQueue: (items: Array<{ recommendation: PpcRecommendation; userFinalBid?: number }>) => Promise<void>;
+  onOpenActionQueue: () => void;
+  pendingQueueCount: number;
+}
+
+export type QuickFilterType =
+  | "ALL"
+  | "INCREASE"
+  | "DECREASE"
+  | "PAUSE"
+  | "BLEEDING"
+  | "PROFITABLE"
+  | "ZERO_SPEND"
+  | "ZERO_SALES";
+
+export type SortField =
+  | "sku"
+  | "spend"
+  | "sales"
+  | "acos"
+  | "breakEvenAcos"
+  | "totalRecommendations"
+  | "increaseCount"
+  | "decreaseCount"
+  | "pauseCount";
+
+export type SortOrder = "asc" | "desc";
+
+export function PpcSkuRecommendationGroupView({
+  groups,
+  allRecommendations,
+  isLoading,
+  onApproveToQueue,
+  onOpenActionQueue,
+  pendingQueueCount,
+}: PpcSkuRecommendationGroupProps) {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedPhôi, setSelectedPhôi] = useState("ALL");
+  const [quickFilter, setQuickFilter] = useState<QuickFilterType>("ALL");
+  const [sortField, setSortField] = useState<SortField>("totalRecommendations");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
+  const [selectedSkuGroup, setSelectedSkuGroup] = useState<SkuRecommendationGroup | null>(null);
+
+  // Detail View State
+  const [selectedRecIds, setSelectedRecIds] = useState<Set<string>>(new Set());
+  const [userFinalBids, setUserFinalBids] = useState<Record<string, number>>({});
+  const [isApproving, setIsApproving] = useState(false);
+  const [modalSearch, setModalSearch] = useState("");
+  const [modalActionFilter, setModalActionFilter] = useState<"ALL" | "BID_INCREASE" | "BID_DECREASE" | "PAUSE_TARGET">("ALL");
+
+  // Dynamic available Phôi list with counts
+  const phôiOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const g of groups) {
+      const p = g.productType || "Chưa xác định";
+      counts.set(p, (counts.get(p) || 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count]) => ({ name, count }));
+  }, [groups]);
+
+  // Quick Filter Counts for badges
+  const filterCounts = useMemo(() => {
+    let increase = 0;
+    let decrease = 0;
+    let pause = 0;
+    let bleeding = 0;
+    let profitable = 0;
+    let zeroSpend = 0;
+    let zeroSales = 0;
+
+    for (const g of groups) {
+      if (g.increaseCount > 0) increase++;
+      if (g.decreaseCount > 0) decrease++;
+      if (g.pauseCount > 0) pause++;
+      if (g.spend > 0 && g.acos > g.breakEvenAcos) bleeding++;
+      if (g.sales > 0 && g.acos <= g.breakEvenAcos) profitable++;
+      if (g.spend === 0) zeroSpend++;
+      if (g.spend > 0 && g.sales === 0) zeroSales++;
+    }
+
+    return {
+      all: groups.length,
+      increase,
+      decrease,
+      pause,
+      bleeding,
+      profitable,
+      zeroSpend,
+      zeroSales,
+    };
+  }, [groups]);
+
+  // Handle Sort Toggle
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortOrder(sortOrder === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortOrder(field === "sku" ? "asc" : "desc");
+    }
+  };
+
+  // Filtered & Sorted Level 1 Groups
+  const filteredGroups = useMemo(() => {
+    const result = groups.filter((g) => {
+      // 1. Search term
+      if (searchTerm) {
+        const q = searchTerm.toLowerCase().trim();
+        const matchSku = g.sku.toLowerCase().includes(q);
+        const matchAsin = g.asin.toLowerCase().includes(q);
+        if (!matchSku && !matchAsin) return false;
+      }
+
+      // 2. Phôi filter
+      if (selectedPhôi !== "ALL" && g.productType !== selectedPhôi) {
+        return false;
+      }
+
+      // 3. Quick Filter
+      switch (quickFilter) {
+        case "INCREASE":
+          return g.increaseCount > 0;
+        case "DECREASE":
+          return g.decreaseCount > 0;
+        case "PAUSE":
+          return g.pauseCount > 0;
+        case "BLEEDING":
+          return g.spend > 0 && g.acos > g.breakEvenAcos;
+        case "PROFITABLE":
+          return g.sales > 0 && g.acos <= g.breakEvenAcos;
+        case "ZERO_SPEND":
+          return g.spend === 0;
+        case "ZERO_SALES":
+          return g.spend > 0 && g.sales === 0;
+        case "ALL":
+        default:
+          return true;
+      }
+    });
+
+    // 4. Sort
+    return result.sort((a, b) => {
+      const valA = a[sortField];
+      const valB = b[sortField];
+
+      if (typeof valA === "string" && typeof valB === "string") {
+        return sortOrder === "asc" ? valA.localeCompare(valB) : valB.localeCompare(valA);
+      }
+
+      const numA = typeof valA === "number" ? valA : 0;
+      const numB = typeof valB === "number" ? valB : 0;
+      return sortOrder === "asc" ? numA - numB : numB - numA;
+    });
+  }, [groups, searchTerm, selectedPhôi, quickFilter, sortField, sortOrder]);
+
+  // Recommendations for the currently selected SKU (Modal)
+  const currentSkuRecs = useMemo(() => {
+    if (!selectedSkuGroup) return [];
+    return allRecommendations
+      .filter((r) => (r.sku || "").toUpperCase() === selectedSkuGroup.sku.toUpperCase())
+      .filter((r) => {
+        if (modalActionFilter !== "ALL" && r.recType !== modalActionFilter) return false;
+        if (modalSearch) {
+          const q = modalSearch.toLowerCase().trim();
+          const matchKw = (r.keyword || "").toLowerCase().includes(q);
+          const matchCamp = (r.campaignName || "").toLowerCase().includes(q);
+          if (!matchKw && !matchCamp) return false;
+        }
+        return true;
+      });
+  }, [allRecommendations, selectedSkuGroup, modalActionFilter, modalSearch]);
+
+  // Select all inside SKU Detail
+  const handleToggleSelectAll = () => {
+    if (selectedRecIds.size === currentSkuRecs.length) {
+      setSelectedRecIds(new Set());
+    } else {
+      setSelectedRecIds(new Set(currentSkuRecs.map((r) => r.id)));
+    }
+  };
+
+  const handleToggleSelectOne = (id: string) => {
+    const next = new Set(selectedRecIds);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    setSelectedRecIds(next);
+  };
+
+  const handleFinalBidChange = (id: string, val: string) => {
+    const num = parseFloat(val);
+    setUserFinalBids((prev) => ({
+      ...prev,
+      [id]: isNaN(num) ? 0 : num,
+    }));
+  };
+
+  // Approve selected into Action Queue
+  const handleApproveSelected = async () => {
+    if (selectedRecIds.size === 0) return;
+    try {
+      setIsApproving(true);
+      const itemsToApprove = currentSkuRecs
+        .filter((r) => selectedRecIds.has(r.id))
+        .map((r) => ({
+          recommendation: r,
+          userFinalBid: userFinalBids[r.id] ?? r.recommendedBid ?? r.currentBid ?? 0,
+        }));
+
+      await onApproveToQueue(itemsToApprove);
+      setSelectedRecIds(new Set());
+    } catch (err) {
+      alert("Lỗi khi duyệt đề xuất: " + String(err));
+    } finally {
+      setIsApproving(false);
+    }
+  };
+
+  // Approve single
+  const handleApproveSingle = async (rec: PpcRecommendation) => {
+    try {
+      setIsApproving(true);
+      await onApproveToQueue([
+        {
+          recommendation: rec,
+          userFinalBid: userFinalBids[rec.id] ?? rec.recommendedBid ?? rec.currentBid ?? 0,
+        },
+      ]);
+    } catch (err) {
+      alert("Lỗi khi duyệt đề xuất: " + String(err));
+    } finally {
+      setIsApproving(false);
+    }
+  };
+
+  const renderActionBadge = (recType: string) => {
+    switch (recType) {
+      case "BID_INCREASE":
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+            <ArrowUpRight size={13} weight="bold" />
+            Tăng
+          </span>
+        );
+      case "BID_DECREASE":
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+            <ArrowDownRight size={13} weight="bold" />
+            Giảm
+          </span>
+        );
+      case "PAUSE_TARGET":
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+            <Pause size={13} weight="bold" />
+            Tạm dừng
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[11px] font-bold bg-sky-50 text-sky-700 border border-sky-200">
+            {recType}
+          </span>
+        );
+    }
+  };
+
+  // Filtered recommendations count in filtered groups
+  const filteredRecommendationsCount = useMemo(() => {
+    return filteredGroups.reduce((acc, g) => acc + g.totalRecommendations, 0);
+  }, [filteredGroups]);
+
+  // Aggregate stats for filtered groups
+  const filteredAggregates = useMemo(() => {
+    let spend = 0;
+    let sales = 0;
+    for (const g of filteredGroups) {
+      spend += g.spend;
+      sales += g.sales;
+    }
+    const acos = sales > 0 ? (spend / sales) * 100 : (spend > 0 ? 999 : 0);
+    return { spend, sales, acos };
+  }, [filteredGroups]);
+
+  // Render Sort Header Helper
+  const renderSortHeader = (label: string, field: SortField, align: "left" | "right" | "center" = "left") => {
+    const isActive = sortField === field;
+    return (
+      <th
+        onClick={() => handleSort(field)}
+        className={`py-3 px-3 text-${align} select-none cursor-pointer hover:bg-slate-100/80 transition group`}
+        title={`Click để sắp xếp theo ${label}`}
+      >
+        <div className={`inline-flex items-center gap-1 ${align === "right" ? "justify-end" : align === "center" ? "justify-center" : "justify-start"}`}>
+          <span className={isActive ? "text-indigo-700 font-black" : "text-slate-700 font-bold group-hover:text-slate-900"}>
+            {label}
+          </span>
+          <span className="text-slate-400">
+            {isActive ? (
+              sortOrder === "asc" ? (
+                <CaretUp size={13} weight="bold" className="text-indigo-600" />
+              ) : (
+                <CaretDown size={13} weight="bold" className="text-indigo-600" />
+              )
+            ) : (
+              <ArrowsDownUp size={11} className="opacity-0 group-hover:opacity-60 transition" />
+            )}
+          </span>
+        </div>
+      </th>
+    );
+  };
+
+  const isFilterActive = searchTerm !== "" || selectedPhôi !== "ALL" || quickFilter !== "ALL";
+
+  return (
+    <div className="space-y-4">
+      {/* Top Filter Area: Search, Phôi & Summary */}
+      <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Search Box */}
+            <div className="relative">
+              <MagnifyingGlass
+                size={14}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+              />
+              <input
+                type="text"
+                placeholder="Tìm theo SKU hoặc ASIN..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-8 pr-7 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600/20 w-60 shadow-2xs"
+              />
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => setSearchTerm("")}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  <X size={12} weight="bold" />
+                </button>
+              )}
+            </div>
+
+            {/* Dynamic Phôi Dropdown */}
+            <div className="flex items-center gap-1.5 text-xs text-slate-600 font-semibold bg-white px-2.5 py-1.5 rounded-lg border border-slate-200 shadow-2xs">
+              <Tag size={14} className="text-slate-400" />
+              <span className="text-slate-500">Phôi:</span>
+              <select
+                value={selectedPhôi}
+                onChange={(e) => setSelectedPhôi(e.target.value)}
+                className="bg-transparent border-none text-xs text-slate-800 font-bold focus:outline-none cursor-pointer pr-1"
+              >
+                <option value="ALL">Tất cả Phôi ({groups.length})</option>
+                {phôiOptions.map((p) => (
+                  <option key={p.name} value={p.name}>
+                    {p.name} ({p.count})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Reset Filter Button */}
+            {isFilterActive && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchTerm("");
+                  setSelectedPhôi("ALL");
+                  setQuickFilter("ALL");
+                }}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-600 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 transition cursor-pointer shadow-2xs"
+                title="Xóa toàn bộ bộ lọc"
+              >
+                <X size={13} weight="bold" />
+                <span>Đặt lại</span>
+              </button>
+            )}
+          </div>
+
+          {/* Counts & Aggregates Badge */}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 text-xs text-slate-600 font-medium bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs">
+              <span>
+                Hiển thị <strong className="text-slate-900 font-bold">{filteredGroups.length}</strong>/{groups.length} SKU
+              </span>
+              <span className="text-slate-300">•</span>
+              <span>
+                <strong className="text-indigo-700 font-bold">{filteredRecommendationsCount}</strong> đề xuất
+              </span>
+              <span className="text-slate-300">•</span>
+              <span>
+                Spend: <strong className="text-slate-900 font-mono font-bold">${filteredAggregates.spend.toFixed(0)}</strong>
+              </span>
+              <span className="text-slate-300">•</span>
+              <span>
+                Sales: <strong className="text-emerald-700 font-mono font-bold">${filteredAggregates.sales.toFixed(0)}</strong>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Quick Filter Chips (BỘ LỌC NHANH - TINH TẾ, GỌN GÀNG, 1 HÀNG) */}
+        <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-200/70">
+          <span className="text-[11px] font-black uppercase text-slate-400 tracking-wider flex items-center gap-1 mr-0.5">
+            <Funnel size={12} weight="bold" className="text-indigo-600" />
+            <span>Lọc:</span>
+          </span>
+
+          {/* All */}
+          <button
+            type="button"
+            onClick={() => setQuickFilter("ALL")}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${
+              quickFilter === "ALL"
+                ? "bg-indigo-50 text-indigo-700 border-indigo-300 ring-1 ring-indigo-200 shadow-2xs font-extrabold"
+                : "bg-slate-100/90 text-slate-700 hover:bg-slate-200/80 border-slate-200"
+            }`}
+          >
+            <span>Tất cả</span>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+              quickFilter === "ALL" ? "bg-indigo-100 text-indigo-800" : "bg-white text-slate-700 shadow-2xs border border-slate-200/60"
+            }`}>
+              {filterCounts.all}
+            </span>
+          </button>
+
+          {/* Increase */}
+          <button
+            type="button"
+            onClick={() => setQuickFilter(quickFilter === "INCREASE" ? "ALL" : "INCREASE")}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${
+              quickFilter === "INCREASE"
+                ? "bg-emerald-100 text-emerald-900 border-emerald-400 ring-1 ring-emerald-300 shadow-2xs font-extrabold"
+                : "bg-emerald-50/70 text-emerald-800 hover:bg-emerald-100/80 border-emerald-200/80"
+            }`}
+          >
+            <ArrowUpRight size={12} weight="bold" className="text-emerald-600" />
+            <span>Tăng Bid</span>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+              quickFilter === "INCREASE" ? "bg-emerald-200 text-emerald-950" : "bg-white text-emerald-900 shadow-2xs border border-emerald-200/60"
+            }`}>
+              {filterCounts.increase}
+            </span>
+          </button>
+
+          {/* Decrease */}
+          <button
+            type="button"
+            onClick={() => setQuickFilter(quickFilter === "DECREASE" ? "ALL" : "DECREASE")}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${
+              quickFilter === "DECREASE"
+                ? "bg-rose-100 text-rose-900 border-rose-400 ring-1 ring-rose-300 shadow-2xs font-extrabold"
+                : "bg-rose-50/70 text-rose-800 hover:bg-rose-100/80 border-rose-200/80"
+            }`}
+          >
+            <ArrowDownRight size={12} weight="bold" className="text-rose-600" />
+            <span>Giảm Bid</span>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+              quickFilter === "DECREASE" ? "bg-rose-200 text-rose-950" : "bg-white text-rose-900 shadow-2xs border border-rose-200/60"
+            }`}>
+              {filterCounts.decrease}
+            </span>
+          </button>
+
+          {/* Pause */}
+          <button
+            type="button"
+            onClick={() => setQuickFilter(quickFilter === "PAUSE" ? "ALL" : "PAUSE")}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${
+              quickFilter === "PAUSE"
+                ? "bg-amber-100 text-amber-950 border-amber-400 ring-1 ring-amber-300 shadow-2xs font-extrabold"
+                : "bg-amber-50/70 text-amber-900 hover:bg-amber-100/80 border-amber-200/80"
+            }`}
+          >
+            <Pause size={12} weight="bold" className="text-amber-600" />
+            <span>Pause</span>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+              quickFilter === "PAUSE" ? "bg-amber-200 text-amber-950" : "bg-white text-amber-950 shadow-2xs border border-amber-200/60"
+            }`}>
+              {filterCounts.pause}
+            </span>
+          </button>
+
+          {/* Bleeding: ACoS > BE ACoS */}
+          <button
+            type="button"
+            onClick={() => setQuickFilter(quickFilter === "BLEEDING" ? "ALL" : "BLEEDING")}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${
+              quickFilter === "BLEEDING"
+                ? "bg-red-100 text-red-950 border-red-400 ring-1 ring-red-300 shadow-2xs font-extrabold"
+                : "bg-red-50/70 text-red-800 hover:bg-red-100/80 border-red-200/80"
+            }`}
+            title="Các SKU có ACoS vượt ngưỡng hòa vốn (đang chạy lỗ)"
+          >
+            <WarningCircle size={12} weight="bold" className="text-red-600" />
+            <span>Lỗ (ACoS cao)</span>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+              quickFilter === "BLEEDING" ? "bg-red-200 text-red-950" : "bg-white text-red-950 shadow-2xs border border-red-200/60"
+            }`}>
+              {filterCounts.bleeding}
+            </span>
+          </button>
+
+          {/* Profitable: ACoS <= BE ACoS */}
+          <button
+            type="button"
+            onClick={() => setQuickFilter(quickFilter === "PROFITABLE" ? "ALL" : "PROFITABLE")}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${
+              quickFilter === "PROFITABLE"
+                ? "bg-teal-100 text-teal-950 border-teal-400 ring-1 ring-teal-300 shadow-2xs font-extrabold"
+                : "bg-teal-50/70 text-teal-800 hover:bg-teal-100/80 border-teal-200/80"
+            }`}
+            title="Các SKU có ACoS thấp hơn hoặc bằng mức hòa vốn (đang có lãi)"
+          >
+            <CheckCircle size={12} weight="bold" className="text-teal-600" />
+            <span>ACoS Tốt</span>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+              quickFilter === "PROFITABLE" ? "bg-teal-200 text-teal-950" : "bg-white text-teal-950 shadow-2xs border border-teal-200/60"
+            }`}>
+              {filterCounts.profitable}
+            </span>
+          </button>
+
+          {/* Zero Spend: Chưa cắn tiền */}
+          <button
+            type="button"
+            onClick={() => setQuickFilter(quickFilter === "ZERO_SPEND" ? "ALL" : "ZERO_SPEND")}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${
+              quickFilter === "ZERO_SPEND"
+                ? "bg-sky-100 text-sky-950 border-sky-400 ring-1 ring-sky-300 shadow-2xs font-extrabold"
+                : "bg-sky-50/70 text-sky-800 hover:bg-sky-100/80 border-sky-200/80"
+            }`}
+            title="Các SKU chưa phát sinh chi phí quảng cáo (Spend = $0)"
+          >
+            <Clock size={12} weight="bold" className="text-sky-600" />
+            <span>Chưa cắn tiền</span>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+              quickFilter === "ZERO_SPEND" ? "bg-sky-200 text-sky-950" : "bg-white text-sky-950 shadow-2xs border border-sky-200/60"
+            }`}>
+              {filterCounts.zeroSpend}
+            </span>
+          </button>
+
+          {/* Zero Sales: Tiêu tiền chưa ra đơn */}
+          <button
+            type="button"
+            onClick={() => setQuickFilter(quickFilter === "ZERO_SALES" ? "ALL" : "ZERO_SALES")}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${
+              quickFilter === "ZERO_SALES"
+                ? "bg-purple-100 text-purple-950 border-purple-400 ring-1 ring-purple-300 shadow-2xs font-extrabold"
+                : "bg-purple-50/70 text-purple-800 hover:bg-purple-100/80 border-purple-200/80"
+            }`}
+            title="Các SKU đã tiêu tiền nhưng chưa ra đơn hàng nào"
+          >
+            <Fire size={12} weight="bold" className="text-purple-600" />
+            <span>Chưa ra đơn</span>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+              quickFilter === "ZERO_SALES" ? "bg-purple-200 text-purple-950" : "bg-white text-purple-950 shadow-2xs border border-purple-200/60"
+            }`}>
+              {filterCounts.zeroSales}
+            </span>
+          </button>
+        </div>
+      </div>
+
+      {/* Level 1 Table: Grouped by SKU */}
+      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
+        <table className="w-full text-left text-xs">
+          <thead className="bg-slate-50/90 text-slate-600 border-b border-slate-200 font-bold">
+            <tr>
+              {renderSortHeader("SKU", "sku", "left")}
+              <th className="py-3 px-3">ASIN</th>
+              <th className="py-3 px-3">Phôi</th>
+              {renderSortHeader("Spend", "spend", "right")}
+              {renderSortHeader("Sales", "sales", "right")}
+              {renderSortHeader("ACoS", "acos", "right")}
+              {renderSortHeader("BE ACoS", "breakEvenAcos", "right")}
+              {renderSortHeader("Đề xuất", "totalRecommendations", "center")}
+              {renderSortHeader("Tăng Bid", "increaseCount", "center")}
+              {renderSortHeader("Giảm Bid", "decreaseCount", "center")}
+              {renderSortHeader("Pause", "pauseCount", "center")}
+              <th className="py-3 px-3 text-center">Chi tiết</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 text-slate-700">
+            {filteredGroups.length === 0 ? (
+              <tr>
+                <td colSpan={12} className="py-12 text-center text-slate-400 font-medium">
+                  Không tìm thấy SKU nào phù hợp với bộ lọc hiện tại.
+                </td>
+              </tr>
+            ) : (
+              filteredGroups.map((group) => {
+                const isBleeding = group.spend > 0 && group.acos > group.breakEvenAcos;
+                const isGoodAcos = group.sales > 0 && group.acos <= group.breakEvenAcos;
+
+                return (
+                  <tr
+                    key={group.sku}
+                    onClick={() => setSelectedSkuGroup(group)}
+                    className="hover:bg-indigo-50/30 transition cursor-pointer group"
+                  >
+                    <td className="py-3 px-3 font-bold text-slate-900 group-hover:text-indigo-600 transition">
+                      {group.sku}
+                    </td>
+                    <td className="py-3 px-3 text-slate-500 font-mono">{group.asin || "—"}</td>
+                    <td className="py-3 px-3">
+                      <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                        {group.productType}
+                      </span>
+                    </td>
+                    <td className="py-3 px-3 text-right text-slate-900 font-bold font-mono">
+                      ${group.spend.toFixed(2)}
+                    </td>
+                    <td className="py-3 px-3 text-right text-emerald-700 font-black font-mono">
+                      ${group.sales.toFixed(2)}
+                    </td>
+                    <td className="py-3 px-3 text-right font-mono font-bold">
+                      <span
+                        className={
+                          isBleeding
+                            ? "text-rose-600"
+                            : isGoodAcos
+                            ? "text-emerald-700"
+                            : "text-slate-800"
+                        }
+                      >
+                        {group.acos.toFixed(1)}%
+                      </span>
+                    </td>
+                    <td className="py-3 px-3 text-right font-black text-amber-700 font-mono">
+                      {group.breakEvenAcos.toFixed(1)}%
+                    </td>
+                    <td className="py-3 px-3 text-center">
+                      <span className="px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-extrabold text-xs border border-indigo-200">
+                        {group.totalRecommendations}
+                      </span>
+                    </td>
+                    <td className="py-3 px-3 text-center font-black text-emerald-700 font-mono">
+                      {group.increaseCount > 0 ? group.increaseCount : "—"}
+                    </td>
+                    <td className="py-3 px-3 text-center font-black text-rose-700 font-mono">
+                      {group.decreaseCount > 0 ? group.decreaseCount : "—"}
+                    </td>
+                    <td className="py-3 px-3 text-center font-black text-amber-800 font-mono">
+                      {group.pauseCount > 0 ? group.pauseCount : "—"}
+                    </td>
+                    <td className="py-3 px-3 text-center">
+                      <button className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold text-indigo-700 bg-indigo-50/70 hover:bg-indigo-100/90 border border-indigo-200/70 shadow-2xs transition cursor-pointer">
+                        <span>Chi tiết</span>
+                        <CaretRight size={12} weight="bold" />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* SKU RECOMMENDATION DETAIL MODAL */}
+      {selectedSkuGroup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="w-full max-w-6xl max-h-[92vh] bg-white border border-slate-200 rounded-2xl flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/70">
+              <div>
+                <div className="flex items-center gap-3">
+                  <h2 className="text-base font-black text-slate-900">
+                    ĐỀ XUẤT CHO SKU: <span className="text-indigo-600">{selectedSkuGroup.sku}</span>
+                  </h2>
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                    {selectedSkuGroup.productType}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  ASIN: {selectedSkuGroup.asin} • Tổng cộng {currentSkuRecs.length} đề xuất tối ưu hóa
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setSelectedSkuGroup(null);
+                  setModalSearch("");
+                  setModalActionFilter("ALL");
+                }}
+                className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto space-y-6">
+              {/* TOP BLOCKS: BLOCK A & BLOCK B */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Block A — SKU Economics */}
+                <div className="bg-slate-50/80 rounded-2xl p-4 border border-slate-200 space-y-3">
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                    <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                      Block A — SKU Economics
+                    </h3>
+                    <span className="text-[10px] text-slate-500">
+                      CR Source: <strong className="text-slate-800">{selectedSkuGroup.economics.crSource}</strong>
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-5 gap-2 text-center pt-1">
+                    <div className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs">
+                      <div className="text-[10px] font-semibold text-slate-500">Price</div>
+                      <div className="text-xs font-black text-slate-900 font-mono mt-0.5">
+                        ${selectedSkuGroup.economics.sellingPrice.toFixed(2)}
+                      </div>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs">
+                      <div className="text-[10px] font-semibold text-slate-500">Profit B. Ads</div>
+                      <div className="text-xs font-black text-emerald-700 font-mono mt-0.5">
+                        ${selectedSkuGroup.economics.profitBeforeAds.toFixed(2)}
+                      </div>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs">
+                      <div className="text-[10px] font-semibold text-slate-500">BE ACoS</div>
+                      <div className="text-xs font-black text-amber-700 font-mono mt-0.5">
+                        {selectedSkuGroup.breakEvenAcos.toFixed(1)}%
+                      </div>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs">
+                      <div className="text-[10px] font-semibold text-slate-500">CR</div>
+                      <div className="text-xs font-bold text-slate-800 font-mono mt-0.5">
+                        {(selectedSkuGroup.economics.cr * 100).toFixed(1)}%
+                      </div>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs">
+                      <div className="text-[10px] font-semibold text-slate-500">Max Bid</div>
+                      <div className="text-xs font-black text-indigo-600 font-mono mt-0.5">
+                        ${selectedSkuGroup.economics.maxBid.toFixed(2)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Block B — PPC Summary */}
+                <div className="bg-indigo-50/40 rounded-2xl p-4 border border-indigo-100 space-y-3">
+                  <div className="flex items-center justify-between border-b border-indigo-100 pb-2">
+                    <h3 className="text-xs font-black text-indigo-900 uppercase tracking-wider">
+                      Block B — PPC Summary
+                    </h3>
+                    <span className="text-[10px] text-indigo-600 font-bold">Chu kỳ 30 ngày gần nhất</span>
+                  </div>
+
+                  <div className="grid grid-cols-4 gap-2 text-center pt-1">
+                    <div className="bg-white p-2.5 rounded-xl border border-indigo-100 shadow-2xs">
+                      <div className="text-[10px] font-semibold text-slate-500">Spend</div>
+                      <div className="text-xs font-black text-slate-900 font-mono mt-0.5">
+                        ${selectedSkuGroup.spend.toFixed(2)}
+                      </div>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-xl border border-indigo-100 shadow-2xs">
+                      <div className="text-[10px] font-semibold text-slate-500">Sales</div>
+                      <div className="text-xs font-black text-emerald-700 font-mono mt-0.5">
+                        ${selectedSkuGroup.sales.toFixed(2)}
+                      </div>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-xl border border-indigo-100 shadow-2xs">
+                      <div className="text-[10px] font-semibold text-slate-500">Orders</div>
+                      <div className="text-xs font-black text-slate-900 font-mono mt-0.5">
+                        {selectedSkuGroup.orders}
+                      </div>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-xl border border-indigo-100 shadow-2xs">
+                      <div className="text-[10px] font-semibold text-slate-500">ACoS</div>
+                      <div className="text-xs font-black text-amber-700 font-mono mt-0.5">
+                        {selectedSkuGroup.acos.toFixed(1)}%
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* BLOCK C: RECOMMENDATIONS TABLE */}
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50/80 p-3 rounded-xl border border-slate-200">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">
+                      Block C — Đề Xuất ({currentSkuRecs.length})
+                    </h3>
+
+                    {/* Modal search */}
+                    <div className="relative">
+                      <MagnifyingGlass size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        placeholder="Lọc từ khóa / campaign..."
+                        value={modalSearch}
+                        onChange={(e) => setModalSearch(e.target.value)}
+                        className="pl-7 pr-3 py-1 bg-white border border-slate-200 rounded-lg text-xs w-48 focus:outline-none focus:border-indigo-600"
+                      />
+                    </div>
+
+                    {/* Modal action filter pills */}
+                    <div className="flex items-center gap-1 bg-white p-0.5 rounded-lg border border-slate-200 text-xs">
+                      <button
+                        onClick={() => setModalActionFilter("ALL")}
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                          modalActionFilter === "ALL" ? "bg-indigo-50 text-indigo-700" : "text-slate-600 hover:text-slate-900"
+                        }`}
+                      >
+                        Tất cả
+                      </button>
+                      <button
+                        onClick={() => setModalActionFilter("BID_INCREASE")}
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                          modalActionFilter === "BID_INCREASE" ? "bg-emerald-50 text-emerald-700" : "text-slate-600 hover:text-emerald-600"
+                        }`}
+                      >
+                        ↑ Tăng
+                      </button>
+                      <button
+                        onClick={() => setModalActionFilter("BID_DECREASE")}
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                          modalActionFilter === "BID_DECREASE" ? "bg-rose-50 text-rose-700" : "text-slate-600 hover:text-rose-600"
+                        }`}
+                      >
+                        ↓ Giảm
+                      </button>
+                      <button
+                        onClick={() => setModalActionFilter("PAUSE_TARGET")}
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                          modalActionFilter === "PAUSE_TARGET" ? "bg-amber-50 text-amber-800" : "text-slate-600 hover:text-amber-700"
+                        }`}
+                      >
+                        ⏸ Pause
+                      </button>
+                    </div>
+
+                    {selectedRecIds.size > 0 && (
+                      <span className="text-xs text-indigo-600 font-bold">
+                        (Đã chọn {selectedRecIds.size} mục)
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleApproveSelected}
+                      disabled={selectedRecIds.size === 0 || isApproving}
+                      className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition shadow-2xs disabled:opacity-40 cursor-pointer"
+                    >
+                      <CheckCircle size={14} weight="bold" />
+                      <span>{isApproving ? "Đang xử lý..." : `Duyệt ${selectedRecIds.size} mục đã chọn`}</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white max-h-96 shadow-2xs">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50/90 text-slate-600 sticky top-0 border-b border-slate-200 font-bold z-10">
+                      <tr>
+                        <th className="py-2.5 px-3 w-8">
+                          <button
+                            onClick={handleToggleSelectAll}
+                            className="text-slate-400 hover:text-slate-700 cursor-pointer"
+                          >
+                            {selectedRecIds.size === currentSkuRecs.length && currentSkuRecs.length > 0 ? (
+                              <CheckSquare size={16} className="text-indigo-600" weight="fill" />
+                            ) : (
+                              <Square size={16} />
+                            )}
+                          </button>
+                        </th>
+                        <th className="py-2.5 px-2 w-24">Hành động</th>
+                        <th className="py-2.5 px-3">Target / Keyword</th>
+                        <th className="py-2.5 px-3">Campaign</th>
+                        <th className="py-2.5 px-3">Type</th>
+                        <th className="py-2.5 px-3 text-right">Current Bid</th>
+                        <th className="py-2.5 px-3 text-right">Suggested Bid</th>
+                        <th className="py-2.5 px-3 text-right">Final Bid</th>
+                        <th className="py-2.5 px-3">Rule</th>
+                        <th className="sticky right-0 z-20 w-20 border-l border-slate-200 bg-slate-50 py-2.5 px-2 text-center shadow-[-6px_0_10px_-8px_rgba(15,23,42,0.35)]">Thao tác</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-slate-700">
+                      {currentSkuRecs.length === 0 ? (
+                        <tr>
+                          <td colSpan={10} className="py-8 text-center text-slate-400">
+                            Không có đề xuất nào cho SKU này.
+                          </td>
+                        </tr>
+                      ) : (
+                        currentSkuRecs.map((rec) => {
+                          const isSelected = selectedRecIds.has(rec.id);
+                          const finalBid = userFinalBids[rec.id] ?? rec.recommendedBid ?? rec.currentBid ?? 0;
+
+                          return (
+                            <tr
+                              key={rec.id}
+                              className={`hover:bg-indigo-50/20 transition ${
+                                isSelected ? "bg-indigo-50/40" : ""
+                              }`}
+                            >
+                              <td className="py-2.5 px-3">
+                                <button
+                                  onClick={() => handleToggleSelectOne(rec.id)}
+                                  className="text-slate-400 hover:text-slate-700 cursor-pointer"
+                                >
+                                  {isSelected ? (
+                                    <CheckSquare size={16} className="text-indigo-600" weight="fill" />
+                                  ) : (
+                                    <Square size={16} />
+                                  )}
+                                </button>
+                              </td>
+                              <td className="py-2.5 px-2 whitespace-nowrap">
+                                {renderActionBadge(rec.recType)}
+                              </td>
+                              <td className="py-2.5 px-3 font-bold text-slate-900 max-w-xs truncate" title={rec.keyword}>
+                                {rec.keyword}
+                              </td>
+                              <td className="py-2.5 px-3 text-slate-500 max-w-[180px] truncate" title={rec.campaignName}>
+                                {rec.campaignName || "—"}
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                  {rec.ruleProfile ? rec.ruleProfile.split(" ")[1] || "SP" : rec.adType}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-mono text-slate-600">
+                                ${rec.currentBid ? rec.currentBid.toFixed(2) : "0.00"}
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-black text-indigo-700 font-mono">
+                                {rec.recType === "PAUSE_TARGET" ? "—" : `$${(rec.recommendedBid || 0).toFixed(2)}`}
+                              </td>
+                              <td className="py-2.5 px-3 text-right">
+                                {rec.recType === "PAUSE_TARGET" ? (
+                                  <span className="text-slate-400 font-mono font-bold">Pause</span>
+                                ) : (
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    value={finalBid ? finalBid.toFixed(2) : ""}
+                                    onChange={(e) => handleFinalBidChange(rec.id, e.target.value)}
+                                    className="w-16 px-1.5 py-0.5 bg-slate-50 border border-slate-300 rounded text-right text-slate-900 font-mono text-xs focus:outline-none focus:border-indigo-600 focus:bg-white"
+                                  />
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3 text-[11px] text-slate-500 whitespace-nowrap">
+                                {rec.ruleProfile || "v1.0"}
+                              </td>
+                              <td className={`sticky right-0 z-[5] border-l border-slate-100 py-2.5 px-2 text-center shadow-[-6px_0_10px_-8px_rgba(15,23,42,0.3)] ${isSelected ? "bg-indigo-50" : "bg-white"}`}>
+                                <button
+                                  onClick={() => handleApproveSingle(rec)}
+                                  disabled={isApproving}
+                                  className="whitespace-nowrap px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold text-[11px] border border-indigo-200 transition cursor-pointer"
+                                >
+                                  Duyệt
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-between px-6 py-3.5 border-t border-slate-100 bg-slate-50/70">
+              <span className="text-xs text-slate-500">
+                Lưu ý: Hành động duyệt sẽ đẩy đề xuất vào <strong>Action Queue</strong> để kiểm tra trùng lặp trước khi xuất Amazon Bulk File.
+              </span>
+              <button
+                onClick={() => setSelectedSkuGroup(null)}
+                className="px-4 py-2 rounded-lg bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-bold transition cursor-pointer shadow-2xs"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

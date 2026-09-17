@@ -21,6 +21,9 @@ import {
   ArrowRight,
   ArrowSquareOut,
   CalendarBlank,
+  Gear,
+  Clock,
+  Sliders,
 } from "@phosphor-icons/react";
 import { PpcPagination } from "./ppc-pagination";
 import {
@@ -28,6 +31,18 @@ import {
   extractCampaignDate,
   formatPpcExportFilename,
 } from "@/lib/ppc/sku-extractor";
+import { PpcSkuEconomicsTable } from "./ppc-sku-economics-table";
+import { PpcSkuRecommendationGroupView } from "./ppc-sku-recommendation-group";
+import { PpcActionQueueDrawer } from "./ppc-action-queue-drawer";
+import { PpcSettingsTab } from "./ppc-settings-tab";
+import type {
+  SkuEconomics,
+  SkuRecommendationGroup,
+  ProductCostMaster,
+  PpcRuleVersion,
+  BulkExport,
+  PpcAction,
+} from "@/lib/ppc/sku-architecture-types";
 import type {
   PpcAlert,
   PpcAdTypeBreakdown,
@@ -49,6 +64,8 @@ import type {
 
 interface PpcDashboardProps {
   isEmbedded?: boolean;
+  initialTab?: "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "alerts" | "recommendations" | "settings";
+  initialSubTab?: "phoi" | "rules" | "history";
 }
 
 interface PpcDetailCounts {
@@ -118,7 +135,7 @@ function formatSyncTime(isoString: string | null): string {
   }
 }
 
-export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
+export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: PpcDashboardProps) {
   const mounted = useSyncExternalStore(subscribeToHydration, getClientSnapshot, getServerSnapshot);
 
   const [stores, setStores] = useState<PpcStore[]>([]);
@@ -152,10 +169,36 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
   const [selectedAdGroupForDrilldown, setSelectedAdGroupForDrilldown] = useState<string | null>(null);
   const [expandedTargetKey, setExpandedTargetKey] = useState<string | null>(null);
 
-  // Navigation tab for data slicing (Hierarchy: Overview -> Campaigns -> Ad Groups -> Targets -> Search Terms | SKU parallel view)
+  // Navigation tab for data slicing (Hierarchy: Overview -> Campaigns -> Ad Groups -> Targets -> Search Terms | SKU parallel view | Settings)
   const [activeTab, setActiveTab] = useState<
-    "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "alerts" | "recommendations"
-  >("overview");
+    "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "alerts" | "recommendations" | "settings"
+  >(initialTab || "overview");
+  const [settingsSubTab, setSettingsSubTab] = useState<"phoi" | "rules" | "history">(initialSubTab || "phoi");
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
+
+  useEffect(() => {
+    if (initialSubTab) {
+      setSettingsSubTab(initialSubTab);
+    }
+  }, [initialSubTab]);
+
+  // SKU-First Architecture state
+  const [skuSubView, setSkuSubView] = useState<"economics" | "performance">("economics");
+  const [recSubView, setRecSubView] = useState<"grouped" | "flat">("grouped");
+  const [skuEconomicsList, setSkuEconomicsList] = useState<SkuEconomics[]>([]);
+  const [skuRecGroups, setSkuRecGroups] = useState<SkuRecommendationGroup[]>([]);
+  const [skuRecAllRecs, setSkuRecAllRecs] = useState<PpcRecommendation[]>([]);
+  const [actionQueue, setActionQueue] = useState<PpcAction[]>([]);
+  const [isActionQueueOpen, setIsActionQueueOpen] = useState(false);
+  const [costMasters, setCostMasters] = useState<ProductCostMaster[]>([]);
+  const [ruleVersions, setRuleVersions] = useState<PpcRuleVersion[]>([]);
+  const [bulkHistory, setBulkHistory] = useState<BulkExport[]>([]);
+  const [loadingSkuEcon, setLoadingSkuEcon] = useState(false);
 
   // Filters & sorting for Search Terms
   const [searchTermQuery, setSearchTermQuery] = useState("");
@@ -327,6 +370,173 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
       metricsRequestRef.current?.controller.abort();
     };
   }, [loadData]);
+
+  const loadSkuEconomics = useCallback(async () => {
+    try {
+      setLoadingSkuEcon(true);
+      const res = await fetch(`/api/ppc/sku-economics?days=${selectedDays}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data?.data) {
+        setSkuEconomicsList(data.data);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingSkuEcon(false);
+    }
+  }, [selectedDays]);
+
+  const loadGroupedRecommendations = useCallback(async () => {
+    try {
+      const res = await fetch(
+        `/api/ppc/recommendations/grouped?days=${selectedDays}&storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data?.data?.groups) {
+        setSkuRecGroups(data.data.groups);
+        if (Array.isArray(data?.data?.allRecommendations)) {
+          setSkuRecAllRecs(data.data.allRecommendations);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, [selectedDays, selectedStore, selectedSku]);
+
+  const loadActionQueue = useCallback(async () => {
+    try {
+      const res = await fetch("/api/ppc/actions", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data?.data) {
+        setActionQueue(data.data);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  const loadSettingsData = useCallback(async () => {
+    try {
+      const [resCost, resRules, resHistory] = await Promise.all([
+        fetch("/api/ppc/cost-master", { cache: "no-store" }),
+        fetch("/api/ppc/rules", { cache: "no-store" }),
+        fetch("/api/ppc/bulk-export", { cache: "no-store" }),
+      ]);
+      if (resCost.ok) {
+        const d = await resCost.json();
+        if (d?.data) setCostMasters(d.data);
+      }
+      if (resRules.ok) {
+        const d = await resRules.json();
+        if (d?.data) setRuleVersions(d.data);
+      }
+      if (resHistory.ok) {
+        const d = await resHistory.json();
+        if (d?.data) setBulkHistory(d.data);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  const handleUpdateSkuEconomics = async (sku: string, updates: Partial<SkuEconomics>) => {
+    const res = await fetch("/api/ppc/sku-economics", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sku, ...updates }),
+    });
+    if (!res.ok) throw new Error("Không thể cập nhật thông số SKU.");
+    void loadSkuEconomics();
+    notify(`Đã cập nhật thông số kinh tế cho SKU ${sku}`, "success");
+  };
+
+  const handleApproveToQueue = async (items: Array<{ recommendation: PpcRecommendation; userFinalBid?: number }>) => {
+    const res = await fetch("/api/ppc/actions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items }),
+    });
+    if (!res.ok) throw new Error("Không thể duyệt hành động vào Action Queue.");
+    const data = await res.json();
+    void loadActionQueue();
+    notify(data.message || "Đã duyệt đề xuất vào Action Queue!", "success");
+  };
+
+  const handleRemoveAction = async (actionId: string) => {
+    const res = await fetch(`/api/ppc/actions?actionId=${encodeURIComponent(actionId)}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) throw new Error("Không thể xóa hành động.");
+    void loadActionQueue();
+    notify("Đã xóa hành động khỏi Action Queue.", "success");
+  };
+
+  const handleExportBulk = async (selectedActionIds?: string[]) => {
+    const res = await fetch("/api/ppc/bulk-export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actionIds: selectedActionIds }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Không thể xuất file Bulk.");
+    }
+    const blob = await res.blob();
+    const disposition = res.headers.get("Content-Disposition") || "";
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    const fileName = match ? match[1] : `bulk_export_${Date.now()}.xlsx`;
+
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+
+    void loadActionQueue();
+    void loadSettingsData();
+    notify(`Đã tạo và tải file bulk: ${fileName}`, "success");
+  };
+
+  const handleSaveCostMaster = async (data: {
+    productType: string;
+    baseCost: number;
+    defaultAmazonFee: number;
+    taxRate: number;
+    effectiveFrom?: string;
+    notes?: string;
+  }) => {
+    const res = await fetch("/api/ppc/cost-master", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error("Không thể lưu phiên bản Phôi mới.");
+    void loadSettingsData();
+    void loadSkuEconomics();
+    notify(`Đã lưu phiên bản mới cho phôi ${data.productType}`, "success");
+  };
+
+  useEffect(() => {
+    void loadActionQueue();
+    void loadSettingsData();
+  }, [loadActionQueue, loadSettingsData]);
+
+  useEffect(() => {
+    if (activeTab === "skus") {
+      void loadSkuEconomics();
+    } else if (activeTab === "recommendations") {
+      void loadGroupedRecommendations();
+    } else if (activeTab === "settings") {
+      void loadSettingsData();
+    }
+  }, [activeTab, loadSkuEconomics, loadGroupedRecommendations, loadSettingsData]);
 
   useEffect(() => {
     if (activeTab === "overview") return;
@@ -1741,18 +1951,7 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             }`}
         >
           <Tag size={15} weight={activeTab === "skus" ? "bold" : "regular"} />
-          <span>Sản Phẩm (SKU / ASIN)</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab("alerts")}
-          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${activeTab === "alerts"
-            ? "bg-white text-rose-700 shadow-xs border border-rose-100"
-            : "text-slate-600 hover:text-slate-900"
-            }`}
-        >
-          <span>Cảnh Báo ({alerts.length.toLocaleString("vi-VN")})</span>
+          <span>5. SKU ({activeSkuPerformance.length})</span>
         </button>
 
         <button
@@ -1763,8 +1962,24 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
             : "text-slate-600 hover:text-slate-900"
             }`}
         >
-          <span>Đề Xuất ({detailCounts?.recommendations !== undefined ? detailCounts.recommendations.toLocaleString("vi-VN") : (loading ? "..." : recommendations.length.toLocaleString("vi-VN"))})</span>
+          <span>6. Đề Xuất ({skuRecGroups.length > 0 ? `${skuRecGroups.length} SKU` : (detailCounts?.recommendations !== undefined ? detailCounts.recommendations.toLocaleString("vi-VN") : (loading ? "..." : recommendations.length.toLocaleString("vi-VN")))})</span>
         </button>
+
+        {/* Action Queue Quick Trigger */}
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setIsActionQueueOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 text-xs font-extrabold transition cursor-pointer shadow-2xs"
+            title="Mở Action Queue"
+          >
+            <Clock size={15} weight="bold" />
+            <span>Action Queue</span>
+            <span className="px-1.5 py-0.2 rounded-full bg-sky-600 text-white text-[10px] font-extrabold">
+              {actionQueue.length}
+            </span>
+          </button>
+        </div>
       </div>
 
       {/* ========================================================================= */}
@@ -2616,96 +2831,10 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
       )}
 
       {/* ========================================================================= */}
-      {/* VIEW 3: BREAKDOWN BY SKU / PORTFOLIO */}
+      {/* VIEW 5: HIỆU SUẤT QUẢNG CÁO SKU */}
       {/* ========================================================================= */}
       {activeTab === "skus" && (
         <div className="space-y-3">
-          {/* Category Filter Chips */}
-          <div className="flex flex-wrap items-center gap-1.5 bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs">
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mr-1">Phân Hạng:</span>
-            <button
-              type="button"
-              onClick={() => {
-                setSkuCategoryFilter("ALL");
-                setSkuPage(1);
-              }}
-              className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${skuCategoryFilter === "ALL" ? "bg-slate-900 text-white shadow-xs" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                }`}
-            >
-              Tất cả ({activeSkuPerformance.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setSkuCategoryFilter("HERO");
-                setSkuPage(1);
-              }}
-              className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 ${skuCategoryFilter === "HERO"
-                ? "bg-emerald-600 text-white shadow-xs"
-                : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-100"
-                }`}
-            >
-              <span>🏆 Hero SKUs</span>
-              <span className="text-[10px] opacity-80">({activeSkuPerformance.filter((s) => s.skuCategory === "HERO").length})</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setSkuCategoryFilter("BLEEDING");
-                setSkuPage(1);
-              }}
-              className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 ${skuCategoryFilter === "BLEEDING"
-                ? "bg-rose-600 text-white shadow-xs"
-                : "bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-100"
-                }`}
-            >
-              <span>⚠️ Bleeding SKUs</span>
-              <span className="text-[10px] opacity-80">({activeSkuPerformance.filter((s) => s.skuCategory === "BLEEDING").length})</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setSkuCategoryFilter("POTENTIAL");
-                setSkuPage(1);
-              }}
-              className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 ${skuCategoryFilter === "POTENTIAL"
-                ? "bg-indigo-600 text-white shadow-xs"
-                : "bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-100"
-                }`}
-            >
-              <span>🌱 Tiềm Năng</span>
-              <span className="text-[10px] opacity-80">({activeSkuPerformance.filter((s) => s.skuCategory === "POTENTIAL").length})</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setSkuCategoryFilter("ZERO_CLICKS");
-                setSkuPage(1);
-              }}
-              className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 ${skuCategoryFilter === "ZERO_CLICKS"
-                ? "bg-amber-600 text-white shadow-xs"
-                : "bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200"
-                }`}
-            >
-              <span>🎯 0 Clicks - Cần Sửa</span>
-              <span className="text-[10px] opacity-80">({activeSkuPerformance.filter((s) => s.clicks === 0).length})</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setSkuCategoryFilter("ZERO_SPEND");
-                setSkuPage(1);
-              }}
-              className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 ${skuCategoryFilter === "ZERO_SPEND"
-                ? "bg-slate-800 text-white shadow-xs"
-                : "bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200"
-                }`}
-            >
-              <span>💤 Chưa Có Spend</span>
-              <span className="text-[10px] opacity-80">({activeSkuPerformance.filter((s) => s.spend === 0).length})</span>
-            </button>
-          </div>
-
           <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
             <div className="relative flex-1 sm:w-72">
               <MagnifyingGlass size={14} className="absolute left-3 top-2.5 text-slate-400" />
@@ -2747,7 +2876,6 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
               <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
                 <tr>
                   <th className="py-3 px-3.5">SKU / Portfolio</th>
-                  <th className="py-3 px-2.5 text-center">Trạng Thái / Tier</th>
                   <th className="py-3 px-2.5">Store</th>
                   <th
                     className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
@@ -2802,31 +2930,6 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                     <td className="py-2.5 px-3.5 font-bold text-slate-900 flex items-center gap-2">
                       <Tag size={14} className="text-indigo-600 shrink-0" />
                       <span className="truncate max-w-[280px]" title={s.sku}>{s.sku}</span>
-                    </td>
-                    <td className="py-2.5 px-2.5 text-center whitespace-nowrap">
-                      <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-black uppercase ${s.skuCategory === "HERO"
-                        ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
-                        : s.skuCategory === "BLEEDING"
-                          ? "bg-rose-100 text-rose-800 border border-rose-200"
-                          : s.skuCategory === "POTENTIAL"
-                            ? "bg-indigo-100 text-indigo-800 border border-indigo-200"
-                            : s.clicks === 0 && s.impressions > 0
-                              ? "bg-amber-100 text-amber-800 border border-amber-300"
-                              : s.spend === 0
-                                ? "bg-slate-100 text-slate-600 border border-slate-300"
-                                : s.clicks === 0
-                                  ? "bg-slate-100 text-slate-500 border border-slate-200"
-                                  : "bg-slate-100 text-slate-600"
-                        }`}>
-                        {s.skuCategory === "HERO" && "🏆 Hero"}
-                        {s.skuCategory === "BLEEDING" && "⚠️ Cắn Tiền"}
-                        {s.skuCategory === "POTENTIAL" && "🌱 Tiềm Năng"}
-                        {s.clicks === 0 && s.impressions > 0 && "🎯 0 Click"}
-                        {s.spend === 0 && s.impressions === 0 && "💤 Chưa Có Spend"}
-                        {s.spend === 0 && s.impressions > 0 && s.clicks === 0 && "🎯 0 Click - Chưa Spend"}
-                        {s.spend === 0 && s.clicks > 0 && "💤 0 Spend"}
-                        {s.spend > 0 && s.clicks > 0 && s.skuCategory === "NEUTRAL" && "Neutral"}
-                      </span>
                     </td>
                     <td className="py-2.5 px-2.5 text-slate-600">{s.storeName}</td>
                     <td className="py-2.5 px-3 text-right font-medium text-slate-700">
@@ -3129,41 +3232,63 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
         </div>
       )}
 
-      {activeTab === "alerts" && (
-        <div className="space-y-2">
-          {alerts.length === 0 ? (
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-6 text-center text-xs font-semibold text-emerald-800">
-              Không có cảnh báo PPC trong phạm vi đang lọc.
-            </div>
-          ) : alerts.map((alert) => (
-            <div key={alert.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-xs font-black text-slate-900">{alert.title}</div>
-                <span className={`rounded px-2 py-0.5 text-[10px] font-black ${alert.severity === "CRITICAL" ? "bg-rose-100 text-rose-800" : "bg-amber-100 text-amber-800"}`}>
-                  {alert.severity}
-                </span>
-              </div>
-              <p className="mt-1 text-xs text-slate-600">{alert.message}</p>
-              <div className="mt-2 text-[11px] font-semibold text-slate-400">{alert.storeName} · {alert.sku || "Chưa gán SKU"}</div>
-            </div>
-          ))}
-        </div>
-      )}
+
 
       {activeTab === "recommendations" && (
         <div className="space-y-4">
-          {/* Recommendations Header & Controls */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs space-y-3.5">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
-                    Đề Xuất Tối Ưu
-                  </h3>
-                  <span className="rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200/60 px-2 py-0.5 text-[10px] font-black">
-                    {filteredRecommendations.length}/{recommendations.length}
-                  </span>
-                </div>
+          {/* Subview Toggle Bar */}
+          <div className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setRecSubView("grouped")}
+                className={`px-3.5 py-1.5 rounded-lg text-xs transition cursor-pointer ${
+                  recSubView === "grouped"
+                    ? "bg-indigo-50 text-indigo-700 font-extrabold border border-indigo-200 shadow-2xs"
+                    : "bg-slate-50 text-slate-600 hover:text-slate-900 border border-transparent font-bold"
+                }`}
+              >
+                1. Gom Theo SKU ({skuRecGroups.length} SKU)
+              </button>
+              <button
+                type="button"
+                onClick={() => setRecSubView("flat")}
+                className={`px-3.5 py-1.5 rounded-lg text-xs transition cursor-pointer ${
+                  recSubView === "flat"
+                    ? "bg-indigo-50 text-indigo-700 font-extrabold border border-indigo-200 shadow-2xs"
+                    : "bg-slate-50 text-slate-600 hover:text-slate-900 border border-transparent font-bold"
+                }`}
+              >
+                2. Danh Sách Phẳng ({recommendations.length} Keyword)
+              </button>
+            </div>
+          </div>
+
+          {recSubView === "grouped" ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs">
+              <PpcSkuRecommendationGroupView
+                groups={skuRecGroups}
+                allRecommendations={skuRecAllRecs.length > 0 ? skuRecAllRecs : recommendations}
+                isLoading={loading}
+                onApproveToQueue={handleApproveToQueue}
+                onOpenActionQueue={() => setIsActionQueueOpen(true)}
+                pendingQueueCount={actionQueue.length}
+              />
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* Recommendations Header & Controls */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs space-y-3.5">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
+                        Đề Xuất Tối Ưu
+                      </h3>
+                      <span className="rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200/60 px-2 py-0.5 text-[10px] font-black">
+                        {filteredRecommendations.length}/{recommendations.length}
+                      </span>
+                    </div>
                 <p className="text-[11px] text-slate-500 mt-0.5">
                   Lọc theo Campaign, SKU hoặc từ khóa để kiểm tra và xuất Bulksheet cho từng nhóm chiến dịch.
                 </p>
@@ -3327,9 +3452,9 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                     setRecProductFilter("ALL");
                     setRecPage(1);
                   }}
-                  className={`rounded-md px-2.5 py-1 text-[11px] font-bold transition cursor-pointer ${recProductFilter === "ALL"
-                    ? "bg-slate-900 text-white shadow-xs"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  className={`rounded-md px-2.5 py-1 text-[11px] transition cursor-pointer ${recProductFilter === "ALL"
+                    ? "bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200/80 font-black shadow-2xs"
+                    : "bg-slate-100 text-slate-600 font-bold hover:bg-slate-200"
                     }`}
                 >
                   Tất Cả ({recommendations.length})
@@ -3379,9 +3504,9 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
                     setRecPriorityFilter("ALL");
                     setRecPage(1);
                   }}
-                  className={`rounded-md px-2 py-0.5 text-[11px] font-bold transition cursor-pointer ${recPriorityFilter === "ALL"
-                    ? "bg-slate-900 text-white"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  className={`rounded-md px-2 py-0.5 text-[11px] transition cursor-pointer ${recPriorityFilter === "ALL"
+                    ? "bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200/80 font-black shadow-2xs"
+                    : "bg-slate-100 text-slate-600 font-bold hover:bg-slate-200"
                     }`}
                 >
                   Tất Cả
@@ -3796,6 +3921,10 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
           )}
         </div>
       )}
+    </div>
+  )}
+
+
 
       {/* MODAL UPLOAD EXCEL FILE */}
       {showUploadModal && (
@@ -3893,6 +4022,18 @@ export function PpcDashboard({ isEmbedded = false }: PpcDashboardProps) {
           </div>
         </div>
       )}
+
+      {/* ACTION QUEUE DRAWER & BULK EXPORT WIZARD */}
+      <PpcActionQueueDrawer
+        isOpen={isActionQueueOpen}
+        onClose={() => setIsActionQueueOpen(false)}
+        actions={actionQueue}
+        onRemoveAction={handleRemoveAction}
+        onExportBulk={handleExportBulk}
+        bulkHistory={bulkHistory}
+        onRefreshBulkHistory={() => void loadSettingsData()}
+        storeName={selectedStore === "ALL" ? "Tất cả shop" : selectedStore}
+      />
     </div>
   );
 }
