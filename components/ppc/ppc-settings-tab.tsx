@@ -22,6 +22,27 @@ import type {
 } from "@/lib/ppc/sku-architecture-types";
 import { getSkuPrefixesForProductType } from "@/lib/ppc/sku-architecture-types";
 
+const parseInputNumber = (val: string | number): number => {
+  if (val === undefined || val === null) return 0;
+  const cleaned = String(val).replace(",", ".").trim();
+  const n = parseFloat(cleaned);
+  return Number.isFinite(n) ? n : 0;
+};
+
+const recalculateBreakEvenAcos = (priceStr: string, costStr: string, feeStr: string): string => {
+  const p = parseInputNumber(priceStr);
+  const c = parseInputNumber(costStr);
+  const f = parseInputNumber(feeStr);
+  if (p > 0) {
+    const profit = p - f - c;
+    if (profit > 0) {
+      return Number(((profit / p) * 100).toFixed(1)).toString();
+    }
+    return "0.0";
+  }
+  return "";
+};
+
 interface PpcSettingsTabProps {
   costMasters: ProductCostMaster[];
   ruleVersions: PpcRuleVersion[];
@@ -32,6 +53,8 @@ interface PpcSettingsTabProps {
     baseCost: number;
     defaultAmazonFee: number;
     taxRate: number;
+    defaultPrice?: number;
+    breakEvenAcos?: number;
     effectiveFrom?: string;
     notes?: string;
   }) => Promise<void>;
@@ -83,6 +106,8 @@ export function PpcSettingsTab({
   const [formBaseCost, setFormBaseCost] = useState("");
   const [formFee, setFormFee] = useState("");
   const [formTaxRate, setFormTaxRate] = useState("3.0");
+  const [formDefaultPrice, setFormDefaultPrice] = useState("25.00");
+  const [formBreakEvenAcos, setFormBreakEvenAcos] = useState("45.5");
   const [formEffectiveFrom, setFormEffectiveFrom] = useState(
     new Date().toISOString().split("T")[0]
   );
@@ -100,6 +125,12 @@ export function PpcSettingsTab({
       setFormBaseCost(phoi.baseCost.toFixed(2));
       setFormFee(phoi.defaultAmazonFee.toFixed(2));
       setFormTaxRate((phoi.taxRate * 100).toFixed(1));
+      setFormDefaultPrice(phoi.defaultPrice ? phoi.defaultPrice.toFixed(2) : "0.00");
+      setFormBreakEvenAcos(
+        phoi.breakEvenAcos
+          ? phoi.breakEvenAcos.toFixed(1)
+          : recalculateBreakEvenAcos(phoi.defaultPrice.toFixed(2), phoi.baseCost.toFixed(2), phoi.defaultAmazonFee.toFixed(2)) || "45.5"
+      );
       setFormEffectiveFrom(new Date().toISOString().split("T")[0]);
       setFormNotes(phoi.notes || "");
     } else {
@@ -108,6 +139,8 @@ export function PpcSettingsTab({
       setFormBaseCost("2.00");
       setFormFee("6.32");
       setFormTaxRate("3.0");
+      setFormDefaultPrice("25.00");
+      setFormBreakEvenAcos(recalculateBreakEvenAcos("25.00", "2.00", "6.32") || "45.5");
       setFormEffectiveFrom(new Date().toISOString().split("T")[0]);
       setFormNotes("");
     }
@@ -123,9 +156,11 @@ export function PpcSettingsTab({
       setIsSavingPhoi(true);
       await onSaveCostMaster({
         productType: formProductType.trim(),
-        baseCost: parseFloat(formBaseCost) || 0,
-        defaultAmazonFee: parseFloat(formFee) || 0,
-        taxRate: (parseFloat(formTaxRate) || 3.0) / 100,
+        baseCost: parseInputNumber(formBaseCost),
+        defaultAmazonFee: parseInputNumber(formFee),
+        taxRate: (parseInputNumber(formTaxRate) || 3.0) / 100,
+        defaultPrice: parseInputNumber(formDefaultPrice),
+        breakEvenAcos: parseInputNumber(formBreakEvenAcos),
         effectiveFrom: formEffectiveFrom,
         notes: formNotes.trim() || undefined,
       });
@@ -144,6 +179,20 @@ export function PpcSettingsTab({
       || ruleVersions.find((r) => r.status === "PUBLISHED")
       || ruleVersions[0];
   }, [ruleVersions, selectedRuleType]);
+
+  // Handle ESC key to close drawer
+  useEffect(() => {
+    if (!isPhoiDrawerOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsPhoiDrawerOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isPhoiDrawerOpen]);
 
   return (
     <div className="space-y-6">
@@ -515,8 +564,14 @@ export function PpcSettingsTab({
 
       {/* DRAWER PHÔI (COST MASTER DRAWER) */}
       {isPhoiDrawerOpen && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/50 backdrop-blur-xs transition">
-          <div className="w-full max-w-md bg-white border-l border-slate-200 p-6 flex flex-col justify-between shadow-2xl animate-in slide-in-from-right duration-200">
+        <div
+          className="fixed inset-0 z-50 flex justify-end bg-slate-900/50 backdrop-blur-xs transition"
+          onClick={() => setIsPhoiDrawerOpen(false)}
+        >
+          <div
+            className="w-full max-w-md bg-white border-l border-slate-200 p-6 flex flex-col justify-between shadow-2xl animate-in slide-in-from-right duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="space-y-6">
               <div className="flex items-start justify-between border-b border-slate-100 pb-4">
                 <div>
@@ -550,50 +605,129 @@ export function PpcSettingsTab({
                   />
                 </div>
 
-                <div>
-                  <label className="block text-slate-700 font-bold mb-1">Base Cost ($ Giá vốn phôi):</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={formBaseCost}
-                    onChange={(e) => setFormBaseCost(e.target.value)}
-                    placeholder="2.00"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono focus:outline-none focus:border-indigo-600 focus:bg-white"
-                  />
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-slate-700 font-bold mb-1">Base Cost ($ Giá vốn):</label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={formBaseCost}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setFormBaseCost(val);
+                        const autoAcos = recalculateBreakEvenAcos(formDefaultPrice, val, formFee);
+                        if (autoAcos !== "") setFormBreakEvenAcos(autoAcos);
+                      }}
+                      placeholder="2.00"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono focus:outline-none focus:border-indigo-600 focus:bg-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-700 font-bold mb-1">Default Amz Fee ($ Phí sàn):</label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={formFee}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setFormFee(val);
+                        const autoAcos = recalculateBreakEvenAcos(formDefaultPrice, formBaseCost, val);
+                        if (autoAcos !== "") setFormBreakEvenAcos(autoAcos);
+                      }}
+                      placeholder="6.32"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono focus:outline-none focus:border-indigo-600 focus:bg-white"
+                    />
+                  </div>
                 </div>
 
-                <div>
-                  <label className="block text-slate-700 font-bold mb-1">Default Amazon Fee ($ Phí sàn mặc định):</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={formFee}
-                    onChange={(e) => setFormFee(e.target.value)}
-                    placeholder="6.32"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono focus:outline-none focus:border-indigo-600 focus:bg-white"
-                  />
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-slate-700 font-bold mb-1">Default Price ($ Giá bán):</label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={formDefaultPrice}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setFormDefaultPrice(val);
+                        const autoAcos = recalculateBreakEvenAcos(val, formBaseCost, formFee);
+                        if (autoAcos !== "") setFormBreakEvenAcos(autoAcos);
+                      }}
+                      placeholder="25.00"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono focus:outline-none focus:border-indigo-600 focus:bg-white"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-slate-700 font-bold">ACoS Hòa Vốn (%):</label>
+                      <span
+                        className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded font-bold"
+                        title="Tự động tính theo: (Price - Fee - Cost) / Price"
+                      >
+                        Tự tính
+                      </span>
+                    </div>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={formBreakEvenAcos}
+                      onChange={(e) => setFormBreakEvenAcos(e.target.value)}
+                      placeholder="46"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono focus:outline-none focus:border-indigo-600 focus:bg-white"
+                    />
+                  </div>
                 </div>
 
-                <div>
-                  <label className="block text-slate-700 font-bold mb-1">Tax Rate (% Tỷ lệ thuế):</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={formTaxRate}
-                    onChange={(e) => setFormTaxRate(e.target.value)}
-                    placeholder="3.0"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono focus:outline-none focus:border-indigo-600 focus:bg-white"
-                  />
-                </div>
+                {parseInputNumber(formDefaultPrice) > 0 && (
+                  <div className="p-3 bg-emerald-50/80 border border-emerald-200 rounded-xl space-y-2 text-xs">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="font-bold text-emerald-900">Profit Before Ads: </span>
+                        <span className="text-emerald-700 text-[11px]">(Price - Fee - Cost)</span>
+                      </div>
+                      <span className="font-mono font-black text-emerald-800 text-sm">
+                        ${Math.max(0, parseInputNumber(formDefaultPrice) - parseInputNumber(formFee) - parseInputNumber(formBaseCost)).toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="pt-2 border-t border-emerald-200/60 flex items-center justify-between text-[11px]">
+                      <div className="text-slate-600">
+                        <span>Min Bid: </span>
+                        <strong className="font-mono text-slate-800">$0.05</strong>
+                      </div>
+                      <div className="text-indigo-900">
+                        <span>Max Bid (CR 10%): </span>
+                        <strong className="font-mono font-bold text-indigo-700 text-xs">
+                          ${(Math.max(0, parseInputNumber(formDefaultPrice) - parseInputNumber(formFee) - parseInputNumber(formBaseCost)) * 0.10).toFixed(2)}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
-                <div>
-                  <label className="block text-slate-700 font-bold mb-1">Effective From (Ngày áp dụng):</label>
-                  <input
-                    type="date"
-                    value={formEffectiveFrom}
-                    onChange={(e) => setFormEffectiveFrom(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono focus:outline-none focus:border-indigo-600 focus:bg-white"
-                  />
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-slate-700 font-bold mb-1">Tax Rate (% Thuế):</label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={formTaxRate}
+                      onChange={(e) => setFormTaxRate(e.target.value)}
+                      placeholder="3.0"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono focus:outline-none focus:border-indigo-600 focus:bg-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-700 font-bold mb-1">Effective From (Áp dụng):</label>
+                    <input
+                      type="date"
+                      value={formEffectiveFrom}
+                      onChange={(e) => setFormEffectiveFrom(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono focus:outline-none focus:border-indigo-600 focus:bg-white"
+                    />
+                  </div>
                 </div>
 
                 <div>
@@ -675,6 +809,20 @@ export function PpcCostMasterStandalone() {
     void loadCostMasters();
   }, []);
 
+  // Handle ESC key to close drawer
+  useEffect(() => {
+    if (!isPhoiDrawerOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsPhoiDrawerOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isPhoiDrawerOpen]);
+
   const handleOpenPhoiDrawer = (phoi?: ProductCostMaster) => {
     if (phoi) {
       setEditingPhoi(phoi);
@@ -712,11 +860,11 @@ export function PpcCostMasterStandalone() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           productType: formProductType.trim(),
-          baseCost: parseFloat(formBaseCost) || 0,
-          defaultAmazonFee: parseFloat(formFee) || 0,
-          taxRate: (parseFloat(formTaxRate) || 3.0) / 100,
-          defaultPrice: parseFloat(formDefaultPrice) || 0,
-          breakEvenAcos: parseFloat(formBreakEvenAcos) || 0,
+          baseCost: parseInputNumber(formBaseCost),
+          defaultAmazonFee: parseInputNumber(formFee),
+          taxRate: (parseInputNumber(formTaxRate) || 3.0) / 100,
+          defaultPrice: parseInputNumber(formDefaultPrice),
+          breakEvenAcos: parseInputNumber(formBreakEvenAcos),
           effectiveFrom: formEffectiveFrom,
           notes: formNotes.trim() || undefined,
         }),
@@ -957,8 +1105,14 @@ export function PpcCostMasterStandalone() {
 
       {/* Drawer: Add / Edit Phôi */}
       {isPhoiDrawerOpen && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/50 backdrop-blur-xs transition">
-          <div className="w-full max-w-md bg-white border-l border-slate-200 p-6 flex flex-col justify-between shadow-2xl animate-in slide-in-from-right duration-200">
+        <div
+          className="fixed inset-0 z-50 flex justify-end bg-slate-900/50 backdrop-blur-xs transition"
+          onClick={() => setIsPhoiDrawerOpen(false)}
+        >
+          <div
+            className="w-full max-w-md bg-white border-l border-slate-200 p-6 flex flex-col justify-between shadow-2xl animate-in slide-in-from-right duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <div className="flex items-center gap-2">
@@ -999,10 +1153,15 @@ export function PpcCostMasterStandalone() {
                   <div>
                     <label className="block text-slate-700 font-bold mb-1">Base Cost ($ Giá vốn):</label>
                     <input
-                      type="number"
-                      step="0.01"
+                      type="text"
+                      inputMode="decimal"
                       value={formBaseCost}
-                      onChange={(e) => setFormBaseCost(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setFormBaseCost(val);
+                        const autoAcos = recalculateBreakEvenAcos(formDefaultPrice, val, formFee);
+                        if (autoAcos !== "") setFormBreakEvenAcos(autoAcos);
+                      }}
                       placeholder="2.00"
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono focus:outline-none focus:border-indigo-600 focus:bg-white"
                     />
@@ -1011,10 +1170,15 @@ export function PpcCostMasterStandalone() {
                   <div>
                     <label className="block text-slate-700 font-bold mb-1">Default Amz Fee ($ Phí sàn):</label>
                     <input
-                      type="number"
-                      step="0.01"
+                      type="text"
+                      inputMode="decimal"
                       value={formFee}
-                      onChange={(e) => setFormFee(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setFormFee(val);
+                        const autoAcos = recalculateBreakEvenAcos(formDefaultPrice, formBaseCost, val);
+                        if (autoAcos !== "") setFormBreakEvenAcos(autoAcos);
+                      }}
                       placeholder="6.32"
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono focus:outline-none focus:border-indigo-600 focus:bg-white"
                     />
@@ -1025,10 +1189,15 @@ export function PpcCostMasterStandalone() {
                   <div>
                     <label className="block text-slate-700 font-bold mb-1">Default Price ($ Giá bán):</label>
                     <input
-                      type="number"
-                      step="0.01"
+                      type="text"
+                      inputMode="decimal"
                       value={formDefaultPrice}
-                      onChange={(e) => setFormDefaultPrice(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setFormDefaultPrice(val);
+                        const autoAcos = recalculateBreakEvenAcos(val, formBaseCost, formFee);
+                        if (autoAcos !== "") setFormBreakEvenAcos(autoAcos);
+                      }}
                       placeholder="25.00"
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono focus:outline-none focus:border-indigo-600 focus:bg-white"
                     />
@@ -1037,28 +1206,16 @@ export function PpcCostMasterStandalone() {
                   <div>
                     <div className="flex items-center justify-between mb-1">
                       <label className="block text-slate-700 font-bold">ACoS Hòa Vốn (%):</label>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const p = parseFloat(formDefaultPrice) || 0;
-                          const c = parseFloat(formBaseCost) || 0;
-                          const f = parseFloat(formFee) || 0;
-                          if (p > 0) {
-                            const profit = p - f - c;
-                            setFormBreakEvenAcos(profit > 0 ? Math.round((profit / p) * 100).toString() : "46");
-                          } else {
-                            setFormBreakEvenAcos("46");
-                          }
-                        }}
-                        className="text-[10px] text-indigo-600 hover:underline font-bold cursor-pointer"
-                        title="Tự động tính ACoS hòa = (Price - Fee - Cost) / Price"
+                      <span
+                        className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded font-bold"
+                        title="Tự động tính theo: (Price - Fee - Cost) / Price"
                       >
                         Tự tính
-                      </button>
+                      </span>
                     </div>
                     <input
-                      type="number"
-                      step="0.1"
+                      type="text"
+                      inputMode="decimal"
                       value={formBreakEvenAcos}
                       onChange={(e) => setFormBreakEvenAcos(e.target.value)}
                       placeholder="46"
@@ -1067,7 +1224,7 @@ export function PpcCostMasterStandalone() {
                   </div>
                 </div>
 
-                {parseFloat(formDefaultPrice) > 0 && (
+                {parseInputNumber(formDefaultPrice) > 0 && (
                   <div className="p-3 bg-emerald-50/80 border border-emerald-200 rounded-xl space-y-2 text-xs">
                     <div className="flex items-center justify-between">
                       <div>
@@ -1075,7 +1232,7 @@ export function PpcCostMasterStandalone() {
                         <span className="text-emerald-700 text-[11px]">(Price - Fee - Cost)</span>
                       </div>
                       <span className="font-mono font-black text-emerald-800 text-sm">
-                        ${Math.max(0, (parseFloat(formDefaultPrice) || 0) - (parseFloat(formFee) || 0) - (parseFloat(formBaseCost) || 0)).toFixed(2)}
+                        ${Math.max(0, parseInputNumber(formDefaultPrice) - parseInputNumber(formFee) - parseInputNumber(formBaseCost)).toFixed(2)}
                       </span>
                     </div>
                     <div className="pt-2 border-t border-emerald-200/60 flex items-center justify-between text-[11px]">
@@ -1086,7 +1243,7 @@ export function PpcCostMasterStandalone() {
                       <div className="text-indigo-900">
                         <span>Max Bid (CR 10%): </span>
                         <strong className="font-mono font-bold text-indigo-700 text-xs">
-                          ${(Math.max(0, (parseFloat(formDefaultPrice) || 0) - (parseFloat(formFee) || 0) - (parseFloat(formBaseCost) || 0)) * 0.10).toFixed(2)}
+                          ${(Math.max(0, parseInputNumber(formDefaultPrice) - parseInputNumber(formFee) - parseInputNumber(formBaseCost)) * 0.10).toFixed(2)}
                         </strong>
                       </div>
                     </div>

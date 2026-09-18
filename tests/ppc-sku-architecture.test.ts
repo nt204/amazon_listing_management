@@ -29,12 +29,31 @@ test("SKU Economics Mathematical Formulas", () => {
   assert.equal(maxBid, 0.72);
 });
 
+test("Dynamic Selling Price and Economics when SKU has Orders", () => {
+  // Scenario: Oodie with base cost $11.50, fee $15.70, tax 3%
+  // Default phôi price: $49.99 -> profit $22.79, BE ACoS ~46.0%, max bid $2.28
+  const defaultProfit = calculateProfitBeforeAds(49.99, 15.70, 11.50, 0.03);
+  assert.equal(defaultProfit, 21.29);
+  assert.equal(calculateMaxBid(0.10, defaultProfit), 2.13);
+
+  // When SKU has orders > 0, e.g. Sales = $111.90, Units = 2 -> Selling Price = $55.95
+  const actualPrice = 111.90 / 2; // 55.95
+  const dynamicProfit = calculateProfitBeforeAds(actualPrice, 15.70, 11.50, 0.03);
+  assert.equal(dynamicProfit, 27.07);
+  // Break-even ACoS: 27.07 / 55.95 = 48.38% -> 48.4%
+  const dynamicBeAcos = calculateBreakEvenAcos(dynamicProfit, actualPrice);
+  assert.equal(dynamicBeAcos, 48.4);
+  // Max Bid: 0.10 * 27.07 = 2.707 -> 2.71
+  const dynamicMaxBid = calculateMaxBid(0.10, dynamicProfit);
+  assert.equal(dynamicMaxBid, 2.71);
+});
+
 test("SKU to Product Type Mapping Engine (Exception Map & Longest Prefix Match)", () => {
   // 1. Exception map test
   assert.equal(detectProductTypeFromSku("BHL180660A01"), "Glass Ornament");
 
-  // 2. Longest prefix test (CBH should match Oodie, CB should match Blanket)
-  assert.equal(detectProductTypeFromSku("CBH100103W"), "Oodie");
+  // 2. Longest prefix test (CBH should match Blanket Hoodie, CB should match Blanket)
+  assert.equal(detectProductTypeFromSku("CBH100103W"), "Blanket Hoodie");
   assert.equal(detectProductTypeFromSku("CB100103W"), "Blanket");
 
   // 3. Oodie prefixes
@@ -336,6 +355,98 @@ test("evaluateRowWithRuleEngine evaluates common rules for SP01, SP03, SP04, SB0
     econMap,
   );
   assert.equal(sb05Pause?.recType, "PAUSE_TARGET");
+
+  // 11. Dynamic Max Bid Ceilings: SP03 uses phôi max bid (2.28), SB01 and SB05 use 80% (1.82)
+  const oodieEconMap = new Map<string, any>([
+    [
+      "OHN240802WF",
+      {
+        sku: "OHN240802WF",
+        productType: "Oodie",
+        breakEvenAcos: 46.0,
+        maxBid: 2.28,
+      },
+    ],
+  ]);
+
+  // SB01 target exceeding ceiling (e.g. gifts for your wife for birthday at $3.00)
+  const sb01Exceed = evaluateRowWithRuleEngine(
+    {
+      grain: "TARGET",
+      isNegative: false,
+      state: "ENABLED",
+      campaignState: "ENABLED",
+      adGroupState: "ENABLED",
+      sku: "OHN240802WF",
+      campaignName: "OHN240802WF SB01 Quynh Exact 250902 10KW (birthday",
+      adType: "SB",
+      targetId: "t-sb01",
+      targetExpression: "gifts for your wife for birthday",
+      bid: 3.0,
+      cpc: 1.5,
+      clicks: 5,
+      spend: 7.5,
+      sales: 0,
+      orders: 0,
+    } as any,
+    ruleMap,
+    oodieEconMap,
+  );
+  assert.equal(sb01Exceed?.recType, "BID_DECREASE");
+  assert.equal(sb01Exceed?.recommendedBid, 1.82, "SB01 max bid must be capped at 80% of phôi max bid (0.8 * 2.28 = 1.82)");
+  assert.match(sb01Exceed?.reason || "", /Trần phôi \$2\.28 x 80%/);
+
+  // SB05 target exceeding ceiling
+  const sb05Exceed = evaluateRowWithRuleEngine(
+    {
+      grain: "TARGET",
+      isNegative: false,
+      state: "ENABLED",
+      campaignState: "ENABLED",
+      adGroupState: "ENABLED",
+      sku: "OHN240802WF",
+      campaignName: "OHN240802WF SB05 VIDEO Quynh Exact",
+      adType: "SB",
+      targetId: "t-sb05",
+      targetExpression: "oodie video keyword",
+      bid: 3.0,
+      cpc: 1.5,
+      clicks: 5,
+      spend: 7.5,
+      sales: 0,
+      orders: 0,
+    } as any,
+    ruleMap,
+    oodieEconMap,
+  );
+  assert.equal(sb05Exceed?.recType, "BID_DECREASE");
+  assert.equal(sb05Exceed?.recommendedBid, 1.82, "SB05 max bid must be capped at 80% of phôi max bid (0.8 * 2.28 = 1.82)");
+
+  // SP03 target exceeding ceiling (capped at 100% of phôi max bid = 2.28)
+  const sp03Exceed = evaluateRowWithRuleEngine(
+    {
+      grain: "TARGET",
+      isNegative: false,
+      state: "ENABLED",
+      campaignState: "ENABLED",
+      adGroupState: "ENABLED",
+      sku: "OHN240802WF",
+      campaignName: "OHN240802WF SP03 Quynh Exact",
+      adType: "SP",
+      targetId: "t-sp03",
+      targetExpression: "gifts for your wife for birthday",
+      bid: 3.0,
+      cpc: 1.5,
+      clicks: 5,
+      spend: 7.5,
+      sales: 0,
+      orders: 0,
+    } as any,
+    ruleMap,
+    oodieEconMap,
+  );
+  assert.equal(sp03Exceed?.recType, "BID_DECREASE");
+  assert.equal(sp03Exceed?.recommendedBid, 2.28, "SP03 max bid must be capped at 100% of phôi max bid ($2.28)");
 });
 
 test("Auto Upload AdsPower: Zero-Spend SKU action filtering logic", () => {

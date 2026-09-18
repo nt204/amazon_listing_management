@@ -5,28 +5,49 @@ import { getGroupedRecommendations, resolveStoreId } from "@/lib/ppc/sku-archite
 
 export const runtime = "nodejs";
 
+// Bid decisions must always use the stable 30-day attribution window. Dashboard
+// charts may switch between 7/14/30 days, but that UI preference must not change
+// executable PPC recommendations.
+const BID_RECOMMENDATION_DAYS = 30;
+
 export async function GET(request: Request) {
   try {
     const scope = dataScope(authorize(request, "read"));
     const { searchParams } = new URL(request.url);
     const storeName = searchParams.get("storeName") || "ALL";
     const sku = searchParams.get("sku") || "ALL";
-    const days = Number(searchParams.get("days") || 30);
+    const days = BID_RECOMMENDATION_DAYS;
 
     const storeId = await resolveStoreId(searchParams.get("storeId") || (storeName !== "ALL" ? storeName : null));
 
-    // Fetch target performance rows
+    // SB target reports commonly leave `sku` blank. Load the store's complete
+    // target set so evaluateRowWithRuleEngine can recover the SKU from the
+    // campaign name, then apply the requested SKU filter to the evaluated result.
     const targetRows = await listPpcPerformance(
       scope,
-      { storeName, sku, days },
+      { storeName, sku: "ALL", days },
       { grain: "TARGET", limit: 25000 },
     );
 
     const result = await getGroupedRecommendations(storeId, targetRows, days);
+    const normalizedSku = sku.trim().toUpperCase();
+    const skuRecommendations = result.allRecommendations.filter(
+      (recommendation) => (recommendation.sku || "").toUpperCase() === normalizedSku,
+    );
+    const filteredResult = normalizedSku === "ALL"
+      ? result
+      : {
+          ...result,
+          groups: result.groups.filter((group) => group.sku.toUpperCase() === normalizedSku),
+          allRecommendations: skuRecommendations,
+          totalRecommendations: skuRecommendations.length,
+          totalSkus: result.groups.some((group) => group.sku.toUpperCase() === normalizedSku) ? 1 : 0,
+        };
 
     return Response.json({
       success: true,
-      data: result,
+      recommendationWindowDays: days,
+      data: filteredResult,
     });
   } catch (error) {
     return routeErrorResponse(error, "Lỗi khi lấy danh sách đề xuất gom theo SKU.", 500);

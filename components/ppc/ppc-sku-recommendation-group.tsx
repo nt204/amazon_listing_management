@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Tag,
   Funnel,
@@ -83,11 +83,26 @@ export function PpcSkuRecommendationGroupView({
   const [modalSearch, setModalSearch] = useState("");
   const [modalActionFilter, setModalActionFilter] = useState<"ALL" | "BID_INCREASE" | "BID_DECREASE" | "PAUSE_TARGET">("ALL");
   const [recentlyApprovedIds, setRecentlyApprovedIds] = useState<Set<string>>(new Set());
+  const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set());
 
   const handleOpenActionQueueModal = () => {
     setSelectedSkuGroup(null);
     onOpenActionQueue();
   };
+
+  // Handle ESC key to close modal
+  useEffect(() => {
+    if (!selectedSkuGroup) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        setSelectedSkuGroup(null);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedSkuGroup]);
 
   // Dynamic available Phôi list with counts
   const phôiOptions = useMemo(() => {
@@ -213,6 +228,81 @@ export function PpcSkuRecommendationGroupView({
       });
   }, [allRecommendations, selectedSkuGroup, modalActionFilter, modalSearch]);
 
+  // Group currentSkuRecs by Campaign
+  const groupedByCampaign = useMemo(() => {
+    const map = new Map<string, PpcRecommendation[]>();
+    for (const rec of currentSkuRecs) {
+      const campName = rec.campaignName || "Chưa xác định Campaign";
+      if (!map.has(campName)) {
+        map.set(campName, []);
+      }
+      map.get(campName)!.push(rec);
+    }
+
+    return Array.from(map.entries()).map(([campaignName, recs]) => {
+      let totalIncrease = 0;
+      let totalDecrease = 0;
+      let totalPause = 0;
+      for (const r of recs) {
+        if (r.recType === "BID_INCREASE") totalIncrease++;
+        else if (r.recType === "BID_DECREASE") totalDecrease++;
+        else if (r.recType === "PAUSE_TARGET") totalPause++;
+      }
+      const firstRec = recs[0];
+      let campType = "SP";
+      if (firstRec?.ruleProfile) {
+        const parts = firstRec.ruleProfile.split(" ");
+        campType = parts[0] || "SP";
+      } else if (campaignName.includes("SB01")) {
+        campType = "SB01";
+      } else if (campaignName.includes("SB05")) {
+        campType = "SB05";
+      } else if (campaignName.includes("SP03")) {
+        campType = "SP03";
+      } else if (firstRec?.adType) {
+        campType = firstRec.adType;
+      }
+
+      return {
+        campaignName,
+        campaignType: campType,
+        adType: firstRec?.adType,
+        recs,
+        totalIncrease,
+        totalDecrease,
+        totalPause,
+      };
+    });
+  }, [currentSkuRecs]);
+
+  const toggleCampaignExpanded = (campName: string) => {
+    setExpandedCampaigns((prev) => {
+      const next = new Set(prev);
+      if (next.has(campName)) next.delete(campName);
+      else next.add(campName);
+      return next;
+    });
+  };
+
+  const handleExpandAllCampaigns = () => {
+    if (expandedCampaigns.size === groupedByCampaign.length) {
+      setExpandedCampaigns(new Set());
+    } else {
+      setExpandedCampaigns(new Set(groupedByCampaign.map((c) => c.campaignName)));
+    }
+  };
+
+  const handleToggleSelectCampaign = (campRecs: PpcRecommendation[]) => {
+    const next = new Set(selectedRecIds);
+    const allSelected = campRecs.length > 0 && campRecs.every((r) => next.has(r.id));
+    if (allSelected) {
+      for (const r of campRecs) next.delete(r.id);
+    } else {
+      for (const r of campRecs) next.add(r.id);
+    }
+    setSelectedRecIds(next);
+  };
+
   // Select all inside SKU Detail
   const handleToggleSelectAll = () => {
     if (selectedRecIds.size === currentSkuRecs.length) {
@@ -233,7 +323,8 @@ export function PpcSkuRecommendationGroupView({
   };
 
   const handleFinalBidChange = (id: string, val: string) => {
-    const num = parseFloat(val);
+    const cleaned = val.replace(",", ".");
+    const num = parseFloat(cleaned);
     setUserFinalBids((prev) => ({
       ...prev,
       [id]: isNaN(num) ? 0 : num,
@@ -444,6 +535,9 @@ export function PpcSkuRecommendationGroupView({
 
           {/* Counts & Aggregates Badge */}
           <div className="flex items-center gap-3">
+            <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-[11px] font-black text-indigo-700">
+              Dữ liệu chỉnh bid: 30D
+            </div>
             <div className="flex items-center gap-2 text-xs text-slate-600 font-medium bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs">
               <span>
                 Hiển thị <strong className="text-slate-900 font-bold">{filteredGroups.length}</strong>/{groups.length} SKU
@@ -730,8 +824,14 @@ export function PpcSkuRecommendationGroupView({
 
       {/* SKU RECOMMENDATION DETAIL MODAL */}
       {selectedSkuGroup && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 overflow-y-auto">
-          <div className="w-full max-w-6xl max-h-[92vh] bg-white border border-slate-200 rounded-2xl flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 overflow-y-auto"
+          onClick={() => setSelectedSkuGroup(null)}
+        >
+          <div
+            className="w-full max-w-6xl max-h-[92vh] bg-white border border-slate-200 rounded-2xl flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
             {/* Modal Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/70">
               <div>
@@ -754,6 +854,7 @@ export function PpcSkuRecommendationGroupView({
                   setModalActionFilter("ALL");
                   setRecentlyApprovedIds(new Set());
                   setSelectedRecIds(new Set());
+                  setExpandedCampaigns(new Set());
                 }}
                 className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer"
               >
@@ -848,13 +949,18 @@ export function PpcSkuRecommendationGroupView({
                 </div>
               </div>
 
-              {/* BLOCK C: RECOMMENDATIONS TABLE */}
-              <div className="space-y-3">
+              {/* BLOCK C: RECOMMENDATIONS TABLE GROUPED BY CAMPAIGN */}
+              <div className="space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50/80 p-3 rounded-xl border border-slate-200">
                   <div className="flex flex-wrap items-center gap-3">
-                    <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">
-                      Block C — Đề Xuất ({currentSkuRecs.length})
-                    </h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">
+                        Block C — Đề Xuất
+                      </h3>
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                        {currentSkuRecs.length} targets · {groupedByCampaign.length} campaigns
+                      </span>
+                    </div>
 
                     {/* Modal search */}
                     <div className="relative">
@@ -864,7 +970,7 @@ export function PpcSkuRecommendationGroupView({
                         placeholder="Lọc từ khóa / campaign..."
                         value={modalSearch}
                         onChange={(e) => setModalSearch(e.target.value)}
-                        className="pl-7 pr-3 py-1 bg-white border border-slate-200 rounded-lg text-xs w-48 focus:outline-none focus:border-indigo-600"
+                        className="pl-7 pr-3 py-1 bg-white border border-slate-200 rounded-lg text-xs w-52 focus:outline-none focus:border-indigo-600"
                       />
                     </div>
 
@@ -872,7 +978,7 @@ export function PpcSkuRecommendationGroupView({
                     <div className="flex items-center gap-1 bg-white p-0.5 rounded-lg border border-slate-200 text-xs">
                       <button
                         onClick={() => setModalActionFilter("ALL")}
-                        className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
                           modalActionFilter === "ALL" ? "bg-indigo-50 text-indigo-700" : "text-slate-600 hover:text-slate-900"
                         }`}
                       >
@@ -880,7 +986,7 @@ export function PpcSkuRecommendationGroupView({
                       </button>
                       <button
                         onClick={() => setModalActionFilter("BID_INCREASE")}
-                        className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
                           modalActionFilter === "BID_INCREASE" ? "bg-emerald-50 text-emerald-700" : "text-slate-600 hover:text-emerald-600"
                         }`}
                       >
@@ -888,7 +994,7 @@ export function PpcSkuRecommendationGroupView({
                       </button>
                       <button
                         onClick={() => setModalActionFilter("BID_DECREASE")}
-                        className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
                           modalActionFilter === "BID_DECREASE" ? "bg-rose-50 text-rose-700" : "text-slate-600 hover:text-rose-600"
                         }`}
                       >
@@ -896,7 +1002,7 @@ export function PpcSkuRecommendationGroupView({
                       </button>
                       <button
                         onClick={() => setModalActionFilter("PAUSE_TARGET")}
-                        className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
                           modalActionFilter === "PAUSE_TARGET" ? "bg-amber-50 text-amber-800" : "text-slate-600 hover:text-amber-700"
                         }`}
                       >
@@ -912,6 +1018,42 @@ export function PpcSkuRecommendationGroupView({
                   </div>
 
                   <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleExpandAllCampaigns}
+                      className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition shadow-2xs cursor-pointer flex items-center gap-1.5"
+                    >
+                      {expandedCampaigns.size === groupedByCampaign.length && groupedByCampaign.length > 0 ? (
+                        <>
+                          <CaretUp size={14} weight="bold" className="text-indigo-600" />
+                          <span>Thu gọn tất cả</span>
+                        </>
+                      ) : (
+                        <>
+                          <CaretDown size={14} weight="bold" className="text-indigo-600" />
+                          <span>Mở tất cả ({groupedByCampaign.length})</span>
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleToggleSelectAll}
+                      className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition shadow-2xs cursor-pointer flex items-center gap-1.5"
+                    >
+                      {selectedRecIds.size === currentSkuRecs.length && currentSkuRecs.length > 0 ? (
+                        <>
+                          <CheckSquare size={15} className="text-indigo-600" weight="fill" />
+                          <span>Bỏ chọn tất cả</span>
+                        </>
+                      ) : (
+                        <>
+                          <Square size={15} className="text-slate-400" />
+                          <span>Chọn tất cả ({currentSkuRecs.length})</span>
+                        </>
+                      )}
+                    </button>
+
                     {recentlyApprovedIds.size > 0 && selectedRecIds.size === 0 ? (
                       <button
                         onClick={handleOpenActionQueueModal}
@@ -934,128 +1076,220 @@ export function PpcSkuRecommendationGroupView({
                   </div>
                 </div>
 
-                <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white max-h-96 shadow-2xs">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-slate-50/90 text-slate-600 sticky top-0 border-b border-slate-200 font-bold z-10">
-                      <tr>
-                        <th className="py-2.5 px-3 w-8">
-                          <button
-                            onClick={handleToggleSelectAll}
-                            className="text-slate-400 hover:text-slate-700 cursor-pointer"
-                          >
-                            {selectedRecIds.size === currentSkuRecs.length && currentSkuRecs.length > 0 ? (
-                              <CheckSquare size={16} className="text-indigo-600" weight="fill" />
-                            ) : (
-                              <Square size={16} />
-                            )}
-                          </button>
-                        </th>
-                        <th className="py-2.5 px-2 w-24">Hành động</th>
-                        <th className="py-2.5 px-3">Target / Keyword</th>
-                        <th className="py-2.5 px-3">Campaign</th>
-                        <th className="py-2.5 px-3">Type</th>
-                        <th className="py-2.5 px-3 text-right">Current Bid</th>
-                        <th className="py-2.5 px-3 text-right">Suggested Bid</th>
-                        <th className="py-2.5 px-3 text-right">Final Bid</th>
-                        <th className="py-2.5 px-3">Rule</th>
-                        <th className="sticky right-0 z-20 w-20 border-l border-slate-200 bg-slate-50 py-2.5 px-2 text-center shadow-[-6px_0_10px_-8px_rgba(15,23,42,0.35)]">Thao tác</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-slate-700">
-                      {currentSkuRecs.length === 0 ? (
-                        <tr>
-                          <td colSpan={10} className="py-8 text-center text-slate-400">
-                            Không có đề xuất nào cho SKU này.
-                          </td>
-                        </tr>
-                      ) : (
-                        currentSkuRecs.map((rec) => {
-                          const isSelected = selectedRecIds.has(rec.id);
-                          const finalBid = userFinalBids[rec.id] ?? rec.recommendedBid ?? rec.currentBid ?? 0;
-                          const isApproved = recentlyApprovedIds.has(rec.id);
+                {/* Grouped Campaign Cards */}
+                {groupedByCampaign.length === 0 ? (
+                  <div className="py-12 text-center text-slate-400 bg-slate-50/50 rounded-xl border border-slate-200">
+                    Không có đề xuất nào cho SKU này theo bộ lọc hiện tại.
+                  </div>
+                ) : (
+                  <div className="space-y-3.5 max-h-[52vh] overflow-y-auto pr-1">
+                    {groupedByCampaign.map((cg) => {
+                      const isCampaignAllSelected = cg.recs.length > 0 && cg.recs.every((r) => selectedRecIds.has(r.id));
+                      const isCampaignSomeSelected = !isCampaignAllSelected && cg.recs.some((r) => selectedRecIds.has(r.id));
+                      const isExpanded = expandedCampaigns.has(cg.campaignName);
 
-                          return (
-                            <tr
-                              key={rec.id}
-                              className={`hover:bg-indigo-50/20 transition ${
-                                isSelected ? "bg-indigo-50/40" : ""
-                              }`}
-                            >
-                              <td className="py-2.5 px-3">
+                      return (
+                        <div
+                          key={cg.campaignName}
+                          className={`rounded-xl border transition shadow-2xs overflow-hidden ${
+                            isExpanded
+                              ? "border-indigo-200 ring-1 ring-indigo-200/50 bg-white"
+                              : "border-slate-200 hover:border-indigo-300 bg-white"
+                          }`}
+                        >
+                          {/* Campaign Header Bar — Click anywhere to expand/collapse */}
+                          <div
+                            onClick={() => toggleCampaignExpanded(cg.campaignName)}
+                            className={`flex flex-wrap items-center justify-between gap-2.5 px-4 py-3 border-b cursor-pointer select-none transition ${
+                              isExpanded
+                                ? "bg-indigo-50/50 border-indigo-100"
+                                : "bg-slate-50/90 hover:bg-indigo-50/30 border-slate-200"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 flex-1 min-w-[280px]">
+                              {/* Checkbox wrapper with stopPropagation */}
+                              <div onClick={(e) => e.stopPropagation()}>
                                 <button
-                                  onClick={() => handleToggleSelectOne(rec.id)}
-                                  className="text-slate-400 hover:text-slate-700 cursor-pointer"
+                                  type="button"
+                                  onClick={() => handleToggleSelectCampaign(cg.recs)}
+                                  className="text-slate-400 hover:text-slate-700 cursor-pointer p-0.5 rounded"
+                                  title={isCampaignAllSelected ? "Bỏ chọn campaign này" : "Chọn tất cả trong campaign này"}
                                 >
-                                  {isSelected ? (
-                                    <CheckSquare size={16} className="text-indigo-600" weight="fill" />
+                                  {isCampaignAllSelected ? (
+                                    <CheckSquare size={17} className="text-indigo-600" weight="fill" />
+                                  ) : isCampaignSomeSelected ? (
+                                    <div className="w-4 h-4 rounded border-2 border-indigo-600 flex items-center justify-center bg-indigo-50">
+                                      <div className="w-2 h-0.5 bg-indigo-600 rounded" />
+                                    </div>
                                   ) : (
-                                    <Square size={16} />
+                                    <Square size={17} />
                                   )}
                                 </button>
-                              </td>
-                              <td className="py-2.5 px-2 whitespace-nowrap">
-                                {renderActionBadge(rec.recType)}
-                              </td>
-                              <td className="py-2.5 px-3 font-bold text-slate-900 max-w-xs truncate" title={rec.keyword}>
-                                {rec.keyword}
-                              </td>
-                              <td className="py-2.5 px-3 text-slate-500 max-w-[180px] truncate" title={rec.campaignName}>
-                                {rec.campaignName || "—"}
-                              </td>
-                              <td className="py-2.5 px-3">
-                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                                  {rec.ruleProfile ? rec.ruleProfile.split(" ")[1] || "SP" : rec.adType}
+                              </div>
+
+                              <CaretRight
+                                size={15}
+                                weight="bold"
+                                className={`text-slate-400 transition-transform duration-200 ${
+                                  isExpanded ? "rotate-90 text-indigo-600" : "text-slate-400"
+                                }`}
+                              />
+
+                              <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800 border border-indigo-200/80">
+                                {cg.campaignType}
+                              </span>
+
+                              {/* FULL CAMPAIGN NAME (NO TRUNCATION!) */}
+                              <h4
+                                className="font-bold text-slate-900 text-xs font-mono break-all select-all flex-1 hover:text-indigo-600 transition"
+                                title="Bấm để mở / thu gọn danh sách target"
+                              >
+                                {cg.campaignName}
+                              </h4>
+                            </div>
+
+                            <div className="flex items-center gap-2 text-[11px]">
+                              <span className="px-2 py-0.5 rounded font-bold text-slate-600 bg-white border border-slate-200">
+                                {cg.recs.length} target{cg.recs.length > 1 ? "s" : ""}
+                              </span>
+
+                              {cg.totalIncrease > 0 && (
+                                <span className="text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                  ↑ {cg.totalIncrease}
                                 </span>
-                              </td>
-                              <td className="py-2.5 px-3 text-right font-mono text-slate-600">
-                                ${rec.currentBid ? rec.currentBid.toFixed(2) : "0.00"}
-                              </td>
-                              <td className="py-2.5 px-3 text-right font-black text-indigo-700 font-mono">
-                                {rec.recType === "PAUSE_TARGET" ? "—" : `$${(rec.recommendedBid || 0).toFixed(2)}`}
-                              </td>
-                              <td className="py-2.5 px-3 text-right">
-                                {rec.recType === "PAUSE_TARGET" ? (
-                                  <span className="text-slate-400 font-mono font-bold">Pause</span>
-                                ) : (
-                                  <input
-                                    type="number"
-                                    step="0.01"
-                                    value={finalBid ? finalBid.toFixed(2) : ""}
-                                    onChange={(e) => handleFinalBidChange(rec.id, e.target.value)}
-                                    className="w-16 px-1.5 py-0.5 bg-slate-50 border border-slate-300 rounded text-right text-slate-900 font-mono text-xs focus:outline-none focus:border-indigo-600 focus:bg-white"
-                                  />
-                                )}
-                              </td>
-                              <td className="py-2.5 px-3 text-[11px] text-slate-500 whitespace-nowrap">
-                                {rec.ruleProfile || "v1.0"}
-                              </td>
-                              <td className={`sticky right-0 z-[5] border-l border-slate-100 py-2.5 px-2 text-center shadow-[-6px_0_10px_-8px_rgba(15,23,42,0.3)] ${isSelected ? "bg-indigo-50" : "bg-white"}`}>
-                                {isApproved ? (
-                                  <button
-                                    onClick={handleOpenActionQueueModal}
-                                    className="whitespace-nowrap px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[11px] shadow-2xs transition cursor-pointer flex items-center justify-center gap-1 mx-auto"
-                                    title="Mục này đã được duyệt vào hàng đợi. Bấm vào đây để mở Action Queue"
-                                  >
-                                    <Lightning size={12} weight="fill" className="text-amber-300" />
-                                    <span>Action</span>
-                                  </button>
-                                ) : (
-                                  <button
-                                    onClick={() => handleApproveSingle(rec)}
-                                    disabled={isApproving}
-                                    className="whitespace-nowrap px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold text-[11px] border border-indigo-200 transition cursor-pointer"
-                                  >
-                                    Duyệt
-                                  </button>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                              )}
+                              {cg.totalDecrease > 0 && (
+                                <span className="text-rose-700 font-bold bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                                  ↓ {cg.totalDecrease}
+                                </span>
+                              )}
+                              {cg.totalPause > 0 && (
+                                <span className="text-amber-800 font-bold bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                                  ⏸ {cg.totalPause}
+                                </span>
+                              )}
+
+                              <span className="text-[11px] font-bold text-indigo-600 pl-1">
+                                {isExpanded ? "Thu gọn ▲" : "Xem target ▼"}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Target Table Inside Campaign (only visible when expanded) */}
+                          {isExpanded && (
+                            <div className="overflow-x-auto animate-in fade-in duration-150">
+                              <table className="w-full text-left text-xs">
+                                <thead className="bg-slate-50/60 text-slate-600 border-b border-slate-100 font-bold text-[11px]">
+                                  <tr>
+                                    <th className="py-2.5 px-3 w-8"></th>
+                                    <th className="py-2.5 px-2 w-24">Hành động</th>
+                                    <th className="py-2.5 px-3">Target / Keyword</th>
+                                    <th className="py-2.5 px-3 text-right">Current Bid</th>
+                                    <th className="py-2.5 px-3 text-right">Suggested Bid</th>
+                                    <th className="py-2.5 px-3 text-right w-24">Final Bid</th>
+                                    <th className="py-2.5 px-3">Rule Profile</th>
+                                    <th className="sticky right-0 z-10 w-24 border-l border-slate-100 bg-slate-50/80 py-2.5 px-3 text-center shadow-[-6px_0_10px_-8px_rgba(15,23,42,0.3)]">
+                                      Thao tác
+                                    </th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 text-slate-700">
+                                  {cg.recs.map((rec) => {
+                                    const isSelected = selectedRecIds.has(rec.id);
+                                    const finalBid = userFinalBids[rec.id] ?? rec.recommendedBid ?? rec.currentBid ?? 0;
+                                    const isApproved = recentlyApprovedIds.has(rec.id);
+
+                                    return (
+                                      <tr
+                                        key={rec.id}
+                                        className={`hover:bg-indigo-50/20 transition ${
+                                          isSelected ? "bg-indigo-50/40" : ""
+                                        }`}
+                                      >
+                                        <td className="py-2.5 px-3">
+                                          <button
+                                            type="button"
+                                            onClick={() => handleToggleSelectOne(rec.id)}
+                                            className="text-slate-400 hover:text-slate-700 cursor-pointer"
+                                          >
+                                            {isSelected ? (
+                                              <CheckSquare size={16} className="text-indigo-600" weight="fill" />
+                                            ) : (
+                                              <Square size={16} />
+                                            )}
+                                          </button>
+                                        </td>
+                                        <td className="py-2.5 px-2 whitespace-nowrap">
+                                          {renderActionBadge(rec.recType)}
+                                        </td>
+                                        <td className="py-2.5 px-3">
+                                          <div className="font-bold text-slate-900 break-words" title={rec.keyword}>
+                                            {rec.keyword}
+                                          </div>
+                                          {rec.matchType && (
+                                            <div className="text-[10px] text-slate-400 uppercase font-mono mt-0.5">
+                                              Match: {rec.matchType}
+                                            </div>
+                                          )}
+                                        </td>
+                                        <td className="py-2.5 px-3 text-right font-mono text-slate-600">
+                                          ${rec.currentBid ? rec.currentBid.toFixed(2) : "0.00"}
+                                        </td>
+                                        <td className="py-2.5 px-3 text-right font-black text-indigo-700 font-mono">
+                                          {rec.recType === "PAUSE_TARGET" ? "—" : `$${(rec.recommendedBid || 0).toFixed(2)}`}
+                                        </td>
+                                        <td className="py-2.5 px-3 text-right">
+                                          {rec.recType === "PAUSE_TARGET" ? (
+                                            <span className="text-slate-400 font-mono font-bold">Pause</span>
+                                          ) : (
+                                            <input
+                                              type="text"
+                                              inputMode="decimal"
+                                              value={finalBid ? finalBid.toFixed(2) : ""}
+                                              onChange={(e) => handleFinalBidChange(rec.id, e.target.value)}
+                                              className="w-18 px-2 py-1 bg-slate-50 border border-slate-300 rounded text-right text-slate-900 font-mono text-xs focus:outline-none focus:border-indigo-600 focus:bg-white"
+                                            />
+                                          )}
+                                        </td>
+                                        <td className="py-2.5 px-3 text-[11px] text-slate-500 whitespace-nowrap">
+                                          {rec.ruleProfile || "v1.0"}
+                                        </td>
+                                        <td
+                                          className={`sticky right-0 z-[5] border-l border-slate-100 py-2.5 px-3 text-center shadow-[-6px_0_10px_-8px_rgba(15,23,42,0.3)] ${
+                                            isSelected ? "bg-indigo-50" : "bg-white"
+                                          }`}
+                                        >
+                                          {isApproved ? (
+                                            <button
+                                              onClick={handleOpenActionQueueModal}
+                                              className="whitespace-nowrap px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[11px] shadow-2xs transition cursor-pointer flex items-center justify-center gap-1 mx-auto"
+                                              title="Mục này đã được duyệt vào hàng đợi. Bấm vào đây để mở Action Queue"
+                                            >
+                                              <Lightning size={12} weight="fill" className="text-amber-300" />
+                                              <span>Action</span>
+                                            </button>
+                                          ) : (
+                                            <button
+                                              onClick={() => handleApproveSingle(rec)}
+                                              disabled={isApproving}
+                                              className="whitespace-nowrap px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold text-[11px] border border-indigo-200 transition cursor-pointer"
+                                            >
+                                              Duyệt
+                                            </button>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1069,6 +1303,7 @@ export function PpcSkuRecommendationGroupView({
                   setSelectedSkuGroup(null);
                   setRecentlyApprovedIds(new Set());
                   setSelectedRecIds(new Set());
+                  setExpandedCampaigns(new Set());
                 }}
                 className="px-4 py-2 rounded-lg bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-bold transition cursor-pointer shadow-2xs"
               >

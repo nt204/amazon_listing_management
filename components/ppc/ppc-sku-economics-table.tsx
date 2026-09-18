@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   MagnifyingGlass,
   PencilSimple,
@@ -69,6 +69,20 @@ export function PpcSkuEconomicsTable({
     setEditCr((item.cr * 100).toFixed(1));
     setIsEditing(false);
   };
+
+  // Handle ESC key to close drawer
+  useEffect(() => {
+    if (!selectedSku) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        setSelectedSku(null);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedSku]);
 
   const handleSave = async () => {
     if (!selectedSku) return;
@@ -343,8 +357,14 @@ export function PpcSkuEconomicsTable({
 
       {/* Drawer Chi Tiết SKU */}
       {selectedSku && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/50 backdrop-blur-xs transition">
-          <div className="w-full max-w-md bg-white border-l border-slate-200 p-6 flex flex-col justify-between overflow-y-auto shadow-2xl animate-in slide-in-from-right duration-200">
+        <div
+          className="fixed inset-0 z-50 flex justify-end bg-slate-900/50 backdrop-blur-xs transition"
+          onClick={() => setSelectedSku(null)}
+        >
+          <div
+            className="w-full max-w-md bg-white border-l border-slate-200 p-6 flex flex-col justify-between overflow-y-auto shadow-2xl animate-in slide-in-from-right duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="space-y-6">
               {/* Header */}
               <div className="flex items-start justify-between border-b border-slate-100 pb-4">

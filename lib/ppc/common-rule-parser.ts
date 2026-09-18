@@ -27,7 +27,12 @@ interface RawCampaignRule {
   display_name: string;
   has_order: { metric: "acos_pct"; zones: RawZone[] };
   no_order: { metric: "clicks"; zones: RawZone[] };
-  bid_limits: { min_bid: number; max_bid: number };
+  bid_limits: {
+    min_bid: number;
+    max_bid: number;
+    max_bid_factor?: number;
+    max_bid_ref?: string;
+  };
   budget_rule: unknown;
 }
 
@@ -94,6 +99,7 @@ export function parseAmazonPpcCommonRuleSet(input: unknown): AmazonPpcCommonRule
     const min = finite(limits.min_bid, `${type}.min_bid`);
     const max = finite(limits.max_bid, `${type}.max_bid`);
     if (min <= 0 || max < min) throw new Error(`${type}: trần/sàn bid không hợp lệ.`);
+    if (limits.max_bid_factor !== undefined) finite(limits.max_bid_factor, `${type}.max_bid_factor`);
   }
   if (!root.parser_rules || !Array.isArray(root.calculation_flow) || !root.output_schema) throw new Error("Thiếu parser_rules, calculation_flow hoặc output_schema.");
   return input as AmazonPpcCommonRuleSet;
@@ -136,7 +142,12 @@ export function commonRuleToDefinitions(ruleSet: AmazonPpcCommonRuleSet): PpcRul
           maxInclusive: zone.max === undefined ? true : (zone.max_inclusive ?? false),
         };
       }),
-      limits: { minBid: campaign.bid_limits.min_bid, maxBid: campaign.bid_limits.max_bid },
+      limits: {
+        minBid: campaign.bid_limits.min_bid,
+        maxBid: campaign.bid_limits.max_bid,
+        maxBidFactor: campaign.bid_limits.max_bid_factor ?? (campaignType === "SP03" ? 1.0 : 0.8),
+        maxBidRef: campaign.bid_limits.max_bid_ref ?? (campaignType === "SP03" ? "sku_max_bid" : "80_pct_sp03_max_bid"),
+      },
     };
   });
 }

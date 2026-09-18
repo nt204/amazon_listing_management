@@ -81,6 +81,8 @@ export interface RuleNoOrderTier {
 export interface RuleLimits {
   minBid: number;
   maxBid: number;
+  maxBidFactor?: number;
+  maxBidRef?: string;
 }
 
 export interface PpcRuleDefinition {
@@ -235,14 +237,12 @@ export const SKU_TO_PRODUCT_TYPE_RULE_SET = {
     trim_whitespace: true,
     uppercase: true,
   },
-  taxonomy: {
-    "Blanket Hoodie": "Oodie",
-  } as Record<string, string>,
+  taxonomy: {} as Record<string, string>,
   exception_map: {
     "BHL180660A01": "Glass Ornament",
   } as Record<string, string>,
   prefix_rules: [
-    { prefix: "CBH", product_type: "Oodie" },
+    { prefix: "CBH", product_type: "Blanket Hoodie" },
     { prefix: "ODL", product_type: "Oodie" },
     { prefix: "OHN", product_type: "Oodie" },
     { prefix: "OC", product_type: "Oodie" },

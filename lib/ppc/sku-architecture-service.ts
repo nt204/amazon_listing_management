@@ -474,6 +474,7 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
       SUM(spend) as total_spend,
       SUM(sales) as total_sales,
       SUM(orders) as total_orders,
+      SUM(units) as total_units,
       SUM(clicks) as total_clicks,
       SUM(impressions) as total_impressions
     FROM ppc_performance_facts p
@@ -503,6 +504,7 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
     const spend = Number(p.total_spend || 0);
     const sales = Number(p.total_sales || 0);
     const orders = Number(p.total_orders || 0);
+    const units = Number(p.total_units || 0);
     const clicks = Number(p.total_clicks || 0);
     const impressions = Number(p.total_impressions || 0);
 
@@ -533,11 +535,20 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
       master = masterMap.get("Glass Ornament")!;
     }
 
+    // Nếu SKU có đơn hàng: Tính giá bán thực tế trung bình từ doanh thu và số lượng bán
+    const dynamicPrice = orders > 0 && sales > 0
+      ? (units > 0 ? sales / units : sales / orders)
+      : 0;
+
     let sellingPrice = hasPrefixError
       ? 0
-      : existing && Number(existing.selling_price) > 0
+      : existing && existing.cost_source === "OVERRIDE" && Number(existing.selling_price) > 0
         ? Number(existing.selling_price)
-        : (master.defaultPrice > 0 ? master.defaultPrice : 15.99);
+        : orders > 0 && dynamicPrice > 0
+          ? Math.round(dynamicPrice * 100) / 100
+          : existing && Number(existing.selling_price) > 0
+            ? Number(existing.selling_price)
+            : (master.defaultPrice > 0 ? master.defaultPrice : 15.99);
     let baseCost = existing && existing.cost_source === "OVERRIDE"
       ? Number(existing.base_cost)
       : master.baseCost;
@@ -549,29 +560,46 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
       : master.taxRate;
     let costSource: CostSource = existing?.cost_source || "INHERITED";
 
-    // CR mục tiêu cố định 10% (0.10) cho tất cả các phôi. Max Bid luôn cố định theo phôi (Max Bid = 10% * Profit Before Ads).
+    // CR mục tiêu cố định 10% (0.10) cho tất cả các phôi. Max Bid luôn tính theo phôi (Max Bid = 10% * Profit Before Ads).
     // Chỉ thay đổi khi người dùng chủ động OVERRIDE.
     let cr = existing?.cr_source === "OVERRIDE" ? Number(existing.cr) : 0.10;
     let crSource: CrSource = existing?.cr_source === "OVERRIDE" ? "OVERRIDE" : "ASSUMED";
 
     // Break-even ACoS & Profit Before Ads:
-    // When costSource is INHERITED, use the Cost Master values directly (from Phôi configuration)
+    // - Khi OVERRIDE hoặc khi SKU có đơn hàng (orders > 0): Tính linh hoạt theo giá bán thực tế, base cost và fee giữ nguyên theo phôi.
+    // - Khi INHERITED chưa có đơn: Sử dụng các giá trị chuẩn mặc định của phôi
     let profitBeforeAds: number;
     let breakEvenAcos: number;
 
-    if (costSource === "INHERITED") {
+    if (costSource === "OVERRIDE") {
+      profitBeforeAds = calculateProfitBeforeAds(sellingPrice, amazonFee, baseCost, taxRate);
+      breakEvenAcos = calculateBreakEvenAcos(profitBeforeAds, sellingPrice);
+    } else if (orders > 0 && dynamicPrice > 0) {
+      profitBeforeAds = calculateProfitBeforeAds(sellingPrice, amazonFee, baseCost, taxRate);
+      breakEvenAcos = calculateBreakEvenAcos(profitBeforeAds, sellingPrice);
+    } else {
       profitBeforeAds = master.defaultPrice > 0
         ? Math.round((master.defaultPrice - master.defaultAmazonFee - master.baseCost) * 100) / 100
         : calculateProfitBeforeAds(sellingPrice, amazonFee, baseCost, taxRate);
       breakEvenAcos = master.breakEvenAcos > 0
         ? master.breakEvenAcos
         : calculateBreakEvenAcos(profitBeforeAds, sellingPrice);
-    } else {
-      profitBeforeAds = calculateProfitBeforeAds(sellingPrice, amazonFee, baseCost, taxRate);
-      breakEvenAcos = calculateBreakEvenAcos(profitBeforeAds, sellingPrice);
     }
 
     const maxBid = hasPrefixError ? 0 : calculateMaxBid(cr, profitBeforeAds);
+
+    // Đồng bộ vào sku_economics nếu có đơn hàng và giá bán được tính tự động
+    if (existing && existing.cost_source === "INHERITED" && orders > 0 && dynamicPrice > 0) {
+      void sql`
+        UPDATE sku_economics
+        SET selling_price = ${sellingPrice},
+            profit_before_ads = ${profitBeforeAds},
+            break_even_acos = ${breakEvenAcos},
+            max_bid = ${maxBid},
+            updated_at = NOW()
+        WHERE store_id = ${storeId} AND sku = ${sku} AND cost_source = 'INHERITED'
+      `.catch(() => {});
+    }
 
     let ppcStatus: "Healthy" | "Review" | "Bleeding" | "Zero Clicks" = "Healthy";
     if (clicks === 0) {
@@ -812,7 +840,16 @@ export function evaluateRowWithRuleEngine(
 
   const beAcos = econ.breakEvenAcos > 0 ? econ.breakEvenAcos : 45.5;
   const skuMaxBid = econ.maxBid;
-  const effectiveMaxBid = Math.min(rule.limits.maxBid, skuMaxBid);
+
+  // Trần Max Bid:
+  // - SP03 (và SP nói chung): lấy trực tiếp từ trần kinh tế phôi (skuMaxBid)
+  // - SB05: bằng 80% max bid SP03 (0.8 * skuMaxBid)
+  // - SB01: bằng 80% max bid SP03 (0.8 * skuMaxBid)
+  const maxBidFactor = rule.limits.maxBidFactor !== undefined
+    ? rule.limits.maxBidFactor
+    : (format === "SB01" || format === "SB05" ? 0.8 : 1.0);
+  const calculatedMaxBid = Math.round(skuMaxBid * maxBidFactor * 100) / 100;
+  const effectiveMaxBid = Math.max(rule.limits.minBid, calculatedMaxBid);
   // Khi trần kinh tế thấp hơn sàn rule, ưu tiên trần để không bid vượt khả năng sinh lời.
   const effectiveMinBid = Math.min(rule.limits.minBid, effectiveMaxBid);
 
@@ -855,7 +892,8 @@ export function evaluateRowWithRuleEngine(
     recType = "BID_DECREASE";
     targetBid = effectiveMaxBid;
     priority = "P0";
-    reason = `[${format}] Bid hiện tại $${currentBid.toFixed(2)} vượt trần kinh tế SKU $${skuMaxBid.toFixed(2)} -> Giảm về trần an toàn.`;
+    const factorLabel = maxBidFactor !== 1 ? ` x ${Math.round(maxBidFactor * 100)}%` : "";
+    reason = `[${format}] Bid hiện tại $${currentBid.toFixed(2)} vượt trần an toàn $${effectiveMaxBid.toFixed(2)} (Trần phôi $${skuMaxBid.toFixed(2)}${factorLabel}) -> Giảm về trần an toàn.`;
   }
 
   const exceededEffectiveMax = targetBid > effectiveMaxBid;
@@ -895,7 +933,7 @@ export function evaluateRowWithRuleEngine(
     priority,
     currentBid,
     recommendedBid: clampedBid,
-    reason: `${reason} (Sàn rule: $${rule.limits.minBid.toFixed(2)}; trần campaign: $${rule.limits.maxBid.toFixed(2)}; trần SKU: $${skuMaxBid.toFixed(2)}; bid cuối: $${clampedBid.toFixed(2)}.)`,
+    reason: `${reason} (Sàn rule: $${rule.limits.minBid.toFixed(2)}; trần campaign: $${effectiveMaxBid.toFixed(2)}; trần SKU: $${skuMaxBid.toFixed(2)}; bid cuối: $${clampedBid.toFixed(2)}.)`,
     estimatedSavings: Math.max(0, estimatedSavings),
     status: "PENDING",
     productType: econ.productType,

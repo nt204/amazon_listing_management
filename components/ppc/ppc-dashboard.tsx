@@ -281,6 +281,20 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     setTimeout(() => setToast(null), 3500);
   };
 
+  // Close upload modal on ESC key
+  useEffect(() => {
+    if (!showUploadModal) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        setShowUploadModal(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [showUploadModal]);
+
   const loadData = useCallback(async (refresh = false) => {
     detailRequestIdRef.current += 1;
     metricsRequestRef.current?.controller.abort();
@@ -390,7 +404,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
   const loadGroupedRecommendations = useCallback(async () => {
     try {
       const res = await fetch(
-        `/api/ppc/recommendations/grouped?days=${selectedDays}&storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}`,
+        `/api/ppc/recommendations/grouped?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}`,
         { cache: "no-store" },
       );
       if (!res.ok) return;
@@ -404,7 +418,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     } catch (e) {
       console.error(e);
     }
-  }, [selectedDays, selectedStore, selectedSku]);
+  }, [selectedStore, selectedSku]);
 
   const loadActionQueue = useCallback(async () => {
     try {
@@ -3942,8 +3956,14 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
 
       {/* MODAL UPLOAD EXCEL FILE */}
       {showUploadModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl animate-in fade-in zoom-in-95 duration-150 flex flex-col">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4"
+          onClick={() => setShowUploadModal(false)}
+        >
+          <div
+            className="w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl animate-in fade-in zoom-in-95 duration-150 flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 bg-slate-50/50">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 rounded-lg bg-indigo-50 text-indigo-600 border border-indigo-100">
