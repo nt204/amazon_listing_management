@@ -23,14 +23,28 @@ import {
   Funnel,
   CaretRight,
   CaretDown,
+  Megaphone,
 } from "@phosphor-icons/react";
 import type { BulkExport, PpcAction, PpcAutoUploadLog } from "@/lib/ppc/sku-architecture-types";
 
-interface ActionSkuGroup {
+export interface ActionCampaignGroup {
+  campaignName: string;
+  campaignId?: string;
+  actions: PpcAction[];
+  totalActions: number;
+  updateBidCount: number;
+  pauseCount: number;
+  budgetCount: number;
+  avgOldBid: number | null;
+  avgNewBid: number | null;
+}
+
+export interface ActionSkuGroup {
   sku: string;
   isZeroSpend: boolean;
   actions: PpcAction[];
   campaigns: string[];
+  campaignGroups: ActionCampaignGroup[];
   totalActions: number;
   updateBidCount: number;
   pauseCount: number;
@@ -127,16 +141,45 @@ export function PpcActionQueueDrawer({
     return actions.filter((a) => (a.sku || "").toUpperCase() === selectedSkuFilter.toUpperCase());
   }, [actions, selectedSkuFilter]);
 
-  // Group actions by SKU
+  // Group actions by SKU and Campaign
   const [expandedSkus, setExpandedSkus] = useState<Set<string>>(new Set());
+  const [collapsedCampaigns, setCollapsedCampaigns] = useState<Set<string>>(new Set());
 
   const skuGroups = useMemo<ActionSkuGroup[]>(() => {
-    type AccGroup = ActionSkuGroup & {
+    type AccCamp = {
+      campaignName: string;
+      campaignId?: string;
+      actions: PpcAction[];
+      totalActions: number;
+      updateBidCount: number;
+      pauseCount: number;
+      budgetCount: number;
+      avgOldBid: number | null;
+      avgNewBid: number | null;
       _totalOldBid: number;
       _countOldBid: number;
       _totalNewBid: number;
       _countNewBid: number;
     };
+
+    type AccGroup = {
+      sku: string;
+      isZeroSpend: boolean;
+      actions: PpcAction[];
+      campaigns: string[];
+      campMap: Map<string, AccCamp>;
+      totalActions: number;
+      updateBidCount: number;
+      pauseCount: number;
+      budgetCount: number;
+      avgOldBid: number | null;
+      avgNewBid: number | null;
+      _totalOldBid: number;
+      _countOldBid: number;
+      _totalNewBid: number;
+      _countNewBid: number;
+    };
+
     const map = new Map<string, AccGroup>();
     for (const act of displayedActions) {
       const sku = (act.sku || "UNKNOWN").toUpperCase();
@@ -147,6 +190,7 @@ export function PpcActionQueueDrawer({
           isZeroSpend: !!act.isZeroSpend,
           actions: [],
           campaigns: [],
+          campMap: new Map(),
           totalActions: 0,
           updateBidCount: 0,
           pauseCount: 0,
@@ -162,33 +206,95 @@ export function PpcActionQueueDrawer({
       }
       group.actions.push(act);
       group.totalActions++;
-      if (act.campaignName && !group.campaigns.includes(act.campaignName)) {
-        group.campaigns.push(act.campaignName);
+
+      const campName = act.campaignName || "Chiến dịch chưa đặt tên";
+      if (!group.campaigns.includes(campName)) {
+        group.campaigns.push(campName);
       }
+
+      let campGroup = group.campMap.get(campName);
+      if (!campGroup) {
+        campGroup = {
+          campaignName: campName,
+          campaignId: act.campaignId,
+          actions: [],
+          totalActions: 0,
+          updateBidCount: 0,
+          pauseCount: 0,
+          budgetCount: 0,
+          avgOldBid: null,
+          avgNewBid: null,
+          _totalOldBid: 0,
+          _countOldBid: 0,
+          _totalNewBid: 0,
+          _countNewBid: 0,
+        };
+        group.campMap.set(campName, campGroup);
+      }
+      campGroup.actions.push(act);
+      campGroup.totalActions++;
 
       if (act.oldValue !== null && act.oldValue !== undefined && act.oldValue > 0) {
         group._totalOldBid += act.oldValue;
         group._countOldBid++;
+        campGroup._totalOldBid += act.oldValue;
+        campGroup._countOldBid++;
       }
 
       if (act.actionType === "UPDATE_BID") {
         group.updateBidCount++;
+        campGroup.updateBidCount++;
         const val = act.finalValue ?? 0;
         if (val > 0) {
           group._totalNewBid += val;
           group._countNewBid++;
+          campGroup._totalNewBid += val;
+          campGroup._countNewBid++;
         }
       } else if (act.actionType === "PAUSE_TARGET") {
         group.pauseCount++;
+        campGroup.pauseCount++;
       } else if (act.actionType === "UPDATE_BUDGET") {
         group.budgetCount++;
+        campGroup.budgetCount++;
       }
     }
 
-    const groups = Array.from(map.values()).map((g) => {
+    const groups: ActionSkuGroup[] = Array.from(map.values()).map((g) => {
       g.avgOldBid = g._countOldBid > 0 ? g._totalOldBid / g._countOldBid : null;
       g.avgNewBid = g._countNewBid > 0 ? g._totalNewBid / g._countNewBid : null;
-      return g as ActionSkuGroup;
+
+      const campaignGroups: ActionCampaignGroup[] = Array.from(g.campMap.values())
+        .map((cg) => {
+          cg.avgOldBid = cg._countOldBid > 0 ? cg._totalOldBid / cg._countOldBid : null;
+          cg.avgNewBid = cg._countNewBid > 0 ? cg._totalNewBid / cg._countNewBid : null;
+          return {
+            campaignName: cg.campaignName,
+            campaignId: cg.campaignId,
+            actions: cg.actions,
+            totalActions: cg.totalActions,
+            updateBidCount: cg.updateBidCount,
+            pauseCount: cg.pauseCount,
+            budgetCount: cg.budgetCount,
+            avgOldBid: cg.avgOldBid,
+            avgNewBid: cg.avgNewBid,
+          };
+        })
+        .sort((a, b) => b.totalActions - a.totalActions);
+
+      return {
+        sku: g.sku,
+        isZeroSpend: g.isZeroSpend,
+        actions: g.actions,
+        campaigns: g.campaigns,
+        campaignGroups,
+        totalActions: g.totalActions,
+        updateBidCount: g.updateBidCount,
+        pauseCount: g.pauseCount,
+        budgetCount: g.budgetCount,
+        avgOldBid: g.avgOldBid,
+        avgNewBid: g.avgNewBid,
+      };
     });
 
     return groups.sort((a, b) => b.totalActions - a.totalActions);
@@ -204,12 +310,25 @@ export function PpcActionQueueDrawer({
     setExpandedSkus(next);
   };
 
+  const handleToggleExpandCampaign = (sku: string, campaignName: string) => {
+    const key = `${sku}::${campaignName}`;
+    const next = new Set(collapsedCampaigns);
+    if (next.has(key)) {
+      next.delete(key);
+    } else {
+      next.add(key);
+    }
+    setCollapsedCampaigns(next);
+  };
+
   const handleExpandAll = () => {
     setExpandedSkus(new Set(skuGroups.map((g) => g.sku)));
+    setCollapsedCampaigns(new Set());
   };
 
   const handleCollapseAll = () => {
     setExpandedSkus(new Set());
+    setCollapsedCampaigns(new Set());
   };
 
   const handleToggleGroupSelect = (group: ActionSkuGroup) => {
@@ -220,6 +339,18 @@ export function PpcActionQueueDrawer({
       groupIds.forEach((id) => next.delete(id));
     } else {
       groupIds.forEach((id) => next.add(id));
+    }
+    setSelectedIds(next);
+  };
+
+  const handleToggleCampaignSelect = (campGroup: ActionCampaignGroup) => {
+    const campIds = campGroup.actions.map((a) => a.id);
+    const allSelected = campIds.length > 0 && campIds.every((id) => selectedIds.has(id));
+    const next = new Set(selectedIds);
+    if (allSelected) {
+      campIds.forEach((id) => next.delete(id));
+    } else {
+      campIds.forEach((id) => next.add(id));
     }
     setSelectedIds(next);
   };
@@ -237,6 +368,22 @@ export function PpcActionQueueDrawer({
     }
     const next = new Set(selectedIds);
     groupIds.forEach((id) => next.delete(id));
+    setSelectedIds(next);
+  };
+
+  const handleDeleteCampaignGroup = async (campGroup: ActionCampaignGroup) => {
+    const confirmed = window.confirm(`Bạn có chắc chắn muốn xóa tất cả ${campGroup.totalActions} hành động trong chiến dịch "${campGroup.campaignName}"?`);
+    if (!confirmed) return;
+    const campIds = campGroup.actions.map((a) => a.id);
+    if (onRemoveActions) {
+      await onRemoveActions(campIds);
+    } else {
+      for (const id of campIds) {
+        await onRemoveAction(id);
+      }
+    }
+    const next = new Set(selectedIds);
+    campIds.forEach((id) => next.delete(id));
     setSelectedIds(next);
   };
 
@@ -488,9 +635,9 @@ export function PpcActionQueueDrawer({
         className="fixed inset-0 z-50 flex justify-end bg-slate-900/50 backdrop-blur-xs transition"
         onClick={onClose}
       >
-        {/* Rộng rãi & Thoải mái: max-w-5xl, xl:max-w-6xl, 2xl:max-w-7xl để hiển thị toàn bộ cột không bị co ép */}
+        {/* Rộng rãi & Thoải mái: max-w-6xl, xl:max-w-7xl, 2xl:max-w-[96vw] để hiển thị đầy đủ tên chiến dịch mà không bị co ép */}
         <div
-          className="w-full max-w-5xl xl:max-w-6xl 2xl:max-w-7xl bg-white border-l border-slate-200 p-6 flex flex-col justify-between shadow-2xl animate-in slide-in-from-right duration-200 h-full overflow-hidden"
+          className="w-full max-w-6xl xl:max-w-7xl 2xl:max-w-[96vw] bg-white border-l border-slate-200 p-6 flex flex-col justify-between shadow-2xl animate-in slide-in-from-right duration-200 h-full overflow-hidden"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="space-y-5 overflow-y-auto flex-1 pr-1">
@@ -644,10 +791,10 @@ export function PpcActionQueueDrawer({
               <div className="flex items-center justify-between px-1 text-xs">
                 <div className="flex items-center gap-2">
                   <span className="font-extrabold text-slate-800">
-                    ĐÃ GOM THÀNH {skuGroups.length} SKU
+                    ĐÃ GOM THEO SKU &amp; CHIẾN DỊCH ({skuGroups.length} SKU)
                   </span>
                   <span className="text-[11px] text-slate-500">
-                    (Click vào từng SKU để xem chi tiết các target)
+                    (Click vào từng SKU và Chiến dịch để xem chi tiết các target)
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5">
@@ -673,9 +820,9 @@ export function PpcActionQueueDrawer({
                   <thead className="bg-slate-50/90 text-slate-600 sticky top-0 border-b border-slate-200 font-bold z-10 whitespace-nowrap">
                     <tr>
                       <th className="py-2.5 px-3 w-10"></th>
-                      <th className="py-2.5 px-3 min-w-[180px]">SKU / Nhóm</th>
-                      <th className="py-2.5 px-3 min-w-[200px]">Chiến dịch</th>
-                      <th className="py-2.5 px-3 min-w-[180px]">Mục tiêu (Targets)</th>
+                      <th className="py-2.5 px-3 min-w-[160px]">SKU / Nhóm</th>
+                      <th className="py-2.5 px-3 min-w-[320px] lg:min-w-[440px]">Chiến dịch</th>
+                      <th className="py-2.5 px-3 min-w-[160px]">Mục tiêu (Targets)</th>
                       <th className="py-2.5 px-3 w-32">Hành động</th>
                       <th className="py-2.5 px-3 text-right w-24">Old (TB)</th>
                       <th className="py-2.5 px-3 text-right w-24">New (TB)</th>
@@ -838,95 +985,232 @@ export function PpcActionQueueDrawer({
                               </td>
                             </tr>
 
-                            {/* Expanded Individual Target Rows */}
+                            {/* Expanded Campaign Subgroups & Individual Target Rows */}
                             {isExpanded &&
-                              group.actions.map((act) => {
-                                const isSelected = selectedIds.has(act.id);
+                              group.campaignGroups.map((camp) => {
+                                const isCampExpanded = !collapsedCampaigns.has(
+                                  `${group.sku}::${camp.campaignName}`
+                                );
+                                const isCampAllSelected =
+                                  camp.actions.length > 0 &&
+                                  camp.actions.every((a) => selectedIds.has(a.id));
+                                const isCampPartiallySelected =
+                                  !isCampAllSelected &&
+                                  camp.actions.some((a) => selectedIds.has(a.id));
+
                                 return (
-                                  <tr
-                                    key={act.id}
-                                    className={`border-b border-slate-100 transition ${
-                                      isSelected
-                                        ? "bg-indigo-50/40"
-                                        : "bg-white hover:bg-slate-50"
-                                    }`}
-                                  >
-                                    <td className="py-2 px-3 pl-6">
-                                      <button
-                                        type="button"
-                                        onClick={() => handleToggleSelectOne(act.id)}
-                                        className="text-slate-400 hover:text-slate-700 cursor-pointer"
+                                  <Fragment key={`${group.sku}-${camp.campaignName}`}>
+                                    {/* Campaign Sub-header Row */}
+                                    <tr
+                                      className="border-b border-slate-200/90 bg-slate-100/80 hover:bg-slate-200/70 transition cursor-pointer border-l-4 border-l-indigo-500 font-semibold"
+                                      onClick={() =>
+                                        handleToggleExpandCampaign(
+                                          group.sku,
+                                          camp.campaignName
+                                        )
+                                      }
+                                    >
+                                      <td
+                                        className="py-2 px-3 pl-6"
+                                        onClick={(e) => e.stopPropagation()}
                                       >
-                                        {isSelected ? (
-                                          <CheckSquare
-                                            size={15}
-                                            className="text-indigo-600"
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            handleToggleCampaignSelect(camp)
+                                          }
+                                          className="text-slate-400 hover:text-slate-700 cursor-pointer"
+                                          title={`Chọn tất cả ${camp.totalActions} mục tiêu trong chiến dịch ${camp.campaignName}`}
+                                        >
+                                          {isCampAllSelected ? (
+                                            <CheckSquare
+                                              size={15}
+                                              className="text-indigo-600"
+                                              weight="fill"
+                                            />
+                                          ) : isCampPartiallySelected ? (
+                                            <div className="w-3.5 h-3.5 rounded border-2 border-indigo-600 bg-indigo-50 flex items-center justify-center">
+                                              <div className="w-2 h-0.5 bg-indigo-600 rounded" />
+                                            </div>
+                                          ) : (
+                                            <Square size={15} />
+                                          )}
+                                        </button>
+                                      </td>
+
+                                      {/* Campaign Name spanning columns 2 & 3 */}
+                                      <td colSpan={2} className="py-2 px-3">
+                                        <div className="flex items-center gap-2">
+                                          <div className="p-0.5 rounded text-slate-500 hover:text-slate-800">
+                                            {isCampExpanded ? (
+                                              <CaretDown size={13} weight="bold" />
+                                            ) : (
+                                              <CaretRight size={13} weight="bold" />
+                                            )}
+                                          </div>
+                                          <Megaphone
+                                            size={13}
+                                            className="text-indigo-600 shrink-0"
                                             weight="fill"
                                           />
-                                        ) : (
-                                          <Square size={15} />
-                                        )}
-                                      </button>
-                                    </td>
-
-                                    <td className="py-2 px-3 pl-8 text-slate-500 text-[11px] font-mono">
-                                      <div className="flex items-center gap-1.5">
-                                        <span>↳ {act.matchType || "Keyword"}</span>
-                                        {act.ruleVersion && (
-                                          <span className="px-1 py-0.2 rounded bg-slate-100 text-[9px] text-slate-400 font-sans">
-                                            {act.ruleVersion}
+                                          <span
+                                            className="font-bold text-slate-800 text-xs select-all whitespace-normal break-words"
+                                            title={camp.campaignName}
+                                          >
+                                            {camp.campaignName}
                                           </span>
-                                        )}
-                                      </div>
-                                    </td>
+                                        </div>
+                                      </td>
 
-                                    <td
-                                      className="py-2 px-3 text-slate-600 text-[11px] max-w-[200px] truncate"
-                                      title={act.campaignName}
-                                    >
-                                      {act.campaignName}
-                                    </td>
-
-                                    <td
-                                      className="py-2 px-3 font-bold text-slate-900 max-w-[200px] truncate"
-                                      title={act.targetKeyword}
-                                    >
-                                      {act.targetKeyword}
-                                    </td>
-
-                                    <td className="py-2 px-3 whitespace-nowrap">
-                                      {act.actionType === "PAUSE_TARGET" ? (
-                                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                                          <Pause size={11} weight="bold" /> Pause
+                                      {/* Targets count in Campaign */}
+                                      <td className="py-2 px-3">
+                                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-slate-200/90 text-slate-700 font-bold text-[10px]">
+                                          {camp.totalActions} targets
                                         </span>
-                                      ) : (
-                                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                          <ArrowUpRight size={11} weight="bold" /> Update Bid
-                                        </span>
-                                      )}
-                                    </td>
+                                      </td>
 
-                                    <td className="py-2 px-3 text-right font-mono text-slate-500 text-[11px]">
-                                      {act.oldValue ? `$${act.oldValue.toFixed(2)}` : "—"}
-                                    </td>
+                                      {/* Action badges in Campaign */}
+                                      <td className="py-2 px-3 whitespace-nowrap">
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          {camp.updateBidCount > 0 && (
+                                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                              {camp.updateBidCount} Bid
+                                            </span>
+                                          )}
+                                          {camp.pauseCount > 0 && (
+                                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                                              {camp.pauseCount} Pause
+                                            </span>
+                                          )}
+                                        </div>
+                                      </td>
 
-                                    <td className="py-2 px-3 text-right font-black text-indigo-700 font-mono text-xs">
-                                      {act.actionType === "PAUSE_TARGET"
-                                        ? "—"
-                                        : `$${(act.finalValue || 0).toFixed(2)}`}
-                                    </td>
+                                      {/* Old Avg Bid for Campaign */}
+                                      <td className="py-2 px-3 text-right font-mono text-slate-500 text-[11px]">
+                                        {camp.avgOldBid !== null
+                                          ? `$${camp.avgOldBid.toFixed(2)}`
+                                          : "—"}
+                                      </td>
 
-                                    <td className="py-2 px-3 text-center">
-                                      <button
-                                        type="button"
-                                        onClick={() => onRemoveAction(act.id)}
-                                        className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-rose-600 transition cursor-pointer"
-                                        title="Xóa hành động này"
+                                      {/* New Avg Bid for Campaign */}
+                                      <td className="py-2 px-3 text-right font-mono font-bold text-indigo-700 text-xs">
+                                        {camp.avgNewBid !== null
+                                          ? `$${camp.avgNewBid.toFixed(2)}`
+                                          : "—"}
+                                      </td>
+
+                                      {/* Delete Campaign */}
+                                      <td
+                                        className="py-2 px-3 text-center"
+                                        onClick={(e) => e.stopPropagation()}
                                       >
-                                        <Trash size={13} />
-                                      </button>
-                                    </td>
-                                  </tr>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            handleDeleteCampaignGroup(camp)
+                                          }
+                                          className="p-1 hover:bg-rose-50 rounded text-slate-400 hover:text-rose-600 transition cursor-pointer"
+                                          title={`Xóa tất cả ${camp.totalActions} hành động trong chiến dịch ${camp.campaignName}`}
+                                        >
+                                          <Trash size={14} />
+                                        </button>
+                                      </td>
+                                    </tr>
+
+                                    {/* Individual Target Rows inside this Campaign */}
+                                    {isCampExpanded &&
+                                      camp.actions.map((act) => {
+                                        const isSelected = selectedIds.has(act.id);
+                                        return (
+                                          <tr
+                                            key={act.id}
+                                            className={`border-b border-slate-100 transition ${
+                                              isSelected
+                                                ? "bg-indigo-50/40"
+                                                : "bg-white hover:bg-slate-50"
+                                            }`}
+                                          >
+                                            <td className="py-2 px-3 pl-10">
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  handleToggleSelectOne(act.id)
+                                                }
+                                                className="text-slate-400 hover:text-slate-700 cursor-pointer"
+                                              >
+                                                {isSelected ? (
+                                                  <CheckSquare
+                                                    size={14}
+                                                    className="text-indigo-600"
+                                                    weight="fill"
+                                                  />
+                                                ) : (
+                                                  <Square size={14} />
+                                                )}
+                                              </button>
+                                            </td>
+
+                                            <td className="py-2 px-3 pl-8 text-slate-500 text-[11px] font-mono">
+                                              <div className="flex items-center gap-1.5">
+                                                <span>↳ {act.matchType || "Keyword"}</span>
+                                                {act.ruleVersion && (
+                                                  <span className="px-1 py-0.2 rounded bg-slate-100 text-[9px] text-slate-400 font-sans">
+                                                    {act.ruleVersion}
+                                                  </span>
+                                                )}
+                                              </div>
+                                            </td>
+
+                                            <td
+                                              className="py-2 px-3 text-slate-500 text-[11px] min-w-[240px] max-w-[440px] truncate"
+                                              title={act.adGroupName || act.campaignName}
+                                            >
+                                              {act.adGroupName ? `Nhóm: ${act.adGroupName}` : act.campaignName}
+                                            </td>
+
+                                            <td
+                                              className="py-2 px-3 font-bold text-slate-900 max-w-[200px] truncate"
+                                              title={act.targetKeyword}
+                                            >
+                                              {act.targetKeyword}
+                                            </td>
+
+                                            <td className="py-2 px-3 whitespace-nowrap">
+                                              {act.actionType === "PAUSE_TARGET" ? (
+                                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                                                  <Pause size={11} weight="bold" /> Pause
+                                                </span>
+                                              ) : (
+                                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                                  <ArrowUpRight size={11} weight="bold" /> Update Bid
+                                                </span>
+                                              )}
+                                            </td>
+
+                                            <td className="py-2 px-3 text-right font-mono text-slate-500 text-[11px]">
+                                              {act.oldValue ? `$${act.oldValue.toFixed(2)}` : "—"}
+                                            </td>
+
+                                            <td className="py-2 px-3 text-right font-black text-indigo-700 font-mono text-xs">
+                                              {act.actionType === "PAUSE_TARGET"
+                                                ? "—"
+                                                : `$${(act.finalValue || 0).toFixed(2)}`}
+                                            </td>
+
+                                            <td className="py-2 px-3 text-center">
+                                              <button
+                                                type="button"
+                                                onClick={() => onRemoveAction(act.id)}
+                                                className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-rose-600 transition cursor-pointer"
+                                                title="Xóa hành động này"
+                                              >
+                                                <Trash size={13} />
+                                              </button>
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                  </Fragment>
                                 );
                               })}
                           </Fragment>

@@ -291,6 +291,9 @@ async function main() {
   downloadedFiles.forEach((f, idx) => console.log(`${idx + 1}. [${f.type}] ${f.name}`));
   console.log("========================================\n");
 
+  console.log("[AdsPower] Đóng tab trình duyệt sau khi tải xong để giải phóng bộ nhớ...");
+  await page.close().catch(() => {});
+
   // Ingest all 6 files into Database
   console.log("=== BẮT ĐẦU NẠP 6 FILE VÀO CƠ SỞ DỮ LIỆU ===");
   const scope = { teamId: "default", actorId: "system" };

@@ -67,6 +67,27 @@ export async function waitForCdpPort(port: number, timeoutMs = 15000): Promise<b
 }
 
 /**
+ * Đóng tab an toàn sau khi xử lý xong theo yêu cầu ("xong tab nào thì tắt tab đó").
+ * Dùng runBeforeUnload: false để đóng dứt khoát không bị chặn bởi dialog unsaved changes.
+ * Nếu là tab duy nhất còn lại trong context, mở 1 tab trắng mới trước khi đóng
+ * để tránh việc Chromium/AdsPower đóng hoàn toàn cửa sổ profile.
+ */
+export async function closeTabSafely(page: any, context?: any): Promise<void> {
+  if (!page || (typeof page.isClosed === "function" && page.isClosed())) return;
+  try {
+    if (context && typeof context.pages === "function") {
+      const remainingPages = context.pages().filter((p: any) => !p.isClosed());
+      if (remainingPages.length <= 1) {
+        await context.newPage().catch(() => {});
+      }
+    }
+    await page.close({ runBeforeUnload: false }).catch(() => {});
+  } catch (err) {
+    console.warn("[AdsPower] Lỗi khi đóng tab:", err);
+  }
+}
+
+/**
  * Tự động phát hiện cổng Chrome DevTools Protocol (CDP) của AdsPower SunBrowser đang MỞ THỰC SỰ trên máy.
  * Bắt buộc xác minh cổng phản hồi /json/version trước khi trả về (tránh stale ports từ phiên cũ).
  */
@@ -463,7 +484,7 @@ async function waitForNewOrUpdatedDownloads(
   const deadline = Date.now() + timeoutSeconds * 1000;
 
   while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await new Promise((resolve) => setTimeout(resolve, 600));
     try {
       // 1. Kiểm tra nếu có file PPC vừa tải xong ở ~/Downloads thì chuyển vào dir
       if (fs.existsSync(parentDir)) {
@@ -508,7 +529,7 @@ async function waitForNewOrUpdatedDownloads(
 
       if (changedFiles.length > 0) {
         // Đảm bảo file đã ghi xong hoàn tất
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 300));
         return changedFiles;
       }
     } catch {
@@ -533,7 +554,7 @@ async function autoCreateAndDownloadSearchTermReport(
 
   // 1. Kiểm tra xem trên trang /reports đã có báo cáo Search Term cho adType vừa tạo hôm nay chưa
   await page.goto(reportsUrl, { waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(2000);
+  await page.waitForSelector("div.ag-row, a[data-takt-id='storm-ui-link'], button:has-text('Create report')", { timeout: 3000 }).catch(() => {});
 
   const existingDownloadLink = await page.evaluate((type: string) => {
     const rows = Array.from(document.querySelectorAll("div.ag-row"));
@@ -569,17 +590,18 @@ async function autoCreateAndDownloadSearchTermReport(
   console.log(`[AdsPower Auto] Tự động tạo mới báo cáo Search Term ${adType}...`);
   const createUrl = `https://advertising.amazon.com/reports/new${entityParam}`;
   await page.goto(createUrl, { waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(2500);
+  await page.waitForSelector("#urc_run_subscription_button, #report-settings-card-report-name-input", { timeout: 4000 }).catch(() => {});
 
   // Chọn Category: Sponsored Brands (nếu SB), Sponsored Products mặc định là SP
   if (adType === "SB") {
     const catBtn = await page.$("#report-configuration-form\\:report-category-control-component-0");
     if (catBtn) {
       await catBtn.click();
-      await page.waitForTimeout(800);
-      const sbOpt = await page.$("[role=\"option\"]:has-text(\"Sponsored Brands\"), li:has-text(\"Sponsored Brands\")");
-      if (sbOpt) await sbOpt.click();
-      await page.waitForTimeout(1200);
+      const sbOpt = await page.waitForSelector("[role=\"option\"]:has-text(\"Sponsored Brands\"), li:has-text(\"Sponsored Brands\")", { timeout: 2000 }).catch(() => null);
+      if (sbOpt) {
+        await sbOpt.click();
+        await page.waitForTimeout(300);
+      }
     }
   }
 
@@ -589,10 +611,11 @@ async function autoCreateAndDownloadSearchTermReport(
     const currentText = await typeBtn.innerText();
     if (!/Search term/i.test(currentText)) {
       await typeBtn.click();
-      await page.waitForTimeout(800);
-      const stOpt = await page.$("[role=\"option\"]:has-text(\"Search term\"), li:has-text(\"Search term\")");
-      if (stOpt) await stOpt.click();
-      await page.waitForTimeout(1000);
+      const stOpt = await page.waitForSelector("[role=\"option\"]:has-text(\"Search term\"), li:has-text(\"Search term\")", { timeout: 2000 }).catch(() => null);
+      if (stOpt) {
+        await stOpt.click();
+        await page.waitForTimeout(300);
+      }
     }
   }
 
@@ -613,7 +636,7 @@ async function autoCreateAndDownloadSearchTermReport(
   // Chờ Amazon tạo xong (tối đa 40s) và lấy link tải
   const deadline = Date.now() + 40000;
   while (Date.now() < deadline) {
-    await page.waitForTimeout(4000);
+    await page.waitForTimeout(2000);
     // Nếu đang ở trang history
     const dlOnHistory = await page.$eval(
       "a[data-takt-id='storm-ui-link'][href*='download-report'], a[href*='download-report']",
@@ -686,7 +709,7 @@ async function autoCreateAndDownloadBulkReport(
 
   if (!bulkPage.url().includes("bulk-operations")) {
     await bulkPage.goto(bulkUrl, { waitUntil: "domcontentloaded" });
-    await bulkPage.waitForTimeout(2500);
+    await bulkPage.waitForSelector("button[data-takt-id='Bulksheet_home_download_campaigns_button'], .ag-row", { timeout: 4000 }).catch(() => {});
   }
 
   console.log(`[AdsPower Auto] Đang cấu hình và yêu cầu file Bulk ${adType}...`);
@@ -695,7 +718,7 @@ async function autoCreateAndDownloadBulkReport(
   const isModalOpen = await bulkPage.$("[data-takt-id='adz_bulkSheets_exportModal_download_button']");
   if (!isModalOpen) {
     await bulkPage.click("button[data-takt-id='Bulksheet_home_download_campaigns_button']");
-    await bulkPage.waitForTimeout(1500);
+    await bulkPage.waitForSelector("[data-takt-id='adz_bulkSheets_exportModal_download_button'], label:has-text('Sponsored Products data')", { timeout: 3000 }).catch(() => {});
   }
 
   // Tùy chỉnh Checkbox theo adType
@@ -718,7 +741,7 @@ async function autoCreateAndDownloadBulkReport(
       await bulkPage.click("label:has-text('Sponsored Products data')");
     }
   }
-  await bulkPage.waitForTimeout(800);
+  await bulkPage.waitForTimeout(300);
 
   // Bấm Download trong modal để Amazon bắt đầu tạo file
   const modalDownloadBtn = await bulkPage.$("button[data-takt-id='adz_bulkSheets_exportModal_download_button']");
@@ -730,7 +753,7 @@ async function autoCreateAndDownloadBulkReport(
   // Đợi link tải Bulk xuất hiện ở dòng đầu tiên của bảng Bulksheet
   const deadline = Date.now() + 45000;
   while (Date.now() < deadline) {
-    await bulkPage.waitForTimeout(4000);
+    await bulkPage.waitForTimeout(2000);
     // Bấm nút Refresh bảng nếu có
     await bulkPage.click("button[aria-label*='Refresh'], button:has-text('Refresh')").catch(() => {});
 
@@ -830,62 +853,93 @@ export async function downloadAdsPowerReports(options: {
   const downloadedFiles: string[] = [];
   const storeName = canonicalStoreName(options.storeName || "HSOSTORE");
 
-  // Tìm hoặc mở trang Amazon Ads để lấy entityId
-  let page = context.pages().find((p) => p.url().includes("advertising.amazon.com"));
-  if (!page) {
-    page = await context.newPage();
-    await page.goto("https://advertising.amazon.com/reports", { waitUntil: "domcontentloaded" });
+  // Tìm entityId từ các tab Amazon Ads đang mở, hoặc mở tab tạm để lấy rồi đóng ngay
+  let entityId = "";
+  for (const p of context.pages()) {
+    const m = p.url().match(/entityId=([A-Z0-9]+)/);
+    if (m && m[1]) {
+      entityId = m[1];
+      break;
+    }
   }
 
-  const entityMatch = page.url().match(/entityId=([A-Z0-9]+)/);
-  const entityId = entityMatch ? entityMatch[1] : "";
+  if (!entityId) {
+    const initPage = await context.newPage();
+    try {
+      await initPage.goto("https://advertising.amazon.com/reports", { waitUntil: "domcontentloaded" });
+      await initPage.waitForTimeout(2000);
+      const m = initPage.url().match(/entityId=([A-Z0-9]+)/);
+      if (m && m[1]) entityId = m[1];
+    } finally {
+      await closeTabSafely(initPage, context);
+    }
+  }
+
   const entityParam = entityId ? `?entityId=${entityId}` : "";
 
-  // Cấu hình CDP cho page
-  const cdp = await context.newCDPSession(page);
-  await cdp.send("Page.setDownloadBehavior", {
-    behavior: "allow",
-    downloadPath: destDir,
-  });
-
   try {
-    // 1. TỰ ĐỘNG TẠO / TẢI SEARCH TERM SP
+    // 1. TỰ ĐỘNG TẠO / TẢI SEARCH TERM SP TRÊN TAB RIÊNG, XONG TẮT TAB
     console.log("[AdsPower Automation] Bắt đầu tự động lấy Search Term SP...");
-    const spSearchFile = await autoCreateAndDownloadSearchTermReport(page, entityParam, "SP", storeName, destDir);
-    if (spSearchFile) downloadedFiles.push(spSearchFile);
-
-    // 2. TỰ ĐỘNG TẠO / TẢI SEARCH TERM SB
-    console.log("[AdsPower Automation] Bắt đầu tự động lấy Search Term SB...");
-    const sbSearchFile = await autoCreateAndDownloadSearchTermReport(page, entityParam, "SB", storeName, destDir);
-    if (sbSearchFile) downloadedFiles.push(sbSearchFile);
-
-    // 3 & 4. TỰ ĐỘNG CẤU HÌNH VÀ TẢI BULK SP & BULK SB TRÊN TRANG BULK OPERATIONS
-    let bulkPage = context.pages().find((p) => p.url().includes("bulk-operations"));
-    let createdBulkPage = false;
-    if (!bulkPage) {
-      bulkPage = await context.newPage();
-      createdBulkPage = true;
-      await bulkPage.goto(`https://advertising.amazon.com/bulk-operations${entityParam}`, { waitUntil: "domcontentloaded" });
+    const spPage = await context.newPage();
+    try {
+      const spCdp = await context.newCDPSession(spPage);
+      await spCdp.send("Page.setDownloadBehavior", {
+        behavior: "allow",
+        downloadPath: destDir,
+      });
+      const spSearchFile = await autoCreateAndDownloadSearchTermReport(spPage, entityParam, "SP", storeName, destDir);
+      if (spSearchFile) downloadedFiles.push(spSearchFile);
+    } finally {
+      console.log("[AdsPower Automation] Đóng tab Search Term SP sau khi xong việc...");
+      await closeTabSafely(spPage, context);
     }
 
-    const bulkCdp = await context.newCDPSession(bulkPage);
-    await bulkCdp.send("Page.setDownloadBehavior", {
-      behavior: "allow",
-      downloadPath: destDir,
-    });
+    // 2. TỰ ĐỘNG TẠO / TẢI SEARCH TERM SB TRÊN TAB RIÊNG, XONG TẮT TAB
+    console.log("[AdsPower Automation] Bắt đầu tự động lấy Search Term SB...");
+    const sbPage = await context.newPage();
+    try {
+      const sbCdp = await context.newCDPSession(sbPage);
+      await sbCdp.send("Page.setDownloadBehavior", {
+        behavior: "allow",
+        downloadPath: destDir,
+      });
+      const sbSearchFile = await autoCreateAndDownloadSearchTermReport(sbPage, entityParam, "SB", storeName, destDir);
+      if (sbSearchFile) downloadedFiles.push(sbSearchFile);
+    } finally {
+      console.log("[AdsPower Automation] Đóng tab Search Term SB sau khi xong việc...");
+      await closeTabSafely(sbPage, context);
+    }
 
-    // 3. Tự động chọn và tải Bulk SP
+    // 3. TỰ ĐỘNG CẤU HÌNH VÀ TẢI BULK SP TRÊN TAB BULK OPERATIONS, XONG TẮT TAB
     console.log("[AdsPower Automation] Bắt đầu tự động lấy Bulk Operations SP...");
-    const bulkSpFile = await autoCreateAndDownloadBulkReport(bulkPage, entityParam, "SP", destDir);
-    if (bulkSpFile) downloadedFiles.push(bulkSpFile);
+    const bulkSpPage = await context.newPage();
+    try {
+      const bulkSpCdp = await context.newCDPSession(bulkSpPage);
+      await bulkSpCdp.send("Page.setDownloadBehavior", {
+        behavior: "allow",
+        downloadPath: destDir,
+      });
+      const bulkSpFile = await autoCreateAndDownloadBulkReport(bulkSpPage, entityParam, "SP", destDir);
+      if (bulkSpFile) downloadedFiles.push(bulkSpFile);
+    } finally {
+      console.log("[AdsPower Automation] Đóng tab Bulk Operations SP sau khi xong việc...");
+      await closeTabSafely(bulkSpPage, context);
+    }
 
-    // 4. Tự động chọn và tải Bulk SB
+    // 4. TỰ ĐỘNG CẤU HÌNH VÀ TẢI BULK SB TRÊN TAB BULK OPERATIONS, XONG TẮT TAB
     console.log("[AdsPower Automation] Bắt đầu tự động lấy Bulk Operations SB...");
-    const bulkSbFile = await autoCreateAndDownloadBulkReport(bulkPage, entityParam, "SB", destDir);
-    if (bulkSbFile) downloadedFiles.push(bulkSbFile);
-
-    if (createdBulkPage) {
-      await bulkPage.close().catch(() => {});
+    const bulkSbPage = await context.newPage();
+    try {
+      const bulkSbCdp = await context.newCDPSession(bulkSbPage);
+      await bulkSbCdp.send("Page.setDownloadBehavior", {
+        behavior: "allow",
+        downloadPath: destDir,
+      });
+      const bulkSbFile = await autoCreateAndDownloadBulkReport(bulkSbPage, entityParam, "SB", destDir);
+      if (bulkSbFile) downloadedFiles.push(bulkSbFile);
+    } finally {
+      console.log("[AdsPower Automation] Đóng tab Bulk Operations SB sau khi xong việc...");
+      await closeTabSafely(bulkSbPage, context);
     }
 
     // 5. SMART FALLBACK: Đảm bảo có đủ 4 file từ thư mục nếu có file vừa tải trong ngày
@@ -1165,23 +1219,15 @@ export async function uploadBulkFileToAmazonAds(options: {
     }
     const m = p.url().match(/entityId=([A-Z0-9]+)/);
     if (m) entityId = m[1];
-    if (created) await p.close().catch(() => {});
+    if (created) await closeTabSafely(p, context);
   }
 
   const entityParam = entityId ? `?entityId=${entityId}` : "";
   console.log(`[AdsPower Upload] Sử dụng entityId: "${entityId}"`);
 
-  // Tìm hoặc mở trang bulk-operations
-  let bulkPage = context.pages().find((p) => p.url().includes("bulk-operations"));
-  if (!bulkPage) {
-    bulkPage = await context.newPage();
-    await bulkPage.goto(`https://advertising.amazon.com/bulk-operations${entityParam}`, { waitUntil: "domcontentloaded" });
-  } else {
-    await bulkPage.bringToFront();
-    if (!bulkPage.url().includes("bulk-operations") || (entityId && !bulkPage.url().includes(entityId))) {
-      await bulkPage.goto(`https://advertising.amazon.com/bulk-operations${entityParam}`, { waitUntil: "domcontentloaded" });
-    }
-  }
+  // Mở tab mới riêng cho quy trình upload
+  const bulkPage = await context.newPage();
+  await bulkPage.goto(`https://advertising.amazon.com/bulk-operations${entityParam}`, { waitUntil: "domcontentloaded" });
 
   console.log(`[AdsPower Upload] Bắt đầu upload file: ${fileName}...`);
 
@@ -1211,7 +1257,6 @@ export async function uploadBulkFileToAmazonAds(options: {
     // 2. Tải file lên input file chooser
     console.log(`[AdsPower Upload] Đang nạp file ${fileName} vào input file chooser...`);
     await fileInput.setInputFiles(options.filePath);
-    await bulkPage.waitForTimeout(2000);
 
     // 3. Chờ nút xác nhận 'Upload' trong modal sáng lên và bấm
     const uploadConfirmBtnSelector = "button[data-takt-id='adz_bulkSheets_unifiedUploadModal_upload_button'], button:has-text('Upload'):not([data-takt-id*='home'])";
@@ -1229,7 +1274,8 @@ export async function uploadBulkFileToAmazonAds(options: {
       console.log("[AdsPower Upload] Bấm nút xác nhận Upload trong modal...");
       await uploadConfirmBtn.click();
       console.log("[AdsPower Upload] Chờ hệ thống Amazon tiếp nhận file...");
-      await bulkPage.waitForTimeout(5000);
+      await bulkPage.waitForSelector("div[role='alert'], .ag-row", { timeout: 3000 }).catch(() => {});
+      await bulkPage.waitForTimeout(1000);
     } else {
       console.warn("[AdsPower Upload] Không thấy nút xác nhận Upload riêng, file có thể đã tự động tiếp nhận.");
     }
@@ -1238,7 +1284,7 @@ export async function uploadBulkFileToAmazonAds(options: {
   } finally {
     // Xong tab nào thì xóa/đóng tab đó đi cho nhẹ trình duyệt theo yêu cầu của user
     console.log("[AdsPower Upload] Đóng tab Bulk Operations sau khi xong việc để giải phóng RAM...");
-    await bulkPage.close().catch(() => {});
+    await closeTabSafely(bulkPage, context);
   }
 
   const profileId = getAdsPowerProfileId(options.profileId, storeName);
