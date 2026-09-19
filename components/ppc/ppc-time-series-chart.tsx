@@ -15,6 +15,7 @@ import {
 } from "recharts";
 import {
   ChartLineUp,
+  CalendarBlank,
 } from "@phosphor-icons/react";
 import type { PpcSummaryMetrics, PpcAdTypeBreakdown, PpcSearchTermRow, PpcDailyTrendPoint } from "@/lib/ppc/types";
 
@@ -29,6 +30,10 @@ interface PpcTimeSeriesChartProps {
   dailyTrends?: PpcDailyTrendPoint[];
   targetAcos?: number;
   currency?: string;
+  isCustomDate?: boolean;
+  startDate?: string;
+  endDate?: string;
+  onCustomDateChange?: (start: string, end: string) => void;
 }
 
 type Granularity = "day" | "week" | "month";
@@ -59,11 +64,30 @@ export function PpcTimeSeriesChart({
   dailyTrends,
   targetAcos = 30,
   currency = "$",
+  isCustomDate = false,
+  startDate,
+  endDate,
+  onCustomDateChange,
 }: PpcTimeSeriesChartProps) {
   // Filters state (ACOS là mặc định, không dùng ROAS)
   const [granularity, setGranularity] = useState<Granularity>("day");
   const [channel, setChannel] = useState<ChannelFilter>("ALL");
   const [rightMetric, setRightMetric] = useState<RightAxisMetric>("ACOS");
+
+  // Custom date picker state
+  const [showCustomPicker, setShowCustomPicker] = useState(false);
+  const maxSelectableDate = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return d.toISOString().slice(0, 10);
+  }, []);
+  const [tempStart, setTempStart] = useState(startDate || "");
+  const [tempEnd, setTempEnd] = useState(endDate || maxSelectableDate);
+
+  React.useEffect(() => {
+    if (startDate) setTempStart(startDate);
+    if (endDate) setTempEnd(endDate);
+  }, [startDate, endDate]);
 
   // Check if real daily search terms data exists
   const hasRealDaily = useMemo(() => {
@@ -152,32 +176,44 @@ export function PpcTimeSeriesChart({
       }
     }
 
-    // 2. Xác định ngày kết thúc chính xác (chỉ view đến ngày hôm qua / ngày có dữ liệu thực tế gần nhất)
+    // 2. Xác định dải ngày chính xác (Hỗ trợ cả Custom Range hoặc relative days)
+    let start: Date;
     let end: Date;
-    if (dailyMap.size > 0) {
-      // Ưu tiên ngày thực tế có dữ liệu gần nhất (ngày hôm qua, không lấy ngày hôm nay khi chưa có số liệu)
-      const sortedDates = Array.from(dailyMap.keys()).sort();
-      const lastDate = sortedDates[sortedDates.length - 1];
-      const parts = lastDate.split("-").map(Number);
-      end = new Date(parts[0], parts[1] - 1, parts[2]);
-    } else if (dateRangeEnd) {
-      const parts = dateRangeEnd.split("-").map(Number);
-      end = new Date(parts[0], parts[1] - 1, parts[2]);
+
+    if (isCustomDate && startDate && endDate) {
+      const sParts = startDate.split("-").map(Number);
+      start = new Date(sParts[0], sParts[1] - 1, sParts[2]);
+      const eParts = endDate.split("-").map(Number);
+      end = new Date(eParts[0], eParts[1] - 1, eParts[2]);
     } else {
-      end = new Date();
-      end.setDate(end.getDate() - 1);
+      if (dailyMap.size > 0) {
+        // Ưu tiên ngày thực tế có dữ liệu gần nhất (ngày hôm qua, không lấy ngày hôm nay khi chưa có số liệu)
+        const sortedDates = Array.from(dailyMap.keys()).sort();
+        const lastDate = sortedDates[sortedDates.length - 1];
+        const parts = lastDate.split("-").map(Number);
+        end = new Date(parts[0], parts[1] - 1, parts[2]);
+      } else if (dateRangeEnd) {
+        const parts = dateRangeEnd.split("-").map(Number);
+        end = new Date(parts[0], parts[1] - 1, parts[2]);
+      } else {
+        end = new Date();
+        end.setDate(end.getDate() - 1);
+      }
+      const daysCount = Math.max(selectedDays, 7);
+      start = new Date(end);
+      start.setDate(end.getDate() - (daysCount - 1));
     }
 
-    const daysCount = Math.max(selectedDays, 7);
+    const diffDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1);
     const dayOfWeekWeights = [1.25, 1.2, 1.05, 0.95, 0.9, 0.8, 0.95];
     let totalWeight = 0;
     const dateWeights: { date: Date; weight: number; isoDate: string }[] = [];
 
-    for (let i = daysCount - 1; i >= 0; i--) {
-      const d = new Date(end);
-      d.setDate(end.getDate() - i);
+    for (let i = 0; i < diffDays; i++) {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
       const dow = d.getDay();
-      const wave = 1 + 0.15 * Math.sin((i / daysCount) * Math.PI * 3);
+      const wave = 1 + 0.15 * Math.sin((i / diffDays) * Math.PI * 3);
       const w = dayOfWeekWeights[dow] * wave;
       const iso = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, "0")}-${d.getDate().toString().padStart(2, "0")}`;
       dateWeights.push({ date: d, weight: w, isoDate: iso });
@@ -236,7 +272,7 @@ export function PpcTimeSeriesChart({
     }
 
     return points;
-  }, [selectedDays, dateRangeEnd, summary, channelTotals, targetAcos, dailyTrends, searchTerms, channel]);
+  }, [selectedDays, dateRangeEnd, summary, channelTotals, targetAcos, dailyTrends, searchTerms, channel, isCustomDate, startDate, endDate]);
 
   // Aggregate by Granularity (Day / Week / Month)
   const chartData = useMemo(() => {
@@ -341,14 +377,17 @@ export function PpcTimeSeriesChart({
 
         {/* Toolbar Filters */}
         <div className="flex flex-wrap items-center gap-2">
-          {/* Quick Time Range Selector: 1 Tuần (7 ngày) | 14 Ngày | 30 Ngày */}
+          {/* Quick Time Range Selector: 1 Tuần (7 ngày) | 14 Ngày | 30 Ngày | Tùy chọn */}
           {onDaysChange && (
             <div className="flex items-center bg-slate-100 rounded-lg p-0.5 text-xs font-semibold">
               <button
                 type="button"
-                onClick={() => onDaysChange(7)}
+                onClick={() => {
+                  setShowCustomPicker(false);
+                  onDaysChange(7);
+                }}
                 className={`px-2 py-1 rounded-md transition cursor-pointer ${
-                  selectedDays === 7 ? "bg-white text-indigo-700 shadow-2xs font-bold" : "text-slate-600 hover:text-slate-900"
+                  !isCustomDate && selectedDays === 7 ? "bg-white text-indigo-700 shadow-2xs font-bold" : "text-slate-600 hover:text-slate-900"
                 }`}
                 title="Xem dữ liệu trong 1 tuần (7 ngày gần nhất)"
               >
@@ -356,9 +395,12 @@ export function PpcTimeSeriesChart({
               </button>
               <button
                 type="button"
-                onClick={() => onDaysChange(14)}
+                onClick={() => {
+                  setShowCustomPicker(false);
+                  onDaysChange(14);
+                }}
                 className={`px-2 py-1 rounded-md transition cursor-pointer ${
-                  selectedDays === 14 ? "bg-white text-indigo-700 shadow-2xs font-bold" : "text-slate-600 hover:text-slate-900"
+                  !isCustomDate && selectedDays === 14 ? "bg-white text-indigo-700 shadow-2xs font-bold" : "text-slate-600 hover:text-slate-900"
                 }`}
                 title="Xem dữ liệu trong 14 ngày"
               >
@@ -366,14 +408,144 @@ export function PpcTimeSeriesChart({
               </button>
               <button
                 type="button"
-                onClick={() => onDaysChange(30)}
+                onClick={() => {
+                  setShowCustomPicker(false);
+                  onDaysChange(30);
+                }}
                 className={`px-2 py-1 rounded-md transition cursor-pointer ${
-                  selectedDays === 30 ? "bg-white text-indigo-700 shadow-2xs font-bold" : "text-slate-600 hover:text-slate-900"
+                  !isCustomDate && selectedDays === 30 ? "bg-white text-indigo-700 shadow-2xs font-bold" : "text-slate-600 hover:text-slate-900"
                 }`}
                 title="Xem dữ liệu trong 30 ngày"
               >
                 30 Ngày
               </button>
+              {onCustomDateChange && (
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowCustomPicker((prev) => !prev)}
+                    className={`flex items-center gap-1 px-2 py-1 rounded-md transition cursor-pointer ${
+                      isCustomDate ? "bg-indigo-600 text-white shadow-2xs font-bold" : "text-slate-600 hover:text-slate-900"
+                    }`}
+                    title="Chọn khoảng ngày tùy chỉnh cụ thể"
+                  >
+                    <CalendarBlank size={13} weight={isCustomDate ? "bold" : "regular"} />
+                    <span>{isCustomDate && startDate && endDate ? `${startDate.slice(5).replace("-", "/")}—${endDate.slice(5).replace("-", "/")}` : "Tùy chọn"}</span>
+                  </button>
+
+                  {/* Popover Custom Date Picker */}
+                  {showCustomPicker && (
+                    <div className="absolute right-0 top-full mt-1.5 z-40 w-72 rounded-xl border border-slate-200 bg-white p-3 shadow-xl text-slate-800 animate-in fade-in zoom-in-95 duration-100">
+                      <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-slate-100">
+                        <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                          <CalendarBlank size={14} className="text-indigo-600" weight="bold" />
+                          Chọn khoảng ngày cụ thể
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setShowCustomPicker(false)}
+                          className="text-slate-400 hover:text-slate-600 text-xs p-0.5 rounded cursor-pointer"
+                        >
+                          ✕
+                        </button>
+                      </div>
+
+                      <div className="space-y-2 text-xs">
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-500 mb-0.5">Từ ngày (Start):</label>
+                          <input
+                            type="date"
+                            value={tempStart}
+                            onChange={(e) => setTempStart(e.target.value)}
+                            max={maxSelectableDate}
+                            className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 font-medium text-slate-800 outline-none focus:border-indigo-500 focus:bg-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-500 mb-0.5">Đến ngày (End):</label>
+                          <input
+                            type="date"
+                            value={tempEnd}
+                            onChange={(e) => setTempEnd(e.target.value)}
+                            max={maxSelectableDate}
+                            min={tempStart}
+                            className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 font-medium text-slate-800 outline-none focus:border-indigo-500 focus:bg-white"
+                          />
+                        </div>
+
+                        {/* Presets */}
+                        <div className="flex items-center gap-1 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const end = maxSelectableDate;
+                              const d = new Date(end);
+                              d.setDate(d.getDate() - 6);
+                              const start = d.toISOString().slice(0, 10);
+                              setTempStart(start);
+                              setTempEnd(end);
+                            }}
+                            className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer"
+                          >
+                            7 ngày qua
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const end = maxSelectableDate;
+                              const d = new Date(end);
+                              d.setDate(d.getDate() - 13);
+                              const start = d.toISOString().slice(0, 10);
+                              setTempStart(start);
+                              setTempEnd(end);
+                            }}
+                            className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer"
+                          >
+                            14 ngày qua
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const end = maxSelectableDate;
+                              const d = new Date(end);
+                              d.setDate(d.getDate() - 29);
+                              const start = d.toISOString().slice(0, 10);
+                              setTempStart(start);
+                              setTempEnd(end);
+                            }}
+                            className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer"
+                          >
+                            30 ngày qua
+                          </button>
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 mt-2">
+                          <button
+                            type="button"
+                            onClick={() => setShowCustomPicker(false)}
+                            className="px-2.5 py-1 text-xs text-slate-500 hover:text-slate-800 rounded-md cursor-pointer"
+                          >
+                            Hủy
+                          </button>
+                          <button
+                            type="button"
+                            disabled={!tempStart || !tempEnd || tempStart > tempEnd}
+                            onClick={() => {
+                              if (tempStart && tempEnd && tempStart <= tempEnd) {
+                                onCustomDateChange(tempStart, tempEnd);
+                                setShowCustomPicker(false);
+                              }
+                            }}
+                            className="px-3 py-1 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-md cursor-pointer shadow-xs"
+                          >
+                            Áp dụng
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

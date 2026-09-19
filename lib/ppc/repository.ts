@@ -229,7 +229,7 @@ export async function listPpcStores(scope: DataScope): Promise<PpcStore[]> {
 
 export async function listPpcSearchTerms(
   scope: DataScope,
-  filters: { storeName: string; sku: string; days: number },
+  filters: { storeName: string; sku: string; days: number; startDate?: string; endDate?: string },
   options: { limit?: number; offset?: number } = {},
 ): Promise<PpcSearchTermRow[]> {
   const sql = await getDatabaseClient();
@@ -239,8 +239,9 @@ export async function listPpcSearchTerms(
       SELECT store_id, ad_type, COUNT(*) as cnt
       FROM ppc_search_terms
       WHERE report_granularity = 'DAILY'
-        AND report_date >= CURRENT_DATE - ${filters.days}::integer
-        AND report_date <= CURRENT_DATE - 1
+        AND (${!filters.startDate} OR report_date >= ${filters.startDate || "1970-01-01"}::date)
+        AND (${!filters.endDate} OR report_date <= ${filters.endDate || "2099-12-31"}::date)
+        AND (${Boolean(filters.startDate || filters.endDate)} OR (report_date >= CURRENT_DATE - ${filters.days}::integer AND report_date <= CURRENT_DATE - 1))
       GROUP BY store_id, ad_type
     ),
     latest_range AS (
@@ -274,8 +275,9 @@ export async function listPpcSearchTerms(
       AND (
         (
           t.report_granularity = 'DAILY'
-          AND t.report_date >= CURRENT_DATE - ${filters.days}::integer
-          AND t.report_date <= CURRENT_DATE - 1
+          AND (${!filters.startDate} OR t.report_date >= ${filters.startDate || "1970-01-01"}::date)
+          AND (${!filters.endDate} OR t.report_date <= ${filters.endDate || "2099-12-31"}::date)
+          AND (${Boolean(filters.startDate || filters.endDate)} OR (t.report_date >= CURRENT_DATE - ${filters.days}::integer AND t.report_date <= CURRENT_DATE - 1))
         )
         OR
         (
@@ -1405,7 +1407,7 @@ export async function listPpcDailyTrendsFromDb(
 
 export async function getPpcSearchTermSummaryFromDb(
   scope: DataScope,
-  filters: { storeName?: string; sku?: string; days?: number; minClicksThreshold?: number; maxSpendThreshold?: number } = {},
+  filters: { storeName?: string; sku?: string; days?: number; startDate?: string; endDate?: string; minClicksThreshold?: number; maxSpendThreshold?: number } = {},
 ): Promise<{
   summary: PpcSearchTermSummary;
   topProfitableAndBleeding: PpcSearchTermRow[];
@@ -1450,8 +1452,9 @@ export async function getPpcSearchTermSummaryFromDb(
           OR lower(p.portfolio_name) = lower(${sku})
           OR position(lower(${sku}) in lower(p.campaign_name)) > 0
         )
-        AND p.report_date >= CURRENT_DATE - ${days}::integer
-        AND p.report_date <= CURRENT_DATE - 1;
+        AND (${!filters.startDate} OR p.report_date >= ${filters.startDate || "1970-01-01"}::date)
+        AND (${!filters.endDate} OR p.report_date <= ${filters.endDate || "2099-12-31"}::date)
+        AND (${Boolean(filters.startDate || filters.endDate)} OR (p.report_date >= CURRENT_DATE - ${days}::integer AND p.report_date <= CURRENT_DATE - 1));
     `,
 
     sql<SearchTermDbRow[]>`
@@ -1466,8 +1469,9 @@ export async function getPpcSearchTermSummaryFromDb(
             OR lower(p.portfolio_name) = lower(${sku})
             OR position(lower(${sku}) in lower(p.campaign_name)) > 0
           )
-          AND p.report_date >= CURRENT_DATE - ${days}::integer
-          AND p.report_date <= CURRENT_DATE - 1
+          AND (${!filters.startDate} OR p.report_date >= ${filters.startDate || "1970-01-01"}::date)
+          AND (${!filters.endDate} OR p.report_date <= ${filters.endDate || "2099-12-31"}::date)
+          AND (${Boolean(filters.startDate || filters.endDate)} OR (p.report_date >= CURRENT_DATE - ${days}::integer AND p.report_date <= CURRENT_DATE - 1))
           AND p.orders >= 2 AND p.acos <= 30
         ORDER BY p.sales DESC, p.id
         LIMIT 5
@@ -1484,8 +1488,9 @@ export async function getPpcSearchTermSummaryFromDb(
             OR lower(p.portfolio_name) = lower(${sku})
             OR position(lower(${sku}) in lower(p.campaign_name)) > 0
           )
-          AND p.report_date >= CURRENT_DATE - ${days}::integer
-          AND p.report_date <= CURRENT_DATE - 1
+          AND (${!filters.startDate} OR p.report_date >= ${filters.startDate || "1970-01-01"}::date)
+          AND (${!filters.endDate} OR p.report_date <= ${filters.endDate || "2099-12-31"}::date)
+          AND (${Boolean(filters.startDate || filters.endDate)} OR (p.report_date >= CURRENT_DATE - ${days}::integer AND p.report_date <= CURRENT_DATE - 1))
           AND p.clicks >= 9 AND p.orders = 0
         ORDER BY p.spend DESC, p.id
         LIMIT 5
@@ -1503,8 +1508,9 @@ export async function getPpcSearchTermSummaryFromDb(
           OR lower(p.portfolio_name) = lower(${sku})
           OR position(lower(${sku}) in lower(p.campaign_name)) > 0
         )
-        AND p.report_date >= CURRENT_DATE - ${days}::integer
-        AND p.report_date <= CURRENT_DATE - 1
+        AND (${!filters.startDate} OR p.report_date >= ${filters.startDate || "1970-01-01"}::date)
+        AND (${!filters.endDate} OR p.report_date <= ${filters.endDate || "2099-12-31"}::date)
+        AND (${Boolean(filters.startDate || filters.endDate)} OR (p.report_date >= CURRENT_DATE - ${days}::integer AND p.report_date <= CURRENT_DATE - 1))
         AND (
           (p.clicks >= 9 AND p.orders = 0 AND p.spend > 5)
           OR (p.orders > 0 AND p.acos > 60 AND p.spend >= 15)

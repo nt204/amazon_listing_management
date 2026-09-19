@@ -141,7 +141,7 @@ export async function parseBulkFile(
 
 export async function getPpcAnalyticsData(
   scope: DataScope,
-  filters: { storeName?: string; sku?: string; days?: number } = {},
+  filters: { storeName?: string; sku?: string; days?: number; startDate?: string; endDate?: string } = {},
   options: { grains?: PpcPerformanceGrain[]; includeRecommendations?: boolean; section?: string } = {},
 ) {
   const storeName = filters.storeName && filters.storeName !== "ALL"
@@ -149,6 +149,8 @@ export async function getPpcAnalyticsData(
     : "ALL";
   const sku = filters.sku || "ALL";
   const days = filters.days || 30;
+  const startDate = filters.startDate;
+  const endDate = filters.endDate;
   const section = options.section?.toLowerCase();
   const isDetailSection = section && section !== "overview";
 
@@ -156,8 +158,8 @@ export async function getPpcAnalyticsData(
     const [stores, aggregates, dailyTrendsDb, searchTermData, syncLogs] = await Promise.all([
       listPpcStores(scope),
       getPpcOverviewAggregates(scope, { storeName, sku, days }),
-      listPpcDailyTrendsFromDb(scope, { storeName, days }),
-      getPpcSearchTermSummaryFromDb(scope, { storeName, sku, days }),
+      listPpcDailyTrendsFromDb(scope, { storeName, days, startDate, endDate }),
+      getPpcSearchTermSummaryFromDb(scope, { storeName, sku, days, startDate, endDate }),
       listPpcSyncLogs(scope),
     ]);
 
@@ -344,9 +346,9 @@ export async function getPpcAnalyticsData(
       };
     });
 
-    let dateRangeStart = aggregates.snapshotDates?.startDate || "";
-    let dateRangeEnd = aggregates.snapshotDates?.endDate || "";
-    if (dailyTrends.length > 0) {
+    let dateRangeStart = startDate || aggregates.snapshotDates?.startDate || "";
+    let dateRangeEnd = endDate || aggregates.snapshotDates?.endDate || "";
+    if (!startDate && !endDate && dailyTrends.length > 0) {
       const lastTrendDate = dailyTrends[dailyTrends.length - 1].date;
       if (!dateRangeEnd || dateRangeEnd > lastTrendDate) {
         dateRangeEnd = lastTrendDate;
@@ -439,7 +441,7 @@ export async function getPpcAnalyticsData(
 
   const [stores, storeRows, campaignRowsRaw, adGroupRows, targetRowsRaw, productRows, placementRows, syncLogs] = await Promise.all([
     listPpcStores(scope),
-    shouldFetchSearchTerms ? listPpcSearchTerms(scope, { storeName, sku, days }) : Promise.resolve([] as PpcSearchTermRow[]),
+    shouldFetchSearchTerms ? listPpcSearchTerms(scope, { storeName, sku, days, startDate, endDate }) : Promise.resolve([] as PpcSearchTermRow[]),
     performanceQuery("CAMPAIGN", 15_000),
     performanceQuery("AD_GROUP", 10_000),
     performanceQuery("TARGET", 25_000),

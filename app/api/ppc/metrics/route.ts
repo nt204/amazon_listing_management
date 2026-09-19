@@ -102,7 +102,12 @@ export async function GET(request: Request) {
       throw new ApiError("Bộ lọc PPC không hợp lệ.", 400);
     }
 
-    const cacheKey = `${scope.teamId}\u0000${storeName}\u0000${sku}\u0000${days}\u0000${section}`;
+    const startDateParam = searchParams.get("startDate")?.trim() || "";
+    const endDateParam = searchParams.get("endDate")?.trim() || "";
+    const startDate = /^\d{4}-\d{2}-\d{2}$/.test(startDateParam) ? startDateParam : undefined;
+    const endDate = /^\d{4}-\d{2}-\d{2}$/.test(endDateParam) ? endDateParam : undefined;
+
+    const cacheKey = `${scope.teamId}\u0000${storeName}\u0000${sku}\u0000${days}\u0000${startDate || ""}\u0000${endDate || ""}\u0000${section}`;
     const cached = refresh ? undefined : metricsCache.get(cacheKey);
     let data: MetricsResponse;
     if (cached && cached.expiresAt > Date.now()) {
@@ -113,7 +118,7 @@ export async function GET(request: Request) {
       if (!pending) {
         pending = getPpcAnalyticsData(
           scope,
-          { storeName, sku, days },
+          { storeName, sku, days, startDate, endDate },
           { grains: SECTION_GRAINS[section], includeRecommendations: false, section },
         ).then((result) => projectMetrics(result, section));
         metricsInFlight.set(cacheKey, pending);

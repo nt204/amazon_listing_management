@@ -143,6 +143,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
   const [selectedStore, setSelectedStore] = useState<string>("ALL");
   const [selectedSku, setSelectedSku] = useState<string>("ALL");
   const [selectedDays, setSelectedDays] = useState(7);
+  const [customStartDate, setCustomStartDate] = useState<string>("");
+  const [customEndDate, setCustomEndDate] = useState<string>("");
+  const [isCustomDate, setIsCustomDate] = useState<boolean>(false);
   const [availableSkus, setAvailableSkus] = useState<string[]>([]);
 
   const [summary, setSummary] = useState<PpcSummaryMetrics | null>(null);
@@ -195,7 +198,14 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
   const [actionQueue, setActionQueue] = useState<PpcAction[]>([]);
   const [actionQueueCount, setActionQueueCount] = useState<number>(0);
   const lastLoadedRecKeyRef = useRef<string>("");
-  const currentFiltersRef = useRef({ store: selectedStore, sku: selectedSku, days: selectedDays });
+  const currentFiltersRef = useRef({
+    store: selectedStore,
+    sku: selectedSku,
+    days: selectedDays,
+    isCustomDate,
+    start: customStartDate,
+    end: customEndDate,
+  });
   const pendingActionCount = actionQueue.length > 0 ? actionQueue.length : actionQueueCount;
   const [isActionQueueOpen, setIsActionQueueOpen] = useState(false);
   const [costMasters, setCostMasters] = useState<ProductCostMaster[]>([]);
@@ -297,8 +307,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     metricsRequestRef.current = { controller, id: requestId };
     setLoading(true);
     try {
+      const dateParams = isCustomDate && customStartDate && customEndDate
+        ? `&startDate=${encodeURIComponent(customStartDate)}&endDate=${encodeURIComponent(customEndDate)}`
+        : "";
       const res = await fetch(
-        `/api/ppc/metrics?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}${refresh ? "&refresh=1" : ""}`,
+        `/api/ppc/metrics?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}${dateParams}${refresh ? "&refresh=1" : ""}`,
         { cache: "no-store", signal: controller.signal }
       );
       if (!res.ok) throw new Error("Không thể tải số liệu PPC");
@@ -347,13 +360,16 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
         setLoading(false);
       }
     }
-  }, [selectedStore, selectedSku, selectedDays]);
+  }, [selectedStore, selectedSku, selectedDays, isCustomDate, customStartDate, customEndDate]);
 
   const loadSection = useCallback(async (section: string) => {
     if (loadedSectionsRef.current.has(section)) return;
     const requestId = ++detailRequestIdRef.current;
+    const dateParams = isCustomDate && customStartDate && customEndDate
+      ? `&startDate=${encodeURIComponent(customStartDate)}&endDate=${encodeURIComponent(customEndDate)}`
+      : "";
     const res = await fetch(
-      `/api/ppc/metrics?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}&section=${encodeURIComponent(section)}`,
+      `/api/ppc/metrics?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}&section=${encodeURIComponent(section)}${dateParams}`,
       { cache: "no-store" },
     );
     if (!res.ok) throw new Error("Không thể tải bảng dữ liệu PPC");
@@ -369,7 +385,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       if (section === "search_terms") setSearchTerms(data.searchTerms || []);
       setDetailCounts((current) => data.detailCounts ? { ...current, ...data.detailCounts } : current);
     });
-  }, [selectedStore, selectedSku, selectedDays]);
+  }, [selectedStore, selectedSku, selectedDays, isCustomDate, customStartDate, customEndDate]);
 
   const loadSkuEconomics = useCallback(async () => {
     try {
@@ -565,10 +581,20 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     const filtersChanged =
       currentFiltersRef.current.store !== selectedStore ||
       currentFiltersRef.current.sku !== selectedSku ||
-      currentFiltersRef.current.days !== selectedDays;
+      currentFiltersRef.current.days !== selectedDays ||
+      currentFiltersRef.current.isCustomDate !== isCustomDate ||
+      currentFiltersRef.current.start !== customStartDate ||
+      currentFiltersRef.current.end !== customEndDate;
 
     if (filtersChanged) {
-      currentFiltersRef.current = { store: selectedStore, sku: selectedSku, days: selectedDays };
+      currentFiltersRef.current = {
+        store: selectedStore,
+        sku: selectedSku,
+        days: selectedDays,
+        isCustomDate,
+        start: customStartDate,
+        end: customEndDate,
+      };
       loadedSectionsRef.current.clear();
       lastLoadedRecKeyRef.current = "";
       if (activeTab === "recommendations") {
@@ -1450,8 +1476,15 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
             <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1">
               <span className="text-slate-500 font-semibold text-[11px]">Date:</span>
               <select
-                value={selectedDays}
-                onChange={(event) => setSelectedDays(Number(event.target.value))}
+                value={isCustomDate ? "custom" : selectedDays}
+                onChange={(event) => {
+                  if (event.target.value === "custom") {
+                    setIsCustomDate(true);
+                  } else {
+                    setIsCustomDate(false);
+                    setSelectedDays(Number(event.target.value));
+                  }
+                }}
                 className="bg-transparent text-slate-900 font-bold outline-none cursor-pointer text-xs"
               >
                 <option value={7}>Last 7 Days</option>
@@ -1459,6 +1492,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                 <option value={30}>Last 30 Days</option>
                 <option value={60}>Last 60 Days</option>
                 <option value={90}>Last 90 Days</option>
+                {isCustomDate && (
+                  <option value="custom">
+                    Tùy chọn ({customStartDate && customEndDate ? `${customStartDate.slice(5).replace("-", "/")}—${customEndDate.slice(5).replace("-", "/")}` : "..."})
+                  </option>
+                )}
               </select>
             </div>
 
@@ -1819,7 +1857,18 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
             summary={summary}
             dailyTrends={dailyTrends}
             selectedDays={selectedDays}
-            onDaysChange={setSelectedDays}
+            onDaysChange={(days) => {
+              setIsCustomDate(false);
+              setSelectedDays(days);
+            }}
+            isCustomDate={isCustomDate}
+            startDate={customStartDate}
+            endDate={customEndDate}
+            onCustomDateChange={(start, end) => {
+              setCustomStartDate(start);
+              setCustomEndDate(end);
+              setIsCustomDate(true);
+            }}
             dateRangeStart={dateRangeStart || undefined}
             dateRangeEnd={dateRangeEnd || undefined}
             adTypeBreakdown={adTypeBreakdown}
