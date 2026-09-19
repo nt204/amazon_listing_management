@@ -16,6 +16,7 @@ import {
   groupPpcByMatchType,
   groupPpcByTargetType,
   performanceDataHealth,
+  roundedPerformanceMetrics,
   skuPerformanceFromFacts,
   targetPerformanceFromFacts,
 } from "./analytics";
@@ -30,6 +31,7 @@ import {
 } from "./parser";
 import { invalidateGroupedRecommendationsCache } from "./recommendation-cache";
 import {
+  getPpcOverviewAggregates,
   listPpcPerformance,
   listPpcSearchTerms,
   listPpcStores,
@@ -44,11 +46,19 @@ import {
 import { getCommonTargetRecommendations } from "./sku-architecture-service";
 import type {
   PpcAdType,
+  PpcAdTypeBreakdown,
   PpcAlert,
+  PpcDataHealth,
+  PpcKeywordMatchType,
+  PpcKeywordMatchTypeBreakdown,
   PpcPerformanceGrain,
   PpcPerformanceRow,
   PpcRecommendation,
   PpcSearchTermRow,
+  PpcSkuPerformance,
+  PpcSummaryMetrics,
+  PpcTargetType,
+  PpcTargetTypeBreakdown,
 } from "./types";
 
 const MAX_R2_FILE_BYTES = 150_000_000;
@@ -139,6 +149,261 @@ export async function getPpcAnalyticsData(
   const days = filters.days || 30;
   const section = options.section?.toLowerCase();
   const isDetailSection = section && section !== "overview";
+
+  if (section === "overview") {
+    const [stores, storeRows, aggregates, syncLogs] = await Promise.all([
+      listPpcStores(scope),
+      listPpcSearchTerms(scope, { storeName, sku, days }),
+      getPpcOverviewAggregates(scope, { storeName, sku, days }),
+      listPpcSyncLogs(scope),
+    ]);
+
+    const currentStore = stores.find((store) => store.name.toLowerCase() === storeName.toLowerCase());
+    const targetAcos = currentStore?.targetAcos ?? DEFAULT_TARGET_ACOS;
+    const searchTermSummary = calculatePpcSearchTermSummary(storeRows);
+    const alerts: PpcAlert[] = generatePpcAlerts(storeRows, targetAcos);
+    const dailyTrends = calculatePpcDailyTrends(storeRows);
+
+    let totalSpend = 0;
+    let totalSales = 0;
+    let totalOrders = 0;
+    let totalUnits = 0;
+    let totalClicks = 0;
+    let totalImpressions = 0;
+    let campaignCount = 0;
+    for (const row of aggregates.kpiRows) {
+      totalSpend += Number(row.spend || 0);
+      totalSales += Number(row.sales || 0);
+      totalOrders += Number(row.orders || 0);
+      totalUnits += Number(row.units || 0);
+      totalClicks += Number(row.clicks || 0);
+      totalImpressions += Number(row.impressions || 0);
+      campaignCount += Number(row.campaign_count || 0);
+    }
+    totalSpend = Math.round(totalSpend * 100) / 100;
+    totalSales = Math.round(totalSales * 100) / 100;
+    const blendedAcos = totalSales > 0 ? Math.round((totalSpend / totalSales) * 1000) / 10 : (totalSpend > 0 ? 999 : 0);
+    const blendedRoas = totalSpend > 0 ? Math.round((totalSales / totalSpend) * 100) / 100 : 0;
+    const avgCpc = totalClicks > 0 ? Math.round((totalSpend / totalClicks) * 100) / 100 : 0;
+    const overallCtr = totalImpressions > 0 ? totalClicks / totalImpressions : 0;
+    const overallCvr = totalClicks > 0 ? totalOrders / totalClicks : 0;
+    const cpa = totalOrders > 0 ? Math.round((totalSpend / totalOrders) * 100) / 100 : 0;
+    const aov = totalOrders > 0 ? Math.round((totalSales / totalOrders) * 100) / 100 : 0;
+
+    const summary: PpcSummaryMetrics = {
+      totalSpend,
+      totalSales,
+      totalOrders,
+      totalUnits,
+      totalClicks,
+      totalImpressions,
+      blendedAcos,
+      blendedRoas,
+      avgCpc,
+      overallCtr,
+      overallCvr,
+      cpa,
+      aov,
+      wastedSpend: searchTermSummary.wastedSpend,
+      activeAlertsCount: alerts.length,
+      pendingRecsCount: 0,
+    };
+
+    const adTypeBreakdown: PpcAdTypeBreakdown[] = aggregates.kpiRows.map((row) => {
+      const spend = Math.round(Number(row.spend || 0) * 100) / 100;
+      const sales = Math.round(Number(row.sales || 0) * 100) / 100;
+      const orders = Number(row.orders || 0);
+      const clicks = Number(row.clicks || 0);
+      const impressions = Number(row.impressions || 0);
+      const acos = sales > 0 ? Math.round((spend / sales) * 1000) / 10 : (spend > 0 ? 999 : 0);
+      const roas = spend > 0 ? Math.round((sales / spend) * 100) / 100 : 0;
+      return {
+        adType: row.ad_type,
+        spend,
+        sales,
+        orders,
+        clicks,
+        impressions,
+        acos,
+        roas,
+      };
+    }).sort((a, b) => b.spend - a.spend);
+
+    const targetTypeMap = new Map<PpcTargetType, { spend: number; sales: number; orders: number; clicks: number; impressions: number }>([
+      ["Keyword", { spend: 0, sales: 0, orders: 0, clicks: 0, impressions: 0 }],
+      ["Auto", { spend: 0, sales: 0, orders: 0, clicks: 0, impressions: 0 }],
+      ["Product Targeting", { spend: 0, sales: 0, orders: 0, clicks: 0, impressions: 0 }],
+    ]);
+    const keywordMatchMap = new Map<PpcKeywordMatchType, { spend: number; sales: number; orders: number; clicks: number; impressions: number }>([
+      ["Exact", { spend: 0, sales: 0, orders: 0, clicks: 0, impressions: 0 }],
+      ["Phrase", { spend: 0, sales: 0, orders: 0, clicks: 0, impressions: 0 }],
+      ["Broad", { spend: 0, sales: 0, orders: 0, clicks: 0, impressions: 0 }],
+    ]);
+
+    let targetTotalSpend = 0;
+    let targetTotalSales = 0;
+    for (const row of aggregates.targetBreakdown) {
+      const sp = Number(row.spend || 0);
+      const sa = Number(row.sales || 0);
+      const ord = Number(row.orders || 0);
+      const cl = Number(row.clicks || 0);
+      const imp = Number(row.impressions || 0);
+
+      const tt = targetTypeMap.get(row.target_type) || targetTypeMap.get("Keyword")!;
+      tt.spend += sp;
+      tt.sales += sa;
+      tt.orders += ord;
+      tt.clicks += cl;
+      tt.impressions += imp;
+      targetTotalSpend += sp;
+      targetTotalSales += sa;
+
+      if (row.target_type === "Keyword" && row.keyword_match_type !== "Unknown") {
+        const km = keywordMatchMap.get(row.keyword_match_type);
+        if (km) {
+          km.spend += sp;
+          km.sales += sa;
+          km.orders += ord;
+          km.clicks += cl;
+          km.impressions += imp;
+        }
+      }
+    }
+
+    const targetTypeBreakdown: PpcTargetTypeBreakdown[] = Array.from(targetTypeMap.entries()).map(([targetType, data]) => {
+      const acos = data.sales > 0 ? (data.spend / data.sales) * 100 : (data.spend > 0 ? 999 : 0);
+      const roas = data.spend > 0 ? data.sales / data.spend : 0;
+      const cvr = data.clicks > 0 ? (data.orders / data.clicks) * 100 : 0;
+      const cpc = data.clicks > 0 ? data.spend / data.clicks : 0;
+      const spendShare = targetTotalSpend > 0 ? (data.spend / targetTotalSpend) * 100 : 0;
+      const salesShare = targetTotalSales > 0 ? (data.sales / targetTotalSales) * 100 : 0;
+      return {
+        targetType,
+        spend: Math.round(data.spend * 100) / 100,
+        spendShare: Math.round(spendShare * 10) / 10,
+        sales: Math.round(data.sales * 100) / 100,
+        salesShare: Math.round(salesShare * 10) / 10,
+        orders: data.orders,
+        clicks: data.clicks,
+        impressions: data.impressions,
+        cpc: Math.round(cpc * 100) / 100,
+        cvr: Math.round(cvr * 100) / 100,
+        acos: Math.round(acos * 10) / 10,
+        roas: Math.round(roas * 100) / 100,
+      };
+    }).sort((a, b) => b.spend - a.spend);
+
+    const keywordTotalSpend = Array.from(keywordMatchMap.values()).reduce((sum, d) => sum + d.spend, 0);
+    const keywordTotalSales = Array.from(keywordMatchMap.values()).reduce((sum, d) => sum + d.sales, 0);
+    const keywordMatchTypeBreakdown: PpcKeywordMatchTypeBreakdown[] = Array.from(keywordMatchMap.entries()).map(([matchType, data]) => {
+      const acos = data.sales > 0 ? (data.spend / data.sales) * 100 : (data.spend > 0 ? 999 : 0);
+      const roas = data.spend > 0 ? data.sales / data.spend : 0;
+      const cvr = data.clicks > 0 ? (data.orders / data.clicks) * 100 : 0;
+      const cpc = data.clicks > 0 ? data.spend / data.clicks : 0;
+      const spendShare = keywordTotalSpend > 0 ? (data.spend / keywordTotalSpend) * 100 : 0;
+      const salesShare = keywordTotalSales > 0 ? (data.sales / keywordTotalSales) * 100 : 0;
+      return {
+        matchType,
+        spend: Math.round(data.spend * 100) / 100,
+        spendShare: Math.round(spendShare * 10) / 10,
+        sales: Math.round(data.sales * 100) / 100,
+        salesShare: Math.round(salesShare * 10) / 10,
+        orders: data.orders,
+        clicks: data.clicks,
+        impressions: data.impressions,
+        cpc: Math.round(cpc * 100) / 100,
+        cvr: Math.round(cvr * 100) / 100,
+        acos: Math.round(acos * 10) / 10,
+        roas: Math.round(roas * 100) / 100,
+      };
+    }).sort((a, b) => b.spend - a.spend);
+
+    const campaignPerformance = campaignPerformanceFromFacts(aggregates.topCampaigns, targetAcos).slice(0, 7);
+
+    const skuPerformance: PpcSkuPerformance[] = aggregates.topSkus.map((row) => {
+      const metrics = roundedPerformanceMetrics(row);
+      const statusBadge: PpcSkuPerformance["statusBadge"] = metrics.clicks === 0 ? (metrics.impressions > 0 ? "ZERO_CLICKS" : "INACTIVE")
+        : metrics.orders === 0 || metrics.acos > targetAcos * 2 ? "CRITICAL"
+          : metrics.acos > targetAcos ? "WARNING" : metrics.acos <= targetAcos * 0.75 ? "EXCELLENT" : "GOOD";
+      const skuCategory: PpcSkuPerformance["skuCategory"] = metrics.orders >= 3 && metrics.acos <= targetAcos ? "HERO"
+        : metrics.orders === 0 && metrics.spend >= 15 ? "BLEEDING"
+          : metrics.orders > 0 && metrics.acos <= targetAcos ? "POTENTIAL"
+            : metrics.clicks === 0 && metrics.impressions > 0 ? "ZERO_CLICKS" : "NEUTRAL";
+      return {
+        sku: row.sku,
+        storeName: row.storeName,
+        ...metrics,
+        campaignsCount: row.campaignsCount,
+        statusBadge,
+        skuCategory,
+        revenueShare: totalSales > 0 ? Math.round((metrics.sales / totalSales) * 1000) / 10 : 0,
+        spendShare: totalSpend > 0 ? Math.round((metrics.spend / totalSpend) * 1000) / 10 : 0,
+      };
+    });
+
+    let dateRangeStart = aggregates.snapshotDates?.startDate || "";
+    let dateRangeEnd = aggregates.snapshotDates?.endDate || "";
+    if (!dateRangeStart || !dateRangeEnd) {
+      dateRangeEnd = dailyTrends[dailyTrends.length - 1]?.date || new Date().toISOString().slice(0, 10);
+      const startObj = new Date(dateRangeEnd);
+      startObj.setDate(startObj.getDate() - (days - 1));
+      dateRangeStart = startObj.toISOString().slice(0, 10);
+    }
+
+    const dataHealth: PpcDataHealth = {
+      performanceSource: "BULK",
+      searchTermSource: "SEARCH_TERM",
+      performanceRows: campaignCount + aggregates.targetCount + aggregates.availableSkus.length,
+      searchTermRows: storeRows.length,
+      campaignRows: campaignCount,
+      targetRows: aggregates.targetCount,
+      productRows: aggregates.availableSkus.length,
+      placementRows: 0,
+      adTypes: aggregates.kpiRows.map((r) => r.ad_type),
+      warnings: ["Chưa có placement grain; chưa thể đánh giá placement modifier."],
+      strLoaded: true,
+      bulkLoaded: true,
+      dateRangeStart,
+      dateRangeEnd,
+      totalRecords: storeRows.length,
+      granularity: "DAILY",
+      spendCoveragePct: 100,
+      clicksCoveragePct: 100,
+      lastSyncTime: syncLogs[0]?.time ?? null,
+    };
+
+    return {
+      stores,
+      summary,
+      skuPerformance,
+      campaignPerformance,
+      adGroups: [],
+      targets: [],
+      adTypeBreakdown,
+      dataHealth,
+      searchTermSummary,
+      targetTypeBreakdown,
+      keywordMatchTypeBreakdown,
+      matchTypeBreakdown: [],
+      dailyTrends,
+      alerts,
+      recommendations: [],
+      searchTerms: storeRows,
+      availableSkus: aggregates.availableSkus,
+      days,
+      targetAcos,
+      dateRangeStart,
+      dateRangeEnd,
+      lastSyncedAt: syncLogs[0]?.time ?? null,
+      syncLogs,
+      detailCounts: {
+        campaigns: campaignCount,
+        targets: aggregates.targetCount,
+        searchTerms: storeRows.length,
+        skus: aggregates.availableSkus.length,
+      },
+    };
+  }
 
   // If a specific detail section is requested, only query the grains needed for that section
   let effectiveGrains = options.grains;

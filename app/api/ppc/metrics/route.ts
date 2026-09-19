@@ -13,7 +13,7 @@ const metricsCache = new Map<string, { expiresAt: number; data: MetricsResponse 
 const metricsInFlight = new Map<string, Promise<MetricsResponse>>();
 
 const SECTION_GRAINS: Record<MetricsSection, PpcPerformanceGrain[]> = {
-  overview: ["CAMPAIGN", "TARGET", "PRODUCT"],
+  overview: [],
   campaigns: ["CAMPAIGN"],
   ad_groups: ["AD_GROUP"],
   targets: ["TARGET"],
@@ -37,7 +37,7 @@ function overviewSearchTerms(rows: PpcSearchTermRow[], targetAcos: number): PpcS
 }
 
 function projectMetrics(data: MetricsData, section: MetricsSection) {
-  const detailCounts = section === "overview"
+  const detailCounts = (data as any).detailCounts || (section === "overview"
     ? {
       campaigns: data.campaignPerformance.length,
       targets: data.targets.length,
@@ -50,7 +50,7 @@ function projectMetrics(data: MetricsData, section: MetricsSection) {
       ...(section === "targets" ? { targets: data.targets.length } : {}),
       ...(section === "skus" ? { skus: data.skuPerformance.length } : {}),
       ...(section === "search_terms" ? { searchTerms: data.searchTerms.length } : {}),
-    };
+    });
   if (section === "overview") {
     return {
       ...data,

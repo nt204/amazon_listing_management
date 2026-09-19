@@ -1062,7 +1062,7 @@ export function calculatePpcDataHealth(
   };
 }
 
-function roundedPerformanceMetrics(row: {
+export function roundedPerformanceMetrics(row: {
   spend: number;
   sales: number;
   orders: number;

@@ -116,6 +116,8 @@ const PpcPerformanceRankingChart = dynamic(
   { loading: () => <div className="h-[420px] animate-pulse rounded-xl bg-slate-100" /> },
 );
 
+import { PpcOverviewSkeleton } from "./ppc-overview-skeleton";
+
 function searchTermKey(term: PpcSearchTermRow): string {
   return [
     term.id, term.storeName, term.adType, term.reportDate, term.portfolioName, term.campaignName,
@@ -1471,9 +1473,10 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
           </div>
 
           {/* Right: Compact Data Status */}
-          {loading ? (
-            <div className="text-[11px] font-medium text-slate-400 text-right animate-pulse">
-              Đang tải dữ liệu…
+          {loading && !dataHealth ? (
+            <div className="flex items-center gap-1.5 text-xs text-indigo-600 font-semibold animate-pulse">
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-ping" />
+              <span>Đang tải số liệu…</span>
             </div>
           ) : dataHealth ? (
             <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
@@ -1514,6 +1517,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
           <strong>Chưa có dữ liệu PPC trong {selectedDays} ngày gần nhất.</strong>{" "}
           Hãy nạp Bulk SP/SB và Search Term SP/SB hoặc đồng bộ từ R2. Hệ thống không tự chèn dữ liệu mẫu.
         </div>
+      )}
+
+      {/* SKELETON LOADING STATE */}
+      {loading && !summary && (
+        <PpcOverviewSkeleton />
       )}
 
       {/* EXECUTIVE KPI CARDS */}
