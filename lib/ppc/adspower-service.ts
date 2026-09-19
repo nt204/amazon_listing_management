@@ -607,6 +607,13 @@ async function autoCreateAndDownloadSearchTermReport(
     }
   }
 
+  // Chọn Time unit: Daily (#time-units-day)
+  const dayRadio = await page.$("#time-units-day, input[value='DAILY'], label[for='time-units-day']");
+  if (dayRadio) {
+    await dayRadio.click().catch(() => page.evaluate((el: any) => el?.click(), dayRadio));
+    await page.waitForTimeout(300);
+  }
+
   // Đặt tên báo cáo có chứa syncRunId duy nhất
   const nameInput = await page.$("#report-settings-card-report-name-input");
   if (nameInput) {
@@ -626,15 +633,36 @@ async function autoCreateAndDownloadSearchTermReport(
     await page.waitForTimeout(4000);
 
     const match = await page.evaluate((targetId: string) => {
-      const rows = Array.from(document.querySelectorAll("div.ag-row, [role='row'], tr"));
-      for (const r of rows) {
-        const text = ((r as HTMLElement).innerText || "").trim();
-        if (text.includes(targetId)) {
-          const isCompleted = /completed|success/i.test(text);
-          const link = r.querySelector<HTMLAnchorElement>("a[data-takt-id='storm-ui-link'], a[href*='download-report'], a[href*='download']");
-          return { found: true, isCompleted, href: link?.href || null };
+      // AG Grid chia thành pinned-left, center, pinned-right; cần gom nhóm theo row-index
+      const allRowEls = Array.from(document.querySelectorAll("div.ag-row[row-index], tr[row-index]"));
+      const rowIndexMap = new Map<string, { texts: string[]; href: string | null }>();
+
+      for (const r of allRowEls) {
+        const idx = r.getAttribute("row-index") || r.getAttribute("aria-rowindex") || "";
+        if (!idx) continue;
+        if (!rowIndexMap.has(idx)) {
+          rowIndexMap.set(idx, { texts: [], href: null });
+        }
+        const entry = rowIndexMap.get(idx)!;
+        const txt = ((r as HTMLElement).innerText || "").trim();
+        if (txt) entry.texts.push(txt);
+
+        const link = r.querySelector<HTMLAnchorElement>(
+          "a[data-takt-id='storm-ui-link'], a[href*='download-report'], a[href*='download']"
+        );
+        if (link?.href && !entry.href) {
+          entry.href = link.href.startsWith("http") ? link.href : (location.origin + link.href);
         }
       }
+
+      for (const [idx, entry] of rowIndexMap.entries()) {
+        const fullText = entry.texts.join(" ");
+        if (fullText.includes(targetId)) {
+          const isCompleted = /completed|success|downloadable/i.test(fullText) || Boolean(entry.href);
+          return { found: true, isCompleted, href: entry.href };
+        }
+      }
+
       return { found: false, isCompleted: false, href: null };
     }, syncRunId);
 
@@ -653,22 +681,55 @@ async function autoCreateAndDownloadSearchTermReport(
     }
   }
 
-  // Fallback: Tìm trên trang /reports đúng row chứa syncRunId
+  // Fallback: Tìm trên trang /reports đúng row chứa syncRunId hoặc Search Term hôm nay đã sẵn sàng
   if (!downloadUrl) {
     const reportsUrl = `https://advertising.amazon.com/reports${entityParam}`;
     await page.goto(reportsUrl, { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(3000);
-    downloadUrl = await page.evaluate((targetId: string) => {
-      const rows = Array.from(document.querySelectorAll("div.ag-row, [role='row']"));
-      for (const r of rows) {
-        const text = ((r as HTMLElement).innerText || "").trim();
-        if (text.includes(targetId) && /completed|success/i.test(text)) {
-          const link = r.querySelector<HTMLAnchorElement>("a[href*='download-report'], a[data-takt-id='storm-ui-link']");
-          if (link?.href) return link.href;
+    downloadUrl = await page.evaluate((args: { targetId: string; adType: string }) => {
+      const allRowEls = Array.from(document.querySelectorAll("div.ag-row[row-index], tr[row-index]"));
+      const rowIndexMap = new Map<string, { texts: string[]; href: string | null }>();
+
+      for (const r of allRowEls) {
+        const idx = r.getAttribute("row-index") || r.getAttribute("aria-rowindex") || "";
+        if (!idx) continue;
+        if (!rowIndexMap.has(idx)) {
+          rowIndexMap.set(idx, { texts: [], href: null });
+        }
+        const entry = rowIndexMap.get(idx)!;
+        const txt = ((r as HTMLElement).innerText || "").trim();
+        if (txt) entry.texts.push(txt);
+
+        const link = r.querySelector<HTMLAnchorElement>(
+          "a[href*='download-report'], a[data-takt-id='storm-ui-link'], a[href*='download']"
+        );
+        if (link?.href && !entry.href) {
+          entry.href = link.href.startsWith("http") ? link.href : (location.origin + link.href);
         }
       }
+
+      // 1. Tìm theo targetId
+      for (const [idx, entry] of rowIndexMap.entries()) {
+        const fullText = entry.texts.join(" ");
+        if (fullText.includes(args.targetId) && entry.href) {
+          return entry.href;
+        }
+      }
+
+      // 2. Fallback thông minh: nếu có hàng Search Term cho đúng adType (30 ngày) đã tạo sẵn thì lấy luôn
+      const adTypeLabel = args.adType === "SB" ? "Sponsored Brands" : "Sponsored Products";
+      for (const [idx, entry] of rowIndexMap.entries()) {
+        const fullText = entry.texts.join(" ");
+        const hasSearchTerm = /search\s*term/i.test(fullText);
+        const hasAdType = fullText.includes(args.adType) || fullText.includes(adTypeLabel);
+        const has30d = /30\s*(?:day|days|d\b)/i.test(fullText);
+        if (hasSearchTerm && hasAdType && has30d && entry.href) {
+          return entry.href;
+        }
+      }
+
       return null;
-    }, syncRunId);
+    }, { targetId: syncRunId, adType });
   }
 
   if (!downloadUrl) {
@@ -713,7 +774,12 @@ async function autoCreateAndDownloadSearchTermReport(
           });
         } else {
           await page.evaluate((url: string) => {
-            window.location.href = url;
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "";
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
           }, downloadUrl);
         }
       })(),
