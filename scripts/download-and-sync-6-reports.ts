@@ -77,66 +77,182 @@ async function requestAndDownloadBulk(
     await page.waitForTimeout(1500);
   }
 
-  // Configure Checkbox according to adType
-  const spInput = await page.$("label:has-text('Sponsored Products data') input");
-  const sbInput = await page.$("label:has-text('Sponsored Brands data') input");
+  // Cấu hình danh sách checkbox chính xác trong modal Bulksheet:
+  // 1. Các mục BẮT BUỘC TÍCH (Included in export):
+  //    - Performance data
+  //    - Paused campaigns
+  //    - Campaign items with zero impressions
+  //    - Placement data for campaigns
+  //    - Sponsored Products (hoặc Sponsored Brands tùy theo adType)
+  const mustCheckLabels = [
+    "Performance data",
+    "Paused campaigns",
+    "Campaign items with zero impressions",
+    "Placement data for campaigns",
+    adType === "SP" ? "Sponsored Products data" : "Sponsored Brands data",
+  ];
 
-  if (adType === "SP") {
-    if (spInput && !(await spInput.isChecked())) {
-      await page.click("label:has-text('Sponsored Products data')");
-    }
-    if (sbInput && (await sbInput.isChecked())) {
-      await page.click("label:has-text('Sponsored Brands data')");
-    }
-  } else {
-    // SB
-    if (sbInput && !(await sbInput.isChecked())) {
-      await page.click("label:has-text('Sponsored Brands data')");
-    }
-    if (spInput && (await spInput.isChecked())) {
-      await page.click("label:has-text('Sponsored Products data')");
+  for (const label of mustCheckLabels) {
+    const el = await page.$(`label:has-text('${label}')`);
+    const input = await el?.$("input");
+    if (el && input && !(await input.isChecked())) {
+      await el.click();
+      await page.waitForTimeout(150);
     }
   }
-  await page.waitForTimeout(500);
+
+  // 2. Các mục BẮT BUỘC BỎ TÍCH (Search term tải riêng ở Reports, không kẹp vào Bulksheet):
+  //    - Sponsored Products / Brands đối nghịch
+  //    - Sponsored products search term data
+  //    - Sponsored brands search term data
+  //    - Sponsored Brands multi-ad group data
+  //    - Sponsored Display data
+  //    - Guidance for Sponsored products
+  //    - Terminated campaigns
+  //    - Brand asset data
+  //    - Budget Rules Data
+  //    - Export specific campaigns only
+  const mustUncheckLabels = [
+    adType === "SP" ? "Sponsored Brands data" : "Sponsored Products data",
+    "Sponsored products search term data",
+    "Sponsored brands search term data",
+    "Sponsored Brands multi-ad group data",
+    "Sponsored Display data",
+    "Guidance for Sponsored products",
+    "Terminated campaigns",
+    "Brand asset data",
+    "Budget Rules Data",
+    "Export specific campaigns only",
+  ];
+
+  for (const label of mustUncheckLabels) {
+    const el = await page.$(`label:has-text('${label}')`);
+    const input = await el?.$("input");
+    if (el && input && (await input.isChecked())) {
+      await el.click();
+      await page.waitForTimeout(150);
+    }
+  }
+  await page.waitForTimeout(300);
 
   // Configure Date Range
   const dateBtn = await page.$(
-    'div:has(button[data-takt-id="adz_bulkSheets_exportModal_download_button"]) button:has-text("2026")',
+    'button[aria-label="Open date range picker"], button:has-text(" - 202"), div[data-takt-id="adz_bulkSheets_exportModal"] button:has-text(" - ")',
   );
   if (dateBtn) {
     await dateBtn.click();
     await page.waitForTimeout(600);
 
     const targetLabel = `${days} Days`;
-    const presetBtn = await page.$(`button:has-text("${targetLabel}")`);
+    const presetBtn = await page.$(
+      `div[role="dialog"] button:has-text("${targetLabel}"), div[role="presentation"] button:has-text("${targetLabel}"), button:has-text("${targetLabel}")`,
+    );
     if (presetBtn) {
       console.log(`[BULK] Chọn preset ngày: ${targetLabel}`);
       await presetBtn.click();
-      await page.waitForTimeout(600);
-
-      const applyBtn = await page.$('button:has-text("Apply")');
-      if (applyBtn) {
-        await applyBtn.click().catch(() => {});
-        await page.waitForTimeout(600);
-      }
+      await page.waitForTimeout(800);
+    } else {
+      // Đóng popover lịch nếu không thấy preset để tránh che khuất nút Download
+      await page.keyboard.press("Escape").catch(() => { });
+      await page.waitForTimeout(300);
     }
   }
 
-  // Click modal Download button
-  const modalDownload = await page.$('button[data-takt-id="adz_bulkSheets_exportModal_download_button"]');
+  // 3.5. Làm mờ (unfocus) input hiện tại để tránh giữ focus outline chặn sự kiện click
+  await page.evaluate(() => {
+    if (document.activeElement && typeof (document.activeElement as HTMLElement).blur === "function") {
+      (document.activeElement as HTMLElement).blur();
+    }
+  });
+  await page.waitForTimeout(300);
+
+  // 4. Bấm Download trong modal
+  const modalContainer = await page.$(
+    'div[data-takt-id="adz_bulkSheets_exportModal"], div[role="dialog"]',
+  );
+
+  let modalDownload = null;
+  if (modalContainer) {
+    modalDownload = await modalContainer.$(
+      'button[data-takt-id="adz_bulkSheets_exportModal_download_button"], button:text-is("Download"), button[type="submit"]',
+    );
+  }
+
+  if (!modalDownload) {
+    modalDownload = await page.$(
+      'div[data-takt-id="adz_bulkSheets_exportModal"] button[data-takt-id="adz_bulkSheets_exportModal_download_button"], ' +
+      'button[data-takt-id="adz_bulkSheets_exportModal_download_button"], ' +
+      'div[data-takt-id="adz_bulkSheets_exportModal"] button:text-is("Download")',
+    );
+  }
+
+  if (!modalDownload) {
+    const jsBtn = await page.evaluateHandle(() => {
+      const modal = document.querySelector('div[data-takt-id="adz_bulkSheets_exportModal"]') ||
+                    document.querySelector('div[role="dialog"]');
+      if (!modal) return null;
+      const btns = Array.from(modal.querySelectorAll("button"));
+      return btns.find(b => (b.textContent || "").trim().toLowerCase() === "download") || null;
+    });
+    if (jsBtn && jsBtn.asElement()) {
+      modalDownload = jsBtn.asElement();
+    }
+  }
+
   if (!modalDownload) throw new Error("Không tìm thấy nút Download trong modal");
 
   console.log(`[BULK] Đang bấm Download để Amazon tạo file Bulk ${adType} ${days}d...`);
-  await modalDownload.click();
-  await page.waitForTimeout(2000);
+  let modalClosed = false;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await modalDownload.scrollIntoViewIfNeeded().catch(() => {});
+      await modalDownload.click({ timeout: 2500 });
+    } catch {
+      await page.evaluate((btn: HTMLElement) => {
+        if (!btn) return;
+        btn.focus();
+        btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+        btn.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
+        btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+        if (typeof btn.click === "function") btn.click();
+      }, modalDownload);
+    }
+
+    modalClosed = await page
+      .waitForSelector('div[data-takt-id="adz_bulkSheets_exportModal"]', {
+        state: "detached",
+        timeout: 3500,
+      })
+      .then(() => true)
+      .catch(() => false);
+
+    if (modalClosed) {
+      console.log(`[BULK] Modal Bulksheet đã đóng thành công (lần thử ${attempt}).`);
+      break;
+    }
+
+    console.warn(`[BULK] Lần ${attempt}: Modal chưa đóng, dispatch click qua JS...`);
+    await page.evaluate(() => {
+      const modal = document.querySelector('div[data-takt-id="adz_bulkSheets_exportModal"]') ||
+                    document.querySelector('div[role="dialog"]');
+      if (!modal) return;
+      const btns = Array.from(modal.querySelectorAll("button"));
+      const target = btns.find(b => (b.textContent || "").trim().toLowerCase() === "download");
+      if (target) {
+        target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+        target.click();
+      }
+    });
+    await page.waitForTimeout(1000);
+  }
 
   // Wait for new download link in the table
-  console.log(`[BULK] Đang chờ Amazon tạo file mới (không dùng lại link cũ)...`);
+  console.log(`[BULK] Đang chờ Amazon tạo file mới (Full Bulksheet mất khoảng 5-15 phút)...`);
   let newDownloadUrl: string | null = null;
-  const deadline = Date.now() + 120_000; // tối đa 2 phút
+  const deadline = Date.now() + 900_000; // tối đa 15 phút cho Full Bulksheet
 
   while (Date.now() < deadline) {
-    await page.waitForTimeout(5000);
+    await page.waitForTimeout(10000);
     // Click Refresh button on page
     await page.click("button[aria-label*='Refresh'], button:has-text('Refresh')").catch(() => {});
     await page.waitForTimeout(1000);

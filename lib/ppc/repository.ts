@@ -215,10 +215,11 @@ function mapPerformance(row: PerformanceDbRow): PpcPerformanceRow {
 
 export async function listPpcStores(scope: DataScope): Promise<PpcStore[]> {
   const sql = await getDatabaseClient();
+  const teamId = (scope as any)?.teamId || "default";
   const rows = await sql<StoreRow[]>`
     SELECT id, name, marketplace, target_acos, daily_budget, status
     FROM ppc_stores
-    WHERE team_id = ${scope.teamId}
+    WHERE team_id = ${teamId}
     ORDER BY lower(name)
   `;
   return rows.map(mapStore);
@@ -230,6 +231,7 @@ export async function listPpcSearchTerms(
   options: { limit?: number; offset?: number } = {},
 ): Promise<PpcSearchTermRow[]> {
   const sql = await getDatabaseClient();
+  const teamId = (scope as any)?.teamId || "default";
   const rows = await sql<SearchTermDbRow[]>`
     WITH daily_counts AS (
       SELECT store_id, ad_type, COUNT(*) as cnt
@@ -260,7 +262,7 @@ export async function listPpcSearchTerms(
     JOIN ppc_stores s ON s.id = t.store_id
     LEFT JOIN daily_counts dc ON dc.store_id = t.store_id AND dc.ad_type = t.ad_type
     LEFT JOIN latest_range lr ON lr.store_id = t.store_id AND lr.ad_type = t.ad_type
-    WHERE s.team_id = ${scope.teamId}
+    WHERE s.team_id = ${teamId}
       AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
       AND (
         ${filters.sku === "ALL"}
@@ -293,6 +295,7 @@ export async function listPpcPerformance(
   options: { grain?: PpcPerformanceGrain; limit?: number; offset?: number } = {},
 ): Promise<PpcPerformanceRow[]> {
   const sql = await getDatabaseClient();
+  const teamId = (scope as any)?.teamId || "default";
   const rows = await sql<PerformanceDbRow[]>`
     WITH latest_snapshots AS (
       SELECT DISTINCT ON (p2.store_id, p2.ad_type)
@@ -301,7 +304,7 @@ export async function listPpcPerformance(
         p2.report_end_date AS max_report_end
       FROM ppc_performance_facts p2
       JOIN ppc_stores s2 ON s2.id = p2.store_id
-      WHERE s2.team_id = ${scope.teamId}
+      WHERE s2.team_id = ${teamId}
         AND (${filters.storeName === "ALL"} OR lower(s2.name) = lower(${filters.storeName}))
         AND (p2.report_end_date - p2.report_start_date + 1)
           BETWEEN ${filters.days - 3}::integer AND ${filters.days + 3}::integer
@@ -336,7 +339,7 @@ export async function listPpcPerformance(
       AND ls.max_snapshot = p.snapshot_date
       AND ls.max_report_start = p.report_start_date
       AND ls.max_report_end = p.report_end_date
-    WHERE s.team_id = ${scope.teamId}
+    WHERE s.team_id = ${teamId}
       AND (${!options.grain} OR p.grain = ${options.grain || "CAMPAIGN"})
       AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
       AND (
@@ -381,10 +384,11 @@ export async function listPpcPerformance(
 
 export async function listPpcSyncLogs(scope: DataScope, limit = 10): Promise<PpcSyncLog[]> {
   const sql = await getDatabaseClient();
+  const teamId = (scope as any)?.teamId || "default";
   const rows = await sql<SyncLogRow[]>`
     SELECT id, source, file_name, status, records_count, message, created_at
     FROM ppc_sync_logs
-    WHERE team_id = ${scope.teamId}
+    WHERE team_id = ${teamId}
     ORDER BY created_at DESC
     LIMIT ${Math.max(1, Math.min(50, limit))}
   `;
@@ -406,10 +410,11 @@ export async function hasSuccessfulPpcSync(
   sourceVersion: string,
 ): Promise<boolean> {
   const sql = await getDatabaseClient();
+  const teamId = (scope as any)?.teamId || "default";
   const rows = await sql<{ found: boolean }[]>`
     SELECT EXISTS(
       SELECT 1 FROM ppc_sync_logs
-      WHERE team_id = ${scope.teamId}
+      WHERE team_id = ${teamId}
         AND source = ${source}
         AND file_name = ${fileName}
         AND source_version = ${sourceVersion}
@@ -431,11 +436,12 @@ export async function recordPpcSyncLog(
   },
 ): Promise<void> {
   const sql = await getDatabaseClient();
+  const teamId = (scope as any)?.teamId || "default";
   await sql`
     INSERT INTO ppc_sync_logs (
       team_id, source, file_name, source_version, status, records_count, message
     ) VALUES (
-      ${scope.teamId}, ${input.source}, ${input.fileName || null},
+      ${teamId}, ${input.source}, ${input.fileName || null},
       ${input.sourceVersion || null}, ${input.status}, ${input.count || 0},
       ${input.message || null}
     )
@@ -467,12 +473,13 @@ export async function upsertPpcSearchTerms(
   options: { replaceExisting?: boolean } = {},
 ): Promise<{ inserted: number; updated: number; deduplicated: number }> {
   const sql = await getDatabaseClient();
+  const teamId = (scope as any)?.teamId || "default";
   const uniqueRows = Array.from(new Map(rows.map((row) => [rowIdentity(row), row])).values());
 
   return sql.begin(async (transaction) => {
     const storeRows = await transaction<StoreRow[]>`
       INSERT INTO ppc_stores (team_id, name)
-      VALUES (${scope.teamId}, ${storeName})
+      VALUES (${teamId}, ${storeName})
       ON CONFLICT (team_id, name) DO UPDATE SET updated_at = NOW()
       RETURNING id, name, marketplace, target_acos, daily_budget, status
     `;
@@ -572,6 +579,7 @@ export async function upsertPpcPerformance(
   options: { replaceExisting?: boolean } = {},
 ): Promise<{ inserted: number; updated: number; deduplicated: number }> {
   const sql = await getDatabaseClient();
+  const teamId = (scope as any)?.teamId || "default";
   const uniqueRows = Array.from(new Map(rows.map((row) => [
     [row.snapshotDate, row.reportStartDate, row.reportEndDate, row.adType, row.grain, performanceIdentity(row)].join(":::"),
     row,
@@ -579,7 +587,7 @@ export async function upsertPpcPerformance(
   return sql.begin(async (transaction) => {
     const storeRows = await transaction<StoreRow[]>`
       INSERT INTO ppc_stores (team_id, name)
-      VALUES (${scope.teamId}, ${storeName})
+      VALUES (${teamId}, ${storeName})
       ON CONFLICT (team_id, name) DO UPDATE SET updated_at = NOW()
       RETURNING id, name, marketplace, target_acos, daily_budget, status
     `;
@@ -685,15 +693,16 @@ export async function replacePpcDataWithMock(
   rows: PpcSearchTermRow[],
 ): Promise<void> {
   const sql = await getDatabaseClient();
+  const teamId = (scope as any)?.teamId || "default";
   await sql.begin(async (transaction) => {
     await transaction`
-      DELETE FROM ppc_stores WHERE team_id = ${scope.teamId}
+      DELETE FROM ppc_stores WHERE team_id = ${teamId}
     `;
     for (const store of stores) {
       await transaction`
         INSERT INTO ppc_stores (team_id, name, marketplace, target_acos, daily_budget, status)
         VALUES (
-          ${scope.teamId}, ${store.name}, ${store.marketplace}, ${store.targetAcos},
+          ${teamId}, ${store.name}, ${store.marketplace}, ${store.targetAcos},
           ${store.dailyBudget}, ${store.status}
         )
       `;

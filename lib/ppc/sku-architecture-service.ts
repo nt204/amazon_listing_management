@@ -519,14 +519,14 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
 
     let master: ProductCostMaster = hasPrefixError
       ? {
-          ...defaultMaster,
-          id: "prefix-error",
-          productType: SKU_PREFIX_ERROR_PRODUCT_TYPE,
-          baseCost: 0,
-          defaultAmazonFee: 0,
-          defaultPrice: 0,
-          breakEvenAcos: 0,
-        }
+        ...defaultMaster,
+        id: "prefix-error",
+        productType: SKU_PREFIX_ERROR_PRODUCT_TYPE,
+        baseCost: 0,
+        defaultAmazonFee: 0,
+        defaultPrice: 0,
+        breakEvenAcos: 0,
+      }
       : (masterMap.get(productType) || defaultMaster);
     if (master === defaultMaster && productType === "Glass Ornament" && masterMap.has("Ornament")) {
       master = masterMap.get("Ornament")!;
@@ -598,7 +598,7 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
             max_bid = ${maxBid},
             updated_at = NOW()
         WHERE store_id = ${storeId} AND sku = ${sku} AND cost_source = 'INHERITED'
-      `.catch(() => {});
+      `.catch(() => { });
     }
 
     let ppcStatus: "Healthy" | "Review" | "Bleeding" | "Zero Clicks" = "Healthy";
@@ -882,8 +882,8 @@ export function evaluateRowWithRuleEngine(
   }
   const metricReason = hasOrders
     ? (matched.action === "BID_DECREASE" && actualAcos > beAcos
-        ? `ACoS ${actualAcos.toFixed(1)}% vượt ACoS hòa vốn ${beAcos}%`
-        : `ACoS ${actualAcos.toFixed(1)}%, ACoS hòa vốn ${beAcos}%`)
+      ? `ACoS ${actualAcos.toFixed(1)}% vượt ACoS hòa vốn ${beAcos}%`
+      : `ACoS ${actualAcos.toFixed(1)}%, ACoS hòa vốn ${beAcos}%`)
     : `${row.clicks} clicks, không có đơn`;
   reason = `[${format}] ${matched.ruleId || "MATCHED_RULE"}: ${metricReason} -> ${matched.description}.`;
 
@@ -1339,20 +1339,20 @@ export async function exportBulkFromQueue(
     });
   }
 
-    const now = new Date();
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const timeStr = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const timeStr = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 
-    // Format: Upload + tên camp + time
-    const rawCampName = actions.find((a: any) => a.campaign_name)?.campaign_name || actions[0]?.sku || "AmazonAds";
-    const cleanCamp = rawCampName
-      .replace(/[/\\?%*:|"<>]/g, "_")
-      .trim()
-      .replace(/\s+/g, "_")
-      .slice(0, 70)
-      .replace(/_+$/, "");
+  // Format: Upload + tên camp + time
+  const rawCampName = actions.find((a: any) => a.campaign_name)?.campaign_name || actions[0]?.sku || "AmazonAds";
+  const cleanCamp = rawCampName
+    .replace(/[/\\?%*:|"<>]/g, "_")
+    .trim()
+    .replace(/\s+/g, "_")
+    .slice(0, 70)
+    .replace(/_+$/, "");
 
-    const fileName = `Upload_${cleanCamp}_${timeStr}.xlsx`;
+  const fileName = `Upload_${cleanCamp}_${timeStr}.xlsx`;
 
   await sql.begin(async (tx: any) => {
     const bulkInsert = await tx`

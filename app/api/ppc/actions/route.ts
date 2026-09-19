@@ -59,7 +59,7 @@ export async function DELETE(request: Request) {
       const body = await request.json();
       if (Array.isArray(body?.actionIds)) bodyActionIds = body.actionIds;
       else if (body?.actionId) bodyActionIds = [body.actionId];
-    } catch {}
+    } catch { }
 
     const queryActionId = searchParams.get("actionId") || searchParams.get("id");
     const queryActionIds = searchParams.get("actionIds")

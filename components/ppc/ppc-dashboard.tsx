@@ -17,7 +17,6 @@ import {
   X,
   FolderSimple,
   ChartPieSlice,
-  ListDashes,
   ArrowRight,
   ArrowSquareOut,
   CalendarBlank,
@@ -35,6 +34,7 @@ import { PpcSkuEconomicsTable } from "./ppc-sku-economics-table";
 import { PpcSkuRecommendationGroupView } from "./ppc-sku-recommendation-group";
 import { PpcActionQueueDrawer } from "./ppc-action-queue-drawer";
 import { PpcSettingsTab } from "./ppc-settings-tab";
+import { PpcFileManagerModal } from "./ppc-file-manager-modal";
 import type {
   SkuEconomics,
   SkuRecommendationGroup,
@@ -74,7 +74,6 @@ interface PpcDetailCounts {
   targets: number;
   skus: number;
   searchTerms: number;
-  recommendations: number;
 }
 
 type SortField = "spend" | "sales" | "orders" | "clicks" | "impressions" | "ctr" | "acos" | "cvr" | "roas";
@@ -157,7 +156,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
   const [matchTypeBreakdown, setMatchTypeBreakdown] = useState<PpcMatchTypeBreakdown[]>([]);
   const [searchTerms, setSearchTerms] = useState<PpcSearchTermRow[]>([]);
   const [alerts, setAlerts] = useState<PpcAlert[]>([]);
-  const [recommendations, setRecommendations] = useState<PpcRecommendation[]>([]);
   const [targetAcos, setTargetAcos] = useState(30);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [detailCounts, setDetailCounts] = useState<PpcDetailCounts | null>(null);
@@ -189,7 +187,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
 
   // SKU-First Architecture state
   const [skuSubView, setSkuSubView] = useState<"economics" | "performance">("economics");
-  const [recSubView, setRecSubView] = useState<"grouped" | "flat">("grouped");
   const [skuEconomicsList, setSkuEconomicsList] = useState<SkuEconomics[]>([]);
   const [skuRecGroups, setSkuRecGroups] = useState<SkuRecommendationGroup[]>([]);
   const [skuRecAllRecs, setSkuRecAllRecs] = useState<PpcRecommendation[]>([]);
@@ -218,23 +215,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
   const [targetPageSize, setTargetPageSize] = useState(25);
   const [skuPage, setSkuPage] = useState(1);
   const [skuPageSize, setSkuPageSize] = useState(25);
-  const [recPage, setRecPage] = useState(1);
-  const [recPageSize, setRecPageSize] = useState(20);
   const [selectedTerms, setSelectedTerms] = useState<Set<string>>(new Set());
 
   // SKU category filter
   const [skuCategoryFilter, setSkuCategoryFilter] = useState<"ALL" | "HERO" | "BLEEDING" | "POTENTIAL" | "ZERO_CLICKS" | "ZERO_SPEND">("ALL");
   const [hidePausedSkus, setHidePausedSkus] = useState(false);
 
-  // Action Center recommendation filters & export
-  const [recPriorityFilter, setRecPriorityFilter] = useState<"ALL" | "P0" | "P1" | "P2">("ALL");
-  const [recProductFilter, setRecProductFilter] = useState<"ALL" | "ORNAMENT" | "GENERAL">("ALL");
-  const [recCampaignFilter, setRecCampaignFilter] = useState<string>("ALL");
-  const [recSkuFilter, setRecSkuFilter] = useState<string>("ALL");
-  const [recSearchQuery, setRecSearchQuery] = useState<string>("");
-  const [recCompactMode, setRecCompactMode] = useState<boolean>(true);
-  const [selectedRecs, setSelectedRecs] = useState<Set<string>>(new Set());
-  const [exportingBulksheet, setExportingBulksheet] = useState(false);
 
   // Campaign search & sort & multi-dimension filters
   const [campaignQuery, setCampaignQuery] = useState("");
@@ -264,6 +250,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
   const [syncingR2, setSyncingR2] = useState(false);
   const [syncingAdsPower, setSyncingAdsPower] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
+  const [showFileManagerModal, setShowFileManagerModal] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadStore, setUploadStore] = useState("HSOSTORE");
   const [uploadEndDate, setUploadEndDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -326,7 +313,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
         setMatchTypeBreakdown(data.matchTypeBreakdown || []);
         setSearchTerms(data.searchTerms || []);
         setAlerts(data.alerts || []);
-        setRecommendations(data.recommendations || []);
         setAvailableSkus(data.availableSkus || []);
         setTargetAcos(data.targetAcos || 30);
         setDateRangeStart(data.dateRangeStart || null);
@@ -335,13 +321,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
         setLastSyncedAt(data.lastSyncedAt || null);
         setDetailCounts(data.detailCounts || null);
         setSelectedTerms(new Set());
-        setSelectedRecs(new Set());
         setTermPage(1);
         setCampaignPage(1);
         setAdGroupPage(1);
         setTargetPage(1);
         setSkuPage(1);
-        setRecPage(1);
       });
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
@@ -372,7 +356,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       if (section === "targets") setTargetPerformance(data.targets || []);
       if (section === "skus") setSkuPerformance(data.skuPerformance || []);
       if (section === "search_terms") setSearchTerms(data.searchTerms || []);
-      if (section === "recommendations") setRecommendations(data.recommendations || []);
       setDetailCounts((current) => data.detailCounts ? { ...current, ...data.detailCounts } : current);
     });
   }, [selectedStore, selectedSku, selectedDays]);
@@ -567,7 +550,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
 
   useEffect(() => {
     if (activeTab === "overview") return;
-    if (["campaigns", "ad_groups", "targets", "skus", "search_terms", "recommendations"].includes(activeTab)) {
+    if (["campaigns", "ad_groups", "targets", "skus", "search_terms"].includes(activeTab)) {
       void loadSection(activeTab).catch((error) => {
         notify(error instanceof Error ? error.message : "Không thể tải bảng dữ liệu PPC", "error");
       });
@@ -696,17 +679,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     }
     return map;
   }, [targetPerformance]);
-
-  // Recommendations count per campaign map
-  const recsPerCampaign = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const r of recommendations) {
-      if (r.campaignName) {
-        map.set(r.campaignName, (map.get(r.campaignName) || 0) + 1);
-      }
-    }
-    return map;
-  }, [recommendations]);
 
   // Filtered & Sorted Campaigns (Default: Active only, sorted Newest to Oldest)
   const filteredSortedCampaigns = useMemo(() => {
@@ -1083,131 +1055,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     return filteredSortedSkus.slice(start, start + skuPageSize);
   }, [filteredSortedSkus, skuPage, skuPageSize]);
 
-  // Unique Campaigns and SKUs in Recommendations
-  const uniqueRecCampaigns = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const r of recommendations) {
-      const camp = r.campaignName?.trim();
-      if (camp) {
-        map.set(camp, (map.get(camp) || 0) + 1);
-      }
-    }
-    return Array.from(map.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([name, count]) => ({ name, count }));
-  }, [recommendations]);
-
-  const uniqueRecSkus = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const r of recommendations) {
-      const sku = r.sku?.trim();
-      if (sku) {
-        map.set(sku, (map.get(sku) || 0) + 1);
-      }
-    }
-    return Array.from(map.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([name, count]) => ({ name, count }));
-  }, [recommendations]);
-
-  // Filtered Recommendations by Priority, Product Rule, Campaign, SKU & Search Query
-  const filteredRecommendations = useMemo(() => {
-    let list = [...recommendations];
-    if (recPriorityFilter !== "ALL") {
-      list = list.filter((r) => r.priority === recPriorityFilter);
-    }
-    if (recProductFilter === "ORNAMENT") {
-      list = list.filter((r) => r.productType === "Glass Ornament");
-    } else if (recProductFilter === "GENERAL") {
-      list = list.filter((r) => r.productType !== "Glass Ornament");
-    }
-    if (recCampaignFilter !== "ALL") {
-      list = list.filter((r) => r.campaignName === recCampaignFilter);
-    }
-    if (recSkuFilter !== "ALL") {
-      list = list.filter((r) => r.sku === recSkuFilter);
-    }
-    if (recSearchQuery.trim()) {
-      const q = recSearchQuery.trim().toLowerCase();
-      list = list.filter(
-        (r) =>
-          (r.keyword && r.keyword.toLowerCase().includes(q)) ||
-          (r.campaignName && r.campaignName.toLowerCase().includes(q)) ||
-          (r.sku && r.sku.toLowerCase().includes(q)) ||
-          (r.ruleProfile && r.ruleProfile.toLowerCase().includes(q))
-      );
-    }
-    return list;
-  }, [recommendations, recPriorityFilter, recProductFilter, recCampaignFilter, recSkuFilter, recSearchQuery]);
-
-  // Paginated Recommendations
-  const totalRecPages = Math.max(1, Math.ceil(filteredRecommendations.length / recPageSize));
-  const paginatedRecommendations = useMemo(() => {
-    const start = (recPage - 1) * recPageSize;
-    return filteredRecommendations.slice(start, start + recPageSize);
-  }, [filteredRecommendations, recPage, recPageSize]);
-
-  // Export Bulksheet update file
-  const handleExportBulksheet = async (recsToExport?: PpcRecommendation[]) => {
-    const list = recsToExport || (selectedRecs.size > 0 ? recommendations.filter((r) => selectedRecs.has(r.id)) : filteredRecommendations);
-    const targetList = list.length > 0 ? list : recommendations;
-    if (targetList.length === 0) {
-      notify("Không có đề xuất nào để xuất Bulksheet.", "error");
-      return;
-    }
-    const exportList = targetList.map((recommendation) => {
-      if (recommendation.targetType === "PRODUCT") return recommendation;
-      const sourceTarget = targetPerformance.find((target) =>
-        target.targetId === recommendation.keywordId &&
-        (!recommendation.campaignId || target.campaignId === recommendation.campaignId) &&
-        (!recommendation.adGroupId || target.adGroupId === recommendation.adGroupId),
-      );
-      return sourceTarget ? { ...recommendation, matchType: sourceTarget.matchType } : recommendation;
-    });
-    setExportingBulksheet(true);
-    try {
-      const res = await fetch("/api/ppc/export-bulksheet", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ recommendations: exportList }),
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Xuất file thất bại");
-      }
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-
-      const disposition = res.headers.get("Content-Disposition") || "";
-      const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
-      const fallbackName = disposition.match(/filename="([^"]+)"/i)?.[1];
-      a.download = encodedName
-        ? decodeURIComponent(encodedName)
-        : fallbackName || "Update.xlsx";
-
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-      notify(`Đã xuất thành công ${targetList.length} đề xuất sang file ${a.download}!`, "success");
-    } catch (err) {
-      notify(err instanceof Error ? err.message : "Lỗi khi xuất file", "error");
-    } finally {
-      setExportingBulksheet(false);
-    }
-  };
-
-  const copyKeyword = async (kw: string) => {
-    try {
-      await navigator.clipboard.writeText(kw);
-      notify(`Đã copy "${kw}" vào clipboard!`, "success");
-    } catch {
-      notify("Trình duyệt không cho phép ghi vào clipboard.", "error");
-    }
-  };
-
   // Chart Data: Top 7 Campaigns by Spend
   const topCampaignChartData = useMemo(() => {
     if (campaignPerformance.length > 0) {
@@ -1477,6 +1324,16 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
             >
               <UploadSimple size={14} className="text-sky-600" weight="bold" />
               <span>Nạp báo cáo PPC</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowFileManagerModal(true)}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 transition cursor-pointer shadow-2xs"
+              title="Quản lý và xóa triệt để file trên Server & Cloudflare R2"
+            >
+              <FolderSimple size={14} className="text-amber-600" weight="bold" />
+              <span>Quản lý File</span>
             </button>
 
             <a
@@ -1989,7 +1846,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
             : "text-slate-600 hover:text-slate-900"
             }`}
         >
-          <span>6. Đề Xuất ({skuRecGroups.length > 0 ? `${skuRecGroups.length} SKU` : (detailCounts?.recommendations !== undefined ? detailCounts.recommendations.toLocaleString("vi-VN") : (loading ? "..." : recommendations.length.toLocaleString("vi-VN")))})</span>
+          <span>6. Đề Xuất ({skuRecGroups.length > 0 ? `${skuRecGroups.length} SKU` : (loading ? "..." : "0 SKU")})</span>
         </button>
 
         {/* Action Queue Quick Trigger */}
@@ -2165,8 +2022,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                     setCampaignPage(1);
                   }}
                   className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition cursor-pointer ${campaignStatusFilter === "ACTIVE"
-                      ? "bg-white text-emerald-700 shadow-2xs font-extrabold"
-                      : "text-slate-600 hover:text-slate-900"
+                    ? "bg-white text-emerald-700 shadow-2xs font-extrabold"
+                    : "text-slate-600 hover:text-slate-900"
                     }`}
                 >
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
@@ -2180,8 +2037,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                     setCampaignPage(1);
                   }}
                   className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition cursor-pointer ${campaignStatusFilter === "PAUSED"
-                      ? "bg-white text-amber-700 shadow-2xs font-extrabold"
-                      : "text-slate-600 hover:text-slate-900"
+                    ? "bg-white text-amber-700 shadow-2xs font-extrabold"
+                    : "text-slate-600 hover:text-slate-900"
                     }`}
                 >
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
@@ -2195,8 +2052,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                     setCampaignPage(1);
                   }}
                   className={`px-2.5 py-1 rounded-md transition cursor-pointer ${campaignStatusFilter === "ALL"
-                      ? "bg-white text-indigo-700 shadow-2xs font-extrabold"
-                      : "text-slate-600 hover:text-slate-900"
+                    ? "bg-white text-indigo-700 shadow-2xs font-extrabold"
+                    : "text-slate-600 hover:text-slate-900"
                     }`}
                 >
                   Tất cả ({campaignPerformance.length.toLocaleString("vi-VN")})
@@ -2316,10 +2173,10 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
               <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">ACOS Trung Bình</div>
               <div
                 className={`text-base font-black mt-0.5 ${filteredCampaignTotals.acos <= targetAcos
-                    ? "text-emerald-600"
-                    : filteredCampaignTotals.acos <= 50
-                      ? "text-amber-600"
-                      : "text-rose-600"
+                  ? "text-emerald-600"
+                  : filteredCampaignTotals.acos <= 50
+                    ? "text-amber-600"
+                    : "text-rose-600"
                   }`}
               >
                 {filteredCampaignTotals.sales > 0 ? `${filteredCampaignTotals.acos.toFixed(1)}%` : "N/A"}
@@ -2507,12 +2364,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                         <td className="py-2.5 px-3 text-right whitespace-nowrap">
                           <span
                             className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${c.acos <= Math.min(20, targetAcos)
-                                ? "bg-emerald-50 text-emerald-700"
-                                : c.acos <= targetAcos
-                                  ? "bg-teal-50 text-teal-700"
-                                  : c.acos <= 50
-                                    ? "bg-amber-50 text-amber-700"
-                                    : "bg-rose-50 text-rose-700"
+                              ? "bg-emerald-50 text-emerald-700"
+                              : c.acos <= targetAcos
+                                ? "bg-teal-50 text-teal-700"
+                                : c.acos <= 50
+                                  ? "bg-amber-50 text-amber-700"
+                                  : "bg-rose-50 text-rose-700"
                               }`}
                           >
                             {c.acos > 500 ? "0 sales" : `${c.acos.toFixed(1)}%`}
@@ -2815,10 +2672,10 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                                         <td className="py-2 px-2.5 text-right font-mono">
                                           <span
                                             className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${term.orders === 0
-                                                ? "text-rose-600 bg-rose-50"
-                                                : term.acos <= targetAcos
-                                                  ? "text-emerald-700 bg-emerald-50"
-                                                  : "text-amber-700 bg-amber-50"
+                                              ? "text-rose-600 bg-rose-50"
+                                              : term.acos <= targetAcos
+                                                ? "text-emerald-700 bg-emerald-50"
+                                                : "text-amber-700 bg-amber-50"
                                               }`}
                                           >
                                             {term.orders === 0 ? "0 sales" : `${term.acos.toFixed(1)}%`}
@@ -3262,697 +3119,18 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
 
 
       {activeTab === "recommendations" && (
-        <div className="space-y-4">
-          {/* Subview Toggle Bar */}
-          <div className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setRecSubView("grouped")}
-                className={`px-3.5 py-1.5 rounded-lg text-xs transition cursor-pointer ${
-                  recSubView === "grouped"
-                    ? "bg-indigo-50 text-indigo-700 font-extrabold border border-indigo-200 shadow-2xs"
-                    : "bg-slate-50 text-slate-600 hover:text-slate-900 border border-transparent font-bold"
-                }`}
-              >
-                1. Gom Theo SKU ({skuRecGroups.length} SKU)
-              </button>
-              <button
-                type="button"
-                onClick={() => setRecSubView("flat")}
-                className={`px-3.5 py-1.5 rounded-lg text-xs transition cursor-pointer ${
-                  recSubView === "flat"
-                    ? "bg-indigo-50 text-indigo-700 font-extrabold border border-indigo-200 shadow-2xs"
-                    : "bg-slate-50 text-slate-600 hover:text-slate-900 border border-transparent font-bold"
-                }`}
-              >
-                2. Danh Sách Phẳng ({recommendations.length} Keyword)
-              </button>
-            </div>
-          </div>
-
-          {recSubView === "grouped" ? (
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs">
-              <PpcSkuRecommendationGroupView
-                groups={skuRecGroups}
-                allRecommendations={skuRecAllRecs.length > 0 ? skuRecAllRecs : recommendations}
-                isLoading={loading}
-                onApproveToQueue={handleApproveToQueue}
-                onOpenActionQueue={() => setIsActionQueueOpen(true)}
-                pendingQueueCount={actionQueue.length}
-                actionQueue={actionQueue}
-              />
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {/* Recommendations Header & Controls */}
-              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs space-y-3.5">
-                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
-                        Đề Xuất Tối Ưu
-                      </h3>
-                      <span className="rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200/60 px-2 py-0.5 text-[10px] font-black">
-                        {filteredRecommendations.length}/{recommendations.length}
-                      </span>
-                    </div>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  Lọc theo Campaign, SKU hoặc từ khóa để kiểm tra và xuất Bulksheet cho từng nhóm chiến dịch.
-                </p>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex items-center gap-2 flex-wrap">
-                {/* Toggle Compact / Expanded mode */}
-                <button
-                  type="button"
-                  onClick={() => setRecCompactMode(!recCompactMode)}
-                  className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold transition cursor-pointer ${recCompactMode
-                    ? "border-indigo-300 bg-indigo-50/70 text-indigo-700 hover:bg-indigo-100"
-                    : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
-                    }`}
-                  title="Chuyển đổi giữa chế độ xem thu gọn và chi tiết"
-                >
-                  <ListDashes size={14} weight="bold" />
-                  <span>{recCompactMode ? "Chế độ: Thu Gọn" : "Chế độ: Chi Tiết"}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (selectedRecs.size === filteredRecommendations.length && filteredRecommendations.length > 0) {
-                      setSelectedRecs(new Set());
-                    } else {
-                      setSelectedRecs(new Set(filteredRecommendations.map((r) => r.id)));
-                    }
-                  }}
-                  className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 transition cursor-pointer"
-                >
-                  {selectedRecs.size === filteredRecommendations.length && filteredRecommendations.length > 0
-                    ? "Bỏ Chọn"
-                    : `Chọn Trang Này (${filteredRecommendations.length})`}
-                </button>
-
-                <button
-                  type="button"
-                  disabled={exportingBulksheet || recommendations.length === 0}
-                  onClick={() => handleExportBulksheet()}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-3.5 py-1.5 text-xs font-black text-white shadow-md shadow-emerald-500/20 hover:from-emerald-700 hover:to-teal-700 disabled:opacity-50 transition cursor-pointer"
-                >
-                  {exportingBulksheet ? (
-                    <>
-                      <ArrowsClockwise size={15} className="animate-spin" />
-                      <span>Đang tạo Bulksheet...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Download size={15} weight="bold" />
-                      <span>
-                        Xuất Bulksheet (.xlsx)
-                        {selectedRecs.size > 0 ? ` (${selectedRecs.size} mục chọn)` : ` (${filteredRecommendations.length} mục)`}
-                      </span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-
-            {/* Search & Campaign / SKU Filters Toolbar */}
-            <div className="flex flex-wrap items-center gap-2.5 bg-slate-50/90 p-2.5 rounded-xl border border-slate-200/80">
-              {/* Search text input */}
-              <div className="relative flex-1 min-w-[200px]">
-                <MagnifyingGlass size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Tìm theo từ khóa, Campaign, SKU..."
-                  value={recSearchQuery}
-                  onChange={(e) => {
-                    setRecSearchQuery(e.target.value);
-                    setRecPage(1);
-                  }}
-                  className="w-full rounded-lg border border-slate-200 bg-white pl-8 pr-7 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:outline-none"
-                />
-                {recSearchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRecSearchQuery("");
-                      setRecPage(1);
-                    }}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                  >
-                    <X size={12} />
-                  </button>
-                )}
-              </div>
-
-              {/* Campaign Dropdown Filter */}
-              <div className="flex items-center gap-1.5 min-w-[210px] max-w-xs">
-                <span className="text-[11px] font-bold text-slate-400 shrink-0">Camp:</span>
-                <select
-                  value={recCampaignFilter}
-                  onChange={(e) => {
-                    setRecCampaignFilter(e.target.value);
-                    setRecPage(1);
-                  }}
-                  className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-indigo-500 transition cursor-pointer truncate"
-                >
-                  <option value="ALL">Tất Cả Campaign ({uniqueRecCampaigns.length})</option>
-                  {uniqueRecCampaigns.map((c) => (
-                    <option key={c.name} value={c.name}>
-                      {c.name} ({c.count} đề xuất)
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* SKU Dropdown Filter */}
-              <div className="flex items-center gap-1.5 min-w-[150px] max-w-[200px]">
-                <span className="text-[11px] font-bold text-slate-400 shrink-0">SKU:</span>
-                <select
-                  value={recSkuFilter}
-                  onChange={(e) => {
-                    setRecSkuFilter(e.target.value);
-                    setRecPage(1);
-                  }}
-                  className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-indigo-500 transition cursor-pointer truncate"
-                >
-                  <option value="ALL">Tất Cả SKU ({uniqueRecSkus.length})</option>
-                  {uniqueRecSkus.map((s) => (
-                    <option key={s.name} value={s.name}>
-                      {s.name} ({s.count})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Reset Filters button */}
-              {(recSearchQuery || recCampaignFilter !== "ALL" || recSkuFilter !== "ALL" || recPriorityFilter !== "ALL" || recProductFilter !== "ALL") && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRecSearchQuery("");
-                    setRecCampaignFilter("ALL");
-                    setRecSkuFilter("ALL");
-                    setRecPriorityFilter("ALL");
-                    setRecProductFilter("ALL");
-                    setRecPage(1);
-                  }}
-                  className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 px-2.5 py-1.5 rounded-lg transition cursor-pointer shrink-0"
-                >
-                  <X size={12} weight="bold" />
-                  <span>Đặt lại</span>
-                </button>
-              )}
-            </div>
-
-            {/* Filter Chips by Product Rule & Priority */}
-            <div className="flex flex-wrap items-center justify-between gap-y-2 gap-x-4 border-t border-slate-100 pt-2.5">
-              {/* Product Rule Filter */}
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1">
-                  Quy tắc:
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRecProductFilter("ALL");
-                    setRecPage(1);
-                  }}
-                  className={`rounded-md px-2.5 py-1 text-[11px] transition cursor-pointer ${recProductFilter === "ALL"
-                    ? "bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200/80 font-black shadow-2xs"
-                    : "bg-slate-100 text-slate-600 font-bold hover:bg-slate-200"
-                    }`}
-                >
-                  Tất Cả ({recommendations.length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRecProductFilter("ORNAMENT");
-                    setRecPage(1);
-                  }}
-                  className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-bold transition cursor-pointer ${recProductFilter === "ORNAMENT"
-                    ? "bg-purple-600 text-white shadow-xs"
-                    : "bg-purple-50 text-purple-700 border border-purple-200/60 hover:bg-purple-100"
-                    }`}
-                >
-                  <span>🔮 Glass Ornament</span>
-                  <span className="rounded-full bg-white/20 px-1.5 py-0.2 text-[9px]">
-                    {recommendations.filter((r) => r.productType === "Glass Ornament").length}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRecProductFilter("GENERAL");
-                    setRecPage(1);
-                  }}
-                  className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-bold transition cursor-pointer ${recProductFilter === "GENERAL"
-                    ? "bg-slate-700 text-white shadow-xs"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                    }`}
-                >
-                  <span>Chiến dịch chung</span>
-                  <span className="rounded-full bg-white/20 px-1.5 py-0.2 text-[9px]">
-                    {recommendations.filter((r) => r.productType !== "Glass Ornament").length}
-                  </span>
-                </button>
-              </div>
-
-              {/* Priority Filter */}
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1">
-                  Ưu tiên:
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRecPriorityFilter("ALL");
-                    setRecPage(1);
-                  }}
-                  className={`rounded-md px-2 py-0.5 text-[11px] transition cursor-pointer ${recPriorityFilter === "ALL"
-                    ? "bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200/80 font-black shadow-2xs"
-                    : "bg-slate-100 text-slate-600 font-bold hover:bg-slate-200"
-                    }`}
-                >
-                  Tất Cả
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRecPriorityFilter("P0");
-                    setRecPage(1);
-                  }}
-                  className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold transition cursor-pointer ${recPriorityFilter === "P0"
-                    ? "bg-rose-600 text-white"
-                    : "bg-rose-50 text-rose-700 border border-rose-200/60 hover:bg-rose-100"
-                    }`}
-                >
-                  <span>🚨 P0</span>
-                  <span className="text-[9px]">
-                    ({recommendations.filter((r) => r.priority === "P0").length})
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRecPriorityFilter("P1");
-                    setRecPage(1);
-                  }}
-                  className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold transition cursor-pointer ${recPriorityFilter === "P1"
-                    ? "bg-emerald-600 text-white"
-                    : "bg-emerald-50 text-emerald-700 border border-emerald-200/60 hover:bg-emerald-100"
-                    }`}
-                >
-                  <span>📈 P1</span>
-                  <span className="text-[9px]">
-                    ({recommendations.filter((r) => r.priority === "P1").length})
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRecPriorityFilter("P2");
-                    setRecPage(1);
-                  }}
-                  className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold transition cursor-pointer ${recPriorityFilter === "P2"
-                    ? "bg-sky-600 text-white"
-                    : "bg-sky-50 text-sky-700 border border-sky-200/60 hover:bg-sky-100"
-                    }`}
-                >
-                  <span>🎯 P2</span>
-                  <span className="text-[9px]">
-                    ({recommendations.filter((r) => r.priority === "P2").length})
-                  </span>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* List of Recommendation Items */}
-          {filteredRecommendations.length === 0 ? (
-            <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center shadow-xs">
-              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-400">
-                <CheckCircle size={28} weight="duotone" />
-              </div>
-              <h4 className="mt-3 text-sm font-bold text-slate-800">Không có đề xuất phù hợp với bộ lọc</h4>
-              <p className="mt-1 text-xs text-slate-500">
-                Không tìm thấy đề xuất nào khớp với từ khóa, Campaign hoặc SKU đã chọn.
-              </p>
-            </div>
-          ) : recCompactMode ? (
-            /* COMPACT MODE: Streamlined, high-density, modern list */
-            <div className="space-y-2">
-              {paginatedRecommendations.map((rec) => {
-                const isSelected = selectedRecs.has(rec.id);
-                const priorityBadge =
-                  rec.priority === "P0" ? (
-                    <span className="rounded bg-rose-100 px-1.5 py-0.2 text-[9px] font-black text-rose-800 border border-rose-200 shrink-0">
-                      P0
-                    </span>
-                  ) : rec.priority === "P1" ? (
-                    <span className="rounded bg-emerald-100 px-1.5 py-0.2 text-[9px] font-black text-emerald-800 border border-emerald-200 shrink-0">
-                      P1
-                    </span>
-                  ) : (
-                    <span className="rounded bg-sky-100 px-1.5 py-0.2 text-[9px] font-black text-sky-800 border border-sky-200 shrink-0">
-                      P2
-                    </span>
-                  );
-
-                const typeBadge =
-                  rec.recType === "PAUSE_TARGET" || rec.actionState === "PAUSED" ? (
-                    <span className="rounded bg-rose-100 px-1.5 py-0.2 text-[9px] font-black text-rose-800 border border-rose-200 shrink-0">
-                      DỪNG TARGET
-                    </span>
-                  ) : rec.recType === "NEGATIVE_KEYWORD" ? (
-                    <span className="rounded bg-rose-50 px-1.5 py-0.2 text-[9px] font-extrabold text-rose-700 border border-rose-100 shrink-0">
-                      PHỦ ĐỊNH
-                    </span>
-                  ) : rec.recType === "BID_DECREASE" ? (
-                    <span className="rounded bg-amber-50 px-1.5 py-0.2 text-[9px] font-extrabold text-amber-700 border border-amber-100 shrink-0">
-                      HẠ BID
-                    </span>
-                  ) : rec.recType === "BID_INCREASE" ? (
-                    <span className="rounded bg-emerald-50 px-1.5 py-0.2 text-[9px] font-extrabold text-emerald-700 border border-emerald-100 shrink-0">
-                      TĂNG BID
-                    </span>
-                  ) : (
-                    <span className="rounded bg-indigo-50 px-1.5 py-0.2 text-[9px] font-extrabold text-indigo-700 border border-indigo-100 shrink-0">
-                      HARVEST
-                    </span>
-                  );
-
-                return (
-                  <div
-                    key={rec.id}
-                    className={`rounded-xl border transition px-3 py-2.5 shadow-2xs ${isSelected
-                      ? "border-indigo-400 bg-indigo-50/25 shadow-xs"
-                      : "border-slate-200 bg-white hover:border-slate-300"
-                      }`}
-                  >
-                    <div className="flex items-center gap-2.5">
-                      {/* Checkbox */}
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => {
-                          setSelectedRecs((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(rec.id)) next.delete(rec.id);
-                            else next.add(rec.id);
-                            return next;
-                          });
-                        }}
-                        className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0"
-                      />
-
-                      <div className="flex-1 min-w-0">
-                        {/* Top Line: Badges + Keyword + Bids + Quick Export */}
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-                            {priorityBadge}
-                            {typeBadge}
-                            {rec.productType === "Glass Ornament" && (
-                              <span className="inline-flex items-center rounded bg-purple-50 text-purple-700 border border-purple-200/80 px-1.5 py-0.2 text-[10px] font-black shrink-0">
-                                🔮 {rec.ruleProfile?.replace("Glass Ornament ", "") || "Ornament"}
-                              </span>
-                            )}
-                            {rec.sku && (
-                              <span className="rounded bg-slate-100 text-slate-700 px-1.5 py-0.2 text-[10px] font-bold shrink-0">
-                                SKU: {rec.sku}
-                              </span>
-                            )}
-
-                            {/* Keyword Tag */}
-                            <span className="font-mono text-xs font-black text-slate-900 bg-slate-100/90 border border-slate-200 px-2 py-0.5 rounded inline-flex items-center gap-1">
-                              {rec.keyword}
-                              <button
-                                type="button"
-                                onClick={() => copyKeyword(rec.keyword)}
-                                className="text-slate-400 hover:text-indigo-600 transition"
-                                title="Sao chép từ khóa"
-                              >
-                                <Copy size={12} />
-                              </button>
-                            </span>
-                          </div>
-
-                          {/* Right: Bid change & Quick Export */}
-                          <div className="flex items-center gap-2 shrink-0">
-                            {rec.actionState === "PAUSED" ? (
-                              <span className="rounded bg-rose-50 border border-rose-200 px-2 py-0.5 text-xs font-black text-rose-700">
-                                🛑 State: paused
-                              </span>
-                            ) : rec.recommendedBid !== undefined ? (
-                              <div className="flex items-center gap-1.5 text-xs">
-                                {rec.currentBid !== undefined && (
-                                  <span className="text-slate-400 line-through text-[11px] font-medium">
-                                    ${rec.currentBid.toFixed(2)}
-                                  </span>
-                                )}
-                                <span className="text-slate-400 text-[10px]">➔</span>
-                                <span className="font-mono font-black text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded text-xs">
-                                  ${rec.recommendedBid.toFixed(2)}
-                                </span>
-                              </div>
-                            ) : null}
-
-                            <button
-                              type="button"
-                              disabled={exportingBulksheet}
-                              title="Xuất riêng mục này sang Bulksheet"
-                              onClick={() => handleExportBulksheet([rec])}
-                              className="inline-flex items-center p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
-                            >
-                              <Download size={14} weight="bold" />
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Bottom Line: Campaign & Reason */}
-                        <div className="mt-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[11px] text-slate-500">
-                          <div className="flex items-center gap-1.5 min-w-0 max-w-[85%]">
-                            <span className="font-bold text-slate-400 shrink-0">Camp:</span>
-                            <span className="truncate max-w-[280px] text-slate-700 font-medium" title={rec.campaignName}>
-                              {rec.campaignName}
-                            </span>
-                            <span className="text-slate-300">·</span>
-                            <span className="truncate text-slate-500" title={rec.reason}>
-                              {rec.reason}
-                            </span>
-                          </div>
-
-                          {rec.estimatedSavings !== undefined && rec.estimatedSavings > 0 && (
-                            <div className="shrink-0 text-emerald-700 font-bold text-[10px] bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-100">
-                              Tiết kiệm: ${rec.estimatedSavings.toFixed(2)}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-
-              {/* Pagination Controls */}
-              <PpcPagination
-                currentPage={recPage}
-                totalPages={totalRecPages}
-                pageSize={recPageSize}
-                totalItems={filteredRecommendations.length}
-                pageSizeOptions={[10, 20, 50, 100]}
-                itemName="đề xuất tối ưu"
-                onPageChange={setRecPage}
-                onPageSizeChange={(size) => {
-                  setRecPageSize(size);
-                  setRecPage(1);
-                }}
-              />
-            </div>
-          ) : (
-            /* EXPANDED MODE: Full detail cards */
-            <div className="space-y-3">
-              {paginatedRecommendations.map((rec) => {
-                const isSelected = selectedRecs.has(rec.id);
-                const priorityBadge =
-                  rec.priority === "P0" ? (
-                    <span className="inline-flex items-center gap-1 rounded-md bg-rose-100 px-2 py-0.5 text-[10px] font-black text-rose-800 border border-rose-200">
-                      🚨 P0: CẮT LỖ KHẨN CẤP
-                    </span>
-                  ) : rec.priority === "P1" ? (
-                    <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-800 border border-emerald-200">
-                      📈 P1: SCALE CHIẾN DỊCH
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 rounded-md bg-sky-100 px-2 py-0.5 text-[10px] font-black text-sky-800 border border-sky-200">
-                      🎯 P2: THU HOẠCH TỪ KHÓA
-                    </span>
-                  );
-
-                const typeBadge =
-                  rec.recType === "PAUSE_TARGET" || rec.actionState === "PAUSED" ? (
-                    <span className="rounded bg-rose-100 px-2 py-0.5 text-[10px] font-black text-rose-800 border border-rose-300">
-                      🛑 TẠM DỪNG TARGET (0 ĐƠN)
-                    </span>
-                  ) : rec.recType === "NEGATIVE_KEYWORD" ? (
-                    <span className="rounded bg-rose-50 px-2 py-0.5 text-[10px] font-extrabold text-rose-700 border border-rose-100">
-                      PHỦ ĐỊNH CHÍNH XÁC (NEGATIVE EXACT)
-                    </span>
-                  ) : rec.recType === "BID_DECREASE" ? (
-                    <span className="rounded bg-amber-50 px-2 py-0.5 text-[10px] font-extrabold text-amber-700 border border-amber-100">
-                      HẠ GIÁ THẦU (BID REDUCTION)
-                    </span>
-                  ) : rec.recType === "BID_INCREASE" ? (
-                    <span className="rounded bg-emerald-50 px-2 py-0.5 text-[10px] font-extrabold text-emerald-700 border border-emerald-100">
-                      TĂNG GIÁ THẦU (BID INCREASE)
-                    </span>
-                  ) : (
-                    <span className="rounded bg-indigo-50 px-2 py-0.5 text-[10px] font-extrabold text-indigo-700 border border-indigo-100">
-                      THU HOẠCH TỪ KHÓA (HARVEST)
-                    </span>
-                  );
-
-                return (
-                  <div
-                    key={rec.id}
-                    className={`rounded-2xl border transition p-4 shadow-2xs ${isSelected
-                      ? "border-indigo-400 bg-indigo-50/20 shadow-xs"
-                      : "border-slate-200 bg-white hover:border-slate-300"
-                      }`}
-                  >
-                    <div className="flex items-start gap-3">
-                      {/* Checkbox */}
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => {
-                          setSelectedRecs((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(rec.id)) next.delete(rec.id);
-                            else next.add(rec.id);
-                            return next;
-                          });
-                        }}
-                        className="mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                      />
-
-                      <div className="flex-1 min-w-0">
-                        {/* Badges & Meta */}
-                        <div className="flex flex-wrap items-center gap-2">
-                          {priorityBadge}
-                          {typeBadge}
-                          {rec.productType === "Glass Ornament" && (
-                            <span className="inline-flex items-center gap-1 rounded-md bg-purple-100 px-2 py-0.5 text-[10px] font-black text-purple-800 border border-purple-200">
-                              🔮 {rec.ruleProfile || "Glass Ornament"}
-                            </span>
-                          )}
-                          {rec.sku && (
-                            <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-700">
-                              SKU: {rec.sku}
-                            </span>
-                          )}
-                          <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">
-                            {rec.storeName}
-                          </span>
-                          {rec.campaignName && (
-                            <span className="truncate max-w-xs text-[11px] font-medium text-slate-400" title={rec.campaignName}>
-                              {rec.campaignName}
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Keyword & Copy */}
-                        <div className="mt-2 flex items-center gap-2">
-                          <span className="font-mono text-xs font-black text-slate-900 bg-slate-50 px-2 py-1 rounded border border-slate-200/80">
-                            {rec.keyword}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => copyKeyword(rec.keyword)}
-                            className="p-1 text-slate-400 hover:text-indigo-600 transition cursor-pointer"
-                            title="Sao chép từ khóa"
-                          >
-                            <Copy size={14} />
-                          </button>
-                        </div>
-
-                        {/* Reason / Logic */}
-                        <div className="mt-2.5 rounded-xl bg-slate-50/80 border border-slate-100 p-3 text-xs text-slate-700">
-                          <p className="leading-relaxed">{rec.reason}</p>
-                        </div>
-
-                        {/* Bid comparison & Action footer */}
-                        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100">
-                          <div className="flex items-center gap-3 text-xs font-semibold text-slate-600">
-                            {rec.actionState === "PAUSED" ? (
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-slate-400">Hành động Bulksheet:</span>
-                                <span className="font-black text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
-                                  State: paused (Tạm dừng)
-                                </span>
-                              </div>
-                            ) : rec.recommendedBid !== undefined ? (
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-slate-400">Giá thầu đề xuất:</span>
-                                <span className="font-black text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded">
-                                  ${rec.recommendedBid.toFixed(2)}
-                                </span>
-                                {rec.currentBid !== undefined && (
-                                  <span className="text-[11px] text-slate-400 font-normal">
-                                    (Hiện tại: ${rec.currentBid.toFixed(2)})
-                                  </span>
-                                )}
-                              </div>
-                            ) : null}
-                            {rec.estimatedSavings !== undefined && rec.estimatedSavings > 0 && (
-                              <div className="flex items-center gap-1 text-emerald-700">
-                                <span>Chi phí kỳ báo cáo có thể tránh:</span>
-                                <strong className="font-black">${rec.estimatedSavings.toFixed(2)}</strong>
-                              </div>
-                            )}
-                          </div>
-
-                          <button
-                            type="button"
-                            disabled={exportingBulksheet}
-                            onClick={() => handleExportBulksheet([rec])}
-                            className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-indigo-600 bg-slate-100 hover:bg-indigo-50 px-3 py-1.5 rounded-lg transition cursor-pointer"
-                          >
-                            <Download size={13} weight="bold" />
-                            <span>Xuất riêng mục này sang Bulksheet</span>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-
-              {/* Pagination Controls */}
-              <PpcPagination
-                currentPage={recPage}
-                totalPages={totalRecPages}
-                pageSize={recPageSize}
-                totalItems={filteredRecommendations.length}
-                pageSizeOptions={[10, 20, 50, 100]}
-                itemName="đề xuất tối ưu"
-                onPageChange={setRecPage}
-                onPageSizeChange={(size) => {
-                  setRecPageSize(size);
-                  setRecPage(1);
-                }}
-              />
-            </div>
-          )}
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs">
+          <PpcSkuRecommendationGroupView
+            groups={skuRecGroups}
+            allRecommendations={skuRecAllRecs}
+            isLoading={loading}
+            onApproveToQueue={handleApproveToQueue}
+            onOpenActionQueue={() => setIsActionQueueOpen(true)}
+            pendingQueueCount={actionQueue.length}
+            actionQueue={actionQueue}
+          />
         </div>
       )}
-    </div>
-  )}
-
-
 
       {/* MODAL UPLOAD EXCEL FILE */}
       {showUploadModal && (
@@ -4070,6 +3248,13 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
         storeName={selectedStore === "ALL" ? (stores[0]?.name || "HSOSTORE") : selectedStore}
         storeId={stores.find((s) => s.name === selectedStore)?.id || stores[0]?.id}
         onRefreshActionQueue={() => void loadActionQueue()}
+      />
+
+      {/* FILE MANAGER MODAL (SERVER & R2 PURGE) */}
+      <PpcFileManagerModal
+        isOpen={showFileManagerModal}
+        onClose={() => setShowFileManagerModal(false)}
+        onDataChanged={() => void loadData(true)}
       />
     </div>
   );

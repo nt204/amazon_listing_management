@@ -127,7 +127,7 @@ export async function parseBulkFile(
 export async function getPpcAnalyticsData(
   scope: DataScope,
   filters: { storeName?: string; sku?: string; days?: number } = {},
-  options: { grains?: PpcPerformanceGrain[] } = {},
+  options: { grains?: PpcPerformanceGrain[]; includeRecommendations?: boolean } = {},
 ) {
   const storeName = filters.storeName && filters.storeName !== "ALL"
     ? canonicalStoreName(filters.storeName)
@@ -172,7 +172,7 @@ export async function getPpcAnalyticsData(
   const targetKey = (adType: PpcAdType | undefined, value: string) => `${adType || "UNKNOWN"}\u0000${normalizedTarget(value)}`;
   const existingTargets = new Set(targetState.filter((row) => !row.isNegative).map((row) => targetKey(row.adType, row.targetExpression)));
   const existingNegatives = new Set(targetState.filter((row) => row.isNegative).map((row) => targetKey(row.adType, row.targetExpression)));
-  const queryRecommendations = generatePpcRecommendations(rows, targetAcos).filter((recommendation) => {
+  const queryRecommendations = options.includeRecommendations === false ? [] : generatePpcRecommendations(rows, targetAcos).filter((recommendation) => {
     if (!recommendation.adType || recommendation.adType === "UNKNOWN") return false;
     const hasActiveDestination = targetState.some((target) =>
       target.adType === recommendation.adType &&
@@ -186,12 +186,12 @@ export async function getPpcAnalyticsData(
     if (recommendation.recType === "NEGATIVE_KEYWORD") return !existingNegatives.has(key);
     return true;
   });
-  const commonTargetRecs = targetState.length > 0
+  const commonTargetRecs = options.includeRecommendations !== false && targetState.length > 0
     ? (await getCommonTargetRecommendations(
-        targetState[0]?.storeId || stores[0]?.id || "",
-        targetState,
-        days,
-      )).recommendations
+      targetState[0]?.storeId || stores[0]?.id || "",
+      targetState,
+      days,
+    )).recommendations
     : [];
 
   const recommendations: PpcRecommendation[] = [
@@ -202,15 +202,15 @@ export async function getPpcAnalyticsData(
   const campaignRows = performanceRows.filter((row) => row.grain === "CAMPAIGN");
   const summary = campaignRows.length > 0
     ? calculatePerformanceSummary(campaignRows, {
-        alerts: alerts.length,
-        recommendations: recommendations.length,
-        wastedSpend: searchTermSummary.wastedSpend,
-      })
+      alerts: alerts.length,
+      recommendations: recommendations.length,
+      wastedSpend: searchTermSummary.wastedSpend,
+    })
     : calculateSearchTermFallbackSummary(rows, {
-        alerts: alerts.length,
-        recommendations: recommendations.length,
-        wastedSpend: searchTermSummary.wastedSpend,
-      });
+      alerts: alerts.length,
+      recommendations: recommendations.length,
+      wastedSpend: searchTermSummary.wastedSpend,
+    });
   const allSkuPerformance = skuPerformanceFromFacts(performanceRows, targetAcos);
   const skuPerformance = sku === "ALL"
     ? allSkuPerformance
@@ -321,13 +321,15 @@ export async function ingestPpcExcelFile(
       try {
         const rows = await parseBulkFile(fileBuffer, normalizedStore, fileName, coverageOptions);
         if (rows.length) {
+          const detectedType = rows.find((r) => r.adType && r.adType !== "UNKNOWN")?.adType || adType;
+          const effectiveAdType = detectedType !== "UNKNOWN" ? detectedType : "SP";
           const saved = await upsertPpcPerformance(scope, normalizedStore, rows, { replaceExisting: true });
           await recordPpcSyncLog(scope, {
             source: "MANUAL_UPLOAD",
             fileName,
             status: "SUCCESS",
             count: saved.inserted + saved.updated,
-            message: `Bulk ${adType}: ${saved.inserted} dòng mới, ${saved.updated} dòng cập nhật, ${saved.deduplicated} dòng trùng.`,
+            message: `Bulk ${effectiveAdType}: ${saved.inserted} dòng mới, ${saved.updated} dòng cập nhật, ${saved.deduplicated} dòng trùng.`,
           });
           return { reportType: "BULK", totalParsed: rows.length, newInserted: saved.inserted, updated: saved.updated, deduplicated: saved.deduplicated, fileName, storeName: normalizedStore };
         }
@@ -341,13 +343,15 @@ export async function ingestPpcExcelFile(
       const parsedRows = await parseSearchTermWorkbook(fileBuffer, normalizedStore, adType);
       if (parsedRows.length) {
         const effectiveStore = parsedRows[0]?.storeName || normalizedStore;
+        const detectedType = parsedRows.find((r) => r.adType && r.adType !== "UNKNOWN")?.adType || adType;
+        const effectiveAdType = detectedType !== "UNKNOWN" ? detectedType : "SP";
         const saved = await upsertPpcSearchTerms(scope, effectiveStore, parsedRows, { replaceExisting: true });
         await recordPpcSyncLog(scope, {
           source: "MANUAL_UPLOAD",
           fileName,
           status: "SUCCESS",
           count: saved.inserted + saved.updated,
-          message: `Search Term ${adType}: ${saved.inserted} dòng mới, ${saved.updated} dòng cập nhật, ${saved.deduplicated} dòng trùng.`,
+          message: `Search Term ${effectiveAdType}: ${saved.inserted} dòng mới, ${saved.updated} dòng cập nhật, ${saved.deduplicated} dòng trùng.`,
         });
         return { reportType: "SEARCH_TERM", totalParsed: parsedRows.length, newInserted: saved.inserted, updated: saved.updated, deduplicated: saved.deduplicated, fileName, storeName: effectiveStore };
       }
@@ -384,11 +388,16 @@ export async function ingestPpcFilePath(
     let inserted = 0;
     let updated = 0;
     let deduplicated = 0;
+    let detectedAdType: PpcAdType = options.adType || "UNKNOWN";
     const totalParsed = await streamLargeBulkWorkbookFile(
       filePath,
       normalizedStore,
       options,
       async (rows) => {
+        if (detectedAdType === "UNKNOWN" && rows.length > 0) {
+          const found = rows.find((r) => r.adType && r.adType !== "UNKNOWN");
+          if (found) detectedAdType = found.adType;
+        }
         const saved = await upsertPpcPerformance(scope, normalizedStore, rows, {
           replaceExisting: firstBatch,
         });
@@ -399,12 +408,13 @@ export async function ingestPpcFilePath(
       },
     );
     if (!totalParsed) throw new PpcInputError("File không chứa dữ liệu Bulk Operations hợp lệ.");
+    const effectiveAdType = detectedAdType !== "UNKNOWN" ? detectedAdType : (options.adType !== "UNKNOWN" ? options.adType : "SP");
     await recordPpcSyncLog(scope, {
       source: "MANUAL_UPLOAD",
       fileName,
       status: "SUCCESS",
       count: inserted + updated,
-      message: `Bulk ${options.adType}: ${inserted} dòng mới, ${updated} dòng cập nhật, ${deduplicated} dòng trùng.`,
+      message: `Bulk ${effectiveAdType}: ${inserted} dòng mới, ${updated} dòng cập nhật, ${deduplicated} dòng trùng.`,
     });
     return {
       reportType: "BULK",

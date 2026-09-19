@@ -473,9 +473,9 @@ export function inferPpcReportCoverage(
 function bulkAdType(product: string, sheetName: string, hint: PpcAdType): PpcAdType {
   const value = `${product} ${sheetName}`.toLowerCase();
   if (value.includes("sponsored products") || /\bsp\b/.test(value)) return "SP";
-  if (value.includes("sponsored brands") || /\bsb\b/.test(value)) return "SB";
+  if (value.includes("sponsored brands") || /\bsb\b/.test(value) || value.includes("hsa campaigns")) return "SB";
   if (value.includes("sponsored display") || /\bsd\b/.test(value)) return "SD";
-  return hint;
+  return hint !== "UNKNOWN" ? hint : "SP";
 }
 
 function bulkGrain(entity: string): PpcPerformanceGrain | null {
@@ -503,6 +503,15 @@ export async function parseBulkWorkbook(
   // @ts-expect-error ExcelJS accepts Buffer directly in load.
   await workbook.xlsx.load(buffer);
   const parsed: PpcPerformanceRow[] = [];
+
+  let fallbackType = options.adType || "UNKNOWN";
+  if (fallbackType === "UNKNOWN") {
+    const allSheetNames = workbook.worksheets.map((w) => w.name.toLowerCase()).join(" ");
+    if (allSheetNames.includes("sponsored products")) fallbackType = "SP";
+    else if (allSheetNames.includes("sponsored brands") || allSheetNames.includes("hsa campaigns")) fallbackType = "SB";
+    else if (allSheetNames.includes("sponsored display")) fallbackType = "SD";
+    else fallbackType = "SP";
+  }
 
   workbook.eachSheet((worksheet) => {
     let headerRowNumber = 0;
@@ -579,7 +588,7 @@ export async function parseBulkWorkbook(
         reportStartDate: options.reportStartDate,
         reportEndDate: options.reportEndDate,
         reportGranularity: options.reportGranularity,
-        adType: bulkAdType(product, worksheet.name, options.adType || "UNKNOWN"),
+        adType: bulkAdType(product, worksheet.name, fallbackType),
         grain,
         entityId: entityId || `${grain}:${campaignId}:${adGroupId}:${targetExpression}:${placement}`,
         campaignId,

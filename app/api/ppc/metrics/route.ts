@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 const METRICS_CACHE_TTL_MS = 30_000;
 const METRICS_CACHE_MAX_ENTRIES = 5;
 type MetricsData = Awaited<ReturnType<typeof getPpcAnalyticsData>>;
-type MetricsSection = "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "search_terms" | "recommendations";
+type MetricsSection = "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "search_terms";
 type MetricsResponse = ReturnType<typeof projectMetrics>;
 const metricsCache = new Map<string, { expiresAt: number; data: MetricsResponse }>();
 const metricsInFlight = new Map<string, Promise<MetricsResponse>>();
@@ -19,7 +19,6 @@ const SECTION_GRAINS: Record<MetricsSection, PpcPerformanceGrain[]> = {
   targets: ["TARGET"],
   skus: ["PRODUCT"],
   search_terms: [],
-  recommendations: ["TARGET"],
 };
 
 function overviewSearchTerms(rows: PpcSearchTermRow[], targetAcos: number): PpcSearchTermRow[] {
@@ -43,7 +42,6 @@ function projectMetrics(data: MetricsData, section: MetricsSection) {
       campaigns: data.campaignPerformance.length,
       targets: data.targets.length,
       searchTerms: data.searchTerms.length,
-      recommendations: data.recommendations.length,
     }
     : {
       ...(section === "campaigns" ? { campaigns: data.campaignPerformance.length } : {}),
@@ -51,7 +49,6 @@ function projectMetrics(data: MetricsData, section: MetricsSection) {
       ...(section === "targets" ? { targets: data.targets.length } : {}),
       ...(section === "skus" ? { skus: data.skuPerformance.length } : {}),
       ...(section === "search_terms" ? { searchTerms: data.searchTerms.length } : {}),
-      ...(section === "recommendations" ? { recommendations: data.recommendations.length } : {}),
     };
   if (section === "overview") {
     return {
@@ -61,7 +58,6 @@ function projectMetrics(data: MetricsData, section: MetricsSection) {
       targets: [],
       skuPerformance: data.skuPerformance.slice(0, 10),
       searchTerms: overviewSearchTerms(data.searchTerms, data.targetAcos),
-      recommendations: data.recommendations.slice(0, 10),
       detailCounts,
     };
   }
@@ -72,15 +68,13 @@ function projectMetrics(data: MetricsData, section: MetricsSection) {
     targets: section === "targets" ? data.targets : [],
     skuPerformance: section === "skus" ? data.skuPerformance : [],
     searchTerms: section === "search_terms" ? data.searchTerms : [],
-    recommendations: section === "recommendations" ? data.recommendations : [],
     detailCounts,
   };
 }
 
 function cacheMetrics(key: string, data: MetricsResponse): void {
   const detailRows = data.campaignPerformance.length + data.adGroups.length +
-    data.targets.length + data.skuPerformance.length + data.searchTerms.length +
-    data.recommendations.length;
+    data.targets.length + data.skuPerformance.length + data.searchTerms.length;
   if (detailRows > 500) return;
   if (metricsCache.size >= METRICS_CACHE_MAX_ENTRIES) {
     const oldestKey = metricsCache.keys().next().value;
@@ -98,7 +92,7 @@ export async function GET(request: Request) {
     const days = Number(searchParams.get("days") || 7);
     const refresh = searchParams.get("refresh") === "1";
     const requestedSection = searchParams.get("section") || "overview";
-    const validSections: MetricsSection[] = ["overview", "campaigns", "ad_groups", "targets", "skus", "search_terms", "recommendations"];
+    const validSections: MetricsSection[] = ["overview", "campaigns", "ad_groups", "targets", "skus", "search_terms"];
     if (!validSections.includes(requestedSection as MetricsSection)) {
       throw new ApiError("Phần dữ liệu PPC không hợp lệ.", 400);
     }
@@ -122,7 +116,7 @@ export async function GET(request: Request) {
         pending = getPpcAnalyticsData(
           scope,
           { storeName, sku, days },
-          { grains: SECTION_GRAINS[section] },
+          { grains: SECTION_GRAINS[section], includeRecommendations: false },
         ).then((result) => projectMetrics(result, section));
         metricsInFlight.set(cacheKey, pending);
       }

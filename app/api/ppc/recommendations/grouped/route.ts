@@ -26,7 +26,7 @@ export async function GET(request: Request) {
     const targetRows = await listPpcPerformance(
       scope,
       { storeName, sku: "ALL", days },
-      { grain: "TARGET", limit: 25000 },
+      { grain: "TARGET", limit: 50000 },
     );
 
     const result = await getGroupedRecommendations(storeId, targetRows, days);
@@ -37,12 +37,12 @@ export async function GET(request: Request) {
     const filteredResult = normalizedSku === "ALL"
       ? result
       : {
-          ...result,
-          groups: result.groups.filter((group) => group.sku.toUpperCase() === normalizedSku),
-          allRecommendations: skuRecommendations,
-          totalRecommendations: skuRecommendations.length,
-          totalSkus: result.groups.some((group) => group.sku.toUpperCase() === normalizedSku) ? 1 : 0,
-        };
+        ...result,
+        groups: result.groups.filter((group) => group.sku.toUpperCase() === normalizedSku),
+        allRecommendations: skuRecommendations,
+        totalRecommendations: skuRecommendations.length,
+        totalSkus: result.groups.some((group) => group.sku.toUpperCase() === normalizedSku) ? 1 : 0,
+      };
 
     return Response.json({
       success: true,

@@ -75,13 +75,15 @@ def grain(entity):
 
 def ad_type(product, sheet_name, hint):
     value = f"{text(product)} {sheet_name}".lower()
-    if "sponsored products" in value:
+    if "sponsored products" in value or "sp campaigns" in value:
         return "SP"
-    if "sponsored brands" in value:
+    if "sponsored brands" in value or "sb campaigns" in value or "hsa campaigns" in value:
         return "SB"
-    if "sponsored display" in value:
+    if "sponsored display" in value or "sd campaigns" in value:
         return "SD"
-    return hint
+    if hint and hint != "UNKNOWN":
+        return hint
+    return "SP"
 
 
 def col_letter_to_index(col_str):
@@ -104,7 +106,20 @@ class FastSheetParser:
         self.start = start
         self.end = end
         self.granularity = granularity
-        self.hint = hint
+
+        # Infer sheet-level ad type from sheet title if available
+        sheet_hint = hint
+        sheet_lower = sheet_title.lower()
+        if "sponsored products" in sheet_lower or "sp campaigns" in sheet_lower:
+            sheet_hint = "SP"
+        elif "sponsored brands" in sheet_lower or "sb campaigns" in sheet_lower or "hsa campaigns" in sheet_lower:
+            sheet_hint = "SB"
+        elif "sponsored display" in sheet_lower or "sd campaigns" in sheet_lower:
+            sheet_hint = "SD"
+        elif sheet_hint == "UNKNOWN":
+            sheet_hint = "SP"
+
+        self.hint = sheet_hint
         self.sheet_title = sheet_title
         self.seen = seen
 
