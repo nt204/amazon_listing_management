@@ -3,6 +3,11 @@ import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-gu
 import { listPpcPerformance } from "@/lib/ppc/repository";
 import { getGroupedRecommendations, resolveStoreId } from "@/lib/ppc/sku-architecture-service";
 
+import {
+  getCachedGroupedRecommendations,
+  setCachedGroupedRecommendations,
+} from "@/lib/ppc/recommendation-cache";
+
 export const runtime = "nodejs";
 
 // Bid decisions must always use the stable 30-day attribution window. Dashboard
@@ -16,20 +21,32 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const storeName = searchParams.get("storeName") || "ALL";
     const sku = searchParams.get("sku") || "ALL";
+    const refresh = searchParams.get("refresh") === "1" || searchParams.get("refresh") === "true";
     const days = BID_RECOMMENDATION_DAYS;
 
     const storeId = await resolveStoreId(searchParams.get("storeId") || (storeName !== "ALL" ? storeName : null));
 
-    // SB target reports commonly leave `sku` blank. Load the store's complete
-    // target set so evaluateRowWithRuleEngine can recover the SKU from the
-    // campaign name, then apply the requested SKU filter to the evaluated result.
-    const targetRows = await listPpcPerformance(
-      scope,
-      { storeName, sku: "ALL", days },
-      { grain: "TARGET", limit: 50000 },
-    );
+    const cacheKey = `${scope.teamId}\0${storeId}\0${storeName}`;
+    const cached = refresh ? null : getCachedGroupedRecommendations(cacheKey);
 
-    const result = await getGroupedRecommendations(storeId, targetRows, days);
+    let result: Awaited<ReturnType<typeof getGroupedRecommendations>>;
+
+    if (cached) {
+      result = cached;
+    } else {
+      // SB target reports commonly leave `sku` blank. Load the store's complete
+      // target set so evaluateRowWithRuleEngine can recover the SKU from the
+      // campaign name, then apply the requested SKU filter to the evaluated result.
+      const targetRows = await listPpcPerformance(
+        scope,
+        { storeName, sku: "ALL", days },
+        { grain: "TARGET", limit: 50000 },
+      );
+
+      result = await getGroupedRecommendations(storeId, targetRows, days);
+      setCachedGroupedRecommendations(cacheKey, result);
+    }
+
     const normalizedSku = sku.trim().toUpperCase();
     const skuRecommendations = result.allRecommendations.filter(
       (recommendation) => (recommendation.sku || "").toUpperCase() === normalizedSku,

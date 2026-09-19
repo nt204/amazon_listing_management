@@ -1109,13 +1109,32 @@ export async function approveRecommendationsToActionQueue(
     approvedBy?: string;
   }>,
 ): Promise<{ addedCount: number; supersededCount: number }> {
-  const sql = await getDatabaseClient();
+  if (!items || items.length === 0) {
+    return { addedCount: 0, supersededCount: 0 };
+  }
 
+  const sql = await getDatabaseClient();
   let addedCount = 0;
   let supersededCount = 0;
 
   await sql.begin(async (tx: any) => {
-    for (const item of items) {
+    const campaignIds = Array.from(
+      new Set(items.map((it) => it.recommendation.campaignId || "").filter(Boolean))
+    );
+
+    const existingRows = campaignIds.length > 0
+      ? await tx<any[]>`
+          SELECT id, campaign_id, target_id, target_keyword, match_type, action_type, status
+          FROM ppc_actions
+          WHERE store_id = ${storeId}
+            AND status IN ('PENDING', 'APPROVED', 'QUEUED')
+            AND campaign_id = ANY(${campaignIds})
+        `
+      : [];
+
+    const supersededIds = new Set<string>();
+
+    const rowsToInsert = items.map((item) => {
       const rec = item.recommendation;
       const sku = (rec.sku || "").toUpperCase();
       const campaignId = rec.campaignId || "";
@@ -1123,48 +1142,93 @@ export async function approveRecommendationsToActionQueue(
       const actionType: ActionType = rec.recType === "PAUSE_TARGET" ? "PAUSE_TARGET" : "UPDATE_BID";
       const finalValue = item.userFinalBid ?? rec.recommendedBid ?? rec.currentBid ?? 0;
 
-      const existing = await tx`
-        SELECT id, action_type, status FROM ppc_actions
-        WHERE store_id = ${storeId}
-          AND campaign_id = ${campaignId}
-          AND (target_id = ${targetId} OR (target_keyword = ${rec.keyword} AND match_type = ${rec.matchType || 'Exact'}))
-          AND status IN ('PENDING', 'APPROVED', 'QUEUED')
-      `;
+      // Find matching existing actions to supersede
+      const matches = existingRows.filter((ex: any) => {
+        if (ex.campaign_id !== campaignId) return false;
+        return (targetId && ex.target_id === targetId) ||
+          (ex.target_keyword === rec.keyword && ex.match_type === (rec.matchType || "Exact"));
+      });
 
-      if (existing.length > 0) {
-        for (const ex of existing) {
-          if (ex.action_type === "PAUSE_TARGET" && actionType === "UPDATE_BID") {
-            continue;
-          }
-          await tx`
-            UPDATE ppc_actions
-            SET status = 'SUPERSEDED', updated_at = NOW()
-            WHERE id = ${ex.id}
-          `;
-          supersededCount++;
+      for (const ex of matches) {
+        if (ex.action_type === "PAUSE_TARGET" && actionType === "UPDATE_BID") {
+          continue;
         }
+        supersededIds.add(ex.id);
       }
 
+      return {
+        store_id: storeId,
+        recommendation_id: rec.id,
+        sku,
+        campaign_id: campaignId,
+        campaign_name: rec.campaignName || "",
+        campaign_type: rec.adType || "SP",
+        ad_group_id: rec.adGroupId || "",
+        ad_group_name: rec.adGroupName || "",
+        target_id: targetId,
+        target_keyword: rec.keyword,
+        match_type: rec.matchType || "Exact",
+        entity_type: "KEYWORD",
+        action_type: actionType,
+        old_value: rec.currentBid || 0,
+        system_suggested_value: rec.recommendedBid || 0,
+        final_value: finalValue,
+        rule_version: rec.ruleProfile || "v1.0",
+        status: "APPROVED",
+        approved_by: item.approvedBy || "User",
+        approved_at: new Date(),
+      };
+    });
+
+    // Deduplicate within the same batch: later recommendation for the same target supersedes earlier
+    const uniqueMap = new Map<string, (typeof rowsToInsert)[0]>();
+    for (const row of rowsToInsert) {
+      const targetKey = `${row.campaign_id}\0${row.target_id || ""}\0${row.target_keyword}\0${row.match_type}`;
+      uniqueMap.set(targetKey, row);
+    }
+    const finalRowsToInsert = Array.from(uniqueMap.values());
+
+    if (supersededIds.size > 0) {
+      const supersededIdArray = Array.from(supersededIds);
       await tx`
-        INSERT INTO ppc_actions (
-          store_id, recommendation_id, sku, campaign_id, campaign_name,
-          campaign_type, ad_group_id, ad_group_name, target_id, target_keyword,
-          match_type, entity_type, action_type, old_value, system_suggested_value,
-          final_value, rule_version, status, approved_by, approved_at
-        ) VALUES (
-          ${storeId}, ${rec.id}, ${sku}, ${campaignId}, ${rec.campaignName || ''},
-          ${rec.adType || 'SP'}, ${rec.adGroupId || ''}, ${rec.adGroupName || ''},
-          ${targetId}, ${rec.keyword}, ${rec.matchType || 'Exact'}, 'KEYWORD',
-          ${actionType}, ${rec.currentBid || 0}, ${rec.recommendedBid || 0},
-          ${finalValue}, ${rec.ruleProfile || 'v1.0'}, 'APPROVED',
-          ${item.approvedBy || 'User'}, NOW()
-        )
+        UPDATE ppc_actions
+        SET status = 'SUPERSEDED', updated_at = NOW()
+        WHERE id = ANY(${supersededIdArray})
       `;
-      addedCount++;
+      supersededCount = supersededIdArray.length;
+    }
+
+    if (finalRowsToInsert.length > 0) {
+      // Chunk inserts in batches of 500 to stay safely below SQL parameter limits
+      const chunkSize = 500;
+      for (let i = 0; i < finalRowsToInsert.length; i += chunkSize) {
+        const chunk = finalRowsToInsert.slice(i, i + chunkSize);
+        await tx`
+          INSERT INTO ppc_actions ${tx(
+            chunk,
+            "store_id", "recommendation_id", "sku", "campaign_id", "campaign_name",
+            "campaign_type", "ad_group_id", "ad_group_name", "target_id", "target_keyword",
+            "match_type", "entity_type", "action_type", "old_value", "system_suggested_value",
+            "final_value", "rule_version", "status", "approved_by", "approved_at"
+          )}
+        `;
+      }
+      addedCount = finalRowsToInsert.length;
     }
   });
 
   return { addedCount, supersededCount };
+}
+
+export async function getActionQueueCount(storeId: string): Promise<number> {
+  const sql = await getDatabaseClient();
+  const rows = await sql<{ count: number }[]>`
+    SELECT COUNT(*)::int as count
+    FROM ppc_actions
+    WHERE store_id = ${storeId}
+      AND status IN ('APPROVED', 'QUEUED')
+  `;
+  return Number(rows[0]?.count || 0);
 }
 
 export async function getActionQueue(storeId: string): Promise<PpcAction[]> {
@@ -1177,7 +1241,16 @@ export async function getActionQueue(storeId: string): Promise<PpcAction[]> {
     LEFT JOIN (
       SELECT UPPER(TRIM(sku)) as sku_code, SUM(spend) as total_spend
       FROM ppc_performance_facts
-      WHERE store_id = ${storeId} AND grain = 'PRODUCT' AND sku IS NOT NULL
+      WHERE store_id = ${storeId} 
+        AND grain = 'PRODUCT' 
+        AND sku IS NOT NULL
+        AND (snapshot_date, report_start_date, report_end_date) = (
+          SELECT snapshot_date, report_start_date, report_end_date
+          FROM ppc_performance_facts 
+          WHERE store_id = ${storeId} AND grain = 'PRODUCT'
+          ORDER BY snapshot_date DESC, (report_end_date - report_start_date) DESC
+          LIMIT 1
+        )
       GROUP BY UPPER(TRIM(sku))
     ) p ON UPPER(TRIM(a.sku)) = p.sku_code
     WHERE a.store_id = ${storeId}

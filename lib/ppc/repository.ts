@@ -687,6 +687,168 @@ export async function upsertPpcPerformance(
   });
 }
 
+export async function ingestPpcPerformanceStream(
+  scope: DataScope,
+  storeName: string,
+  streamer: (pushBatch: (rows: PpcPerformanceRow[]) => Promise<void>) => Promise<number>,
+  options: { replaceExisting?: boolean } = {},
+): Promise<{ totalParsed: number; inserted: number; updated: number; deduplicated: number }> {
+  const sql = await getDatabaseClient();
+  const teamId = (scope as any)?.teamId || "default";
+
+  return sql.begin(async (transaction) => {
+    // 1. Ensure store exists
+    const storeRows = await transaction<StoreRow[]>`
+      INSERT INTO ppc_stores (team_id, name)
+      VALUES (${teamId}, ${storeName})
+      ON CONFLICT (team_id, name) DO UPDATE SET updated_at = NOW()
+      RETURNING id, name, marketplace, target_acos, daily_budget, status
+    `;
+    const storeId = storeRows[0].id;
+
+    // 2. Create staging table inside this transaction
+    await transaction`
+      CREATE TEMP TABLE ppc_perf_staging (
+        LIKE ppc_performance_facts INCLUDING DEFAULTS
+      ) ON COMMIT DROP
+    `;
+
+    let totalEmitted = 0;
+
+    // 3. Consume the stream and write batches into staging table
+    const pushBatch = async (rows: PpcPerformanceRow[]) => {
+      if (!rows || rows.length === 0) return;
+      totalEmitted += rows.length;
+      const mapped = rows.map((row) => ({
+        store_id: storeId,
+        snapshot_date: safeSqlString(row.snapshotDate),
+        report_start_date: safeSqlString(row.reportStartDate),
+        report_end_date: safeSqlString(row.reportEndDate),
+        report_granularity: safeSqlString(row.reportGranularity),
+        ad_type: safeSqlString(row.adType),
+        grain: safeSqlString(row.grain),
+        identity_key: performanceIdentity(row),
+        entity_id: safeSqlString(row.entityId),
+        campaign_id: safeSqlString(row.campaignId),
+        campaign_name: safeSqlString(row.campaignName),
+        ad_group_id: safeSqlString(row.adGroupId),
+        ad_group_name: safeSqlString(row.adGroupName),
+        target_id: safeSqlString(row.targetId),
+        target_expression: safeSqlString(row.targetExpression),
+        match_type: safeSqlString(row.matchType),
+        portfolio_name: safeSqlString(row.portfolioName),
+        sku: safeSqlString(row.sku),
+        asin: safeSqlString(row.asin),
+        state: safeSqlString(row.state),
+        campaign_state: safeSqlString(row.campaignState),
+        ad_group_state: safeSqlString(row.adGroupState),
+        targeting_type: safeSqlString(row.targetingType),
+        bidding_strategy: safeSqlString(row.biddingStrategy),
+        placement: safeSqlString(row.placement),
+        daily_budget: row.dailyBudget,
+        bid: row.bid,
+        placement_adjustment: row.placementAdjustment,
+        is_negative: row.isNegative,
+        impressions: row.impressions,
+        clicks: row.clicks,
+        spend: row.spend,
+        sales: row.sales,
+        orders: row.orders,
+        units: row.units,
+      }));
+
+      for (let start = 0; start < mapped.length; start += 2000) {
+        const chunk = mapped.slice(start, start + 2000);
+        await transaction`
+          INSERT INTO ppc_perf_staging ${transaction(chunk)}
+        `;
+      }
+    };
+
+    const totalParsed = await streamer(pushBatch);
+
+    if (totalParsed === 0 || totalEmitted === 0) {
+      return { totalParsed: 0, inserted: 0, updated: 0, deduplicated: 0 };
+    }
+
+    // 4. If replaceExisting (default true for bulk snapshot files), delete old scope matching staging
+    if (options.replaceExisting !== false) {
+      await transaction`
+        DELETE FROM ppc_performance_facts f
+        USING (
+          SELECT DISTINCT store_id, snapshot_date, report_start_date, report_end_date, ad_type
+          FROM ppc_perf_staging
+        ) s
+        WHERE f.store_id = s.store_id
+          AND f.snapshot_date = s.snapshot_date
+          AND f.report_start_date = s.report_start_date
+          AND f.report_end_date = s.report_end_date
+          AND f.ad_type = s.ad_type
+      `;
+    }
+
+    // 5. Transfer from staging table to ppc_performance_facts with ON CONFLICT
+    const insertResult = await transaction`
+      INSERT INTO ppc_performance_facts (
+        store_id, snapshot_date, report_start_date, report_end_date, report_granularity,
+        ad_type, grain, identity_key, entity_id, campaign_id, campaign_name,
+        ad_group_id, ad_group_name, target_id, target_expression, match_type,
+        portfolio_name, sku, asin, state, campaign_state, ad_group_state,
+        targeting_type, bidding_strategy, placement, daily_budget, bid,
+        placement_adjustment, is_negative, impressions, clicks, spend, sales, orders, units
+      )
+      SELECT DISTINCT ON (store_id, snapshot_date, report_start_date, report_end_date, ad_type, grain, identity_key)
+        store_id, snapshot_date, report_start_date, report_end_date, report_granularity,
+        ad_type, grain, identity_key, entity_id, campaign_id, campaign_name,
+        ad_group_id, ad_group_name, target_id, target_expression, match_type,
+        portfolio_name, sku, asin, state, campaign_state, ad_group_state,
+        targeting_type, bidding_strategy, placement, daily_budget, bid,
+        placement_adjustment, is_negative, impressions, clicks, spend, sales, orders, units
+      FROM ppc_perf_staging
+      ON CONFLICT (store_id, snapshot_date, report_start_date, report_end_date, ad_type, grain, identity_key)
+      DO UPDATE SET
+        entity_id = EXCLUDED.entity_id,
+        campaign_id = EXCLUDED.campaign_id,
+        campaign_name = EXCLUDED.campaign_name,
+        ad_group_id = EXCLUDED.ad_group_id,
+        ad_group_name = EXCLUDED.ad_group_name,
+        target_id = EXCLUDED.target_id,
+        target_expression = EXCLUDED.target_expression,
+        match_type = EXCLUDED.match_type,
+        portfolio_name = EXCLUDED.portfolio_name,
+        sku = EXCLUDED.sku,
+        asin = EXCLUDED.asin,
+        state = EXCLUDED.state,
+        campaign_state = EXCLUDED.campaign_state,
+        ad_group_state = EXCLUDED.ad_group_state,
+        targeting_type = EXCLUDED.targeting_type,
+        bidding_strategy = EXCLUDED.bidding_strategy,
+        placement = EXCLUDED.placement,
+        daily_budget = EXCLUDED.daily_budget,
+        bid = EXCLUDED.bid,
+        placement_adjustment = EXCLUDED.placement_adjustment,
+        is_negative = EXCLUDED.is_negative,
+        impressions = EXCLUDED.impressions,
+        clicks = EXCLUDED.clicks,
+        spend = EXCLUDED.spend,
+        sales = EXCLUDED.sales,
+        orders = EXCLUDED.orders,
+        units = EXCLUDED.units,
+        updated_at = NOW()
+    `;
+
+    const insertedCount = insertResult.count;
+    const deduplicated = Math.max(0, totalEmitted - insertedCount);
+
+    return {
+      totalParsed,
+      inserted: insertedCount,
+      updated: 0,
+      deduplicated,
+    };
+  });
+}
+
 export async function replacePpcDataWithMock(
   scope: DataScope,
   stores: PpcStore[],

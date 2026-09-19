@@ -3,6 +3,7 @@ import { ApiError, authorize, enforceRequestSize, routeErrorResponse } from "@/l
 import {
   approveRecommendationsToActionQueue,
   getActionQueue,
+  getActionQueueCount,
   removeActionFromQueue,
   removeActionsFromQueue,
   resolveStoreId,
@@ -15,6 +16,11 @@ export async function GET(request: Request) {
     authorize(request, "read");
     const { searchParams } = new URL(request.url);
     const storeId = await resolveStoreId(searchParams.get("storeId"));
+
+    if (searchParams.get("countOnly") === "true" || searchParams.get("count") === "1") {
+      const count = await getActionQueueCount(storeId);
+      return Response.json({ success: true, count, data: count });
+    }
 
     const queue = await getActionQueue(storeId);
     return Response.json({ success: true, data: queue });

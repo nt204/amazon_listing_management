@@ -569,111 +569,102 @@ async function autoCreateAndDownloadSearchTermReport(
   console.log(`========================================`);
 
   const statsBefore = getFileStatsMap(destDir);
-  const reportsUrl = `https://advertising.amazon.com/reports${entityParam}`;
+  const syncRunId = Math.random().toString(36).slice(2, 8).toUpperCase();
+  const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  const reportName = `${storeName} ST ${adType} 30D ${today} ${syncRunId}`;
+  let downloadUrl: string | null = null;
 
-  // 1. Kiểm tra xem trên trang /reports đã có báo cáo Search Term cho adType vừa tạo hôm nay chưa
-  await page.goto(reportsUrl, { waitUntil: "domcontentloaded" });
-  await page.waitForSelector("div.ag-row, a[data-takt-id='storm-ui-link'], button:has-text('Create report')", { timeout: 4000 }).catch(() => { });
+  // 1. Tự động vào trang /reports/new để tạo báo cáo mới có syncRunId duy nhất
+  console.log(`[SEARCH TERM] Tự động tạo mới Search Term ${adType} với ID [${syncRunId}]...`);
+  const createUrl = `https://advertising.amazon.com/reports/new${entityParam}`;
+  await page.goto(createUrl, { waitUntil: "domcontentloaded" });
+  await page.waitForSelector("#urc_run_subscription_button, #report-settings-card-report-name-input", { timeout: 5000 }).catch(() => { });
 
-  let downloadUrl = await page.evaluate((type: string) => {
-    const rows = Array.from(document.querySelectorAll("div.ag-row, [role='row']"));
-    for (const r of rows) {
-      const text = ((r as HTMLElement).innerText || "").trim();
-      const isTarget = type === "SP"
-        ? /Search Term SP|Sponsored Products Search term/i.test(text)
-        : /Search Term SB|Sponsored Brands Search term/i.test(text);
-      if (isTarget) {
-        const link = r.querySelector<HTMLAnchorElement>("a[data-takt-id='storm-ui-link'], a[href*='download-report']");
-        if (link?.href) return link.href;
+  // Chọn Category: Sponsored Brands (nếu SB), Sponsored Products mặc định là SP
+  if (adType === "SB") {
+    const catBtn = await page.$("#report-configuration-form\\:report-category-control-component-0");
+    if (catBtn) {
+      await catBtn.click();
+      const sbOpt = await page.waitForSelector("[role=\"option\"]:has-text(\"Sponsored Brands\"), li:has-text(\"Sponsored Brands\")", { timeout: 2000 }).catch(() => null);
+      if (sbOpt) {
+        await sbOpt.click();
+        await page.waitForTimeout(300);
       }
     }
-    return null;
-  }, adType);
+  }
 
-  // 2. Nếu chưa có: Tự động vào trang /reports/new để tạo cấu hình và chạy báo cáo
+  // Chọn Report Type: Search term
+  const typeBtn = await page.$("#report-configuration-form\\:report-type-control-component-0");
+  if (typeBtn) {
+    const currentText = await typeBtn.innerText();
+    if (!/Search term/i.test(currentText)) {
+      await typeBtn.click();
+      const stOpt = await page.waitForSelector("[role=\"option\"]:has-text(\"Search term\"), li:has-text(\"Search term\")", { timeout: 2000 }).catch(() => null);
+      if (stOpt) {
+        await stOpt.click();
+        await page.waitForTimeout(300);
+      }
+    }
+  }
+
+  // Đặt tên báo cáo có chứa syncRunId duy nhất
+  const nameInput = await page.$("#report-settings-card-report-name-input");
+  if (nameInput) {
+    await nameInput.fill(reportName);
+  }
+
+  // Bấm Run report
+  const runBtn = await page.$("#urc_run_subscription_button");
+  if (runBtn) {
+    await runBtn.click();
+    console.log(`[SEARCH TERM] Đã bấm Run report cho Search Term ${adType} (${syncRunId})!`);
+  }
+
+  // 2. Chờ Amazon tạo xong và tìm đúng row chứa syncRunId có trạng thái Completed
+  const deadline = Date.now() + 60000;
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(3500);
+
+    const match = await page.evaluate((targetId: string) => {
+      const rows = Array.from(document.querySelectorAll("div.ag-row, [role='row'], tr"));
+      for (const r of rows) {
+        const text = ((r as HTMLElement).innerText || "").trim();
+        if (text.includes(targetId)) {
+          const isCompleted = /completed|success/i.test(text);
+          const link = r.querySelector<HTMLAnchorElement>("a[data-takt-id='storm-ui-link'], a[href*='download-report'], a[href*='download']");
+          return { found: true, isCompleted, href: link?.href || null };
+        }
+      }
+      return { found: false, isCompleted: false, href: null };
+    }, syncRunId);
+
+    if (match.found && match.isCompleted && match.href) {
+      downloadUrl = match.href;
+      console.log(`[SEARCH TERM] Đã tìm thấy file hoàn thành cho ${syncRunId}!`);
+      break;
+    }
+
+    if (page.url().includes("/reports/history") && (await page.innerText("body")).includes("Pending")) {
+      await page.reload({ waitUntil: "domcontentloaded" }).catch(() => { });
+    }
+  }
+
+  // Fallback: Tìm trên trang /reports đúng row chứa syncRunId
   if (!downloadUrl) {
-    console.log(`[SEARCH TERM] Chưa có báo cáo sẵn, tự động tạo mới Search Term ${adType}...`);
-    const createUrl = `https://advertising.amazon.com/reports/new${entityParam}`;
-    await page.goto(createUrl, { waitUntil: "domcontentloaded" });
-    await page.waitForSelector("#urc_run_subscription_button, #report-settings-card-report-name-input", { timeout: 4000 }).catch(() => { });
-
-    // Chọn Category: Sponsored Brands (nếu SB), Sponsored Products mặc định là SP
-    if (adType === "SB") {
-      const catBtn = await page.$("#report-configuration-form\\:report-category-control-component-0");
-      if (catBtn) {
-        await catBtn.click();
-        const sbOpt = await page.waitForSelector("[role=\"option\"]:has-text(\"Sponsored Brands\"), li:has-text(\"Sponsored Brands\")", { timeout: 2000 }).catch(() => null);
-        if (sbOpt) {
-          await sbOpt.click();
-          await page.waitForTimeout(300);
+    const reportsUrl = `https://advertising.amazon.com/reports${entityParam}`;
+    await page.goto(reportsUrl, { waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(3000);
+    downloadUrl = await page.evaluate((targetId: string) => {
+      const rows = Array.from(document.querySelectorAll("div.ag-row, [role='row']"));
+      for (const r of rows) {
+        const text = ((r as HTMLElement).innerText || "").trim();
+        if (text.includes(targetId) && /completed|success/i.test(text)) {
+          const link = r.querySelector<HTMLAnchorElement>("a[href*='download-report'], a[data-takt-id='storm-ui-link']");
+          if (link?.href) return link.href;
         }
       }
-    }
-
-    // Chọn Report Type: Search term
-    const typeBtn = await page.$("#report-configuration-form\\:report-type-control-component-0");
-    if (typeBtn) {
-      const currentText = await typeBtn.innerText();
-      if (!/Search term/i.test(currentText)) {
-        await typeBtn.click();
-        const stOpt = await page.waitForSelector("[role=\"option\"]:has-text(\"Search term\"), li:has-text(\"Search term\")", { timeout: 2000 }).catch(() => null);
-        if (stOpt) {
-          await stOpt.click();
-          await page.waitForTimeout(300);
-        }
-      }
-    }
-
-    // Đặt tên báo cáo
-    const nameInput = await page.$("#report-settings-card-report-name-input");
-    if (nameInput) {
-      const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-      await nameInput.fill(`${storeName} Search Term ${adType} 30D ${today} Auto`);
-    }
-
-    // Bấm Run report
-    const runBtn = await page.$("#urc_run_subscription_button");
-    if (runBtn) {
-      await runBtn.click();
-      console.log(`[SEARCH TERM] Đã bấm Run report cho Search Term ${adType}!`);
-    }
-
-    // Chờ Amazon tạo xong (tối đa 40s) và lấy link tải
-    const deadline = Date.now() + 40000;
-    while (Date.now() < deadline) {
-      await page.waitForTimeout(3000);
-      const dlOnHistory = await page.$eval(
-        "a[data-takt-id='storm-ui-link'][href*='download-report'], a[href*='download-report']",
-        (a: any) => a.href,
-      ).catch(() => null);
-
-      if (dlOnHistory) {
-        downloadUrl = dlOnHistory;
-        break;
-      }
-
-      if (page.url().includes("/reports/history") && (await page.innerText("body")).includes("Pending")) {
-        await page.reload({ waitUntil: "domcontentloaded" }).catch(() => { });
-      }
-    }
-
-    // Fallback: Tìm lại trên trang /reports
-    if (!downloadUrl) {
-      await page.goto(reportsUrl, { waitUntil: "domcontentloaded" });
-      await page.waitForTimeout(2500);
-      downloadUrl = await page.evaluate((type: string) => {
-        const rows = Array.from(document.querySelectorAll("div.ag-row, [role='row']"));
-        for (const r of rows) {
-          const text = ((r as HTMLElement).innerText || "").trim();
-          const isTarget = type === "SP" ? /Search Term SP/i.test(text) : /Search Term SB/i.test(text);
-          if (isTarget) {
-            const link = r.querySelector<HTMLAnchorElement>("a[href*='download-report']");
-            if (link?.href) return link.href;
-          }
-        }
-        return null;
-      }, adType);
-    }
+      return null;
+    }, syncRunId);
   }
 
   if (!downloadUrl) {
@@ -690,6 +681,7 @@ async function autoCreateAndDownloadSearchTermReport(
       (await page.$(`a[href*="${reportId}"]`))
     : null;
 
+  const reportsUrl = `https://advertising.amazon.com/reports${entityParam}`;
   if (!directLinkEl && !page.url().includes("/reports?")) {
     await page.goto(reportsUrl, { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(2000);
@@ -1161,60 +1153,69 @@ export async function downloadAdsPowerReports(options: {
   const entityParam = entityId ? `?entityId=${entityId}` : "";
 
   try {
-    // 1. Xử lý 4 file Bulksheet trên 1 tab duy nhất để tối ưu RAM và tránh xung đột session
-    console.log("\n[AdsPower] Khởi tạo tab Bulk Operations...");
-    const bulkPage = await context.newPage();
-    const usedBulkUrls = new Set<string>();
+    // 1 & 2. Tách 2 worker độc lập: Worker Bulk (4 file) và Worker Search Term (2 file) chạy song song (Concurrency 2)
+    console.log("\n[AdsPower] Khởi tạo 2 worker tải song song (Bulk Worker & Search Term Worker)...");
 
-    try {
-      const bulkCdp = await context.newCDPSession(bulkPage);
-      await bulkCdp.send("Page.setDownloadBehavior", { behavior: "allow", downloadPath: destDir });
+    const runBulkWorker = async () => {
+      const bulkPage = await context.newPage();
+      const usedBulkUrls = new Set<string>();
+      const files: string[] = [];
+      try {
+        const bulkCdp = await context.newCDPSession(bulkPage);
+        await bulkCdp.send("Page.setDownloadBehavior", { behavior: "allow", downloadPath: destDir });
 
-      // 1. Bulk SP 30d
-      console.log("\n[AdsPower 6-Files] 1/6: Đang xử lý Bulk SP 30 Days...");
-      const f1 = await autoCreateAndDownloadBulkReport(bulkPage, entityParam, "SP", 30, storeName, destDir, usedBulkUrls);
-      if (f1) downloadedFiles.push(f1);
+        console.log("\n[Bulk Worker] 1/4: Đang xử lý Bulk SP 30 Days...");
+        const f1 = await autoCreateAndDownloadBulkReport(bulkPage, entityParam, "SP", 30, storeName, destDir, usedBulkUrls);
+        if (f1) files.push(f1);
 
-      // 2. Bulk SB 30d
-      console.log("\n[AdsPower 6-Files] 2/6: Đang xử lý Bulk SB 30 Days...");
-      const f2 = await autoCreateAndDownloadBulkReport(bulkPage, entityParam, "SB", 30, storeName, destDir, usedBulkUrls);
-      if (f2) downloadedFiles.push(f2);
+        console.log("\n[Bulk Worker] 2/4: Đang xử lý Bulk SB 30 Days...");
+        const f2 = await autoCreateAndDownloadBulkReport(bulkPage, entityParam, "SB", 30, storeName, destDir, usedBulkUrls);
+        if (f2) files.push(f2);
 
-      // 3. Bulk SP 7d
-      console.log("\n[AdsPower 6-Files] 3/6: Đang xử lý Bulk SP 7 Days...");
-      const f3 = await autoCreateAndDownloadBulkReport(bulkPage, entityParam, "SP", 7, storeName, destDir, usedBulkUrls);
-      if (f3) downloadedFiles.push(f3);
+        console.log("\n[Bulk Worker] 3/4: Đang xử lý Bulk SP 7 Days...");
+        const f3 = await autoCreateAndDownloadBulkReport(bulkPage, entityParam, "SP", 7, storeName, destDir, usedBulkUrls);
+        if (f3) files.push(f3);
 
-      // 4. Bulk SB 7d
-      console.log("\n[AdsPower 6-Files] 4/6: Đang xử lý Bulk SB 7 Days...");
-      const f4 = await autoCreateAndDownloadBulkReport(bulkPage, entityParam, "SB", 7, storeName, destDir, usedBulkUrls);
-      if (f4) downloadedFiles.push(f4);
-    } finally {
-      await closeTabSafely(bulkPage, context);
-    }
+        console.log("\n[Bulk Worker] 4/4: Đang xử lý Bulk SB 7 Days...");
+        const f4 = await autoCreateAndDownloadBulkReport(bulkPage, entityParam, "SB", 7, storeName, destDir, usedBulkUrls);
+        if (f4) files.push(f4);
 
-    // 2. Xử lý 2 file Search Term trên 1 tab Reports
-    console.log("\n[AdsPower] Khởi tạo tab Reports (Search Term)...");
-    const stPage = await context.newPage();
-    try {
-      const stCdp = await context.newCDPSession(stPage);
-      await stCdp.send("Page.setDownloadBehavior", { behavior: "allow", downloadPath: destDir });
+        return files;
+      } finally {
+        await closeTabSafely(bulkPage, context);
+      }
+    };
 
-      // 5. Search Term SP 30d
-      console.log("\n[AdsPower 6-Files] 5/6: Đang xử lý Search Term SP 30 Days...");
-      const f5 = await autoCreateAndDownloadSearchTermReport(stPage, entityParam, "SP", storeName, destDir);
-      if (f5) downloadedFiles.push(f5);
+    const runSearchTermWorker = async () => {
+      const stPage = await context.newPage();
+      const files: string[] = [];
+      try {
+        const stCdp = await context.newCDPSession(stPage);
+        await stCdp.send("Page.setDownloadBehavior", { behavior: "allow", downloadPath: destDir });
 
-      // 6. Search Term SB 30d
-      console.log("\n[AdsPower 6-Files] 6/6: Đang xử lý Search Term SB 30 Days...");
-      const f6 = await autoCreateAndDownloadSearchTermReport(stPage, entityParam, "SB", storeName, destDir);
-      if (f6) downloadedFiles.push(f6);
-    } finally {
-      await closeTabSafely(stPage, context);
-    }
+        console.log("\n[Search Term Worker] 1/2: Đang xử lý Search Term SP 30 Days...");
+        const f5 = await autoCreateAndDownloadSearchTermReport(stPage, entityParam, "SP", storeName, destDir);
+        if (f5) files.push(f5);
+
+        console.log("\n[Search Term Worker] 2/2: Đang xử lý Search Term SB 30 Days...");
+        const f6 = await autoCreateAndDownloadSearchTermReport(stPage, entityParam, "SB", storeName, destDir);
+        if (f6) files.push(f6);
+
+        return files;
+      } finally {
+        await closeTabSafely(stPage, context);
+      }
+    };
+
+    const [bulkFiles, stFiles] = await Promise.all([
+      runBulkWorker(),
+      runSearchTermWorker(),
+    ]);
+
+    downloadedFiles.push(...bulkFiles, ...stFiles);
 
     console.log("\n========================================");
-    console.log(`ĐÃ TẢI THÀNH CÔNG ĐỦ ${downloadedFiles.length}/6 FILE PPC:`);
+    console.log(`ĐÃ TẢI THÀNH CÔNG ĐỦ ${downloadedFiles.length}/6 FILE PPC (SONG SONG 2 WORKER):`);
     downloadedFiles.forEach((f, idx) => console.log(`${idx + 1}. ${path.basename(f)}`));
     console.log("========================================\n");
   } catch (error) {
@@ -1337,23 +1338,25 @@ export async function syncPpcFromAdsPower(
     };
   }
 
-  // 1. Nạp dữ liệu vào PostgreSQL Database
-  const { totalParsed, totalNew, totalUpdated } = await ingestDownloadedPpcFiles(
-    scope,
-    storeName,
-    filePaths,
-  );
+  // 1 & 2. Nạp dữ liệu vào PostgreSQL Database và sao lưu lên Cloudflare R2 song song
+  const [ingestResult, r2Uploaded] = await Promise.all([
+    ingestDownloadedPpcFiles(scope, storeName, filePaths),
+    (async () => {
+      if (process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY) {
+        try {
+          const count = await uploadReportsToR2(storeName, filePaths);
+          console.log(`[AdsPower Sync] Đã lưu trữ ${count} file lên Cloudflare R2 thành công.`);
+          return count;
+        } catch (r2Err) {
+          console.warn("[AdsPower Sync] Lỗi khi tải file lên R2 (dữ liệu DB vẫn an toàn):", r2Err);
+          return 0;
+        }
+      }
+      return 0;
+    })(),
+  ]);
 
-  // 2. Tự động sao lưu các file tải về lên Cloudflare R2
-  let r2Uploaded = 0;
-  if (process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY) {
-    try {
-      r2Uploaded = await uploadReportsToR2(storeName, filePaths);
-      console.log(`[AdsPower Sync] Đã lưu trữ ${r2Uploaded} file lên Cloudflare R2 thành công.`);
-    } catch (r2Err) {
-      console.warn("[AdsPower Sync] Lỗi khi tải file lên R2 (dữ liệu DB vẫn an toàn):", r2Err);
-    }
-  }
+  const { totalParsed, totalNew, totalUpdated } = ingestResult;
 
   // 3. Tắt web sau khi dùng theo yêu cầu ("tắt web sau khi dùng")
   if (options.closeBrowserAfter !== false && profileId) {

@@ -28,6 +28,7 @@ import {
   parseSearchTermCsv,
   parseSearchTermWorkbook,
 } from "./parser";
+import { invalidateGroupedRecommendationsCache } from "./recommendation-cache";
 import {
   listPpcPerformance,
   listPpcSearchTerms,
@@ -37,6 +38,8 @@ import {
   replacePpcDataWithMock,
   upsertPpcSearchTerms,
   upsertPpcPerformance,
+  hasSuccessfulPpcSync,
+  ingestPpcPerformanceStream,
 } from "./repository";
 import { getCommonTargetRecommendations } from "./sku-architecture-service";
 import type {
@@ -127,32 +130,45 @@ export async function parseBulkFile(
 export async function getPpcAnalyticsData(
   scope: DataScope,
   filters: { storeName?: string; sku?: string; days?: number } = {},
-  options: { grains?: PpcPerformanceGrain[]; includeRecommendations?: boolean } = {},
+  options: { grains?: PpcPerformanceGrain[]; includeRecommendations?: boolean; section?: string } = {},
 ) {
   const storeName = filters.storeName && filters.storeName !== "ALL"
     ? canonicalStoreName(filters.storeName)
     : "ALL";
   const sku = filters.sku || "ALL";
   const days = filters.days || 30;
-  const requestedGrains = new Set<PpcPerformanceGrain>(options.grains ?? [
-    "CAMPAIGN",
-    "AD_GROUP",
-    "TARGET",
-    "PRODUCT",
-    "PLACEMENT",
-  ]);
+  const section = options.section?.toLowerCase();
+  const isDetailSection = section && section !== "overview";
+
+  // If a specific detail section is requested, only query the grains needed for that section
+  let effectiveGrains = options.grains;
+  if (!effectiveGrains) {
+    if (section === "campaigns") effectiveGrains = ["CAMPAIGN"];
+    else if (section === "ad_groups") effectiveGrains = ["AD_GROUP"];
+    else if (section === "targets") effectiveGrains = ["TARGET"];
+    else if (section === "skus") effectiveGrains = ["PRODUCT"];
+    else if (section === "search_terms") effectiveGrains = [];
+    else effectiveGrains = ["CAMPAIGN", "AD_GROUP", "TARGET", "PRODUCT", "PLACEMENT"];
+  }
+
+  const requestedGrains = new Set<PpcPerformanceGrain>(effectiveGrains);
   const performanceQuery = (grain: PpcPerformanceGrain, limit: number) => requestedGrains.has(grain)
     ? listPpcPerformance(scope, { storeName, sku, days }, { grain, limit })
     : Promise.resolve([] as PpcPerformanceRow[]);
+
+  // Only query search terms if overview or search_terms section
+  const shouldFetchSearchTerms = !isDetailSection || section === "search_terms";
+  const shouldFetchSyncLogs = !isDetailSection;
+
   const [stores, storeRows, campaignRowsRaw, adGroupRows, targetRowsRaw, productRows, placementRows, syncLogs] = await Promise.all([
     listPpcStores(scope),
-    listPpcSearchTerms(scope, { storeName, sku, days }),
+    shouldFetchSearchTerms ? listPpcSearchTerms(scope, { storeName, sku, days }) : Promise.resolve([] as PpcSearchTermRow[]),
     performanceQuery("CAMPAIGN", 15_000),
     performanceQuery("AD_GROUP", 10_000),
     performanceQuery("TARGET", 25_000),
     performanceQuery("PRODUCT", 10_000),
     performanceQuery("PLACEMENT", 5_000),
-    listPpcSyncLogs(scope),
+    shouldFetchSyncLogs ? listPpcSyncLogs(scope) : Promise.resolve([] as any[]),
   ]);
   const performanceRows = [
     ...campaignRowsRaw,
@@ -166,6 +182,59 @@ export async function getPpcAnalyticsData(
 
   const currentStore = stores.find((store) => store.name.toLowerCase() === storeName.toLowerCase());
   const targetAcos = currentStore?.targetAcos ?? DEFAULT_TARGET_ACOS;
+
+  // Fast path for detail sections: skip computing overview alerts, breakdowns, and summaries
+  if (isDetailSection) {
+    const campaignPerformance = section === "campaigns" ? campaignPerformanceFromFacts(performanceRows, targetAcos) : [];
+    const adGroups = section === "ad_groups" ? adGroupPerformanceFromFacts(performanceRows) : [];
+    const targets = section === "targets" ? targetPerformanceFromFacts(performanceRows).slice(0, 20000) : [];
+    const allSkuPerformance = section === "skus" ? skuPerformanceFromFacts(performanceRows, targetAcos) : [];
+    const skuPerformance = section === "skus"
+      ? (sku === "ALL" ? allSkuPerformance : allSkuPerformance.filter((row) => row.sku.toLowerCase() === sku.toLowerCase()))
+      : [];
+
+    return {
+      stores,
+      summary: null,
+      skuPerformance,
+      campaignPerformance,
+      adGroups,
+      targets,
+      adTypeBreakdown: [],
+      dataHealth: null,
+      searchTermSummary: {
+        totalSpend: 0,
+        totalSales: 0,
+        totalOrders: 0,
+        totalClicks: 0,
+        totalImpressions: 0,
+        acos: 0,
+        roas: 0,
+        cpc: 0,
+        ctr: 0,
+        cvr: 0,
+        wastedSpend: 0,
+        bleedingSpend: 0,
+        potentialSales: 0,
+        zeroOrderTerms: 0,
+        profitableTerms: 0,
+      },
+      targetTypeBreakdown: [],
+      keywordMatchTypeBreakdown: [],
+      matchTypeBreakdown: [],
+      dailyTrends: [],
+      alerts: [],
+      recommendations: [],
+      searchTerms: rows,
+      availableSkus: Array.from(new Set(performanceRows.map((row) => row.sku).filter(Boolean))).sort(),
+      days,
+      targetAcos,
+      dateRangeStart: new Date().toISOString().slice(0, 10),
+      dateRangeEnd: new Date().toISOString().slice(0, 10),
+      lastSyncedAt: null,
+      syncLogs: [],
+    };
+  }
   const alerts: PpcAlert[] = generatePpcAlerts(rows, targetAcos);
   const normalizedTarget = (value: string) => value.trim().toLowerCase().replace(/\s+/g, " ");
   const targetState = performanceRows.filter((row) => row.grain === "TARGET");
@@ -384,44 +453,44 @@ export async function ingestPpcFilePath(
     adType: reportAdType(fileName),
   };
   try {
-    let firstBatch = true;
-    let inserted = 0;
-    let updated = 0;
-    let deduplicated = 0;
     let detectedAdType: PpcAdType = options.adType || "UNKNOWN";
-    const totalParsed = await streamLargeBulkWorkbookFile(
-      filePath,
+    const result = await ingestPpcPerformanceStream(
+      scope,
       normalizedStore,
-      options,
-      async (rows) => {
-        if (detectedAdType === "UNKNOWN" && rows.length > 0) {
-          const found = rows.find((r) => r.adType && r.adType !== "UNKNOWN");
-          if (found) detectedAdType = found.adType;
-        }
-        const saved = await upsertPpcPerformance(scope, normalizedStore, rows, {
-          replaceExisting: firstBatch,
-        });
-        firstBatch = false;
-        inserted += saved.inserted;
-        updated += saved.updated;
-        deduplicated += saved.deduplicated;
+      async (pushBatch) => {
+        return streamLargeBulkWorkbookFile(
+          filePath,
+          normalizedStore,
+          options,
+          async (rows) => {
+            if (detectedAdType === "UNKNOWN" && rows.length > 0) {
+              const found = rows.find((r) => r.adType && r.adType !== "UNKNOWN");
+              if (found) detectedAdType = found.adType;
+            }
+            await pushBatch(rows);
+          },
+          2000,
+        );
       },
+      { replaceExisting: true },
     );
-    if (!totalParsed) throw new PpcInputError("File không chứa dữ liệu Bulk Operations hợp lệ.");
+
+    if (!result.totalParsed) throw new PpcInputError("File không chứa dữ liệu Bulk Operations hợp lệ.");
     const effectiveAdType = detectedAdType !== "UNKNOWN" ? detectedAdType : (options.adType !== "UNKNOWN" ? options.adType : "SP");
     await recordPpcSyncLog(scope, {
       source: "MANUAL_UPLOAD",
       fileName,
       status: "SUCCESS",
-      count: inserted + updated,
-      message: `Bulk ${effectiveAdType}: ${inserted} dòng mới, ${updated} dòng cập nhật, ${deduplicated} dòng trùng.`,
+      count: result.inserted,
+      message: `Bulk ${effectiveAdType}: ${result.inserted} dòng nạp atomic qua staging (${result.deduplicated} dòng trùng).`,
     });
+    invalidateGroupedRecommendationsCache(normalizedStore);
     return {
       reportType: "BULK",
-      totalParsed,
-      newInserted: inserted,
-      updated,
-      deduplicated,
+      totalParsed: result.totalParsed,
+      newInserted: result.inserted,
+      updated: result.updated,
+      deduplicated: result.deduplicated,
       fileName,
       storeName: normalizedStore,
     };
@@ -512,7 +581,15 @@ export async function syncPpcReportsFromR2(scope: DataScope) {
 
     for (const object of selectedFiles) {
       const fileName = object.Key || "";
+      const version = r2Version(object);
       try {
+        const alreadySynced = await hasSuccessfulPpcSync(scope, "CLOUDFLARE_R2", fileName, version);
+        if (alreadySynced) {
+          console.log(`[R2 Sync] Bỏ qua file đã đồng bộ thành công trước đó: ${fileName} (${version})`);
+          filesProcessed++;
+          continue;
+        }
+
         if ((object.Size || 0) > MAX_R2_FILE_BYTES) {
           throw new Error(`File vượt quá giới hạn ${Math.round(MAX_R2_FILE_BYTES / 1_000_000)} MB.`);
         }

@@ -13,7 +13,7 @@ const metricsCache = new Map<string, { expiresAt: number; data: MetricsResponse 
 const metricsInFlight = new Map<string, Promise<MetricsResponse>>();
 
 const SECTION_GRAINS: Record<MetricsSection, PpcPerformanceGrain[]> = {
-  overview: ["CAMPAIGN", "TARGET"],
+  overview: ["CAMPAIGN", "TARGET", "PRODUCT"],
   campaigns: ["CAMPAIGN"],
   ad_groups: ["AD_GROUP"],
   targets: ["TARGET"],
@@ -42,6 +42,7 @@ function projectMetrics(data: MetricsData, section: MetricsSection) {
       campaigns: data.campaignPerformance.length,
       targets: data.targets.length,
       searchTerms: data.searchTerms.length,
+      skus: data.skuPerformance.length,
     }
     : {
       ...(section === "campaigns" ? { campaigns: data.campaignPerformance.length } : {}),
@@ -73,9 +74,6 @@ function projectMetrics(data: MetricsData, section: MetricsSection) {
 }
 
 function cacheMetrics(key: string, data: MetricsResponse): void {
-  const detailRows = data.campaignPerformance.length + data.adGroups.length +
-    data.targets.length + data.skuPerformance.length + data.searchTerms.length;
-  if (detailRows > 500) return;
   if (metricsCache.size >= METRICS_CACHE_MAX_ENTRIES) {
     const oldestKey = metricsCache.keys().next().value;
     if (oldestKey) metricsCache.delete(oldestKey);
@@ -116,7 +114,7 @@ export async function GET(request: Request) {
         pending = getPpcAnalyticsData(
           scope,
           { storeName, sku, days },
-          { grains: SECTION_GRAINS[section], includeRecommendations: false },
+          { grains: SECTION_GRAINS[section], includeRecommendations: false, section },
         ).then((result) => projectMetrics(result, section));
         metricsInFlight.set(cacheKey, pending);
       }

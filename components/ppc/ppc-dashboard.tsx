@@ -191,11 +191,16 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
   const [skuRecGroups, setSkuRecGroups] = useState<SkuRecommendationGroup[]>([]);
   const [skuRecAllRecs, setSkuRecAllRecs] = useState<PpcRecommendation[]>([]);
   const [actionQueue, setActionQueue] = useState<PpcAction[]>([]);
+  const [actionQueueCount, setActionQueueCount] = useState<number>(0);
+  const lastLoadedRecKeyRef = useRef<string>("");
+  const currentFiltersRef = useRef({ store: selectedStore, sku: selectedSku, days: selectedDays });
+  const pendingActionCount = actionQueue.length > 0 ? actionQueue.length : actionQueueCount;
   const [isActionQueueOpen, setIsActionQueueOpen] = useState(false);
   const [costMasters, setCostMasters] = useState<ProductCostMaster[]>([]);
   const [ruleVersions, setRuleVersions] = useState<PpcRuleVersion[]>([]);
   const [bulkHistory, setBulkHistory] = useState<BulkExport[]>([]);
   const [loadingSkuEcon, setLoadingSkuEcon] = useState(false);
+  const [loadingRecs, setLoadingRecs] = useState(false);
 
   // Filters & sorting for Search Terms
   const [searchTermQuery, setSearchTermQuery] = useState("");
@@ -298,6 +303,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       const data = await res.json();
       loadedSectionsRef.current.clear();
       loadedSectionsRef.current.add("overview");
+      if (refresh) {
+        lastLoadedRecKeyRef.current = "";
+      }
       startTransition(() => {
         setStores(data.stores || []);
         setSummary(data.summary || null);
@@ -351,6 +359,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     if (requestId !== detailRequestIdRef.current) return;
     loadedSectionsRef.current.add(section);
     startTransition(() => {
+      if (data.stores && data.stores.length > 0) setStores(data.stores);
       if (section === "campaigns") setCampaignPerformance(data.campaignPerformance || []);
       if (section === "ad_groups") setAdGroupPerformance(data.adGroups || []);
       if (section === "targets") setTargetPerformance(data.targets || []);
@@ -359,14 +368,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       setDetailCounts((current) => data.detailCounts ? { ...current, ...data.detailCounts } : current);
     });
   }, [selectedStore, selectedSku, selectedDays]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => void loadData(), 0);
-    return () => {
-      window.clearTimeout(timer);
-      metricsRequestRef.current?.controller.abort();
-    };
-  }, [loadData]);
 
   const loadSkuEconomics = useCallback(async () => {
     try {
@@ -384,15 +385,21 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     }
   }, [selectedDays]);
 
-  const loadGroupedRecommendations = useCallback(async () => {
+  const loadGroupedRecommendations = useCallback(async (force = false) => {
+    const currentKey = `${selectedStore}:${selectedSku}`;
+    if (!force && lastLoadedRecKeyRef.current === currentKey && skuRecGroups.length > 0) {
+      return;
+    }
+    setLoadingRecs(true);
     try {
       const res = await fetch(
-        `/api/ppc/recommendations/grouped?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}`,
+        `/api/ppc/recommendations/grouped?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}${force ? "&refresh=1" : ""}`,
         { cache: "no-store" },
       );
       if (!res.ok) return;
       const data = await res.json();
       if (data?.data?.groups) {
+        lastLoadedRecKeyRef.current = currentKey;
         setSkuRecGroups(data.data.groups);
         if (Array.isArray(data?.data?.allRecommendations)) {
           setSkuRecAllRecs(data.data.allRecommendations);
@@ -400,8 +407,23 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       }
     } catch (e) {
       console.error(e);
+    } finally {
+      setLoadingRecs(false);
     }
-  }, [selectedStore, selectedSku]);
+  }, [selectedStore, selectedSku, skuRecGroups.length]);
+
+  const loadActionQueueCount = useCallback(async () => {
+    try {
+      const res = await fetch("/api/ppc/actions/count", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (typeof data?.count === "number") {
+        setActionQueueCount(data.count);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
 
   const loadActionQueue = useCallback(async () => {
     try {
@@ -410,27 +432,16 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       const data = await res.json();
       if (data?.data) {
         setActionQueue(data.data);
+        setActionQueueCount(data.data.length);
       }
     } catch (e) {
       console.error(e);
     }
   }, []);
 
-  const loadSettingsData = useCallback(async () => {
+  const loadBulkHistory = useCallback(async () => {
     try {
-      const [resCost, resRules, resHistory] = await Promise.all([
-        fetch("/api/ppc/cost-master", { cache: "no-store" }),
-        fetch("/api/ppc/rules", { cache: "no-store" }),
-        fetch("/api/ppc/bulk-export", { cache: "no-store" }),
-      ]);
-      if (resCost.ok) {
-        const d = await resCost.json();
-        if (d?.data) setCostMasters(d.data);
-      }
-      if (resRules.ok) {
-        const d = await resRules.json();
-        if (d?.data) setRuleVersions(d.data);
-      }
+      const resHistory = await fetch("/api/ppc/bulk-export", { cache: "no-store" });
       if (resHistory.ok) {
         const d = await resHistory.json();
         if (d?.data) setBulkHistory(d.data);
@@ -460,6 +471,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     if (!res.ok) throw new Error("Không thể duyệt hành động vào Action Queue.");
     const data = await res.json();
     void loadActionQueue();
+    void loadGroupedRecommendations(true);
     notify(data.message || "Đã duyệt đề xuất vào Action Queue!", "success");
   };
 
@@ -510,7 +522,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     window.URL.revokeObjectURL(url);
 
     void loadActionQueue();
-    void loadSettingsData();
+    void loadBulkHistory();
     notify(`Đã tạo và tải file bulk: ${fileName}`, "success");
   };
 
@@ -528,34 +540,75 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       body: JSON.stringify(data),
     });
     if (!res.ok) throw new Error("Không thể lưu phiên bản Phôi mới.");
-    void loadSettingsData();
     void loadSkuEconomics();
     notify(`Đã lưu phiên bản mới cho phôi ${data.productType}`, "success");
   };
 
+  // Initial mount: load light action queue count and preload recommendations in background
   useEffect(() => {
-    void loadActionQueue();
-    void loadSettingsData();
-  }, [loadActionQueue, loadSettingsData]);
+    void loadActionQueueCount();
+    void loadGroupedRecommendations();
+  }, [loadActionQueueCount, loadGroupedRecommendations]);
 
+  // Lazy-load drawer data only when opened
   useEffect(() => {
-    if (activeTab === "skus") {
-      void loadSkuEconomics();
+    if (isActionQueueOpen) {
+      void loadActionQueue();
+      void loadBulkHistory();
+    }
+  }, [isActionQueueOpen, loadActionQueue, loadBulkHistory]);
+
+  // Coordinated effect: filter changes and tab switches without race conditions
+  useEffect(() => {
+    const filtersChanged =
+      currentFiltersRef.current.store !== selectedStore ||
+      currentFiltersRef.current.sku !== selectedSku ||
+      currentFiltersRef.current.days !== selectedDays;
+
+    if (filtersChanged) {
+      currentFiltersRef.current = { store: selectedStore, sku: selectedSku, days: selectedDays };
+      loadedSectionsRef.current.clear();
+      lastLoadedRecKeyRef.current = "";
+      if (activeTab === "recommendations") {
+        void loadGroupedRecommendations();
+      }
+    }
+
+    if (activeTab === "overview") {
+      if (!loadedSectionsRef.current.has("overview")) {
+        const timer = window.setTimeout(() => void loadData(), 0);
+        return () => {
+          window.clearTimeout(timer);
+          metricsRequestRef.current?.controller.abort();
+        };
+      }
+    } else if (["campaigns", "ad_groups", "targets", "skus", "search_terms"].includes(activeTab)) {
+      if (!loadedSectionsRef.current.has(activeTab)) {
+        void loadSection(activeTab).catch((error) => {
+          notify(error instanceof Error ? error.message : "Không thể tải bảng dữ liệu PPC", "error");
+        });
+      }
+      if (activeTab === "skus") {
+        void loadSkuEconomics();
+      }
     } else if (activeTab === "recommendations") {
       void loadGroupedRecommendations();
-    } else if (activeTab === "settings") {
-      void loadSettingsData();
+      if (actionQueue.length === 0) {
+        void loadActionQueue();
+      }
     }
-  }, [activeTab, loadSkuEconomics, loadGroupedRecommendations, loadSettingsData]);
-
-  useEffect(() => {
-    if (activeTab === "overview") return;
-    if (["campaigns", "ad_groups", "targets", "skus", "search_terms"].includes(activeTab)) {
-      void loadSection(activeTab).catch((error) => {
-        notify(error instanceof Error ? error.message : "Không thể tải bảng dữ liệu PPC", "error");
-      });
-    }
-  }, [activeTab, loadSection]);
+  }, [
+    activeTab,
+    selectedStore,
+    selectedSku,
+    selectedDays,
+    loadData,
+    loadSection,
+    loadSkuEconomics,
+    loadGroupedRecommendations,
+    loadActionQueue,
+    actionQueue.length,
+  ]);
 
   const handleSyncR2 = async () => {
     setSyncingR2(true);
@@ -1835,7 +1888,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
             }`}
         >
           <Tag size={15} weight={activeTab === "skus" ? "bold" : "regular"} />
-          <span>5. SKU ({activeSkuPerformance.length})</span>
+          <span>5. SKU ({detailCounts?.skus !== undefined ? detailCounts.skus.toLocaleString("vi-VN") : (loading ? "..." : activeSkuPerformance.length.toLocaleString("vi-VN"))})</span>
         </button>
 
         <button
@@ -1846,7 +1899,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
             : "text-slate-600 hover:text-slate-900"
             }`}
         >
-          <span>6. Đề Xuất ({skuRecGroups.length > 0 ? `${skuRecGroups.length} SKU` : (loading ? "..." : "0 SKU")})</span>
+          <span>6. Đề Xuất ({skuRecGroups.length > 0 ? `${skuRecGroups.length.toLocaleString("vi-VN")} SKU` : (loadingRecs ? "..." : "0 SKU")})</span>
         </button>
 
         {/* Action Queue Quick Trigger */}
@@ -1860,7 +1913,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
             <Clock size={15} weight="bold" />
             <span>Action Queue</span>
             <span className="px-1.5 py-0.2 rounded-full bg-sky-600 text-white text-[10px] font-extrabold">
-              {actionQueue.length}
+              {pendingActionCount}
             </span>
           </button>
         </div>
@@ -3126,7 +3179,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
             isLoading={loading}
             onApproveToQueue={handleApproveToQueue}
             onOpenActionQueue={() => setIsActionQueueOpen(true)}
-            pendingQueueCount={actionQueue.length}
+            pendingQueueCount={pendingActionCount}
             actionQueue={actionQueue}
           />
         </div>
@@ -3244,7 +3297,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
         onRemoveActions={handleRemoveActions}
         onExportBulk={handleExportBulk}
         bulkHistory={bulkHistory}
-        onRefreshBulkHistory={() => void loadSettingsData()}
+        onRefreshBulkHistory={() => void loadBulkHistory()}
         storeName={selectedStore === "ALL" ? (stores[0]?.name || "HSOSTORE") : selectedStore}
         storeId={stores.find((s) => s.name === selectedStore)?.id || stores[0]?.id}
         onRefreshActionQueue={() => void loadActionQueue()}
