@@ -4,10 +4,12 @@ import { getDatabaseClient, type DataScope } from "@/lib/db";
 import type {
   MatchType,
   PpcAdType,
+  PpcDailyTrendPoint,
   PpcPerformanceGrain,
   PpcPerformanceRow,
   PpcReportGranularity,
   PpcSearchTermRow,
+  PpcSearchTermSummary,
   PpcStore,
 } from "./types";
 
@@ -560,8 +562,62 @@ export async function upsertPpcSearchTerms(
       }
     }
 
+    await refreshPpcDailySummary(scope, storeId, transaction);
+
     return { inserted, updated, deduplicated: rows.length - uniqueRows.length };
   });
+}
+
+export async function refreshPpcDailySummary(
+  scope: DataScope,
+  storeId?: string,
+  client?: any,
+): Promise<void> {
+  const sql = client || await getDatabaseClient();
+  const teamId = (scope as any)?.teamId || "default";
+  await sql`
+    INSERT INTO ppc_daily_summary (
+      store_id, report_date, ad_type,
+      impressions, clicks, spend, sales, orders, units,
+      cpc, ctr, cvr, acos, roas, updated_at
+    )
+    SELECT
+      p.store_id,
+      p.report_date,
+      COALESCE(p.ad_type, 'UNKNOWN') AS ad_type,
+      COALESCE(SUM(p.impressions), 0) AS impressions,
+      COALESCE(SUM(p.clicks), 0) AS clicks,
+      COALESCE(SUM(p.spend), 0) AS spend,
+      COALESCE(SUM(p.sales), 0) AS sales,
+      COALESCE(SUM(p.orders), 0) AS orders,
+      COALESCE(SUM(p.units), 0) AS units,
+      CASE WHEN SUM(p.clicks) > 0 THEN ROUND((SUM(p.spend) / SUM(p.clicks))::numeric, 2) ELSE 0 END AS cpc,
+      CASE WHEN SUM(p.impressions) > 0 THEN ROUND((SUM(p.clicks)::numeric / SUM(p.impressions)::numeric) * 100, 4) ELSE 0 END AS ctr,
+      CASE WHEN SUM(p.clicks) > 0 THEN ROUND((SUM(p.orders)::numeric / SUM(p.clicks)::numeric) * 100, 4) ELSE 0 END AS cvr,
+      CASE WHEN SUM(p.sales) > 0 THEN ROUND((SUM(p.spend) / SUM(p.sales) * 100)::numeric, 2) ELSE (CASE WHEN SUM(p.spend) > 0 THEN 999 ELSE 0 END) END AS acos,
+      CASE WHEN SUM(p.spend) > 0 THEN ROUND((SUM(p.sales) / SUM(p.spend))::numeric, 2) ELSE 0 END AS roas,
+      NOW() AS updated_at
+    FROM ppc_search_terms p
+    JOIN ppc_stores s ON s.id = p.store_id
+    WHERE s.team_id = ${teamId}
+      AND (${!storeId} OR p.store_id = ${storeId || null}::uuid)
+      AND p.report_date IS NOT NULL
+    GROUP BY p.store_id, p.report_date, COALESCE(p.ad_type, 'UNKNOWN')
+    ON CONFLICT (store_id, report_date, ad_type)
+    DO UPDATE SET
+      impressions = EXCLUDED.impressions,
+      clicks = EXCLUDED.clicks,
+      spend = EXCLUDED.spend,
+      sales = EXCLUDED.sales,
+      orders = EXCLUDED.orders,
+      units = EXCLUDED.units,
+      cpc = EXCLUDED.cpc,
+      ctr = EXCLUDED.ctr,
+      cvr = EXCLUDED.cvr,
+      acos = EXCLUDED.acos,
+      roas = EXCLUDED.roas,
+      updated_at = NOW();
+  `;
 }
 
 function performanceIdentity(row: PpcPerformanceRow): string {
@@ -1220,3 +1276,275 @@ export async function getPpcOverviewAggregates(
     snapshotDates,
   };
 }
+
+type DailyTrendSqlRow = {
+  date: string;
+  spend: string | number;
+  sales: string | number;
+  orders: string | number;
+  clicks: string | number;
+  impressions: string | number;
+  sp_spend: string | number;
+  sp_sales: string | number;
+  sp_orders: string | number;
+  sp_clicks: string | number;
+  sp_impressions: string | number;
+  sb_spend: string | number;
+  sb_sales: string | number;
+  sb_orders: string | number;
+  sb_clicks: string | number;
+  sb_impressions: string | number;
+};
+
+export async function listPpcDailyTrendsFromDb(
+  scope: DataScope,
+  filters: { storeName?: string; days?: number; startDate?: string; endDate?: string } = {},
+): Promise<PpcDailyTrendPoint[]> {
+  const sql = await getDatabaseClient();
+  const teamId = (scope as any)?.teamId || "default";
+  const storeName = filters.storeName || "ALL";
+  const days = Math.max(1, filters.days || 30);
+
+  let rows = await sql<DailyTrendSqlRow[]>`
+    SELECT 
+      to_char(p.report_date, 'YYYY-MM-DD') AS date,
+      COALESCE(SUM(p.spend), 0) AS spend,
+      COALESCE(SUM(p.sales), 0) AS sales,
+      COALESCE(SUM(p.orders), 0) AS orders,
+      COALESCE(SUM(p.clicks), 0) AS clicks,
+      COALESCE(SUM(p.impressions), 0) AS impressions,
+      COALESCE(SUM(p.spend) FILTER (WHERE p.ad_type = 'SP'), 0) AS sp_spend,
+      COALESCE(SUM(p.sales) FILTER (WHERE p.ad_type = 'SP'), 0) AS sp_sales,
+      COALESCE(SUM(p.orders) FILTER (WHERE p.ad_type = 'SP'), 0) AS sp_orders,
+      COALESCE(SUM(p.clicks) FILTER (WHERE p.ad_type = 'SP'), 0) AS sp_clicks,
+      COALESCE(SUM(p.impressions) FILTER (WHERE p.ad_type = 'SP'), 0) AS sp_impressions,
+      COALESCE(SUM(p.spend) FILTER (WHERE p.ad_type = 'SB'), 0) AS sb_spend,
+      COALESCE(SUM(p.sales) FILTER (WHERE p.ad_type = 'SB'), 0) AS sb_sales,
+      COALESCE(SUM(p.orders) FILTER (WHERE p.ad_type = 'SB'), 0) AS sb_orders,
+      COALESCE(SUM(p.clicks) FILTER (WHERE p.ad_type = 'SB'), 0) AS sb_clicks,
+      COALESCE(SUM(p.impressions) FILTER (WHERE p.ad_type = 'SB'), 0) AS sb_impressions
+    FROM ppc_daily_summary p
+    JOIN ppc_stores s ON s.id = p.store_id
+    WHERE s.team_id = ${teamId}
+      AND (${storeName === "ALL"} OR lower(s.name) = lower(${storeName}))
+      AND (${!filters.startDate} OR p.report_date >= ${filters.startDate || "1970-01-01"}::date)
+      AND (${!filters.endDate} OR p.report_date <= ${filters.endDate || "2099-12-31"}::date)
+      AND (${Boolean(filters.startDate || filters.endDate)} OR (p.report_date >= CURRENT_DATE - ${days}::integer AND p.report_date <= CURRENT_DATE))
+    GROUP BY p.report_date
+    ORDER BY p.report_date ASC;
+  `;
+
+  if (rows.length === 0 && !filters.startDate && !filters.endDate) {
+    await refreshPpcDailySummary(scope);
+    rows = await sql<DailyTrendSqlRow[]>`
+      SELECT 
+        to_char(p.report_date, 'YYYY-MM-DD') AS date,
+        COALESCE(SUM(p.spend), 0) AS spend,
+        COALESCE(SUM(p.sales), 0) AS sales,
+        COALESCE(SUM(p.orders), 0) AS orders,
+        COALESCE(SUM(p.clicks), 0) AS clicks,
+        COALESCE(SUM(p.impressions), 0) AS impressions,
+        COALESCE(SUM(p.spend) FILTER (WHERE p.ad_type = 'SP'), 0) AS sp_spend,
+        COALESCE(SUM(p.sales) FILTER (WHERE p.ad_type = 'SP'), 0) AS sp_sales,
+        COALESCE(SUM(p.orders) FILTER (WHERE p.ad_type = 'SP'), 0) AS sp_orders,
+        COALESCE(SUM(p.clicks) FILTER (WHERE p.ad_type = 'SP'), 0) AS sp_clicks,
+        COALESCE(SUM(p.impressions) FILTER (WHERE p.ad_type = 'SP'), 0) AS sp_impressions,
+        COALESCE(SUM(p.spend) FILTER (WHERE p.ad_type = 'SB'), 0) AS sb_spend,
+        COALESCE(SUM(p.sales) FILTER (WHERE p.ad_type = 'SB'), 0) AS sb_sales,
+        COALESCE(SUM(p.orders) FILTER (WHERE p.ad_type = 'SB'), 0) AS sb_orders,
+        COALESCE(SUM(p.clicks) FILTER (WHERE p.ad_type = 'SB'), 0) AS sb_clicks,
+        COALESCE(SUM(p.impressions) FILTER (WHERE p.ad_type = 'SB'), 0) AS sb_impressions
+      FROM ppc_daily_summary p
+      JOIN ppc_stores s ON s.id = p.store_id
+      WHERE s.team_id = ${teamId}
+        AND (${storeName === "ALL"} OR lower(s.name) = lower(${storeName}))
+        AND (p.report_date >= CURRENT_DATE - ${days}::integer AND p.report_date <= CURRENT_DATE)
+      GROUP BY p.report_date
+      ORDER BY p.report_date ASC;
+    `;
+  }
+
+  return rows.map((r) => {
+    const spend = Math.round(Number(r.spend || 0) * 100) / 100;
+    const sales = Math.round(Number(r.sales || 0) * 100) / 100;
+    const orders = Number(r.orders || 0);
+    const clicks = Number(r.clicks || 0);
+    const impressions = Number(r.impressions || 0);
+
+    const acos = sales > 0 ? (spend / sales) * 100 : (spend > 0 ? 999 : 0);
+    const roas = spend > 0 ? sales / spend : 0;
+    const cvr = clicks > 0 ? (orders / clicks) * 100 : 0;
+    const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+    const cpc = clicks > 0 ? spend / clicks : 0;
+
+    return {
+      date: r.date,
+      spend,
+      sales,
+      orders,
+      clicks,
+      impressions,
+      acos: Math.round(acos * 10) / 10,
+      roas: Math.round(roas * 100) / 100,
+      cvr: Math.round(cvr * 100) / 100,
+      ctr: Math.round(ctr * 100) / 100,
+      cpc: Math.round(cpc * 100) / 100,
+      spSpend: Math.round(Number(r.sp_spend || 0) * 100) / 100,
+      spSales: Math.round(Number(r.sp_sales || 0) * 100) / 100,
+      spOrders: Number(r.sp_orders || 0),
+      spClicks: Number(r.sp_clicks || 0),
+      spImpressions: Number(r.sp_impressions || 0),
+      sbSpend: Math.round(Number(r.sb_spend || 0) * 100) / 100,
+      sbSales: Math.round(Number(r.sb_sales || 0) * 100) / 100,
+      sbOrders: Number(r.sb_orders || 0),
+      sbClicks: Number(r.sb_clicks || 0),
+      sbImpressions: Number(r.sb_impressions || 0),
+    };
+  });
+}
+
+export async function getPpcSearchTermSummaryFromDb(
+  scope: DataScope,
+  filters: { storeName?: string; sku?: string; days?: number; minClicksThreshold?: number; maxSpendThreshold?: number } = {},
+): Promise<{
+  summary: PpcSearchTermSummary;
+  topProfitableAndBleeding: PpcSearchTermRow[];
+  alertRows: PpcSearchTermRow[];
+}> {
+  const sql = await getDatabaseClient();
+  const teamId = (scope as any)?.teamId || "default";
+  const storeName = filters.storeName || "ALL";
+  const sku = filters.sku || "ALL";
+  const days = Math.max(1, filters.days || 30);
+  const minClicks = filters.minClicksThreshold ?? 10;
+  const maxSpend = filters.maxSpendThreshold ?? 15.0;
+
+  const [summaryRows, topTermsRows, alertTermsRows] = await Promise.all([
+    sql<Array<{
+      total_terms: string | number;
+      terms_with_orders: string | number;
+      terms_without_orders: string | number;
+      candidate_bleeder_terms: string | number;
+      observed_spend: string | number;
+      observed_sales: string | number;
+      observed_orders: string | number;
+      observed_clicks: string | number;
+      wasted_spend: string | number;
+    }>>`
+      SELECT 
+        COUNT(*) AS total_terms,
+        COUNT(*) FILTER (WHERE p.orders > 0) AS terms_with_orders,
+        COUNT(*) FILTER (WHERE p.orders = 0) AS terms_without_orders,
+        COUNT(*) FILTER (WHERE p.orders = 0 AND (p.clicks >= ${minClicks} OR p.spend >= ${maxSpend})) AS candidate_bleeder_terms,
+        COALESCE(SUM(p.spend), 0) AS observed_spend,
+        COALESCE(SUM(p.sales), 0) AS observed_sales,
+        COALESCE(SUM(p.orders), 0) AS observed_orders,
+        COALESCE(SUM(p.clicks), 0) AS observed_clicks,
+        COALESCE(SUM(p.spend) FILTER (WHERE p.orders = 0 AND (p.clicks >= ${minClicks} OR p.spend >= ${maxSpend})), 0) AS wasted_spend
+      FROM ppc_search_terms p
+      JOIN ppc_stores s ON s.id = p.store_id
+      WHERE s.team_id = ${teamId}
+        AND (${storeName === "ALL"} OR lower(s.name) = lower(${storeName}))
+        AND (
+          ${sku === "ALL"}
+          OR lower(p.portfolio_name) = lower(${sku})
+          OR position(lower(${sku}) in lower(p.campaign_name)) > 0
+        )
+        AND p.report_date >= CURRENT_DATE - ${days}::integer
+        AND p.report_date <= CURRENT_DATE;
+    `,
+
+    sql<SearchTermDbRow[]>`
+      (
+        SELECT p.*
+        FROM ppc_search_terms p
+        JOIN ppc_stores s ON s.id = p.store_id
+        WHERE s.team_id = ${teamId}
+          AND (${storeName === "ALL"} OR lower(s.name) = lower(${storeName}))
+          AND (
+            ${sku === "ALL"}
+            OR lower(p.portfolio_name) = lower(${sku})
+            OR position(lower(${sku}) in lower(p.campaign_name)) > 0
+          )
+          AND p.report_date >= CURRENT_DATE - ${days}::integer
+          AND p.report_date <= CURRENT_DATE
+          AND p.orders >= 2 AND p.acos <= 30
+        ORDER BY p.sales DESC, p.id
+        LIMIT 5
+      )
+      UNION ALL
+      (
+        SELECT p.*
+        FROM ppc_search_terms p
+        JOIN ppc_stores s ON s.id = p.store_id
+        WHERE s.team_id = ${teamId}
+          AND (${storeName === "ALL"} OR lower(s.name) = lower(${storeName}))
+          AND (
+            ${sku === "ALL"}
+            OR lower(p.portfolio_name) = lower(${sku})
+            OR position(lower(${sku}) in lower(p.campaign_name)) > 0
+          )
+          AND p.report_date >= CURRENT_DATE - ${days}::integer
+          AND p.report_date <= CURRENT_DATE
+          AND p.clicks >= 9 AND p.orders = 0
+        ORDER BY p.spend DESC, p.id
+        LIMIT 5
+      );
+    `,
+
+    sql<SearchTermDbRow[]>`
+      SELECT p.*
+      FROM ppc_search_terms p
+      JOIN ppc_stores s ON s.id = p.store_id
+      WHERE s.team_id = ${teamId}
+        AND (${storeName === "ALL"} OR lower(s.name) = lower(${storeName}))
+        AND (
+          ${sku === "ALL"}
+          OR lower(p.portfolio_name) = lower(${sku})
+          OR position(lower(${sku}) in lower(p.campaign_name)) > 0
+        )
+        AND p.report_date >= CURRENT_DATE - ${days}::integer
+        AND p.report_date <= CURRENT_DATE
+        AND (
+          (p.clicks >= 9 AND p.orders = 0 AND p.spend > 5)
+          OR (p.orders > 0 AND p.acos > 60 AND p.spend >= 15)
+          OR (p.impressions >= 1000 AND p.ctr < 0.1)
+        );
+    `,
+  ]);
+
+  const s = summaryRows[0];
+  const totalTerms = Number(s?.total_terms || 0);
+  const termsWithOrders = Number(s?.terms_with_orders || 0);
+  const termsWithoutOrders = Number(s?.terms_without_orders || 0);
+  const candidateBleederTerms = Number(s?.candidate_bleeder_terms || 0);
+  const observedSpend = asNumber(s?.observed_spend);
+  const observedSales = asNumber(s?.observed_sales);
+  const observedOrders = Number(s?.observed_orders || 0);
+  const observedClicks = Number(s?.observed_clicks || 0);
+  const wastedSpend = asNumber(s?.wasted_spend);
+
+  const observedAcos = observedSales > 0 ? (observedSpend / observedSales) * 100 : 0;
+  const observedRoas = observedSpend > 0 ? observedSales / observedSpend : 0;
+
+  const summary: PpcSearchTermSummary = {
+    totalTerms,
+    termsWithOrders,
+    termsWithoutOrders,
+    candidateBleederTerms,
+    observedSpend: Math.round(observedSpend * 100) / 100,
+    observedSales: Math.round(observedSales * 100) / 100,
+    observedOrders,
+    observedClicks,
+    observedAcos: Math.round(observedAcos * 10) / 10,
+    observedRoas: Math.round(observedRoas * 100) / 100,
+    wastedSpend: Math.round(wastedSpend * 100) / 100,
+  };
+
+  return {
+    summary,
+    topProfitableAndBleeding: topTermsRows.map(mapSearchTerm),
+    alertRows: alertTermsRows.map(mapSearchTerm),
+  };
+}
+

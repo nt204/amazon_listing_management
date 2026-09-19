@@ -32,6 +32,8 @@ import {
 import { invalidateGroupedRecommendationsCache } from "./recommendation-cache";
 import {
   getPpcOverviewAggregates,
+  getPpcSearchTermSummaryFromDb,
+  listPpcDailyTrendsFromDb,
   listPpcPerformance,
   listPpcSearchTerms,
   listPpcStores,
@@ -151,18 +153,19 @@ export async function getPpcAnalyticsData(
   const isDetailSection = section && section !== "overview";
 
   if (section === "overview") {
-    const [stores, storeRows, aggregates, syncLogs] = await Promise.all([
+    const [stores, aggregates, dailyTrendsDb, searchTermData, syncLogs] = await Promise.all([
       listPpcStores(scope),
-      listPpcSearchTerms(scope, { storeName, sku, days }),
       getPpcOverviewAggregates(scope, { storeName, sku, days }),
+      listPpcDailyTrendsFromDb(scope, { storeName, days }),
+      getPpcSearchTermSummaryFromDb(scope, { storeName, sku, days }),
       listPpcSyncLogs(scope),
     ]);
 
     const currentStore = stores.find((store) => store.name.toLowerCase() === storeName.toLowerCase());
     const targetAcos = currentStore?.targetAcos ?? DEFAULT_TARGET_ACOS;
-    const searchTermSummary = calculatePpcSearchTermSummary(storeRows);
-    const alerts: PpcAlert[] = generatePpcAlerts(storeRows, targetAcos);
-    const dailyTrends = calculatePpcDailyTrends(storeRows);
+    const searchTermSummary = searchTermData.summary;
+    const alerts: PpcAlert[] = generatePpcAlerts(searchTermData.alertRows, targetAcos);
+    const dailyTrends = dailyTrendsDb;
 
     let totalSpend = 0;
     let totalSales = 0;
@@ -354,7 +357,7 @@ export async function getPpcAnalyticsData(
       performanceSource: "BULK",
       searchTermSource: "SEARCH_TERM",
       performanceRows: campaignCount + aggregates.targetCount + aggregates.availableSkus.length,
-      searchTermRows: storeRows.length,
+      searchTermRows: searchTermData.summary.totalTerms,
       campaignRows: campaignCount,
       targetRows: aggregates.targetCount,
       productRows: aggregates.availableSkus.length,
@@ -365,7 +368,7 @@ export async function getPpcAnalyticsData(
       bulkLoaded: true,
       dateRangeStart,
       dateRangeEnd,
-      totalRecords: storeRows.length,
+      totalRecords: searchTermData.summary.totalTerms,
       granularity: "DAILY",
       spendCoveragePct: 100,
       clicksCoveragePct: 100,
@@ -388,7 +391,7 @@ export async function getPpcAnalyticsData(
       dailyTrends,
       alerts,
       recommendations: [],
-      searchTerms: storeRows,
+      searchTerms: searchTermData.topProfitableAndBleeding,
       availableSkus: aggregates.availableSkus,
       days,
       targetAcos,
@@ -399,7 +402,7 @@ export async function getPpcAnalyticsData(
       detailCounts: {
         campaigns: campaignCount,
         targets: aggregates.targetCount,
-        searchTerms: storeRows.length,
+        searchTerms: searchTermData.summary.totalTerms,
         skus: aggregates.availableSkus.length,
       },
     };
