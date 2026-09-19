@@ -240,7 +240,7 @@ export async function listPpcSearchTerms(
       FROM ppc_search_terms
       WHERE report_granularity = 'DAILY'
         AND report_date >= CURRENT_DATE - ${filters.days}::integer
-        AND report_date <= CURRENT_DATE
+        AND report_date <= CURRENT_DATE - 1
       GROUP BY store_id, ad_type
     ),
     latest_range AS (
@@ -249,7 +249,7 @@ export async function listPpcSearchTerms(
       WHERE report_granularity = 'RANGE'
         AND (report_end_date - report_start_date + 1)
           BETWEEN ${filters.days - 3}::integer AND ${filters.days + 3}::integer
-        AND report_end_date <= CURRENT_DATE
+        AND report_end_date <= CURRENT_DATE - 1
       GROUP BY store_id, ad_type
     )
     SELECT
@@ -275,7 +275,7 @@ export async function listPpcSearchTerms(
         (
           t.report_granularity = 'DAILY'
           AND t.report_date >= CURRENT_DATE - ${filters.days}::integer
-          AND t.report_date <= CURRENT_DATE
+          AND t.report_date <= CURRENT_DATE - 1
         )
         OR
         (
@@ -1329,7 +1329,7 @@ export async function listPpcDailyTrendsFromDb(
       AND (${storeName === "ALL"} OR lower(s.name) = lower(${storeName}))
       AND (${!filters.startDate} OR p.report_date >= ${filters.startDate || "1970-01-01"}::date)
       AND (${!filters.endDate} OR p.report_date <= ${filters.endDate || "2099-12-31"}::date)
-      AND (${Boolean(filters.startDate || filters.endDate)} OR (p.report_date >= CURRENT_DATE - ${days}::integer AND p.report_date <= CURRENT_DATE))
+      AND (${Boolean(filters.startDate || filters.endDate)} OR (p.report_date >= CURRENT_DATE - ${days}::integer AND p.report_date <= CURRENT_DATE - 1))
     GROUP BY p.report_date
     ORDER BY p.report_date ASC;
   `;
@@ -1358,7 +1358,7 @@ export async function listPpcDailyTrendsFromDb(
       JOIN ppc_stores s ON s.id = p.store_id
       WHERE s.team_id = ${teamId}
         AND (${storeName === "ALL"} OR lower(s.name) = lower(${storeName}))
-        AND (p.report_date >= CURRENT_DATE - ${days}::integer AND p.report_date <= CURRENT_DATE)
+        AND (p.report_date >= CURRENT_DATE - ${days}::integer AND p.report_date <= CURRENT_DATE - 1)
       GROUP BY p.report_date
       ORDER BY p.report_date ASC;
     `;
@@ -1451,7 +1451,7 @@ export async function getPpcSearchTermSummaryFromDb(
           OR position(lower(${sku}) in lower(p.campaign_name)) > 0
         )
         AND p.report_date >= CURRENT_DATE - ${days}::integer
-        AND p.report_date <= CURRENT_DATE;
+        AND p.report_date <= CURRENT_DATE - 1;
     `,
 
     sql<SearchTermDbRow[]>`
@@ -1467,7 +1467,7 @@ export async function getPpcSearchTermSummaryFromDb(
             OR position(lower(${sku}) in lower(p.campaign_name)) > 0
           )
           AND p.report_date >= CURRENT_DATE - ${days}::integer
-          AND p.report_date <= CURRENT_DATE
+          AND p.report_date <= CURRENT_DATE - 1
           AND p.orders >= 2 AND p.acos <= 30
         ORDER BY p.sales DESC, p.id
         LIMIT 5
@@ -1485,7 +1485,7 @@ export async function getPpcSearchTermSummaryFromDb(
             OR position(lower(${sku}) in lower(p.campaign_name)) > 0
           )
           AND p.report_date >= CURRENT_DATE - ${days}::integer
-          AND p.report_date <= CURRENT_DATE
+          AND p.report_date <= CURRENT_DATE - 1
           AND p.clicks >= 9 AND p.orders = 0
         ORDER BY p.spend DESC, p.id
         LIMIT 5
@@ -1504,7 +1504,7 @@ export async function getPpcSearchTermSummaryFromDb(
           OR position(lower(${sku}) in lower(p.campaign_name)) > 0
         )
         AND p.report_date >= CURRENT_DATE - ${days}::integer
-        AND p.report_date <= CURRENT_DATE
+        AND p.report_date <= CURRENT_DATE - 1
         AND (
           (p.clicks >= 9 AND p.orders = 0 AND p.spend > 5)
           OR (p.orders > 0 AND p.acos > 60 AND p.spend >= 15)

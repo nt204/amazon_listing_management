@@ -152,18 +152,20 @@ export function PpcTimeSeriesChart({
       }
     }
 
-    // 2. Xác định ngày kết thúc chính xác (ưu tiên dateRangeEnd của báo cáo để khớp dải ngày badge)
+    // 2. Xác định ngày kết thúc chính xác (chỉ view đến ngày hôm qua / ngày có dữ liệu thực tế gần nhất)
     let end: Date;
-    if (dateRangeEnd) {
-      const parts = dateRangeEnd.split("-").map(Number);
-      end = new Date(parts[0], parts[1] - 1, parts[2]);
-    } else if (dailyMap.size > 0) {
+    if (dailyMap.size > 0) {
+      // Ưu tiên ngày thực tế có dữ liệu gần nhất (ngày hôm qua, không lấy ngày hôm nay khi chưa có số liệu)
       const sortedDates = Array.from(dailyMap.keys()).sort();
       const lastDate = sortedDates[sortedDates.length - 1];
       const parts = lastDate.split("-").map(Number);
       end = new Date(parts[0], parts[1] - 1, parts[2]);
+    } else if (dateRangeEnd) {
+      const parts = dateRangeEnd.split("-").map(Number);
+      end = new Date(parts[0], parts[1] - 1, parts[2]);
     } else {
       end = new Date();
+      end.setDate(end.getDate() - 1);
     }
 
     const daysCount = Math.max(selectedDays, 7);

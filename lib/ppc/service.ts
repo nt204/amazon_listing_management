@@ -346,6 +346,15 @@ export async function getPpcAnalyticsData(
 
     let dateRangeStart = aggregates.snapshotDates?.startDate || "";
     let dateRangeEnd = aggregates.snapshotDates?.endDate || "";
+    if (dailyTrends.length > 0) {
+      const lastTrendDate = dailyTrends[dailyTrends.length - 1].date;
+      if (!dateRangeEnd || dateRangeEnd > lastTrendDate) {
+        dateRangeEnd = lastTrendDate;
+        const startObj = new Date(dateRangeEnd);
+        startObj.setDate(startObj.getDate() - (days - 1));
+        dateRangeStart = startObj.toISOString().slice(0, 10);
+      }
+    }
     if (!dateRangeStart || !dateRangeEnd) {
       dateRangeEnd = dailyTrends[dailyTrends.length - 1]?.date || new Date().toISOString().slice(0, 10);
       const startObj = new Date(dateRangeEnd);
