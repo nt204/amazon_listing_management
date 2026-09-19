@@ -13,8 +13,8 @@ import type {
   PpcStore,
 } from "./types";
 
-export type PpcSyncSource = "CLOUDFLARE_R2" | "MANUAL_UPLOAD" | "MOCK_DATA";
-export type PpcSyncStatus = "SUCCESS" | "FAILED" | "SKIPPED";
+export type PpcSyncSource = "CLOUDFLARE_R2" | "MANUAL_UPLOAD" | "MOCK_DATA" | "ADSPOWER_DOWNLOAD" | "DATA_INGEST" | "SYSTEM";
+export type PpcSyncStatus = "SUCCESS" | "FAILED" | "SKIPPED" | "RUNNING";
 
 export interface PpcSyncLog {
   id: string;
@@ -451,6 +451,12 @@ export async function recordPpcSyncLog(
     )
     ON CONFLICT DO NOTHING
   `;
+}
+
+export async function clearPpcSyncLogs(scope: DataScope): Promise<void> {
+  const sql = await getDatabaseClient();
+  const teamId = (scope as any)?.teamId || "default";
+  await sql`DELETE FROM ppc_sync_logs WHERE team_id = ${teamId}`;
 }
 
 function safeSqlString(value: unknown): string {

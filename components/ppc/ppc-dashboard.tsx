@@ -35,6 +35,7 @@ import { PpcSkuRecommendationGroupView } from "./ppc-sku-recommendation-group";
 import { PpcActionQueueDrawer } from "./ppc-action-queue-drawer";
 import { PpcSettingsTab } from "./ppc-settings-tab";
 import { PpcFileManagerModal } from "./ppc-file-manager-modal";
+import { PpcNotificationPopover } from "./ppc-notification-popover";
 import type {
   SkuEconomics,
   SkuRecommendationGroup,
@@ -1426,6 +1427,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
               <Download size={14} weight="bold" />
               <span>Template</span>
             </a>
+
+            <PpcNotificationPopover onRefreshParent={() => void loadData(true)} />
           </div>
         </div>
 

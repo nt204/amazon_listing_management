@@ -673,6 +673,12 @@ async function autoCreateAndDownloadSearchTermReport(
 
   if (!downloadUrl) {
     console.warn(`[SEARCH TERM] Không tìm thấy link tải Search Term ${adType}`);
+    await recordPpcSyncLog({ teamId: "default" } as any, {
+      source: "ADSPOWER_DOWNLOAD",
+      fileName: `${storeName}_Search_Term_${adType}_30Days`,
+      status: "FAILED",
+      message: `Hết thời gian chờ tạo Search Term ${adType} 30d từ Amazon`,
+    }).catch(() => {});
     return null;
   }
 
@@ -756,6 +762,16 @@ async function autoCreateAndDownloadSearchTermReport(
       fs.statSync(standardizedPath).size / 1024,
     )} KB)`,
   );
+
+  const stSizeKb = Math.round(fs.statSync(standardizedPath).size / 1024);
+  const stSizeStr = stSizeKb >= 1024 ? `${(stSizeKb / 1024).toFixed(1)} MB` : `${stSizeKb} KB`;
+  await recordPpcSyncLog({ teamId: "default" } as any, {
+    source: "ADSPOWER_DOWNLOAD",
+    fileName: path.basename(standardizedPath),
+    status: "SUCCESS",
+    message: `Tải thành công Search Term ${adType} 30d (${stSizeStr}) từ Amazon`,
+  }).catch(() => {});
+
   return standardizedPath;
 }
 
@@ -986,6 +1002,12 @@ async function autoCreateAndDownloadBulkReport(
   }
 
   if (!downloadUrl) {
+    await recordPpcSyncLog({ teamId: "default" } as any, {
+      source: "ADSPOWER_DOWNLOAD",
+      fileName: `${storeName}_Bulk_${adType}_${days}Days`,
+      status: "FAILED",
+      message: `Hết thời gian chờ (10 phút) tạo file Bulk ${adType} ${days}d từ Amazon`,
+    }).catch(() => {});
     throw new Error(
       `Timeout: Không tìm thấy link tải hoàn thành cho Bulk ${adType} ${days}d sau 10 phút.`,
     );
@@ -1068,6 +1090,15 @@ async function autoCreateAndDownloadBulkReport(
       fs.statSync(standardizedPath).size / 1024 / 1024,
     )} MB)`,
   );
+
+  const bulkSizeMb = (fs.statSync(standardizedPath).size / 1024 / 1024).toFixed(1);
+  await recordPpcSyncLog({ teamId: "default" } as any, {
+    source: "ADSPOWER_DOWNLOAD",
+    fileName: path.basename(standardizedPath),
+    status: "SUCCESS",
+    message: `Tải thành công Bulk ${adType} ${days}d (${bulkSizeMb} MB) từ Amazon`,
+  }).catch(() => {});
+
   return standardizedPath;
 }
 
@@ -1252,14 +1283,21 @@ export async function ingestDownloadedPpcFiles(
       totalNew += res.newInserted;
       totalUpdated += res.updated;
       console.log(`[AdsPower Ingest] Hoàn tất ${fileName}: ${res.totalParsed} dòng, ${res.newInserted} mới, ${res.updated} cập nhật.`);
+      await recordPpcSyncLog(scope, {
+        source: "DATA_INGEST",
+        fileName,
+        status: "SUCCESS",
+        count: res.totalParsed,
+        message: `Nạp dữ liệu ${fileName}: ${res.totalParsed.toLocaleString()} dòng (${res.newInserted.toLocaleString()} mới, ${res.updated.toLocaleString()} cập nhật)`,
+      }).catch(() => {});
     } catch (err) {
       console.error(`[AdsPower Ingest] Lỗi xử lý file ${fileName}:`, err);
       await recordPpcSyncLog(scope, {
-        source: "MANUAL_UPLOAD",
+        source: "DATA_INGEST",
         fileName,
         status: "FAILED",
-        message: `[AdsPower Auto] Lỗi nạp file: ${err instanceof Error ? err.message : String(err)}`,
-      });
+        message: `Lỗi nạp file: ${err instanceof Error ? err.message : String(err)}`,
+      }).catch(() => {});
     }
   }
 
@@ -1361,6 +1399,24 @@ export async function syncPpcFromAdsPower(
   ]);
 
   const { totalParsed, totalNew, totalUpdated } = ingestResult;
+
+  await recordPpcSyncLog(scope, {
+    source: "SYSTEM",
+    status: totalParsed > 0 ? "SUCCESS" : "FAILED",
+    count: totalParsed,
+    message: totalParsed > 0
+      ? `Đồng bộ hoàn tất: Đã tải ${filePaths.length} file, nạp ${totalParsed.toLocaleString()} dòng (${totalNew.toLocaleString()} mới, ${totalUpdated.toLocaleString()} cập nhật)`
+      : `Đồng bộ hoàn tất: Đã tải ${filePaths.length} file nhưng không có dòng dữ liệu nào được nạp.`,
+  }).catch(() => {});
+
+  if (r2Uploaded > 0) {
+    await recordPpcSyncLog(scope, {
+      source: "CLOUDFLARE_R2",
+      status: "SUCCESS",
+      count: r2Uploaded,
+      message: `Đã sao lưu ${r2Uploaded} file báo cáo lên Cloudflare R2 an toàn`,
+    }).catch(() => {});
+  }
 
   // 3. Tắt web sau khi dùng theo yêu cầu ("tắt web sau khi dùng")
   if (options.closeBrowserAfter !== false && profileId) {
