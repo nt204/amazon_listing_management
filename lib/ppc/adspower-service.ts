@@ -621,9 +621,9 @@ async function autoCreateAndDownloadSearchTermReport(
   }
 
   // 2. Chờ Amazon tạo xong và tìm đúng row chứa syncRunId có trạng thái Completed
-  const deadline = Date.now() + 60000;
+  const deadline = Date.now() + 180_000; // Tối đa 3 phút cho Search Term Report
   while (Date.now() < deadline) {
-    await page.waitForTimeout(3500);
+    await page.waitForTimeout(4000);
 
     const match = await page.evaluate((targetId: string) => {
       const rows = Array.from(document.querySelectorAll("div.ag-row, [role='row'], tr"));
@@ -644,7 +644,11 @@ async function autoCreateAndDownloadSearchTermReport(
       break;
     }
 
-    if (page.url().includes("/reports/history") && (await page.innerText("body")).includes("Pending")) {
+    // Bấm Refresh hoặc reload nếu còn pending
+    const refreshBtn = await page.$("button[aria-label*='Refresh'], button:has-text('Refresh')");
+    if (refreshBtn) {
+      await refreshBtn.click().catch(() => {});
+    } else if (page.url().includes("/reports/history") && (await page.innerText("body")).includes("Pending")) {
       await page.reload({ waitUntil: "domcontentloaded" }).catch(() => { });
     }
   }

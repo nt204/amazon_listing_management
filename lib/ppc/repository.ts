@@ -815,8 +815,8 @@ export async function ingestPpcPerformanceStream(
         units: row.units,
       }));
 
-      for (let start = 0; start < mapped.length; start += 2000) {
-        const chunk = mapped.slice(start, start + 2000);
+      for (let start = 0; start < mapped.length; start += 800) {
+        const chunk = mapped.slice(start, start + 800);
         await transaction`
           INSERT INTO ppc_perf_staging ${transaction(chunk)}
         `;
