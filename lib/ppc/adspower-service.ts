@@ -492,6 +492,7 @@ async function waitForNewOrUpdatedDownloads(
   dir: string,
   beforeMap: Map<string, number>,
   timeoutSeconds = 90,
+  storeName = "HSOSTORE",
 ): Promise<string[]> {
   const parentDir = path.dirname(dir);
   const deadline = Date.now() + timeoutSeconds * 1000;
@@ -505,7 +506,11 @@ async function waitForNewOrUpdatedDownloads(
         for (const f of parentFiles) {
           if (
             (f.endsWith(".xlsx") || f.endsWith(".csv")) &&
-            (/bulk|search.*term|update.*campaign|amazon.*bulk/i.test(f) || f.startsWith("bulk-") || f.startsWith("Warmstorey"))
+            (/bulk|search.*term|\bst\b|update.*campaign|amazon.*bulk/i.test(f) ||
+             f.startsWith("bulk-") ||
+             f.toLowerCase().includes(storeName.toLowerCase()) ||
+             f.toLowerCase().includes("warmstorey") ||
+             f.toLowerCase().includes("hsostore"))
           ) {
             const src = path.join(parentDir, f);
             const dest = path.join(dir, f);
@@ -623,8 +628,19 @@ async function autoCreateAndDownloadSearchTermReport(
   // Bấm Run report
   const runBtn = await page.$("#urc_run_subscription_button");
   if (runBtn) {
-    await runBtn.click();
+    await runBtn.click().catch(async () => {
+      await page.evaluate((el: any) => el?.click(), runBtn);
+    });
     console.log(`[SEARCH TERM] Đã bấm Run report cho Search Term ${adType} (${syncRunId})!`);
+    await page.waitForTimeout(2500);
+  }
+
+  // Chuyển sang trang /reports để theo dõi bảng kết quả
+  const reportsUrl = `https://advertising.amazon.com/reports${entityParam}`;
+  if (!page.url().includes("/reports?")) {
+    console.log(`[SEARCH TERM] Chuyển đến trang danh sách báo cáo: ${reportsUrl}`);
+    await page.goto(reportsUrl, { waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(2500);
   }
 
   // 2. Chờ Amazon tạo xong và tìm đúng row chứa syncRunId có trạng thái Completed
@@ -632,14 +648,13 @@ async function autoCreateAndDownloadSearchTermReport(
   while (Date.now() < deadline) {
     await page.waitForTimeout(4000);
 
-    const match = await page.evaluate((targetId: string) => {
+    const match = await page.evaluate((args: { targetId: string; adType: string }) => {
       // AG Grid chia thành pinned-left, center, pinned-right; cần gom nhóm theo row-index
-      const allRowEls = Array.from(document.querySelectorAll("div.ag-row[row-index], tr[row-index]"));
+      const allRowEls = Array.from(document.querySelectorAll("div.ag-row[row-index], tr[row-index], table tbody tr"));
       const rowIndexMap = new Map<string, { texts: string[]; href: string | null }>();
 
       for (const r of allRowEls) {
-        const idx = r.getAttribute("row-index") || r.getAttribute("aria-rowindex") || "";
-        if (!idx) continue;
+        const idx = r.getAttribute("row-index") || r.getAttribute("aria-rowindex") || String(Math.random());
         if (!rowIndexMap.has(idx)) {
           rowIndexMap.set(idx, { texts: [], href: null });
         }
@@ -655,20 +670,32 @@ async function autoCreateAndDownloadSearchTermReport(
         }
       }
 
+      // Ưu tiên 1: Khớp chính xác syncRunId
       for (const [idx, entry] of rowIndexMap.entries()) {
         const fullText = entry.texts.join(" ");
-        if (fullText.includes(targetId)) {
+        if (fullText.includes(args.targetId)) {
           const isCompleted = /completed|success|downloadable/i.test(fullText) || Boolean(entry.href);
           return { found: true, isCompleted, href: entry.href };
         }
       }
 
+      // Ưu tiên 2 (Fallback): Khớp theo Search Term hôm nay đã hoàn thành
+      const adTypeLabel = args.adType === "SB" ? "Sponsored Brands" : "Sponsored Products";
+      for (const [idx, entry] of rowIndexMap.entries()) {
+        const fullText = entry.texts.join(" ");
+        const hasSearchTerm = /search\s*term/i.test(fullText);
+        const hasAdType = fullText.includes(args.adType) || fullText.includes(adTypeLabel);
+        if (hasSearchTerm && hasAdType && entry.href) {
+          return { found: true, isCompleted: true, href: entry.href };
+        }
+      }
+
       return { found: false, isCompleted: false, href: null };
-    }, syncRunId);
+    }, { targetId: syncRunId, adType });
 
     if (match.found && match.isCompleted && match.href) {
       downloadUrl = match.href;
-      console.log(`[SEARCH TERM] Đã tìm thấy file hoàn thành cho ${syncRunId}!`);
+      console.log(`[SEARCH TERM] Đã tìm thấy link tải báo cáo cho ${syncRunId}! Link: ${downloadUrl}`);
       break;
     }
 
@@ -676,14 +703,13 @@ async function autoCreateAndDownloadSearchTermReport(
     const refreshBtn = await page.$("button[aria-label*='Refresh'], button:has-text('Refresh')");
     if (refreshBtn) {
       await refreshBtn.click().catch(() => {});
-    } else if (page.url().includes("/reports/history") && (await page.innerText("body")).includes("Pending")) {
-      await page.reload({ waitUntil: "domcontentloaded" }).catch(() => { });
+    } else {
+      await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
     }
   }
 
   // Fallback: Tìm trên trang /reports đúng row chứa syncRunId hoặc Search Term hôm nay đã sẵn sàng
   if (!downloadUrl) {
-    const reportsUrl = `https://advertising.amazon.com/reports${entityParam}`;
     await page.goto(reportsUrl, { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(3000);
     downloadUrl = await page.evaluate((args: { targetId: string; adType: string }) => {
@@ -724,7 +750,9 @@ async function autoCreateAndDownloadSearchTermReport(
         const hasAdType = fullText.includes(args.adType) || fullText.includes(adTypeLabel);
         const has30d = /30\s*(?:day|days|d\b)/i.test(fullText);
         if (hasSearchTerm && hasAdType && has30d && entry.href) {
-          return entry.href;
+          if (!entry.href.includes("BulkSheetExportOutput") && !entry.href.includes("bulk-operations")) {
+            return entry.href;
+          }
         }
       }
 
@@ -752,7 +780,6 @@ async function autoCreateAndDownloadSearchTermReport(
       (await page.$(`a[href*="${reportId}"]`))
     : null;
 
-  const reportsUrl = `https://advertising.amazon.com/reports${entityParam}`;
   if (!directLinkEl && !page.url().includes("/reports?")) {
     await page.goto(reportsUrl, { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(2000);
@@ -802,13 +829,17 @@ async function autoCreateAndDownloadSearchTermReport(
   }
 
   if (!standardizedPath || !fs.existsSync(standardizedPath)) {
-    const downloadedList = await waitForNewOrUpdatedDownloads(destDir, statsBefore, 90);
-    const downloadedPath = downloadedList[0];
+    const downloadedList = await waitForNewOrUpdatedDownloads(destDir, statsBefore, 90, storeName);
+    // Bỏ qua file Bulk nếu có file bulk rơi vào destDir
+    const downloadedPath = downloadedList.find((f) => {
+      const b = path.basename(f);
+      return !b.startsWith("bulk-") && !/amazon.*bulk/i.test(b);
+    }) || downloadedList[0];
     if (!downloadedPath) {
       throw new Error(`Không tải được file Search Term ${adType} về thư mục.`);
     }
     const rawName = path.basename(downloadedPath);
-    const cleanRawName = rawName.replace(new RegExp(`^(?:${storeName}|Warmstorey)_(?:Bulk|Search_Term)_[^.]+?_`, "i"), "");
+    const cleanRawName = sanitizeRawFileName(rawName, storeName);
     const standardizedName = `${storeName}_Search_Term_${adType}_30Days_${cleanRawName}`;
     standardizedPath = path.join(destDir, standardizedName);
     if (downloadedPath !== standardizedPath) {
@@ -842,22 +873,175 @@ async function autoCreateAndDownloadSearchTermReport(
 }
 
 /**
- * Tự động chọn và tải báo cáo Bulk Operations (SP hoặc SB, 7 ngày hoặc 30 ngày) từ Amazon Advertising
+ * Tự động phát hiện loại chiến dịch (SP hoặc SB) từ tên sheet bên trong file Excel
  */
-async function autoCreateAndDownloadBulkReport(
+async function detectActualBulkWorkbookAdType(filePath: string): Promise<"SP" | "SB" | null> {
+  try {
+    const ExcelJS = await import("exceljs");
+    const wb = new ExcelJS.default.stream.xlsx.WorkbookReader(filePath, {});
+    for await (const worksheetReader of wb) {
+      const name = (((worksheetReader as any).name as string) || "").toLowerCase();
+      if (name.includes("sponsored products") || name.includes("sp campaigns")) return "SP";
+      if (name.includes("sponsored brands") || name.includes("sb campaigns") || name.includes("hsa campaigns")) return "SB";
+    }
+  } catch {}
+  return null;
+}
+
+/**
+ * Làm sạch tên file gốc, loại bỏ triệt để các tiền tố chuẩn hóa cũ bị lặp (như 30Days_30Days, HSOSTORE_Bulk_, v.v.)
+ */
+function sanitizeRawFileName(name: string, storeName: string): string {
+  let clean = path.basename(name);
+  clean = clean.replace(new RegExp(`^(?:${storeName}|Warmstorey|HSOSTORE)_(?:Bulk|Search_Term)_(?:SP|SB)_(?:7|30)Days_`, "ig"), "");
+  clean = clean.replace(new RegExp(`^(?:${storeName}|Warmstorey|HSOSTORE)_(?:Bulk|Search_Term)_`, "ig"), "");
+  clean = clean.replace(/^(?:SP|SB)_(?:7|30)Days_/ig, "");
+  clean = clean.replace(/^(?:30Days_|7Days_)+/ig, "");
+  clean = clean.replace(new RegExp(`^(?:${storeName}|Warmstorey|HSOSTORE)_`, "ig"), "");
+  return clean;
+}
+
+/**
+ * Đợi và định vị chính xác file Bulk Operations tải về (kiểm tra cả destDir và ~/Downloads)
+ * Tuyệt đối không bao giờ nhận nhầm file Search Term.
+ */
+async function waitForBulkFileDownload(
+  destDir: string,
+  expectedRawName: string | null,
+  timeoutSeconds = 120,
+): Promise<string> {
+  const parentDir = path.dirname(destDir);
+  const deadline = Date.now() + timeoutSeconds * 1000;
+
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    // 1. Nếu có tên file gốc cụ thể từ Amazon (ví dụ: bulk-a1qiqhomjzfqb8-20260821-20260920-1789875152141.xlsx)
+    if (expectedRawName) {
+      const destCandidate = path.join(destDir, expectedRawName);
+      const parentCandidate = path.join(parentDir, expectedRawName);
+
+      // Kiểm tra trong destDir
+      if (fs.existsSync(destCandidate)) {
+        const crdownload = path.join(destDir, `${expectedRawName}.crdownload`);
+        if (!fs.existsSync(crdownload)) {
+          const stat = fs.statSync(destCandidate);
+          if (stat.size > 100_000) {
+            return destCandidate;
+          }
+        }
+      }
+
+      // Kiểm tra trong parentDir (~/Downloads)
+      if (fs.existsSync(parentCandidate)) {
+        const crdownload = path.join(parentDir, `${expectedRawName}.crdownload`);
+        if (!fs.existsSync(crdownload)) {
+          const stat = fs.statSync(parentCandidate);
+          if (stat.size > 100_000) {
+            if (fs.existsSync(destCandidate)) {
+              try { fs.unlinkSync(destCandidate); } catch {}
+            }
+            fs.renameSync(parentCandidate, destCandidate);
+            console.log(`[BULK] Đã tự động chuyển ${expectedRawName} từ Downloads vào thư mục Bulk file.`);
+            return destCandidate;
+          }
+        }
+      }
+    }
+
+    // 2. Dò tìm file bulk mới bất kỳ (chỉ nhận file bắt đầu bằng bulk- hoặc amazon.*bulk và size > 1MB)
+    const scanDirs = [destDir, parentDir];
+    for (const d of scanDirs) {
+      if (!fs.existsSync(d)) continue;
+      const files = fs.readdirSync(d);
+      for (const f of files) {
+        if (!f.endsWith(".xlsx") || f.includes(".crdownload") || f.startsWith(".")) continue;
+        if (!f.startsWith("bulk-") && !/amazon.*bulk/i.test(f)) continue;
+        if (/search.*term|ST_/i.test(f)) continue;
+
+        const fullPath = path.join(d, f);
+        try {
+          const stat = fs.statSync(fullPath);
+          if (stat.size > 1_000_000 && Date.now() - stat.mtimeMs < 10 * 60 * 1000) {
+            if (d === parentDir) {
+              const targetPath = path.join(destDir, f);
+              if (fs.existsSync(targetPath)) {
+                try { fs.unlinkSync(targetPath); } catch {}
+              }
+              fs.renameSync(fullPath, targetPath);
+              console.log(`[BULK] Đã tự động chuyển ${f} từ Downloads vào thư mục Bulk file.`);
+              return targetPath;
+            }
+            return fullPath;
+          }
+        } catch {}
+      }
+    }
+  }
+
+  throw new Error(`Timeout: Không tìm thấy file bulk tải về sau ${timeoutSeconds} giây.`);
+}
+
+interface BulkTableRow {
+  guid: string | null;
+  text: string;
+  href: string | null;
+  isSuccess: boolean;
+  isDownloading: boolean;
+}
+
+/**
+ * Trích xuất toàn bộ danh sách hàng trong bảng Bulk Operations trên Amazon Advertising
+ */
+async function getBulkTableRows(bulkPage: any): Promise<BulkTableRow[]> {
+  return await bulkPage.evaluate(() => {
+    const allRowEls = Array.from(
+      document.querySelectorAll("div.ag-row[row-index], tr[row-index], tr[role='row'], table tbody tr"),
+    );
+    const map = new Map<string, { texts: string[]; href: string | null }>();
+
+    for (const r of allRowEls) {
+      const idx = r.getAttribute("row-index") || r.getAttribute("aria-rowindex") || String(Math.random());
+      if (!map.has(idx)) {
+        map.set(idx, { texts: [], href: null });
+      }
+      const item = map.get(idx)!;
+      const text = (r as HTMLElement).innerText ? (r as HTMLElement).innerText.replace(/\s+/g, " ") : "";
+      if (text) item.texts.push(text);
+
+      const a = r.querySelector<HTMLAnchorElement>(
+        'a[data-takt-id="Bulksheet_originalFileAction_download_original_file"], a[href*="BulkSheetExportOutput"], a[href*="bulk-operations/download"]',
+      );
+      if (a?.href && !item.href) {
+        item.href = a.href.startsWith("http") ? a.href : (location.origin + a.href);
+      }
+    }
+
+    return Array.from(map.values()).map((item) => {
+      const fullText = item.texts.join(" ");
+      const guidMatch = fullText.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+      const guid = guidMatch ? guidMatch[0].toLowerCase() : null;
+      return {
+        guid,
+        text: fullText,
+        href: item.href,
+        isSuccess: /Success/i.test(fullText),
+        isDownloading: /Downloading|In progress|Pending/i.test(fullText),
+      };
+    });
+  });
+}
+
+/**
+ * Pha 1: Bấm tạo file trong modal và khóa mã ID (exportRequestId) ngay khi bấm.
+ * Hàm này đảm bảo lấy được mã GUID duy nhất trước khi trả về.
+ */
+async function triggerBulkExport(
   bulkPage: any,
   entityParam: string,
   adType: "SP" | "SB",
   days: 7 | 30,
-  storeName: string,
-  destDir: string,
-  usedUrls: Set<string>,
-): Promise<string | null> {
-  console.log(`\n========================================`);
-  console.log(`[BULK] Bắt đầu xử lý Bulk ${adType} - ${days} ngày...`);
-  console.log(`========================================`);
-
-  const statsBefore = getFileStatsMap(destDir);
+): Promise<string> {
   const bulkUrl = `https://advertising.amazon.com/bulk-operations${entityParam}`;
 
   if (!bulkPage.url().includes("bulk-operations")) {
@@ -872,19 +1056,29 @@ async function autoCreateAndDownloadBulkReport(
   if (!isModalOpen) {
     const openModalBtn = await bulkPage.waitForSelector(
       'button[data-takt-id="Bulksheet_home_download_campaigns_button"]',
-      { timeout: 15000 },
+      { timeout: 25000 },
     ).catch(() => null);
 
     if (openModalBtn) {
-      console.log(`[BULK] Mo modal Download campaigns...`);
-      await openModalBtn.click().catch(async () => {
-        await bulkPage.evaluate((el: any) => el?.click(), openModalBtn);
-      });
-      await bulkPage.waitForSelector(
-        'button[data-takt-id="adz_bulkSheets_exportModal_download_button"]',
-        { timeout: 10000 },
-      );
-      await bulkPage.waitForTimeout(1000);
+      console.log(`[BULK] Mở modal Download campaigns...`);
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await openModalBtn.click().catch(async () => {
+          await bulkPage.evaluate((el: any) => el?.click(), openModalBtn);
+        });
+        const found = await bulkPage.waitForSelector(
+          'button[data-takt-id="adz_bulkSheets_exportModal_download_button"]',
+          { timeout: 8000 },
+        ).catch(() => null);
+        if (found) {
+          isModalOpen = found;
+          break;
+        }
+        await bulkPage.waitForTimeout(1000);
+      }
+      if (!isModalOpen) {
+        throw new Error("Không thể mở modal Bulksheet sau 3 lần thử click.");
+      }
+      await bulkPage.waitForTimeout(600);
     }
   }
 
@@ -899,7 +1093,7 @@ async function autoCreateAndDownloadBulkReport(
       `button[data-takt-id="adz_bulkSheets_exportModal_date_range"]:has-text("${targetLabel}")`,
     );
     if (presetBtn) {
-      console.log(`[BULK] Chon preset ngay: ${targetLabel}`);
+      console.log(`[BULK] Chọn preset ngày: ${targetLabel}`);
       await presetBtn.click();
       await bulkPage.waitForTimeout(500);
 
@@ -962,7 +1156,7 @@ async function autoCreateAndDownloadBulkReport(
     }
   }
 
-  // 3.5. Làm mờ (unfocus) input hiện tại để tránh giữ focus outline chặn sự kiện click
+  // Làm mờ input hiện tại để tránh giữ focus outline chặn sự kiện click
   await bulkPage.evaluate(() => {
     if (document.activeElement && typeof (document.activeElement as HTMLElement).blur === "function") {
       (document.activeElement as HTMLElement).blur();
@@ -970,128 +1164,106 @@ async function autoCreateAndDownloadBulkReport(
   });
   await bulkPage.waitForTimeout(300);
 
-  // 4. Bấm Download trong modal để Amazon bắt đầu tạo file
+  // Chụp danh sách GUID các hàng hiện có trên bảng để nhận diện hàng mới
+  const rowsBefore = await getBulkTableRows(bulkPage);
+  const existingGuids = new Set<string>(rowsBefore.map((r) => r.guid).filter(Boolean) as string[]);
+
+  // 4. Bấm Download trong modal và lắng nghe phản hồi POST để khóa exportRequestId
   const modalDownload = await bulkPage.$(
     'button[data-takt-id="adz_bulkSheets_exportModal_download_button"]',
   );
   if (!modalDownload) {
-    throw new Error("Khong tim thay nut Download trong modal Bulksheet");
+    throw new Error("Không tìm thấy nút Download trong modal Bulksheet");
   }
 
-  console.log(`[BULK] Dang bam Download de Amazon tao file Bulk ${adType} ${days}d...`);
+  console.log(`[BULK] Đang bấm Download để Amazon tạo file Bulk ${adType} ${days}d...`);
+  const exportPromise = bulkPage.waitForResponse(
+    (res: any) =>
+      res.url().includes("/bulk-operations/export") &&
+      res.request().method() === "POST",
+    { timeout: 15000 },
+  ).catch(() => null);
+
   await modalDownload.click().catch(async () => {
     await bulkPage.evaluate((btn: any) => btn?.click(), modalDownload);
   });
 
-  // Chờ modal đóng (button biến mất khỏi DOM)
+  // Chờ modal đóng
   await bulkPage
     .waitForSelector('button[data-takt-id="adz_bulkSheets_exportModal_download_button"]', {
       state: "detached",
-      timeout: 6000,
+      timeout: 8000,
     })
     .catch(() => {});
 
-  // Đợi 6 giây chống rate limit 5000ms cố định của Amazon trước khi thao tác tiếp
-  await bulkPage.waitForTimeout(6000);
-
-  // 5. Hàm tính số ngày từ dải YYYYMMDD-YYYYMMDD
-  function calcDayDiff(d1: string, d2: string): number {
-    const date1 = new Date(
-      Date.UTC(
-        parseInt(d1.slice(0, 4), 10),
-        parseInt(d1.slice(4, 6), 10) - 1,
-        parseInt(d1.slice(6, 8), 10),
-      ),
-    );
-    const date2 = new Date(
-      Date.UTC(
-        parseInt(d2.slice(0, 4), 10),
-        parseInt(d2.slice(4, 6), 10) - 1,
-        parseInt(d2.slice(6, 8), 10),
-      ),
-    );
-    return Math.round(
-      Math.abs(date2.getTime() - date1.getTime()) / (1000 * 60 * 60 * 24),
-    );
+  const exportRes = await exportPromise;
+  let targetRequestId: string | null = null;
+  if (exportRes && exportRes.status() >= 200 && exportRes.status() < 300) {
+    try {
+      const json = await exportRes.json();
+      targetRequestId = (json.exportRequestId || json.requestId || json.id || "").toLowerCase() || null;
+      if (targetRequestId) {
+        console.log(`[BULK] Đã nhận diện targetRequestId từ phản hồi mạng: ${targetRequestId}`);
+      }
+    } catch {}
   }
 
-  // 6. Quét bảng để tìm link tải tương ứng với đúng số ngày và chưa từng tải
-  console.log(`[BULK] Đang tìm link tải Bulk ${adType} ${days}d trên bảng...`);
-  let downloadUrl: string | null = null;
-  const deadline = Date.now() + 600_000; // Tối đa 10 phút
-
-  while (Date.now() < deadline) {
-    const candidates = await bulkPage.evaluate(() => {
-      const rows = Array.from(
-        document.querySelectorAll(".ag-center-cols-container .ag-row, tr[role='row']"),
-      );
-      return rows.map((r) => {
-        const a = r.querySelector<HTMLAnchorElement>(
-          'a[data-takt-id="Bulksheet_originalFileAction_download_original_file"], a[href*="BulkSheetExportOutput"], a[href*="bulk-operations/download"]',
-        );
-        const text = (r as HTMLElement).innerText ? (r as HTMLElement).innerText.replace(/\s+/g, " ") : "";
-        return {
-          href: a?.href || null,
-          text,
-          isSuccess: text.includes("Success"),
-        };
-      });
-    });
-
-    for (const item of candidates) {
-      if (!item.href || usedUrls.has(item.href)) continue;
-      // Trích xuất dải ngày YYYYMMDD-YYYYMMDD từ URL
-      const m = item.href.match(/bulk-[^/]*?-(\d{8})-(\d{8})-\d+\.xlsx/);
-      if (m && item.isSuccess) {
-        const diff = calcDayDiff(m[1], m[2]);
-        const matchesDays = days === 30 ? diff >= 25 : diff <= 10;
-        if (matchesDays) {
-          downloadUrl = item.href;
-          usedUrls.add(item.href);
-          console.log(`[BULK] ĐÃ TÌM THẤY LINK CHUẨN (${diff} ngày): ${downloadUrl}`);
-          break;
-        }
+  // Nếu API không trả về exportRequestId trực tiếp, dò tìm hàng mới xuất hiện ở đầu bảng
+  if (!targetRequestId) {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await bulkPage.waitForTimeout(1500);
+      const rowsAfter = await getBulkTableRows(bulkPage);
+      const newRow = rowsAfter.find((r) => r.guid && !existingGuids.has(r.guid));
+      if (newRow?.guid) {
+        targetRequestId = newRow.guid;
+        console.log(`[BULK] Phát hiện requestId mới từ bảng: ${targetRequestId}`);
+        break;
       }
     }
+  }
 
-    if (downloadUrl) break;
-
-    console.log(`[BULK] Đang chờ Amazon tạo xong file Bulk ${adType} ${days}d (refresh bảng sau 10s)...`);
-    await bulkPage.waitForTimeout(10000);
-    // Bấm nút Refresh bảng
-    const refreshBtn = await bulkPage.$(
-      'button[aria-label*="Refresh"], button:has-text("Refresh")',
-    );
-    if (refreshBtn) {
-      await refreshBtn.click().catch(() => {});
+  if (!targetRequestId) {
+    const currentRows = await getBulkTableRows(bulkPage);
+    if (currentRows.length > 0 && currentRows[0].guid) {
+      targetRequestId = currentRows[0].guid;
+      console.log(`[BULK] Sử dụng requestId từ hàng đầu tiên: ${targetRequestId}`);
     }
   }
 
-  if (!downloadUrl) {
-    await recordPpcSyncLog({ teamId: "default" } as any, {
-      source: "ADSPOWER_DOWNLOAD",
-      fileName: `${storeName}_Bulk_${adType}_${days}Days`,
-      status: "FAILED",
-      message: `Hết thời gian chờ (10 phút) tạo file Bulk ${adType} ${days}d từ Amazon`,
-    }).catch(() => {});
-    throw new Error(
-      `Timeout: Không tìm thấy link tải hoàn thành cho Bulk ${adType} ${days}d sau 10 phút.`,
-    );
+  if (!targetRequestId) {
+    throw new Error(`[BULK] Không thể khóa mã ID (exportRequestId) cho Bulk ${adType} ${days}d.`);
   }
 
-  // 7. Bắt đầu tải file và lưu chuẩn tên: {STORE}_Bulk_{ADTYPE}_{DAYS}Days_{RAWNAME}
-  console.log(`[BULK] Bắt đầu tải file: ${downloadUrl}`);
-  const guidMatch = downloadUrl.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-  const guid = guidMatch ? guidMatch[0] : "";
-  const directLinkEl = guid
-    ? await bulkPage.$(`a[href*="${guid}"]`)
-    : await bulkPage.$('a[data-takt-id="Bulksheet_originalFileAction_download_original_file"]');
+  return targetRequestId;
+}
+
+/**
+ * Tải file của một hàng cụ thể theo mã requestId đã khóa và chuẩn hóa tên file
+ */
+async function downloadBulkFileByRow(
+  bulkPage: any,
+  task: { adType: "SP" | "SB"; days: 7 | 30; requestId: string },
+  downloadUrl: string,
+  storeName: string,
+  destDir: string,
+): Promise<{ savedPath: string; actualAdType: "SP" | "SB" }> {
+  console.log(`[BULK] Bắt đầu tải file cho ${task.adType} ${task.days}d (ID: ${task.requestId})...`);
+  console.log(`[BULK] Link tải Amazon: ${downloadUrl}`);
+
+  const guid = task.requestId;
+  const expectedRawName = downloadUrl.match(/bulk-[^/?]+\.xlsx/i)?.[0] || null;
+  if (expectedRawName) {
+    console.log(`[BULK] Tên file Amazon thực tế: ${expectedRawName}`);
+  }
+
+  const directLinkEl = await bulkPage.$(`a[href*="${guid}"]`).catch(() => null)
+    || await bulkPage.$(`.ag-row:has-text("${guid}") a, tr:has-text("${guid}") a`).catch(() => null);
 
   let standardizedPath: string | null = null;
 
   try {
     const [download] = await Promise.all([
-      bulkPage.waitForEvent("download", { timeout: 120_000 }),
+      bulkPage.waitForEvent("download", { timeout: 60_000 }),
       (async () => {
         if (directLinkEl) {
           await directLinkEl.click().catch(async () => {
@@ -1111,33 +1283,24 @@ async function autoCreateAndDownloadBulkReport(
     ]);
 
     const suggestedName = download.suggestedFilename();
-    const cleanRawName = suggestedName.replace(
-      new RegExp(`^${storeName}_(?:Bulk|Search_Term)_[^.]+?_`, "i"),
-      "",
-    );
-    const standardizedName = `${storeName}_Bulk_${adType}_${days}Days_${cleanRawName}`;
+    const cleanRawName = sanitizeRawFileName(suggestedName, storeName);
+    const standardizedName = `${storeName}_Bulk_${task.adType}_${task.days}Days_${cleanRawName}`;
     standardizedPath = path.join(destDir, standardizedName);
     try {
       await download.saveAs(standardizedPath);
     } catch {
-      // Với Page.setDownloadBehavior trên CDP, Chrome lưu trực tiếp vào thư mục chỉ định
+      // Chrome CDP có thể lưu trực tiếp vào thư mục chỉ định
     }
   } catch (downloadErr) {
-    // waitForEvent download có thể timeout nếu Amazon tải ngầm
+    // Có thể timeout nếu browser lưu trực tiếp mà không bắn event
   }
 
   if (!standardizedPath || !fs.existsSync(standardizedPath)) {
-    const downloadedList = await waitForNewOrUpdatedDownloads(destDir, statsBefore, 90);
-    const downloadedPath = downloadedList[0];
-    if (!downloadedPath) {
-      throw new Error("File Bulk đã bấm tải nhưng không thấy xuất hiện trong thư mục.");
-    }
+    // Sử dụng bộ dò tìm file bulk chuyên dụng, đảm bảo không nhận nhầm Search Term
+    const downloadedPath = await waitForBulkFileDownload(destDir, expectedRawName, 120);
     const rawName = path.basename(downloadedPath);
-    const cleanRawName = rawName.replace(
-      new RegExp(`^${storeName}_(?:Bulk|Search_Term)_[^.]+?_`, "i"),
-      "",
-    );
-    const standardizedName = `${storeName}_Bulk_${adType}_${days}Days_${cleanRawName}`;
+    const cleanRawName = sanitizeRawFileName(rawName, storeName);
+    const standardizedName = `${storeName}_Bulk_${task.adType}_${task.days}Days_${cleanRawName}`;
     standardizedPath = path.join(destDir, standardizedName);
     if (downloadedPath !== standardizedPath) {
       if (fs.existsSync(standardizedPath)) {
@@ -1148,24 +1311,227 @@ async function autoCreateAndDownloadBulkReport(
   }
 
   if (!standardizedPath || !fs.existsSync(standardizedPath)) {
-    throw new Error("Không tìm thấy file Bulk sau khi tải và chuẩn hóa.");
+    throw new Error(`Không tìm thấy file Bulk sau khi tải và chuẩn hóa (ID: ${task.requestId}).`);
   }
 
-  console.log(
-    `[BULK] TẢI THÀNH CÔNG: ${path.basename(standardizedPath)} (${Math.round(
-      fs.statSync(standardizedPath).size / 1024 / 1024,
-    )} MB)`,
-  );
+  // Tự động kiểm tra sheet bên trong file để đảm bảo gắn nhãn SP/SB chính xác 100%
+  const actualAdType = await detectActualBulkWorkbookAdType(standardizedPath).catch(() => null);
+  if (actualAdType && actualAdType !== task.adType) {
+    const rawName = path.basename(standardizedPath);
+    const cleanRawName = sanitizeRawFileName(rawName, storeName);
+    const correctedName = `${storeName}_Bulk_${actualAdType}_${task.days}Days_${cleanRawName}`;
+    const correctedPath = path.join(destDir, correctedName);
+    if (correctedPath !== standardizedPath) {
+      if (fs.existsSync(correctedPath)) {
+        try { fs.unlinkSync(correctedPath); } catch {}
+      }
+      fs.renameSync(standardizedPath, correctedPath);
+      console.log(`[BULK] Đã tự động điều chỉnh nhãn file theo sheet thực tế: ${path.basename(standardizedPath)} -> ${correctedName}`);
+      standardizedPath = correctedPath;
+    }
+  }
 
   const bulkSizeMb = (fs.statSync(standardizedPath).size / 1024 / 1024).toFixed(1);
+  const effectiveAdType = actualAdType || task.adType;
+  console.log(
+    `[BULK] TẢI THÀNH CÔNG: ${path.basename(standardizedPath)} (${bulkSizeMb} MB) [Khớp ID: ${task.requestId}]`,
+  );
+
   await recordPpcSyncLog({ teamId: "default" } as any, {
     source: "ADSPOWER_DOWNLOAD",
     fileName: path.basename(standardizedPath),
     status: "SUCCESS",
-    message: `Tải thành công Bulk ${adType} ${days}d (${bulkSizeMb} MB) từ Amazon`,
+    message: `Tải thành công Bulk ${effectiveAdType} ${task.days}d (${bulkSizeMb} MB, ID: ${task.requestId}) từ Amazon`,
   }).catch(() => {});
 
-  return standardizedPath;
+  return { savedPath: standardizedPath, actualAdType: effectiveAdType };
+}
+
+interface BulkTaskItem {
+  adType: "SP" | "SB";
+  days: 7 | 30;
+  requestId: string;
+  filePath?: string;
+}
+
+/**
+ * Tự động tạo và tải toàn bộ 4 file Bulk theo quy trình 2 pha:
+ * - Pha 1: Bấm tạo lần lượt từng file -> Khóa mã ID (exportRequestId) ngay khi bấm -> Chờ 6s -> Bấm tạo file tiếp theo
+ * - Pha 2: Ngồi chờ Amazon xử lý song song, hàng có ID nào xong thì bốc đúng file của ID đó
+ */
+async function createAndDownloadAllBulkReports(
+  bulkPage: any,
+  entityParam: string,
+  storeName: string,
+  destDir: string,
+  onFileReady?: (filePath: string) => Promise<void>,
+): Promise<string[]> {
+  const tasks: BulkTaskItem[] = [
+    { adType: "SP", days: 30, requestId: "" },
+    { adType: "SB", days: 30, requestId: "" },
+    { adType: "SP", days: 7, requestId: "" },
+    { adType: "SB", days: 7, requestId: "" },
+  ];
+
+  console.log(`\n================================================================`);
+  console.log(`🔒 [BULK PHA 1] KHÓA MÃ ID (exportRequestId) NGAY KHI BẤM`);
+  console.log(`Quy tắc: Bấm SP 30d ➔ Ghi nhớ ID ➔ Chờ 6s ➔ Bấm SB 30d ➔ Ghi nhớ ID ➔ Chờ 6s ➔ Bấm SP 7d ➔ Ghi nhớ ID ➔ Chờ 6s ➔ Bấm SB 7d ➔ Ghi nhớ ID`);
+  console.log(`Khi ghi xong ID rồi thì mới bấm tạo tiếp để tránh nhầm`);
+  console.log(`================================================================\n`);
+
+  for (let i = 0; i < tasks.length; i++) {
+    const task = tasks[i];
+    console.log(`\n[BULK PHA 1] [${i + 1}/4] Kích hoạt tạo Bulk ${task.adType} ${task.days} Days...`);
+
+    task.requestId = await triggerBulkExport(bulkPage, entityParam, task.adType, task.days);
+
+    console.log(`[BULK PHA 1] 🔒 ĐÃ GHI NHỚ: ${task.adType}_${task.days}D = ${task.requestId}`);
+
+    // Chỉ khi ghi xong ID rồi thì mới bấm tạo tiếp để tránh nhầm, kèm thời gian chờ 6s chống rate limit Amazon
+    if (i < tasks.length - 1) {
+      console.log(`[BULK PHA 1] Đã ghi xong ID [${task.adType}_${task.days}D = ${task.requestId}]. Chờ 6s bảo vệ rate limit trước khi tạo file tiếp theo...`);
+      await bulkPage.waitForTimeout(6000);
+    }
+  }
+
+  console.log(`\n================================================================`);
+  console.log(`🔒 [BULK PHA 1 HOÀN TẤT] ĐÃ KHÓA TOÀN BỘ 4 MÃ GUID TỪ AMAZON:`);
+  tasks.forEach((t) => console.log(`   * ${t.adType}_${t.days}D: ID = ${t.requestId}`));
+  console.log(`================================================================\n`);
+
+  console.log(`\n================================================================`);
+  console.log(`⏳ [BULK PHA 2] CHỜ VÀ BỐC ĐÚNG FILE THEO TỪNG MÃ ID ĐÃ KHÓA`);
+  console.log(`Amazon xử lý song song cả 4 file. Hàng có ID nào xong thì bốc đúng file của ID đó.`);
+  console.log(`================================================================\n`);
+
+  const deadline = Date.now() + 1_800_000; // Tối đa 30 phút cho file lớn (Amazon SP có thể mất 15-25 phút)
+  let pollIteration = 0;
+  const usedHrefs = new Set<string>();
+
+  while (Date.now() < deadline && tasks.some((t) => !t.filePath)) {
+    pollIteration++;
+    const rows = await getBulkTableRows(bulkPage);
+
+    // 1. Ưu tiên khớp chính xác theo ID (requestId) đã khóa từ Pha 1
+    for (const task of tasks) {
+      if (task.filePath) continue;
+
+      const matchingRow = rows.find(
+        (r) =>
+          (r.guid && r.guid.toLowerCase() === task.requestId.toLowerCase()) ||
+          (r.text && r.text.toLowerCase().includes(task.requestId.toLowerCase())),
+      );
+
+      if (matchingRow && matchingRow.isSuccess && matchingRow.href && !usedHrefs.has(matchingRow.href)) {
+        console.log(`\n[BULK PHA 2] 🎯 Hàng ID ${task.requestId} (${task.adType} ${task.days}d) ĐÃ XONG (Success)! Bắt đầu bốc file...`);
+        usedHrefs.add(matchingRow.href);
+        const { savedPath, actualAdType } = await downloadBulkFileByRow(
+          bulkPage,
+          task,
+          matchingRow.href,
+          storeName,
+          destDir,
+        );
+        const targetTask = tasks.find(t => t.adType === actualAdType && t.days === task.days && !t.filePath)
+          || tasks.find(t => t.adType === actualAdType && !t.filePath)
+          || task;
+        targetTask.filePath = savedPath;
+        console.log(`[BULK PHA 2] ✅ Đã bốc xong: ${path.basename(savedPath)} (gán cho ${targetTask.adType} ${targetTask.days}d)`);
+
+        if (onFileReady) {
+          try {
+            console.log(`[BULK PIPELINE] 🚀 Nạp ngay vào Database: ${path.basename(savedPath)}...`);
+            await onFileReady(savedPath);
+          } catch (ingestErr) {
+            console.error(`[BULK PIPELINE] ⚠️ Lỗi khi nạp ngay file ${path.basename(savedPath)}:`, ingestErr);
+          }
+        }
+      } else if (matchingRow && matchingRow.isDownloading) {
+        // Amazon đang kết xuất file cho mã ID này, kiên nhẫn chờ
+      }
+    }
+
+    const remaining = tasks.filter((t) => !t.filePath);
+    if (remaining.length === 0) {
+      console.log(`\n[BULK PHA 2] 🎉 TẤT CẢ 4 FILE BULK ĐÃ ĐƯỢC BỐC XONG CHÍNH XÁC THEO MÃ ID!`);
+      break;
+    }
+
+    const remainingSummary = remaining.map((t) => `${t.adType}_${t.days}D (${t.requestId.slice(0, 8)}...)`).join(", ");
+    console.log(`[BULK PHA 2] Đang chờ Amazon hoàn tất: ${remainingSummary} (refresh sau 12s)...`);
+    await bulkPage.waitForTimeout(12000);
+
+    // Reload page mỗi 2 vòng (24s) để đảm bảo trình duyệt cập nhật dữ liệu mới nhất từ Amazon
+    if (pollIteration % 2 === 0) {
+      await bulkPage.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
+      await bulkPage.waitForTimeout(2000);
+    } else {
+      const refreshBtn = await bulkPage.$(
+        'button[aria-label*="Refresh"], button:has-text("Refresh")',
+      );
+      if (refreshBtn) {
+        await refreshBtn.click().catch(() => {});
+      }
+    }
+  }
+
+  const unfinished = tasks.filter((t) => !t.filePath);
+  if (unfinished.length > 0) {
+    const missingSummary = unfinished.map((t) => `${t.adType} ${t.days}d (ID: ${t.requestId})`).join(", ");
+    throw new Error(`Timeout: Không thể tải xong các file Bulk sau 30 phút: ${missingSummary}`);
+  }
+
+  return tasks.map((t) => t.filePath!);
+}
+
+/**
+ * Tự động chọn và tải 1 báo cáo Bulk Operations đơn lẻ (dành cho kiểm thử hoặc gọi riêng)
+ */
+async function autoCreateAndDownloadBulkReport(
+  bulkPage: any,
+  entityParam: string,
+  adType: "SP" | "SB",
+  days: 7 | 30,
+  storeName: string,
+  destDir: string,
+  _usedUrls?: Set<string>,
+): Promise<string | null> {
+  const requestId = await triggerBulkExport(bulkPage, entityParam, adType, days);
+  console.log(`[BULK] 🔒 ĐÃ GHI NHỚ MÃ ID: ${adType}_${days}D = ${requestId}`);
+
+  const task = { adType, days, requestId };
+  const deadline = Date.now() + 900_000;
+  let pollIteration = 0;
+
+  while (Date.now() < deadline) {
+    pollIteration++;
+    const rows = await getBulkTableRows(bulkPage);
+    const matchingRow = rows.find(
+      (r) =>
+        (r.guid && r.guid.toLowerCase() === requestId.toLowerCase()) ||
+        (r.text && r.text.toLowerCase().includes(requestId.toLowerCase())),
+    );
+
+    if (matchingRow && matchingRow.isSuccess && matchingRow.href) {
+      const res = await downloadBulkFileByRow(bulkPage, task, matchingRow.href, storeName, destDir);
+      return res.savedPath;
+    }
+
+    await bulkPage.waitForTimeout(12000);
+    if (pollIteration % 2 === 0) {
+      await bulkPage.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
+      await bulkPage.waitForTimeout(2000);
+    } else {
+      const refreshBtn = await bulkPage.$(
+        'button[aria-label*="Refresh"], button:has-text("Refresh")',
+      );
+      if (refreshBtn) {
+        await refreshBtn.click().catch(() => {});
+      }
+    }
+  }
+
+  throw new Error(`Timeout chờ file Bulk ${adType} ${days}d (ID: ${requestId})`);
 }
 
 /**
@@ -1183,6 +1549,7 @@ export async function downloadAdsPowerReports(options: {
   storeName?: string;
   profileId?: string;
   autoStart?: boolean;
+  onFileReady?: (filePath: string) => Promise<void>;
 }): Promise<{ filePaths: string[]; debugPort: number }> {
   let debugPort: number | null = options.port || null;
   if (debugPort && !(await isCdpPortResponding(debugPort))) {
@@ -1254,71 +1621,64 @@ export async function downloadAdsPowerReports(options: {
   const entityParam = entityId ? `?entityId=${entityId}` : "";
 
   try {
-    // 1 & 2. Tách 2 worker độc lập: Worker Bulk (4 file) và Worker Search Term (2 file) chạy song song (Concurrency 2)
-    console.log("\n[AdsPower] Khởi tạo 2 worker tải song song (Bulk Worker & Search Term Worker)...");
+    // CHẠY 1 LUỒNG DUY NHẤT TUẦN TỰ (Single Worker Page) để chống hoàn toàn xung đột tên file
+    console.log("\n[AdsPower] Bắt đầu quy trình tải tuần tự 1 luồng (Search Term -> Bulk Operations)...");
+    const workerPage = await context.newPage();
+    try {
+      const pageCdp = await context.newCDPSession(workerPage);
+      await pageCdp.send("Page.setDownloadBehavior", { behavior: "allow", downloadPath: destDir });
 
-    const runBulkWorker = async () => {
-      const bulkPage = await context.newPage();
-      const usedBulkUrls = new Set<string>();
-      const files: string[] = [];
-      try {
-        const bulkCdp = await context.newCDPSession(bulkPage);
-        await bulkCdp.send("Page.setDownloadBehavior", { behavior: "allow", downloadPath: destDir });
-
-        console.log("\n[Bulk Worker] 1/4: Đang xử lý Bulk SP 30 Days...");
-        const f1 = await autoCreateAndDownloadBulkReport(bulkPage, entityParam, "SP", 30, storeName, destDir, usedBulkUrls);
-        if (f1) files.push(f1);
-
-        console.log("\n[Bulk Worker] 2/4: Đang xử lý Bulk SB 30 Days...");
-        const f2 = await autoCreateAndDownloadBulkReport(bulkPage, entityParam, "SB", 30, storeName, destDir, usedBulkUrls);
-        if (f2) files.push(f2);
-
-        console.log("\n[Bulk Worker] 3/4: Đang xử lý Bulk SP 7 Days...");
-        const f3 = await autoCreateAndDownloadBulkReport(bulkPage, entityParam, "SP", 7, storeName, destDir, usedBulkUrls);
-        if (f3) files.push(f3);
-
-        console.log("\n[Bulk Worker] 4/4: Đang xử lý Bulk SB 7 Days...");
-        const f4 = await autoCreateAndDownloadBulkReport(bulkPage, entityParam, "SB", 7, storeName, destDir, usedBulkUrls);
-        if (f4) files.push(f4);
-
-        return files;
-      } finally {
-        await closeTabSafely(bulkPage, context);
+      // 1. Search Term SP 30 Days
+      console.log("\n========================================");
+      console.log("[1/6] ĐANG TẢI & NẠP: Search Term SP 30 Days...");
+      console.log("========================================");
+      const f1 = await autoCreateAndDownloadSearchTermReport(workerPage, entityParam, "SP", storeName, destDir);
+      if (f1) {
+        downloadedFiles.push(f1);
+        if (options.onFileReady) {
+          console.log(`[PIPELINE] 🚀 Nạp ngay vào Database: ${path.basename(f1)}...`);
+          await options.onFileReady(f1).catch((e) => console.error(`[PIPELINE] Lỗi nạp ${path.basename(f1)}:`, e));
+        }
       }
-    };
 
-    const runSearchTermWorker = async () => {
-      const stPage = await context.newPage();
-      const files: string[] = [];
-      try {
-        const stCdp = await context.newCDPSession(stPage);
-        await stCdp.send("Page.setDownloadBehavior", { behavior: "allow", downloadPath: destDir });
-
-        console.log("\n[Search Term Worker] 1/2: Đang xử lý Search Term SP 30 Days...");
-        const f5 = await autoCreateAndDownloadSearchTermReport(stPage, entityParam, "SP", storeName, destDir);
-        if (f5) files.push(f5);
-
-        console.log("\n[Search Term Worker] 2/2: Đang xử lý Search Term SB 30 Days...");
-        const f6 = await autoCreateAndDownloadSearchTermReport(stPage, entityParam, "SB", storeName, destDir);
-        if (f6) files.push(f6);
-
-        return files;
-      } finally {
-        await closeTabSafely(stPage, context);
+      // 2. Search Term SB 30 Days
+      console.log("\n========================================");
+      console.log("[2/6] ĐANG TẢI & NẠP: Search Term SB 30 Days...");
+      console.log("========================================");
+      const f2 = await autoCreateAndDownloadSearchTermReport(workerPage, entityParam, "SB", storeName, destDir);
+      if (f2) {
+        downloadedFiles.push(f2);
+        if (options.onFileReady) {
+          console.log(`[PIPELINE] 🚀 Nạp ngay vào Database: ${path.basename(f2)}...`);
+          await options.onFileReady(f2).catch((e) => console.error(`[PIPELINE] Lỗi nạp ${path.basename(f2)}:`, e));
+        }
       }
-    };
 
-    const [bulkFiles, stFiles] = await Promise.all([
-      runBulkWorker(),
-      runSearchTermWorker(),
-    ]);
+      // 3-6. Bulk Operations (SP 30D, SB 30D, SP 7D, SB 7D)
+      console.log("\n========================================");
+      console.log("[3-6/6] ĐANG TẠO & TẢI TUẦN TỰ 4 FILE BULK OPERATIONS...");
+      console.log("========================================");
+      const bulkFiles = await createAndDownloadAllBulkReports(
+        workerPage,
+        entityParam,
+        storeName,
+        destDir,
+        async (savedPath) => {
+          if (options.onFileReady) {
+            console.log(`[PIPELINE] 🚀 Nạp ngay vào Database: ${path.basename(savedPath)}...`);
+            await options.onFileReady(savedPath).catch((e) => console.error(`[PIPELINE] Lỗi nạp ${path.basename(savedPath)}:`, e));
+          }
+        },
+      );
+      downloadedFiles.push(...bulkFiles);
 
-    downloadedFiles.push(...bulkFiles, ...stFiles);
-
-    console.log("\n========================================");
-    console.log(`ĐÃ TẢI THÀNH CÔNG ĐỦ ${downloadedFiles.length}/6 FILE PPC (SONG SONG 2 WORKER):`);
-    downloadedFiles.forEach((f, idx) => console.log(`${idx + 1}. ${path.basename(f)}`));
-    console.log("========================================\n");
+      console.log("\n========================================");
+      console.log(`ĐÃ TẢI & NẠP THÀNH CÔNG ĐỦ ${downloadedFiles.length}/6 FILE PPC (1 LUỒNG TUẦN TỰ):`);
+      downloadedFiles.forEach((f, idx) => console.log(`${idx + 1}. ${path.basename(f)}`));
+      console.log("========================================\n");
+    } finally {
+      await closeTabSafely(workerPage, context);
+    }
   } catch (error) {
     console.error("[AdsPower Automation] Lỗi trong quá trình tải báo cáo:", error);
     throw error;
@@ -1426,11 +1786,62 @@ export async function syncPpcFromAdsPower(
   const storeName = canonicalStoreName(options.storeName || "HSOSTORE");
   const profileId = getAdsPowerProfileId(options.profileId, storeName);
 
+  let totalParsed = 0;
+  let totalNew = 0;
+  let totalUpdated = 0;
+  let r2Uploaded = 0;
+  const processedFiles = new Set<string>();
+
+  const handleFileReady = async (filePath: string) => {
+    const fileName = path.basename(filePath);
+    if (processedFiles.has(fileName)) return;
+    processedFiles.add(fileName);
+
+    // 1. Nạp ngay vào Database
+    try {
+      console.log(`[AdsPower Ingest] Đang nạp ngay: ${fileName}...`);
+      const res = await ingestPpcFilePath(scope, filePath, fileName, storeName);
+      totalParsed += res.totalParsed;
+      totalNew += res.newInserted;
+      totalUpdated += res.updated;
+      console.log(`[AdsPower Ingest] Hoàn tất ${fileName}: ${res.totalParsed} dòng (${res.newInserted} mới, ${res.updated} cập nhật).`);
+      await recordPpcSyncLog(scope, {
+        source: "DATA_INGEST",
+        fileName,
+        status: "SUCCESS",
+        count: res.totalParsed,
+        message: `Nạp dữ liệu ${fileName}: ${res.totalParsed.toLocaleString()} dòng (${res.newInserted.toLocaleString()} mới, ${res.updated.toLocaleString()} cập nhật)`,
+      }).catch(() => {});
+    } catch (err) {
+      console.error(`[AdsPower Ingest] Lỗi xử lý file ${fileName}:`, err);
+      await recordPpcSyncLog(scope, {
+        source: "DATA_INGEST",
+        fileName,
+        status: "FAILED",
+        message: `Lỗi nạp file: ${err instanceof Error ? err.message : String(err)}`,
+      }).catch(() => {});
+    }
+
+    // 2. Sao lưu lên Cloudflare R2 ngay khi tải xong
+    if (process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY) {
+      try {
+        const count = await uploadReportsToR2(storeName, [filePath]);
+        r2Uploaded += count;
+        if (count > 0) {
+          console.log(`[AdsPower Sync] Đã lưu trữ ${fileName} lên Cloudflare R2.`);
+        }
+      } catch (r2Err) {
+        console.warn(`[AdsPower Sync] Lỗi khi tải ${fileName} lên R2:`, r2Err);
+      }
+    }
+  };
+
   const { filePaths, debugPort } = await downloadAdsPowerReports({
     storeName,
     destDir: options.destDir,
     profileId,
     autoStart: options.autoStart,
+    onFileReady: handleFileReady,
   });
 
   if (!filePaths.length) {
@@ -1446,33 +1857,21 @@ export async function syncPpcFromAdsPower(
     };
   }
 
-  // 1 & 2. Nạp dữ liệu vào PostgreSQL Database và sao lưu lên Cloudflare R2 song song
-  const [ingestResult, r2Uploaded] = await Promise.all([
-    ingestDownloadedPpcFiles(scope, storeName, filePaths),
-    (async () => {
-      if (process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY) {
-        try {
-          const count = await uploadReportsToR2(storeName, filePaths);
-          console.log(`[AdsPower Sync] Đã lưu trữ ${count} file lên Cloudflare R2 thành công.`);
-          return count;
-        } catch (r2Err) {
-          console.warn("[AdsPower Sync] Lỗi khi tải file lên R2 (dữ liệu DB vẫn an toàn):", r2Err);
-          return 0;
-        }
-      }
-      return 0;
-    })(),
-  ]);
-
-  const { totalParsed, totalNew, totalUpdated } = ingestResult;
+  // Safety check: nạp bổ sung nếu có file nào chưa nạp
+  for (const fp of filePaths) {
+    const fn = path.basename(fp);
+    if (!processedFiles.has(fn)) {
+      await handleFileReady(fp);
+    }
+  }
 
   await recordPpcSyncLog(scope, {
     source: "SYSTEM",
     status: totalParsed > 0 ? "SUCCESS" : "FAILED",
     count: totalParsed,
     message: totalParsed > 0
-      ? `Đồng bộ hoàn tất: Đã tải ${filePaths.length} file, nạp ${totalParsed.toLocaleString()} dòng (${totalNew.toLocaleString()} mới, ${totalUpdated.toLocaleString()} cập nhật)`
-      : `Đồng bộ hoàn tất: Đã tải ${filePaths.length} file nhưng không có dòng dữ liệu nào được nạp.`,
+      ? `Đồng bộ hoàn tất: Đã tải ${filePaths.length}/6 file, nạp ${totalParsed.toLocaleString()} dòng (${totalNew.toLocaleString()} mới, ${totalUpdated.toLocaleString()} cập nhật)`
+      : `Đồng bộ hoàn tất: Đã tải ${filePaths.length}/6 file nhưng không có dòng dữ liệu nào được nạp.`,
   }).catch(() => {});
 
   if (r2Uploaded > 0) {
@@ -1484,10 +1883,10 @@ export async function syncPpcFromAdsPower(
     }).catch(() => {});
   }
 
-  // 3. Tắt web sau khi dùng theo yêu cầu ("tắt web sau khi dùng")
+  // Tắt web sau khi dùng theo yêu cầu
   if (options.closeBrowserAfter !== false && profileId) {
     console.log(`[AdsPower Sync] Đóng trình duyệt AdsPower profile ${profileId} để giải phóng RAM máy...`);
-    await stopAdsPowerProfile(profileId).catch(() => { });
+    await stopAdsPowerProfile(profileId).catch(() => {});
   }
 
   return {
@@ -1627,17 +2026,23 @@ export async function uploadBulkFileToAmazonAds(options: {
       console.log("[AdsPower Upload] Bấm nút xác nhận Upload trong modal...");
       await uploadConfirmBtn.click();
       console.log("[AdsPower Upload] Chờ hệ thống Amazon tiếp nhận file...");
-      await bulkPage.waitForSelector("div[role='alert'], .ag-row", { timeout: 3000 }).catch(() => { });
-      await bulkPage.waitForTimeout(1000);
+      await bulkPage.waitForSelector("div[role='alert'], .ag-row", { timeout: 5000 }).catch(() => { });
+      await bulkPage.waitForTimeout(2000);
     } else {
       console.warn("[AdsPower Upload] Không thấy nút xác nhận Upload riêng, file có thể đã tự động tiếp nhận.");
     }
 
     console.log(`[AdsPower Upload] Đã upload thành công file ${fileName} lên Amazon Ads Bulk Operations!`);
   } finally {
-    // Xong tab nào thì xóa/đóng tab đó đi cho nhẹ trình duyệt theo yêu cầu của user
-    console.log("[AdsPower Upload] Đóng tab Bulk Operations sau khi xong việc để giải phóng RAM...");
+    // Xong việc thì dứt khoát thoát tab Bulk Operations ngay để giải phóng RAM và sạch trình duyệt
+    console.log("[AdsPower Upload] Đang dứt khoát thoát tab Bulk Operations sau khi đẩy xong...");
+    try {
+      if (bulkPage && !bulkPage.isClosed()) {
+        await bulkPage.close({ runBeforeUnload: false }).catch(() => {});
+      }
+    } catch {}
     await closeTabSafely(bulkPage, context);
+    console.log("[AdsPower Upload] ✅ Đã thoát sạch tab sau khi đẩy xong!");
   }
 
   const profileId = getAdsPowerProfileId(options.profileId, storeName);

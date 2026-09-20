@@ -66,3 +66,49 @@ test("standardized names for all 6 PPC files are correctly parsed by reportAdTyp
     assert.equal(diffDays, f.expectedDays, `Expected ${f.expectedDays} days for ${f.name}`);
   }
 });
+
+test("downloaded bulk files in ~/Downloads/Bulk file are unique, have distinct hashes, and correct sheets", async () => {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const os = await import("node:os");
+  const crypto = await import("node:crypto");
+  const ExcelJS = await import("exceljs");
+
+  const dir = path.join(os.homedir(), "Downloads", "Bulk file");
+  if (!fs.existsSync(dir)) return;
+
+  const targetFiles = [
+    { name: "HSOSTORE_Bulk_SP_30Days_bulk-a1qiqhomjzfqb8-20260821-20260920-1789865514178.xlsx", expectedType: "SP" },
+    { name: "HSOSTORE_Bulk_SB_30Days_bulk-a1qiqhomjzfqb8-20260821-20260920-1789865299580.xlsx", expectedType: "SB" },
+    { name: "HSOSTORE_Bulk_SP_7Days_bulk-a1qiqhomjzfqb8-20260913-20260920-1789865588103.xlsx", expectedType: "SP" },
+    { name: "HSOSTORE_Bulk_SB_7Days_bulk-a1qiqhomjzfqb8-20260913-20260920-1789865375618.xlsx", expectedType: "SB" },
+  ];
+
+  const hashes = new Set<string>();
+
+  for (const item of targetFiles) {
+    const fullPath = path.join(dir, item.name);
+    if (!fs.existsSync(fullPath)) continue;
+
+    // Hash must be unique
+    const fileBytes = fs.readFileSync(fullPath);
+    const hash = crypto.createHash("sha256").update(fileBytes).digest("hex");
+    assert.ok(!hashes.has(hash), `Duplicate hash found for file: ${item.name}`);
+    hashes.add(hash);
+
+    // Verify sheet names
+    const wb = new ExcelJS.default.stream.xlsx.WorkbookReader(fullPath, {});
+    let foundExpectedSheet = false;
+    for await (const worksheetReader of wb) {
+      const sheetName = (((worksheetReader as any).name as string) || "").toLowerCase();
+      if (item.expectedType === "SP" && (sheetName.includes("sponsored products") || sheetName.includes("sp campaigns"))) {
+        foundExpectedSheet = true;
+      }
+      if (item.expectedType === "SB" && (sheetName.includes("sponsored brands") || sheetName.includes("sb campaigns") || sheetName.includes("hsa campaigns"))) {
+        foundExpectedSheet = true;
+      }
+    }
+    assert.ok(foundExpectedSheet, `File ${item.name} does not contain expected sheet for ${item.expectedType}`);
+  }
+});
+

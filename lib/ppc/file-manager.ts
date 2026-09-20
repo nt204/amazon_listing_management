@@ -203,7 +203,7 @@ export async function listManagedPpcFiles(scope: DataScope): Promise<{
   const syncLogs = await sql<any[]>`
     SELECT id, file_name, records_count, created_at, status
     FROM ppc_sync_logs
-    WHERE team_id = ${scope.teamId}
+    WHERE team_id = ${scope.teamId} OR team_id = 'default'
     ORDER BY created_at DESC
   `;
 
@@ -213,10 +213,11 @@ export async function listManagedPpcFiles(scope: DataScope): Promise<{
 
     const baseName = path.basename(fn);
     const existing = fileMap.get(baseName) || fileMap.get(fn);
+    const count = Number(log.records_count || 0);
 
     if (existing) {
       existing.locations.database = true;
-      existing.locations.dbRecordsCount = Number(log.records_count || 0);
+      existing.locations.dbRecordsCount = Math.max(existing.locations.dbRecordsCount || 0, count);
       existing.syncLogId = log.id;
     } else {
       fileMap.set(baseName, {
