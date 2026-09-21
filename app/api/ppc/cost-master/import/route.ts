@@ -11,6 +11,7 @@ export async function POST(request: Request) {
 
     const formData = await request.formData();
     const file = formData.get("file") || formData.get("excel");
+    const storeId = (formData.get("storeId") as string) || undefined;
 
     if (!(file instanceof File)) {
       throw new ApiError("Vui lòng tải lên một file Excel (.xlsx hoặc .xls).", 400);
@@ -23,7 +24,7 @@ export async function POST(request: Request) {
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    const result = await importCostMasterFromExcel(buffer);
+    const result = await importCostMasterFromExcel(buffer, storeId);
 
     return Response.json({
       success: true,

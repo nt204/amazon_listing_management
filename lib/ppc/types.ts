@@ -15,6 +15,23 @@ export interface PpcStore {
   status: "ACTIVE" | "PAUSED";
 }
 
+export interface PpcStoreSummary extends PpcStore {
+  totalCampaigns: number;
+  activeCampaigns: number;
+  spend: number;
+  sales: number;
+  orders: number;
+  clicks: number;
+  impressions: number;
+  acos: number;
+  roas: number;
+  cpc: number;
+  ctr: number;
+  cvr: number;
+  spendShare: number;
+  salesShare: number;
+}
+
 export interface PpcSearchTermRow {
   id?: string;
   storeId?: string;
@@ -397,6 +414,7 @@ export interface PpcVelocityComparison {
 
 export interface PpcAnalyticsData {
   stores: PpcStore[];
+  storeSummaries?: PpcStoreSummary[];
   summary: PpcSummaryMetrics;
   velocity?: PpcVelocityComparison;
   skuPerformance: PpcSkuPerformance[];

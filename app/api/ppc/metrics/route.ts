@@ -64,6 +64,7 @@ function projectMetrics(data: MetricsData, section: MetricsSection) {
   }
   return {
     stores: data.stores,
+    storeSummaries: data.storeSummaries || [],
     campaignPerformance: section === "campaigns" ? data.campaignPerformance : [],
     adGroups: section === "ad_groups" ? data.adGroups : [],
     targets: section === "targets" ? data.targets : [],

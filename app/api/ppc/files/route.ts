@@ -1,18 +1,68 @@
 import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
-import { listManagedPpcFiles, deleteManagedPpcFile } from "@/lib/ppc/file-manager";
+import {
+  listManagedPpcFiles,
+  deleteManagedPpcFile,
+  organizeAllLocalBulkFiles,
+  LOCAL_BULK_DIR,
+} from "@/lib/ppc/file-manager";
 
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
     const scope = dataScope(authorize(request, "read"));
+    const url = new URL(request.url);
+    const storeFilter = url.searchParams.get("storeName")?.trim().toUpperCase();
+    const dateFilter = url.searchParams.get("date")?.trim();
+    const adTypeFilter = url.searchParams.get("adType")?.trim().toUpperCase();
+
     const data = await listManagedPpcFiles(scope);
+
+    let files = data.files;
+    if (storeFilter && storeFilter !== "ALL") {
+      files = files.filter((f) => f.storeName.toUpperCase() === storeFilter);
+    }
+    if (dateFilter) {
+      files = files.filter((f) => f.reportDate === dateFilter);
+    }
+    if (adTypeFilter && (adTypeFilter === "SP" || adTypeFilter === "SB")) {
+      files = files.filter((f) => f.adType === adTypeFilter);
+    }
+
     return Response.json({
       success: true,
-      data,
+      data: {
+        ...data,
+        files,
+        localBulkDir: LOCAL_BULK_DIR,
+      },
     });
   } catch (error) {
     return routeErrorResponse(error, "Lỗi khi lấy danh sách file báo cáo PPC.", 500);
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const scope = dataScope(authorize(request, "write"));
+    const body = await request.json().catch(() => ({}));
+    const action = body.action || "organize";
+
+    if (action === "organize") {
+      const result = organizeAllLocalBulkFiles();
+      const data = await listManagedPpcFiles(scope);
+      return Response.json({
+        success: true,
+        message: `Đã tổ chức lại thư mục báo cáo (${result.movedCount} file được phân loại).`,
+        movedCount: result.movedCount,
+        files: result.files,
+        data,
+      });
+    }
+
+    throw new ApiError(`Hành động '${action}' không được hỗ trợ.`, 400);
+  } catch (error) {
+    return routeErrorResponse(error, "Lỗi khi xử lý thao tác file PPC.", 500);
   }
 }
 
@@ -48,3 +98,4 @@ export async function DELETE(request: Request) {
     return routeErrorResponse(error, "Lỗi khi xóa file PPC.", 500);
   }
 }
+

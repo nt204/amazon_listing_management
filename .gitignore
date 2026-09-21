@@ -2,6 +2,8 @@ node_modules/
 .next/
 .env*
 !.env.example
+mac-crawler/config.env
+mac-crawler/node_modules/
 data/
 *.tsbuildinfo
 npm-debug.log*

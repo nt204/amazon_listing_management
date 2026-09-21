@@ -14,6 +14,13 @@ import {
   Info,
   DownloadSimple,
   UploadSimple,
+  Storefront,
+  Trash,
+  Sparkle,
+  Lightning,
+  FloppyDisk,
+  Copy,
+  Gear,
 } from "@phosphor-icons/react";
 import type {
   ProductCostMaster,
@@ -21,6 +28,7 @@ import type {
   BulkExport,
 } from "@/lib/ppc/sku-architecture-types";
 import { getSkuPrefixesForProductType } from "@/lib/ppc/sku-architecture-types";
+import { PpcStoreManagerModal } from "./ppc-store-manager-modal";
 
 const parseInputNumber = (val: string | number): number => {
   if (val === undefined || val === null) return 0;
@@ -261,16 +269,16 @@ export function PpcSettingsTab({
               <thead className="bg-slate-50/90 text-slate-600 border-b border-slate-200 font-bold">
                 <tr>
                   <th className="py-3 px-3.5">Product Type</th>
+                  <th className="py-3 px-3 text-center">SKU Prefix</th>
                   <th className="py-3 px-3 text-right">Base Cost</th>
-                  <th className="py-3 px-3 text-right">Default Amazon Fee</th>
                   <th className="py-3 px-3 text-right">Default Price</th>
                   <th className="py-3 px-3 text-right">Profit Before Ads</th>
                   <th className="py-3 px-3 text-right">Break-even ACoS</th>
                   <th className="py-3 px-3 text-right">Min Bid</th>
                   <th className="py-3 px-3 text-right">Max Bid</th>
-                  <th className="py-3 px-2.5 text-center">SKU Sử Dụng</th>
-                  <th className="py-3 px-2.5 text-center">Phiên bản</th>
-                  <th className="py-3 px-3 text-center">Thao tác</th>
+                  <th className="py-3 px-2.5 text-center">SKUs</th>
+                  <th className="py-3 px-2.5 text-center">Version</th>
+                  <th className="py-3 px-3 text-center">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -292,23 +300,24 @@ export function PpcSettingsTab({
                         <div className="font-bold text-slate-900 group-hover:text-indigo-600 transition">
                           {phoi.productType}
                         </div>
-                        {getSkuPrefixesForProductType(phoi.productType).length > 0 && (
-                          <div className="mt-0.5 font-mono text-[10px] font-semibold text-slate-400">
-                            {getSkuPrefixesForProductType(phoi.productType).join(" · ")}
-                          </div>
+                      </td>
+                      <td className="py-3 px-3 text-center">
+                        {phoi.skuPrefix ? (
+                          <span className="inline-block px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-mono font-bold text-[11px] border border-indigo-200 tracking-widest">
+                            {phoi.skuPrefix}
+                          </span>
+                        ) : (
+                          <span className="text-slate-300 text-[11px]">—</span>
                         )}
                       </td>
                       <td className="py-3 px-3 text-right font-mono text-slate-700 font-medium">
                         ${phoi.baseCost.toFixed(2)}
                       </td>
-                      <td className="py-3 px-3 text-right font-mono text-slate-700 font-medium">
-                        ${phoi.defaultAmazonFee.toFixed(2)}
-                      </td>
                       <td className="py-3 px-3 text-right font-mono font-bold text-slate-900">
                         {phoi.defaultPrice > 0 ? `$${phoi.defaultPrice.toFixed(2)}` : "-"}
                       </td>
                       <td className="py-3 px-3 text-right font-mono font-bold text-emerald-700">
-                        {phoi.defaultPrice > 0 ? `$${profitBeforeAds.toFixed(2)}` : "-"}
+                        {profitBeforeAds > 0 ? `$${profitBeforeAds.toFixed(2)}` : "-"}
                       </td>
                       <td className="py-3 px-3 text-right">
                         <span className="inline-block px-2.5 py-0.5 rounded text-xs font-black bg-amber-50 text-amber-800 border border-amber-200">
@@ -772,7 +781,11 @@ export function PpcSettingsTab({
  */
 export function PpcCostMasterStandalone() {
   const [costMasters, setCostMasters] = useState<ProductCostMaster[]>([]);
+  const [stores, setStores] = useState<Array<{ id: string; name: string; marketplace?: string }>>([]);
+  const [selectedStoreId, setSelectedStoreId] = useState<string>("");
   const [loading, setLoading] = useState(true);
+
+  // Drawer Edit / Add state
   const [isPhoiDrawerOpen, setIsPhoiDrawerOpen] = useState(false);
   const [editingPhoi, setEditingPhoi] = useState<ProductCostMaster | null>(null);
   const [formProductType, setFormProductType] = useState("");
@@ -790,13 +803,43 @@ export function PpcCostMasterStandalone() {
   const [searchQuery, setSearchQuery] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const loadCostMasters = async () => {
+  // Convenient Fast Entry Inline State
+  const [isFastEntryOpen, setIsFastEntryOpen] = useState(false);
+  const [fastProductType, setFastProductType] = useState("");
+  const [fastSkuPrefix, setFastSkuPrefix] = useState("");
+  const [fastBaseCost, setFastBaseCost] = useState("");
+  const [fastFee, setFastFee] = useState("");
+  const [fastPrice, setFastPrice] = useState("");
+  const [fastTaxRate, setFastTaxRate] = useState("");
+  const [fastNotes, setFastNotes] = useState("");
+  const [isSavingFast, setIsSavingFast] = useState(false);
+
+  // Store Manager Modal
+  const [isStoreManagerOpen, setIsStoreManagerOpen] = useState(false);
+  const [isCloning, setIsCloning] = useState(false);
+  const [deletingPhoiId, setDeletingPhoiId] = useState<string | null>(null);
+
+  const loadCostMasters = async (storeId?: string) => {
     try {
       setLoading(true);
-      const res = await fetch("/api/ppc/cost-master", { cache: "no-store" });
+      const targetStore = storeId !== undefined ? storeId : selectedStoreId;
+      const url = targetStore
+        ? `/api/ppc/cost-master?storeId=${encodeURIComponent(targetStore)}`
+        : "/api/ppc/cost-master";
+      const res = await fetch(url, { cache: "no-store" });
       if (res.ok) {
         const d = await res.json();
-        if (d?.data) setCostMasters(d.data);
+        if (d?.data) {
+          setCostMasters(d.data);
+          // Tự động mở khung nhập nhanh nếu store này chưa có dòng phôi nào
+          if (d.data.length === 0) {
+            setIsFastEntryOpen(true);
+          }
+        }
+        if (d?.stores) setStores(d.stores);
+        if (d?.activeStoreId && (!selectedStoreId || storeId !== undefined)) {
+          setSelectedStoreId(d.activeStoreId);
+        }
       }
     } catch (e) {
       console.error(e);
@@ -808,6 +851,11 @@ export function PpcCostMasterStandalone() {
   useEffect(() => {
     void loadCostMasters();
   }, []);
+
+  const handleStoreChange = (newStoreId: string) => {
+    setSelectedStoreId(newStoreId);
+    void loadCostMasters(newStoreId);
+  };
 
   // Handle ESC key to close drawer
   useEffect(() => {
@@ -859,6 +907,7 @@ export function PpcCostMasterStandalone() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          storeId: selectedStoreId || undefined,
           productType: formProductType.trim(),
           baseCost: parseInputNumber(formBaseCost),
           defaultAmazonFee: parseInputNumber(formFee),
@@ -870,7 +919,7 @@ export function PpcCostMasterStandalone() {
         }),
       });
       if (!res.ok) throw new Error("Không thể lưu thông số Phôi.");
-      await loadCostMasters();
+      await loadCostMasters(selectedStoreId);
       setIsPhoiDrawerOpen(false);
     } catch (err) {
       alert("Lỗi khi lưu thông số Phôi: " + String(err));
@@ -879,8 +928,105 @@ export function PpcCostMasterStandalone() {
     }
   };
 
+  // Tính Break-even ACoS thời gian thực cho Fast Entry
+  const fastP = parseInputNumber(fastPrice);
+  const fastC = parseInputNumber(fastBaseCost);
+  const fastF = parseInputNumber(fastFee);
+  const fastT = (parseInputNumber(fastTaxRate) || 3.0) / 100;
+  const fastProfit = fastP > 0 ? fastP - fastF - fastC - (fastP * fastT) : 0;
+  const fastCalculatedBeAcos = (fastP > 0 && fastProfit > 0)
+    ? Number(((fastProfit / fastP) * 100).toFixed(1))
+    : 0;
+
+  // Lưu nhanh phôi trực tiếp từ inline form
+  const handleFastAddPhoi = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const trimmedType = fastProductType.trim();
+    if (!trimmedType) {
+      alert("Vui lòng nhập tên loại phôi (Ví dụ: Ornament 2D, Tumbler 20oz...)");
+      return;
+    }
+
+    try {
+      setIsSavingFast(true);
+      const res = await fetch("/api/ppc/cost-master", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          storeId: selectedStoreId || undefined,
+          productType: trimmedType,
+          skuPrefix: fastSkuPrefix.trim() || undefined,
+          baseCost: fastC,
+          defaultAmazonFee: fastF,
+          taxRate: fastT,
+          defaultPrice: fastP,
+          breakEvenAcos: fastCalculatedBeAcos,
+          notes: fastNotes.trim() || undefined,
+        }),
+      });
+
+      if (!res.ok) throw new Error("Không thể lưu phôi.");
+      await loadCostMasters(selectedStoreId);
+      // Chỉ xóa tên phôi & sku prefix, giữ lại giá/phí để gõ tiếp phôi kế tiếp nhanh
+      setFastProductType("");
+      setFastSkuPrefix("");
+      setFastNotes("");
+    } catch (err: any) {
+      alert(err.message || "Lỗi khi lưu phôi.");
+    } finally {
+      setIsSavingFast(false);
+    }
+  };
+
+  // Xóa một dòng phôi
+  const handleDeletePhoi = async (phoi: ProductCostMaster) => {
+    if (!window.confirm(`Xác nhận xóa phôi "${phoi.productType}" khỏi store?`)) return;
+
+    try {
+      setDeletingPhoiId(phoi.id);
+      const res = await fetch(`/api/ppc/cost-master?id=${encodeURIComponent(phoi.id)}&storeId=${encodeURIComponent(selectedStoreId)}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Không thể xóa dòng phôi.");
+      await loadCostMasters(selectedStoreId);
+    } catch (err: any) {
+      alert(err.message || "Lỗi khi xóa dòng phôi.");
+    } finally {
+      setDeletingPhoiId(null);
+    }
+  };
+
+  // Sao chép danh mục phôi từ HSOSTORE
+  const handleCloneFromHso = async () => {
+    if (!currentStore) return;
+    const confirmMsg = `Bạn có chắc chắn muốn sao chép toàn bộ danh mục phôi từ HSOSTORE sang store "${currentStore.name}" không?`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      setIsCloning(true);
+      const res = await fetch("/api/ppc/cost-master", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "clone",
+          sourceStore: "HSOSTORE",
+          targetStore: currentStore.name,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Không thể sao chép phôi.");
+      alert(data.message || "Đã sao chép phôi thành công!");
+      await loadCostMasters(selectedStoreId);
+    } catch (err: any) {
+      alert(err.message || "Lỗi khi sao chép phôi.");
+    } finally {
+      setIsCloning(false);
+    }
+  };
+
   const handleExportExcel = () => {
-    window.open("/api/ppc/cost-master?export=excel", "_blank");
+    const q = selectedStoreId ? `?export=excel&storeId=${encodeURIComponent(selectedStoreId)}` : "?export=excel";
+    window.open(`/api/ppc/cost-master${q}`, "_blank");
   };
 
   const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -890,6 +1036,9 @@ export function PpcCostMasterStandalone() {
       setIsImporting(true);
       const formData = new FormData();
       formData.append("file", file);
+      if (selectedStoreId) {
+        formData.append("storeId", selectedStoreId);
+      }
       const res = await fetch("/api/ppc/cost-master/import", {
         method: "POST",
         body: formData,
@@ -897,7 +1046,7 @@ export function PpcCostMasterStandalone() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Lỗi khi import file Excel.");
       alert(data.message || `Đã import thành công ${data.importedCount} loại phôi!`);
-      await loadCostMasters();
+      await loadCostMasters(selectedStoreId);
     } catch (err) {
       alert("Lỗi khi import file Excel: " + String(err));
     } finally {
@@ -905,6 +1054,10 @@ export function PpcCostMasterStandalone() {
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
+
+  const currentStore = useMemo(() => {
+    return stores.find((s) => s.id === selectedStoreId) || stores[0] || null;
+  }, [stores, selectedStoreId]);
 
   const filteredMasters = useMemo(() => {
     if (!searchQuery.trim()) return costMasters;
@@ -915,20 +1068,53 @@ export function PpcCostMasterStandalone() {
   return (
     <div className="space-y-5">
       {/* Header Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
         <div className="flex items-center gap-3.5">
           <div className="p-2.5 rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-100 shadow-2xs">
             <Tag size={22} weight="duotone" />
           </div>
           <div>
-            <h2 className="text-base font-black text-slate-900 tracking-tight">QUẢN LÝ PHÔI (COST MASTER)</h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Quản lý giá vốn gốc, phí sàn Amazon, thuế, giá bán và ACoS hòa vốn. Cho phép xuất file Excel và import cập nhật hàng loạt.
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <h2 className="text-base font-black text-slate-900 tracking-tight">QUẢN LÝ PHÔI (COST MASTER)</h2>
+              
+              {/* Store Selector Dropdown */}
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-slate-100 hover:bg-slate-200/70 border border-slate-300 text-slate-800 text-xs font-bold transition shadow-2xs">
+                <Storefront size={15} weight="duotone" className="text-indigo-600 shrink-0" />
+                <span className="text-slate-500 font-medium">Store:</span>
+                <select
+                  value={selectedStoreId}
+                  onChange={(e) => handleStoreChange(e.target.value)}
+                  className="bg-transparent font-bold text-indigo-900 border-none outline-none cursor-pointer text-xs"
+                >
+                  {stores.length === 0 && (
+                    <option value="">Đang tải store...</option>
+                  )}
+                  {stores.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.marketplace || "US"})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Nút Quản Lý Store */}
+              <button
+                type="button"
+                onClick={() => setIsStoreManagerOpen(true)}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-bold transition shadow-2xs cursor-pointer"
+                title="Quản lý thêm, sửa, xóa danh sách store"
+              >
+                <Gear size={13} weight="bold" className="text-slate-500" />
+                <span>Quản Lý Store</span>
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 mt-1">
+              Quản lý giá vốn gốc, phí sàn Amazon, thuế, giá bán và ACoS hòa vốn theo từng store.
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2.5 self-end sm:self-auto">
+        <div className="flex items-center gap-2 self-end lg:self-auto flex-wrap">
           <input
             ref={fileInputRef}
             type="file"
@@ -937,35 +1123,44 @@ export function PpcCostMasterStandalone() {
             className="hidden"
           />
 
+          {/* Tải File Mẫu Excel */}
           <button
             type="button"
             onClick={handleExportExcel}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-bold transition shadow-2xs cursor-pointer"
-            title="Xuất bảng Phôi ra file Excel (.xlsx)"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-bold transition shadow-2xs cursor-pointer"
+            title="Tải file mẫu Excel (.xlsx) chuẩn để điền và import"
           >
             <DownloadSimple size={15} weight="bold" />
-            <span>Xuất Excel</span>
+            <span>Tải Mẫu / Xuất Excel</span>
           </button>
 
+          {/* Import File Excel */}
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={isImporting}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 text-xs font-bold transition shadow-2xs cursor-pointer disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 text-xs font-bold transition shadow-2xs cursor-pointer disabled:opacity-50"
             title="Nhập bảng Phôi từ file Excel (.xlsx)"
           >
             <UploadSimple size={15} weight="bold" />
             <span>{isImporting ? "Đang import..." : "Import Excel"}</span>
           </button>
 
+          {/* Nút bật/tắt Nhập Nhanh */}
           <button
-            onClick={() => handleOpenPhoiDrawer()}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold transition shadow-xs cursor-pointer"
+            type="button"
+            onClick={() => setIsFastEntryOpen((prev) => !prev)}
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition shadow-2xs cursor-pointer ${
+              isFastEntryOpen
+                ? "bg-indigo-50 text-indigo-700 border border-indigo-200"
+                : "bg-indigo-600 hover:bg-indigo-700 text-white"
+            }`}
           >
-            <Plus size={16} weight="bold" />
-            + Thêm phôi mới
+            <Lightning size={15} weight="fill" className={isFastEntryOpen ? "text-indigo-600" : "text-amber-300"} />
+            <span>{isFastEntryOpen ? "Đóng Nhập Nhanh" : "+ Điền Phôi Nhanh"}</span>
           </button>
 
+          {/* Refresh */}
           <button
             onClick={() => void loadCostMasters()}
             disabled={loading}
@@ -976,6 +1171,191 @@ export function PpcCostMasterStandalone() {
           </button>
         </div>
       </div>
+
+      {/* Helper Banner khi Store là Bảng Trắng (Chưa có phôi) */}
+      {!loading && costMasters.length === 0 && (
+        <div className="p-5 rounded-2xl bg-gradient-to-r from-amber-50/80 to-indigo-50/60 border border-amber-200/80 shadow-xs space-y-3">
+          <div className="flex items-start gap-3">
+            <div className="p-2 rounded-xl bg-amber-500 text-white shadow-xs shrink-0">
+              <Sparkle size={20} weight="fill" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-sm font-black text-slate-900">
+                Store "{currentStore?.name || "này"}" hiện là bảng phôi trắng
+              </h3>
+              <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">
+                Hệ thống hỗ trợ 3 cách điền phôi nhanh chóng và thuận tiện nhất để bạn lựa chọn:
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
+            {/* Cách 1: Nhập dòng nhanh */}
+            <div className="p-3.5 rounded-xl bg-white border border-slate-200 shadow-2xs space-y-2">
+              <div className="flex items-center gap-2 font-bold text-xs text-indigo-700">
+                <Lightning size={16} weight="fill" className="text-amber-500" />
+                <span>1. Nhập Dòng Trực Tiếp</span>
+              </div>
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                Gõ tên phôi, giá bán, giá vốn vào form nhập nhanh bên dưới. Hệ thống tự động tính Break-even ACoS ngay khi gõ.
+              </p>
+              <button
+                type="button"
+                onClick={() => setIsFastEntryOpen(true)}
+                className="w-full py-1.5 px-3 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs transition cursor-pointer"
+              >
+                Mở Form Nhập Nhanh
+              </button>
+            </div>
+
+            {/* Cách 2: Tải mẫu Excel & Nhập */}
+            <div className="p-3.5 rounded-xl bg-white border border-slate-200 shadow-2xs space-y-2">
+              <div className="flex items-center gap-2 font-bold text-xs text-sky-700">
+                <FileXls size={16} weight="duotone" className="text-emerald-600" />
+                <span>2. Điền File Excel Mẫu</span>
+              </div>
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                Tải file mẫu định dạng sẵn với 2 dòng ví dụ minh họa, chỉnh sửa trên máy tính rồi upload lên lại.
+              </p>
+              <button
+                type="button"
+                onClick={handleExportExcel}
+                className="w-full py-1.5 px-3 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-700 font-bold text-xs transition cursor-pointer"
+              >
+                Tải File Mẫu (.xlsx)
+              </button>
+            </div>
+
+            {/* Cách 3: Sao chép từ HSOSTORE */}
+            <div className="p-3.5 rounded-xl bg-white border border-slate-200 shadow-2xs space-y-2">
+              <div className="flex items-center gap-2 font-bold text-xs text-purple-700">
+                <Copy size={16} weight="duotone" className="text-purple-600" />
+                <span>3. Sao Chép Từ HSOSTORE</span>
+              </div>
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                Nếu store này bán các sản phẩm tương tự HSOSTORE, sao chép toàn bộ sang chỉ với 1 click để đỡ tốn công gõ lại.
+              </p>
+              <button
+                type="button"
+                onClick={handleCloneFromHso}
+                disabled={isCloning || currentStore?.name === "HSOSTORE"}
+                className="w-full py-1.5 px-3 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold text-xs transition cursor-pointer disabled:opacity-50"
+              >
+                {isCloning ? "Đang sao chép..." : "Sao Chép Phôi HSOSTORE"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Khung Nhập Nhanh Trực Tiếp (Inline Fast Entry Card) */}
+      {isFastEntryOpen && (
+        <form
+          onSubmit={handleFastAddPhoi}
+          className="p-4 rounded-2xl bg-indigo-50/70 border-2 border-indigo-300/80 shadow-xs space-y-3 animate-in fade-in duration-150"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-xs font-black text-indigo-950">
+              <Lightning size={16} weight="fill" className="text-amber-500" />
+              <span>NHẬP PHÔI NHANH • STORE {currentStore?.name || "HSOSTORE"}</span>
+              <span className="text-slate-400 font-normal text-[11px]">(Tự động tính Break-even ACoS real-time)</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsFastEntryOpen(false)}
+              className="p-1 rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer"
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+            {/* Product Type */}
+            <div className="col-span-2 sm:col-span-1">
+              <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                Product Type <span className="text-rose-500">*</span>
+              </label>
+              <input
+                type="text"
+                required
+                autoFocus
+                placeholder="Ornament 2D, Tumbler 20oz..."
+                value={fastProductType}
+                onChange={(e) => setFastProductType(e.target.value)}
+                className="w-full px-3 py-1.5 bg-white border border-slate-300 focus:border-indigo-600 rounded-lg font-bold text-slate-900 text-xs shadow-2xs outline-none"
+              />
+            </div>
+
+            {/* SKU Prefix */}
+            <div>
+              <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1">
+                SKU Prefix
+              </label>
+              <input
+                type="text"
+                placeholder="ORN, TUM, MUG..."
+                value={fastSkuPrefix}
+                onChange={(e) => setFastSkuPrefix(e.target.value.toUpperCase())}
+                className="w-full px-3 py-1.5 bg-white border border-slate-300 focus:border-indigo-600 rounded-lg font-bold text-slate-900 text-xs shadow-2xs outline-none font-mono tracking-widest uppercase"
+              />
+            </div>
+
+            {/* Base Cost */}
+            <div>
+              <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                Base Cost ($)
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="2.00"
+                value={fastBaseCost}
+                onChange={(e) => setFastBaseCost(e.target.value)}
+                className="w-full px-3 py-1.5 bg-white border border-slate-300 focus:border-indigo-600 rounded-lg font-bold text-slate-900 text-xs shadow-2xs outline-none"
+              />
+            </div>
+
+            {/* Default Price */}
+            <div>
+              <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                Default Price ($)
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="24.99"
+                value={fastPrice}
+                onChange={(e) => setFastPrice(e.target.value)}
+                className="w-full px-3 py-1.5 bg-white border border-slate-300 focus:border-indigo-600 rounded-lg font-bold text-slate-900 text-xs shadow-2xs outline-none"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-indigo-200/60 text-xs">
+            {/* Real-time calculated indicators */}
+            <div className="flex items-center gap-3">
+              <span className="text-[11px] text-slate-600">
+                Lãi trước ads: <strong className="text-emerald-700 font-mono">${fastProfit > 0 ? fastProfit.toFixed(2) : "0.00"}</strong>
+              </span>
+              <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 font-black text-xs border border-amber-300 shadow-2xs">
+                Break-even ACoS: {fastCalculatedBeAcos}%
+              </span>
+            </div>
+
+            {/* Submit button */}
+            <button
+              type="submit"
+              disabled={isSavingFast}
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs shadow-xs transition cursor-pointer disabled:opacity-50"
+            >
+              <FloppyDisk size={15} weight="bold" />
+              <span>{isSavingFast ? "Đang lưu..." : "Lưu Dòng Nhanh"}</span>
+            </button>
+          </div>
+        </form>
+      )}
 
       {/* Main Table Card */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-4">
@@ -989,9 +1369,11 @@ export function PpcCostMasterStandalone() {
               className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs outline-none focus:bg-white focus:border-indigo-600"
             />
           </div>
-          <span className="text-xs font-medium text-slate-500">
-            Tổng cộng: <strong className="text-slate-900 font-bold">{filteredMasters.length}</strong> loại phôi
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-medium text-slate-500">
+              Tổng cộng: <strong className="text-slate-900 font-bold">{filteredMasters.length}</strong> loại phôi
+            </span>
+          </div>
         </div>
 
         <div className="overflow-x-auto rounded-xl border border-slate-200">
@@ -1021,7 +1403,7 @@ export function PpcCostMasterStandalone() {
               ) : filteredMasters.length === 0 ? (
                 <tr>
                   <td colSpan={11} className="py-8 text-center text-slate-400">
-                    Chưa có phôi nào được thiết lập.
+                    Chưa có phôi nào được thiết lập cho store này.
                   </td>
                 </tr>
               ) : (
@@ -1032,6 +1414,7 @@ export function PpcCostMasterStandalone() {
                   const breakEvenAcosDisplay = phoi.breakEvenAcos > 0
                     ? `${Math.round(phoi.breakEvenAcos)}%`
                     : (phoi.defaultPrice > 0 ? `${Math.round((profitBeforeAds / phoi.defaultPrice) * 100)}%` : "46%");
+                  const isDeleting = deletingPhoiId === phoi.id;
 
                   return (
                     <tr
@@ -1083,16 +1466,29 @@ export function PpcCostMasterStandalone() {
                         </span>
                       </td>
                       <td className="py-3 px-3 text-center">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleOpenPhoiDrawer(phoi);
-                          }}
-                          className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-indigo-600 transition cursor-pointer"
-                          title="Tạo phiên bản mới cho phôi"
-                        >
-                          <PencilSimple size={15} />
-                        </button>
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenPhoiDrawer(phoi);
+                            }}
+                            className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-indigo-600 transition cursor-pointer"
+                            title="Tạo phiên bản mới cho phôi"
+                          >
+                            <PencilSimple size={15} />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleDeletePhoi(phoi);
+                            }}
+                            disabled={isDeleting}
+                            className="p-1.5 hover:bg-rose-50 rounded-lg text-slate-400 hover:text-rose-600 transition cursor-pointer"
+                            title="Xóa phôi này"
+                          >
+                            <Trash size={15} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1102,6 +1498,20 @@ export function PpcCostMasterStandalone() {
           </table>
         </div>
       </div>
+
+      {/* Modal Quản Lý Danh Sách Store */}
+      <PpcStoreManagerModal
+        isOpen={isStoreManagerOpen}
+        onClose={() => setIsStoreManagerOpen(false)}
+        onStoreSelected={(name) => {
+          const matched = stores.find((s) => s.name === name);
+          if (matched) handleStoreChange(matched.id);
+        }}
+        onNavigateToCostMaster={(name) => {
+          const matched = stores.find((s) => s.name === name);
+          if (matched) handleStoreChange(matched.id);
+        }}
+      />
 
       {/* Drawer: Add / Edit Phôi */}
       {isPhoiDrawerOpen && (
@@ -1123,8 +1533,10 @@ export function PpcCostMasterStandalone() {
                     <h3 className="text-sm font-black text-slate-900 uppercase">
                       {editingPhoi ? `Tạo Phiên Bản Mới: ${editingPhoi.productType}` : "Thêm Phôi Mới"}
                     </h3>
-                    <p className="text-xs text-slate-400">
-                      {editingPhoi ? `Phiên bản hiện tại: v${editingPhoi.version}.0` : "Tạo loại phôi mới cho hệ thống"}
+                    <p className="text-xs text-slate-500">
+                      {editingPhoi
+                        ? `Phiên bản v${editingPhoi.version}.0 • Store: ${currentStore?.name || "HSOSTORE"}`
+                        : `Áp dụng cho store: ${currentStore?.name || "HSOSTORE"}`}
                     </p>
                   </div>
                 </div>

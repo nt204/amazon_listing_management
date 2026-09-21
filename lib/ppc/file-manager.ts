@@ -18,8 +18,11 @@ export interface ManagedPpcFile {
   fileName: string;
   storeName: string;
   fileType: "BULK_SP" | "BULK_SB" | "SEARCH_TERM_SP" | "SEARCH_TERM_SB" | "BULK_EXPORT" | "OTHER";
+  adType?: "SP" | "SB";
   days?: number;
   reportDate?: string;
+  relativePath?: string; // e.g. "2026-09-21/HSOSTORE/SP/fileName.xlsx"
+  folderPath?: string;   // e.g. "2026-09-21/HSOSTORE/SP"
   sizeBytes: number;
   lastModified: string;
   locations: {
@@ -41,7 +44,7 @@ export interface PpcStorageStats {
   dbSyncedFilesCount: number;
 }
 
-const LOCAL_BULK_DIR = path.join(os.homedir(), "Downloads", "Bulk file");
+export const LOCAL_BULK_DIR = path.join(os.homedir(), "Downloads", "Bulk file");
 
 function getR2Client() {
   const accountId = process.env.R2_ACCOUNT_ID;
@@ -63,7 +66,7 @@ function getR2Client() {
   return { client, bucket, prefix };
 }
 
-function detectFileType(fileName: string): ManagedPpcFile["fileType"] {
+export function detectFileType(fileName: string): ManagedPpcFile["fileType"] {
   const lower = fileName.toLowerCase();
   const isSearchTerm = lower.includes("search") || lower.includes("term") || lower.includes("str");
   const isSb = lower.includes("sb") || lower.includes("brand");
@@ -75,13 +78,247 @@ function detectFileType(fileName: string): ManagedPpcFile["fileType"] {
   return "BULK_SP";
 }
 
-function detectDays(fileName: string): number | undefined {
+export function detectDays(fileName: string): number | undefined {
   const m = fileName.match(/(\d+)\s*(?:day|days|ngày|d\b)/i);
   if (m) return parseInt(m[1], 10);
   if (/7d/i.test(fileName)) return 7;
   if (/14d/i.test(fileName)) return 14;
   if (/30d/i.test(fileName)) return 30;
   return undefined;
+}
+
+/**
+ * Trích xuất ngày, store, loại quảng cáo (SP/SB) và loại file từ tên file hoặc đường dẫn phân cấp.
+ */
+export function parseReportMetadata(
+  fileName: string,
+  relativeOrFullPath?: string,
+): {
+  reportDate: string;
+  storeName: string;
+  adType: "SP" | "SB";
+  fileType: ManagedPpcFile["fileType"];
+  days?: number;
+} {
+  const fileType = detectFileType(fileName);
+  const days = detectDays(fileName);
+  const adType: "SP" | "SB" =
+    fileType === "BULK_SB" || fileType === "SEARCH_TERM_SB" || /_SB_|\bSB\b/i.test(fileName)
+      ? "SB"
+      : "SP";
+
+  // 1. Nhận diện store từ đường dẫn hoặc tên file
+  let storeName = "HSOSTORE";
+  if (relativeOrFullPath) {
+    const parts = relativeOrFullPath.split(path.sep);
+    // Nếu có dạng 2026-09-21/StoreName/...
+    for (const p of parts) {
+      if (/warmstorey/i.test(p)) {
+        storeName = "Warmstorey";
+        break;
+      }
+      if (/hsostore/i.test(p)) {
+        storeName = "HSOSTORE";
+        break;
+      }
+    }
+  }
+  if (fileName.toUpperCase().includes("WARMSTOREY")) {
+    storeName = "Warmstorey";
+  } else if (fileName.toUpperCase().includes("HSOSTORE")) {
+    storeName = "HSOSTORE";
+  }
+
+  // 2. Nhận diện ngày báo cáo (Ưu tiên: thư mục YYYY-MM-DD -> Range cuối trong tên file -> Ngày đơn lẻ trong tên file -> Hôm nay)
+  let reportDate = "";
+  if (relativeOrFullPath) {
+    const parts = relativeOrFullPath.split(path.sep);
+    for (const p of parts) {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(p)) {
+        reportDate = p;
+        break;
+      }
+    }
+  }
+
+  if (!reportDate) {
+    // Tìm range YYYYMMDD-YYYYMMDD (ví dụ: 20260822-20260921)
+    const rangeMatch = fileName.match(/(\d{4})(\d{2})(\d{2})-(\d{4})(\d{2})(\d{2})/);
+    if (rangeMatch) {
+      reportDate = `${rangeMatch[4]}-${rangeMatch[5]}-${rangeMatch[6]}`;
+    } else {
+      // Tìm ngày đơn lẻ YYYYMMDD (ví dụ: 20260921)
+      const singleMatch = fileName.match(/(?:20\d{2})(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])/);
+      if (singleMatch) {
+        const s = singleMatch[0];
+        reportDate = `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+      }
+    }
+  }
+
+  if (!reportDate) {
+    reportDate = new Date().toISOString().split("T")[0];
+  }
+
+  return {
+    reportDate,
+    storeName: canonicalStoreName(storeName),
+    adType,
+    fileType,
+    days,
+  };
+}
+
+/**
+ * Trả về đường dẫn thư mục phân cấp chuẩn: [baseDir]/[YYYY-MM-DD]/[StoreName]/[SP | SB]
+ */
+export function getStructuredReportDir(
+  dateStr: string,
+  storeName: string,
+  adType: "SP" | "SB",
+  baseDir = LOCAL_BULK_DIR,
+): string {
+  const safeDate = dateStr.replace(/[^0-9-]/g, "") || new Date().toISOString().split("T")[0];
+  const safeStore = canonicalStoreName(storeName);
+  const safeType = adType === "SB" ? "SB" : "SP";
+  return path.join(baseDir, safeDate, safeStore, safeType);
+}
+
+/**
+ * Tổ chức/di chuyển một file báo cáo vào đúng cấu trúc phân cấp:
+ * ~/Downloads/Bulk file/[Ngày]/[Store]/[SP|SB]/[fileName]
+ */
+export function organizePpcReportFile(
+  currentPath: string,
+  options: { storeName?: string; dateStr?: string; adType?: "SP" | "SB" } = {},
+): string {
+  if (!fs.existsSync(currentPath)) {
+    return currentPath;
+  }
+  const fileName = path.basename(currentPath);
+  const meta = parseReportMetadata(fileName, currentPath);
+
+  const dateStr = options.dateStr || meta.reportDate;
+  const storeName = options.storeName ? canonicalStoreName(options.storeName) : meta.storeName;
+  const adType = options.adType || meta.adType;
+
+  const targetDir = getStructuredReportDir(dateStr, storeName, adType);
+  if (!fs.existsSync(targetDir)) {
+    fs.mkdirSync(targetDir, { recursive: true });
+  }
+
+  const targetPath = path.join(targetDir, fileName);
+  if (path.resolve(currentPath) === path.resolve(targetPath)) {
+    return targetPath;
+  }
+
+  if (fs.existsSync(targetPath)) {
+    try {
+      fs.unlinkSync(targetPath);
+    } catch {}
+  }
+
+  fs.renameSync(currentPath, targetPath);
+  return targetPath;
+}
+
+/**
+ * Quét toàn bộ thư mục Bulk file và tự động gom các file chưa phân cấp vào đúng vị trí:
+ * [Ngày YYYY-MM-DD]/[Store]/[SP|SB]/[fileName]
+ */
+export function organizeAllLocalBulkFiles(baseDir = LOCAL_BULK_DIR): {
+  movedCount: number;
+  files: { oldPath: string; newPath: string }[];
+} {
+  if (!fs.existsSync(baseDir)) {
+    return { movedCount: 0, files: [] };
+  }
+
+  const allFiles = findFilesRecursively(baseDir, 5);
+  const movedFiles: { oldPath: string; newPath: string }[] = [];
+
+  for (const filePath of allFiles) {
+    const fileName = path.basename(filePath);
+    if (fileName.startsWith(".") || fileName.endsWith(".crdownload")) continue;
+
+    const relPath = path.relative(baseDir, filePath);
+    const parts = relPath.split(path.sep);
+
+    // Kiểm tra xem file đã nằm đúng cấu trúc: [YYYY-MM-DD]/[Store]/[SP|SB]/fileName chưa
+    const isAlreadyOrganized =
+      parts.length === 4 &&
+      /^\d{4}-\d{2}-\d{2}$/.test(parts[0]) &&
+      Boolean(parts[1]) &&
+      (parts[2] === "SP" || parts[2] === "SB");
+
+    if (!isAlreadyOrganized) {
+      const meta = parseReportMetadata(fileName, relPath);
+      const targetDir = getStructuredReportDir(meta.reportDate, meta.storeName, meta.adType, baseDir);
+      const targetPath = path.join(targetDir, fileName);
+
+      if (path.resolve(filePath) !== path.resolve(targetPath)) {
+        if (!fs.existsSync(targetDir)) {
+          fs.mkdirSync(targetDir, { recursive: true });
+        }
+        if (fs.existsSync(targetPath)) {
+          try { fs.unlinkSync(targetPath); } catch {}
+        }
+        fs.renameSync(filePath, targetPath);
+        cleanEmptyParentDirs(path.dirname(filePath), baseDir);
+        movedFiles.push({ oldPath: filePath, newPath: targetPath });
+      }
+    }
+  }
+
+  return {
+    movedCount: movedFiles.length,
+    files: movedFiles,
+  };
+}
+
+/**
+ * Đệ quy tìm kiếm tất cả các file trong thư mục tối đa maxDepth tầng
+ */
+export function findFilesRecursively(dir: string, maxDepth = 5, currentDepth = 0): string[] {
+  if (!fs.existsSync(dir) || currentDepth > maxDepth) return [];
+  const results: string[] = [];
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name.startsWith(".") || entry.name.endsWith(".crdownload")) continue;
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        results.push(...findFilesRecursively(fullPath, maxDepth, currentDepth + 1));
+      } else if (entry.isFile()) {
+        results.push(fullPath);
+      }
+    }
+  } catch (e) {
+    console.warn("[File Manager] Lỗi đọc thư mục:", dir, e);
+  }
+  return results;
+}
+
+/**
+ * Dọn dẹp các thư mục rỗng cha sau khi di chuyển hoặc xóa file
+ */
+export function cleanEmptyParentDirs(dir: string, stopDir: string) {
+  try {
+    let curr = path.resolve(dir);
+    const stop = path.resolve(stopDir);
+    while (curr !== stop && curr.startsWith(stop)) {
+      const items = fs.readdirSync(curr);
+      if (items.length === 0 || (items.length === 1 && items[0] === ".DS_Store")) {
+        if (items.includes(".DS_Store")) {
+          try { fs.unlinkSync(path.join(curr, ".DS_Store")); } catch {}
+        }
+        fs.rmdirSync(curr);
+        curr = path.dirname(curr);
+      } else {
+        break;
+      }
+    }
+  } catch {}
 }
 
 export async function listManagedPpcFiles(scope: DataScope): Promise<{
@@ -96,13 +333,11 @@ export async function listManagedPpcFiles(scope: DataScope): Promise<{
   let r2FilesCount = 0;
   let r2TotalBytes = 0;
 
-  // 1. Quét file cục bộ trên máy chủ (Server local)
+  // 1. Quét file cục bộ trên máy chủ (Server local) - Quét đệ quy đa tầng
   if (fs.existsSync(LOCAL_BULK_DIR)) {
     try {
-      const entries = fs.readdirSync(LOCAL_BULK_DIR);
-      for (const entry of entries) {
-        if (entry.startsWith(".") || entry.endsWith(".crdownload")) continue;
-        const fullPath = path.join(LOCAL_BULK_DIR, entry);
+      const allFiles = findFilesRecursively(LOCAL_BULK_DIR, 5);
+      for (const fullPath of allFiles) {
         try {
           const stat = fs.statSync(fullPath);
           if (!stat.isFile()) continue;
@@ -110,18 +345,21 @@ export async function listManagedPpcFiles(scope: DataScope): Promise<{
           serverFilesCount++;
           serverTotalBytes += stat.size;
 
-          const storeName = entry.toUpperCase().includes("WARMSTOREY")
-            ? "Warmstorey"
-            : entry.toUpperCase().includes("HSOSTORE")
-              ? "HSOSTORE"
-              : "HSOSTORE";
+          const fileName = path.basename(fullPath);
+          const relativePath = path.relative(LOCAL_BULK_DIR, fullPath);
+          const folderPath = path.dirname(relativePath) === "." ? "" : path.dirname(relativePath);
+          const meta = parseReportMetadata(fileName, relativePath);
 
-          fileMap.set(entry, {
-            id: `server-${entry}`,
-            fileName: entry,
-            storeName,
-            fileType: detectFileType(entry),
-            days: detectDays(entry),
+          fileMap.set(fileName, {
+            id: `server-${fileName}`,
+            fileName,
+            storeName: meta.storeName,
+            fileType: meta.fileType,
+            adType: meta.adType,
+            days: meta.days,
+            reportDate: meta.reportDate,
+            relativePath,
+            folderPath,
             sizeBytes: stat.size,
             lastModified: stat.mtime.toISOString(),
             locations: {
@@ -131,7 +369,7 @@ export async function listManagedPpcFiles(scope: DataScope): Promise<{
               database: false,
             },
           });
-        } catch { }
+        } catch {}
       }
     } catch (err) {
       console.warn("[File Manager] Lỗi đọc thư mục local:", err);
@@ -279,6 +517,7 @@ export async function deleteManagedPpcFile(
     try {
       fs.unlinkSync(targetServerPath);
       deletedServer = true;
+      cleanEmptyParentDirs(path.dirname(targetServerPath), LOCAL_BULK_DIR);
     } catch (err) {
       console.warn(`[File Manager] Lỗi xóa file server ${targetServerPath}:`, err);
     }

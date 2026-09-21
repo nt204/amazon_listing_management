@@ -13,8 +13,12 @@ import {
   Warning,
   FileXls,
   FileCsv,
-  FileText,
   CheckCircle,
+  Copy,
+  Check,
+  Storefront,
+  CalendarBlank,
+  Lightning,
 } from "@phosphor-icons/react";
 import type { ManagedPpcFile, PpcStorageStats } from "@/lib/ppc/file-manager";
 
@@ -35,14 +39,20 @@ function formatBytes(bytes: number): string {
 export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileManagerModalProps) {
   const [files, setFiles] = useState<ManagedPpcFile[]>([]);
   const [stats, setStats] = useState<PpcStorageStats | null>(null);
+  const [localBulkDir, setLocalBulkDir] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [organizing, setOrganizing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterLocation, setFilterLocation] = useState<"ALL" | "R2" | "SERVER" | "DB">("ALL");
+  const [filterStore, setFilterStore] = useState<string>("ALL");
+  const [filterDate, setFilterDate] = useState<string>("ALL");
+  const [filterAdType, setFilterAdType] = useState<"ALL" | "SP" | "SB">("ALL");
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
   const [purgeDb, setPurgeDb] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const loadFiles = useCallback(async () => {
     try {
@@ -54,6 +64,9 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
       if (json?.data) {
         setFiles(json.data.files || []);
         setStats(json.data.stats || null);
+        if (json.data.localBulkDir) {
+          setLocalBulkDir(json.data.localBulkDir);
+        }
       }
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : "Lỗi khi tải danh sách file.");
@@ -71,20 +84,42 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
     }
   }, [isOpen, loadFiles]);
 
+  // Danh sách các Store có trong danh sách file
+  const availableStores = useMemo(() => {
+    const s = new Set<string>();
+    files.forEach((f) => {
+      if (f.storeName) s.add(f.storeName);
+    });
+    return Array.from(s).sort();
+  }, [files]);
+
+  // Danh sách các Ngày có trong danh sách file (sắp xếp mới nhất trước)
+  const availableDates = useMemo(() => {
+    const d = new Set<string>();
+    files.forEach((f) => {
+      if (f.reportDate) d.add(f.reportDate);
+    });
+    return Array.from(d).sort((a, b) => b.localeCompare(a));
+  }, [files]);
+
   const filteredFiles = useMemo(() => {
     return files.filter((f) => {
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const matchesName = f.fileName.toLowerCase().includes(q);
         const matchesStore = f.storeName.toLowerCase().includes(q);
-        if (!matchesName && !matchesStore) return false;
+        const matchesFolder = (f.folderPath || "").toLowerCase().includes(q);
+        if (!matchesName && !matchesStore && !matchesFolder) return false;
       }
+      if (filterStore !== "ALL" && f.storeName.toUpperCase() !== filterStore.toUpperCase()) return false;
+      if (filterDate !== "ALL" && f.reportDate !== filterDate) return false;
+      if (filterAdType !== "ALL" && f.adType !== filterAdType) return false;
       if (filterLocation === "R2" && !f.locations.r2) return false;
       if (filterLocation === "SERVER" && !f.locations.server) return false;
       if (filterLocation === "DB" && !f.locations.database) return false;
       return true;
     });
-  }, [files, searchQuery, filterLocation]);
+  }, [files, searchQuery, filterStore, filterDate, filterAdType, filterLocation]);
 
   const toggleSelectAll = () => {
     if (selectedFileIds.size === filteredFiles.length) {
@@ -101,6 +136,40 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
       else next.add(id);
       return next;
     });
+  };
+
+  const handleCopyPath = (file: ManagedPpcFile) => {
+    const targetPath = file.locations.serverPath || (localBulkDir ? `${localBulkDir}/${file.relativePath || file.fileName}` : file.fileName);
+    navigator.clipboard.writeText(targetPath);
+    setCopiedId(file.id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const handleOrganizeFiles = async () => {
+    try {
+      setOrganizing(true);
+      setErrorMsg(null);
+      setSuccessMsg(null);
+
+      const res = await fetch("/api/ppc/files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "organize" }),
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || "Không thể sắp xếp thư mục.");
+      }
+
+      const json = await res.json();
+      setSuccessMsg(json.message || "Đã sắp xếp file vào thư mục [Ngày]/[Store]/[SP|SB]/ thành công!");
+      await loadFiles();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Lỗi khi sắp xếp thư mục.");
+    } finally {
+      setOrganizing(false);
+    }
   };
 
   const handleDelete = async (targetFiles: ManagedPpcFile[]) => {
@@ -153,7 +222,7 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
-      <div className="relative w-full max-w-5xl rounded-2xl bg-white shadow-2xl border border-slate-200 flex flex-col max-h-[90vh] overflow-hidden">
+      <div className="relative w-full max-w-6xl rounded-2xl bg-white shadow-2xl border border-slate-200 flex flex-col max-h-[92vh] overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/50">
           <div className="flex items-center gap-3">
@@ -161,9 +230,14 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
               <FolderSimple size={24} weight="duotone" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-slate-900">Quản Lý File Báo Cáo PPC</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold text-slate-900">Quản Lý File Báo Cáo PPC</h2>
+                <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-bold">
+                  Phân Cấp: [Ngày] / [Store] / [SP | SB]
+                </span>
+              </div>
               <p className="text-xs text-slate-500">
-                Xóa triệt để file trên Server cục bộ, Cloudflare R2 và làm sạch Database snapshots
+                Tự động tổ chức theo ngày, store và loại quảng cáo để dễ dàng tìm kiếm, kiểm tra và dọn dẹp
               </p>
             </div>
           </div>
@@ -221,62 +295,132 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
           </div>
         )}
 
-        {/* Toolbar & Filters */}
-        <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-3 border-b border-slate-100">
-          <div className="flex items-center gap-2 flex-1 max-w-md">
-            <div className="relative w-full">
+        {/* Filters & Tools Bar */}
+        <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-3 border-b border-slate-100 bg-white">
+          <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[320px]">
+            {/* Search */}
+            <div className="relative min-w-[200px] flex-1">
               <MagnifyingGlass size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
-                placeholder="Tìm tên file hoặc tên Store..."
+                placeholder="Tìm tên file, ngày, store..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full pl-9 pr-3 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
               />
             </div>
+
+            {/* Store Filter */}
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-slate-200 bg-slate-50 text-xs">
+              <Storefront size={14} className="text-slate-400" />
+              <select
+                value={filterStore}
+                onChange={(e) => setFilterStore(e.target.value)}
+                className="bg-transparent text-slate-700 font-semibold focus:outline-hidden text-xs cursor-pointer"
+              >
+                <option value="ALL">Tất cả Store ({availableStores.length})</option>
+                {availableStores.map((st) => (
+                  <option key={st} value={st}>{st}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Date Filter */}
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-slate-200 bg-slate-50 text-xs">
+              <CalendarBlank size={14} className="text-slate-400" />
+              <select
+                value={filterDate}
+                onChange={(e) => setFilterDate(e.target.value)}
+                className="bg-transparent text-slate-700 font-semibold focus:outline-hidden text-xs cursor-pointer"
+              >
+                <option value="ALL">Tất cả Ngày ({availableDates.length})</option>
+                {availableDates.map((dt) => (
+                  <option key={dt} value={dt}>{dt}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Ad Type Filter */}
+            <div className="flex items-center bg-slate-100 p-0.5 rounded-lg text-xs font-semibold text-slate-600">
+              <button
+                type="button"
+                onClick={() => setFilterAdType("ALL")}
+                className={`px-2 py-1 rounded-md transition text-xs ${filterAdType === "ALL" ? "bg-white shadow-2xs text-indigo-700" : "hover:text-slate-900"}`}
+              >
+                Tất cả loại
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterAdType("SP")}
+                className={`px-2 py-1 rounded-md transition text-xs ${filterAdType === "SP" ? "bg-white shadow-2xs text-purple-700" : "hover:text-slate-900"}`}
+              >
+                SP
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterAdType("SB")}
+                className={`px-2 py-1 rounded-md transition text-xs ${filterAdType === "SB" ? "bg-white shadow-2xs text-sky-700" : "hover:text-slate-900"}`}
+              >
+                SB
+              </button>
+            </div>
           </div>
 
-          {/* Location Filter Tabs */}
-          <div className="flex items-center bg-slate-100 p-0.5 rounded-lg text-xs font-semibold text-slate-600">
+          <div className="flex items-center gap-2">
+            {/* Location Tabs */}
+            <div className="flex items-center bg-slate-100 p-0.5 rounded-lg text-xs font-semibold text-slate-600">
+              <button
+                type="button"
+                onClick={() => setFilterLocation("ALL")}
+                className={`px-2.5 py-1 rounded-md transition ${filterLocation === "ALL" ? "bg-white shadow-2xs text-indigo-700" : "hover:text-slate-900"}`}
+              >
+                Tất cả ({files.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterLocation("SERVER")}
+                className={`px-2.5 py-1 rounded-md transition ${filterLocation === "SERVER" ? "bg-white shadow-2xs text-amber-700" : "hover:text-slate-900"}`}
+              >
+                Server
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterLocation("R2")}
+                className={`px-2.5 py-1 rounded-md transition ${filterLocation === "R2" ? "bg-white shadow-2xs text-sky-700" : "hover:text-slate-900"}`}
+              >
+                R2
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterLocation("DB")}
+                className={`px-2.5 py-1 rounded-md transition ${filterLocation === "DB" ? "bg-white shadow-2xs text-indigo-700" : "hover:text-slate-900"}`}
+              >
+                DB
+              </button>
+            </div>
+
+            {/* Organize Button */}
             <button
               type="button"
-              onClick={() => setFilterLocation("ALL")}
-              className={`px-2.5 py-1 rounded-md transition ${filterLocation === "ALL" ? "bg-white shadow-2xs text-indigo-700" : "hover:text-slate-900"}`}
+              onClick={handleOrganizeFiles}
+              disabled={organizing}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold transition disabled:opacity-50"
+              title="Tự động sắp xếp lại các file trong thư mục Downloads/Bulk file theo cấu trúc [Ngày]/[Store]/[SP|SB]/"
             >
-              Tất cả ({files.length})
+              <Lightning size={14} className={organizing ? "animate-spin" : "text-amber-500"} weight="fill" />
+              <span>{organizing ? "Đang sắp xếp..." : "Gom thư mục chuẩn"}</span>
             </button>
+
+            {/* Refresh */}
             <button
               type="button"
-              onClick={() => setFilterLocation("R2")}
-              className={`px-2.5 py-1 rounded-md transition ${filterLocation === "R2" ? "bg-white shadow-2xs text-sky-700" : "hover:text-slate-900"}`}
+              onClick={loadFiles}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-600 transition disabled:opacity-50"
             >
-              Trên R2
-            </button>
-            <button
-              type="button"
-              onClick={() => setFilterLocation("SERVER")}
-              className={`px-2.5 py-1 rounded-md transition ${filterLocation === "SERVER" ? "bg-white shadow-2xs text-amber-700" : "hover:text-slate-900"}`}
-            >
-              Trên Server
-            </button>
-            <button
-              type="button"
-              onClick={() => setFilterLocation("DB")}
-              className={`px-2.5 py-1 rounded-md transition ${filterLocation === "DB" ? "bg-white shadow-2xs text-indigo-700" : "hover:text-slate-900"}`}
-            >
-              Đã nạp DB
+              <ArrowsClockwise size={14} className={loading ? "animate-spin" : ""} />
             </button>
           </div>
-
-          <button
-            type="button"
-            onClick={loadFiles}
-            disabled={loading}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-600 transition disabled:opacity-50"
-          >
-            <ArrowsClockwise size={14} className={loading ? "animate-spin" : ""} />
-            <span>Làm mới</span>
-          </button>
         </div>
 
         {/* Bulk Action Controls */}
@@ -312,15 +456,15 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
           {loading && files.length === 0 ? (
             <div className="p-12 text-center text-slate-400 text-xs">
               <ArrowsClockwise size={28} className="animate-spin mx-auto mb-2 text-indigo-500" />
-              Đang quét các file trên Server và Cloudflare R2...
+              Đang quét các file trong hệ thống phân cấp thư mục...
             </div>
           ) : filteredFiles.length === 0 ? (
             <div className="p-12 text-center text-slate-400 text-xs">
-              Không tìm thấy file nào phù hợp với bộ lọc.
+              Không tìm thấy file nào phù hợp với bộ lọc hiện tại.
             </div>
           ) : (
             <table className="w-full text-left text-xs border-collapse">
-              <thead className="sticky top-0 bg-slate-100/90 backdrop-blur-xs text-slate-600 font-bold border-b border-slate-200 z-10">
+              <thead className="sticky top-0 bg-slate-100/95 backdrop-blur-xs text-slate-600 font-bold border-b border-slate-200 z-10">
                 <tr>
                   <th className="p-3 w-10 text-center">
                     <input
@@ -330,18 +474,21 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
                       className="rounded-sm border-slate-300 text-indigo-600 focus:ring-indigo-500"
                     />
                   </th>
-                  <th className="p-3">Tên File</th>
+                  <th className="p-3">Tên File & Thư Mục Phân Cấp</th>
                   <th className="p-3 w-28">Store</th>
+                  <th className="p-3 w-20">Loại Ad</th>
                   <th className="p-3 w-24">Dung Lượng</th>
-                  <th className="p-3 w-40">Lưu Trữ Tại</th>
-                  <th className="p-3 w-36">Ngày Cập Nhật</th>
-                  <th className="p-3 w-20 text-center">Thao Tác</th>
+                  <th className="p-3 w-36">Lưu Trữ Tại</th>
+                  <th className="p-3 w-32">Ngày Cập Nhật</th>
+                  <th className="p-3 w-24 text-center">Thao Tác</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredFiles.map((file) => {
                   const isSelected = selectedFileIds.has(file.id);
                   const isCsv = file.fileName.toLowerCase().endsWith(".csv");
+                  const isCopied = copiedId === file.id;
+                  const folderDisplay = file.folderPath || (file.reportDate && file.storeName && file.adType ? `${file.reportDate}/${file.storeName}/${file.adType}` : "");
 
                   return (
                     <tr
@@ -357,17 +504,45 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
                         />
                       </td>
                       <td className="p-3 font-medium text-slate-800">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-start gap-2">
                           {isCsv ? (
-                            <FileCsv size={18} className="text-emerald-600 shrink-0" weight="duotone" />
+                            <FileCsv size={18} className="text-emerald-600 shrink-0 mt-0.5" weight="duotone" />
                           ) : (
-                            <FileXls size={18} className="text-green-600 shrink-0" weight="duotone" />
+                            <FileXls size={18} className="text-green-600 shrink-0 mt-0.5" weight="duotone" />
                           )}
-                          <span className="break-all font-mono text-[11px]">{file.fileName}</span>
+                          <div className="min-w-0">
+                            <span className="break-all font-mono text-[11px] font-semibold text-slate-900 block">
+                              {file.fileName}
+                            </span>
+                            {folderDisplay && (
+                              <div className="flex items-center gap-1.5 mt-0.5">
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-600 font-mono text-[10px] font-medium border border-slate-200">
+                                  📁 {folderDisplay}
+                                </span>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </td>
-                      <td className="p-3 text-slate-600 font-semibold">{file.storeName}</td>
-                      <td className="p-3 text-slate-600">{file.sizeBytes > 0 ? formatBytes(file.sizeBytes) : "--"}</td>
+                      <td className="p-3">
+                        <span className="font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded text-[11px]">
+                          {file.storeName}
+                        </span>
+                      </td>
+                      <td className="p-3">
+                        <span
+                          className={`inline-block px-2 py-0.5 rounded text-[10px] font-black uppercase ${
+                            file.adType === "SB"
+                              ? "bg-sky-50 text-sky-700 border border-sky-200"
+                              : "bg-purple-50 text-purple-700 border border-purple-200"
+                          }`}
+                        >
+                          {file.adType || "SP"}
+                        </span>
+                      </td>
+                      <td className="p-3 text-slate-600 font-mono text-[11px]">
+                        {file.sizeBytes > 0 ? formatBytes(file.sizeBytes) : "--"}
+                      </td>
                       <td className="p-3">
                         <div className="flex flex-wrap items-center gap-1.5">
                           {file.locations.r2 && (
@@ -381,7 +556,10 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
                             </span>
                           )}
                           {file.locations.database && (
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-bold" title={`Đã nạp ${file.locations.dbRecordsCount || 0} dòng`}>
+                            <span
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-bold"
+                              title={`Đã nạp ${file.locations.dbRecordsCount || 0} dòng`}
+                            >
                               <Database size={12} weight="bold" /> DB ({file.locations.dbRecordsCount || 0})
                             </span>
                           )}
@@ -391,15 +569,25 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
                         {file.lastModified ? new Date(file.lastModified).toLocaleString("vi-VN") : "--"}
                       </td>
                       <td className="p-3 text-center">
-                        <button
-                          type="button"
-                          onClick={() => void handleDelete([file])}
-                          disabled={deleting}
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
-                          title="Xóa triệt để file này"
-                        >
-                          <Trash size={15} />
-                        </button>
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleCopyPath(file)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition"
+                            title="Sao chép đường dẫn file trên máy"
+                          >
+                            {isCopied ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleDelete([file])}
+                            disabled={deleting}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
+                            title="Xóa triệt để file này"
+                          >
+                            <Trash size={14} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -411,8 +599,15 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
 
         {/* Footer */}
         <div className="flex items-center justify-between px-6 py-3 border-t border-slate-100 bg-slate-50/50 text-xs">
-          <div className="text-slate-500">
-            Hiển thị <strong className="text-slate-700">{filteredFiles.length}</strong> / {files.length} file
+          <div className="flex items-center gap-2 text-slate-500">
+            <span>
+              Hiển thị <strong className="text-slate-700">{filteredFiles.length}</strong> / {files.length} file
+            </span>
+            {localBulkDir && (
+              <span className="text-slate-400 hidden sm:inline">
+                • Thư mục gốc: <code className="bg-slate-100 px-1 py-0.5 rounded text-[11px] text-slate-600">{localBulkDir}</code>
+              </span>
+            )}
           </div>
           <button
             type="button"
@@ -426,3 +621,4 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
     </div>
   );
 }
+

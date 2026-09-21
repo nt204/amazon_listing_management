@@ -23,6 +23,10 @@ import {
   TrendDown,
   Sparkle,
   Lightning,
+  Calculator,
+  ShieldCheck,
+  Check,
+  Info,
 } from "@phosphor-icons/react";
 import type { SkuRecommendationGroup, PpcAction } from "@/lib/ppc/sku-architecture-types";
 import type { PpcRecommendation } from "@/lib/ppc/types";
@@ -88,6 +92,7 @@ export function PpcSkuRecommendationGroupView({
   const [aiExplanationModal, setAiExplanationModal] = useState<{
     rec: PpcRecommendation;
     explanation: string;
+    structured?: any;
   } | null>(null);
 
   const handleExplainWithAi = async (rec: PpcRecommendation) => {
@@ -123,6 +128,7 @@ export function PpcSkuRecommendationGroupView({
       setAiExplanationModal({
         rec,
         explanation: data.explanation,
+        structured: data.structured,
       });
     } catch (err: any) {
       alert("Lỗi AI: " + (err.message || "Vui lòng thử lại"));
@@ -1371,81 +1377,200 @@ export function PpcSkuRecommendationGroupView({
       )}
 
       {/* AI Explanation Modal */}
-      {aiExplanationModal && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full p-5 space-y-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-violet-100 text-violet-700 flex items-center justify-center shrink-0">
-                  <Sparkle size={18} weight="fill" />
+      {aiExplanationModal && (() => {
+        const rec = aiExplanationModal.rec;
+        const breakEven = selectedSkuGroup?.economics?.breakEvenAcos;
+        const maxBidCap = selectedSkuGroup?.economics?.maxBid;
+        const info = getStructuredAiExplanation(aiExplanationModal, breakEven, maxBidCap);
+        const actualAcosStr = rec.sales && rec.sales > 0 && rec.spend ? `${((rec.spend / rec.sales) * 100).toFixed(1)}%` : "Chưa có";
+        const isIncrease = rec.recType === "BID_INCREASE";
+        const isPause = rec.recType === "PAUSE_TARGET";
+
+        return (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+            <div className="bg-white rounded-2xl shadow-2xl border border-slate-200/80 max-w-lg w-full p-5 space-y-3.5 overflow-hidden flex flex-col">
+              {/* Header */}
+              <div className="flex items-start justify-between gap-3 pb-2 border-b border-slate-100">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-violet-100 text-violet-700 flex items-center justify-center shrink-0">
+                    <Sparkle size={18} weight="fill" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
+                      <span>Giải thích Đề xuất Bid</span>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 font-semibold border border-violet-200">
+                        AI Rule Engine
+                      </span>
+                    </h3>
+                    <div className="flex items-center gap-1.5 text-xs text-slate-500 font-mono mt-0.5 flex-wrap">
+                      <span className="font-bold text-slate-800">{rec.keyword}</span>
+                      {rec.matchType && (
+                        <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 font-semibold text-[10px] uppercase">
+                          {rec.matchType}
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
-                    <span>AI Giải thích đề xuất Bid</span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 font-semibold border border-violet-200">
-                      Gemini 2.5 Flash
+                <button
+                  type="button"
+                  onClick={() => setAiExplanationModal(null)}
+                  className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition cursor-pointer shrink-0"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* 4 Quick Stat Pills */}
+              <div className="grid grid-cols-4 gap-1.5 text-center">
+                <div className="bg-slate-50 border border-slate-200/60 rounded-lg p-1.5">
+                  <div className="text-[9px] text-slate-400 uppercase">Giá thầu</div>
+                  <div className="font-bold text-xs">
+                    <span className="text-slate-400 line-through mr-1">${rec.currentBid?.toFixed(2)}</span>
+                    <span className={isPause ? "text-rose-600" : isIncrease ? "text-emerald-700" : "text-indigo-700"}>
+                      ${rec.recommendedBid?.toFixed(2)}
                     </span>
-                  </h3>
-                  <p className="text-xs text-slate-500 font-mono mt-0.5 truncate max-w-[320px]">
-                    {aiExplanationModal.rec.keyword} ({aiExplanationModal.rec.matchType || "Target"})
-                  </p>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-200/60 rounded-lg p-1.5">
+                  <div className="text-[9px] text-slate-400 uppercase">Avg CPC</div>
+                  <div className="font-bold text-xs text-indigo-700 font-mono">
+                    ${(rec.cpc || 0).toFixed(2)}
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-200/60 rounded-lg p-1.5">
+                  <div className="text-[9px] text-slate-400 uppercase">ACoS / Hòa vốn</div>
+                  <div className="font-bold text-xs text-slate-800 font-mono">
+                    {actualAcosStr} {breakEven ? `/ ${breakEven}%` : ""}
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-200/60 rounded-lg p-1.5">
+                  <div className="text-[9px] text-slate-400 uppercase">Đơn / Clicks</div>
+                  <div className="font-bold text-xs text-slate-800 font-mono">
+                    {rec.orders || 0} đơn / {rec.clicks || 0} clk
+                  </div>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setAiExplanationModal(null)}
-                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition cursor-pointer"
-              >
-                <X size={16} />
-              </button>
-            </div>
 
-            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 text-xs space-y-1.5 font-mono">
-              <div className="flex justify-between text-slate-600">
-                <span>Hành động:</span>
-                <span className="font-bold text-slate-900">
-                  {aiExplanationModal.rec.recType === "PAUSE_TARGET"
-                    ? "Tạm dừng (PAUSE)"
-                    : aiExplanationModal.rec.recType === "BID_INCREASE"
-                    ? "Tăng Bid (+)"
-                    : "Giảm Bid (-)"}
-                </span>
-              </div>
-              <div className="flex justify-between text-slate-600">
-                <span>Điều chỉnh giá thầu:</span>
-                <span className="font-bold text-indigo-700">
-                  ${aiExplanationModal.rec.currentBid?.toFixed(2)} ➔ ${aiExplanationModal.rec.recommendedBid?.toFixed(2)}
-                </span>
-              </div>
-              {aiExplanationModal.rec.reason && (
-                <div className="text-[11px] text-slate-500 pt-1 border-t border-slate-200/60 break-words">
-                  <span className="font-bold text-slate-700">Luật hệ thống:</span> {aiExplanationModal.rec.reason}
+              {/* Khối 1: Luật áp dụng & Điều kiện */}
+              <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-1.5 text-xs shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                    <span>📋 Luật áp dụng</span>
+                  </span>
+                  {info.ruleName && (
+                    <span className="px-2 py-0.5 rounded bg-violet-50 text-violet-700 font-mono font-bold text-[10px] border border-violet-200">
+                      {info.ruleName}
+                    </span>
+                  )}
                 </div>
-              )}
-            </div>
-
-            <div className="bg-violet-50/50 rounded-xl p-4 border border-violet-100">
-              <div className="text-xs font-bold text-violet-900 mb-2 flex items-center gap-1.5">
-                <Sparkle size={13} weight="fill" className="text-violet-600" />
-                <span>Giải thích từ AI (Ngắn gọn & Đúng trọng tâm):</span>
+                <p className="text-slate-700 leading-relaxed">
+                  {info.ruleCondition}
+                </p>
               </div>
-              <div className="text-xs text-slate-700 leading-relaxed whitespace-pre-line space-y-1 font-sans">
-                {aiExplanationModal.explanation}
-              </div>
-            </div>
 
-            <div className="flex justify-end pt-1">
-              <button
-                type="button"
-                onClick={() => setAiExplanationModal(null)}
-                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer"
-              >
-                Đã hiểu
-              </button>
+              {/* Khối 2: Phép tính số học & Trần/Sàn */}
+              <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-2 text-xs shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                    <span>🧮 Phép tính & Giới hạn</span>
+                  </span>
+                  <span className="text-[10px] font-bold text-emerald-700 flex items-center gap-1">
+                    <ShieldCheck size={13} weight="fill" className="text-emerald-600" />
+                    <span>Hợp lệ</span>
+                  </span>
+                </div>
+
+                <div className="bg-slate-900 text-slate-100 rounded-lg p-2.5 font-mono text-xs flex items-center justify-between flex-wrap gap-2">
+                  <span className="text-slate-300">{info.formula}</span>
+                  <div className="flex items-center gap-1.5 font-bold">
+                    <span className="text-slate-400">➔</span>
+                    <span className="text-emerald-400 px-1.5 py-0.2 rounded bg-emerald-950 border border-emerald-800">
+                      {info.resultBid}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] text-slate-600 bg-slate-50 rounded-lg px-2.5 py-1 border border-slate-100 font-mono">
+                  <span>Sàn: $0.10</span>
+                  <span className="text-indigo-700 font-bold">Đề xuất: {info.resultBid}</span>
+                  <span>Trần: ${maxBidCap ? maxBidCap.toFixed(2) : "2.80"}</span>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={() => setAiExplanationModal(null)}
+                  className="px-4 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition cursor-pointer"
+                >
+                  Đã hiểu
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
+}
+
+function getStructuredAiExplanation(
+  modal: { rec: PpcRecommendation; explanation: string; structured?: any },
+  breakEvenAcos?: number,
+  maxBidLimit?: number
+) {
+  const structured = modal.structured;
+  if (structured && structured.ruleCondition && structured.formula) {
+    return {
+      ruleName: structured.ruleName || "MATCHED_RULE",
+      ruleCondition: structured.ruleCondition,
+      formula: structured.formula,
+      resultBid: structured.resultBid || `$${(modal.rec.recommendedBid || 0).toFixed(2)}`,
+      boundaryNote: structured.boundaryNote || "",
+    };
+  }
+
+  const rec = modal.rec;
+  const beAcos = breakEvenAcos ?? 48;
+  const actualAcos = rec.sales && rec.sales > 0 && rec.spend ? (rec.spend / rec.sales) * 100 : null;
+  const isIncrease = rec.recType === "BID_INCREASE";
+  const isPause = rec.recType === "PAUSE_TARGET";
+  const isWarning = actualAcos !== null && actualAcos > 40 && actualAcos <= beAcos;
+
+  let ruleName = rec.reason ? rec.reason.split(":")[0]?.replace(/\[.*?\]\s*/, "").trim() : "PPC_RULE";
+  let ruleCondition = "";
+
+  if (isPause) {
+    ruleCondition = `${rec.clicks || 0} clicks không ra đơn (vượt trần cho phép) ➔ Tạm dừng target (PAUSE).`;
+  } else if (isIncrease) {
+    ruleCondition = `ACoS ${actualAcos?.toFixed(1)}% ≤ 20% (vùng hiệu quả cao) ➔ Tăng +8% Current Bid.`;
+  } else if (isWarning) {
+    ruleCondition = `ACoS ${actualAcos?.toFixed(1)}% nằm trong khoảng [40% - ${beAcos}% hòa vốn] ➔ Quy định giảm -8% Avg CPC.`;
+  } else if (actualAcos !== null && actualAcos > beAcos) {
+    ruleCondition = `ACoS ${actualAcos?.toFixed(1)}% vượt ACoS hòa vốn (${beAcos}%) ➔ Giảm mạnh -15% Avg CPC.`;
+  } else {
+    ruleCondition = rec.reason || `Khớp điều kiện quy tắc tối ưu.`;
+  }
+
+  const exactCpc = rec.spend && rec.clicks && rec.clicks > 0 ? rec.spend / rec.clicks : (rec.cpc || rec.currentBid || 0);
+  const formula = isPause
+    ? `Tạm dừng target (Bid = $${(rec.recommendedBid || 0).toFixed(2)})`
+    : isIncrease
+    ? `$${(rec.currentBid || 0).toFixed(2)} (Current Bid) × 1.08 = $${((rec.currentBid || 0) * 1.08).toFixed(3)}`
+    : `$${exactCpc.toFixed(2)} (Avg CPC) × 0.92 = $${(exactCpc * 0.92).toFixed(3)}`;
+
+  return {
+    ruleName,
+    ruleCondition,
+    formula,
+    resultBid: `$${(rec.recommendedBid || 0).toFixed(2)}`,
+    boundaryNote: maxBidLimit
+      ? `Sàn $0.10 ≤ $${(rec.recommendedBid || 0).toFixed(2)} ≤ Trần $${maxBidLimit.toFixed(2)}`
+      : `Nằm trong khoảng an toàn`,
+  };
 }

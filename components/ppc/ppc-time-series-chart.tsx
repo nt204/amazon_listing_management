@@ -34,6 +34,7 @@ interface PpcTimeSeriesChartProps {
   startDate?: string;
   endDate?: string;
   onCustomDateChange?: (start: string, end: string) => void;
+  hideSummaryCards?: boolean;
 }
 
 type Granularity = "day" | "week" | "month";
@@ -68,6 +69,7 @@ export function PpcTimeSeriesChart({
   startDate,
   endDate,
   onCustomDateChange,
+  hideSummaryCards = false,
 }: PpcTimeSeriesChartProps) {
   // Filters state (ACOS là mặc định, không dùng ROAS)
   const [granularity, setGranularity] = useState<Granularity>("day");
@@ -603,70 +605,72 @@ export function PpcTimeSeriesChart({
         </div>
       </div>
 
-      {/* Summary KPI Mini-Cards - Khớp 100% với Bulk File */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        <div className="rounded-lg bg-slate-50 p-2.5 border border-slate-100">
-          <span className="text-[10px] font-bold text-slate-400 uppercase block">Tổng Spend (Kỳ này)</span>
-          <div className="flex items-baseline justify-between mt-0.5">
-            <span className="text-base font-black text-slate-900">
-              {currency}{currentTotalSpend.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
-            <span className="text-[10px] font-bold text-slate-500">
-              Avg: {currency}{avgDailySpend.toFixed(1)}/d
-            </span>
+      {/* Summary KPI Mini-Cards - Khớp 100% với Bulk File (Chỉ hiển thị khi không bị ẩn) */}
+      {!hideSummaryCards && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div className="rounded-lg bg-slate-50 p-2.5 border border-slate-100">
+            <span className="text-[10px] font-bold text-slate-400 uppercase block">Tổng Spend (Kỳ này)</span>
+            <div className="flex items-baseline justify-between mt-0.5">
+              <span className="text-base font-black text-slate-900">
+                {currency}{currentTotalSpend.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+              <span className="text-[10px] font-bold text-slate-500">
+                Avg: {currency}{avgDailySpend.toFixed(1)}/d
+              </span>
+            </div>
           </div>
-        </div>
 
-        <div className="rounded-lg bg-slate-50 p-2.5 border border-slate-100">
-          <span className="text-[10px] font-bold text-slate-400 uppercase block">Tổng Revenue</span>
-          <div className="flex items-baseline justify-between mt-0.5">
-            <span className="text-base font-black text-emerald-600">
-              {currency}{currentTotalRevenue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
-            <span className="text-[10px] font-bold text-emerald-600">
-              ROAS: {currentBlendedRoas.toFixed(2)}x
-            </span>
+          <div className="rounded-lg bg-slate-50 p-2.5 border border-slate-100">
+            <span className="text-[10px] font-bold text-slate-400 uppercase block">Tổng Revenue</span>
+            <div className="flex items-baseline justify-between mt-0.5">
+              <span className="text-base font-black text-emerald-600">
+                {currency}{currentTotalRevenue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+              <span className="text-[10px] font-bold text-emerald-600">
+                ROAS: {currentBlendedRoas.toFixed(2)}x
+              </span>
+            </div>
           </div>
-        </div>
 
-        <div className="rounded-lg bg-slate-50 p-2.5 border border-slate-100">
-          <span className="text-[10px] font-bold text-slate-400 uppercase block">ACOS Trung Bình</span>
-          <div className="flex items-baseline justify-between mt-0.5">
-            <span className={`text-base font-black ${
-              currentTotalRevenue === 0
-                ? currentTotalSpend > 0 ? "text-rose-600" : "text-slate-400"
-                : currentBlendedAcos <= targetAcos ? "text-emerald-600" : "text-rose-600"
-            }`}>
-              {currentTotalRevenue > 0 ? `${currentBlendedAcos.toFixed(1)}%` : currentTotalSpend > 0 ? "N/A (0 Sales)" : "—"}
-            </span>
-            <span className={`text-[10px] font-bold ${
-              currentTotalRevenue > 0 && currentBlendedAcos <= targetAcos
-                ? "text-emerald-600"
-                : currentTotalRevenue > 0 && currentBlendedAcos > targetAcos
-                ? "text-rose-600"
-                : "text-slate-400"
-            }`}>
-              {currentTotalRevenue > 0 && currentBlendedAcos <= targetAcos
-                ? `✓ Đạt KPI (≤${targetAcos}%)`
-                : currentTotalRevenue > 0
-                ? `+${(currentBlendedAcos - targetAcos).toFixed(1)}%`
-                : `Mục tiêu ≤${targetAcos}%`}
-            </span>
+          <div className="rounded-lg bg-slate-50 p-2.5 border border-slate-100">
+            <span className="text-[10px] font-bold text-slate-400 uppercase block">ACOS Trung Bình</span>
+            <div className="flex items-baseline justify-between mt-0.5">
+              <span className={`text-base font-black ${
+                currentTotalRevenue === 0
+                  ? currentTotalSpend > 0 ? "text-rose-600" : "text-slate-400"
+                  : currentBlendedAcos <= targetAcos ? "text-emerald-600" : "text-rose-600"
+              }`}>
+                {currentTotalRevenue > 0 ? `${currentBlendedAcos.toFixed(1)}%` : currentTotalSpend > 0 ? "N/A (0 Sales)" : "—"}
+              </span>
+              <span className={`text-[10px] font-bold ${
+                currentTotalRevenue > 0 && currentBlendedAcos <= targetAcos
+                  ? "text-emerald-600"
+                  : currentTotalRevenue > 0 && currentBlendedAcos > targetAcos
+                  ? "text-rose-600"
+                  : "text-slate-400"
+              }`}>
+                {currentTotalRevenue > 0 && currentBlendedAcos <= targetAcos
+                  ? `✓ Đạt KPI (≤${targetAcos}%)`
+                  : currentTotalRevenue > 0
+                  ? `+${(currentBlendedAcos - targetAcos).toFixed(1)}%`
+                  : `Mục tiêu ≤${targetAcos}%`}
+              </span>
+            </div>
           </div>
-        </div>
 
-        <div className="rounded-lg bg-slate-50 p-2.5 border border-slate-100">
-          <span className="text-[10px] font-bold text-slate-400 uppercase block">Conversions (Đơn Hàng)</span>
-          <div className="flex items-baseline justify-between mt-0.5">
-            <span className="text-base font-black text-slate-900">
-              {currentTotalOrders.toLocaleString()}
-            </span>
-            <span className="text-[10px] font-bold text-slate-500">
-              AOV: {currency}{avgOrderValue.toFixed(1)}
-            </span>
+          <div className="rounded-lg bg-slate-50 p-2.5 border border-slate-100">
+            <span className="text-[10px] font-bold text-slate-400 uppercase block">Conversions (Đơn Hàng)</span>
+            <div className="flex items-baseline justify-between mt-0.5">
+              <span className="text-base font-black text-slate-900">
+                {currentTotalOrders.toLocaleString()}
+              </span>
+              <span className="text-[10px] font-bold text-slate-500">
+                AOV: {currency}{avgOrderValue.toFixed(1)}
+              </span>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Main Combo Chart */}
       <div className="h-72 w-full pt-2">

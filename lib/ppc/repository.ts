@@ -227,6 +227,122 @@ export async function listPpcStores(scope: DataScope): Promise<PpcStore[]> {
   return rows.map(mapStore);
 }
 
+export async function createPpcStore(
+  scope: DataScope,
+  storeData: {
+    name: string;
+    marketplace?: string;
+    targetAcos?: number;
+    dailyBudget?: number;
+    status?: "ACTIVE" | "PAUSED";
+  }
+): Promise<PpcStore> {
+  const sql = await getDatabaseClient();
+  const teamId = (scope as any)?.teamId || "default";
+  const name = storeData.name.trim();
+  const marketplace = (storeData.marketplace || "US").trim().toUpperCase();
+  const targetAcos = Number(storeData.targetAcos ?? 30.0);
+  const dailyBudget = Number(storeData.dailyBudget ?? 500.0);
+  const status = storeData.status || "ACTIVE";
+
+  const rows = await sql<StoreRow[]>`
+    INSERT INTO ppc_stores (team_id, name, marketplace, target_acos, daily_budget, status)
+    VALUES (${teamId}, ${name}, ${marketplace}, ${targetAcos}, ${dailyBudget}, ${status})
+    RETURNING id, name, marketplace, target_acos, daily_budget, status
+  `;
+  return mapStore(rows[0]);
+}
+
+export async function findPpcStoreByName(
+  scope: DataScope,
+  name: string
+): Promise<PpcStore | null> {
+  const sql = await getDatabaseClient();
+  const teamId = (scope as any)?.teamId || "default";
+  const rows = await sql<StoreRow[]>`
+    SELECT id, name, marketplace, target_acos, daily_budget, status
+    FROM ppc_stores
+    WHERE team_id = ${teamId} AND LOWER(name) = LOWER(${name.trim()})
+    LIMIT 1
+  `;
+  return rows.length > 0 ? mapStore(rows[0]) : null;
+}
+
+export async function updatePpcStore(
+  scope: DataScope,
+  id: string,
+  storeData: {
+    name?: string;
+    marketplace?: string;
+    targetAcos?: number;
+    dailyBudget?: number;
+    status?: "ACTIVE" | "PAUSED";
+  }
+): Promise<PpcStore> {
+  const sql = await getDatabaseClient();
+  const teamId = (scope as any)?.teamId || "default";
+
+  const existing = await sql<StoreRow[]>`
+    SELECT id, name, marketplace, target_acos, daily_budget, status
+    FROM ppc_stores
+    WHERE id = ${id} AND team_id = ${teamId}
+  `;
+  if (!existing.length) {
+    throw new Error("Không tìm thấy gian hàng để cập nhật.");
+  }
+
+  const name = storeData.name !== undefined ? storeData.name.trim() : existing[0].name;
+  const marketplace = storeData.marketplace !== undefined ? storeData.marketplace.trim().toUpperCase() : existing[0].marketplace;
+  const targetAcos = storeData.targetAcos !== undefined ? Number(storeData.targetAcos) : Number(existing[0].target_acos);
+  const dailyBudget = storeData.dailyBudget !== undefined ? Number(storeData.dailyBudget) : Number(existing[0].daily_budget);
+  const status = storeData.status !== undefined ? storeData.status : existing[0].status;
+
+  const rows = await sql<StoreRow[]>`
+    UPDATE ppc_stores
+    SET name = ${name}, marketplace = ${marketplace}, target_acos = ${targetAcos}, daily_budget = ${dailyBudget}, status = ${status}
+    WHERE id = ${id} AND team_id = ${teamId}
+    RETURNING id, name, marketplace, target_acos, daily_budget, status
+  `;
+  return mapStore(rows[0]);
+}
+
+export async function deletePpcStore(
+  scope: DataScope,
+  id: string
+): Promise<{ success: boolean; deletedName: string }> {
+  const sql = await getDatabaseClient();
+  const teamId = (scope as any)?.teamId || "default";
+
+  const existing = await sql<StoreRow[]>`
+    SELECT id, name, marketplace, target_acos, daily_budget, status
+    FROM ppc_stores
+    WHERE id = ${id} AND team_id = ${teamId}
+  `;
+  if (!existing.length) {
+    throw new Error("Không tìm thấy gian hàng để xóa.");
+  }
+
+  const storeName = existing[0].name;
+  if (storeName.toUpperCase() === "HSOSTORE") {
+    throw new Error("Không thể xóa store mặc định HSOSTORE.");
+  }
+
+  // Xóa các dòng phôi liên quan của store này
+  // (product_cost_master không có cột team_id — chỉ filter theo store_id UUID)
+  await sql`
+    DELETE FROM product_cost_master
+    WHERE store_id = ${id}::uuid
+  `;
+
+  // Xóa store (ppc_stores có cột team_id)
+  await sql`
+    DELETE FROM ppc_stores
+    WHERE id = ${id} AND team_id = ${teamId}
+  `;
+
+  return { success: true, deletedName: storeName };
+}
+
 export async function listPpcSearchTerms(
   scope: DataScope,
   filters: { storeName: string; sku: string; days: number; startDate?: string; endDate?: string },
@@ -982,6 +1098,21 @@ export interface PpcOverviewAggregates {
     startDate: string;
     endDate: string;
   } | null;
+  storeSummaries?: Array<{
+    id: string;
+    name: string;
+    marketplace: string;
+    target_acos: string | number;
+    daily_budget: string | number;
+    status: string;
+    total_campaigns: string | number;
+    active_campaigns: string | number;
+    spend: string | number;
+    sales: string | number;
+    orders: string | number;
+    clicks: string | number;
+    impressions: string | number;
+  }>;
 }
 
 const targetCountCache = new Map<string, { expiresAt: number; count: number }>();
@@ -1046,7 +1177,7 @@ export async function getPpcOverviewAggregates(
       return count;
     })();
 
-  const [kpiRows, topCampaignRows, topSkuRows, targetBreakdownRows, availableSkuRows, targetCount] = await Promise.all([
+  const [kpiRows, topCampaignRows, topSkuRows, targetBreakdownRows, availableSkuRows, targetCount, storeSummaryRows] = await Promise.all([
     // 1. KPI and Ad Type breakdown
     sql<Array<{
       ad_type: PpcAdType;
@@ -1254,6 +1385,71 @@ export async function getPpcOverviewAggregates(
 
     // 6. Scoped Target Count
     targetCountPromise,
+
+    // 7. Store Summaries
+    sql<Array<{
+      id: string;
+      name: string;
+      marketplace: string;
+      target_acos: string | number;
+      daily_budget: string | number;
+      status: string;
+      total_campaigns: string | number;
+      active_campaigns: string | number;
+      spend: string | number;
+      sales: string | number;
+      orders: string | number;
+      clicks: string | number;
+      impressions: string | number;
+    }>>`
+      WITH latest_snapshots AS (
+        SELECT DISTINCT ON (p2.store_id, p2.ad_type)
+          p2.store_id, p2.ad_type, p2.snapshot_date AS max_snapshot,
+          p2.report_start_date AS max_report_start,
+          p2.report_end_date AS max_report_end
+        FROM ppc_performance_facts p2
+        JOIN ppc_stores s2 ON s2.id = p2.store_id
+        WHERE s2.team_id = ${teamId}
+          AND (p2.report_end_date - p2.report_start_date + 1)
+            BETWEEN ${days - 3}::integer AND ${days + 3}::integer
+        ORDER BY p2.store_id, p2.ad_type, p2.snapshot_date DESC, p2.report_end_date DESC
+      ),
+      camp_agg AS (
+        SELECT 
+          p.store_id,
+          COUNT(DISTINCT p.campaign_id) as total_campaigns,
+          COUNT(DISTINCT p.campaign_id) FILTER (WHERE p.spend > 0) as active_campaigns,
+          COALESCE(SUM(p.spend), 0) as spend,
+          COALESCE(SUM(p.sales), 0) as sales,
+          COALESCE(SUM(p.orders), 0) as orders,
+          COALESCE(SUM(p.clicks), 0) as clicks,
+          COALESCE(SUM(p.impressions), 0) as impressions
+        FROM ppc_performance_facts p
+        JOIN latest_snapshots ls
+          ON ls.store_id = p.store_id AND ls.ad_type = p.ad_type
+          AND ls.max_snapshot = p.snapshot_date AND ls.max_report_start = p.report_start_date AND ls.max_report_end = p.report_end_date
+        WHERE p.grain = 'CAMPAIGN'
+        GROUP BY p.store_id
+      )
+      SELECT 
+        s.id,
+        s.name,
+        s.marketplace,
+        s.target_acos,
+        s.daily_budget,
+        s.status,
+        COALESCE(c.total_campaigns, 0) as total_campaigns,
+        COALESCE(c.active_campaigns, 0) as active_campaigns,
+        COALESCE(c.spend, 0) as spend,
+        COALESCE(c.sales, 0) as sales,
+        COALESCE(c.orders, 0) as orders,
+        COALESCE(c.clicks, 0) as clicks,
+        COALESCE(c.impressions, 0) as impressions
+      FROM ppc_stores s
+      LEFT JOIN camp_agg c ON c.store_id = s.id
+      WHERE s.team_id = ${teamId}
+      ORDER BY lower(s.name);
+    `,
   ]);
 
   let snapshotDates: { startDate: string; endDate: string } | null = null;
@@ -1282,6 +1478,7 @@ export async function getPpcOverviewAggregates(
     targetCount,
     availableSkus: availableSkuRows.map((r) => r.sku),
     snapshotDates,
+    storeSummaries: storeSummaryRows,
   };
 }
 

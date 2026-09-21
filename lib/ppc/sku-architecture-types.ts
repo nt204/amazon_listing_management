@@ -3,6 +3,7 @@ import type { MatchType } from "./types";
 
 export interface ProductCostMaster {
   id: string;
+  storeId?: string;
   productType: string;
   baseCost: number;
   defaultAmazonFee: number;
@@ -13,6 +14,7 @@ export interface ProductCostMaster {
   effectiveFrom: string; // YYYY-MM-DD
   effectiveTo?: string | null;
   notes?: string | null;
+  skuPrefix?: string | null;
   skuCount?: number;
   createdAt: string;
   updatedAt: string;

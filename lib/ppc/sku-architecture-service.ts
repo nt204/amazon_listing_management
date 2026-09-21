@@ -52,23 +52,25 @@ export async function resolveStoreId(storeIdOrName?: string | null): Promise<str
    1. QUẢN LÝ PHÔI (PRODUCT COST MASTER)
    ========================================================================= */
 
-export async function getCostMasters(): Promise<ProductCostMaster[]> {
+export async function getCostMasters(storeIdOrName?: string | null): Promise<ProductCostMaster[]> {
   const sql = await getDatabaseClient();
+  const storeId = await resolveStoreId(storeIdOrName);
 
   const rows = await sql<any[]>`
     WITH ranked AS (
       SELECT *,
              ROW_NUMBER() OVER(PARTITION BY product_type ORDER BY version DESC) as rn
       FROM product_cost_master
+      WHERE store_id = ${storeId}
     )
-    SELECT r.id, r.product_type, r.base_cost, r.default_amazon_fee, r.tax_rate,
+    SELECT r.id, r.store_id, r.product_type, r.base_cost, r.default_amazon_fee, r.tax_rate,
            r.default_price, r.break_even_acos,
            r.version, r.effective_from, r.effective_to, r.notes, r.created_at, r.updated_at,
            COUNT(DISTINCT s.sku)::int as sku_count
     FROM ranked r
-    LEFT JOIN sku_economics s ON s.product_type = r.product_type
+    LEFT JOIN sku_economics s ON s.product_type = r.product_type AND s.store_id = ${storeId}
     WHERE r.rn = 1
-    GROUP BY r.id, r.product_type, r.base_cost, r.default_amazon_fee, r.tax_rate,
+    GROUP BY r.id, r.store_id, r.product_type, r.base_cost, r.default_amazon_fee, r.tax_rate,
              r.default_price, r.break_even_acos,
              r.version, r.effective_from, r.effective_to, r.notes, r.created_at, r.updated_at
     ORDER BY r.product_type ASC
@@ -76,6 +78,7 @@ export async function getCostMasters(): Promise<ProductCostMaster[]> {
 
   return rows.map((r: any) => ({
     id: r.id,
+    storeId: r.store_id,
     productType: r.product_type,
     baseCost: Number(r.base_cost),
     defaultAmazonFee: Number(r.default_amazon_fee),
@@ -92,7 +95,26 @@ export async function getCostMasters(): Promise<ProductCostMaster[]> {
   }));
 }
 
+export async function getCostMastersWithStores(storeIdOrName?: string | null): Promise<{
+  masters: ProductCostMaster[];
+  stores: Array<{ id: string; name: string; marketplace: string }>;
+  activeStoreId: string;
+}> {
+  const sql = await getDatabaseClient();
+  const storeRows = await sql<{ id: string; name: string; marketplace: string }[]>`
+    SELECT id, name, marketplace FROM ppc_stores ORDER BY name ASC
+  `;
+  const activeStoreId = await resolveStoreId(storeIdOrName);
+  const masters = await getCostMasters(activeStoreId);
+  return {
+    masters,
+    stores: storeRows,
+    activeStoreId,
+  };
+}
+
 export async function saveCostMasterNewVersion(data: {
+  storeId?: string;
   productType: string;
   baseCost: number;
   defaultAmazonFee: number;
@@ -103,6 +125,7 @@ export async function saveCostMasterNewVersion(data: {
   notes?: string;
 }): Promise<ProductCostMaster> {
   const sql = await getDatabaseClient();
+  const storeId = await resolveStoreId(data.storeId);
   const effectiveDate = data.effectiveFrom || new Date().toISOString().split("T")[0];
 
   return await sql.begin(async (tx: any) => {
@@ -117,42 +140,42 @@ export async function saveCostMasterNewVersion(data: {
       }
       if (beAcos <= 0) {
         const avgRows = await tx<{ avg_acos: string | null }[]>`
-          SELECT AVG(break_even_acos) as avg_acos FROM product_cost_master WHERE break_even_acos > 0
+          SELECT AVG(break_even_acos) as avg_acos FROM product_cost_master WHERE store_id = ${storeId} AND break_even_acos > 0
         `;
         beAcos = avgRows[0]?.avg_acos ? Math.round(Number(avgRows[0].avg_acos) * 100) / 100 : 45.5;
       }
     }
 
-    // 2. Find latest version
+    // 2. Find latest version for this store and product_type
     const latest = await tx`
       SELECT version FROM product_cost_master
-      WHERE product_type = ${data.productType}
+      WHERE store_id = ${storeId} AND product_type = ${data.productType}
       ORDER BY version DESC LIMIT 1
     `;
 
     const nextVersion = latest.length > 0 ? Number(latest[0].version) + 1 : 1;
 
-    // 3. Set effective_to for previous version
+    // 3. Set effective_to for previous version of this store
     await tx`
       UPDATE product_cost_master
       SET effective_to = ${effectiveDate}, updated_at = NOW()
-      WHERE product_type = ${data.productType} AND effective_to IS NULL
+      WHERE store_id = ${storeId} AND product_type = ${data.productType} AND effective_to IS NULL
     `;
 
     // 4. Insert new version
     const inserted = await tx`
       INSERT INTO product_cost_master (
-        product_type, base_cost, default_amazon_fee, tax_rate,
+        store_id, product_type, base_cost, default_amazon_fee, tax_rate,
         default_price, break_even_acos, version, effective_from, notes
       ) VALUES (
-        ${data.productType}, ${data.baseCost}, ${data.defaultAmazonFee},
+        ${storeId}, ${data.productType}, ${data.baseCost}, ${data.defaultAmazonFee},
         ${data.taxRate}, ${defPrice}, ${beAcos}, ${nextVersion},
         ${effectiveDate}, ${data.notes || null}
       )
       RETURNING *
     `;
 
-    // 5. Update SKU Economics inheriting from this Phôi
+    // 5. Update SKU Economics inheriting from this Phôi ONLY in this store
     await tx`
       UPDATE sku_economics
       SET base_cost = ${data.baseCost}::numeric,
@@ -165,12 +188,13 @@ export async function saveCostMasterNewVersion(data: {
             ELSE ${beAcos}::numeric END,
           max_bid = cr * (selling_price - ${data.defaultAmazonFee}::numeric - ${data.baseCost}::numeric - (selling_price * ${data.taxRate}::numeric)),
           updated_at = NOW()
-      WHERE product_type = ${data.productType} AND cost_source = 'INHERITED'
+      WHERE store_id = ${storeId} AND product_type = ${data.productType} AND cost_source = 'INHERITED'
     `;
 
     const r = inserted[0];
     return {
       id: r.id,
+      storeId: r.store_id,
       productType: r.product_type,
       baseCost: Number(r.base_cost),
       defaultAmazonFee: Number(r.default_amazon_fee),
@@ -188,11 +212,21 @@ export async function saveCostMasterNewVersion(data: {
 }
 
 /**
- * Xuất toàn bộ bảng Cost Master ra file Excel (.xlsx)
+ * Xuất toàn bộ bảng Cost Master ra file Excel (.xlsx) theo từng store
  */
-export async function exportCostMasterToExcel(): Promise<Buffer> {
+export async function exportCostMasterToExcel(storeIdOrName?: string | null): Promise<{
+  buffer: Buffer;
+  storeName: string;
+}> {
+  const sql = await getDatabaseClient();
+  const storeId = await resolveStoreId(storeIdOrName);
   const ExcelJS = (await import("exceljs")).default;
-  const masters = await getCostMasters();
+  const masters = await getCostMasters(storeId);
+
+  const storeInfo = await sql<{ name: string; marketplace: string }[]>`
+    SELECT name, marketplace FROM ppc_stores WHERE id = ${storeId} LIMIT 1
+  `;
+  const storeName = storeInfo[0]?.name || "Store";
 
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Amazon Listing Management";
@@ -244,8 +278,45 @@ export async function exportCostMasterToExcel(): Promise<Buffer> {
     };
   });
 
-  // Data rows
-  masters.forEach((m, idx) => {
+  // Data rows or sample rows if empty
+  const rowsToExport = masters.length > 0 ? masters : [
+    {
+      id: "sample-1",
+      storeId,
+      productType: "Ornament 2D (Ví dụ)",
+      baseCost: 2.00,
+      defaultAmazonFee: 6.32,
+      defaultPrice: 24.99,
+      breakEvenAcos: 58.7,
+      taxRate: 0.03,
+      version: 1,
+      skuCount: 0,
+      notes: "Mẫu tham khảo - Hãy sửa tên và giá theo đúng sản phẩm của bạn",
+      effectiveFrom: new Date().toISOString().split("T")[0],
+      effectiveTo: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+    {
+      id: "sample-2",
+      storeId,
+      productType: "Tumbler 20oz (Ví dụ)",
+      baseCost: 4.50,
+      defaultAmazonFee: 7.20,
+      defaultPrice: 32.99,
+      breakEvenAcos: 61.5,
+      taxRate: 0.03,
+      version: 1,
+      skuCount: 0,
+      notes: "Mẫu tham khảo - Hãy sửa tên và giá theo đúng sản phẩm của bạn",
+      effectiveFrom: new Date().toISOString().split("T")[0],
+      effectiveTo: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+  ];
+
+  rowsToExport.forEach((m, idx) => {
     const profitBeforeAds = m.defaultPrice > 0 ? (m.defaultPrice - m.defaultAmazonFee - m.baseCost) : 0;
     const maxBid = profitBeforeAds > 0 ? Number((0.10 * profitBeforeAds).toFixed(2)) : 0.05;
     const row = sheet.addRow({
@@ -303,16 +374,75 @@ export async function exportCostMasterToExcel(): Promise<Buffer> {
   });
 
   const buffer = await workbook.xlsx.writeBuffer();
-  return Buffer.from(buffer);
+  return {
+    buffer: Buffer.from(buffer),
+    storeName,
+  };
 }
 
 /**
- * Nhập bảng Cost Master từ file Excel (.xlsx)
+ * Xóa một bản ghi phôi (Cost Master)
  */
-export async function importCostMasterFromExcel(buffer: Buffer): Promise<{
+export async function deleteCostMaster(
+  id: string,
+  storeIdOrName?: string | null,
+): Promise<boolean> {
+  const sql = await getDatabaseClient();
+  const storeId = await resolveStoreId(storeIdOrName);
+  const res = await sql`
+    DELETE FROM product_cost_master
+    WHERE id = ${id} AND store_id = ${storeId}
+    RETURNING id
+  `;
+  return res.length > 0;
+}
+
+/**
+ * Sao chép toàn bộ danh sách phôi từ một store nguồn sang store đích
+ */
+export async function cloneCostMasters(
+  sourceStoreName: string,
+  targetStoreName: string,
+): Promise<{ clonedCount: number }> {
+  const sql = await getDatabaseClient();
+  const sourceId = await resolveStoreId(sourceStoreName);
+  const targetId = await resolveStoreId(targetStoreName);
+
+  const sourceMasters = await getCostMasters(sourceId);
+  if (!sourceMasters.length) return { clonedCount: 0 };
+
+  const effectiveDate = new Date().toISOString().split("T")[0];
+  let count = 0;
+
+  for (const m of sourceMasters) {
+    await saveCostMasterNewVersion({
+      storeId: targetId,
+      productType: m.productType,
+      baseCost: m.baseCost,
+      defaultAmazonFee: m.defaultAmazonFee,
+      taxRate: m.taxRate,
+      defaultPrice: m.defaultPrice,
+      breakEvenAcos: m.breakEvenAcos,
+      effectiveFrom: effectiveDate,
+      notes: `Sao chép từ ${sourceStoreName}`,
+    });
+    count++;
+  }
+
+  return { clonedCount: count };
+}
+
+/**
+ * Nhập bảng Cost Master từ file Excel (.xlsx) theo từng store
+ */
+export async function importCostMasterFromExcel(
+  buffer: Buffer,
+  storeIdOrName?: string | null,
+): Promise<{
   importedCount: number;
   items: Array<{ productType: string; baseCost: number; breakEvenAcos: number }>;
 }> {
+  const storeId = await resolveStoreId(storeIdOrName);
   const ExcelJS = (await import("exceljs")).default;
   const workbook = new ExcelJS.Workbook();
   // @ts-expect-error - ExcelJS accepts Buffer directly in load
@@ -408,6 +538,7 @@ export async function importCostMasterFromExcel(buffer: Buffer): Promise<{
     const notes = colMap.notes ? String(row.getCell(colMap.notes).value || "").trim() : "";
 
     const saved = await saveCostMasterNewVersion({
+      storeId,
       productType: productTypeRaw,
       baseCost,
       defaultAmazonFee,
@@ -437,7 +568,7 @@ export async function importCostMasterFromExcel(buffer: Buffer): Promise<{
 export async function getSkuEconomicsList(storeId: string, days = 30): Promise<SkuEconomics[]> {
   const sql = await getDatabaseClient();
 
-  const masters = await getCostMasters();
+  const masters = await getCostMasters(storeId);
   const masterMap = new Map(masters.map((m) => [m.productType, m]));
 
   const defaultMaster: ProductCostMaster = masterMap.get("Ornament") || masterMap.get("Glass Ornament") || {
@@ -660,7 +791,7 @@ export async function upsertSkuEconomics(
   const normalizedSku = sku.toUpperCase().trim();
 
   const pType = data.productType || "Ornament";
-  const masters = await getCostMasters();
+  const masters = await getCostMasters(storeId);
   const master = masters.find((m) => m.productType === pType) || {
     baseCost: 2.0,
     defaultAmazonFee: 6.32,
@@ -1209,12 +1340,12 @@ export async function approveRecommendationsToActionQueue(
         const chunk = finalRowsToInsert.slice(i, i + chunkSize);
         await tx`
           INSERT INTO ppc_actions ${tx(
-            chunk,
-            "store_id", "recommendation_id", "sku", "campaign_id", "campaign_name",
-            "campaign_type", "ad_group_id", "ad_group_name", "target_id", "target_keyword",
-            "match_type", "entity_type", "action_type", "old_value", "system_suggested_value",
-            "final_value", "rule_version", "status", "approved_by", "approved_at"
-          )}
+          chunk,
+          "store_id", "recommendation_id", "sku", "campaign_id", "campaign_name",
+          "campaign_type", "ad_group_id", "ad_group_name", "target_id", "target_keyword",
+          "match_type", "entity_type", "action_type", "old_value", "system_suggested_value",
+          "final_value", "rule_version", "status", "approved_by", "approved_at"
+        )}
         `;
       }
       addedCount = finalRowsToInsert.length;

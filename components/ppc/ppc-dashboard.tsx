@@ -23,6 +23,7 @@ import {
   Gear,
   Clock,
   Sliders,
+  Plus,
 } from "@phosphor-icons/react";
 import { PpcPagination } from "./ppc-pagination";
 import {
@@ -36,6 +37,8 @@ import { PpcActionQueueDrawer } from "./ppc-action-queue-drawer";
 import { PpcSettingsTab } from "./ppc-settings-tab";
 import { PpcFileManagerModal } from "./ppc-file-manager-modal";
 import { PpcNotificationPopover } from "./ppc-notification-popover";
+import { PpcAddStoreModal } from "./ppc-add-store-modal";
+import { PpcStoreManagerModal } from "./ppc-store-manager-modal";
 import type {
   SkuEconomics,
   SkuRecommendationGroup,
@@ -44,6 +47,7 @@ import type {
   BulkExport,
   PpcAction,
 } from "@/lib/ppc/sku-architecture-types";
+import { PpcMultiStoreView } from "./ppc-multi-store-view";
 import type {
   PpcAlert,
   PpcAdTypeBreakdown,
@@ -56,6 +60,7 @@ import type {
   PpcSearchTermRow,
   PpcSkuPerformance,
   PpcStore,
+  PpcStoreSummary,
   PpcSummaryMetrics,
   PpcTargetPerformance,
   PpcTargetTypeBreakdown,
@@ -141,6 +146,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
   const mounted = useSyncExternalStore(subscribeToHydration, getClientSnapshot, getServerSnapshot);
 
   const [stores, setStores] = useState<PpcStore[]>([]);
+  const [storeSummaries, setStoreSummaries] = useState<PpcStoreSummary[]>([]);
   const [selectedStore, setSelectedStore] = useState<string>("ALL");
   const [selectedSku, setSelectedSku] = useState<string>("ALL");
   const [selectedDays, setSelectedDays] = useState(7);
@@ -269,6 +275,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
   const [syncingAdsPower, setSyncingAdsPower] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showFileManagerModal, setShowFileManagerModal] = useState(false);
+  const [showAddStoreModal, setShowAddStoreModal] = useState(false);
+  const [showStoreManagerModal, setShowStoreManagerModal] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadStore, setUploadStore] = useState("HSOSTORE");
   const [uploadEndDate, setUploadEndDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -324,6 +332,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       }
       startTransition(() => {
         setStores(data.stores || []);
+        setStoreSummaries(data.storeSummaries || []);
         setSummary(data.summary || null);
         setVelocity(data.velocity || null);
         setSkuPerformance(data.skuPerformance || []);
@@ -1357,18 +1366,40 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                 <h2 className="text-sm font-black text-slate-900 tracking-tight">
                   Amazon PPC Seller Dashboard
                 </h2>
-                <span className="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase bg-indigo-50 text-indigo-700 border border-indigo-200">
-                  Multi-Store Live
-                </span>
+                {selectedStore === "ALL" ? (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase bg-indigo-50 text-indigo-700 border border-indigo-200">
+                    Multi-Store Live
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
+                    <Storefront size={12} weight="bold" />
+                    <span>Store: {selectedStore}</span>
+                  </span>
+                )}
               </div>
               <p className="text-[11px] text-slate-500 font-medium">
-                Hiệu suất từ Bulk theo Campaign, Target, SKU; truy vấn khách hàng từ Search Term Report
+                {selectedStore === "ALL"
+                  ? "Tổng quan hiệu suất quảng cáo đa store"
+                  : `Phân tích chuyên sâu chiến dịch cho store ${selectedStore}`}
               </p>
             </div>
           </div>
 
           {/* Action Toolbar */}
-          <div className="flex items-center gap-2 self-stretch lg:self-auto justify-end">
+          <div className="flex items-center gap-2 self-stretch lg:self-auto justify-end flex-wrap">
+            {selectedStore !== "ALL" && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedStore("ALL");
+                  setSelectedSku("ALL");
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50/80 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition cursor-pointer shadow-2xs"
+                title="Quay lại giao diện thống kê so sánh đa shop"
+              >
+                <span>← Tất cả Shop</span>
+              </button>
+            )}
             {!isEmbedded && (
               <Link
                 href="/"
@@ -1456,8 +1487,19 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
               </select>
             </div>
 
-            {/* SKU Filter */}
-            {availableSkus.length > 0 && (
+            {/* Nút Quản Lý Store */}
+            <button
+              type="button"
+              onClick={() => setShowStoreManagerModal(true)}
+              className="flex items-center gap-1 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-bold transition cursor-pointer shadow-2xs"
+              title="Quản lý danh sách, chỉnh sửa hoặc xóa store"
+            >
+              <Gear size={13} weight="bold" className="text-slate-500" />
+              <span className="hidden sm:inline">Quản Lý Store</span>
+            </button>
+
+            {/* SKU Filter (Chỉ hiển thị khi đã chọn 1 shop cụ thể) */}
+            {selectedStore !== "ALL" && availableSkus.length > 0 && (
               <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1">
                 <Tag size={15} className="text-emerald-600" weight="duotone" />
                 <span className="text-slate-500 font-semibold text-[11px]">SKU:</span>
@@ -1513,13 +1555,13 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
             )}
           </div>
 
-          {/* Right: Compact Data Status */}
+          {/* Right: Compact Data Status (Chỉ hiển thị khi đang soi 1 store cụ thể) */}
           {loading && !dataHealth ? (
             <div className="flex items-center gap-1.5 text-xs text-indigo-600 font-semibold animate-pulse">
               <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-ping" />
               <span>Đang tải số liệu…</span>
             </div>
-          ) : dataHealth ? (
+          ) : selectedStore !== "ALL" && dataHealth ? (
             <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
               <div className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-medium border ${dataHealth.campaignRows > 0
                 ? "bg-emerald-50/80 text-emerald-800 border-emerald-200/60"
@@ -1565,8 +1607,40 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
         <PpcOverviewSkeleton />
       )}
 
-      {/* EXECUTIVE KPI CARDS */}
-      {summary && ((dataHealth?.campaignRows || 0) > 0 || searchTerms.length > 0) && (
+      {/* NẾU ĐANG Ở CHẾ ĐỘ XEM TẤT CẢ SHOP VÀ TAB TỔNG QUAN: HIỂN THỊ GIAO DIỆN MULTI-STORE HUB */}
+      {selectedStore === "ALL" && activeTab === "overview" && (
+        <PpcMultiStoreView
+          storeSummaries={storeSummaries}
+          summary={summary}
+          dailyTrends={dailyTrends}
+          adTypeBreakdown={adTypeBreakdown}
+          searchTerms={searchTerms}
+          selectedDays={selectedDays}
+          onDaysChange={(days) => {
+            setIsCustomDate(false);
+            setSelectedDays(days);
+          }}
+          isCustomDate={isCustomDate}
+          startDate={customStartDate}
+          endDate={customEndDate}
+          onCustomDateChange={(start, end) => {
+            setCustomStartDate(start);
+            setCustomEndDate(end);
+            setIsCustomDate(true);
+          }}
+          dateRangeStart={dateRangeStart || undefined}
+          dateRangeEnd={dateRangeEnd || undefined}
+          onSelectStore={(storeName) => {
+            setSelectedStore(storeName);
+            setSelectedSku("ALL");
+          }}
+          onRefreshStores={() => void loadData(true)}
+          currency="$"
+        />
+      )}
+
+      {/* EXECUTIVE KPI CARDS (KHI XEM 1 SHOP HOẶC KHI CHUYỂN CÁC TAB KHÁC) */}
+      {(selectedStore !== "ALL" || activeTab !== "overview") && summary && ((dataHealth?.campaignRows || 0) > 0 || searchTerms.length > 0) && (
         <div className="space-y-3">
           {(dataHealth?.campaignRows || 0) === 0 && searchTerms.length > 0 && (
             <div className="flex items-center gap-2 rounded-xl bg-sky-50 border border-sky-200 px-4 py-2.5 text-xs text-sky-900 font-medium">
@@ -1852,8 +1926,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
         </div>
       )}
 
-      {/* 2 BIỂU ĐỒ CỐT LÕI PPC DASHBOARD THEO SPEC KỸ THUẬT */}
-      {mounted && summary && ((dataHealth?.campaignRows || 0) > 0 || searchTerms.length > 0) && (
+      {/* 2 BIỂU ĐỒ CỐT LÕI PPC DASHBOARD THEO SPEC KỸ THUẬT (KHI XEM 1 SHOP HOẶC CHUYỂN TAB) */}
+      {(selectedStore !== "ALL" || activeTab !== "overview") && mounted && summary && ((dataHealth?.campaignRows || 0) > 0 || searchTerms.length > 0) && (
         <div className="space-y-4">
           {/* BIỂU ĐỒ 1: Spend vs Revenue / ROAS theo thời gian */}
           <PpcTimeSeriesChart
@@ -1889,7 +1963,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
         </div>
       )}
 
-      {/* DATA SLICING SUB-TABS (Bóc tách dữ liệu theo kiến trúc 5 tầng + SKU song song) */}
+      {/* DATA SLICING SUB-TABS (Bóc tách dữ liệu theo kiến trúc 5 tầng + SKU song song - CHỈ HIỂN THỊ KHI XEM 1 SHOP HOẶC KHI CHỌN TAB CỤ THỂ) */}
+      {(selectedStore !== "ALL" || activeTab !== "overview") && (
       <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-200/60 rounded-xl border border-slate-200/80 shadow-2xs">
         <button
           type="button"
@@ -1978,11 +2053,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
           </button>
         </div>
       </div>
+      )}
 
       {/* ========================================================================= */}
-      {/* VIEW 1: OVERVIEW SUMMARY TABLE */}
+      {/* VIEW 1: OVERVIEW SUMMARY TABLE (CHỈ HIỂN THỊ KHI ĐANG XEM 1 SHOP CỤ THỂ) */}
       {/* ========================================================================= */}
-      {activeTab === "overview" && (
+      {activeTab === "overview" && selectedStore !== "ALL" && (
         <div className="space-y-3">
           {/* Quick High-Impact Table: Top Converting vs Bleeding Summary */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -2898,14 +2974,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                   >
                     Spend ($) {skuSortField === "spend" && (skuSortDir === "asc" ? "↑" : "↓")}
                   </th>
-                  <th className="py-3 px-2 text-right">% Spend</th>
                   <th
                     className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() => handleSort("sales", skuSortField, skuSortDir, setSkuSortField, setSkuSortDir)}
                   >
                     Sales ($) {skuSortField === "sales" && (skuSortDir === "asc" ? "↑" : "↓")}
                   </th>
-                  <th className="py-3 px-2 text-right">% Sales</th>
                   <th
                     className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() => handleSort("orders", skuSortField, skuSortDir, setSkuSortField, setSkuSortDir)}
@@ -2939,9 +3013,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                       {s.impressions > 0 ? `${(s.ctr || 0).toFixed(2)}%` : "-"}
                     </td>
                     <td className="py-2.5 px-3 text-right font-bold text-slate-900">${s.spend.toFixed(2)}</td>
-                    <td className="py-2.5 px-2 text-right text-slate-500 font-bold">{s.spendShare}%</td>
                     <td className="py-2.5 px-3 text-right font-black text-emerald-600">${s.sales.toFixed(2)}</td>
-                    <td className="py-2.5 px-2 text-right text-emerald-700 font-bold">{s.revenueShare}%</td>
                     <td className="py-2.5 px-3 text-right font-black text-slate-900">{s.orders}</td>
                     <td className="py-2.5 px-3 text-right text-slate-700">{s.clicks > 0 ? `${s.cvr.toFixed(1)}%` : "-"}</td>
                     <td className="py-2.5 px-3 text-right">
@@ -3368,6 +3440,36 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
         isOpen={showFileManagerModal}
         onClose={() => setShowFileManagerModal(false)}
         onDataChanged={() => void loadData(true)}
+      />
+
+      {/* ADD STORE MODAL */}
+      <PpcAddStoreModal
+        isOpen={showAddStoreModal}
+        onClose={() => setShowAddStoreModal(false)}
+        onStoreCreated={(newStore) => {
+          notify(`Đã tạo store "${newStore.name}" (${newStore.marketplace}) thành công!`, "success");
+          void loadData(true);
+          setSelectedStore(newStore.name);
+          setSelectedSku("ALL");
+        }}
+      />
+
+      {/* STORE MANAGER MODAL */}
+      <PpcStoreManagerModal
+        isOpen={showStoreManagerModal}
+        onClose={() => setShowStoreManagerModal(false)}
+        onStoreSelected={(name) => {
+          void loadData(true);
+          setSelectedStore(name);
+          setSelectedSku("ALL");
+        }}
+        onNavigateToCostMaster={(name) => {
+          void loadData(true);
+          setSelectedStore(name);
+          setSelectedSku("ALL");
+          setActiveTab("settings");
+          setSettingsSubTab("phoi");
+        }}
       />
     </div>
   );

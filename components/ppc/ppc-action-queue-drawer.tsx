@@ -1415,7 +1415,7 @@ export function PpcActionQueueDrawer({
                 </strong>
               </div>
               <div className="flex justify-between items-center text-slate-700">
-                <span>Gian hàng / Profile AdsPower:</span>
+                <span>Store / Profile AdsPower:</span>
                 <div className="flex items-center gap-1 font-bold text-slate-800">
                   <Browser size={14} className="text-sky-600" />
                   <span>{storeName || "HSOSTORE"}</span>

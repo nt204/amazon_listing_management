@@ -58,6 +58,7 @@ import type {
   PpcRecommendation,
   PpcSearchTermRow,
   PpcSkuPerformance,
+  PpcStoreSummary,
   PpcSummaryMetrics,
   PpcTargetType,
   PpcTargetTypeBreakdown,
@@ -386,8 +387,48 @@ export async function getPpcAnalyticsData(
       lastSyncTime: syncLogs[0]?.time ?? null,
     };
 
+    const storeSummaries: PpcStoreSummary[] = (aggregates.storeSummaries || []).map((s) => {
+      const spend = Math.round(Number(s.spend || 0) * 100) / 100;
+      const sales = Math.round(Number(s.sales || 0) * 100) / 100;
+      const orders = Number(s.orders || 0);
+      const clicks = Number(s.clicks || 0);
+      const impressions = Number(s.impressions || 0);
+      const targetAcosVal = Number(s.target_acos || DEFAULT_TARGET_ACOS);
+      const acos = sales > 0 ? Math.round((spend / sales) * 1000) / 10 : spend > 0 ? 999 : 0;
+      const roas = spend > 0 ? Math.round((sales / spend) * 100) / 100 : 0;
+      const cpc = clicks > 0 ? Math.round((spend / clicks) * 100) / 100 : 0;
+      const ctr = impressions > 0 ? Math.round((clicks / impressions) * 10000) / 100 : 0;
+      const cvr = clicks > 0 ? Math.round((orders / clicks) * 1000) / 10 : 0;
+      const spendShare = totalSpend > 0 ? Math.round((spend / totalSpend) * 1000) / 10 : 0;
+      const salesShare = totalSales > 0 ? Math.round((sales / totalSales) * 1000) / 10 : 0;
+
+      return {
+        id: s.id,
+        name: s.name,
+        marketplace: s.marketplace || "US",
+        targetAcos: targetAcosVal,
+        dailyBudget: Number(s.daily_budget || 0),
+        status: (s.status as "ACTIVE" | "PAUSED") || "ACTIVE",
+        totalCampaigns: Number(s.total_campaigns || 0),
+        activeCampaigns: Number(s.active_campaigns || 0),
+        spend,
+        sales,
+        orders,
+        clicks,
+        impressions,
+        acos,
+        roas,
+        cpc,
+        ctr,
+        cvr,
+        spendShare,
+        salesShare,
+      };
+    });
+
     return {
       stores,
+      storeSummaries,
       summary,
       skuPerformance,
       campaignPerformance,
@@ -447,7 +488,9 @@ export async function getPpcAnalyticsData(
     performanceQuery("TARGET", 25_000),
     performanceQuery("PRODUCT", 10_000),
     performanceQuery("PLACEMENT", 5_000),
-    shouldFetchSyncLogs ? listPpcSyncLogs(scope) : Promise.resolve([] as any[]),
+    shouldFetchSyncLogs
+      ? listPpcSyncLogs(scope)
+      : Promise.resolve([] as Awaited<ReturnType<typeof listPpcSyncLogs>>),
   ]);
   const performanceRows = [
     ...campaignRowsRaw,
@@ -819,14 +862,42 @@ export async function syncPpcReportsFromR2(scope: DataScope) {
     continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
   } while (continuationToken);
 
-  const reportFiles = objects.filter((object) => /\.(xlsx|csv)$/i.test(object.Key || ""));
+  // A marker is the commit record for one store/date batch. Read its exact key
+  // list so repeated runs on the same day cannot combine old and new reports.
+  const objectByKey = new Map(objects.map((object) => [object.Key || "", object]));
+  const committedKeys = new Set<string>();
+  const expectedSlots = [
+    "bulk_sp_30days", "bulk_sb_30days", "bulk_sp_7days",
+    "bulk_sb_7days", "search_term_sp_30days", "search_term_sb_30days",
+  ];
+  for (const markerObject of objects.filter((object) => (object.Key || "").endsWith("/_COMPLETE.json"))) {
+    const markerKey = markerObject.Key || "";
+    const batchPrefix = markerKey.slice(0, -"_COMPLETE.json".length);
+    try {
+      const markerResponse = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: markerKey }));
+      if (!markerResponse.Body) throw new Error("marker rỗng");
+      const marker = JSON.parse(Buffer.from(await markerResponse.Body.transformToByteArray()).toString("utf8"));
+      const keys = Array.isArray(marker?.files) ? marker.files.filter((key: unknown): key is string => typeof key === "string") : [];
+      const slots = new Set(keys.map((key: string) => key.toLowerCase()).flatMap((key: string) => expectedSlots.filter((slot) => key.includes(slot))));
+      if (keys.length !== 6 || new Set(keys).size !== 6 || slots.size !== 6) throw new Error("marker không đủ 6 slot PPC");
+      for (const key of keys) {
+        if (!key.startsWith(batchPrefix) || !objectByKey.has(key)) throw new Error(`object không thuộc batch hoặc chưa tồn tại: ${key}`);
+      }
+      keys.forEach((key: string) => committedKeys.add(key));
+    } catch (error) {
+      console.warn(`[R2 Sync] Bỏ qua batch marker không hợp lệ ${markerKey}:`, error);
+    }
+  }
+  const allReportFiles = objects.filter((object) => /\.(xlsx|csv)$/i.test(object.Key || ""));
+  const reportFiles = allReportFiles.filter((object) => committedKeys.has(object.Key || ""));
   const recognizedFiles = reportFiles.filter((object) => {
     const key = object.Key || "";
     return /search[\s_-]*term/i.test(key) || /(?:^|\/|[\s_-])bulk/i.test(key);
   });
   const searchTermFiles = recognizedFiles.filter((object) => /search[\s_-]*term/i.test(object.Key || ""));
   const bulkFiles = recognizedFiles.filter((object) => /(?:^|\/|[\s_-])bulk/i.test(object.Key || "") && !/search[\s_-]*term/i.test(object.Key || ""));
-  const ignored = reportFiles.length - recognizedFiles.length;
+  const incomplete = allReportFiles.length - reportFiles.length;
+  const ignored = reportFiles.length - recognizedFiles.length + incomplete;
   const knownStores = (await listPpcStores(scope)).map((store) => store.name);
   const grouped = new Map<string, typeof recognizedFiles>();
   for (const object of recognizedFiles) {

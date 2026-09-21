@@ -86,9 +86,25 @@ test("downloaded bulk files in ~/Downloads/Bulk file are unique, have distinct h
 
   const hashes = new Set<string>();
 
+  function findFile(base: string, targetName: string): string | null {
+    if (!fs.existsSync(base)) return null;
+    const direct = path.join(base, targetName);
+    if (fs.existsSync(direct)) return direct;
+    try {
+      const entries = fs.readdirSync(base, { withFileTypes: true });
+      for (const e of entries) {
+        if (e.isDirectory() && !e.name.startsWith(".")) {
+          const sub = findFile(path.join(base, e.name), targetName);
+          if (sub) return sub;
+        }
+      }
+    } catch {}
+    return null;
+  }
+
   for (const item of targetFiles) {
-    const fullPath = path.join(dir, item.name);
-    if (!fs.existsSync(fullPath)) continue;
+    const fullPath = findFile(dir, item.name);
+    if (!fullPath || !fs.existsSync(fullPath)) continue;
 
     // Hash must be unique
     const fileBytes = fs.readFileSync(fullPath);

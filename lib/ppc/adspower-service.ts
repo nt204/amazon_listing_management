@@ -23,6 +23,7 @@ import {
   upsertPpcPerformance,
   upsertPpcSearchTerms,
 } from "./repository";
+import { organizePpcReportFile } from "./file-manager";
 
 export interface AdsPowerSyncResult {
   success: boolean;
@@ -854,6 +855,13 @@ async function autoCreateAndDownloadSearchTermReport(
     throw new Error(`Không tìm thấy file Search Term ${adType} sau khi tải.`);
   }
 
+  // Tự động tổ chức file vào cấu trúc thư mục [Ngày]/[Store]/[SP|SB]/
+  try {
+    standardizedPath = organizePpcReportFile(standardizedPath, { storeName, adType });
+  } catch (orgErr) {
+    console.warn(`[SEARCH TERM] Không thể tự động chuyển file vào thư mục phân cấp:`, orgErr);
+  }
+
   console.log(
     `[SEARCH TERM] TẢI THÀNH CÔNG: ${path.basename(standardizedPath)} (${Math.round(
       fs.statSync(standardizedPath).size / 1024,
@@ -1331,8 +1339,15 @@ async function downloadBulkFileByRow(
     }
   }
 
-  const bulkSizeMb = (fs.statSync(standardizedPath).size / 1024 / 1024).toFixed(1);
   const effectiveAdType = actualAdType || task.adType;
+  // Tự động tổ chức file vào cấu trúc thư mục [Ngày]/[Store]/[SP|SB]/
+  try {
+    standardizedPath = organizePpcReportFile(standardizedPath, { storeName, adType: effectiveAdType });
+  } catch (orgErr) {
+    console.warn(`[BULK] Không thể tự động chuyển file vào thư mục phân cấp:`, orgErr);
+  }
+
+  const bulkSizeMb = (fs.statSync(standardizedPath).size / 1024 / 1024).toFixed(1);
   console.log(
     `[BULK] TẢI THÀNH CÔNG: ${path.basename(standardizedPath)} (${bulkSizeMb} MB) [Khớp ID: ${task.requestId}]`,
   );
