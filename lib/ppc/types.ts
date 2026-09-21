@@ -138,6 +138,11 @@ export interface PpcRecommendation {
   productType?: string;
   ruleProfile?: string;
   actionState?: "ENABLE" | "PAUSED";
+  clicks?: number;
+  spend?: number;
+  sales?: number;
+  orders?: number;
+  cpc?: number;
   createdAt: string;
 }
 

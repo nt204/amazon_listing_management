@@ -888,12 +888,12 @@ export function evaluateRowWithRuleEngine(
   reason = `[${format}] ${matched.ruleId || "MATCHED_RULE"}: ${metricReason} -> ${matched.description}.`;
 
   if (!recType) {
-    if (currentBid <= effectiveMaxBid) return null;
-    recType = "BID_DECREASE";
-    targetBid = effectiveMaxBid;
-    priority = "P0";
-    const factorLabel = maxBidFactor !== 1 ? ` x ${Math.round(maxBidFactor * 100)}%` : "";
-    reason = `[${format}] Bid hiện tại $${currentBid.toFixed(2)} vượt trần an toàn $${effectiveMaxBid.toFixed(2)} (Trần phôi $${skuMaxBid.toFixed(2)}${factorLabel}) -> Giảm về trần an toàn.`;
+    return null;
+  }
+
+  // Nếu bid hiện tại đã vượt quá max bid thì không tăng, không giảm nữa mà giữ nguyên
+  if (currentBid > effectiveMaxBid && recType !== "PAUSE_TARGET") {
+    return null;
   }
 
   const exceededEffectiveMax = targetBid > effectiveMaxBid;
@@ -907,7 +907,6 @@ export function evaluateRowWithRuleEngine(
     recType = clampedBid > currentBid ? "BID_INCREASE" : "BID_DECREASE";
     if (exceededEffectiveMax) {
       reason += ` Kết quả tính toán được chặn tại trần hiệu lực $${effectiveMaxBid.toFixed(2)}.`;
-      if (clampedBid < currentBid) priority = "P0";
     }
   }
 
@@ -939,6 +938,11 @@ export function evaluateRowWithRuleEngine(
     productType: econ.productType,
     ruleProfile: `${format} v1.0`,
     actionState,
+    clicks: row.clicks,
+    spend: row.spend,
+    sales: row.sales,
+    orders: row.orders,
+    cpc: row.clicks > 0 ? Number((row.spend / row.clicks).toFixed(2)) : (row.cpc || 0),
     createdAt: new Date().toISOString(),
   };
 }

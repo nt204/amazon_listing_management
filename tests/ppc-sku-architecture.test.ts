@@ -256,14 +256,18 @@ test("evaluateRowWithRuleEngine evaluates common rules for SP01, SP03, SP04, SB0
     ruleMap,
     cappedEconomics,
   );
-  assert.equal(cappedBid?.recType, "BID_DECREASE");
-  assert.equal(cappedBid?.recommendedBid, 0.6);
-  assert.match(cappedBid?.reason || "", /trần SKU: \$0\.60/);
+  assert.equal(cappedBid, null, "Bid hiện tại $1.00 vượt trần max bid $0.60 thì không tăng, không giảm mà giữ nguyên");
 
+  const beEconomics = new Map(econMap);
+  beEconomics.set("BHL180660A01", {
+    ...econMap.get("BHL180660A01"),
+    breakEvenAcos: 42,
+    maxBid: 1.85,
+  });
   const skuBreakEven = evaluateRowWithRuleEngine(
     makeRow({ campaignName: "BHL180660A01 SP03 Exact", bid: 1, spend: 45, sales: 100, clicks: 50, orders: 1 }),
     ruleMap,
-    cappedEconomics,
+    beEconomics,
   );
   assert.equal(skuBreakEven?.recType, "BID_DECREASE");
   assert.match(skuBreakEven?.reason || "", /vượt ACoS hòa vốn 42%/);
@@ -392,9 +396,7 @@ test("evaluateRowWithRuleEngine evaluates common rules for SP01, SP03, SP04, SB0
     ruleMap,
     oodieEconMap,
   );
-  assert.equal(sb01Exceed?.recType, "BID_DECREASE");
-  assert.equal(sb01Exceed?.recommendedBid, 1.82, "SB01 max bid must be capped at 80% of phôi max bid (0.8 * 2.28 = 1.82)");
-  assert.match(sb01Exceed?.reason || "", /Trần phôi \$2\.28 x 80%/);
+  assert.equal(sb01Exceed, null, "Bid hiện tại $3.00 vượt max bid SB01 $1.82 thì không tăng/giảm mà giữ nguyên");
 
   // SB05 target exceeding ceiling
   const sb05Exceed = evaluateRowWithRuleEngine(
@@ -419,10 +421,9 @@ test("evaluateRowWithRuleEngine evaluates common rules for SP01, SP03, SP04, SB0
     ruleMap,
     oodieEconMap,
   );
-  assert.equal(sb05Exceed?.recType, "BID_DECREASE");
-  assert.equal(sb05Exceed?.recommendedBid, 1.82, "SB05 max bid must be capped at 80% of phôi max bid (0.8 * 2.28 = 1.82)");
+  assert.equal(sb05Exceed, null, "Bid hiện tại $3.00 vượt max bid SB05 $1.82 thì không tăng/giảm mà giữ nguyên");
 
-  // SP03 target exceeding ceiling (capped at 100% of phôi max bid = 2.28)
+  // SP03 target exceeding ceiling
   const sp03Exceed = evaluateRowWithRuleEngine(
     {
       grain: "TARGET",
@@ -445,8 +446,34 @@ test("evaluateRowWithRuleEngine evaluates common rules for SP01, SP03, SP04, SB0
     ruleMap,
     oodieEconMap,
   );
-  assert.equal(sp03Exceed?.recType, "BID_DECREASE");
-  assert.equal(sp03Exceed?.recommendedBid, 2.28, "SP03 max bid must be capped at 100% of phôi max bid ($2.28)");
+  assert.equal(sp03Exceed, null, "Bid hiện tại $3.00 vượt max bid SP03 $2.28 thì không tăng/giảm mà giữ nguyên");
+
+  // SP03 target within ceiling, increasing and capped at max bid ceiling
+  const sp03CappedAtCeiling = evaluateRowWithRuleEngine(
+    {
+      grain: "TARGET",
+      isNegative: false,
+      state: "ENABLED",
+      campaignState: "ENABLED",
+      adGroupState: "ENABLED",
+      sku: "OHN240802WF",
+      campaignName: "OHN240802WF SP03 Quynh Exact",
+      adType: "SP",
+      targetId: "t-sp03-inc",
+      targetExpression: "gifts for your wife for birthday",
+      bid: 2.20,
+      cpc: 1.5,
+      clicks: 0,
+      spend: 0,
+      sales: 0,
+      orders: 0,
+    } as any,
+    ruleMap,
+    oodieEconMap,
+  );
+  assert.equal(sp03CappedAtCeiling?.recType, "BID_INCREASE");
+  assert.equal(sp03CappedAtCeiling?.recommendedBid, 2.28, "Tăng bid được chặn tại trần max bid 2.28");
+  assert.match(sp03CappedAtCeiling?.reason || "", /chặn tại trần hiệu lực \$2\.28/);
 });
 
 test("Auto Upload AdsPower: Zero-Spend SKU action filtering logic", () => {

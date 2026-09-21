@@ -84,6 +84,52 @@ export function PpcSkuRecommendationGroupView({
   const [modalActionFilter, setModalActionFilter] = useState<"ALL" | "BID_INCREASE" | "BID_DECREASE" | "PAUSE_TARGET">("ALL");
   const [recentlyApprovedIds, setRecentlyApprovedIds] = useState<Set<string>>(new Set());
   const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set());
+  const [explainingRecId, setExplainingRecId] = useState<string | null>(null);
+  const [aiExplanationModal, setAiExplanationModal] = useState<{
+    rec: PpcRecommendation;
+    explanation: string;
+  } | null>(null);
+
+  const handleExplainWithAi = async (rec: PpcRecommendation) => {
+    setExplainingRecId(rec.id);
+    try {
+      const res = await fetch("/api/ppc/ai-explain", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          keyword: rec.keyword,
+          matchType: rec.matchType,
+          campaignName: rec.campaignName,
+          recType: rec.recType,
+          currentBid: rec.currentBid,
+          recommendedBid: rec.recommendedBid,
+          clicks: rec.clicks,
+          spend: rec.spend,
+          sales: rec.sales,
+          orders: rec.orders,
+          cpc: rec.cpc,
+          breakEvenAcos: selectedSkuGroup?.economics?.breakEvenAcos,
+          maxBid: selectedSkuGroup?.economics?.maxBid,
+          productType: rec.productType || selectedSkuGroup?.productType,
+          ruleProfile: rec.ruleProfile,
+          ruleReason: rec.reason,
+          sku: rec.sku || selectedSkuGroup?.sku,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Không thể lấy giải thích từ AI");
+      }
+      setAiExplanationModal({
+        rec,
+        explanation: data.explanation,
+      });
+    } catch (err: any) {
+      alert("Lỗi AI: " + (err.message || "Vui lòng thử lại"));
+    } finally {
+      setExplainingRecId(null);
+    }
+  };
 
   const handleOpenActionQueueModal = () => {
     setSelectedSkuGroup(null);
@@ -1223,8 +1269,18 @@ export function PpcSkuRecommendationGroupView({
                                           {renderActionBadge(rec.recType)}
                                         </td>
                                         <td className="py-2.5 px-3">
-                                          <div className="font-bold text-slate-900 break-words" title={rec.keyword}>
-                                            {rec.keyword}
+                                          <div className="font-bold text-slate-900 break-words flex items-center gap-1.5" title={rec.keyword}>
+                                            <span>{rec.keyword}</span>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleExplainWithAi(rec)}
+                                              disabled={explainingRecId === rec.id}
+                                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-200 transition cursor-pointer disabled:opacity-50 shrink-0"
+                                              title="AI (Gemini 2.5 Flash) giải thích tại sao đề xuất mức bid này"
+                                            >
+                                              <Sparkle size={10} weight="fill" className={explainingRecId === rec.id ? "animate-spin text-violet-600" : "text-violet-600"} />
+                                              <span>{explainingRecId === rec.id ? "Đang nghĩ..." : "AI"}</span>
+                                            </button>
                                           </div>
                                           {rec.matchType && (
                                             <div className="text-[10px] text-slate-400 uppercase font-mono mt-0.5">
@@ -1308,6 +1364,83 @@ export function PpcSkuRecommendationGroupView({
                 className="px-4 py-2 rounded-lg bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-bold transition cursor-pointer shadow-2xs"
               >
                 Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI Explanation Modal */}
+      {aiExplanationModal && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full p-5 space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-violet-100 text-violet-700 flex items-center justify-center shrink-0">
+                  <Sparkle size={18} weight="fill" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
+                    <span>AI Giải thích đề xuất Bid</span>
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 font-semibold border border-violet-200">
+                      Gemini 2.5 Flash
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-500 font-mono mt-0.5 truncate max-w-[320px]">
+                    {aiExplanationModal.rec.keyword} ({aiExplanationModal.rec.matchType || "Target"})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAiExplanationModal(null)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 text-xs space-y-1.5 font-mono">
+              <div className="flex justify-between text-slate-600">
+                <span>Hành động:</span>
+                <span className="font-bold text-slate-900">
+                  {aiExplanationModal.rec.recType === "PAUSE_TARGET"
+                    ? "Tạm dừng (PAUSE)"
+                    : aiExplanationModal.rec.recType === "BID_INCREASE"
+                    ? "Tăng Bid (+)"
+                    : "Giảm Bid (-)"}
+                </span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Điều chỉnh giá thầu:</span>
+                <span className="font-bold text-indigo-700">
+                  ${aiExplanationModal.rec.currentBid?.toFixed(2)} ➔ ${aiExplanationModal.rec.recommendedBid?.toFixed(2)}
+                </span>
+              </div>
+              {aiExplanationModal.rec.reason && (
+                <div className="text-[11px] text-slate-500 pt-1 border-t border-slate-200/60 break-words">
+                  <span className="font-bold text-slate-700">Luật hệ thống:</span> {aiExplanationModal.rec.reason}
+                </div>
+              )}
+            </div>
+
+            <div className="bg-violet-50/50 rounded-xl p-4 border border-violet-100">
+              <div className="text-xs font-bold text-violet-900 mb-2 flex items-center gap-1.5">
+                <Sparkle size={13} weight="fill" className="text-violet-600" />
+                <span>Giải thích từ AI (Ngắn gọn & Đúng trọng tâm):</span>
+              </div>
+              <div className="text-xs text-slate-700 leading-relaxed whitespace-pre-line space-y-1 font-sans">
+                {aiExplanationModal.explanation}
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-1">
+              <button
+                type="button"
+                onClick={() => setAiExplanationModal(null)}
+                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer"
+              >
+                Đã hiểu
               </button>
             </div>
           </div>
