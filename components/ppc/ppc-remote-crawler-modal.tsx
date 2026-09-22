@@ -389,7 +389,10 @@ export function PpcRemoteCrawlerModal({
                               }
                               weight="bold"
                             />
-                            <span className="font-bold text-slate-700 truncate">{t.id.replace(`${t.store}_`, "")}</span>
+                            <span className="font-bold text-slate-700 truncate">
+                              {activeJob.store_name === "ALL" ? `[${t.store}] ` : ""}
+                              {t.id.replace(`${t.store}_`, "")}
+                            </span>
                           </div>
                           <div className="shrink-0 flex items-center gap-1 ml-2">
                             {isDone ? (
