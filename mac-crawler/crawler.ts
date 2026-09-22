@@ -94,15 +94,24 @@ loadEnv();
 const ADSPOWER_API_URL = process.env.ADSPOWER_API_URL || "http://local.adspower.net:50325";
 const DEFAULT_CDP_PORT = Number(process.env.ADSPOWER_CDP_PORT || 0);
 
+function testDirWritable(dirPath: string): boolean {
+  try {
+    fs.mkdirSync(dirPath, { recursive: true });
+    const probe = path.join(dirPath, `.probe_${Date.now()}`);
+    fs.writeFileSync(probe, "1");
+    fs.unlinkSync(probe);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const safeDownloadDir = path.join(os.homedir(), "Library", "Application Support", "AmazonPpcCrawler", "downloads");
 const configuredDownloadDir = (process.env.DOWNLOAD_BASE_DIR || safeDownloadDir)
   .replace("$HOME", os.homedir()).replace("~", os.homedir());
-const protectedMacDirs = [path.join(os.homedir(), "Downloads"), path.join(os.homedir(), "Desktop")];
-const BASE_DOWNLOAD_DIR = protectedMacDirs.some((dir) =>
-  configuredDownloadDir === dir || configuredDownloadDir.startsWith(`${dir}${path.sep}`),
-) ? safeDownloadDir : configuredDownloadDir;
+const BASE_DOWNLOAD_DIR = testDirWritable(configuredDownloadDir) ? configuredDownloadDir : safeDownloadDir;
 if (BASE_DOWNLOAD_DIR !== configuredDownloadDir) {
-  console.warn(`[CONFIG] DOWNLOAD_BASE_DIR nằm trong thư mục macOS bảo vệ; tự chuyển sang: ${BASE_DOWNLOAD_DIR}`);
+  console.warn(`[CONFIG] Không có quyền ghi vào ${configuredDownloadDir} (macOS TCC); chuyển sang: ${BASE_DOWNLOAD_DIR}`);
 }
 
 export interface StoreTarget {
