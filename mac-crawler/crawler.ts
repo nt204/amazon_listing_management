@@ -3,6 +3,7 @@ import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { execFile } from "node:child_process";
 import ExcelJS from "exceljs";
 import {
   type ReportTaskType,
@@ -400,8 +401,45 @@ export async function startAdsPowerProfile(profileId: string): Promise<string> {
   throw new Error(`Không thể mở đúng AdsPower profile ${profileId}; không dùng CDP fallback để tránh lẫn store.`);
 }
 
+async function ensureAdsPowerApiReady(): Promise<void> {
+  const isReady = async () => {
+    try {
+      const response = await fetch(`${ADSPOWER_API_URL}/api/v1/browser/local-active`, {
+        signal: AbortSignal.timeout(5_000),
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  };
+  if (await isReady()) return;
+
+  if (process.platform !== "darwin") {
+    throw new Error(`AdsPower Local API chưa sẵn sàng tại ${ADSPOWER_API_URL}.`);
+  }
+
+  const appName = process.env.ADSPOWER_APP_NAME || "AdsPower Global";
+  console.log(`[AdsPower] Local API chưa sẵn sàng; đang mở ứng dụng "${appName}"...`);
+  await new Promise<void>((resolve, reject) => {
+    execFile("/usr/bin/open", ["-a", appName], (error) => error ? reject(error) : resolve());
+  }).catch((error) => {
+    throw new Error(`Không thể mở ứng dụng ${appName}: ${(error as Error).message}`);
+  });
+
+  const deadline = Date.now() + envInt("ADSPOWER_APP_START_TIMEOUT_SECONDS", 60, 10, 180) * 1000;
+  while (Date.now() < deadline) {
+    if (await isReady()) {
+      console.log("[AdsPower] Local API đã sẵn sàng.");
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
+  throw new Error(`AdsPower đã được mở nhưng Local API chưa sẵn sàng tại ${ADSPOWER_API_URL}.`);
+}
+
 async function startAdsPowerProfileWithRetry(profileId: string): Promise<string> {
   try {
+    await ensureAdsPowerApiReady();
     return await retryWithBackoff(
       `Mở AdsPower profile ${profileId}`,
       envInt("ADSPOWER_MAX_ATTEMPTS", 3, 1, 5),

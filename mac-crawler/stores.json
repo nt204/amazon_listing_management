@@ -4,5 +4,11 @@
     "profile_id": "k1fmv7mf",
     "enabled": true,
     "description": "Store chính HSOSTORE"
+  },
+  {
+    "store_name": "CELSORIX",
+    "profile_id": "k1fd52o4",
+    "enabled": true,
+    "description": "Store CELSORIX"
   }
 ]

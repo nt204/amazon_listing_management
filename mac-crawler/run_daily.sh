@@ -40,8 +40,8 @@ NODE_BIN="$(which node || echo "/usr/local/bin/node")"
 PYTHON_BIN="$(which python3 || echo "/usr/bin/python3")"
 
 if [ ! -f "$SCRIPT_DIR/node_modules/.bin/tsx" ]; then
-  echo "[Node] Chưa có node_modules, đang tự động chạy npm install..."
-  (cd "$SCRIPT_DIR" && npm install --silent)
+  echo "[LỖI] Thiếu node_modules/.bin/tsx. Hãy chạy ./setup_mac.sh trước; daily không tự cài package lúc runtime." >&2
+  exit 1
 fi
 
 if [ -f "$SCRIPT_DIR/node_modules/.bin/tsx" ]; then
@@ -51,7 +51,8 @@ elif [ -f "$SCRIPT_DIR/../node_modules/.bin/tsx" ]; then
 elif command -v tsx >/dev/null 2>&1; then
   TSX_BIN="$(which tsx)"
 else
-  TSX_BIN="npx tsx"
+  echo "[LỖI] Không tìm thấy tsx. Hãy chạy ./setup_mac.sh trước." >&2
+  exit 1
 fi
 
 # Load config
@@ -77,7 +78,8 @@ elif [ -f "$SCRIPT_DIR/../node_modules/.bin/tsx" ]; then
 elif command -v tsx >/dev/null 2>&1; then
   tsx "$SCRIPT_DIR/crawler.ts"
 else
-  npx tsx "$SCRIPT_DIR/crawler.ts"
+  echo "[LỖI] Không tìm thấy tsx để chạy crawler." >&2
+  exit 1
 fi
 
 # crawler.ts chỉ publish marker sau khi đủ và xác minh đúng 6 file. Script

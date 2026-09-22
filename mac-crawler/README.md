@@ -2,7 +2,7 @@
 
 Thư mục này được thiết kế **hoàn toàn độc lập (standalone)**, tối ưu cho máy **Mac mini M1** cắm chạy tự động 24/7:
 1. **Nhận lệnh từ xa (Remote Worker):** Lắng nghe lệnh trực tiếp từ Web App (`https://ncehub.net`), hỗ trợ theo dõi tiến độ 6 file thời gian thực, cơ chế Lease Token chống trùng lặp, và Checkpoint khôi phục nguyên tử khi đứt đoạn.
-2. **Lịch cố định:** Tự động chạy tải dữ liệu vào đúng **12:00 trưa mỗi ngày**.
+2. **Lịch cố định:** Đúng **12:00 trưa mỗi ngày**, scheduler gửi một job `ALL` lên server; remote worker là tiến trình duy nhất crawl, tránh tranh lock và chạy trùng.
 3. **Tải đủ 6 báo cáo PPC Amazon:**
    - `Bulk SP 30d` & `Bulk SP 7d`
    - `Bulk SB 30d` & `Bulk SB 7d`
@@ -114,7 +114,7 @@ flowchart LR
 
 ### 4. Quản lý Lịch Chạy Tự Động 12:00 Trưa (Daily LaunchAgent)
 
-Nếu bạn muốn Mac mini tự động kích hoạt crawl đúng 12:00 trưa mỗi ngày mà không cần ai bấm web:
+Đúng 12:00, LaunchAgent chạy `schedule_daily_job.sh` để enqueue job `ALL` lên Web. Nó không gọi `crawler.ts` trực tiếp. Nếu đang có job khác, scheduler chờ và retry có giới hạn; nếu đã có job `ALL`, nó không tạo trùng.
 
 ```bash
 cd ~/mac-crawler
@@ -124,6 +124,9 @@ cd ~/mac-crawler
 
 # Kiểm tra xem lịch đã đăng ký chưa:
 launchctl list | grep com.amazon.ppc.crawler
+
+# Xem log scheduler 12:00:
+tail -f ~/Library/Logs/mac-crawler.log
 
 # Gỡ bỏ lịch tự động 12:00 trưa:
 ./uninstall_launchd.sh

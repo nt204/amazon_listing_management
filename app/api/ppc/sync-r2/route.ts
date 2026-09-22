@@ -5,10 +5,12 @@ export const runtime = "nodejs";
 
 export const maxDuration = 300;
 
+const activeSyncPromises = new Map<string, Promise<any>>();
+
 export async function POST(request: Request) {
   try {
     const actor = authorize(request, "write");
-    await enforceRateLimit(actor, "ppc-r2-sync", 3, 60);
+    await enforceRateLimit(actor, "ppc-r2-sync", 5, 60);
     const body = await request.json().catch(() => ({})) as {
       batchId?: unknown;
       batchDate?: unknown;
@@ -29,7 +31,26 @@ export async function POST(request: Request) {
         };
       }) : undefined,
     } : undefined;
-    const result = await syncPpcReportsFromR2(dataScope(actor), target);
+
+    const lockKey = `${actor.teamId}:${target?.batchId || "ALL"}`;
+    if (activeSyncPromises.has(lockKey)) {
+      console.log(`[R2 Sync] Đang có tiến trình đồng bộ ${lockKey} chạy nền, chờ kết quả thay vì chạy mới...`);
+      const existingResult = await activeSyncPromises.get(lockKey);
+      return Response.json({
+        success: true,
+        message: "Đồng bộ R2 hoàn tất thành công (từ tiến trình nền song song).",
+        result: existingResult,
+      });
+    }
+
+    const syncPromise = syncPpcReportsFromR2(dataScope(actor), target)
+      .finally(() => {
+        activeSyncPromises.delete(lockKey);
+      });
+
+    activeSyncPromises.set(lockKey, syncPromise);
+    const result = await syncPromise;
+
     const failureSuffix = result.failed ? ` Có ${result.failed} file lỗi.` : "";
     return Response.json({
       success: result.failed === 0,

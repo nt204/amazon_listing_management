@@ -136,7 +136,12 @@ async function triggerServerSync(batchId: string, batchDate: string, storeNames:
       body: JSON.stringify({ batchId, batchDate, storeNames }),
     }, configuredInt("DB_SYNC_TIMEOUT_MINUTES", 10, 1, 30) * 60_000);
     const body = await res.text();
-    if (!res.ok) throw new Error(`Server sync thất bại (${res.status}): ${body}`);
+    if (!res.ok) {
+      if (res.status === 504) {
+        console.warn("[Worker] Nginx 504 Gateway Timeout: Server đang nạp 6 file lớn từ R2 vào Postgres. Đang chờ server xử lý tiếp...");
+      }
+      throw new Error(`Server sync (${res.status}): ${body.slice(0, 200).replace(/\s+/g, " ")}`);
+    }
     const data = JSON.parse(body);
     if (data.success === false || data.result?.failed > 0) {
       throw new Error(data.message || `Server báo ${data.result?.failed || 0} file ingest lỗi.`);
@@ -193,7 +198,17 @@ async function processJob(job: {
     const allConfiguredStores = getStoreList();
     let storesToCrawl: StoreTarget[] = [];
     if (targetStoreName === "ALL") {
-      storesToCrawl = allConfiguredStores;
+      const requestedStores = new Set((job.task_states || []).map((task) => task.store.toLowerCase()));
+      if (requestedStores.size) {
+        const configuredByName = new Map(allConfiguredStores.map((store) => [store.store_name.toLowerCase(), store]));
+        const missing = [...requestedStores].filter((name) => !configuredByName.has(name));
+        if (missing.length) {
+          throw new Error(`Job yêu cầu store chưa được map trong stores.json: ${missing.join(", ")}.`);
+        }
+        storesToCrawl = [...requestedStores].map((name) => configuredByName.get(name)!);
+      } else {
+        storesToCrawl = allConfiguredStores;
+      }
     } else {
       const match = allConfiguredStores.find((s) => s.store_name.toLowerCase() === targetStoreName.toLowerCase());
       if (!match) {

@@ -214,7 +214,19 @@ export async function POST(request: Request) {
     if (storeName !== "ALL" && !stores.some((store) => store.name.toLowerCase() === storeName.toLowerCase())) {
       throw new ApiError(`Store "${storeName}" không tồn tại trong hệ thống.`, 400);
     }
-    const totalFiles = (storeName === "ALL" ? stores.length : 1) * 6;
+    const requestedStoreNames: string[] = Array.isArray(body?.storeNames)
+      ? [...new Set<string>(body.storeNames.map((value: unknown) => String(value).trim()).filter(Boolean))]
+      : [];
+    let targetStoreNames: string[];
+    if (storeName === "ALL" && requestedStoreNames.length) {
+      const knownByName = new Map(stores.map((store) => [store.name.toLowerCase(), store.name]));
+      const invalid = requestedStoreNames.filter((name) => !knownByName.has(name.toLowerCase()));
+      if (invalid.length) throw new ApiError(`Store không tồn tại trong hệ thống: ${invalid.join(", ")}.`, 400);
+      targetStoreNames = requestedStoreNames.map((name) => knownByName.get(name.toLowerCase())!);
+    } else {
+      targetStoreNames = storeName === "ALL" ? stores.map((store) => store.name) : [storeName];
+    }
+    const totalFiles = targetStoreNames.length * 6;
 
     // Kiểm tra xem có job nào đang chạy không
     const runningCheck = await sql`
@@ -260,7 +272,6 @@ export async function POST(request: Request) {
       { type: "ST_SB", days: 30 },
     ];
 
-    const targetStoreNames = storeName === "ALL" ? stores.map((s) => s.name) : [storeName];
     const initialTasks = targetStoreNames.flatMap((sName) =>
       defaultTaskTypes.map((t) => ({
         id: `${sName}_${t.type}_${t.days}D`,

@@ -13,6 +13,7 @@ echo "CÀI ĐẶT LỊCH TỰ ĐỘNG CRAWL VÀO 12:00 TRƯA MỖI NGÀY TRÊN M
 echo "============================================================"
 
 # Cấp quyền thực thi cho các file script
+chmod +x "$SCRIPT_DIR/schedule_daily_job.sh"
 chmod +x "$SCRIPT_DIR/run_daily.sh"
 chmod +x "$SCRIPT_DIR/trigger_sync.sh"
 chmod +x "$SCRIPT_DIR/upload_r2.py"
@@ -37,7 +38,7 @@ cat <<EOF > "$TARGET_PLIST"
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>$SCRIPT_DIR/run_daily.sh</string>
+        <string>$SCRIPT_DIR/schedule_daily_job.sh</string>
     </array>
 
     <!-- Lịch chạy: Đúng 12 giờ 00 phút trưa mỗi ngày -->
@@ -48,6 +49,11 @@ cat <<EOF > "$TARGET_PLIST"
         <key>Minute</key>
         <integer>0</integer>
     </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
 
     <key>StandardOutPath</key>
     <string>$HOME/Library/Logs/mac-crawler.log</string>
