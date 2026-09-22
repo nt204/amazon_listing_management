@@ -65,6 +65,12 @@ export async function GET(request: Request) {
       success: true,
       recommendationWindowDays: days,
       data: filteredResult,
+    }, {
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+        Pragma: "no-cache",
+        Expires: "0",
+      },
     });
   } catch (error) {
     return routeErrorResponse(error, "Lỗi khi lấy danh sách đề xuất gom theo SKU.", 500);

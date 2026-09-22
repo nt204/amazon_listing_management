@@ -30,6 +30,7 @@ import {
   type AmazonPpcCommonRuleSet,
 } from "./common-rule-parser";
 import { uploadBulkFileToAmazonAds } from "./adspower-service";
+import { invalidateGroupedRecommendationsCache } from "./recommendation-cache";
 
 export async function resolveStoreId(storeIdOrName?: string | null): Promise<string> {
   const sql = await getDatabaseClient();
@@ -192,7 +193,7 @@ export async function saveCostMasterNewVersion(data: {
     `;
 
     const r = inserted[0];
-    return {
+    const result = {
       id: r.id,
       storeId: r.store_id,
       productType: r.product_type,
@@ -208,6 +209,8 @@ export async function saveCostMasterNewVersion(data: {
       createdAt: new Date(r.created_at).toISOString(),
       updatedAt: new Date(r.updated_at).toISOString(),
     };
+    invalidateGroupedRecommendationsCache(storeId);
+    return result;
   });
 }
 
@@ -394,6 +397,9 @@ export async function deleteCostMaster(
     WHERE id = ${id} AND store_id = ${storeId}
     RETURNING id
   `;
+  if (res.length > 0) {
+    invalidateGroupedRecommendationsCache(storeId);
+  }
   return res.length > 0;
 }
 
@@ -429,6 +435,7 @@ export async function cloneCostMasters(
     count++;
   }
 
+  invalidateGroupedRecommendationsCache(targetId);
   return { clonedCount: count };
 }
 
@@ -555,6 +562,7 @@ export async function importCostMasterFromExcel(
     });
   }
 
+  invalidateGroupedRecommendationsCache(storeId);
   return {
     importedCount: items.length,
     items,
@@ -839,7 +847,7 @@ export async function upsertSkuEconomics(
   `;
 
   const r = rows[0];
-  return {
+  const result = {
     id: r.id,
     storeId: r.store_id,
     sku: r.sku,
@@ -856,6 +864,9 @@ export async function upsertSkuEconomics(
     maxBid: Number(r.max_bid),
     costSource: r.cost_source,
   };
+
+  invalidateGroupedRecommendationsCache(storeId);
+  return result;
 }
 
 /* =========================================================================
