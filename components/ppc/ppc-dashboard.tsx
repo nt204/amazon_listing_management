@@ -651,14 +651,55 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
   const handleSyncR2 = async () => {
     setSyncingR2(true);
     try {
-      const res = await fetch("/api/ppc/sync-r2", { method: "POST" });
+      const targetStore = selectedStore !== "ALL" ? selectedStore : undefined;
+      const res = await fetch("/api/ppc/sync-r2", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storeName: targetStore, force: true }),
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Lỗi đồng bộ Cloudflare R2");
-      notify(
-        data.message || "Đã đồng bộ báo cáo mới nhất từ Cloudflare R2!",
-        data.result?.failed ? "error" : "success",
-      );
-      await loadData(true);
+
+      if (data.job?.status === "COMPLETED" && !data.accepted) {
+        notify(data.message || "Đã đồng bộ báo cáo mới nhất từ Cloudflare R2!", "success");
+        await loadData(true);
+        return;
+      }
+
+      const jobId = data.job?.id;
+      if (!jobId) {
+        notify(data.message || "Đã gửi yêu cầu đồng bộ R2!", "success");
+        await loadData(true);
+        return;
+      }
+
+      notify(data.message || "Đã đưa vào hàng đợi đồng bộ, đang xử lý ngầm...");
+
+      // Polling kiểm tra trạng thái job
+      const pollInterval = 3000;
+      const maxPollTime = 300_000;
+      const startTime = Date.now();
+
+      while (Date.now() - startTime < maxPollTime) {
+        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+        const statusRes = await fetch(`/api/ppc/sync-r2?jobId=${encodeURIComponent(jobId)}`);
+        if (!statusRes.ok) continue;
+        const statusData = await statusRes.json();
+        const job = statusData.job;
+        if (!job) continue;
+
+        if (job.status === "COMPLETED") {
+          notify(`Đồng bộ R2 hoàn tất thành công cho batch ${job.batch_id}!`, "success");
+          await loadData(true);
+          return;
+        }
+
+        if (job.status === "FAILED" || job.status === "CANCELLED") {
+          throw new Error(job.error_message || `Đồng bộ thất bại (trạng thái ${job.status}).`);
+        }
+      }
+
+      notify("Tiến trình đồng bộ đang tiếp tục chạy ngầm trên máy chủ. Bạn có thể làm mới trang sau ít phút.");
     } catch (err) {
       notify(err instanceof Error ? err.message : "Đồng bộ R2 thất bại", "error");
     } finally {

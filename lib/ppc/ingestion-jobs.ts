@@ -10,16 +10,42 @@ export interface PpcIngestionJob {
   lease_token?: string|null; result?: unknown; error_message?: string|null;
 }
 
-export async function enqueuePpcIngestion(scope: DataScope, target: {batchId:string;batchDate:string;storeNames:string[]}) {
-  const sql=await getDatabaseClient();
-  const stores=[...new Set(target.storeNames.map(v=>v.trim()).filter(Boolean))];
-  const rows=await sql<PpcIngestionJob[]>`
-    INSERT INTO ppc_ingestion_jobs(team_id,actor_id,batch_id,batch_date,store_names)
-    VALUES(${scope.teamId},${scope.actorId},${target.batchId},${target.batchDate},${sql.json(stores)})
-    ON CONFLICT(team_id,batch_id) DO UPDATE SET actor_id=EXCLUDED.actor_id,batch_date=EXCLUDED.batch_date,
-      store_names=EXCLUDED.store_names,status=CASE WHEN ppc_ingestion_jobs.status IN ('FAILED','CANCELLED') THEN 'RETRY_WAIT' ELSE ppc_ingestion_jobs.status END,
-      next_attempt_at=CASE WHEN ppc_ingestion_jobs.status IN ('FAILED','CANCELLED') THEN NOW() ELSE ppc_ingestion_jobs.next_attempt_at END,
-      error_message=CASE WHEN ppc_ingestion_jobs.status IN ('FAILED','CANCELLED') THEN NULL ELSE ppc_ingestion_jobs.error_message END,updated_at=NOW()
+export async function enqueuePpcIngestion(
+  scope: DataScope,
+  target: { batchId: string; batchDate: string; storeNames: string[] },
+  options?: { force?: boolean }
+) {
+  const sql = await getDatabaseClient();
+  const stores = [...new Set(target.storeNames.map((v) => v.trim()).filter(Boolean))];
+  const force = Boolean(options?.force);
+  const rows = await sql<PpcIngestionJob[]>`
+    INSERT INTO ppc_ingestion_jobs(team_id, actor_id, batch_id, batch_date, store_names)
+    VALUES(${scope.teamId}, ${scope.actorId}, ${target.batchId}, ${target.batchDate}, ${sql.json(stores)})
+    ON CONFLICT(team_id, batch_id) DO UPDATE SET
+      actor_id = EXCLUDED.actor_id,
+      batch_date = EXCLUDED.batch_date,
+      store_names = EXCLUDED.store_names,
+      status = CASE 
+        WHEN ${force} THEN 'QUEUED'
+        WHEN ppc_ingestion_jobs.status IN ('FAILED', 'CANCELLED') THEN 'RETRY_WAIT' 
+        ELSE ppc_ingestion_jobs.status 
+      END,
+      stage = CASE WHEN ${force} THEN 'QUEUED' ELSE ppc_ingestion_jobs.stage END,
+      progress_pct = CASE WHEN ${force} THEN 0 ELSE ppc_ingestion_jobs.progress_pct END,
+      attempt_count = CASE WHEN ${force} THEN 0 ELSE ppc_ingestion_jobs.attempt_count END,
+      next_attempt_at = CASE 
+        WHEN ${force} THEN NOW()
+        WHEN ppc_ingestion_jobs.status IN ('FAILED', 'CANCELLED') THEN NOW() 
+        ELSE ppc_ingestion_jobs.next_attempt_at 
+      END,
+      error_message = CASE 
+        WHEN ${force} THEN NULL
+        WHEN ppc_ingestion_jobs.status IN ('FAILED', 'CANCELLED') THEN NULL 
+        ELSE ppc_ingestion_jobs.error_message 
+      END,
+      lease_token = CASE WHEN ${force} THEN NULL ELSE ppc_ingestion_jobs.lease_token END,
+      lease_expires_at = CASE WHEN ${force} THEN NULL ELSE ppc_ingestion_jobs.lease_expires_at END,
+      updated_at = NOW()
     RETURNING *`;
   return rows[0];
 }

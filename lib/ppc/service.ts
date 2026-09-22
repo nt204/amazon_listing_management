@@ -843,6 +843,94 @@ export interface R2SyncTarget {
   batches?: Array<{ batchId: string; batchDate: string; storeName: string }>;
 }
 
+export interface DiscoveredR2Marker {
+  batchId: string;
+  batchDate: string;
+  storeName: string;
+  markerKey: string;
+  lastModified: Date;
+}
+
+export async function findLatestR2Markers(
+  _scope?: DataScope,
+  filterStoreName?: string,
+): Promise<DiscoveredR2Marker[]> {
+  const accountId = process.env.R2_ACCOUNT_ID;
+  const accessKeyId = process.env.R2_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
+  const bucket = process.env.R2_BUCKET_NAME || "amazon-listing-production";
+  const prefix = `${(process.env.PPC_R2_PREFIX || process.env.R2_PREFIX || "ppc-reports").replace(/^\/+|\/+$/g, "")}/`;
+  if (!accountId || !accessKeyId || !secretAccessKey) {
+    throw new PpcInputError("Chưa cấu hình đầy đủ thông tin Cloudflare R2 (R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY).");
+  }
+
+  const s3 = new S3Client({
+    region: "auto",
+    endpoint: process.env.R2_ENDPOINT || `https://${accountId}.r2.cloudflarestorage.com`,
+    credentials: { accessKeyId, secretAccessKey },
+  });
+
+  const objects: Array<{ Key?: string; LastModified?: Date }> = [];
+  try {
+    const listRes = await s3.send(new ListObjectsV2Command({
+      Bucket: bucket,
+      Prefix: `${prefix}input/`,
+      MaxKeys: 500,
+    }));
+    objects.push(...(listRes.Contents || []));
+  } catch (err) {
+    console.warn("[R2 Marker Discovery] Lỗi khi list prefix input/:", err);
+  }
+
+  let markerObjects = objects.filter((o) => (o.Key || "").endsWith("/_COMPLETE.json"));
+  if (!markerObjects.length) {
+    try {
+      const fallbackRes = await s3.send(new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: prefix,
+        MaxKeys: 500,
+      }));
+      markerObjects = (fallbackRes.Contents || []).filter((o) => (o.Key || "").endsWith("/_COMPLETE.json"));
+    } catch (err) {
+      console.warn("[R2 Marker Discovery] Lỗi khi fallback list prefix:", err);
+    }
+  }
+
+  if (!markerObjects.length) {
+    return [];
+  }
+
+  markerObjects.sort((a, b) => {
+    const timeA = a.LastModified ? a.LastModified.getTime() : 0;
+    const timeB = b.LastModified ? b.LastModified.getTime() : 0;
+    return timeB - timeA;
+  });
+
+  const results: DiscoveredR2Marker[] = [];
+  for (const obj of markerObjects) {
+    const markerKey = obj.Key || "";
+    const parts = markerKey.split("/");
+    const completeIdx = parts.indexOf("_COMPLETE.json");
+    if (completeIdx >= 3) {
+      const batchId = parts[completeIdx - 1];
+      const storeName = parts[completeIdx - 2];
+      const batchDate = parts[completeIdx - 3];
+      if (filterStoreName && filterStoreName !== "ALL" && storeName.toLowerCase() !== filterStoreName.toLowerCase()) {
+        continue;
+      }
+      results.push({
+        batchId,
+        batchDate,
+        storeName,
+        markerKey,
+        lastModified: obj.LastModified || new Date(),
+      });
+    }
+  }
+
+  return results;
+}
+
 export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarget) {
   const accountId = process.env.R2_ACCOUNT_ID;
   const accessKeyId = process.env.R2_ACCESS_KEY_ID;
