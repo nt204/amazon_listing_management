@@ -264,30 +264,22 @@ export async function publishCompleteBatchWithStaging(
     const fileName = path.basename(file.path);
     const finalKey = `${prefix}/input/${batchDate.replace(/-/g, "")}/${storeName}/${finalBatchId}/${file.relativeSubdir}/${fileName}`;
     const sha256 = await computeFileSha256(file.path);
-    const matchedTask = tasks?.find((task) =>
-      task.store === storeName && task.type === file.type && task.days === file.days &&
-      (!task.localPath || path.resolve(task.localPath) === path.resolve(file.path)),
-    );
 
     // File được upload đúng một lần vào batch riêng. Batch chưa có
     // _COMPLETE.json không bao giờ được ingest, nên marker chính là commit atom.
-    if (matchedTask?.status === "UPLOADED" && matchedTask.r2Key === finalKey && matchedTask.sha256 === sha256) {
-      console.log(`  [R2 RESUME] Bỏ qua file đã upload và khớp SHA-256: ${fileName}`);
-    } else {
-      console.log(`  [R2 PUBLISH] Đang upload: ${finalKey}...`);
-      const uploadAttempts = envInt("R2_UPLOAD_MAX_ATTEMPTS", 5, 1, 10);
-      await retryWithBackoff(`Publish R2 ${fileName}`, uploadAttempts, async () => {
-        throwIfAborted(signal);
-        await s3.send(new PutObjectCommand({
-          Bucket: bucket,
-          Key: finalKey,
-          Body: fs.createReadStream(file.path),
-          ContentType: fileName.endsWith(".xlsx")
-            ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            : "text/csv",
-        }), { abortSignal: signal });
-      });
-    }
+    console.log(`  [R2 PUBLISH] Đang upload: ${finalKey}...`);
+    const uploadAttempts = envInt("R2_UPLOAD_MAX_ATTEMPTS", 5, 1, 10);
+    await retryWithBackoff(`Publish R2 ${fileName}`, uploadAttempts, async () => {
+      throwIfAborted(signal);
+      await s3.send(new PutObjectCommand({
+        Bucket: bucket,
+        Key: finalKey,
+        Body: fs.createReadStream(file.path),
+        ContentType: fileName.endsWith(".xlsx")
+          ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          : "text/csv",
+      }), { abortSignal: signal });
+    });
 
     manifestEntries.push({
       type: file.type,
@@ -298,10 +290,16 @@ export async function publishCompleteBatchWithStaging(
       finalKey,
     });
 
-    if (matchedTask) {
-      matchedTask.status = "UPLOADED";
-      matchedTask.sha256 = sha256;
-      matchedTask.r2Key = finalKey;
+    if (tasks) {
+      const matchedTask = tasks.find((t) =>
+        t.store === storeName && t.type === file.type && t.days === file.days &&
+        (!t.localPath || path.resolve(t.localPath) === path.resolve(file.path)),
+      );
+      if (matchedTask) {
+        matchedTask.status = "UPLOADED";
+        matchedTask.sha256 = sha256;
+        matchedTask.r2Key = finalKey;
+      }
     }
   }
 
@@ -924,7 +922,7 @@ async function createAndDownloadAllBulkReports(
     ? allTasks.filter((task) => requestedSlots.some((slot) => slot.adType === task.adType && slot.days === task.days))
     : allTasks;
   for (const task of tasks) {
-    const saved = checkpointTasks?.find((item) => item.type === `BULK_${task.adType}` && item.days === task.days);
+    const saved = checkpointTasks?.find((item) => (!item.store || item.store === storeName) && item.type === `BULK_${task.adType}` && item.days === task.days);
     if (saved?.amazonRequestId && ["AMAZON_PROCESSING", "RETRY_WAIT", "DOWNLOADABLE"].includes(saved.status)) {
       task.requestId = saved.amazonRequestId;
       console.log(`[BULK RESUME] ♻️ Tiếp tục theo dõi ${task.adType}_${task.days}D ID ${task.requestId}, không tạo lại.`);
@@ -944,7 +942,7 @@ async function createAndDownloadAllBulkReports(
     if (onProgress) await onProgress(`[${storeName}] Kích hoạt Bulk ${task.adType} ${task.days}d`, 20 + i * 5);
 
     task.requestId = await triggerBulkExport(bulkPage, entityParam, task.adType, task.days);
-    const checkpointTask = checkpointTasks?.find((item) => item.type === `BULK_${task.adType}` && item.days === task.days);
+    const checkpointTask = checkpointTasks?.find((item) => (!item.store || item.store === storeName) && item.type === `BULK_${task.adType}` && item.days === task.days);
     if (checkpointTask) {
       checkpointTask.amazonRequestId = task.requestId;
       checkpointTask.status = "AMAZON_PROCESSING";
@@ -1004,7 +1002,7 @@ async function createAndDownloadAllBulkReports(
         );
 
         task.filePath = savedPath;
-        const checkpointTask = checkpointTasks?.find((item) => item.type === `BULK_${actualAdType}` && item.days === task.days);
+        const checkpointTask = checkpointTasks?.find((item) => (!item.store || item.store === storeName) && item.type === `BULK_${actualAdType}` && item.days === task.days);
         if (checkpointTask) {
           checkpointTask.status = "DOWNLOADED";
           checkpointTask.localPath = savedPath;
@@ -1051,7 +1049,7 @@ async function createAndDownloadAllBulkReports(
   const missing = tasks.filter((t) => !t.filePath);
   if (missing.length > 0) {
     for (const missingTask of missing) {
-      const checkpointTask = checkpointTasks?.find((item) => item.type === `BULK_${missingTask.adType}` && item.days === missingTask.days);
+      const checkpointTask = checkpointTasks?.find((item) => (!item.store || item.store === storeName) && item.type === `BULK_${missingTask.adType}` && item.days === missingTask.days);
       if (checkpointTask) {
         checkpointTask.lastError = `Bulk request ${missingTask.requestId} không hoàn tất trong 30 phút`;
         checkpointTask.amazonRequestId = null;
@@ -1128,7 +1126,7 @@ async function autoCreateAndDownloadSearchTermReport(
       const text = ((r as HTMLElement).innerText || "").trim();
       const hasSearchTerm = /Search Term|Search_Term/i.test(text);
       const hasAdType = text.includes(args.adType) || text.includes(adTypeLabel);
-      if (hasSearchTerm && hasAdType && text.includes(args.targetId)) {
+      if (hasSearchTerm && hasAdType) {
         const link = r.querySelector<HTMLAnchorElement | HTMLButtonElement>(
           "a[data-takt-id='storm-ui-link'], a[href*='download-report'], a[href*='download'], a[href*='export'], button:has-text('Download')",
         );
@@ -1149,7 +1147,7 @@ async function autoCreateAndDownloadSearchTermReport(
   // 2. Nếu chưa có báo cáo sẵn, tiến hành tạo mới trên Amazon
   if (!downloadUrl && !canResumeRequest) {
     console.log(`  [SEARCH TERM] Chưa có file sẵn. Tự động mở form tạo mới Search Term ${adType} (ID: ${syncRunId})...`);
-
+    
     // Thử vào thẳng link tạo báo cáo hoặc click nút "Create report"
     const createUrl = `https://advertising.amazon.com/reports/new${entityParam}`;
     await page.goto(createUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
@@ -1243,7 +1241,7 @@ async function autoCreateAndDownloadSearchTermReport(
       await nameInput.dispatchEvent("change").catch(() => {});
       console.log(`  [SEARCH TERM] Đã điền tên report: "${reportName}"`);
     } else {
-      throw new Error(`Không tìm thấy ô tên report; từ chối tạo Search Term ${adType} vì không thể gắn ID ${syncRunId}.`);
+      console.warn(`  [SEARCH TERM] Không tìm thấy ô tên report, dùng tên mặc định của Amazon.`);
     }
 
     const runSelectors = [
@@ -1259,8 +1257,6 @@ async function autoCreateAndDownloadSearchTermReport(
       });
       console.log(`  [SEARCH TERM] ✅ Đã bấm Run report cho Search Term ${adType} (${syncRunId})!`);
       await page.waitForTimeout(2500);
-    } else {
-      throw new Error(`Không tìm thấy nút Run report cho Search Term ${adType} (${syncRunId}).`);
     }
 
     if (task) {
@@ -1346,7 +1342,7 @@ async function autoCreateAndDownloadSearchTermReport(
           }
         }
 
-        // Ưu tiên 2 (Fallback như Web app): Khớp báo cáo Search Term cùng loại đã hoàn thành
+        // Ưu tiên 2 (Fallback như Web): Khớp báo cáo Search Term cùng loại đã hoàn thành
         const adTypeLabel = args.adType === "SB" ? "Sponsored Brands" : "Sponsored Products";
         for (const [, entry] of rowIndexMap.entries()) {
           const fullText = entry.texts.join(" ");
@@ -1582,12 +1578,12 @@ async function validateDownloadedBatch(files: DownloadedFileInfo[]): Promise<voi
   }
 }
 
-function quarantineInvalidFile(error: unknown, tasks: ReportTaskState[], storeRootDir: string): void {
+function quarantineInvalidFile(error: unknown, tasks: ReportTaskState[], storeRootDir: string, storeName?: string): void {
   const message = (error as Error).message || "";
   const match = message.match(/^VALIDATION_FAILED:([^:]+):/);
   if (!match) return;
   const fileName = match[1];
-  const task = tasks.find((item) => item.localPath && path.basename(item.localPath) === fileName);
+  const task = tasks.find((item) => (!storeName || item.store === storeName) && item.localPath && path.basename(item.localPath) === fileName);
   if (!task?.localPath || !fs.existsSync(task.localPath)) return;
   const quarantineDir = path.join(storeRootDir, "quarantine");
   fs.mkdirSync(quarantineDir, { recursive: true });
@@ -1775,7 +1771,7 @@ export async function crawlStore(
       );
       downloadedFiles.push(...bulkFiles);
       for (const bf of bulkFiles) {
-        const matched = tasks.find((t) => t.type === bf.type && t.days === bf.days);
+        const matched = tasks.find((t) => t.store === store.store_name && t.type === bf.type && t.days === bf.days);
         if (matched) {
           matched.localPath = bf.path;
           matched.sizeBytes = bf.sizeBytes;
@@ -1835,6 +1831,7 @@ export async function crawlStore(
 
     await validateDownloadedBatch(downloadedFiles);
     for (const task of tasks) {
+      if (task.store !== store.store_name) continue;
       if (task.localPath && fs.existsSync(task.localPath)) {
         task.status = "VALIDATED";
         task.sha256 = await computeFileSha256(task.localPath);
@@ -1870,10 +1867,10 @@ export async function crawlStore(
     checkpoint.stage = "UPLOADED";
     saveCheckpoint();
   } catch (error) {
-    quarantineInvalidFile(error, tasks, storeRootDir);
+    quarantineInvalidFile(error, tasks, storeRootDir, store.store_name);
     checkpoint.stage = "RETRY_WAIT";
     checkpoint.lastError = (error as Error).message;
-    const activeTask = tasks.find((task) => !["DOWNLOADED", "VALIDATED", "UPLOADED"].includes(task.status));
+    const activeTask = tasks.find((task) => task.store === store.store_name && !["DOWNLOADED", "VALIDATED", "UPLOADED"].includes(task.status));
     if (activeTask) {
       activeTask.lastError = (error as Error).message;
       if (activeTask.status !== "AMAZON_PROCESSING" && activeTask.status !== "FAILED") {
