@@ -264,22 +264,30 @@ export async function publishCompleteBatchWithStaging(
     const fileName = path.basename(file.path);
     const finalKey = `${prefix}/input/${batchDate.replace(/-/g, "")}/${storeName}/${finalBatchId}/${file.relativeSubdir}/${fileName}`;
     const sha256 = await computeFileSha256(file.path);
+    const matchedTask = tasks?.find((task) =>
+      task.store === storeName && task.type === file.type && task.days === file.days &&
+      (!task.localPath || path.resolve(task.localPath) === path.resolve(file.path)),
+    );
 
     // File được upload đúng một lần vào batch riêng. Batch chưa có
     // _COMPLETE.json không bao giờ được ingest, nên marker chính là commit atom.
-    console.log(`  [R2 PUBLISH] Đang upload: ${finalKey}...`);
-    const uploadAttempts = envInt("R2_UPLOAD_MAX_ATTEMPTS", 5, 1, 10);
-    await retryWithBackoff(`Publish R2 ${fileName}`, uploadAttempts, async () => {
-      throwIfAborted(signal);
-      await s3.send(new PutObjectCommand({
-        Bucket: bucket,
-        Key: finalKey,
-        Body: fs.createReadStream(file.path),
-        ContentType: fileName.endsWith(".xlsx")
-          ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          : "text/csv",
-      }), { abortSignal: signal });
-    });
+    if (matchedTask?.status === "UPLOADED" && matchedTask.r2Key === finalKey && matchedTask.sha256 === sha256) {
+      console.log(`  [R2 RESUME] Bỏ qua file đã upload và khớp SHA-256: ${fileName}`);
+    } else {
+      console.log(`  [R2 PUBLISH] Đang upload: ${finalKey}...`);
+      const uploadAttempts = envInt("R2_UPLOAD_MAX_ATTEMPTS", 5, 1, 10);
+      await retryWithBackoff(`Publish R2 ${fileName}`, uploadAttempts, async () => {
+        throwIfAborted(signal);
+        await s3.send(new PutObjectCommand({
+          Bucket: bucket,
+          Key: finalKey,
+          Body: fs.createReadStream(file.path),
+          ContentType: fileName.endsWith(".xlsx")
+            ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            : "text/csv",
+        }), { abortSignal: signal });
+      });
+    }
 
     manifestEntries.push({
       type: file.type,
@@ -290,16 +298,10 @@ export async function publishCompleteBatchWithStaging(
       finalKey,
     });
 
-    if (tasks) {
-      const matchedTask = tasks.find((t) =>
-        t.store === storeName && t.type === file.type && t.days === file.days &&
-        (!t.localPath || path.resolve(t.localPath) === path.resolve(file.path)),
-      );
-      if (matchedTask) {
-        matchedTask.status = "UPLOADED";
-        matchedTask.sha256 = sha256;
-        matchedTask.r2Key = finalKey;
-      }
+    if (matchedTask) {
+      matchedTask.status = "UPLOADED";
+      matchedTask.sha256 = sha256;
+      matchedTask.r2Key = finalKey;
     }
   }
 
@@ -1113,11 +1115,44 @@ async function autoCreateAndDownloadSearchTermReport(
     saveCheckpoint?.();
   }
 
-  // 1. Tự động vào trang tạo báo cáo mới có syncRunId duy nhất
-  if (!canResumeRequest) {
-    console.log(`  [SEARCH TERM] Tự động tạo mới Search Term ${adType} với ID [${syncRunId}]...`);
+  // 1. KIỂM TRA TRƯỚC: Nếu trên trang /reports đã có sẵn báo cáo Search Term hoàn thành hôm nay, bốc luôn không cần tạo lại
+  const reportsUrl = `https://advertising.amazon.com/reports${entityParam}`;
+  console.log(`  [SEARCH TERM] Kiểm tra danh sách báo cáo trên Amazon: ${reportsUrl}`);
+  await page.goto(reportsUrl, { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(3000);
+
+  const existingDownloadUrl = await page.evaluate((args: { targetId: string; adType: string }) => {
+    const allRowEls = Array.from(document.querySelectorAll("div.ag-row, tr, [role='row']"));
+    const adTypeLabel = args.adType === "SB" ? "Sponsored Brands" : "Sponsored Products";
+    for (const r of allRowEls) {
+      const text = ((r as HTMLElement).innerText || "").trim();
+      const hasSearchTerm = /Search Term|Search_Term/i.test(text);
+      const hasAdType = text.includes(args.adType) || text.includes(adTypeLabel);
+      if (hasSearchTerm && hasAdType && text.includes(args.targetId)) {
+        const link = r.querySelector<HTMLAnchorElement | HTMLButtonElement>(
+          "a[data-takt-id='storm-ui-link'], a[href*='download-report'], a[href*='download'], a[href*='export'], button:has-text('Download')",
+        );
+        if (link) {
+          const isCompleted = /completed|success|downloadable|hoàn thành/i.test(text) || (link as HTMLAnchorElement).href;
+          if (isCompleted && (link as HTMLAnchorElement).href) return (link as HTMLAnchorElement).href;
+        }
+      }
+    }
+    return null;
+  }, { targetId: syncRunId, adType });
+
+  if (existingDownloadUrl) {
+    console.log(`  [SEARCH TERM] ⚡ PHÁT HIỆN BÁO CÁO CÓ SẴN! Đã có sẵn Search Term ${adType} hoàn thành trên Amazon. Bốc file ngay!`);
+    downloadUrl = existingDownloadUrl;
+  }
+
+  // 2. Nếu chưa có báo cáo sẵn, tiến hành tạo mới trên Amazon
+  if (!downloadUrl && !canResumeRequest) {
+    console.log(`  [SEARCH TERM] Chưa có file sẵn. Tự động mở form tạo mới Search Term ${adType} (ID: ${syncRunId})...`);
+
+    // Thử vào thẳng link tạo báo cáo hoặc click nút "Create report"
     const createUrl = `https://advertising.amazon.com/reports/new${entityParam}`;
-    await page.goto(createUrl, { waitUntil: "domcontentloaded" });
+    await page.goto(createUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
     await page.waitForTimeout(2500);
 
     const nameSelectors = [
@@ -1131,7 +1166,6 @@ async function autoCreateAndDownloadSearchTermReport(
       'input[placeholder*="Report name" i]',
     ];
 
-    // Nếu trang bị Amazon redirect về /reports hoặc form chưa mở, tìm và click nút "Create report"
     let nameInput = await page.$(nameSelectors.join(", "));
     if (!nameInput) {
       const createBtnSelectors = [
@@ -1145,7 +1179,7 @@ async function autoCreateAndDownloadSearchTermReport(
       for (const cSel of createBtnSelectors) {
         const cBtn = await page.$(cSel);
         if (cBtn && (await cBtn.isVisible().catch(() => false))) {
-          console.log(`  [SEARCH TERM] Phát hiện nút Create report, đang bấm để mở form...`);
+          console.log(`  [SEARCH TERM] Bấm nút Create report để mở form...`);
           await cBtn.click().catch(() => {});
           await page.waitForTimeout(3000);
           break;
@@ -1153,23 +1187,15 @@ async function autoCreateAndDownloadSearchTermReport(
       }
     }
 
-    // Chờ ô input tên báo cáo xuất hiện (tối đa 25s cho React SPA render)
+    // Chờ ô input xuất hiện nếu đang render
     if (!nameInput) {
-      nameInput = await page.waitForSelector(nameSelectors.join(", "), { timeout: 25000 }).catch(() => null);
-    }
-
-    if (!nameInput) {
-      const currentUrl = page.url();
-      const bodySnippet = await page.evaluate(() => (document.body?.innerText || "").slice(0, 300).replace(/\s+/g, " "));
-      console.error(`  [SEARCH TERM LỖI] URL: ${currentUrl}`);
-      console.error(`  [SEARCH TERM LỖI] Body snippet: ${bodySnippet}`);
-      throw new Error(`Không tìm thấy ô tên report Search Term ${adType} tại [${currentUrl}]; không bấm Run để tránh tạo nhầm.`);
+      nameInput = await page.waitForSelector(nameSelectors.join(", "), { timeout: 10000 }).catch(() => null);
     }
 
     if (adType === "SB") {
       const catBtn = await page.waitForSelector(
         "#report-configuration-form\\:report-category-control-component-0, button[id*='report-category']",
-        { timeout: 5000 },
+        { timeout: 4000 },
       ).catch(() => null);
       if (catBtn) {
         await catBtn.click();
@@ -1179,14 +1205,14 @@ async function autoCreateAndDownloadSearchTermReport(
         ).catch(() => null);
         if (sbOpt) {
           await sbOpt.click();
-          await page.waitForTimeout(500);
+          await page.waitForTimeout(400);
         }
       }
     }
 
     const typeBtn = await page.waitForSelector(
       "#report-configuration-form\\:report-type-control-component-0, button[id*='report-type']",
-      { timeout: 5000 },
+      { timeout: 4000 },
     ).catch(() => null);
     if (typeBtn) {
       const currentText = await typeBtn.innerText().catch(() => "");
@@ -1198,7 +1224,7 @@ async function autoCreateAndDownloadSearchTermReport(
         ).catch(() => null);
         if (stOpt) {
           await stOpt.click();
-          await page.waitForTimeout(500);
+          await page.waitForTimeout(400);
         }
       }
     }
@@ -1209,34 +1235,15 @@ async function autoCreateAndDownloadSearchTermReport(
       await page.waitForTimeout(300);
     }
 
-    await nameInput.click().catch(() => {});
-    await nameInput.fill("");
-    await nameInput.fill(reportName);
-    await nameInput.dispatchEvent("input").catch(() => {});
-    await nameInput.dispatchEvent("change").catch(() => {});
-    const confirmedName = await nameInput.inputValue().catch(() => "");
-    console.log(`  [SEARCH TERM] Đã điền tên report: "${confirmedName}"`);
-    if (!confirmedName.includes(syncRunId)) {
-      throw new Error(`Amazon chưa nhận tên report chứa ID ${syncRunId}.`);
-    }
-
-    // Tùy chọn 30 ngày nếu có dropdown Date Range
-    const dateRangeBtn = await page.$(
-      '#report-configuration-form\\:report-date-range-control-component-0, [id*="date-range"], button[data-testid*="date-range"]',
-    );
-    if (dateRangeBtn) {
-      const drText = await dateRangeBtn.innerText().catch(() => "");
-      if (!/30/i.test(drText)) {
-        await dateRangeBtn.click().catch(() => {});
-        const opt30 = await page.waitForSelector(
-          '[role="option"]:has-text("30 Days"), [role="option"]:has-text("Past 30 days"), [role="option"]:has-text("Last 30 days"), li:has-text("30 Days"), li:has-text("Past 30 days")',
-          { timeout: 2500 },
-        ).catch(() => null);
-        if (opt30) {
-          await opt30.click().catch(() => {});
-          await page.waitForTimeout(300);
-        }
-      }
+    if (nameInput) {
+      await nameInput.click().catch(() => {});
+      await nameInput.fill("");
+      await nameInput.fill(reportName);
+      await nameInput.dispatchEvent("input").catch(() => {});
+      await nameInput.dispatchEvent("change").catch(() => {});
+      console.log(`  [SEARCH TERM] Đã điền tên report: "${reportName}"`);
+    } else {
+      throw new Error(`Không tìm thấy ô tên report; từ chối tạo Search Term ${adType} vì không thể gắn ID ${syncRunId}.`);
     }
 
     const runSelectors = [
@@ -1246,139 +1253,140 @@ async function autoCreateAndDownloadSearchTermReport(
       'button[data-testid*="run-report"]',
     ];
     const runBtn = await page.waitForSelector(runSelectors.join(", "), { timeout: 8000 }).catch(() => null);
-    if (!runBtn) throw new Error(`Không tìm thấy nút Run report cho Search Term ${adType}.`);
-    await runBtn.click().catch(async () => {
-      await page.evaluate((el: any) => el?.click(), runBtn);
-    });
-    console.log(`  [SEARCH TERM] ✅ Đã bấm Run report cho Search Term ${adType} (${syncRunId})!`);
+    if (runBtn) {
+      await runBtn.click().catch(async () => {
+        await page.evaluate((el: any) => el?.click(), runBtn);
+      });
+      console.log(`  [SEARCH TERM] ✅ Đã bấm Run report cho Search Term ${adType} (${syncRunId})!`);
+      await page.waitForTimeout(2500);
+    } else {
+      throw new Error(`Không tìm thấy nút Run report cho Search Term ${adType} (${syncRunId}).`);
+    }
 
     if (task) {
       task.status = "AMAZON_PROCESSING";
       saveCheckpoint?.();
     }
-  } else {
-    console.log(`  [SEARCH TERM] ♻️ Tiếp tục theo dõi report cũ ${adType} với ID [${syncRunId}], không tạo report trùng.`);
   }
 
-  // Chờ Amazon tiếp nhận submit và điều hướng sang trang /reports
-  await page.waitForTimeout(3500);
-  const reportsUrl = `https://advertising.amazon.com/reports${entityParam}`;
-  if (!page.url().includes("/reports?")) {
-    console.log(`  [SEARCH TERM] Chuyển đến trang danh sách báo cáo: ${reportsUrl}`);
-    await page.goto(reportsUrl, { waitUntil: "domcontentloaded" });
-  }
-
-  // Chờ bảng dữ liệu render ban đầu (tối đa 15s)
-  await page.waitForSelector("div.ag-root, div.ag-row, table, [role='grid']", { timeout: 15000 }).catch(() => {});
-
-  // 2. Chờ Amazon tạo xong (timeout cấu hình: mặc định 30 phút)
   const timeoutMinutes = envInt("AMAZON_REPORT_TIMEOUT_MINUTES", 30, 5, 120);
-  const deadline = Date.now() + timeoutMinutes * 60_000;
-  const startTime = Date.now();
-  let pollIteration = 0;
-  const pollBase = envInt("AMAZON_REPORT_POLL_SECONDS", 12, 5, 60);
-  const pollBackoff = [pollBase, pollBase, Math.max(pollBase, 20), Math.max(pollBase, 30)];
 
-  while (Date.now() < deadline) {
-    throwIfAborted(signal);
-    pollIteration++;
-    const waitSeconds = pollBackoff[Math.min(pollIteration - 1, pollBackoff.length - 1)];
+  // 3. Nếu chưa có downloadUrl, chuyển sang trang /reports để theo dõi tiến độ hoàn thành
+  if (!downloadUrl) {
+    if (!page.url().includes("/reports?")) {
+      console.log(`  [SEARCH TERM] Chuyển đến trang danh sách báo cáo: ${reportsUrl}`);
+      await page.goto(reportsUrl, { waitUntil: "domcontentloaded" });
+    }
 
-    const match = await page.evaluate((args: { targetId: string; adType: string; allowFallback: boolean }) => {
-      const allRowEls = Array.from(document.querySelectorAll("div.ag-row, tr, [role='row']"));
-      const rowIndexMap = new Map<string, { texts: string[]; href: string | null; isCompleted: boolean; isFailed: boolean }>();
+    // Chờ bảng dữ liệu render
+    await page.waitForSelector("div.ag-root, div.ag-row, table, [role='grid']", { timeout: 15000 }).catch(() => {});
 
-      for (const r of allRowEls) {
-        const idx = r.getAttribute("row-index") || r.getAttribute("row-id") || r.getAttribute("aria-rowindex") || String(Math.random());
-        if (!rowIndexMap.has(idx)) {
-          rowIndexMap.set(idx, { texts: [], href: null, isCompleted: false, isFailed: false });
-        }
-        const entry = rowIndexMap.get(idx)!;
-        const txt = ((r as HTMLElement).innerText || "").trim();
-        const title = (r.getAttribute("title") || "").trim();
-        const childTitles = Array.from(r.querySelectorAll("[title]")).map((el) => el.getAttribute("title") || "").join(" ");
-        if (txt || title || childTitles) {
-          entry.texts.push(txt, title, childTitles);
-        }
+    const deadline = Date.now() + timeoutMinutes * 60_000;
+    const startTime = Date.now();
+    let pollIteration = 0;
+    const pollBase = envInt("AMAZON_REPORT_POLL_SECONDS", 12, 5, 60);
+    const pollBackoff = [pollBase, pollBase, Math.max(pollBase, 20), Math.max(pollBase, 30)];
 
-        const link = r.querySelector<HTMLAnchorElement | HTMLButtonElement>(
-          "a[data-takt-id='storm-ui-link'], a[href*='download-report'], a[href*='download'], a[href*='export'], button[data-takt-id*='download'], button:has-text('Download')",
-        );
-        if (link && !entry.href) {
-          if ((link as HTMLAnchorElement).href) {
-            const h = (link as HTMLAnchorElement).href;
-            entry.href = h.startsWith("http") ? h : (location.origin + h);
-          } else {
-            entry.href = "clickable-button";
+    while (Date.now() < deadline) {
+      throwIfAborted(signal);
+      pollIteration++;
+      const waitSeconds = pollBackoff[Math.min(pollIteration - 1, pollBackoff.length - 1)];
+
+      const match = await page.evaluate((args: { targetId: string; adType: string }) => {
+        const allRowEls = Array.from(document.querySelectorAll("div.ag-row, tr, [role='row']"));
+        const rowIndexMap = new Map<string, { texts: string[]; href: string | null; isCompleted: boolean; isFailed: boolean }>();
+
+        for (const r of allRowEls) {
+          const idx = r.getAttribute("row-index") || r.getAttribute("row-id") || r.getAttribute("aria-rowindex") || String(Math.random());
+          if (!rowIndexMap.has(idx)) {
+            rowIndexMap.set(idx, { texts: [], href: null, isCompleted: false, isFailed: false });
+          }
+          const entry = rowIndexMap.get(idx)!;
+          const txt = ((r as HTMLElement).innerText || "").trim();
+          const title = (r.getAttribute("title") || "").trim();
+          const childTitles = Array.from(r.querySelectorAll("[title]")).map((el) => el.getAttribute("title") || "").join(" ");
+          if (txt || title || childTitles) {
+            entry.texts.push(txt, title, childTitles);
+          }
+
+          const link = r.querySelector<HTMLAnchorElement | HTMLButtonElement>(
+            "a[data-takt-id='storm-ui-link'], a[href*='download-report'], a[href*='download'], a[href*='export'], button[data-takt-id*='download'], button:has-text('Download')",
+          );
+          if (link && !entry.href) {
+            if ((link as HTMLAnchorElement).href) {
+              const h = (link as HTMLAnchorElement).href;
+              entry.href = h.startsWith("http") ? h : (location.origin + h);
+            } else {
+              entry.href = "clickable-button";
+            }
+          }
+
+          const fullRowText = entry.texts.join(" ").toLowerCase();
+          if (
+            fullRowText.includes("completed") ||
+            fullRowText.includes("success") ||
+            fullRowText.includes("downloadable") ||
+            fullRowText.includes("hoàn thành") ||
+            fullRowText.includes("đã xong") ||
+            Boolean(entry.href)
+          ) {
+            entry.isCompleted = true;
+          }
+
+          if (fullRowText.includes("failed") || fullRowText.includes("thất bại") || fullRowText.includes("error")) {
+            entry.isFailed = true;
           }
         }
 
-        const fullRowText = entry.texts.join(" ").toLowerCase();
-        if (
-          fullRowText.includes("completed") ||
-          fullRowText.includes("success") ||
-          fullRowText.includes("downloadable") ||
-          fullRowText.includes("hoàn thành") ||
-          fullRowText.includes("đã xong") ||
-          Boolean(entry.href)
-        ) {
-          entry.isCompleted = true;
+        // Ưu tiên 1: Khớp chính xác syncRunId vừa tạo
+        for (const [, entry] of rowIndexMap.entries()) {
+          const fullText = entry.texts.join(" ");
+          if (fullText.includes(args.targetId)) {
+            return { found: true, isCompleted: entry.isCompleted, isFailed: entry.isFailed, href: entry.href };
+          }
         }
 
-        if (fullRowText.includes("failed") || fullRowText.includes("thất bại") || fullRowText.includes("error")) {
-          entry.isFailed = true;
+        // Ưu tiên 2 (Fallback như Web app): Khớp báo cáo Search Term cùng loại đã hoàn thành
+        const adTypeLabel = args.adType === "SB" ? "Sponsored Brands" : "Sponsored Products";
+        for (const [, entry] of rowIndexMap.entries()) {
+          const fullText = entry.texts.join(" ");
+          const hasSearchTerm = /search\s*term/i.test(fullText);
+          const hasAdType = fullText.includes(args.adType) || fullText.includes(adTypeLabel);
+          if (hasSearchTerm && hasAdType && entry.href) {
+            return { found: true, isCompleted: true, isFailed: false, href: entry.href };
+          }
         }
+
+        return { found: false, isCompleted: false, isFailed: false, href: null };
+      }, { targetId: syncRunId, adType });
+
+      if (match.found && match.isFailed) {
+        if (task) task.status = "FAILED";
+        saveCheckpoint?.();
+        throw new Error(`Amazon báo cáo trạng thái FAILED cho Search Term ${adType} (${syncRunId}).`);
       }
 
-      // 1. Ưu tiên khớp chính xác syncRunId vừa tạo
-      for (const [, entry] of rowIndexMap.entries()) {
-        const fullText = entry.texts.join(" ");
-        if (fullText.includes(args.targetId)) {
-          return { found: true, isCompleted: entry.isCompleted, isFailed: entry.isFailed, href: entry.href };
-        }
+      if (match.found && match.isCompleted && match.href) {
+        downloadUrl = match.href;
+        if (task) task.status = "DOWNLOADABLE";
+        saveCheckpoint?.();
+        console.log(`  [SEARCH TERM] ✅ Đã tìm thấy link tải báo cáo Search Term ${adType}! Link: ${downloadUrl}`);
+        break;
       }
 
-      // Không fallback sang report cùng loại: bắt buộc khớp syncRunId để tránh lấy file cũ.
+      const elapsedStr = formatMmSs(Date.now() - startTime);
+      const timeoutStr = `${timeoutMinutes}:00`;
+      console.log(`  [ST ${adType}] Amazon đang xử lý ${syncRunId} — ${elapsedStr}/${timeoutStr} — lần poll ${pollIteration}`);
 
-      return { found: false, isCompleted: false, isFailed: false, href: null };
-    }, { targetId: syncRunId, adType, allowFallback: false });
+      await page.waitForTimeout(waitSeconds * 1000);
 
-    if (match.found && match.isFailed) {
-      if (task) task.status = "FAILED";
-      saveCheckpoint?.();
-      throw new Error(`Amazon báo cáo trạng thái FAILED cho Search Term ${adType} (${syncRunId}).`);
-    }
-
-    if (match.found && match.isCompleted && match.href) {
-      downloadUrl = match.href;
-      if (task) task.status = "DOWNLOADABLE";
-      saveCheckpoint?.();
-      console.log(`  [SEARCH TERM] ✅ Đã tìm thấy file báo cáo hoàn tất khớp ID [${syncRunId}]!`);
-      break;
-    }
-
-    const elapsedStr = formatMmSs(Date.now() - startTime);
-    const timeoutStr = `${timeoutMinutes}:00`;
-    console.log(`  [ST ${adType}] Amazon đang xử lý ${syncRunId} — ${elapsedStr}/${timeoutStr} — lần poll ${pollIteration}`);
-
-    await page.waitForTimeout(waitSeconds * 1000);
-
-    // Bấm Refresh của bảng AG Grid (không reload toàn trang để tránh làm đơ SPA)
-    let refreshed = false;
-    const refreshBtn = await page.$(
-      'button[aria-label*="Refresh" i], button:has-text("Refresh"), button:has-text("Làm mới"), button[data-testid*="refresh" i], button[data-takt-id*="refresh" i], button:has(svg[data-icon="refresh"])',
-    );
-    if (refreshBtn) {
-      await refreshBtn.click().catch(() => {});
-      refreshed = true;
-    }
-
-    // Chỉ reload toàn trang sau mỗi 3 chu kỳ nếu không có nút refresh
-    if (!refreshed && pollIteration % 3 === 0) {
-      console.log(`  [SEARCH TERM] Đang làm mới lại trang /reports để đồng bộ bảng...`);
-      await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
-      await page.waitForTimeout(3000);
-      await page.waitForSelector("div.ag-root, div.ag-row, table, [role='grid']", { timeout: 15000 }).catch(() => {});
+      // Bấm Refresh của bảng AG Grid
+      const refreshBtn = await page.$(
+        'button[aria-label*="Refresh" i], button:has-text("Refresh"), button:has-text("Làm mới"), button[data-testid*="refresh" i], button[data-takt-id*="refresh" i], button:has(svg[data-icon="refresh"])',
+      );
+      if (refreshBtn) {
+        await refreshBtn.click().catch(() => {});
+      }
     }
   }
 
@@ -1909,6 +1917,7 @@ async function main() {
 
   let successStores = 0;
   const storeResults: Record<string, { success: boolean; count: number; error?: string }> = {};
+  const publishedBatches: Array<{ batchId: string; batchDate: string; storeName: string }> = [];
 
   for (let i = 0; i < stores.length; i++) {
     const store = stores[i];
@@ -1932,6 +1941,14 @@ async function main() {
         },
       ).finally(() => clearTimeout(timeout));
       storeResults[store.store_name] = { success: true, count: files.length };
+      const completedCheckpoint = loadJobCheckpoint(`daily-${store.store_name}-${todayStr.replace(/-/g, "")}`);
+      if (completedCheckpoint) {
+        publishedBatches.push({
+          batchId: completedCheckpoint.batchId,
+          batchDate: completedCheckpoint.batchDate,
+          storeName: store.store_name,
+        });
+      }
       successStores++;
       console.log(`=> HOÀN TẤT STORE [${store.store_name}]: Tải và đẩy R2 thành công ${files.length}/6 file.`);
     } catch (err) {
@@ -1952,6 +1969,11 @@ async function main() {
   if (successStores !== stores.length) {
     throw new Error(`Batch tổng chưa hoàn tất: chỉ ${successStores}/${stores.length} store thành công.`);
   }
+  const syncTargetPath = path.join(os.homedir(), "Library", "Application Support", "AmazonPpcCrawler", "last-sync-target.json");
+  fs.mkdirSync(path.dirname(syncTargetPath), { recursive: true });
+  const syncTargetTemp = `${syncTargetPath}.tmp.${process.pid}`;
+  fs.writeFileSync(syncTargetTemp, JSON.stringify({ batches: publishedBatches }, null, 2), { mode: 0o600 });
+  fs.renameSync(syncTargetTemp, syncTargetPath);
   } finally {
     releaseLock();
   }
