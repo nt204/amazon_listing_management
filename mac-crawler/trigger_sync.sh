@@ -26,19 +26,24 @@ if ! curl -s -f -o /dev/null --max-time 5 "$WEB_APP_URL"; then
   exit 1
 fi
 
-AUTH_HEADER=""
-if [ -n "$WEB_APP_AUTH_TOKEN" ]; then
-  AUTH_HEADER="Authorization: Bearer $WEB_APP_AUTH_TOKEN"
+SYNC_TARGET_FILE="$HOME/Library/Application Support/AmazonPpcCrawler/last-sync-target.json"
+SYNC_PAYLOAD="{}"
+if [ -s "$SYNC_TARGET_FILE" ]; then
+  SYNC_PAYLOAD="$(<"$SYNC_TARGET_FILE")"
+  echo "[WEB APP SYNC] Chỉ đồng bộ các batch vừa publish trong $SYNC_TARGET_FILE"
+else
+  echo "[WEB APP SYNC] Không có target file; dùng chế độ quét tương thích."
 fi
 
 echo "[WEB APP SYNC] Đang gửi yêu cầu quét và nạp dữ liệu từ Cloudflare R2..."
 HTTP_BODY_FILE="$(mktemp -t ppc-sync-response.XXXXXX)"
 trap 'rm -f "$HTTP_BODY_FILE"' EXIT
-HTTP_STATUS=$(curl -sS -o "$HTTP_BODY_FILE" -w "%{http_code}" -X POST "$ENDPOINT" \
-  ${AUTH_HEADER:+-H "$AUTH_HEADER"} \
-  -H "Content-Type: application/json" \
-  -H "Origin: $WEB_APP_URL" \
-  --max-time 600)
+CURL_ARGS=(-sS -o "$HTTP_BODY_FILE" -w "%{http_code}" -X POST "$ENDPOINT")
+if [ -n "${WEB_APP_AUTH_TOKEN:-}" ]; then
+  CURL_ARGS+=(-H "Authorization: Bearer $WEB_APP_AUTH_TOKEN")
+fi
+CURL_ARGS+=(-H "Content-Type: application/json" -H "Origin: $WEB_APP_URL" --data-binary "$SYNC_PAYLOAD" --max-time 600)
+HTTP_STATUS=$(curl "${CURL_ARGS[@]}")
 RESPONSE=$(<"$HTTP_BODY_FILE")
 
 if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then

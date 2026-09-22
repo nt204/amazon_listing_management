@@ -8,8 +8,8 @@ Thư mục này được thiết kế **hoàn toàn độc lập (standalone)**,
    - `Bulk SB 30d` & `Bulk SB 7d`
    - `Search Term SP 30d` & `Search Term SB 30d`
 4. **Phân loại & Lưu trữ cục bộ:** Lưu tại `~/Downloads/Bulk file/{YYYY-MM-DD}/{STORE_NAME}/` chia thành 2 thư mục con `SP/` và `SB/`.
-5. **Upload Cloudflare R2:** Kiểm tra SHA-256, đẩy lên R2 và tạo marker `_COMPLETE.json`.
-6. **Đồng bộ Database:** Gọi API server nạp dữ liệu vào PostgreSQL an toàn và tự động.
+5. **Upload Cloudflare R2:** Mỗi file chỉ upload một lần vào batch riêng; kiểm tra SHA-256 và tạo marker `_COMPLETE.json` cuối cùng.
+6. **Đồng bộ Database:** Chỉ gửi đúng `batchId/store/date` vừa hoàn tất, không quét toàn bộ lịch sử R2. Search Term và Bulk được commit trong cùng transaction.
 
 ---
 
@@ -38,7 +38,7 @@ cd ~/mac-crawler
 
 ### 2. Quản lý Dịch vụ Remote Worker (Nhận lệnh từ Web)
 
-Worker này chạy nền vĩnh viễn (tốn ~20MB RAM, CPU 0%), tự động bật cùng macOS để nhận lệnh khi bạn bấm trên Web App:
+Worker chạy nền với mức ưu tiên CPU/I/O thấp, tự động bật cùng macOS để nhận lệnh khi bạn bấm trên Web App. Khi không có job, worker chỉ polling theo chu kỳ cấu hình:
 
 ```bash
 cd ~/mac-crawler
@@ -76,6 +76,38 @@ tail -n 100 ~/Library/Logs/mac-crawler-worker.log
 
 # 5. Xem log của Lịch chạy 12h trưa tự động (nếu có bật):
 tail -f ~/Library/Logs/mac-crawler.log
+```
+
+Log được tự xoay khi đạt `MAX_LOG_MB` và xóa theo `LOG_RETENTION_DAYS`; không cần xóa thủ công định kỳ.
+
+---
+
+## Tối ưu tài nguyên và retention
+
+Các giá trị mặc định nằm trong `config.env.example`:
+
+- `WORKER_POLL_SECONDS=10`: giảm request nền nhưng vẫn nhận job nhanh.
+- `MIN_FREE_DISK_GB=10`: từ chối chạy trước khi ổ đĩa quá đầy.
+- `LOCAL_RETENTION_DAYS=14`: dọn thư mục tải cũ theo ngày.
+- `CHECKPOINT_RETENTION_DAYS=30`: dọn checkpoint cũ.
+- `MAX_LOG_MB=20`, `LOG_RETENTION_DAYS=14`: giới hạn log.
+- `WORKER_ID`: nên đặt cố định cho từng Mac mini.
+
+`maintenance.sh` chạy trước worker và lịch daily. Script chỉ dọn bên trong thư mục download/checkpoint đã resolve cụ thể.
+
+Luồng publish tối ưu:
+
+```mermaid
+flowchart LR
+    A[Validate 6 file bằng streaming] --> B[SHA-256]
+    B --> C[Upload mỗi file 1 lần vào batch path]
+    C --> D{Đủ 6 file?}
+    D -- Không --> E[Không có marker nên Web bỏ qua]
+    D -- Có --> F[Upload _COMPLETE.json]
+    F --> G[Sync đúng batchId/store/date]
+    G --> H[Parse tuần tự]
+    H --> I[Transaction Search Term + Bulk]
+    I --> J[COMPLETED]
 ```
 
 ---

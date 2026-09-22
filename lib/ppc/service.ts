@@ -837,9 +837,10 @@ export async function resetPpcToMockData(scope: DataScope) {
 }
 
 export interface R2SyncTarget {
-  batchId: string;
-  batchDate: string;
-  storeNames: string[];
+  batchId?: string;
+  batchDate?: string;
+  storeNames?: string[];
+  batches?: Array<{ batchId: string; batchDate: string; storeName: string }>;
 }
 
 export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarget) {
@@ -860,13 +861,20 @@ export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarg
   const objects: Array<{ Key?: string; ETag?: string; Size?: number; LastModified?: Date }> = [];
   const listPrefixes: string[] = [];
   if (target) {
-    if (!/^[A-Za-z0-9_.-]{1,120}$/.test(target.batchId)) throw new PpcInputError("batchId không hợp lệ.");
-    const batchDate = target.batchDate.replace(/-/g, "");
-    if (!/^\d{8}$/.test(batchDate)) throw new PpcInputError("batchDate phải có dạng YYYY-MM-DD hoặc YYYYMMDD.");
-    const stores = [...new Set(target.storeNames.map(cleanStoreName))];
-    if (!stores.length || stores.length > 50) throw new PpcInputError("Danh sách store sync không hợp lệ.");
-    for (const storeName of stores) {
-      listPrefixes.push(`${prefix}input/${batchDate}/${storeName}/${target.batchId}/`);
+    const batches = target.batches?.length
+      ? target.batches
+      : (target.storeNames || []).map((storeName) => ({
+          batchId: String(target.batchId || ""),
+          batchDate: String(target.batchDate || ""),
+          storeName,
+        }));
+    if (!batches.length || batches.length > 50) throw new PpcInputError("Danh sách batch sync không hợp lệ.");
+    for (const batch of batches) {
+      if (!/^[A-Za-z0-9_.-]{1,120}$/.test(batch.batchId)) throw new PpcInputError("batchId không hợp lệ.");
+      const batchDate = batch.batchDate.replace(/-/g, "");
+      if (!/^\d{8}$/.test(batchDate)) throw new PpcInputError("batchDate phải có dạng YYYY-MM-DD hoặc YYYYMMDD.");
+      const storeName = cleanStoreName(batch.storeName);
+      listPrefixes.push(`${prefix}input/${batchDate}/${storeName}/${batch.batchId}/`);
     }
   } else {
     // Tương thích thao tác sync thủ công cũ. Worker luôn truyền target để tránh
@@ -994,7 +1002,6 @@ export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarg
 
     for (const object of selectedFiles) {
       const fileName = object.Key || "";
-      const version = r2Version(object);
       try {
         if ((object.Size || 0) > MAX_R2_FILE_BYTES) {
           throw new Error(`File vượt quá giới hạn ${Math.round(MAX_R2_FILE_BYTES / 1_000_000)} MB.`);

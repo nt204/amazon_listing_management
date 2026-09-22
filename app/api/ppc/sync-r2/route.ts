@@ -13,12 +13,21 @@ export async function POST(request: Request) {
       batchId?: unknown;
       batchDate?: unknown;
       storeNames?: unknown;
+      batches?: unknown;
     };
-    const hasTarget = body.batchId != null || body.batchDate != null || body.storeNames != null;
+    const hasTarget = body.batchId != null || body.batchDate != null || body.storeNames != null || body.batches != null;
     const target = hasTarget ? {
       batchId: String(body.batchId || ""),
       batchDate: String(body.batchDate || ""),
       storeNames: Array.isArray(body.storeNames) ? body.storeNames.map(String) : [],
+      batches: Array.isArray(body.batches) ? body.batches.map((batch) => {
+        const item = batch && typeof batch === "object" ? batch as Record<string, unknown> : {};
+        return {
+          batchId: String(item.batchId || ""),
+          batchDate: String(item.batchDate || ""),
+          storeName: String(item.storeName || ""),
+        };
+      }) : undefined,
     } : undefined;
     const result = await syncPpcReportsFromR2(dataScope(actor), target);
     const failureSuffix = result.failed ? ` Có ${result.failed} file lỗi.` : "";

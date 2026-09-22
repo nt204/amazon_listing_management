@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getDatabaseClient, type DataScope } from "@/lib/db";
+import type postgres from "postgres";
 import type {
   MatchType,
   PpcAdType,
@@ -34,6 +35,8 @@ interface StoreRow {
   daily_budget: string | number | null;
   status: "ACTIVE" | "PAUSED";
 }
+
+type PpcTransaction = postgres.TransactionSql;
 
 interface SearchTermDbRow {
   id: string;
@@ -596,13 +599,13 @@ export async function upsertPpcSearchTerms(
   scope: DataScope,
   storeName: string,
   rows: PpcSearchTermRow[],
-  options: { replaceExisting?: boolean; transaction?: any } = {},
+  options: { replaceExisting?: boolean; transaction?: PpcTransaction } = {},
 ): Promise<{ inserted: number; updated: number; deduplicated: number }> {
   const sql = await getDatabaseClient();
   const teamId = (scope as any)?.teamId || "default";
   const uniqueRows = Array.from(new Map(rows.map((row) => [rowIdentity(row), row])).values());
 
-  const operation = async (transaction: any) => {
+  const operation = async (transaction: PpcTransaction) => {
     const storeRows = await transaction<StoreRow[]>`
       INSERT INTO ppc_stores (team_id, name)
       VALUES (${teamId}, ${storeName})
@@ -757,7 +760,7 @@ export async function upsertPpcPerformance(
   scope: DataScope,
   storeName: string,
   rows: PpcPerformanceRow[],
-  options: { replaceExisting?: boolean; transaction?: any } = {},
+  options: { replaceExisting?: boolean; transaction?: PpcTransaction } = {},
 ): Promise<{ inserted: number; updated: number; deduplicated: number }> {
   const sql = await getDatabaseClient();
   const teamId = (scope as any)?.teamId || "default";
@@ -765,7 +768,7 @@ export async function upsertPpcPerformance(
     [row.snapshotDate, row.reportStartDate, row.reportEndDate, row.adType, row.grain, performanceIdentity(row)].join(":::"),
     row,
   ])).values());
-  const operation = async (transaction: any) => {
+  const operation = async (transaction: PpcTransaction) => {
     const storeRows = await transaction<StoreRow[]>`
       INSERT INTO ppc_stores (team_id, name)
       VALUES (${teamId}, ${storeName})

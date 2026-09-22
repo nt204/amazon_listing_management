@@ -12,11 +12,13 @@ function crawlerLeaseSeconds(): number {
 }
 
 function publicJob(row: Record<string, unknown>) {
-  const { lease_token: _leaseToken, ...safeRow } = row;
+  const safeRow = { ...row };
+  delete safeRow.lease_token;
   const taskStates = Array.isArray(row.task_states)
     ? row.task_states.map((task) => {
         if (!task || typeof task !== "object") return task;
-        const { localPath: _localPath, ...safeTask } = task as Record<string, unknown>;
+        const safeTask = { ...task as Record<string, unknown> };
+        delete safeTask.localPath;
         return safeTask;
       })
     : row.task_states;

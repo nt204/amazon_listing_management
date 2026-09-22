@@ -22,7 +22,8 @@ echo "######################################################################"
 # 1. Chống Sleep: Dùng caffeinate để giữ Mac luôn thức trong suốt quá trình chạy
 CAFFEINATE_PID=""
 if command -v caffeinate >/dev/null 2>&1; then
-  caffeinate -dimsu &
+  # Chỉ ngăn system idle sleep; không giữ màn hình và ổ đĩa thức vô ích.
+  caffeinate -i -w $$ &
   CAFFEINATE_PID=$!
   echo "[Power] Đã kích hoạt caffeinate (PID $CAFFEINATE_PID) ngăn Mac ngủ trong lúc crawl."
 fi
