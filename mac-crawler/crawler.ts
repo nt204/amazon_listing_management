@@ -38,7 +38,7 @@ async function raceWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Prom
     promise,
     new Promise<never>((_, reject) => signal.addEventListener("abort", () =>
       reject(new Error(`CRAWLER_ABORTED: ${String(signal.reason || "Job bị hủy hoặc mất lease")}`)),
-    { once: true })),
+      { once: true })),
   ]);
 }
 
@@ -184,7 +184,7 @@ export function acquireCrawlerLock(): () => void {
     }
   }
   return () => {
-    try { fs.unlinkSync(LOCK_PATH); } catch {}
+    try { fs.unlinkSync(LOCK_PATH); } catch { }
   };
 }
 
@@ -471,7 +471,7 @@ function getFileStatsMap(dir: string): Map<string, number> {
   for (const f of fs.readdirSync(dir)) {
     try {
       map.set(f, fs.statSync(path.join(dir, f)).mtimeMs);
-    } catch {}
+    } catch { }
   }
   return map;
 }
@@ -493,7 +493,7 @@ async function waitForNewDownload(dir: string, beforeStats: Map<string, number>,
           await new Promise((r) => setTimeout(r, 1000));
           return fullPath;
         }
-      } catch {}
+      } catch { }
     }
   }
   return null;
@@ -594,7 +594,7 @@ async function waitForBulkFileDownload(
           const stat = fs.statSync(parentCandidate);
           if (stat.size > 100_000) {
             if (fs.existsSync(destCandidate)) {
-              try { fs.unlinkSync(destCandidate); } catch {}
+              try { fs.unlinkSync(destCandidate); } catch { }
             }
             fs.renameSync(parentCandidate, destCandidate);
             return destCandidate;
@@ -619,14 +619,14 @@ async function waitForBulkFileDownload(
             if (d === parentDir) {
               const targetPath = path.join(destDir, f);
               if (fs.existsSync(targetPath)) {
-                try { fs.unlinkSync(targetPath); } catch {}
+                try { fs.unlinkSync(targetPath); } catch { }
               }
               fs.renameSync(fullPath, targetPath);
               return targetPath;
             }
             return fullPath;
           }
-        } catch {}
+        } catch { }
       }
     }
   }
@@ -643,7 +643,7 @@ async function detectActualBulkWorkbookAdType(filePath: string): Promise<"SP" | 
       if (name.includes("sponsored products") || name.includes("sp campaigns")) return "SP";
       if (name.includes("sponsored brands") || name.includes("sb campaigns") || name.includes("hsa campaigns")) return "SB";
     }
-  } catch {}
+  } catch { }
   return null;
 }
 
@@ -723,7 +723,7 @@ async function triggerBulkExport(
         await bulkPage.waitForTimeout(600);
       }
     } else {
-      await bulkPage.keyboard.press("Escape").catch(() => {});
+      await bulkPage.keyboard.press("Escape").catch(() => { });
       await bulkPage.waitForTimeout(300);
     }
   }
@@ -812,7 +812,7 @@ async function triggerBulkExport(
       state: "detached",
       timeout: 8000,
     })
-    .catch(() => {});
+    .catch(() => { });
 
   const exportRes = await exportPromise;
   let targetRequestId: string | null = null;
@@ -823,7 +823,7 @@ async function triggerBulkExport(
       if (targetRequestId) {
         console.log(`  [BULK] 🔒 Khóa mã targetRequestId từ response mạng: ${targetRequestId}`);
       }
-    } catch {}
+    } catch { }
   }
 
   // Nếu API không trả về exportRequestId trực tiếp, dò tìm hàng mới xuất hiện ở đầu bảng so với snapshot
@@ -908,8 +908,8 @@ async function downloadBulkFileByRow(
     standardizedPath = path.join(initialDir, standardizedName);
     try {
       await download.saveAs(standardizedPath);
-    } catch {}
-  } catch {}
+    } catch { }
+  } catch { }
 
   if (!standardizedPath || !fs.existsSync(standardizedPath)) {
     const downloadedPath = await waitForBulkFileDownload(initialDir, expectedRawName, 120, signal);
@@ -919,7 +919,7 @@ async function downloadBulkFileByRow(
     standardizedPath = path.join(initialDir, standardizedName);
     if (downloadedPath !== standardizedPath) {
       if (fs.existsSync(standardizedPath)) {
-        try { fs.unlinkSync(standardizedPath); } catch {}
+        try { fs.unlinkSync(standardizedPath); } catch { }
       }
       fs.renameSync(downloadedPath, standardizedPath);
     }
@@ -941,7 +941,7 @@ async function downloadBulkFileByRow(
 
   if (correctedPath !== standardizedPath) {
     if (fs.existsSync(correctedPath)) {
-      try { fs.unlinkSync(correctedPath); } catch {}
+      try { fs.unlinkSync(correctedPath); } catch { }
     }
     fs.renameSync(standardizedPath, correctedPath);
     standardizedPath = correctedPath;
@@ -1089,14 +1089,14 @@ async function createAndDownloadAllBulkReports(
     await bulkPage.waitForTimeout(12000);
 
     if (pollIteration % 2 === 0) {
-      await bulkPage.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
+      await bulkPage.reload({ waitUntil: "domcontentloaded" }).catch(() => { });
       await bulkPage.waitForTimeout(2000);
     } else {
       const refreshBtn = await bulkPage.$(
         'button[aria-label*="Refresh"], button:has-text("Refresh")',
       );
       if (refreshBtn) {
-        await refreshBtn.click().catch(() => {});
+        await refreshBtn.click().catch(() => { });
       }
     }
   }
@@ -1180,9 +1180,9 @@ async function autoCreateAndDownloadSearchTermReport(
   // 2. Tạo mới trên Amazon nếu chưa có checkpoint đang xử lý
   if (!canResumeRequest) {
     console.log(`  [SEARCH TERM] Tự động tạo mới Search Term ${adType} 30 Ngày (Mã định danh: ${syncRunId})...`);
-    
+
     const createUrl = `https://advertising.amazon.com/reports/new${entityParam}`;
-    await page.goto(createUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
+    await page.goto(createUrl, { waitUntil: "domcontentloaded" }).catch(() => { });
     await page.waitForTimeout(2500);
 
     const nameSelectors = [
@@ -1210,7 +1210,7 @@ async function autoCreateAndDownloadSearchTermReport(
         const cBtn = await page.$(cSel);
         if (cBtn && (await cBtn.isVisible().catch(() => false))) {
           console.log(`  [SEARCH TERM] Bấm nút Create report để mở form...`);
-          await cBtn.click().catch(() => {});
+          await cBtn.click().catch(() => { });
           await page.waitForTimeout(3000);
           break;
         }
@@ -1276,28 +1276,28 @@ async function autoCreateAndDownloadSearchTermReport(
       "#report-configuration-form\\:date-range-control-component-0, button[id*='date-range'], button[id*='dateRange'], button[aria-label*='Date range' i], button[data-testid*='date-range']",
     );
     if (dateRangeBtn && (await dateRangeBtn.isVisible().catch(() => false))) {
-      await dateRangeBtn.click().catch(() => {});
+      await dateRangeBtn.click().catch(() => { });
       await page.waitForTimeout(500);
       const opt30 = await page.waitForSelector(
         '[role="option"]:has-text("Last 30 days"), [role="option"]:has-text("Past 30 days"), [role="option"]:has-text("30 days"), li:has-text("Last 30 days"), li:has-text("Past 30 days"), button:has-text("Last 30 days")',
         { timeout: 3000 },
       ).catch(() => null);
       if (opt30) {
-        await opt30.click().catch(() => {});
+        await opt30.click().catch(() => { });
         await page.waitForTimeout(400);
         console.log(`  [SEARCH TERM] Đã chọn Date Range: Last 30 days`);
       } else {
-        await page.keyboard.press("Escape").catch(() => {});
+        await page.keyboard.press("Escape").catch(() => { });
       }
     }
 
     // Điền Report Name chứa syncRunId duy nhất
     if (nameInput) {
-      await nameInput.click().catch(() => {});
+      await nameInput.click().catch(() => { });
       await nameInput.fill("");
       await nameInput.fill(reportName);
-      await nameInput.dispatchEvent("input").catch(() => {});
-      await nameInput.dispatchEvent("change").catch(() => {});
+      await nameInput.dispatchEvent("input").catch(() => { });
+      await nameInput.dispatchEvent("change").catch(() => { });
       console.log(`  [SEARCH TERM] Đã điền tên report: "${reportName}"`);
     } else {
       console.warn(`  [SEARCH TERM] Không tìm thấy ô tên report, dùng tên mặc định của Amazon.`);
@@ -1334,7 +1334,7 @@ async function autoCreateAndDownloadSearchTermReport(
       await page.goto(reportsUrl, { waitUntil: "domcontentloaded" });
     }
 
-    await page.waitForSelector("div.ag-root, div.ag-row, table, [role='grid']", { timeout: 15000 }).catch(() => {});
+    await page.waitForSelector("div.ag-root, div.ag-row, table, [role='grid']", { timeout: 15000 }).catch(() => { });
 
     const deadline = Date.now() + timeoutMinutes * 60_000;
     const startTime = Date.now();
@@ -1404,11 +1404,11 @@ async function autoCreateAndDownloadSearchTermReport(
         'button[aria-label*="Refresh" i], button:has-text("Refresh"), button:has-text("Làm mới"), button[data-testid*="refresh" i], button[data-takt-id*="refresh" i], button:has(svg[data-icon="refresh"])',
       );
       if (refreshBtn && (await refreshBtn.isVisible().catch(() => false))) {
-        await refreshBtn.click().catch(() => {});
+        await refreshBtn.click().catch(() => { });
         refreshed = true;
       }
       if (!refreshed && pollIteration % 2 === 0) {
-        await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
+        await page.reload({ waitUntil: "domcontentloaded" }).catch(() => { });
         await page.waitForTimeout(2000);
       }
     }
@@ -1430,7 +1430,7 @@ async function autoCreateAndDownloadSearchTermReport(
   const reportId = allGuids[allGuids.length - 1] || "";
   let directLinkEl = reportId
     ? (await page.$(`a[href*="download-report"][href*="${reportId}"]`)) ||
-      (await page.$(`a[href*="${reportId}"]`))
+    (await page.$(`a[href*="${reportId}"]`))
     : null;
 
   if (!directLinkEl) {
@@ -1454,64 +1454,64 @@ async function autoCreateAndDownloadSearchTermReport(
     `Tải Search Term ${adType} (${syncRunId})`,
     downloadAttempts,
     async () => {
-    throwIfAborted(signal);
-    if (task) {
-      task.status = "DOWNLOADING";
-      saveCheckpoint?.();
-    }
-    let savedPath: string | null = null;
-    const beforeStats = getFileStatsMap(destDir);
-    try {
-    const [download] = await Promise.all([
-      raceWithAbort(page.waitForEvent("download", { timeout: envInt("REPORT_DOWNLOAD_TIMEOUT_MINUTES", 15, 1, 60) * 60_000 }), signal),
-      (async () => {
-        if (directLinkEl) {
-          await directLinkEl.click().catch(async () => {
-            await page.evaluate((el: any) => el?.click(), directLinkEl);
-          });
-        } else if (downloadUrl) {
-          await page.goto(downloadUrl, { waitUntil: "commit" }).catch(async () => {
-            await page.evaluate((url: string) => {
-              const a = document.createElement("a");
-              a.href = url;
-              a.download = "";
-              document.body.appendChild(a);
-              a.click();
-              a.remove();
-            }, downloadUrl);
-          });
-        }
-      })(),
-    ]);
-
-    const suggestedName = download.suggestedFilename();
-    const cleanRawName = sanitizeRawFileName(suggestedName, storeName);
-    const standardizedName = `${storeName}_Search_Term_${adType}_30Days_${cleanRawName}`;
-    savedPath = path.join(destDir, standardizedName);
-    try {
-      await download.saveAs(savedPath);
-    } catch {}
-  } catch {}
-
-  if (!savedPath || !fs.existsSync(savedPath)) {
-    const downloadedPath = await waitForNewDownload(destDir, beforeStats, envInt("REPORT_DOWNLOAD_TIMEOUT_MINUTES", 15, 1, 60) * 60, signal);
-    if (!downloadedPath) throw new Error(`Không tải được file Search Term ${adType}`);
-    const rawName = path.basename(downloadedPath);
-    const cleanRawName = sanitizeRawFileName(rawName, storeName);
-    const standardizedName = `${storeName}_Search_Term_${adType}_30Days_${cleanRawName}`;
-    savedPath = path.join(destDir, standardizedName);
-    if (downloadedPath !== savedPath) {
-      if (fs.existsSync(savedPath)) {
-        try { fs.unlinkSync(savedPath); } catch {}
+      throwIfAborted(signal);
+      if (task) {
+        task.status = "DOWNLOADING";
+        saveCheckpoint?.();
       }
-      fs.renameSync(downloadedPath, savedPath);
-    }
-  }
-    if (!savedPath || !fs.existsSync(savedPath) || fs.statSync(savedPath).size === 0) {
-      throw new Error(`File Search Term ${adType} tải về bị thiếu hoặc rỗng.`);
-    }
-    return savedPath;
-  });
+      let savedPath: string | null = null;
+      const beforeStats = getFileStatsMap(destDir);
+      try {
+        const [download] = await Promise.all([
+          raceWithAbort(page.waitForEvent("download", { timeout: envInt("REPORT_DOWNLOAD_TIMEOUT_MINUTES", 15, 1, 60) * 60_000 }), signal),
+          (async () => {
+            if (directLinkEl) {
+              await directLinkEl.click().catch(async () => {
+                await page.evaluate((el: any) => el?.click(), directLinkEl);
+              });
+            } else if (downloadUrl) {
+              await page.goto(downloadUrl, { waitUntil: "commit" }).catch(async () => {
+                await page.evaluate((url: string) => {
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = "";
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                }, downloadUrl);
+              });
+            }
+          })(),
+        ]);
+
+        const suggestedName = download.suggestedFilename();
+        const cleanRawName = sanitizeRawFileName(suggestedName, storeName);
+        const standardizedName = `${storeName}_Search_Term_${adType}_30Days_${cleanRawName}`;
+        savedPath = path.join(destDir, standardizedName);
+        try {
+          await download.saveAs(savedPath);
+        } catch { }
+      } catch { }
+
+      if (!savedPath || !fs.existsSync(savedPath)) {
+        const downloadedPath = await waitForNewDownload(destDir, beforeStats, envInt("REPORT_DOWNLOAD_TIMEOUT_MINUTES", 15, 1, 60) * 60, signal);
+        if (!downloadedPath) throw new Error(`Không tải được file Search Term ${adType}`);
+        const rawName = path.basename(downloadedPath);
+        const cleanRawName = sanitizeRawFileName(rawName, storeName);
+        const standardizedName = `${storeName}_Search_Term_${adType}_30Days_${cleanRawName}`;
+        savedPath = path.join(destDir, standardizedName);
+        if (downloadedPath !== savedPath) {
+          if (fs.existsSync(savedPath)) {
+            try { fs.unlinkSync(savedPath); } catch { }
+          }
+          fs.renameSync(downloadedPath, savedPath);
+        }
+      }
+      if (!savedPath || !fs.existsSync(savedPath) || fs.statSync(savedPath).size === 0) {
+        throw new Error(`File Search Term ${adType} tải về bị thiếu hoặc rỗng.`);
+      }
+      return savedPath;
+    });
 
   const stat = fs.statSync(standardizedPath);
   if (task) {
@@ -1571,37 +1571,37 @@ async function validateDownloadedBatch(files: DownloadedFileInfo[]): Promise<voi
   if (realPaths.size !== 6) throw new Error("Batch có file trùng đường dẫn.");
   for (const file of files) {
     try {
-    const stat = fs.statSync(file.path);
-    if (!stat.isFile() || stat.size === 0) throw new Error(`File rỗng hoặc không hợp lệ: ${file.name}`);
-    if (file.type.startsWith("BULK_")) {
-      if (!file.name.toLowerCase().endsWith(".xlsx")) throw new Error(`Bulk phải là XLSX: ${file.name}`);
-      const { sheetNames } = await inspectWorkbookStreaming(file.path);
-      const expectedAdType = file.relativeSubdir;
-      const valid = expectedAdType === "SP"
-        ? /sponsored products|sp campaigns/.test(sheetNames)
-        : /sponsored brands|sb campaigns|hsa campaigns/.test(sheetNames);
-      if (!valid) throw new Error(`Nội dung workbook không khớp ${expectedAdType}: ${file.name}`);
-    } else {
-      let headerText = "";
-      if (file.name.toLowerCase().endsWith(".csv")) {
-        const fd = fs.openSync(file.path, "r");
-        try {
-          const buffer = Buffer.alloc(Math.min(stat.size, 128 * 1024));
-          fs.readSync(fd, buffer, 0, buffer.length, 0);
-          headerText = buffer.toString("utf8");
-        } finally {
-          fs.closeSync(fd);
-        }
-      } else if (file.name.toLowerCase().endsWith(".xlsx")) {
-        ({ headerText } = await inspectWorkbookStreaming(file.path, 10));
+      const stat = fs.statSync(file.path);
+      if (!stat.isFile() || stat.size === 0) throw new Error(`File rỗng hoặc không hợp lệ: ${file.name}`);
+      if (file.type.startsWith("BULK_")) {
+        if (!file.name.toLowerCase().endsWith(".xlsx")) throw new Error(`Bulk phải là XLSX: ${file.name}`);
+        const { sheetNames } = await inspectWorkbookStreaming(file.path);
+        const expectedAdType = file.relativeSubdir;
+        const valid = expectedAdType === "SP"
+          ? /sponsored products|sp campaigns/.test(sheetNames)
+          : /sponsored brands|sb campaigns|hsa campaigns/.test(sheetNames);
+        if (!valid) throw new Error(`Nội dung workbook không khớp ${expectedAdType}: ${file.name}`);
       } else {
-        throw new Error(`Search Term phải là XLSX hoặc CSV: ${file.name}`);
+        let headerText = "";
+        if (file.name.toLowerCase().endsWith(".csv")) {
+          const fd = fs.openSync(file.path, "r");
+          try {
+            const buffer = Buffer.alloc(Math.min(stat.size, 128 * 1024));
+            fs.readSync(fd, buffer, 0, buffer.length, 0);
+            headerText = buffer.toString("utf8");
+          } finally {
+            fs.closeSync(fd);
+          }
+        } else if (file.name.toLowerCase().endsWith(".xlsx")) {
+          ({ headerText } = await inspectWorkbookStreaming(file.path, 10));
+        } else {
+          throw new Error(`Search Term phải là XLSX hoặc CSV: ${file.name}`);
+        }
+        const normalized = headerText.toLowerCase().replace(/[^a-z0-9]+/g, " ");
+        if (!/search term|customer search term/.test(normalized) || !/campaign/.test(normalized) || !/click|spend|cost/.test(normalized)) {
+          throw new Error(`File không có schema Search Term hợp lệ: ${file.name}`);
+        }
       }
-      const normalized = headerText.toLowerCase().replace(/[^a-z0-9]+/g, " ");
-      if (!/search term|customer search term/.test(normalized) || !/campaign/.test(normalized) || !/click|spend|cost/.test(normalized)) {
-        throw new Error(`File không có schema Search Term hợp lệ: ${file.name}`);
-      }
-    }
     } catch (error) {
       throw new Error(`VALIDATION_FAILED:${file.name}:${(error as Error).message}`);
     }
@@ -1749,7 +1749,7 @@ export async function crawlStore(
   });
   const context = browser.contexts()[0];
   if (!context) {
-    await browser.close().catch(() => {});
+    await browser.close().catch(() => { });
     await stopAdsPowerProfile(store.profile_id);
     throw new Error(`Không tìm thấy context trình duyệt của store ${store.store_name}.`);
   }
@@ -1758,7 +1758,7 @@ export async function crawlStore(
   if (!page) {
     page = await context.newPage();
     await page.goto("https://advertising.amazon.com/reports", { waitUntil: "domcontentloaded" }).catch(async (error) => {
-      await browser.close().catch(() => {});
+      await browser.close().catch(() => { });
       await stopAdsPowerProfile(store.profile_id);
       throw error;
     });
@@ -1912,7 +1912,7 @@ export async function crawlStore(
     throw error;
   } finally {
     console.log(`[AdsPower] Đang ngắt kết nối CDP và đóng AdsPower của store [${store.store_name}]...`);
-    await browser.close().catch(() => {});
+    await browser.close().catch(() => { });
     await stopAdsPowerProfile(store.profile_id);
     console.log(`[AdsPower] => ĐÃ ĐÓNG HOÀN TOÀN TRÌNH DUYỆT SHOP [${store.store_name}]! (RAM ĐÃ ĐƯỢC GIẢI PHÓNG)`);
   }
@@ -1926,81 +1926,81 @@ export async function crawlStore(
 async function main() {
   const releaseLock = acquireCrawlerLock();
   try {
-  const stores = getStoreList();
+    const stores = getStoreList();
 
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  const todayStr = `${year}-${month}-${day}`;
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    const todayStr = `${year}-${month}-${day}`;
 
-  console.log("============================================================");
-  console.log(`[MAC CRAWLER STREAMING] BẮT ĐẦU CRAWL BÁO CÁO PPC`);
-  console.log(`Số lượng Store cấu hình: ${stores.length}`);
-  console.log(`Danh sách Store: ${stores.map((s) => s.store_name).join(", ")}`);
-  console.log(`Cơ chế: kiểm tra đủ đúng 6 file rồi mới publish batch nguyên tử lên R2.`);
-  console.log(`Thời gian bắt đầu: ${new Date().toLocaleString("vi-VN")}`);
-  console.log("============================================================");
+    console.log("============================================================");
+    console.log(`[MAC CRAWLER STREAMING] BẮT ĐẦU CRAWL BÁO CÁO PPC`);
+    console.log(`Số lượng Store cấu hình: ${stores.length}`);
+    console.log(`Danh sách Store: ${stores.map((s) => s.store_name).join(", ")}`);
+    console.log(`Cơ chế: kiểm tra đủ đúng 6 file rồi mới publish batch nguyên tử lên R2.`);
+    console.log(`Thời gian bắt đầu: ${new Date().toLocaleString("vi-VN")}`);
+    console.log("============================================================");
 
-  let successStores = 0;
-  const storeResults: Record<string, { success: boolean; count: number; error?: string }> = {};
-  const publishedBatches: Array<{ batchId: string; batchDate: string; storeName: string }> = [];
+    let successStores = 0;
+    const storeResults: Record<string, { success: boolean; count: number; error?: string }> = {};
+    const publishedBatches: Array<{ batchId: string; batchDate: string; storeName: string }> = [];
 
-  for (let i = 0; i < stores.length; i++) {
-    const store = stores[i];
-    console.log(`\n============================================================`);
-    console.log(`[TIẾN TRÌNH ${i + 1}/${stores.length}]: ĐANG XỬ LÝ STORE [${store.store_name}]`);
-    console.log(`============================================================`);
+    for (let i = 0; i < stores.length; i++) {
+      const store = stores[i];
+      console.log(`\n============================================================`);
+      console.log(`[TIẾN TRÌNH ${i + 1}/${stores.length}]: ĐANG XỬ LÝ STORE [${store.store_name}]`);
+      console.log(`============================================================`);
 
-    try {
-      const controller = new AbortController();
-      const timeoutMinutes = envInt("CRAWLER_JOB_TIMEOUT_MINUTES", 120, 15, 720);
-      const timeout = setTimeout(() => controller.abort(`Vượt timeout tổng ${timeoutMinutes} phút`), timeoutMinutes * 60_000);
-      const files = await retryWithBackoff(
-        `Crawl store ${store.store_name}`,
-        envInt("CRAWLER_MAX_JOB_ATTEMPTS", 3, 1, 5),
-        async (attempt) => {
-          console.log(`[JOB RETRY] Store ${store.store_name}: vòng chạy ${attempt}/${envInt("CRAWLER_MAX_JOB_ATTEMPTS", 3, 1, 5)}.`);
-          return crawlStore(store, todayStr, undefined, {
-            jobId: `daily-${store.store_name}-${todayStr.replace(/-/g, "")}`,
-            signal: controller.signal,
+      try {
+        const controller = new AbortController();
+        const timeoutMinutes = envInt("CRAWLER_JOB_TIMEOUT_MINUTES", 120, 15, 720);
+        const timeout = setTimeout(() => controller.abort(`Vượt timeout tổng ${timeoutMinutes} phút`), timeoutMinutes * 60_000);
+        const files = await retryWithBackoff(
+          `Crawl store ${store.store_name}`,
+          envInt("CRAWLER_MAX_JOB_ATTEMPTS", 3, 1, 5),
+          async (attempt) => {
+            console.log(`[JOB RETRY] Store ${store.store_name}: vòng chạy ${attempt}/${envInt("CRAWLER_MAX_JOB_ATTEMPTS", 3, 1, 5)}.`);
+            return crawlStore(store, todayStr, undefined, {
+              jobId: `daily-${store.store_name}-${todayStr.replace(/-/g, "")}`,
+              signal: controller.signal,
+            });
+          },
+        ).finally(() => clearTimeout(timeout));
+        storeResults[store.store_name] = { success: true, count: files.length };
+        const completedCheckpoint = loadJobCheckpoint(`daily-${store.store_name}-${todayStr.replace(/-/g, "")}`);
+        if (completedCheckpoint) {
+          publishedBatches.push({
+            batchId: completedCheckpoint.batchId,
+            batchDate: completedCheckpoint.batchDate,
+            storeName: store.store_name,
           });
-        },
-      ).finally(() => clearTimeout(timeout));
-      storeResults[store.store_name] = { success: true, count: files.length };
-      const completedCheckpoint = loadJobCheckpoint(`daily-${store.store_name}-${todayStr.replace(/-/g, "")}`);
-      if (completedCheckpoint) {
-        publishedBatches.push({
-          batchId: completedCheckpoint.batchId,
-          batchDate: completedCheckpoint.batchDate,
-          storeName: store.store_name,
-        });
+        }
+        successStores++;
+        console.log(`=> HOÀN TẤT STORE [${store.store_name}]: Tải và đẩy R2 thành công ${files.length}/6 file.`);
+      } catch (err) {
+        const msg = (err as Error).message;
+        console.error(`=> [LỖI] Crawl store [${store.store_name}] thất bại: ${msg}`);
+        storeResults[store.store_name] = { success: false, count: 0, error: msg };
       }
-      successStores++;
-      console.log(`=> HOÀN TẤT STORE [${store.store_name}]: Tải và đẩy R2 thành công ${files.length}/6 file.`);
-    } catch (err) {
-      const msg = (err as Error).message;
-      console.error(`=> [LỖI] Crawl store [${store.store_name}] thất bại: ${msg}`);
-      storeResults[store.store_name] = { success: false, count: 0, error: msg };
     }
-  }
 
-  console.log("\n============================================================");
-  console.log(`[MAC CRAWLER] TỔNG KẾT TIẾN TRÌNH CRAWL ĐA CỬA HÀNG:`);
-  console.log(`Hoàn thành: ${successStores}/${stores.length} Store`);
-  for (const [sName, res] of Object.entries(storeResults)) {
-    console.log(`  - [${sName}]: ${res.success ? `THÀNH CÔNG (${res.count} file)` : `THẤT BẠI (${res.error})`}`);
-  }
-  console.log("============================================================\n");
+    console.log("\n============================================================");
+    console.log(`[MAC CRAWLER] TỔNG KẾT TIẾN TRÌNH CRAWL ĐA CỬA HÀNG:`);
+    console.log(`Hoàn thành: ${successStores}/${stores.length} Store`);
+    for (const [sName, res] of Object.entries(storeResults)) {
+      console.log(`  - [${sName}]: ${res.success ? `THÀNH CÔNG (${res.count} file)` : `THẤT BẠI (${res.error})`}`);
+    }
+    console.log("============================================================\n");
 
-  if (successStores !== stores.length) {
-    throw new Error(`Batch tổng chưa hoàn tất: chỉ ${successStores}/${stores.length} store thành công.`);
-  }
-  const syncTargetPath = path.join(os.homedir(), "Library", "Application Support", "AmazonPpcCrawler", "last-sync-target.json");
-  fs.mkdirSync(path.dirname(syncTargetPath), { recursive: true });
-  const syncTargetTemp = `${syncTargetPath}.tmp.${process.pid}`;
-  fs.writeFileSync(syncTargetTemp, JSON.stringify({ batches: publishedBatches }, null, 2), { mode: 0o600 });
-  fs.renameSync(syncTargetTemp, syncTargetPath);
+    if (successStores !== stores.length) {
+      throw new Error(`Batch tổng chưa hoàn tất: chỉ ${successStores}/${stores.length} store thành công.`);
+    }
+    const syncTargetPath = path.join(os.homedir(), "Library", "Application Support", "AmazonPpcCrawler", "last-sync-target.json");
+    fs.mkdirSync(path.dirname(syncTargetPath), { recursive: true });
+    const syncTargetTemp = `${syncTargetPath}.tmp.${process.pid}`;
+    fs.writeFileSync(syncTargetTemp, JSON.stringify({ batches: publishedBatches }, null, 2), { mode: 0o600 });
+    fs.renameSync(syncTargetTemp, syncTargetPath);
   } finally {
     releaseLock();
   }
