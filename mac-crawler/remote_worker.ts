@@ -1,17 +1,67 @@
+import os from "node:os";
 import { acquireCrawlerLock, loadEnv, getStoreList, crawlStore, type StoreTarget } from "./crawler";
+import {
+  type JobCheckpoint,
+  type ReportTaskState,
+  loadJobCheckpoint,
+  saveJobCheckpointAtomic,
+  createDefaultTasksForStore,
+} from "./checkpoint";
 
 loadEnv();
 
 const WEB_APP_URL = (process.env.WEB_APP_URL || "http://localhost:2411").replace(/\/+$/, "");
 const AUTH_TOKEN = process.env.WEB_APP_AUTH_TOKEN || "";
-const POLL_INTERVAL_MS = 5000; // 5 giây hỏi 1 lần
+const WORKER_ID = `${os.hostname()}_${process.pid}`;
+const POLL_INTERVAL_MS = 5000; // 5 giây thăm dò lệnh 1 lần
+const HEARTBEAT_INTERVAL_MS = Number(process.env.WORKER_HEARTBEAT_SECONDS || 15) * 1000;
+
+function configuredInt(name: string, fallback: number, min = 1, max = 20): number {
+  const value = Number.parseInt(process.env[name] || "", 10);
+  return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
+}
+
+async function retryOperation<T>(label: string, attempts: number, operation: (attempt: number) => Promise<T>): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await operation(attempt);
+    } catch (error) {
+      lastError = error;
+      if ((error as Error).message.includes("CRAWLER_ABORTED")) break;
+      if (attempt >= attempts) break;
+      const waitSeconds = Math.min(120, configuredInt("RETRY_BASE_DELAY_SECONDS", 5, 1, 300) * 2 ** (attempt - 1));
+      console.warn(`[Worker Retry] ${label} lỗi lần ${attempt}/${attempts}: ${(error as Error).message}. Chờ ${waitSeconds}s...`);
+      await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`${label} thất bại.`);
+}
+
+async function waitUntilRetry(tasks: ReportTaskState[], signal: AbortSignal): Promise<void> {
+  const timestamps = tasks
+    .map((task) => task.nextRetryAt ? Date.parse(task.nextRetryAt) : Number.NaN)
+    .filter(Number.isFinite);
+  if (!timestamps.length) return;
+  const waitMs = Math.max(0, Math.min(...timestamps) - Date.now());
+  if (!waitMs) return;
+  console.log(`[Worker Retry] Đóng AdsPower và chờ checkpoint nextRetryAt thêm ${Math.ceil(waitMs / 1000)}s.`);
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(resolve, waitMs);
+    signal.addEventListener("abort", () => {
+      clearTimeout(timer);
+      reject(new Error(`CRAWLER_ABORTED: ${String(signal.reason || "Job bị hủy")}`));
+    }, { once: true });
+  });
+}
 
 console.log("============================================================");
-
 if (!AUTH_TOKEN) throw new Error("Thiếu WEB_APP_AUTH_TOKEN trong config.env.");
 console.log("[MAC REMOTE WORKER] KHỞI ĐỘNG TIẾN TRÌNH LẮNG NGHE LỆNH TỪ SERVER");
+console.log(`Worker ID: ${WORKER_ID}`);
 console.log(`Server URL: ${WEB_APP_URL}`);
 console.log(`Chu kỳ thăm dò: ${POLL_INTERVAL_MS / 1000}s`);
+console.log(`Chu kỳ Heartbeat: ${HEARTBEAT_INTERVAL_MS / 1000}s`);
 console.log("============================================================");
 
 function getHeaders() {
@@ -22,26 +72,52 @@ function getHeaders() {
   };
 }
 
+async function sendHeartbeat(jobId: string, leaseToken: string): Promise<"ok" | "temporary" | "revoked"> {
+  try {
+    const response = await fetch(`${WEB_APP_URL}/api/ppc/crawler/job`, {
+      method: "PATCH",
+      headers: getHeaders(),
+      body: JSON.stringify({ jobId, leaseToken, isHeartbeatOnly: true }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      if (body.revoked) {
+        console.warn(`[Worker Heartbeat] ⚠️ Lease token đã bị server thu hồi cho job ${jobId}`);
+        return "revoked";
+      }
+    }
+    return response.ok ? "ok" : "temporary";
+  } catch (err) {
+    console.warn(`[Worker Heartbeat] Không thể gửi heartbeat (${(err as Error).message})`);
+    return "temporary";
+  }
+}
+
 async function updateJob(
   jobId: string,
+  leaseToken: string,
   data: {
-    status?: "RUNNING" | "COMPLETED" | "FAILED";
+    status?: "RUNNING" | "COMPLETED" | "FAILED" | "RETRY_WAIT";
+    stage?: string;
     progress_pct?: number;
     current_step?: string;
     error_message?: string;
     processed_files?: number;
+    task_states?: ReportTaskState[];
   },
 ) {
   const response = await fetch(`${WEB_APP_URL}/api/ppc/crawler/job`, {
     method: "PATCH",
     headers: getHeaders(),
-    body: JSON.stringify({ jobId, ...data }),
+    body: JSON.stringify({ jobId, leaseToken, ...data }),
   });
-  if (!response.ok) throw new Error(`Server từ chối cập nhật job (${response.status}): ${await response.text()}`);
+  if (!response.ok) {
+    throw new Error(`Server từ chối cập nhật job (${response.status}): ${await response.text()}`);
+  }
 }
 
 async function triggerServerSync(): Promise<string> {
-  try {
+  return retryOperation("Đồng bộ R2 vào database", configuredInt("DB_SYNC_MAX_ATTEMPTS", 5, 1, 10), async () => {
     const res = await fetch(`${WEB_APP_URL}/api/ppc/sync-r2`, {
       method: "POST",
       headers: getHeaders(),
@@ -53,19 +129,51 @@ async function triggerServerSync(): Promise<string> {
       throw new Error(data.message || `Server báo ${data.result?.failed || 0} file ingest lỗi.`);
     }
     return data.message || "Đã đồng bộ R2 thành công.";
-  } catch (err) {
-    throw new Error(`Lỗi gọi sync-r2: ${(err as Error).message}`);
-  }
+  });
 }
 
-async function processJob(job: { id: string; store_name: string }) {
+async function processJob(job: {
+  id: string;
+  store_name: string;
+  batch_id?: string;
+  lease_token?: string;
+  task_states?: ReportTaskState[];
+}) {
   const jobId = job.id;
+  const leaseToken = job.lease_token || "";
   const targetStoreName = job.store_name;
+  const batchId = job.batch_id || `${targetStoreName}_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}_${Math.random().toString(36).slice(2, 8)}`;
 
   console.log(`\n============================================================`);
   console.log(`[Worker] NHẬN LỆNH CRAWL TỪ SERVER! Job ID: ${jobId}`);
   console.log(`Mục tiêu Store: [${targetStoreName}]`);
-  console.log(`============================================================`);
+  console.log(`Batch ID: ${batchId}`);
+  console.log(`Lease Token: ${leaseToken}`);
+  console.log("============================================================");
+
+  const abortController = new AbortController();
+  const jobTimeoutMinutes = configuredInt("CRAWLER_JOB_TIMEOUT_MINUTES", 120, 15, 720);
+  const jobDeadlineTimer = setTimeout(
+    () => abortController.abort(`Job vượt quá timeout tổng ${jobTimeoutMinutes} phút`),
+    jobTimeoutMinutes * 60_000,
+  );
+
+  // Heartbeat tuần tự, không chồng request. Revoked hoặc mất 3 nhịp thì dừng side effect.
+  let isJobActive = true;
+  let heartbeatFailures = 0;
+  let heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
+  const heartbeatLoop = async () => {
+    if (!isJobActive || abortController.signal.aborted) return;
+    const result = await sendHeartbeat(jobId, leaseToken);
+    if (result === "ok") heartbeatFailures = 0;
+    else heartbeatFailures += 1;
+    if (result === "revoked" || heartbeatFailures >= 3) {
+      abortController.abort(result === "revoked" ? "Lease bị thu hồi hoặc job đã hủy" : "Mất kết nối server quá 3 heartbeat");
+      return;
+    }
+    heartbeatTimer = setTimeout(() => void heartbeatLoop(), HEARTBEAT_INTERVAL_MS);
+  };
+  heartbeatTimer = setTimeout(() => void heartbeatLoop(), HEARTBEAT_INTERVAL_MS);
 
   let releaseLock: (() => void) | undefined;
   try {
@@ -75,13 +183,56 @@ async function processJob(job: { id: string; store_name: string }) {
       storesToCrawl = allConfiguredStores;
     } else {
       const match = allConfiguredStores.find((s) => s.store_name.toLowerCase() === targetStoreName.toLowerCase());
-      if (!match) throw new Error(`Store "${targetStoreName}" chưa được map trong stores.json; từ chối fallback để tránh lẫn dữ liệu.`);
+      if (!match) {
+        throw new Error(`Store "${targetStoreName}" chưa được map trong stores.json; từ chối fallback để tránh lẫn dữ liệu.`);
+      }
       storesToCrawl = [match];
     }
+
     const now = new Date();
-    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const initialDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+    // Khôi phục hoặc tạo Checkpoint cho Job này
+    const loadedCheckpoint = loadJobCheckpoint(jobId);
+    const checkpoint: JobCheckpoint = loadedCheckpoint || {
+      jobId,
+      batchId,
+      storeName: targetStoreName,
+      batchDate: initialDate,
+      stage: "CRAWLING",
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      runAttempt: 0,
+      lastError: null,
+      tasks: job.task_states && job.task_states.length > 0
+        ? job.task_states
+        : storesToCrawl.flatMap((s) => createDefaultTasksForStore(s.store_name)),
+    };
+    if (loadedCheckpoint && Array.isArray(job.task_states)) {
+      for (const serverTask of job.task_states) {
+        const localTask = checkpoint.tasks.find((task) => task.id === serverTask.id);
+        if (localTask?.status === "FAILED" && serverTask.status === "NOT_STARTED") {
+          Object.assign(localTask, serverTask);
+        }
+      }
+    }
+    // reportDate bất biến kể cả resume qua nửa đêm.
+    const todayStr = checkpoint.batchDate;
+
+    if (loadedCheckpoint) {
+      console.log(`[Worker] 🔄 Đã khôi phục checkpoint local của Job ${jobId} (chứa ${checkpoint.tasks.length} tasks).`);
+    } else {
+      saveJobCheckpointAtomic(checkpoint);
+    }
+
     releaseLock = acquireCrawlerLock();
-    await updateJob(jobId, { progress_pct: 5, current_step: "Máy Mac đã khóa pipeline, chuẩn bị mở AdsPower..." });
+    await updateJob(jobId, leaseToken, {
+      stage: "CRAWLING",
+      progress_pct: 5,
+      current_step: "Máy Mac đã khóa pipeline và bắt đầu xử lý theo checkpoint...",
+      task_states: checkpoint.tasks,
+    });
+
     let totalFilesCrawled = 0;
 
     for (let i = 0; i < storesToCrawl.length; i++) {
@@ -91,45 +242,102 @@ async function processJob(job: { id: string; store_name: string }) {
 
       console.log(`[Worker] Đang xử lý store ${i + 1}/${storesToCrawl.length}: [${store.store_name}]`);
 
-      const files = await crawlStore(store, todayStr, async (stepDesc, percentWithinStore) => {
-        const currentTotalPct = basePct + Math.round((percentWithinStore / 100) * stepPctRange);
-        await updateJob(jobId, {
-          progress_pct: Math.min(85, currentTotalPct),
-          current_step: `[${store.store_name}] ${stepDesc}`,
-        });
-      });
+      const files = await retryOperation(
+        `Crawl store ${store.store_name}`,
+        configuredInt("CRAWLER_MAX_JOB_ATTEMPTS", 3, 1, 5),
+        async (runAttempt) => {
+          if (runAttempt > 1) await waitUntilRetry(checkpoint.tasks, abortController.signal);
+          checkpoint.runAttempt = runAttempt;
+          checkpoint.stage = "CRAWLING";
+          checkpoint.lastError = null;
+          saveJobCheckpointAtomic(checkpoint);
+          if (runAttempt > 1) {
+            await updateJob(jobId, leaseToken, {
+              status: "RUNNING",
+              stage: "CRAWLING",
+              current_step: `[${store.store_name}] Đang resume vòng ${runAttempt}, giữ lại các file đã hoàn thành...`,
+              task_states: checkpoint.tasks,
+            }).catch(() => {});
+          }
+          return crawlStore(
+            store,
+            todayStr,
+            async (stepDesc, percentWithinStore) => {
+          const currentTotalPct = basePct + Math.round((percentWithinStore / 100) * stepPctRange);
+          await updateJob(jobId, leaseToken, {
+            progress_pct: Math.min(85, currentTotalPct),
+            current_step: `[${store.store_name}] ${stepDesc}`,
+          }).catch(() => {});
+            },
+            {
+          jobId,
+          batchId,
+          checkpoint,
+          onTaskUpdate: async (task: ReportTaskState) => {
+            if (checkpoint) {
+              const idx = checkpoint.tasks.findIndex((t) => t.id === task.id);
+              if (idx !== -1) {
+                checkpoint.tasks[idx] = task;
+              } else {
+                checkpoint.tasks.push(task);
+              }
+              saveJobCheckpointAtomic(checkpoint);
+              await updateJob(jobId, leaseToken, {
+                task_states: checkpoint.tasks,
+              }).catch(() => {});
+            }
+          },
+          signal: abortController.signal,
+            },
+          );
+        },
+      );
 
       totalFilesCrawled += files.length;
     }
 
     // Bước đồng bộ Server từ R2
-    await updateJob(jobId, {
+    checkpoint.stage = "INGESTING";
+    saveJobCheckpointAtomic(checkpoint);
+
+    await updateJob(jobId, leaseToken, {
+      stage: "INGESTING",
       progress_pct: 90,
-      current_step: "Đã tải & đẩy R2 xong! Đang kích hoạt Server nạp vào Database...",
+      current_step: "Đã tải & đẩy R2 staging thành công! Đang kích hoạt Server nạp vào Database...",
       processed_files: totalFilesCrawled,
+      task_states: checkpoint.tasks,
     });
 
     const syncMsg = await triggerServerSync();
     console.log(`[Worker] Kết quả đồng bộ Server: ${syncMsg}`);
 
     // Báo cáo hoàn tất
-    await updateJob(jobId, {
+    checkpoint.stage = "COMPLETED";
+    saveJobCheckpointAtomic(checkpoint);
+
+    await updateJob(jobId, leaseToken, {
       status: "COMPLETED",
+      stage: "COMPLETED",
       progress_pct: 100,
       current_step: `Hoàn tất xuất sắc! Đã tải ${totalFilesCrawled} file và đồng bộ vào DB.`,
       processed_files: totalFilesCrawled,
+      task_states: checkpoint.tasks,
     });
 
     console.log(`\n[Worker] => JOB ${jobId} ĐÃ HOÀN TẤT THÀNH CÔNG!`);
   } catch (err) {
     const errorMsg = (err as Error).message;
     console.error(`[Worker] => JOB ${jobId} THẤT BẠI: ${errorMsg}`);
-    await updateJob(jobId, {
+    await updateJob(jobId, leaseToken, {
       status: "FAILED",
+      stage: "FAILED",
       error_message: errorMsg,
       current_step: `Lỗi: ${errorMsg}`,
     }).catch((updateError) => console.error(`[Worker] Không thể báo lỗi về server: ${(updateError as Error).message}`));
   } finally {
+    isJobActive = false;
+    if (heartbeatTimer) clearTimeout(heartbeatTimer);
+    clearTimeout(jobDeadlineTimer);
     releaseLock?.();
   }
 }
@@ -141,7 +349,7 @@ async function startLoop() {
     if (isProcessing) return;
 
     try {
-      const res = await fetch(`${WEB_APP_URL}/api/ppc/crawler/job?action=poll`, {
+      const res = await fetch(`${WEB_APP_URL}/api/ppc/crawler/job?action=poll&workerId=${encodeURIComponent(WORKER_ID)}`, {
         headers: getHeaders(),
       });
 
@@ -152,7 +360,11 @@ async function startLoop() {
       const data = await res.json();
       if (data.hasJob && data.job) {
         isProcessing = true;
-        try { await processJob(data.job); } finally { isProcessing = false; }
+        try {
+          await processJob(data.job);
+        } finally {
+          isProcessing = false;
+        }
       }
     } catch {
       // Server offline hoặc chưa khởi động, tiếp tục thăm dò

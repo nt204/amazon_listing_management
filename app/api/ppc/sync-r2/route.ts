@@ -12,7 +12,7 @@ export async function POST(request: Request) {
     const result = await syncPpcReportsFromR2(dataScope(actor));
     const failureSuffix = result.failed ? ` Có ${result.failed} file lỗi.` : "";
     return Response.json({
-      success: true,
+      success: result.failed === 0,
       message: `Đã quét ${result.filesFound} file: xử lý ${result.filesProcessed} báo cáo PPC (${result.bulkFiles} Bulk, ${result.searchTermFiles} Search Term), bỏ qua ${result.ignored} file không nhận diện; ghi ${result.totalNew} dòng mới.${failureSuffix}`,
       result,
     });

@@ -46,7 +46,7 @@ if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
   exit 1
 fi
 
-if ! printf '%s' "$RESPONSE" | grep -Eq '"success"[[:space:]]*:[[:space:]]*true'; then
+if ! RESPONSE_JSON="$RESPONSE" python3 -c 'import json, os, sys; d=json.loads(os.environ["RESPONSE_JSON"]); sys.exit(0 if d.get("success") is True and int((d.get("result") or {}).get("failed", 0)) == 0 else 1)' 2>/dev/null; then
   echo "[LỖI] Server không xác nhận sync thành công: $RESPONSE" >&2
   exit 1
 fi

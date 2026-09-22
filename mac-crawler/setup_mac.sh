@@ -12,6 +12,16 @@ if [ ! -f "$SCRIPT_DIR/config.env" ]; then
 fi
 
 echo "============================================================"
+
+set -a
+source "$SCRIPT_DIR/config.env"
+set +a
+for REQUIRED_VAR in R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY WEB_APP_URL WEB_APP_AUTH_TOKEN; do
+  if [ -z "${!REQUIRED_VAR:-}" ]; then
+    echo "[LỖI]: config.env còn thiếu $REQUIRED_VAR. Setup dừng để tránh cài worker restart-loop."
+    exit 1
+  fi
+done
 echo "    SETUP HỆ THỐNG MAC CRAWLER TỰ ĐỘNG CHO MAC MINI M1     "
 echo "============================================================"
 
@@ -44,6 +54,10 @@ fi
 if ! python3 -c "import boto3" 2>/dev/null; then
   echo "      -> Chưa có boto3, đang tự động cài đặt qua pip3..."
   pip3 install boto3 --break-system-packages --quiet 2>/dev/null || pip3 install boto3 --quiet || python3 -m pip install boto3 --break-system-packages --quiet || true
+fi
+if ! python3 -c "import boto3" 2>/dev/null; then
+  echo "[LỖI]: Không thể cài hoặc import boto3. Hãy kiểm tra pip/Python rồi chạy setup lại."
+  exit 1
 fi
 echo "      -> Python 3 & Boto3: OK"
 

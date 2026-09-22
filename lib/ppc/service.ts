@@ -1,6 +1,7 @@
 import "server-only";
 
 import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
+import crypto from "node:crypto";
 import type { DataScope } from "@/lib/db";
 import {
   adTypeBreakdownFromFacts,
@@ -866,6 +867,8 @@ export async function syncPpcReportsFromR2(scope: DataScope) {
   // list so repeated runs on the same day cannot combine old and new reports.
   const objectByKey = new Map(objects.map((object) => [object.Key || "", object]));
   const committedKeys = new Set<string>();
+  const committedChecksums = new Map<string, { sha256: string; sizeBytes: number }>();
+  const committedBatchRank = new Map<string, string>();
   const expectedSlots = [
     "bulk_sp_30days", "bulk_sb_30days", "bulk_sp_7days",
     "bulk_sb_7days", "search_term_sp_30days", "search_term_sb_30days",
@@ -878,10 +881,24 @@ export async function syncPpcReportsFromR2(scope: DataScope) {
       if (!markerResponse.Body) throw new Error("marker rỗng");
       const marker = JSON.parse(Buffer.from(await markerResponse.Body.transformToByteArray()).toString("utf8"));
       const keys = Array.isArray(marker?.files) ? marker.files.filter((key: unknown): key is string => typeof key === "string") : [];
+      const checksums = Array.isArray(marker?.checksums) ? marker.checksums : [];
+      const checksumByKey = new Map<string, { sha256: string; sizeBytes: number }>();
+      for (const item of checksums) {
+        if (typeof item?.key === "string" && typeof item?.sha256 === "string" && Number.isFinite(item?.sizeBytes)) {
+          checksumByKey.set(item.key, { sha256: item.sha256.toLowerCase(), sizeBytes: Number(item.sizeBytes) });
+        }
+      }
       const slots = new Set(keys.map((key: string) => key.toLowerCase()).flatMap((key: string) => expectedSlots.filter((slot) => key.includes(slot))));
       if (keys.length !== 6 || new Set(keys).size !== 6 || slots.size !== 6) throw new Error("marker không đủ 6 slot PPC");
       for (const key of keys) {
         if (!key.startsWith(batchPrefix) || !objectByKey.has(key)) throw new Error(`object không thuộc batch hoặc chưa tồn tại: ${key}`);
+        const expected = checksumByKey.get(key);
+        if (Number(marker?.version || 1) >= 2 && !expected) throw new Error(`marker v2 thiếu checksum: ${key}`);
+        if (expected) {
+          if ((objectByKey.get(key)?.Size || 0) !== expected.sizeBytes) throw new Error(`size không khớp marker: ${key}`);
+          committedChecksums.set(key, expected);
+        }
+        committedBatchRank.set(key, String(marker?.completedAt || markerObject.LastModified?.toISOString() || markerKey));
       }
       keys.forEach((key: string) => committedKeys.add(key));
     } catch (error) {
@@ -925,7 +942,29 @@ export async function syncPpcReportsFromR2(scope: DataScope) {
     const inputCandidates = candidates.filter((object) => (object.Key || "").toLowerCase().includes("/input/"));
     if (inputCandidates.length) candidates = inputCandidates;
 
+    // Có thể có nhiều batch hoàn chỉnh trong cùng ngày. Chỉ ingest batch được
+    // commit gần nhất, không trộn 6 file của các batchId khác nhau.
+    const latestCommitRank = candidates.reduce(
+      (latest, object) => Math.max(latest, Date.parse(committedBatchRank.get(object.Key || "") || "") || 0),
+      0,
+    );
+    if (latestCommitRank > 0) {
+      candidates = candidates.filter(
+        (object) => (Date.parse(committedBatchRank.get(object.Key || "") || "") || 0) === latestCommitRank,
+      );
+    }
+
     const selectedFiles = candidates;
+    const syncStates = await Promise.all(selectedFiles.map((object) =>
+      hasSuccessfulPpcSync(scope, "CLOUDFLARE_R2", object.Key || "", r2Version(object)),
+    ));
+    if (selectedFiles.length === 6 && syncStates.every(Boolean)) {
+      console.log(`[R2 Sync] Bỏ qua batch ${latestBatch}/${storeName}: đủ 6 file đã đồng bộ thành công.`);
+      filesProcessed += selectedFiles.length;
+      continue;
+    }
+
+    const failuresBeforeStore = failures.length;
     const parsedSearchTerms: Array<{ object: (typeof selectedFiles)[number]; rows: PpcSearchTermRow[] }> = [];
     const parsedPerformance: Array<{ object: (typeof selectedFiles)[number]; rows: Awaited<ReturnType<typeof parseBulkWorkbook>> }> = [];
 
@@ -933,19 +972,19 @@ export async function syncPpcReportsFromR2(scope: DataScope) {
       const fileName = object.Key || "";
       const version = r2Version(object);
       try {
-        const alreadySynced = await hasSuccessfulPpcSync(scope, "CLOUDFLARE_R2", fileName, version);
-        if (alreadySynced) {
-          console.log(`[R2 Sync] Bỏ qua file đã đồng bộ thành công trước đó: ${fileName} (${version})`);
-          filesProcessed++;
-          continue;
-        }
-
         if ((object.Size || 0) > MAX_R2_FILE_BYTES) {
           throw new Error(`File vượt quá giới hạn ${Math.round(MAX_R2_FILE_BYTES / 1_000_000)} MB.`);
         }
         const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: fileName }));
         if (!response.Body) throw new Error("R2 trả về file rỗng.");
         const buffer = Buffer.from(await response.Body.transformToByteArray());
+        const expectedIntegrity = committedChecksums.get(fileName);
+        if (expectedIntegrity) {
+          const actualSha256 = crypto.createHash("sha256").update(buffer).digest("hex");
+          if (buffer.length !== expectedIntegrity.sizeBytes || actualSha256 !== expectedIntegrity.sha256) {
+            throw new Error("Checksum SHA-256 hoặc kích thước không khớp marker.");
+          }
+        }
         const adType = reportAdType(fileName);
         if (/search[\s_-]*term/i.test(fileName)) {
           const rows = fileName.toLowerCase().endsWith(".csv")
@@ -970,6 +1009,13 @@ export async function syncPpcReportsFromR2(scope: DataScope) {
           message: `Giữ nguyên snapshot cũ của ${storeName}: ${message}`,
         });
       }
+    }
+
+    // Snapshot là đơn vị nguyên tử: một file lỗi thì không thay thế dữ liệu cũ
+    // bằng phần còn lại của batch.
+    if (failures.length > failuresBeforeStore || parsedSearchTerms.length !== 2 || parsedPerformance.length !== 4) {
+      console.warn(`[R2 Sync] Giữ nguyên snapshot cũ của ${storeName}: batch mới chưa parse đủ 6 file.`);
+      continue;
     }
 
     if (parsedSearchTerms.length) {

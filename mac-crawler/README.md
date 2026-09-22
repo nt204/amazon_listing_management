@@ -22,11 +22,47 @@ Thư mục này được thiết kế **hoàn toàn độc lập (standalone)**,
            └── manifest.json
    ```
 4. Kiểm tra đúng 6 loại file, kiểm tra sheet/header, rồi đẩy toàn bộ lên **Cloudflare R2** theo Key chuẩn hóa:
-   - `ppc-reports/input/{YYYYMMDD}/{STORE_NAME}/SP/...`
-   - `ppc-reports/input/{YYYYMMDD}/{STORE_NAME}/SB/...`
-   - `ppc-reports/input/{YYYYMMDD}/{STORE_NAME}/_COMPLETE.json` được ghi cuối cùng; server bỏ qua batch thiếu marker.
+   - `ppc-reports/input/{YYYYMMDD}/{STORE_NAME}/{BATCH_ID}/SP/...`
+   - `ppc-reports/input/{YYYYMMDD}/{STORE_NAME}/{BATCH_ID}/SB/...`
+   - `ppc-reports/input/{YYYYMMDD}/{STORE_NAME}/{BATCH_ID}/_COMPLETE.json` được ghi cuối cùng; server bỏ qua batch thiếu marker hoặc sai checksum.
 5. Kích hoạt Web App (`POST /api/ppc/sync-r2`) để hệ thống tự động kéo từ R2 về và nạp vào cơ sở dữ liệu PostgreSQL.
 6. Hiển thị thông báo màn hình macOS (Notification) và ghi log chi tiết.
+
+## Luồng retry, checkpoint và publish nguyên tử
+
+```mermaid
+flowchart TD
+    A["Lịch 12:00 hoặc Web tạo job"] --> B["Mac claim lease và heartbeat"]
+    B --> C["Đọc checkpoint theo jobId/batchId"]
+    C --> D{"Task đã hoàn thành?"}
+    D -->|Uploaded| E["Bỏ qua"]
+    D -->|Validated| F["Chỉ upload"]
+    D -->|Amazon processing| G["Poll request ID cũ"]
+    D -->|Chưa tạo| H["Tạo report Amazon"]
+    H --> G
+    G --> I{"Amazon status"}
+    I -->|Processing| G
+    I -->|Completed| J["Download có retry"]
+    I -->|Failed còn lượt| H
+    J --> K["Validate schema và SHA-256"]
+    K -->|Sai| L["Quarantine rồi tải lại"]
+    L --> J
+    K -->|Đúng| F
+    E --> M{"Đủ đúng 6 task?"}
+    F --> M
+    M -->|Chưa đủ| D
+    M -->|Đủ| N["Upload prefix input/date/store/batchId"]
+    N --> O["Ghi _COMPLETE.json cuối cùng"]
+    O --> P["Web xác minh size và SHA-256"]
+    P --> Q["Ingest DB idempotent"]
+    Q --> R["Completed, đóng AdsPower"]
+    B -->|Cancel hoặc lease revoked| S["Abort, lưu checkpoint, đóng AdsPower"]
+```
+
+- File checkpoint: `~/Library/Application Support/AmazonPpcCrawler/jobs/{jobId}.json`.
+- Retry không tải lại file đã validate; lỗi schema được chuyển vào thư mục `quarantine/`.
+- Mỗi batch có prefix R2 riêng chứa `batchId`, vì vậy batch cũ không thể nhìn thấy file mới đang upload dở.
+- Worker dừng side effect khi web hủy job, lease bị thu hồi hoặc mất ba heartbeat liên tiếp.
 
 ---
 
@@ -135,3 +171,5 @@ Script này sẽ tự động 100%:
   cd ~/Desktop/mac-crawler
   ./uninstall_launchd.sh
   ```
+
+  tail -f ~/Library/Logs/mac-crawler-worker.log

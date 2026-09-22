@@ -4,6 +4,65 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import ExcelJS from "exceljs";
+import {
+  type ReportTaskType,
+  type ReportTaskState,
+  type JobCheckpoint,
+  computeFileSha256,
+  loadJobCheckpoint,
+  saveJobCheckpointAtomic,
+  createDefaultTasksForStore,
+} from "./checkpoint";
+
+export function formatMmSs(ms: number): string {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function envInt(name: string, fallback: number, min = 1, max = 10_000): number {
+  const parsed = Number.parseInt(process.env[name] || "", 10);
+  return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new Error(`CRAWLER_ABORTED: ${String(signal.reason || "Job bị hủy hoặc mất lease")}`);
+}
+
+async function raceWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  throwIfAborted(signal);
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => signal.addEventListener("abort", () =>
+      reject(new Error(`CRAWLER_ABORTED: ${String(signal.reason || "Job bị hủy hoặc mất lease")}`)),
+    { once: true })),
+  ]);
+}
+
+async function retryWithBackoff<T>(
+  label: string,
+  maxAttempts: number,
+  operation: (attempt: number) => Promise<T>,
+): Promise<T> {
+  let lastError: unknown;
+  const baseDelaySeconds = envInt("RETRY_BASE_DELAY_SECONDS", 5, 1, 300);
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await operation(attempt);
+    } catch (error) {
+      lastError = error;
+      if ((error as Error).message.includes("CRAWLER_ABORTED")) break;
+      if (attempt >= maxAttempts) break;
+      const delaySeconds = Math.min(120, baseDelaySeconds * 2 ** (attempt - 1));
+      console.warn(`[RETRY] ${label} lỗi lần ${attempt}/${maxAttempts}: ${(error as Error).message}. Thử lại sau ${delaySeconds}s...`);
+      await new Promise((resolve) => setTimeout(resolve, delaySeconds * 1000));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`${label} thất bại sau ${maxAttempts} lần.`);
+}
+
 
 // ============================================================================
 // CONFIGURATION RESOLUTION
@@ -171,29 +230,153 @@ export async function uploadFileImmediatelyToR2(
   }
 }
 
+export async function publishCompleteBatchWithStaging(
+  files: DownloadedFileInfo[],
+  storeName: string,
+  batchDate: string,
+  batchId?: string,
+  tasks?: ReportTaskState[],
+  signal?: AbortSignal,
+): Promise<void> {
+  if (files.length !== 6) throw new Error(`Batch ${storeName} chưa đủ 6 file.`);
+  const s3 = getS3Client();
+  if (!s3) throw new Error("Thiếu credentials R2.");
+
+  const prefix = (process.env.PPC_R2_PREFIX || "ppc-reports").replace(/^\/+|\/+$/g, "");
+  const bucket = process.env.R2_BUCKET_NAME || "amazon-listing-production";
+  const finalBatchId = batchId || `${storeName}_${batchDate.replace(/-/g, "")}_${Math.random().toString(36).slice(2, 8)}`;
+
+  console.log(`\n============================================================`);
+  console.log(`[R2 STAGING & PUBLISH] BẮT ĐẦU ĐẨY BATCH ${finalBatchId}`);
+  console.log(`============================================================`);
+
+  const manifestEntries: Array<{
+    type: string;
+    days: number;
+    fileName: string;
+    sizeBytes: number;
+    sha256: string;
+    stagingKey: string;
+    finalKey: string;
+  }> = [];
+
+  for (const file of files) {
+    throwIfAborted(signal);
+    const fileName = path.basename(file.path);
+    const stagingKey = `${prefix}/staging/${finalBatchId}/${storeName}/${file.relativeSubdir}/${fileName}`;
+    const finalKey = `${prefix}/input/${batchDate.replace(/-/g, "")}/${storeName}/${finalBatchId}/${file.relativeSubdir}/${fileName}`;
+    const sha256 = await computeFileSha256(file.path);
+
+    // 1. Upload vào Staging
+    console.log(`  [R2 STAGING] Đang upload staging: ${fileName}...`);
+    const uploadAttempts = envInt("R2_UPLOAD_MAX_ATTEMPTS", 5, 1, 10);
+    await retryWithBackoff(`Upload staging ${fileName}`, uploadAttempts, async () => {
+      throwIfAborted(signal);
+      await s3.send(new PutObjectCommand({
+        Bucket: bucket,
+        Key: stagingKey,
+        Body: fs.createReadStream(file.path),
+        ContentType: fileName.endsWith(".xlsx")
+          ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          : "text/csv",
+      }), { abortSignal: signal });
+    });
+
+    // 2. Publish sang thư mục chính thức /input/
+    console.log(`  [R2 PUBLISH] Đang publish chính thức: ${finalKey}...`);
+    await retryWithBackoff(`Publish R2 ${fileName}`, uploadAttempts, async () => {
+      throwIfAborted(signal);
+      await s3.send(new PutObjectCommand({
+        Bucket: bucket,
+        Key: finalKey,
+        Body: fs.createReadStream(file.path),
+        ContentType: fileName.endsWith(".xlsx")
+          ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          : "text/csv",
+      }), { abortSignal: signal });
+    });
+
+    manifestEntries.push({
+      type: file.type,
+      days: file.days,
+      fileName,
+      sizeBytes: file.sizeBytes,
+      sha256,
+      stagingKey,
+      finalKey,
+    });
+
+    if (tasks) {
+      const matchedTask = tasks.find((t) =>
+        t.store === storeName && t.type === file.type && t.days === file.days &&
+        (!t.localPath || path.resolve(t.localPath) === path.resolve(file.path)),
+      );
+      if (matchedTask) {
+        matchedTask.status = "UPLOADED";
+        matchedTask.sha256 = sha256;
+        matchedTask.r2Key = finalKey;
+      }
+    }
+  }
+
+  // 3. Ghi Manifest vào Staging
+  const stagingManifestKey = `${prefix}/staging/${finalBatchId}/${storeName}/manifest.json`;
+  await retryWithBackoff("Upload R2 staging manifest", envInt("R2_UPLOAD_MAX_ATTEMPTS", 5, 1, 10), async () => s3.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: stagingManifestKey,
+      Body: JSON.stringify(
+        {
+          batchId: finalBatchId,
+          store: storeName,
+          reportDate: batchDate,
+          expectedFiles: 6,
+          completedAt: new Date().toISOString(),
+          files: manifestEntries,
+        },
+        null,
+        2,
+      ),
+      ContentType: "application/json",
+    }), { abortSignal: signal },
+  ));
+  console.log(`  [R2 STAGING] Đã ghi manifest: ${stagingManifestKey}`);
+
+  // 4. Ghi file chốt hạ _COMPLETE.json vào /input/
+  const markerKey = `${prefix}/input/${batchDate.replace(/-/g, "")}/${storeName}/${finalBatchId}/_COMPLETE.json`;
+  throwIfAborted(signal);
+  await retryWithBackoff("Publish R2 complete marker", envInt("R2_UPLOAD_MAX_ATTEMPTS", 5, 1, 10), async () => s3.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: markerKey,
+      Body: JSON.stringify(
+        {
+          version: 2,
+          batchId: finalBatchId,
+          storeName,
+          batchDate: batchDate.replace(/-/g, ""),
+          completedAt: new Date().toISOString(),
+          files: manifestEntries.map((f) => f.finalKey),
+          checksums: manifestEntries.map((f) => ({ key: f.finalKey, sha256: f.sha256, sizeBytes: f.sizeBytes })),
+        },
+        null,
+        2,
+      ),
+      ContentType: "application/json",
+    }), { abortSignal: signal },
+  ));
+  console.log(`[R2] ✅ Đã chốt hạ marker nguyên tử: ${markerKey}`);
+}
+
+// Giữ alias tương thích
 async function publishCompleteBatch(
   files: DownloadedFileInfo[],
   storeName: string,
   batchDate: string,
 ): Promise<void> {
-  if (files.length !== 6) throw new Error(`Batch ${storeName} chưa đủ 6 file.`);
-  const keys: string[] = [];
-  for (const file of files) {
-    keys.push(await uploadFileImmediatelyToR2(file.path, storeName, file.relativeSubdir, batchDate));
-  }
-  const s3 = getS3Client();
-  if (!s3) throw new Error("Thiếu cấu hình R2.");
-  const prefix = (process.env.PPC_R2_PREFIX || "ppc-reports").replace(/^\/+|\/+$/g, "");
-  const bucket = process.env.R2_BUCKET_NAME || "amazon-listing-production";
-  const markerKey = `${prefix}/input/${batchDate}/${storeName}/_COMPLETE.json`;
-  await s3.send(new PutObjectCommand({
-    Bucket: bucket,
-    Key: markerKey,
-    Body: JSON.stringify({ version: 1, storeName, batchDate, completedAt: new Date().toISOString(), files: keys }),
-    ContentType: "application/json",
-  }));
-  console.log(`[R2] Batch ${storeName} đã đủ 6 file; published marker ${markerKey}`);
+  await publishCompleteBatchWithStaging(files, storeName, batchDate);
 }
+
 
 // ============================================================================
 // ADSPOWER PROFILE CONTROLLER (AUTO START & STOP TO SAVE RAM)
@@ -239,6 +422,22 @@ export async function startAdsPowerProfile(profileId: string): Promise<string> {
   throw new Error(`Không thể mở đúng AdsPower profile ${profileId}; không dùng CDP fallback để tránh lẫn store.`);
 }
 
+async function startAdsPowerProfileWithRetry(profileId: string): Promise<string> {
+  try {
+    return await retryWithBackoff(
+      `Mở AdsPower profile ${profileId}`,
+      envInt("ADSPOWER_MAX_ATTEMPTS", 3, 1, 5),
+      async (attempt) => {
+        if (attempt > 1) await stopAdsPowerProfile(profileId);
+        return startAdsPowerProfile(profileId);
+      },
+    );
+  } catch (error) {
+    await stopAdsPowerProfile(profileId);
+    throw error;
+  }
+}
+
 export async function stopAdsPowerProfile(profileId: string): Promise<void> {
   try {
     console.log(`[AdsPower] Đang đóng profile ${profileId} để giải phóng RAM cho Mac mini...`);
@@ -261,9 +460,10 @@ function getFileStatsMap(dir: string): Map<string, number> {
   return map;
 }
 
-async function waitForNewDownload(dir: string, beforeStats: Map<string, number>, timeoutSec = 60): Promise<string | null> {
+async function waitForNewDownload(dir: string, beforeStats: Map<string, number>, timeoutSec = 60, signal?: AbortSignal): Promise<string | null> {
   const deadline = Date.now() + timeoutSec * 1000;
   while (Date.now() < deadline) {
+    throwIfAborted(signal);
     await new Promise((r) => setTimeout(r, 1000));
     if (!fs.existsSync(dir)) continue;
     const files = fs.readdirSync(dir);
@@ -351,11 +551,13 @@ async function waitForBulkFileDownload(
   destDir: string,
   expectedRawName: string | null,
   timeoutSeconds = 120,
+  signal?: AbortSignal,
 ): Promise<string> {
   const parentDir = path.dirname(destDir);
   const deadline = Date.now() + timeoutSeconds * 1000;
 
   while (Date.now() < deadline) {
+    throwIfAborted(signal);
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
     if (expectedRawName) {
@@ -651,6 +853,7 @@ async function downloadBulkFileByRow(
   storeName: string,
   spDir: string,
   sbDir: string,
+  signal?: AbortSignal,
 ): Promise<{ savedPath: string; actualAdType: "SP" | "SB"; targetDir: string }> {
   console.log(`  [BULK] Bắt đầu tải file cho ${task.adType} ${task.days}d (Khớp ID: ${task.requestId})...`);
 
@@ -664,7 +867,7 @@ async function downloadBulkFileByRow(
 
   try {
     const [download] = await Promise.all([
-      bulkPage.waitForEvent("download", { timeout: 60_000 }),
+      raceWithAbort(bulkPage.waitForEvent("download", { timeout: 60_000 }), signal),
       (async () => {
         if (directLinkEl) {
           await directLinkEl.click().catch(async () => {
@@ -693,7 +896,7 @@ async function downloadBulkFileByRow(
   } catch {}
 
   if (!standardizedPath || !fs.existsSync(standardizedPath)) {
-    const downloadedPath = await waitForBulkFileDownload(initialDir, expectedRawName, 120);
+    const downloadedPath = await waitForBulkFileDownload(initialDir, expectedRawName, 120, signal);
     const rawName = path.basename(downloadedPath);
     const cleanRawName = sanitizeRawFileName(rawName, storeName);
     const standardizedName = `${storeName}_Bulk_${task.adType}_${task.days}Days_${cleanRawName}`;
@@ -743,13 +946,27 @@ async function createAndDownloadAllBulkReports(
   spDir: string,
   sbDir: string,
   onProgress?: ProgressCallback,
+  requestedSlots?: Array<{ adType: "SP" | "SB"; days: number }>,
+  checkpointTasks?: ReportTaskState[],
+  saveCheckpoint?: () => void,
+  signal?: AbortSignal,
 ): Promise<DownloadedFileInfo[]> {
-  const tasks: BulkTaskItem[] = [
+  const allTasks: BulkTaskItem[] = [
     { adType: "SP", days: 30, requestId: "" },
     { adType: "SB", days: 30, requestId: "" },
     { adType: "SP", days: 7, requestId: "" },
     { adType: "SB", days: 7, requestId: "" },
   ];
+  const tasks = requestedSlots?.length
+    ? allTasks.filter((task) => requestedSlots.some((slot) => slot.adType === task.adType && slot.days === task.days))
+    : allTasks;
+  for (const task of tasks) {
+    const saved = checkpointTasks?.find((item) => item.type === `BULK_${task.adType}` && item.days === task.days);
+    if (saved?.amazonRequestId && ["AMAZON_PROCESSING", "RETRY_WAIT", "DOWNLOADABLE"].includes(saved.status)) {
+      task.requestId = saved.amazonRequestId;
+      console.log(`[BULK RESUME] ♻️ Tiếp tục theo dõi ${task.adType}_${task.days}D ID ${task.requestId}, không tạo lại.`);
+    }
+  }
 
   console.log(`\n================================================================`);
   console.log(`🔒 [BULK PHA 1] KHÓA MÃ ID (exportRequestId) NGAY KHI BẤM`);
@@ -757,11 +974,21 @@ async function createAndDownloadAllBulkReports(
   console.log(`================================================================\n`);
 
   for (let i = 0; i < tasks.length; i++) {
+    throwIfAborted(signal);
     const task = tasks[i];
+    if (task.requestId) continue;
     console.log(`\n[BULK PHA 1] [${i + 1}/4] Kích hoạt tạo Bulk ${task.adType} ${task.days} Days...`);
     if (onProgress) await onProgress(`[${storeName}] Kích hoạt Bulk ${task.adType} ${task.days}d`, 20 + i * 5);
 
     task.requestId = await triggerBulkExport(bulkPage, entityParam, task.adType, task.days);
+    const checkpointTask = checkpointTasks?.find((item) => item.type === `BULK_${task.adType}` && item.days === task.days);
+    if (checkpointTask) {
+      checkpointTask.amazonRequestId = task.requestId;
+      checkpointTask.status = "AMAZON_PROCESSING";
+      checkpointTask.attempt += 1;
+      checkpointTask.lastError = null;
+      saveCheckpoint?.();
+    }
     console.log(`[BULK PHA 1] 🔒 ĐÃ GHI NHỚ: ${task.adType}_${task.days}D = ${task.requestId}`);
 
     if (i < tasks.length - 1) {
@@ -786,6 +1013,7 @@ async function createAndDownloadAllBulkReports(
   const results: DownloadedFileInfo[] = [];
 
   while (Date.now() < deadline && tasks.some((t) => !t.filePath)) {
+    throwIfAborted(signal);
     pollIteration++;
     const rows = await getBulkTableRows(bulkPage);
 
@@ -809,9 +1037,18 @@ async function createAndDownloadAllBulkReports(
           storeName,
           spDir,
           sbDir,
+          signal,
         );
 
         task.filePath = savedPath;
+        const checkpointTask = checkpointTasks?.find((item) => item.type === `BULK_${actualAdType}` && item.days === task.days);
+        if (checkpointTask) {
+          checkpointTask.status = "DOWNLOADED";
+          checkpointTask.localPath = savedPath;
+          checkpointTask.sizeBytes = fs.statSync(savedPath).size;
+          checkpointTask.lastError = null;
+          saveCheckpoint?.();
+        }
         results.push({
           name: path.basename(savedPath),
           path: savedPath,
@@ -827,7 +1064,7 @@ async function createAndDownloadAllBulkReports(
 
     const remaining = tasks.filter((t) => !t.filePath);
     if (remaining.length === 0) {
-      console.log(`\n[BULK PHA 2] 🎉 TẤT CẢ 4 FILE BULK ĐÃ ĐƯỢC BỐC XONG CHÍNH XÁC THEO MÃ ID!`);
+      console.log(`\n[BULK PHA 2] 🎉 TẤT CẢ ${tasks.length} FILE BULK CÒN THIẾU ĐÃ ĐƯỢC BỐC XONG!`);
       break;
     }
 
@@ -850,6 +1087,15 @@ async function createAndDownloadAllBulkReports(
 
   const missing = tasks.filter((t) => !t.filePath);
   if (missing.length > 0) {
+    for (const missingTask of missing) {
+      const checkpointTask = checkpointTasks?.find((item) => item.type === `BULK_${missingTask.adType}` && item.days === missingTask.days);
+      if (checkpointTask) {
+        checkpointTask.lastError = `Bulk request ${missingTask.requestId} không hoàn tất trong 30 phút`;
+        checkpointTask.amazonRequestId = null;
+        checkpointTask.status = checkpointTask.attempt >= 3 ? "FAILED" : "NOT_STARTED";
+      }
+    }
+    saveCheckpoint?.();
     throw new Error(`[BULK] Timeout: Không hoàn tất đủ 4 file Bulk. Thiếu: ${missing.map((m) => `${m.adType}_${m.days}D`).join(", ")}`);
   }
 
@@ -866,17 +1112,48 @@ async function autoCreateAndDownloadSearchTermReport(
   adType: "SP" | "SB",
   storeName: string,
   destDir: string,
+  task?: ReportTaskState,
+  saveCheckpoint?: () => void,
+  signal?: AbortSignal,
 ): Promise<DownloadedFileInfo> {
+  throwIfAborted(signal);
   console.log(`\n  ========================================`);
-  console.log(`  [SEARCH TERM] Bắt đầu tải Search Term ${adType} (30 ngày)...`);
+  console.log(`  [SEARCH TERM] Bắt đầu xử lý Search Term ${adType} (30 ngày)...`);
   console.log(`  ========================================`);
 
-  const syncRunId = Math.random().toString(36).slice(2, 8).toUpperCase();
+  const canResumeRequest = Boolean(
+    task?.amazonRequestId &&
+    ["REQUESTED", "AMAZON_PROCESSING", "DOWNLOADABLE", "RETRY_WAIT"].includes(task.status),
+  );
+  const syncRunId = canResumeRequest
+    ? String(task!.amazonRequestId)
+    : Math.random().toString(36).slice(2, 8).toUpperCase();
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-  const reportName = `${storeName} ST ${adType} 30D ${today} ${syncRunId}`;
+  const reportName = canResumeRequest && task?.reportName
+    ? task.reportName
+    : `${storeName} ST ${adType} 30D ${today} ${syncRunId}`;
   let downloadUrl: string | null = null;
 
+  if (task && !canResumeRequest) {
+    const maxCreates = 1 + envInt("AMAZON_REPORT_MAX_RECREATE", 2, 0, 5);
+    if ((task.attempt || 0) >= maxCreates) {
+      task.status = "FAILED";
+      task.lastError = `Đã hết giới hạn ${maxCreates} lần tạo report Amazon`;
+      saveCheckpoint?.();
+      throw new Error(`Search Term ${adType} đã hết giới hạn tạo lại report (${maxCreates} lần).`);
+    }
+    task.amazonRequestId = syncRunId;
+    task.reportName = reportName;
+    // Chỉ chuyển sang AMAZON_PROCESSING sau khi click Run thành công. Nếu form lỗi
+    // trước lúc submit, lần retry phải tạo lại thay vì poll một ID chưa tồn tại.
+    task.status = "NOT_STARTED";
+    task.attempt = (task.attempt || 0) + 1;
+    task.lastError = null;
+    saveCheckpoint?.();
+  }
+
   // 1. Tự động vào trang /reports/new để tạo báo cáo mới có syncRunId duy nhất
+  if (!canResumeRequest) {
   console.log(`  [SEARCH TERM] Tự động tạo mới Search Term ${adType} với ID [${syncRunId}]...`);
   const createUrl = `https://advertising.amazon.com/reports/new${entityParam}`;
   await page.goto(createUrl, { waitUntil: "domcontentloaded" });
@@ -914,79 +1191,178 @@ async function autoCreateAndDownloadSearchTermReport(
   }
 
   const nameInput = await page.$("#report-settings-card-report-name-input");
-  if (nameInput) {
-    await nameInput.fill(reportName);
+  if (!nameInput) throw new Error(`Không tìm thấy ô tên report Search Term ${adType}; không bấm Run để tránh tạo nhầm.`);
+  await nameInput.click().catch(() => {});
+  await nameInput.fill(reportName);
+  await nameInput.dispatchEvent("input").catch(() => {});
+  await nameInput.dispatchEvent("change").catch(() => {});
+  const confirmedName = await nameInput.inputValue().catch(() => "");
+  if (!confirmedName.includes(syncRunId)) throw new Error(`Amazon chưa nhận tên report chứa ID ${syncRunId}.`);
+
+  // Tùy chọn 30 ngày nếu có dropdown Date Range
+  const dateRangeBtn = await page.$(
+    '#report-configuration-form\\:report-date-range-control-component-0, [id*="date-range"], button[data-testid*="date-range"]',
+  );
+  if (dateRangeBtn) {
+    const drText = await dateRangeBtn.innerText().catch(() => "");
+    if (!/30/i.test(drText)) {
+      await dateRangeBtn.click().catch(() => {});
+      const opt30 = await page.waitForSelector(
+        '[role="option"]:has-text("30 Days"), [role="option"]:has-text("Past 30 days"), [role="option"]:has-text("Last 30 days"), li:has-text("30 Days"), li:has-text("Past 30 days")',
+        { timeout: 2500 },
+      ).catch(() => null);
+      if (opt30) {
+        await opt30.click().catch(() => {});
+        await page.waitForTimeout(300);
+      }
+    }
   }
 
   const runBtn = await page.$("#urc_run_subscription_button");
-  if (runBtn) {
-    await runBtn.click().catch(async () => {
-      await page.evaluate((el: any) => el?.click(), runBtn);
-    });
-    console.log(`  [SEARCH TERM] Đã bấm Run report cho Search Term ${adType} (${syncRunId})!`);
-    await page.waitForTimeout(2500);
+  if (!runBtn) throw new Error(`Không tìm thấy nút Run report cho Search Term ${adType}.`);
+  await runBtn.click().catch(async () => {
+    await page.evaluate((el: any) => el?.click(), runBtn);
+  });
+  console.log(`  [SEARCH TERM] Đã bấm Run report cho Search Term ${adType} (${syncRunId})!`);
+
+  if (task) {
+    task.status = "AMAZON_PROCESSING";
+    saveCheckpoint?.();
+  }
+  } else {
+    console.log(`  [SEARCH TERM] ♻️ Tiếp tục theo dõi report cũ ${adType} với ID [${syncRunId}], không tạo report trùng.`);
   }
 
+  // Chờ Amazon tiếp nhận submit và điều hướng sang trang /reports
+  await page.waitForTimeout(3500);
   const reportsUrl = `https://advertising.amazon.com/reports${entityParam}`;
   if (!page.url().includes("/reports?")) {
+    console.log(`  [SEARCH TERM] Chuyển đến trang danh sách báo cáo: ${reportsUrl}`);
     await page.goto(reportsUrl, { waitUntil: "domcontentloaded" });
-    await page.waitForTimeout(2500);
   }
 
-  // 2. Chờ Amazon tạo xong và tìm đúng row chứa syncRunId có trạng thái Completed
-  const deadline = Date.now() + 240_000; // Tối đa 4 phút cho Search Term
-  while (Date.now() < deadline) {
-    await page.waitForTimeout(4000);
+  // Chờ bảng dữ liệu render ban đầu (tối đa 15s)
+  await page.waitForSelector("div.ag-root, div.ag-row, table, [role='grid']", { timeout: 15000 }).catch(() => {});
 
-    const match = await page.evaluate((args: { targetId: string; adType: string }) => {
-      const allRowEls = Array.from(document.querySelectorAll("div.ag-row[row-index], tr[row-index], table tbody tr"));
-      const rowIndexMap = new Map<string, { texts: string[]; href: string | null }>();
+  // 2. Chờ Amazon tạo xong (timeout cấu hình: mặc định 30 phút)
+  const timeoutMinutes = envInt("AMAZON_REPORT_TIMEOUT_MINUTES", 30, 5, 120);
+  const deadline = Date.now() + timeoutMinutes * 60_000;
+  const startTime = Date.now();
+  let pollIteration = 0;
+  const pollBase = envInt("AMAZON_REPORT_POLL_SECONDS", 12, 5, 60);
+  const pollBackoff = [pollBase, pollBase, Math.max(pollBase, 20), Math.max(pollBase, 30)];
+
+  while (Date.now() < deadline) {
+    throwIfAborted(signal);
+    pollIteration++;
+    const waitSeconds = pollBackoff[Math.min(pollIteration - 1, pollBackoff.length - 1)];
+
+    const match = await page.evaluate((args: { targetId: string; adType: string; allowFallback: boolean }) => {
+      const allRowEls = Array.from(document.querySelectorAll("div.ag-row, tr, [role='row']"));
+      const rowIndexMap = new Map<string, { texts: string[]; href: string | null; isCompleted: boolean; isFailed: boolean }>();
 
       for (const r of allRowEls) {
-        const idx = r.getAttribute("row-index") || r.getAttribute("aria-rowindex") || String(Math.random());
+        const idx = r.getAttribute("row-index") || r.getAttribute("row-id") || r.getAttribute("aria-rowindex") || String(Math.random());
         if (!rowIndexMap.has(idx)) {
-          rowIndexMap.set(idx, { texts: [], href: null });
+          rowIndexMap.set(idx, { texts: [], href: null, isCompleted: false, isFailed: false });
         }
         const entry = rowIndexMap.get(idx)!;
         const txt = ((r as HTMLElement).innerText || "").trim();
-        if (txt) entry.texts.push(txt);
+        const title = (r.getAttribute("title") || "").trim();
+        const childTitles = Array.from(r.querySelectorAll("[title]")).map((el) => el.getAttribute("title") || "").join(" ");
+        if (txt || title || childTitles) {
+          entry.texts.push(txt, title, childTitles);
+        }
 
-        const link = r.querySelector<HTMLAnchorElement>(
-          "a[data-takt-id='storm-ui-link'], a[href*='download-report'], a[href*='download']"
+        const link = r.querySelector<HTMLAnchorElement | HTMLButtonElement>(
+          "a[data-takt-id='storm-ui-link'], a[href*='download-report'], a[href*='download'], a[href*='export'], button[data-takt-id*='download'], button:has-text('Download')",
         );
-        if (link?.href && !entry.href) {
-          entry.href = link.href.startsWith("http") ? link.href : (location.origin + link.href);
+        if (link && !entry.href) {
+          if ((link as HTMLAnchorElement).href) {
+            const h = (link as HTMLAnchorElement).href;
+            entry.href = h.startsWith("http") ? h : (location.origin + h);
+          } else {
+            entry.href = "clickable-button";
+          }
+        }
+
+        const fullRowText = entry.texts.join(" ").toLowerCase();
+        if (
+          fullRowText.includes("completed") ||
+          fullRowText.includes("success") ||
+          fullRowText.includes("downloadable") ||
+          fullRowText.includes("hoàn thành") ||
+          fullRowText.includes("đã xong") ||
+          Boolean(entry.href)
+        ) {
+          entry.isCompleted = true;
+        }
+
+        if (fullRowText.includes("failed") || fullRowText.includes("thất bại") || fullRowText.includes("error")) {
+          entry.isFailed = true;
         }
       }
 
       // 1. Ưu tiên khớp chính xác syncRunId vừa tạo
-      for (const [idx, entry] of rowIndexMap.entries()) {
+      for (const [, entry] of rowIndexMap.entries()) {
         const fullText = entry.texts.join(" ");
         if (fullText.includes(args.targetId)) {
-          const isCompleted = /completed|success|downloadable/i.test(fullText) || Boolean(entry.href);
-          return { found: true, isCompleted, href: entry.href };
+          return { found: true, isCompleted: entry.isCompleted, isFailed: entry.isFailed, href: entry.href };
         }
       }
 
-      return { found: false, isCompleted: false, href: null };
-    }, { targetId: syncRunId, adType });
+      // Không fallback sang report cùng loại: bắt buộc khớp syncRunId để tránh lấy file cũ.
+
+      return { found: false, isCompleted: false, isFailed: false, href: null };
+    }, { targetId: syncRunId, adType, allowFallback: false });
+
+    if (match.found && match.isFailed) {
+      if (task) task.status = "FAILED";
+      saveCheckpoint?.();
+      throw new Error(`Amazon báo cáo trạng thái FAILED cho Search Term ${adType} (${syncRunId}).`);
+    }
 
     if (match.found && match.isCompleted && match.href) {
       downloadUrl = match.href;
+      if (task) task.status = "DOWNLOADABLE";
+      saveCheckpoint?.();
       console.log(`  [SEARCH TERM] ✅ Đã tìm thấy file báo cáo hoàn tất khớp ID [${syncRunId}]!`);
       break;
     }
 
-    const refreshBtn = await page.$("button[aria-label*='Refresh'], button:has-text('Refresh')");
+    const elapsedStr = formatMmSs(Date.now() - startTime);
+    const timeoutStr = `${timeoutMinutes}:00`;
+    console.log(`  [ST ${adType}] Amazon đang xử lý ${syncRunId} — ${elapsedStr}/${timeoutStr} — lần poll ${pollIteration}`);
+
+    await page.waitForTimeout(waitSeconds * 1000);
+
+    // Bấm Refresh của bảng AG Grid (không reload toàn trang để tránh làm đơ SPA)
+    let refreshed = false;
+    const refreshBtn = await page.$(
+      'button[aria-label*="Refresh" i], button:has-text("Refresh"), button:has-text("Làm mới"), button[data-testid*="refresh" i], button[data-takt-id*="refresh" i], button:has(svg[data-icon="refresh"])',
+    );
     if (refreshBtn) {
       await refreshBtn.click().catch(() => {});
-    } else {
+      refreshed = true;
+    }
+
+    // Chỉ reload toàn trang sau mỗi 3 chu kỳ nếu không có nút refresh
+    if (!refreshed && pollIteration % 3 === 0) {
+      console.log(`  [SEARCH TERM] Đang làm mới lại trang /reports để đồng bộ bảng...`);
       await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
+      await page.waitForTimeout(3000);
+      await page.waitForSelector("div.ag-root, div.ag-row, table, [role='grid']", { timeout: 15000 }).catch(() => {});
     }
   }
 
   if (!downloadUrl) {
-    throw new Error(`Timeout: Không tạo xong file Search Term ${adType} với ID ${syncRunId} sau 4 phút.`);
+    if (task) {
+      task.status = "RETRY_WAIT";
+      task.lastError = `Amazon vẫn chưa hoàn tất sau ${timeoutMinutes} phút`;
+      task.nextRetryAt = new Date(Date.now() + 10 * 60_000).toISOString();
+      saveCheckpoint?.();
+    }
+    throw new Error(`Timeout: Không tạo xong file Search Term ${adType} với ID ${syncRunId} sau ${timeoutMinutes} phút.`);
   }
 
   // 3. Tải file về thư mục chỉ định
@@ -998,12 +1374,37 @@ async function autoCreateAndDownloadSearchTermReport(
       (await page.$(`a[href*="${reportId}"]`))
     : null;
 
-  let standardizedPath: string | null = null;
-  const beforeStats = getFileStatsMap(destDir);
+  if (!directLinkEl) {
+    directLinkEl = await page.evaluateHandle((targetId: string) => {
+      const allRows = Array.from(document.querySelectorAll("div.ag-row, tr, [role='row']"));
+      for (const r of allRows) {
+        const full = ((r as HTMLElement).innerText || "") + " " + (r.getAttribute("title") || "") + " " + Array.from(r.querySelectorAll("[title]")).map((el) => el.getAttribute("title") || "").join(" ");
+        if (full.includes(targetId)) {
+          const btn = r.querySelector<HTMLElement>(
+            "a[data-takt-id='storm-ui-link'], a[href*='download-report'], a[href*='download'], button[data-takt-id*='download'], button"
+          );
+          if (btn) return btn;
+        }
+      }
+      return null;
+    }, syncRunId).then((h) => h.asElement()).catch(() => null);
+  }
 
-  try {
+  const downloadAttempts = envInt("DOWNLOAD_MAX_ATTEMPTS", 3, 1, 5);
+  const standardizedPath = await retryWithBackoff<string>(
+    `Tải Search Term ${adType} (${syncRunId})`,
+    downloadAttempts,
+    async () => {
+    throwIfAborted(signal);
+    if (task) {
+      task.status = "DOWNLOADING";
+      saveCheckpoint?.();
+    }
+    let savedPath: string | null = null;
+    const beforeStats = getFileStatsMap(destDir);
+    try {
     const [download] = await Promise.all([
-      page.waitForEvent("download", { timeout: 60_000 }),
+      raceWithAbort(page.waitForEvent("download", { timeout: envInt("REPORT_DOWNLOAD_TIMEOUT_MINUTES", 15, 1, 60) * 60_000 }), signal),
       (async () => {
         if (directLinkEl) {
           await directLinkEl.click().catch(async () => {
@@ -1025,28 +1426,41 @@ async function autoCreateAndDownloadSearchTermReport(
     const suggestedName = download.suggestedFilename();
     const cleanRawName = sanitizeRawFileName(suggestedName, storeName);
     const standardizedName = `${storeName}_Search_Term_${adType}_30Days_${cleanRawName}`;
-    standardizedPath = path.join(destDir, standardizedName);
+    savedPath = path.join(destDir, standardizedName);
     try {
-      await download.saveAs(standardizedPath);
+      await download.saveAs(savedPath);
     } catch {}
   } catch {}
 
-  if (!standardizedPath || !fs.existsSync(standardizedPath)) {
-    const downloadedPath = await waitForNewDownload(destDir, beforeStats, 60);
+  if (!savedPath || !fs.existsSync(savedPath)) {
+    const downloadedPath = await waitForNewDownload(destDir, beforeStats, envInt("REPORT_DOWNLOAD_TIMEOUT_MINUTES", 15, 1, 60) * 60, signal);
     if (!downloadedPath) throw new Error(`Không tải được file Search Term ${adType}`);
     const rawName = path.basename(downloadedPath);
     const cleanRawName = sanitizeRawFileName(rawName, storeName);
     const standardizedName = `${storeName}_Search_Term_${adType}_30Days_${cleanRawName}`;
-    standardizedPath = path.join(destDir, standardizedName);
-    if (downloadedPath !== standardizedPath) {
-      if (fs.existsSync(standardizedPath)) {
-        try { fs.unlinkSync(standardizedPath); } catch {}
+    savedPath = path.join(destDir, standardizedName);
+    if (downloadedPath !== savedPath) {
+      if (fs.existsSync(savedPath)) {
+        try { fs.unlinkSync(savedPath); } catch {}
       }
-      fs.renameSync(downloadedPath, standardizedPath);
+      fs.renameSync(downloadedPath, savedPath);
     }
   }
+    if (!savedPath || !fs.existsSync(savedPath) || fs.statSync(savedPath).size === 0) {
+      throw new Error(`File Search Term ${adType} tải về bị thiếu hoặc rỗng.`);
+    }
+    return savedPath;
+  });
 
   const stat = fs.statSync(standardizedPath);
+  if (task) {
+    task.status = "DOWNLOADED";
+    task.localPath = standardizedPath;
+    task.sizeBytes = stat.size;
+    task.lastError = null;
+    task.nextRetryAt = null;
+    saveCheckpoint?.();
+  }
   console.log(
     `  [SEARCH TERM] ✅ TẢI THÀNH CÔNG: ${path.basename(standardizedPath)} (${(stat.size / 1024).toFixed(1)} KB) [Khớp ID: ${syncRunId}]`,
   );
@@ -1070,6 +1484,7 @@ async function validateDownloadedBatch(files: DownloadedFileInfo[]): Promise<voi
   const realPaths = new Set(files.map((file) => fs.realpathSync(file.path)));
   if (realPaths.size !== 6) throw new Error("Batch có file trùng đường dẫn.");
   for (const file of files) {
+    try {
     const stat = fs.statSync(file.path);
     if (!stat.isFile() || stat.size === 0) throw new Error(`File rỗng hoặc không hợp lệ: ${file.name}`);
     if (file.type.startsWith("BULK_")) {
@@ -1109,7 +1524,28 @@ async function validateDownloadedBatch(files: DownloadedFileInfo[]): Promise<voi
         throw new Error(`File không có schema Search Term hợp lệ: ${file.name}`);
       }
     }
+    } catch (error) {
+      throw new Error(`VALIDATION_FAILED:${file.name}:${(error as Error).message}`);
+    }
   }
+}
+
+function quarantineInvalidFile(error: unknown, tasks: ReportTaskState[], storeRootDir: string): void {
+  const message = (error as Error).message || "";
+  const match = message.match(/^VALIDATION_FAILED:([^:]+):/);
+  if (!match) return;
+  const fileName = match[1];
+  const task = tasks.find((item) => item.localPath && path.basename(item.localPath) === fileName);
+  if (!task?.localPath || !fs.existsSync(task.localPath)) return;
+  const quarantineDir = path.join(storeRootDir, "quarantine");
+  fs.mkdirSync(quarantineDir, { recursive: true });
+  const quarantinePath = path.join(quarantineDir, `${Date.now()}_${path.basename(task.localPath)}`);
+  fs.renameSync(task.localPath, quarantinePath);
+  console.warn(`[VALIDATION] Đã cách ly file lỗi: ${quarantinePath}`);
+  task.localPath = null;
+  task.sizeBytes = 0;
+  task.sha256 = null;
+  task.status = task.amazonRequestId ? "DOWNLOADABLE" : "NOT_STARTED";
 }
 
 // ============================================================================
@@ -1126,10 +1562,19 @@ export interface DownloadedFileInfo {
 
 export type ProgressCallback = (step: string, percent: number) => Promise<void> | void;
 
+export interface CrawlStoreOptions {
+  jobId?: string;
+  batchId?: string;
+  checkpoint?: JobCheckpoint;
+  onTaskUpdate?: (task: ReportTaskState) => Promise<void> | void;
+  signal?: AbortSignal;
+}
+
 export async function crawlStore(
   store: StoreTarget,
   todayStr: string,
   onProgress?: ProgressCallback,
+  options?: CrawlStoreOptions,
 ): Promise<DownloadedFileInfo[]> {
   const storeRootDir = path.join(BASE_DOWNLOAD_DIR, todayStr, store.store_name);
   const spDir = path.join(storeRootDir, "SP");
@@ -1139,48 +1584,214 @@ export async function crawlStore(
   fs.mkdirSync(spDir, { recursive: true });
   fs.mkdirSync(sbDir, { recursive: true });
 
+  const checkpoint = options?.checkpoint || loadJobCheckpoint(options?.jobId || `daily-${store.store_name}-${batchDate}`) || {
+    jobId: options?.jobId || `daily-${store.store_name}-${batchDate}`,
+    batchId: options?.batchId || `${store.store_name}_${batchDate}_${Math.random().toString(36).slice(2, 8)}`,
+    storeName: store.store_name,
+    batchDate,
+    stage: "CRAWLING",
+    startedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    runAttempt: 0,
+    lastError: null,
+    tasks: createDefaultTasksForStore(store.store_name),
+  } satisfies JobCheckpoint;
+  checkpoint.runAttempt = (checkpoint.runAttempt || 0) + 1;
+  checkpoint.stage = "CRAWLING";
+  checkpoint.lastError = null;
+  const saveCheckpoint = () => saveJobCheckpointAtomic(checkpoint);
+  const notifyTask = async (task: ReportTaskState) => {
+    saveCheckpoint();
+    if (options?.onTaskUpdate) await options.onTaskUpdate(task);
+  };
+  const tasks = checkpoint.tasks;
+  throwIfAborted(options?.signal);
+  const findTask = (type: ReportTaskType, days: number) =>
+    tasks.find((t) => t.store === store.store_name && t.type === type && t.days === days);
+
+  // Khôi phục trạng thái các file đã tải sẵn trên ổ cứng
+  for (const t of tasks) {
+    if (t.store !== store.store_name) continue;
+    const targetSubDir = t.type.includes("SP") ? spDir : sbDir;
+    if (!t.localPath && fs.existsSync(targetSubDir)) {
+      const diskFiles = fs.readdirSync(targetSubDir)
+        .filter((name) => /\.(xlsx|csv)$/i.test(name))
+        .sort((a, b) => fs.statSync(path.join(targetSubDir, b)).mtimeMs - fs.statSync(path.join(targetSubDir, a)).mtimeMs);
+      const matched = diskFiles.find((f) => {
+        const lower = f.toLowerCase();
+        const hasType = t.type.startsWith("BULK_")
+          ? /(?:^|[_ -])bulk(?:[_ -])/.test(lower)
+          : /search[_ -]*term/.test(lower);
+        const hasAd = t.type.includes("SP") ? lower.includes("sp") : lower.includes("sb");
+        const hasDays = lower.includes(`${t.days}days`) || lower.includes(`${t.days}d`);
+        return hasType && hasAd && hasDays;
+      });
+      if (matched) {
+        t.localPath = path.join(targetSubDir, matched);
+      }
+    }
+    if (t.localPath && fs.existsSync(t.localPath)) {
+      const stat = fs.statSync(t.localPath);
+      if (stat.size > 0) {
+        t.status = "DOWNLOADED";
+        t.sizeBytes = stat.size;
+      }
+    }
+  }
+  saveCheckpoint();
+
+  const downloadedFiles: DownloadedFileInfo[] = [];
+
+  const bulkTasks = [
+    findTask("BULK_SP", 30),
+    findTask("BULK_SB", 30),
+    findTask("BULK_SP", 7),
+    findTask("BULK_SB", 7),
+  ].filter(Boolean) as ReportTaskState[];
+
+  const allBulkDone = bulkTasks.length === 4 && bulkTasks.every((t) => t.localPath && fs.existsSync(t.localPath) && fs.statSync(t.localPath).size > 0);
+
   console.log("\n************************************************************");
   console.log(`>>> BẮT ĐẦU CRAWL CHO STORE: [${store.store_name}]`);
   console.log(`    Profile ID: ${store.profile_id}`);
   console.log(`    Thư mục lưu trữ: ${storeRootDir}`);
+  if (allBulkDone) {
+    console.log(`    [Checkpoint] Đã có đủ 4 file Bulk chuẩn, sẽ chỉ tập trung vào Search Term!`);
+  }
   console.log("************************************************************");
 
   if (onProgress) await onProgress(`Đang mở AdsPower profile ${store.profile_id}`, 10);
 
-  const cdpEndpoint = await startAdsPowerProfile(store.profile_id);
+  const cdpEndpoint = await startAdsPowerProfileWithRetry(store.profile_id);
   console.log(`[Browser] Kết nối CDP tại: ${cdpEndpoint}...`);
 
-  const browser = await chromium.connectOverCDP(cdpEndpoint);
+  const browser = await chromium.connectOverCDP(cdpEndpoint).catch(async (error) => {
+    await stopAdsPowerProfile(store.profile_id);
+    throw error;
+  });
   const context = browser.contexts()[0];
-  if (!context) throw new Error(`Không tìm thấy context trình duyệt của store ${store.store_name}.`);
+  if (!context) {
+    await browser.close().catch(() => {});
+    await stopAdsPowerProfile(store.profile_id);
+    throw new Error(`Không tìm thấy context trình duyệt của store ${store.store_name}.`);
+  }
 
   let page = context.pages().find((p) => p.url().includes("advertising.amazon.com"));
   if (!page) {
     page = await context.newPage();
-    await page.goto("https://advertising.amazon.com/reports", { waitUntil: "domcontentloaded" });
+    await page.goto("https://advertising.amazon.com/reports", { waitUntil: "domcontentloaded" }).catch(async (error) => {
+      await browser.close().catch(() => {});
+      await stopAdsPowerProfile(store.profile_id);
+      throw error;
+    });
     await page.waitForTimeout(3000);
   }
 
-  const downloadedFiles: DownloadedFileInfo[] = [];
-
   try {
-    // 1. Tự động tạo và tải 4 file Bulk theo quy trình 2 pha (Khóa exportRequestId + Snapshot bảng)
     const entityId = page.url().match(/entityId=([A-Z0-9]+)/)?.[1] || "";
     const entityParam = entityId ? `?entityId=${entityId}` : "";
-    const bulkFiles = await createAndDownloadAllBulkReports(page, entityParam, store.store_name, spDir, sbDir, onProgress);
-    downloadedFiles.push(...bulkFiles);
 
-    // 2. Search Term SP 30d (Gắn syncRunId duy nhất)
-    if (onProgress) await onProgress(`[${store.store_name}] Tải Search Term SP 30 Ngày`, 85);
-    const stSp = await autoCreateAndDownloadSearchTermReport(page, entityParam, "SP", store.store_name, spDir);
-    downloadedFiles.push(stSp);
+    // 1. Tự động xử lý 4 file Bulk
+    if (allBulkDone) {
+      console.log(`  [BULK CHECKPOINT] ✅ Khôi phục cả 4 file Bulk từ ổ cứng, không cần tải lại:`);
+      for (const bt of bulkTasks) {
+        console.log(`    - ${path.basename(bt.localPath!)} (${((bt.sizeBytes || 0) / (1024 * 1024)).toFixed(1)} MB)`);
+        downloadedFiles.push({
+          name: path.basename(bt.localPath!),
+          path: bt.localPath!,
+          relativeSubdir: bt.type.includes("SP") ? "SP" : "SB",
+          days: bt.days,
+          type: bt.type,
+          sizeBytes: bt.sizeBytes || fs.statSync(bt.localPath!).size,
+        });
+      }
+    } else {
+      const missingBulkSlots = bulkTasks
+        .filter((task) => !task.localPath || !fs.existsSync(task.localPath) || fs.statSync(task.localPath).size === 0)
+        .map((task) => ({ adType: task.type.endsWith("_SB") ? "SB" as const : "SP" as const, days: task.days }));
+      console.log(`[BULK RESUME] Chỉ tải ${missingBulkSlots.length} file còn thiếu; giữ nguyên ${4 - missingBulkSlots.length} file đã có.`);
+      for (const task of bulkTasks.filter((task) => !missingBulkSlots.some((slot) => task.type === `BULK_${slot.adType}` && task.days === slot.days))) {
+        downloadedFiles.push({
+          name: path.basename(task.localPath!), path: task.localPath!,
+          relativeSubdir: task.type.endsWith("_SB") ? "SB" : "SP",
+          days: task.days, type: task.type, sizeBytes: fs.statSync(task.localPath!).size,
+        });
+      }
+      const bulkFiles = await createAndDownloadAllBulkReports(
+        page, entityParam, store.store_name, spDir, sbDir, onProgress,
+        missingBulkSlots, tasks, saveCheckpoint, options?.signal,
+      );
+      downloadedFiles.push(...bulkFiles);
+      for (const bf of bulkFiles) {
+        const matched = tasks.find((t) => t.type === bf.type && t.days === bf.days);
+        if (matched) {
+          matched.localPath = bf.path;
+          matched.sizeBytes = bf.sizeBytes;
+          matched.status = "DOWNLOADED";
+          await notifyTask(matched);
+        }
+      }
+    }
 
-    // 3. Search Term SB 30d (Gắn syncRunId duy nhất)
-    if (onProgress) await onProgress(`[${store.store_name}] Tải Search Term SB 30 Ngày`, 95);
-    const stSb = await autoCreateAndDownloadSearchTermReport(page, entityParam, "SB", store.store_name, sbDir);
-    downloadedFiles.push(stSb);
+    // 2. Search Term SP 30d
+    const stSpTask = findTask("ST_SP", 30);
+    if (stSpTask && stSpTask.localPath && fs.existsSync(stSpTask.localPath) && fs.statSync(stSpTask.localPath).size > 0) {
+      console.log(`  [ST CHECKPOINT] ✅ Khôi phục Search Term SP 30d từ đĩa: ${path.basename(stSpTask.localPath)}`);
+      downloadedFiles.push({
+        name: path.basename(stSpTask.localPath),
+        path: stSpTask.localPath,
+        relativeSubdir: "SP",
+        days: 30,
+        type: "ST_SP",
+        sizeBytes: stSpTask.sizeBytes || fs.statSync(stSpTask.localPath).size,
+      });
+    } else {
+      if (onProgress) await onProgress(`[${store.store_name}] Tải Search Term SP 30 Ngày`, 85);
+      const stSp = await autoCreateAndDownloadSearchTermReport(page, entityParam, "SP", store.store_name, spDir, stSpTask, saveCheckpoint, options?.signal);
+      downloadedFiles.push(stSp);
+      if (stSpTask) {
+        stSpTask.localPath = stSp.path;
+        stSpTask.sizeBytes = stSp.sizeBytes;
+        stSpTask.status = "DOWNLOADED";
+        await notifyTask(stSpTask);
+      }
+    }
+
+    // 3. Search Term SB 30d
+    const stSbTask = findTask("ST_SB", 30);
+    if (stSbTask && stSbTask.localPath && fs.existsSync(stSbTask.localPath) && fs.statSync(stSbTask.localPath).size > 0) {
+      console.log(`  [ST CHECKPOINT] ✅ Khôi phục Search Term SB 30d từ đĩa: ${path.basename(stSbTask.localPath)}`);
+      downloadedFiles.push({
+        name: path.basename(stSbTask.localPath),
+        path: stSbTask.localPath,
+        relativeSubdir: "SB",
+        days: 30,
+        type: "ST_SB",
+        sizeBytes: stSbTask.sizeBytes || fs.statSync(stSbTask.localPath).size,
+      });
+    } else {
+      if (onProgress) await onProgress(`[${store.store_name}] Tải Search Term SB 30 Ngày`, 95);
+      const stSb = await autoCreateAndDownloadSearchTermReport(page, entityParam, "SB", store.store_name, sbDir, stSbTask, saveCheckpoint, options?.signal);
+      downloadedFiles.push(stSb);
+      if (stSbTask) {
+        stSbTask.localPath = stSb.path;
+        stSbTask.sizeBytes = stSb.sizeBytes;
+        stSbTask.status = "DOWNLOADED";
+        await notifyTask(stSbTask);
+      }
+    }
 
     await validateDownloadedBatch(downloadedFiles);
+    for (const task of tasks) {
+      if (task.localPath && fs.existsSync(task.localPath)) {
+        task.status = "VALIDATED";
+        task.sha256 = await computeFileSha256(task.localPath);
+        task.lastError = null;
+        task.nextRetryAt = null;
+      }
+    }
+    checkpoint.stage = "VALIDATED";
+    saveCheckpoint();
 
     // Ghi manifest riêng cho store này
     const manifestPath = path.join(storeRootDir, "manifest.json");
@@ -1192,6 +1803,7 @@ export async function crawlStore(
           date: todayStr,
           storeName: store.store_name,
           profileId: store.profile_id,
+          batchId: options?.batchId,
           files: downloadedFiles,
         },
         null,
@@ -1200,10 +1812,26 @@ export async function crawlStore(
       "utf8",
     );
     console.log(`\n  [Manifest] Đã lưu manifest của [${store.store_name}] tại: ${manifestPath}`);
+
     if (onProgress) await onProgress(`[${store.store_name}] Đã kiểm tra đủ 6 file, đang publish batch lên R2`, 98);
-    await publishCompleteBatch(downloadedFiles, store.store_name, batchDate);
+    await publishCompleteBatchWithStaging(downloadedFiles, store.store_name, batchDate, checkpoint.batchId, tasks, options?.signal);
+    checkpoint.stage = "UPLOADED";
+    saveCheckpoint();
+  } catch (error) {
+    quarantineInvalidFile(error, tasks, storeRootDir);
+    checkpoint.stage = "RETRY_WAIT";
+    checkpoint.lastError = (error as Error).message;
+    const activeTask = tasks.find((task) => !["DOWNLOADED", "VALIDATED", "UPLOADED"].includes(task.status));
+    if (activeTask) {
+      activeTask.lastError = (error as Error).message;
+      if (activeTask.status !== "AMAZON_PROCESSING" && activeTask.status !== "FAILED") {
+        activeTask.status = "RETRY_WAIT";
+      }
+      activeTask.nextRetryAt = new Date(Date.now() + 10 * 60_000).toISOString();
+    }
+    saveCheckpoint();
+    throw error;
   } finally {
-    // 3. ĐÓNG HOÀN TOÀN TRÌNH DUYỆT ĐỂ GIẢI PHÓNG RAM
     console.log(`[AdsPower] Đang ngắt kết nối CDP và đóng AdsPower của store [${store.store_name}]...`);
     await browser.close().catch(() => {});
     await stopAdsPowerProfile(store.profile_id);
@@ -1245,7 +1873,20 @@ async function main() {
     console.log(`============================================================`);
 
     try {
-      const files = await crawlStore(store, todayStr);
+      const controller = new AbortController();
+      const timeoutMinutes = envInt("CRAWLER_JOB_TIMEOUT_MINUTES", 120, 15, 720);
+      const timeout = setTimeout(() => controller.abort(`Vượt timeout tổng ${timeoutMinutes} phút`), timeoutMinutes * 60_000);
+      const files = await retryWithBackoff(
+        `Crawl store ${store.store_name}`,
+        envInt("CRAWLER_MAX_JOB_ATTEMPTS", 3, 1, 5),
+        async (attempt) => {
+          console.log(`[JOB RETRY] Store ${store.store_name}: vòng chạy ${attempt}/${envInt("CRAWLER_MAX_JOB_ATTEMPTS", 3, 1, 5)}.`);
+          return crawlStore(store, todayStr, undefined, {
+            jobId: `daily-${store.store_name}-${todayStr.replace(/-/g, "")}`,
+            signal: controller.signal,
+          });
+        },
+      ).finally(() => clearTimeout(timeout));
       storeResults[store.store_name] = { success: true, count: files.length };
       successStores++;
       console.log(`=> HOÀN TẤT STORE [${store.store_name}]: Tải và đẩy R2 thành công ${files.length}/6 file.`);

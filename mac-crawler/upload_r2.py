@@ -3,6 +3,8 @@ import os
 import sys
 import json
 import glob
+import hashlib
+import uuid
 from datetime import datetime
 from pathlib import Path
 import boto3
@@ -125,13 +127,15 @@ def main():
     success_count = 0
     store_summary: dict[str, int] = {}
     uploaded_keys: dict[str, list[str]] = {}
+    uploaded_integrity: dict[str, list[dict]] = {}
+    batch_ids = {sname: f"{sname}_{batch_date}_manual_{uuid.uuid4().hex[:8]}" for sname in target_stores}
 
     for idx, (fpath, sname, sub_dir) in enumerate(files_to_upload, start=1):
         file_name = fpath.name
         file_size_mb = fpath.stat().st_size / (1024 * 1024)
 
         # R2 Key: ppc-reports/input/{batch_date}/{store_name}/{sub_dir}/{file_name}
-        r2_key = f"{r2_prefix}/input/{batch_date}/{sname}/{sub_dir}/{file_name}"
+        r2_key = f"{r2_prefix}/input/{batch_date}/{sname}/{batch_ids[sname]}/{sub_dir}/{file_name}"
 
         print(f"\n[{idx}/{len(files_to_upload)}] [Store: {sname}] Upload: {file_name} ({file_size_mb:.2f} MB)...")
         print(f"       -> R2 Key: {r2_key}")
@@ -151,6 +155,15 @@ def main():
             success_count += 1
             store_summary[sname] = store_summary.get(sname, 0) + 1
             uploaded_keys.setdefault(sname, []).append(r2_key)
+            digest = hashlib.sha256()
+            with open(fpath, "rb") as source:
+                for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            uploaded_integrity.setdefault(sname, []).append({
+                "key": r2_key,
+                "sha256": digest.hexdigest(),
+                "sizeBytes": fpath.stat().st_size,
+            })
         except Exception as e:
             print(f"       => [THẤT BẠI] Lỗi upload file {file_name}: {e}", file=sys.stderr)
 
@@ -166,13 +179,15 @@ def main():
         if len(keys) != 6 or actual_slots != expected_slots:
             print(f"[LỖI] [{sname}] chưa đúng đủ 6 slot; không publish _COMPLETE.json.", file=sys.stderr)
             continue
-        marker_key = f"{r2_prefix}/input/{batch_date}/{sname}/_COMPLETE.json"
+        marker_key = f"{r2_prefix}/input/{batch_date}/{sname}/{batch_ids[sname]}/_COMPLETE.json"
         marker = json.dumps({
-            "version": 1,
+            "version": 2,
+            "batchId": batch_ids[sname],
             "storeName": sname,
             "batchDate": batch_date,
             "completedAt": datetime.now().isoformat(),
             "files": keys,
+            "checksums": uploaded_integrity.get(sname, []),
         }).encode("utf-8")
         s3_client.put_object(Bucket=bucket_name, Key=marker_key, Body=marker, ContentType="application/json")
         print(f"[OK] [{sname}] Đã publish batch marker: {marker_key}")

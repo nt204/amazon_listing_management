@@ -87,7 +87,19 @@ echo ">>> [BƯỚC 2/3] BATCH ĐÃ ĐƯỢC KIỂM TRA VÀ PUBLISH LÊN R2..."
 # ====================================================================
 echo ""
 echo ">>> [BƯỚC 3/3] KÍCH HOẠT WEB APP ĐỒNG BỘ DỮ LIỆU VÀO DATABASE..."
-bash "$SCRIPT_DIR/trigger_sync.sh"
+SYNC_MAX_ATTEMPTS="${DB_SYNC_MAX_ATTEMPTS:-5}"
+SYNC_ATTEMPT=1
+until bash "$SCRIPT_DIR/trigger_sync.sh"; do
+  if [ "$SYNC_ATTEMPT" -ge "$SYNC_MAX_ATTEMPTS" ]; then
+    echo "[SYNC] Đã hết giới hạn $SYNC_MAX_ATTEMPTS lần đồng bộ. File trên R2 vẫn được giữ để retry sau."
+    exit 1
+  fi
+  SYNC_DELAY=$((5 * (2 ** (SYNC_ATTEMPT - 1))))
+  if [ "$SYNC_DELAY" -gt 60 ]; then SYNC_DELAY=60; fi
+  echo "[SYNC] Lần $SYNC_ATTEMPT/$SYNC_MAX_ATTEMPTS thất bại; thử lại sau ${SYNC_DELAY}s..."
+  sleep "$SYNC_DELAY"
+  SYNC_ATTEMPT=$((SYNC_ATTEMPT + 1))
+done
 
 echo ""
 echo "######################################################################"
