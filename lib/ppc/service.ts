@@ -1088,8 +1088,13 @@ export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarg
     const parsedSearchTerms: Array<{ object: (typeof selectedFiles)[number]; rows: PpcSearchTermRow[] }> = [];
     const parsedPerformance: Array<{ object: (typeof selectedFiles)[number]; rows: Awaited<ReturnType<typeof parseBulkWorkbook>> }> = [];
 
+    let fileIdx = 0;
     for (const object of selectedFiles) {
+      fileIdx++;
       const fileName = object.Key || "";
+      const baseName = fileName.split("/").pop() || fileName;
+      const sizeMb = ((object.Size || 0) / (1024 * 1024)).toFixed(1);
+      console.log(`[R2 Sync] [${fileIdx}/${selectedFiles.length}] Đang tải & phân tích ${baseName} (${sizeMb} MB)...`);
       try {
         if ((object.Size || 0) > MAX_R2_FILE_BYTES) {
           throw new Error(`File vượt quá giới hạn ${Math.round(MAX_R2_FILE_BYTES / 1_000_000)} MB.`);
@@ -1110,15 +1115,18 @@ export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarg
             ? parseSearchTermCsv(buffer, storeName, adType)
             : await parseSearchTermWorkbook(buffer, storeName, adType);
           if (!rows.length) throw new Error("Không có dữ liệu Search Term hợp lệ.");
+          console.log(`[R2 Sync] [${fileIdx}/${selectedFiles.length}] ✓ Đã đọc ${rows.length.toLocaleString()} dòng Search Term.`);
           parsedSearchTerms.push({ object, rows });
         } else {
           if (fileName.toLowerCase().endsWith(".csv")) throw new Error("Bulk Operations cần định dạng .xlsx.");
           const rows = await parseBulkFile(buffer, storeName, fileName);
           if (!rows.length) throw new Error("Không có entity Bulk hợp lệ.");
+          console.log(`[R2 Sync] [${fileIdx}/${selectedFiles.length}] ✓ Đã đọc ${rows.length.toLocaleString()} dòng Bulk Operations.`);
           parsedPerformance.push({ object, rows });
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Lỗi không xác định";
+        console.error(`[R2 Sync] [${fileIdx}/${selectedFiles.length}] ✗ Lỗi file ${baseName}:`, message);
         failures.push({ fileName, error: message });
         await recordPpcSyncLog(scope, {
           source: "CLOUDFLARE_R2",
@@ -1139,7 +1147,10 @@ export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarg
 
     const mergedSearchTerms = parsedSearchTerms.flatMap((item) => item.rows);
     const mergedPerformance = parsedPerformance.flatMap((item) => item.rows);
+    const totalBatchRows = mergedSearchTerms.length + mergedPerformance.length;
+    console.log(`[R2 Sync] Đang nạp ${totalBatchRows.toLocaleString()} dòng dữ liệu của ${storeName} vào PostgreSQL...`);
     const saved = await upsertPpcSnapshot(scope, storeName, mergedSearchTerms, mergedPerformance);
+    console.log(`[R2 Sync] ✓ Đã lưu thành công snapshot ${storeName} (${(saved.searchTerms.inserted + saved.performance.inserted).toLocaleString()} mới, ${(saved.searchTerms.updated + saved.performance.updated).toLocaleString()} cập nhật).`);
     totalParsed += mergedSearchTerms.length + mergedPerformance.length;
     totalNew += saved.searchTerms.inserted + saved.performance.inserted;
     totalUpdated += saved.searchTerms.updated + saved.performance.updated;
