@@ -129,25 +129,42 @@ async function updateJob(
 }
 
 async function triggerServerSync(batchId: string, batchDate: string, storeNames: string[]): Promise<string> {
-  return retryOperation("Đồng bộ R2 vào database", configuredInt("DB_SYNC_MAX_ATTEMPTS", 5, 1, 10), async () => {
+  const accepted = await retryOperation("Tạo hàng đợi đồng bộ R2", configuredInt("DB_SYNC_MAX_ATTEMPTS", 5, 1, 10), async () => {
     const res = await fetchWithTimeout(`${WEB_APP_URL}/api/ppc/sync-r2`, {
       method: "POST",
       headers: getHeaders(),
       body: JSON.stringify({ batchId, batchDate, storeNames }),
-    }, configuredInt("DB_SYNC_TIMEOUT_MINUTES", 10, 1, 30) * 60_000);
+    });
     const body = await res.text();
     if (!res.ok) {
-      if (res.status === 504) {
-        console.warn("[Worker] Nginx 504 Gateway Timeout: Server đang nạp 6 file lớn từ R2 vào Postgres. Đang chờ server xử lý tiếp...");
-      }
       throw new Error(`Server sync (${res.status}): ${body.slice(0, 200).replace(/\s+/g, " ")}`);
     }
     const data = JSON.parse(body);
-    if (data.success === false || data.result?.failed > 0) {
-      throw new Error(data.message || `Server báo ${data.result?.failed || 0} file ingest lỗi.`);
-    }
-    return data.message || "Đã đồng bộ R2 thành công.";
+    if (!data.job?.id) throw new Error("Server không trả ingestion jobId.");
+    return data as {job:{id:string;status:string};message?:string};
   });
+
+  const deadline=Date.now()+configuredInt("DB_SYNC_TIMEOUT_MINUTES",120,5,360)*60_000;
+  let consecutivePollFailures=0;
+  while(Date.now()<deadline){
+    let terminalError="";
+    try {
+      const res=await fetchWithTimeout(`${WEB_APP_URL}/api/ppc/sync-r2?jobId=${encodeURIComponent(accepted.job.id)}`,{headers:getHeaders()});
+      if(!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0,200)}`);
+      const data=await res.json() as {job?:{status?:string;stage?:string;progress_pct?:number;error_message?:string}};
+      consecutivePollFailures=0;
+      const status=data.job?.status;
+      if(status==="COMPLETED") return "Server đã đồng bộ R2 vào database thành công.";
+      if(status==="FAILED"||status==="CANCELLED") terminalError=data.job?.error_message||`Ingestion job ${status}.`;
+      console.log(`[Worker] Server ingest ${status||"QUEUED"} (${data.job?.progress_pct||0}%). Chờ 15s...`);
+    } catch(error) {
+      consecutivePollFailures+=1;
+      console.warn(`[Worker] Tạm mất trạng thái ingest (${consecutivePollFailures}): ${error instanceof Error?error.message:String(error)}. Sẽ thử lại...`);
+    }
+    if(terminalError) throw new Error(terminalError);
+    await new Promise(resolve=>setTimeout(resolve,15_000));
+  }
+  throw new Error(`Server ingest chưa hoàn tất sau ${configuredInt("DB_SYNC_TIMEOUT_MINUTES",120,5,360)} phút.`);
 }
 
 async function processJob(job: {
@@ -262,6 +279,8 @@ async function processJob(job: {
     });
 
     let totalFilesCrawled = 0;
+    const successfulStoreNames: string[] = [];
+    const storeFailures: string[] = [];
 
     for (let i = 0; i < storesToCrawl.length; i++) {
       const store = storesToCrawl[i];
@@ -270,10 +289,11 @@ async function processJob(job: {
 
       console.log(`[Worker] Đang xử lý store ${i + 1}/${storesToCrawl.length}: [${store.store_name}]`);
 
-      const files = await retryOperation(
-        `Crawl store ${store.store_name}`,
-        configuredInt("CRAWLER_MAX_JOB_ATTEMPTS", 3, 1, 5),
-        async (runAttempt) => {
+      try {
+        const files = await retryOperation(
+          `Crawl store ${store.store_name}`,
+          configuredInt("CRAWLER_MAX_JOB_ATTEMPTS", 3, 1, 5),
+          async (runAttempt) => {
           if (runAttempt > 1) await waitUntilRetry(checkpoint.tasks, abortController.signal);
           checkpoint.runAttempt = runAttempt;
           checkpoint.stage = "CRAWLING";
@@ -318,10 +338,28 @@ async function processJob(job: {
           signal: abortController.signal,
             },
           );
-        },
-      );
+          },
+        );
+        totalFilesCrawled += files.length;
+        successfulStoreNames.push(store.store_name);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        storeFailures.push(`[${store.store_name}] ${message}`);
+        console.error(`[Worker] Store [${store.store_name}] hết retry, tiếp tục store kế tiếp: ${message}`);
+        await updateJob(jobId, leaseToken, {
+          status: "RUNNING",
+          stage: "CRAWLING",
+          current_step: `[${store.store_name}] thất bại sau giới hạn retry; đang tiếp tục store kế tiếp...`,
+          task_states: checkpoint.tasks,
+        }).catch(() => {});
+      }
+    }
 
-      totalFilesCrawled += files.length;
+    if (!successfulStoreNames.length) {
+      throw new Error(`Không có store nào hoàn tất: ${storeFailures.join(" | ")}`);
+    }
+    if (storeFailures.length) {
+      throw new Error(`Đã crawl xong ${successfulStoreNames.length}/${storesToCrawl.length} store và giữ checkpoint; cần resume các store lỗi trước khi commit DB: ${storeFailures.join(" | ")}`);
     }
 
     // Bước đồng bộ Server từ R2
@@ -336,7 +374,7 @@ async function processJob(job: {
       task_states: checkpoint.tasks,
     });
 
-    const syncMsg = await triggerServerSync(batchId, todayStr, storesToCrawl.map((store) => store.store_name));
+    const syncMsg = await triggerServerSync(batchId, todayStr, successfulStoreNames);
     console.log(`[Worker] Kết quả đồng bộ Server: ${syncMsg}`);
 
     // Báo cáo hoàn tất

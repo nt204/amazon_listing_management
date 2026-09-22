@@ -1,0 +1,39 @@
+import os from "node:os";
+import {
+  claimPpcIngestion, completePpcIngestion, failPpcIngestion, heartbeatPpcIngestion,
+} from "../lib/ppc/ingestion-jobs";
+import { syncPpcReportsFromR2 } from "../lib/ppc/service";
+
+const workerId=process.env.PPC_INGESTION_WORKER_ID||`${os.hostname()}:${process.pid}`;
+const pollMs=Math.max(1000,Number(process.env.PPC_INGESTION_POLL_SECONDS||5)*1000);
+let stopping=false;
+const sleep=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
+
+process.on("SIGTERM",()=>{stopping=true;});
+process.on("SIGINT",()=>{stopping=true;});
+console.log(`[PPC Ingestion Worker] Started as ${workerId}`);
+
+while(!stopping){
+  let job;
+  try { job=await claimPpcIngestion(workerId); }
+  catch(error){console.error("[PPC Ingestion Worker] Claim failed:",error);await sleep(pollMs);continue;}
+  if(!job){await sleep(pollMs);continue;}
+  const token=job.lease_token!;
+  console.log(`[PPC Ingestion Worker] Processing ${job.batch_id}, attempt ${job.attempt_count}/${job.max_attempts}`);
+  const heartbeat=setInterval(()=>void heartbeatPpcIngestion(job.id,token).catch(error=>
+    console.error(`[PPC Ingestion Worker] Heartbeat failed for ${job.id}:`,error)),30_000);
+  try {
+    const result=await syncPpcReportsFromR2(
+      {teamId:job.team_id,actorId:job.actor_id},
+      {batchId:job.batch_id,batchDate:job.batch_date,storeNames:job.store_names},
+    );
+    if(result.failed>0) throw new Error(`${result.failed} file ingest lỗi: ${JSON.stringify(result.failures)}`);
+    await completePpcIngestion(job.id,token,result);
+    console.log(`[PPC Ingestion Worker] Completed ${job.batch_id}: ${result.filesProcessed} files`);
+  } catch(error){
+    const message=error instanceof Error?error.message:String(error);
+    console.error(`[PPC Ingestion Worker] Failed ${job.batch_id}:`,message);
+    await failPpcIngestion(job.id,token,message).catch(updateError=>console.error("Cannot persist failure:",updateError));
+  } finally { clearInterval(heartbeat); }
+}
+console.log("[PPC Ingestion Worker] Stopped");

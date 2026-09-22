@@ -100,6 +100,7 @@ npm run build
 # 2. Chạy ngầm bằng PM2
 sudo npm install -g pm2
 pm2 start npm --name "amazon-listing" -- start
+pm2 start npm --name "ppc-ingestion-worker" --max-memory-restart 1500M -- run ppc:ingest-worker
 pm2 save
 pm2 startup
 ```
@@ -159,6 +160,7 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 
 ```bash
 pm2 restart amazon-listing    # Restart lại web app
+pm2 restart ppc-ingestion-worker # Restart worker nạp R2 riêng, không làm gián đoạn web
 pm2 logs amazon-listing       # Xem log ứng dụng trực tiếp
 pm2 status                    # Xem trạng thái chạy ngầm
 ```

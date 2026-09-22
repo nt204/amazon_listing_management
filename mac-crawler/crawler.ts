@@ -1152,6 +1152,7 @@ async function autoCreateAndDownloadSearchTermReport(
     ? task.reportName
     : `${storeName} ST ${adType} 30D ${today} ${syncRunId}`;
   let downloadUrl: string | null = null;
+  const reportsUrl = `https://advertising.amazon.com/reports${entityParam}`;
 
   if (task && !canResumeRequest) {
     const maxCreates = 1 + envInt("AMAZON_REPORT_MAX_RECREATE", 2, 0, 5);
@@ -1171,56 +1172,15 @@ async function autoCreateAndDownloadSearchTermReport(
     saveCheckpoint?.();
   }
 
-  // 1. KIỂM TRA TRƯỚC: Nếu trên trang /reports đã có sẵn báo cáo Search Term hoàn thành hôm nay, bốc luôn không cần tạo lại
-  const reportsUrl = `https://advertising.amazon.com/reports${entityParam}`;
-  console.log(`  [SEARCH TERM] Kiểm tra danh sách báo cáo trên Amazon: ${reportsUrl}`);
-  await page.goto(reportsUrl, { waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(3000);
-
-  const existingDownloadUrl = await page.evaluate((args: { targetId: string; adType: string; today: string; todayMonthDay: string }) => {
-    const allRowEls = Array.from(document.querySelectorAll("div.ag-row[row-index], tr[row-index], table tbody tr"));
-    const rowIndexMap = new Map<string, { texts: string[]; href: string | null }>();
-
-    for (const r of allRowEls) {
-      const idx = r.getAttribute("row-index") || r.getAttribute("aria-rowindex") || String(Math.random());
-      if (!rowIndexMap.has(idx)) {
-        rowIndexMap.set(idx, { texts: [], href: null });
-      }
-      const entry = rowIndexMap.get(idx)!;
-      const txt = ((r as HTMLElement).innerText || "").trim();
-      if (txt) entry.texts.push(txt);
-
-      const link = r.querySelector<HTMLAnchorElement>(
-        "a[data-takt-id='storm-ui-link'], a[href*='download-report'], a[href*='download'], a[href*='export']"
-      );
-      if (link?.href && !entry.href) {
-        entry.href = link.href.startsWith("http") ? link.href : (location.origin + link.href);
-      }
-    }
-
-    const adTypeLabel = args.adType === "SB" ? "Sponsored Brands" : "Sponsored Products";
-    for (const [, entry] of rowIndexMap.entries()) {
-      const fullText = entry.texts.join(" ");
-      const hasSearchTerm = /search\s*term/i.test(fullText);
-      const hasAdType = fullText.includes(args.adType) || fullText.includes(adTypeLabel);
-      const hasToday = fullText.includes(args.today) || fullText.includes(args.todayMonthDay);
-      if (hasSearchTerm && hasAdType && hasToday && entry.href) {
-        return entry.href;
-      }
-    }
-    return null;
-  }, { targetId: syncRunId, adType, today, todayMonthDay });
-
-  if (existingDownloadUrl) {
-    console.log(`  [SEARCH TERM] ⚡ PHÁT HIỆN BÁO CÁO CÓ SẴN! Đã có sẵn Search Term ${adType} hoàn thành trên Amazon. Bốc file ngay!`);
-    downloadUrl = existingDownloadUrl;
+  // 1. Chỉ khôi phục link nếu task đang ở trạng thái DOWNLOADABLE từ checkpoint hợp lệ
+  if (canResumeRequest && task?.status === "DOWNLOADABLE" && task?.amazonRequestId) {
+    console.log(`  [SEARCH TERM] Khôi phục từ checkpoint: Search Term ${adType} đã sẵn sàng tải (${task.amazonRequestId}).`);
   }
 
-  // 2. Nếu chưa có báo cáo sẵn, tiến hành tạo mới trên Amazon
-  if (!downloadUrl && !canResumeRequest) {
-    console.log(`  [SEARCH TERM] Chưa có file sẵn. Tự động mở form tạo mới Search Term ${adType} (ID: ${syncRunId})...`);
+  // 2. Tạo mới trên Amazon nếu chưa có checkpoint đang xử lý
+  if (!canResumeRequest) {
+    console.log(`  [SEARCH TERM] Tự động tạo mới Search Term ${adType} 30 Ngày (Mã định danh: ${syncRunId})...`);
     
-    // Thử vào thẳng link tạo báo cáo hoặc click nút "Create report"
     const createUrl = `https://advertising.amazon.com/reports/new${entityParam}`;
     await page.goto(createUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
     await page.waitForTimeout(2500);
@@ -1257,31 +1217,35 @@ async function autoCreateAndDownloadSearchTermReport(
       }
     }
 
-    // Chờ ô input xuất hiện nếu đang render
     if (!nameInput) {
       nameInput = await page.waitForSelector(nameSelectors.join(", "), { timeout: 10000 }).catch(() => null);
     }
 
-    if (adType === "SB") {
-      const catBtn = await page.waitForSelector(
-        "#report-configuration-form\\:report-category-control-component-0, button[id*='report-category']",
-        { timeout: 4000 },
-      ).catch(() => null);
-      if (catBtn) {
+    // Cấu hình Category (SP vs SB)
+    const targetCat = adType === "SB" ? "Sponsored Brands" : "Sponsored Products";
+    const catBtn = await page.waitForSelector(
+      "#report-configuration-form\\:report-category-control-component-0, button[id*='report-category'], button[data-testid*='report-category']",
+      { timeout: 4000 },
+    ).catch(() => null);
+    if (catBtn) {
+      const currentCat = await catBtn.innerText().catch(() => "");
+      if (!currentCat.includes(targetCat)) {
         await catBtn.click();
-        const sbOpt = await page.waitForSelector(
-          '[role="option"]:has-text("Sponsored Brands"), li:has-text("Sponsored Brands")',
+        const catOpt = await page.waitForSelector(
+          `[role="option"]:has-text("${targetCat}"), li:has-text("${targetCat}"), button:has-text("${targetCat}")`,
           { timeout: 3000 },
         ).catch(() => null);
-        if (sbOpt) {
-          await sbOpt.click();
+        if (catOpt) {
+          await catOpt.click();
           await page.waitForTimeout(400);
+          console.log(`  [SEARCH TERM] Đã chọn Category: ${targetCat}`);
         }
       }
     }
 
+    // Cấu hình Report Type: Search term
     const typeBtn = await page.waitForSelector(
-      "#report-configuration-form\\:report-type-control-component-0, button[id*='report-type']",
+      "#report-configuration-form\\:report-type-control-component-0, button[id*='report-type'], button[data-testid*='report-type']",
       { timeout: 4000 },
     ).catch(() => null);
     if (typeBtn) {
@@ -1289,22 +1253,45 @@ async function autoCreateAndDownloadSearchTermReport(
       if (!/Search term/i.test(currentText)) {
         await typeBtn.click();
         const stOpt = await page.waitForSelector(
-          '[role="option"]:has-text("Search term"), li:has-text("Search term")',
+          '[role="option"]:has-text("Search term"), li:has-text("Search term"), button:has-text("Search term")',
           { timeout: 3000 },
         ).catch(() => null);
         if (stOpt) {
           await stOpt.click();
           await page.waitForTimeout(400);
+          console.log(`  [SEARCH TERM] Đã chọn Report Type: Search term`);
         }
       }
     }
 
+    // Cấu hình Time unit: Daily
     const dayRadio = await page.$("#time-units-day, input[value='DAILY'], label[for='time-units-day']");
     if (dayRadio) {
       await dayRadio.click().catch(() => page.evaluate((el: any) => el?.click(), dayRadio));
       await page.waitForTimeout(300);
     }
 
+    // Cấu hình Date range: Last 30 days
+    const dateRangeBtn = await page.$(
+      "#report-configuration-form\\:date-range-control-component-0, button[id*='date-range'], button[id*='dateRange'], button[aria-label*='Date range' i], button[data-testid*='date-range']",
+    );
+    if (dateRangeBtn && (await dateRangeBtn.isVisible().catch(() => false))) {
+      await dateRangeBtn.click().catch(() => {});
+      await page.waitForTimeout(500);
+      const opt30 = await page.waitForSelector(
+        '[role="option"]:has-text("Last 30 days"), [role="option"]:has-text("Past 30 days"), [role="option"]:has-text("30 days"), li:has-text("Last 30 days"), li:has-text("Past 30 days"), button:has-text("Last 30 days")',
+        { timeout: 3000 },
+      ).catch(() => null);
+      if (opt30) {
+        await opt30.click().catch(() => {});
+        await page.waitForTimeout(400);
+        console.log(`  [SEARCH TERM] Đã chọn Date Range: Last 30 days`);
+      } else {
+        await page.keyboard.press("Escape").catch(() => {});
+      }
+    }
+
+    // Điền Report Name chứa syncRunId duy nhất
     if (nameInput) {
       await nameInput.click().catch(() => {});
       await nameInput.fill("");
@@ -1316,6 +1303,7 @@ async function autoCreateAndDownloadSearchTermReport(
       console.warn(`  [SEARCH TERM] Không tìm thấy ô tên report, dùng tên mặc định của Amazon.`);
     }
 
+    // Bấm Run report
     const runSelectors = [
       "#urc_run_subscription_button",
       'button[id*="run_subscription"]',
@@ -1339,14 +1327,13 @@ async function autoCreateAndDownloadSearchTermReport(
 
   const timeoutMinutes = envInt("AMAZON_REPORT_TIMEOUT_MINUTES", 30, 5, 120);
 
-  // 3. Nếu chưa có downloadUrl, chuyển sang trang /reports để theo dõi tiến độ hoàn thành
+  // 3. Theo dõi tiến độ hoàn thành đúng của syncRunId (không bốc bừa file khác)
   if (!downloadUrl) {
     if (!page.url().includes("/reports?")) {
       console.log(`  [SEARCH TERM] Chuyển đến trang danh sách báo cáo: ${reportsUrl}`);
       await page.goto(reportsUrl, { waitUntil: "domcontentloaded" });
     }
 
-    // Chờ bảng dữ liệu render
     await page.waitForSelector("div.ag-root, div.ag-row, table, [role='grid']", { timeout: 15000 }).catch(() => {});
 
     const deadline = Date.now() + timeoutMinutes * 60_000;
@@ -1360,74 +1347,36 @@ async function autoCreateAndDownloadSearchTermReport(
       pollIteration++;
       const waitSeconds = pollBackoff[Math.min(pollIteration - 1, pollBackoff.length - 1)];
 
-      const match = await page.evaluate((args: { targetId: string; adType: string; today: string; todayMonthDay: string }) => {
+      // Tìm duy nhất dòng khớp syncRunId của lượt chạy này
+      const match = await page.evaluate((targetId: string) => {
         const allRowEls = Array.from(document.querySelectorAll("div.ag-row, tr, [role='row']"));
-        const rowIndexMap = new Map<string, { texts: string[]; href: string | null; isCompleted: boolean; isFailed: boolean }>();
-
         for (const r of allRowEls) {
-          const idx = r.getAttribute("row-index") || r.getAttribute("row-id") || r.getAttribute("aria-rowindex") || String(Math.random());
-          if (!rowIndexMap.has(idx)) {
-            rowIndexMap.set(idx, { texts: [], href: null, isCompleted: false, isFailed: false });
-          }
-          const entry = rowIndexMap.get(idx)!;
           const txt = ((r as HTMLElement).innerText || "").trim();
           const title = (r.getAttribute("title") || "").trim();
           const childTitles = Array.from(r.querySelectorAll("[title]")).map((el) => el.getAttribute("title") || "").join(" ");
-          if (txt || title || childTitles) {
-            entry.texts.push(txt, title, childTitles);
-          }
+          const fullText = `${txt} ${title} ${childTitles}`;
 
-          const link = r.querySelector<HTMLAnchorElement | HTMLButtonElement>(
-            "a[data-takt-id='storm-ui-link'], a[href*='download-report'], a[href*='download'], a[href*='export'], button[data-takt-id*='download'], button[aria-label*='download' i]"
-          );
-          if (link && !entry.href) {
-            if ((link as HTMLAnchorElement).href) {
-              const h = (link as HTMLAnchorElement).href;
-              entry.href = h.startsWith("http") ? h : (location.origin + h);
-            } else {
-              entry.href = "clickable-button";
+          if (fullText.includes(targetId)) {
+            const link = r.querySelector<HTMLAnchorElement | HTMLButtonElement>(
+              "a[data-takt-id='storm-ui-link'], a[href*='download-report'], a[href*='download'], a[href*='export'], button[data-takt-id*='download'], button[aria-label*='download' i]"
+            );
+            let href: string | null = null;
+            if (link) {
+              if ((link as HTMLAnchorElement).href) {
+                const h = (link as HTMLAnchorElement).href;
+                href = h.startsWith("http") ? h : (location.origin + h);
+              } else {
+                href = "clickable-button";
+              }
             }
-          }
-
-          const fullRowText = entry.texts.join(" ").toLowerCase();
-          if (
-            fullRowText.includes("completed") ||
-            fullRowText.includes("success") ||
-            fullRowText.includes("downloadable") ||
-            fullRowText.includes("hoàn thành") ||
-            fullRowText.includes("đã xong") ||
-            Boolean(entry.href)
-          ) {
-            entry.isCompleted = true;
-          }
-
-          if (fullRowText.includes("failed") || fullRowText.includes("thất bại") || fullRowText.includes("error")) {
-            entry.isFailed = true;
+            const lower = fullText.toLowerCase();
+            const isCompleted = lower.includes("completed") || lower.includes("success") || lower.includes("downloadable") || lower.includes("hoàn thành") || Boolean(href);
+            const isFailed = lower.includes("failed") || lower.includes("thất bại") || lower.includes("error");
+            return { found: true, isCompleted, isFailed, href };
           }
         }
-
-        // Ưu tiên 1: Khớp chính xác syncRunId vừa tạo
-        for (const [, entry] of rowIndexMap.entries()) {
-          const fullText = entry.texts.join(" ");
-          if (fullText.includes(args.targetId)) {
-            return { found: true, isCompleted: entry.isCompleted, isFailed: entry.isFailed, href: entry.href };
-          }
-        }
-
-        // Ưu tiên 2 (Fallback như Web): Khớp báo cáo Search Term cùng loại đã hoàn thành trong ngày
-        const adTypeLabel = args.adType === "SB" ? "Sponsored Brands" : "Sponsored Products";
-        for (const [, entry] of rowIndexMap.entries()) {
-          const fullText = entry.texts.join(" ");
-          const hasSearchTerm = /search\s*term/i.test(fullText);
-          const hasAdType = fullText.includes(args.adType) || fullText.includes(adTypeLabel);
-          const hasToday = fullText.includes(args.today) || fullText.includes(args.todayMonthDay);
-          if (hasSearchTerm && hasAdType && hasToday && entry.href) {
-            return { found: true, isCompleted: true, isFailed: false, href: entry.href };
-          }
-        }
-
         return { found: false, isCompleted: false, isFailed: false, href: null };
-      }, { targetId: syncRunId, adType, today, todayMonthDay });
+      }, syncRunId);
 
       if (match.found && match.isFailed) {
         if (task) task.status = "FAILED";
@@ -1439,7 +1388,7 @@ async function autoCreateAndDownloadSearchTermReport(
         downloadUrl = match.href;
         if (task) task.status = "DOWNLOADABLE";
         saveCheckpoint?.();
-        console.log(`  [SEARCH TERM] ✅ Đã tìm thấy link tải báo cáo Search Term ${adType}! Link: ${downloadUrl}`);
+        console.log(`  [SEARCH TERM] ✅ Đã tìm thấy link tải báo cáo Search Term ${adType} (${syncRunId})!`);
         break;
       }
 
@@ -1449,12 +1398,18 @@ async function autoCreateAndDownloadSearchTermReport(
 
       await page.waitForTimeout(waitSeconds * 1000);
 
-      // Bấm Refresh của bảng AG Grid
+      // Refresh dữ liệu bảng báo cáo
+      let refreshed = false;
       const refreshBtn = await page.$(
         'button[aria-label*="Refresh" i], button:has-text("Refresh"), button:has-text("Làm mới"), button[data-testid*="refresh" i], button[data-takt-id*="refresh" i], button:has(svg[data-icon="refresh"])',
       );
-      if (refreshBtn) {
+      if (refreshBtn && (await refreshBtn.isVisible().catch(() => false))) {
         await refreshBtn.click().catch(() => {});
+        refreshed = true;
+      }
+      if (!refreshed && pollIteration % 2 === 0) {
+        await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
+        await page.waitForTimeout(2000);
       }
     }
   }
