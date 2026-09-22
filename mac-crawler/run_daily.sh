@@ -7,6 +7,8 @@ LOG_FILE="$LOG_DIR/mac-crawler.log"
 
 mkdir -p "$LOG_DIR"
 
+bash "$SCRIPT_DIR/maintenance.sh"
+
 # Ghi nhận output ra đồng thời console và file log
 exec > >(tee -a "$LOG_FILE") 2>&1
 

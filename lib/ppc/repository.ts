@@ -596,13 +596,13 @@ export async function upsertPpcSearchTerms(
   scope: DataScope,
   storeName: string,
   rows: PpcSearchTermRow[],
-  options: { replaceExisting?: boolean } = {},
+  options: { replaceExisting?: boolean; transaction?: any } = {},
 ): Promise<{ inserted: number; updated: number; deduplicated: number }> {
   const sql = await getDatabaseClient();
   const teamId = (scope as any)?.teamId || "default";
   const uniqueRows = Array.from(new Map(rows.map((row) => [rowIdentity(row), row])).values());
 
-  return sql.begin(async (transaction) => {
+  const operation = async (transaction: any) => {
     const storeRows = await transaction<StoreRow[]>`
       INSERT INTO ppc_stores (team_id, name)
       VALUES (${teamId}, ${storeName})
@@ -689,7 +689,8 @@ export async function upsertPpcSearchTerms(
     await refreshPpcDailySummary(scope, storeId, transaction);
 
     return { inserted, updated, deduplicated: rows.length - uniqueRows.length };
-  });
+  };
+  return options.transaction ? operation(options.transaction) : sql.begin(operation);
 }
 
 export async function refreshPpcDailySummary(
@@ -756,7 +757,7 @@ export async function upsertPpcPerformance(
   scope: DataScope,
   storeName: string,
   rows: PpcPerformanceRow[],
-  options: { replaceExisting?: boolean } = {},
+  options: { replaceExisting?: boolean; transaction?: any } = {},
 ): Promise<{ inserted: number; updated: number; deduplicated: number }> {
   const sql = await getDatabaseClient();
   const teamId = (scope as any)?.teamId || "default";
@@ -764,7 +765,7 @@ export async function upsertPpcPerformance(
     [row.snapshotDate, row.reportStartDate, row.reportEndDate, row.adType, row.grain, performanceIdentity(row)].join(":::"),
     row,
   ])).values());
-  return sql.begin(async (transaction) => {
+  const operation = async (transaction: any) => {
     const storeRows = await transaction<StoreRow[]>`
       INSERT INTO ppc_stores (team_id, name)
       VALUES (${teamId}, ${storeName})
@@ -860,10 +861,35 @@ export async function upsertPpcPerformance(
           updated_at = NOW()
         RETURNING (xmax = 0) AS inserted
       `;
-      inserted += saved.filter((row) => row.inserted).length;
-      updated += saved.filter((row) => !row.inserted).length;
+      inserted += saved.filter((row: { inserted: boolean }) => row.inserted).length;
+      updated += saved.filter((row: { inserted: boolean }) => !row.inserted).length;
     }
     return { inserted, updated, deduplicated: rows.length - uniqueRows.length };
+  };
+  return options.transaction ? operation(options.transaction) : sql.begin(operation);
+}
+
+/** Thay cả Search Term và Bulk trong cùng một transaction database. */
+export async function upsertPpcSnapshot(
+  scope: DataScope,
+  storeName: string,
+  searchTerms: PpcSearchTermRow[],
+  performance: PpcPerformanceRow[],
+): Promise<{
+  searchTerms: { inserted: number; updated: number; deduplicated: number };
+  performance: { inserted: number; updated: number; deduplicated: number };
+}> {
+  const sql = await getDatabaseClient();
+  return sql.begin(async (transaction) => {
+    const searchResult = await upsertPpcSearchTerms(scope, storeName, searchTerms, {
+      replaceExisting: true,
+      transaction,
+    });
+    const performanceResult = await upsertPpcPerformance(scope, storeName, performance, {
+      replaceExisting: true,
+      transaction,
+    });
+    return { searchTerms: searchResult, performance: performanceResult };
   });
 }
 
@@ -1756,4 +1782,3 @@ export async function getPpcSearchTermSummaryFromDb(
     alertRows: alertTermsRows.map(mapSearchTerm),
   };
 }
-

@@ -12,13 +12,25 @@ loadEnv();
 
 const WEB_APP_URL = (process.env.WEB_APP_URL || "http://localhost:2411").replace(/\/+$/, "");
 const AUTH_TOKEN = process.env.WEB_APP_AUTH_TOKEN || "";
-const WORKER_ID = `${os.hostname()}_${process.pid}`;
-const POLL_INTERVAL_MS = 5000; // 5 giây thăm dò lệnh 1 lần
-const HEARTBEAT_INTERVAL_MS = Number(process.env.WORKER_HEARTBEAT_SECONDS || 15) * 1000;
+const WORKER_ID = (process.env.WORKER_ID || os.hostname()).trim();
 
 function configuredInt(name: string, fallback: number, min = 1, max = 20): number {
   const value = Number.parseInt(process.env[name] || "", 10);
   return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
+}
+
+const POLL_INTERVAL_MS = configuredInt("WORKER_POLL_SECONDS", 10, 3, 300) * 1000;
+const HEARTBEAT_INTERVAL_MS = configuredInt("WORKER_HEARTBEAT_SECONDS", 15, 5, 60) * 1000;
+const REQUEST_TIMEOUT_MS = configuredInt("WORKER_REQUEST_TIMEOUT_SECONDS", 20, 5, 120) * 1000;
+
+async function fetchWithTimeout(input: string, init: RequestInit = {}, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort("HTTP request timeout"), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: init.signal || controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function retryOperation<T>(label: string, attempts: number, operation: (attempt: number) => Promise<T>): Promise<T> {
@@ -74,7 +86,7 @@ function getHeaders() {
 
 async function sendHeartbeat(jobId: string, leaseToken: string): Promise<"ok" | "temporary" | "revoked"> {
   try {
-    const response = await fetch(`${WEB_APP_URL}/api/ppc/crawler/job`, {
+    const response = await fetchWithTimeout(`${WEB_APP_URL}/api/ppc/crawler/job`, {
       method: "PATCH",
       headers: getHeaders(),
       body: JSON.stringify({ jobId, leaseToken, isHeartbeatOnly: true }),
@@ -106,7 +118,7 @@ async function updateJob(
     task_states?: ReportTaskState[];
   },
 ) {
-  const response = await fetch(`${WEB_APP_URL}/api/ppc/crawler/job`, {
+  const response = await fetchWithTimeout(`${WEB_APP_URL}/api/ppc/crawler/job`, {
     method: "PATCH",
     headers: getHeaders(),
     body: JSON.stringify({ jobId, leaseToken, ...data }),
@@ -116,12 +128,13 @@ async function updateJob(
   }
 }
 
-async function triggerServerSync(): Promise<string> {
+async function triggerServerSync(batchId: string, batchDate: string, storeNames: string[]): Promise<string> {
   return retryOperation("Đồng bộ R2 vào database", configuredInt("DB_SYNC_MAX_ATTEMPTS", 5, 1, 10), async () => {
-    const res = await fetch(`${WEB_APP_URL}/api/ppc/sync-r2`, {
+    const res = await fetchWithTimeout(`${WEB_APP_URL}/api/ppc/sync-r2`, {
       method: "POST",
       headers: getHeaders(),
-    });
+      body: JSON.stringify({ batchId, batchDate, storeNames }),
+    }, configuredInt("DB_SYNC_TIMEOUT_MINUTES", 10, 1, 30) * 60_000);
     const body = await res.text();
     if (!res.ok) throw new Error(`Server sync thất bại (${res.status}): ${body}`);
     const data = JSON.parse(body);
@@ -308,7 +321,7 @@ async function processJob(job: {
       task_states: checkpoint.tasks,
     });
 
-    const syncMsg = await triggerServerSync();
+    const syncMsg = await triggerServerSync(batchId, todayStr, storesToCrawl.map((store) => store.store_name));
     console.log(`[Worker] Kết quả đồng bộ Server: ${syncMsg}`);
 
     // Báo cáo hoàn tất
@@ -345,11 +358,11 @@ async function processJob(job: {
 async function startLoop() {
   let isProcessing = false;
 
-  setInterval(async () => {
+  const poll = async () => {
     if (isProcessing) return;
 
     try {
-      const res = await fetch(`${WEB_APP_URL}/api/ppc/crawler/job?action=poll&workerId=${encodeURIComponent(WORKER_ID)}`, {
+      const res = await fetchWithTimeout(`${WEB_APP_URL}/api/ppc/crawler/job?action=poll&workerId=${encodeURIComponent(WORKER_ID)}`, {
         headers: getHeaders(),
       });
 
@@ -368,8 +381,11 @@ async function startLoop() {
       }
     } catch {
       // Server offline hoặc chưa khởi động, tiếp tục thăm dò
+    } finally {
+      setTimeout(() => void poll(), POLL_INTERVAL_MS);
     }
-  }, POLL_INTERVAL_MS);
+  };
+  void poll();
 }
 
 startLoop();

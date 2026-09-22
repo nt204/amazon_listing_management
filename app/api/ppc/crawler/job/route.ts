@@ -11,6 +11,18 @@ function crawlerLeaseSeconds(): number {
   return Number.isFinite(value) ? Math.min(300, Math.max(45, value)) : 90;
 }
 
+function publicJob(row: Record<string, unknown>) {
+  const { lease_token: _leaseToken, ...safeRow } = row;
+  const taskStates = Array.isArray(row.task_states)
+    ? row.task_states.map((task) => {
+        if (!task || typeof task !== "object") return task;
+        const { localPath: _localPath, ...safeTask } = task as Record<string, unknown>;
+        return safeTask;
+      })
+    : row.task_states;
+  return { ...safeRow, task_states: taskStates };
+}
+
 // GET: Polling job cho máy Mac HOẶC Lấy danh sách job cho giao diện Web
 export async function GET(request: Request) {
   try {
@@ -100,7 +112,7 @@ export async function GET(request: Request) {
     `;
 
     return Response.json({
-      jobs: rows,
+      jobs: rows.map((row) => publicJob(row as Record<string, unknown>)),
     });
   } catch (error) {
     return routeErrorResponse(error, "Lỗi khi lấy thông tin crawler job.", 500);

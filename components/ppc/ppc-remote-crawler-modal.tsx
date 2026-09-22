@@ -99,7 +99,7 @@ export function PpcRemoteCrawlerModal({
     const timer = setInterval(() => {
       setClockNow(Date.now());
       void fetchJobs();
-    }, 2500);
+    }, 5000);
     return () => { clearTimeout(initial); clearInterval(timer); };
   }, [isOpen, fetchJobs]);
 

@@ -256,34 +256,19 @@ export async function publishCompleteBatchWithStaging(
     fileName: string;
     sizeBytes: number;
     sha256: string;
-    stagingKey: string;
     finalKey: string;
   }> = [];
 
   for (const file of files) {
     throwIfAborted(signal);
     const fileName = path.basename(file.path);
-    const stagingKey = `${prefix}/staging/${finalBatchId}/${storeName}/${file.relativeSubdir}/${fileName}`;
     const finalKey = `${prefix}/input/${batchDate.replace(/-/g, "")}/${storeName}/${finalBatchId}/${file.relativeSubdir}/${fileName}`;
     const sha256 = await computeFileSha256(file.path);
 
-    // 1. Upload vào Staging
-    console.log(`  [R2 STAGING] Đang upload staging: ${fileName}...`);
+    // File được upload đúng một lần vào batch riêng. Batch chưa có
+    // _COMPLETE.json không bao giờ được ingest, nên marker chính là commit atom.
+    console.log(`  [R2 PUBLISH] Đang upload: ${finalKey}...`);
     const uploadAttempts = envInt("R2_UPLOAD_MAX_ATTEMPTS", 5, 1, 10);
-    await retryWithBackoff(`Upload staging ${fileName}`, uploadAttempts, async () => {
-      throwIfAborted(signal);
-      await s3.send(new PutObjectCommand({
-        Bucket: bucket,
-        Key: stagingKey,
-        Body: fs.createReadStream(file.path),
-        ContentType: fileName.endsWith(".xlsx")
-          ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          : "text/csv",
-      }), { abortSignal: signal });
-    });
-
-    // 2. Publish sang thư mục chính thức /input/
-    console.log(`  [R2 PUBLISH] Đang publish chính thức: ${finalKey}...`);
     await retryWithBackoff(`Publish R2 ${fileName}`, uploadAttempts, async () => {
       throwIfAborted(signal);
       await s3.send(new PutObjectCommand({
@@ -302,7 +287,6 @@ export async function publishCompleteBatchWithStaging(
       fileName,
       sizeBytes: file.sizeBytes,
       sha256,
-      stagingKey,
       finalKey,
     });
 
@@ -319,30 +303,7 @@ export async function publishCompleteBatchWithStaging(
     }
   }
 
-  // 3. Ghi Manifest vào Staging
-  const stagingManifestKey = `${prefix}/staging/${finalBatchId}/${storeName}/manifest.json`;
-  await retryWithBackoff("Upload R2 staging manifest", envInt("R2_UPLOAD_MAX_ATTEMPTS", 5, 1, 10), async () => s3.send(
-    new PutObjectCommand({
-      Bucket: bucket,
-      Key: stagingManifestKey,
-      Body: JSON.stringify(
-        {
-          batchId: finalBatchId,
-          store: storeName,
-          reportDate: batchDate,
-          expectedFiles: 6,
-          completedAt: new Date().toISOString(),
-          files: manifestEntries,
-        },
-        null,
-        2,
-      ),
-      ContentType: "application/json",
-    }), { abortSignal: signal },
-  ));
-  console.log(`  [R2 STAGING] Đã ghi manifest: ${stagingManifestKey}`);
-
-  // 4. Ghi file chốt hạ _COMPLETE.json vào /input/
+  // Ghi file chốt hạ cuối cùng. Reader chỉ nhìn thấy batch sau bước này.
   const markerKey = `${prefix}/input/${batchDate.replace(/-/g, "")}/${storeName}/${finalBatchId}/_COMPLETE.json`;
   throwIfAborted(signal);
   await retryWithBackoff("Publish R2 complete marker", envInt("R2_UPLOAD_MAX_ATTEMPTS", 5, 1, 10), async () => s3.send(
@@ -1152,83 +1113,149 @@ async function autoCreateAndDownloadSearchTermReport(
     saveCheckpoint?.();
   }
 
-  // 1. Tự động vào trang /reports/new để tạo báo cáo mới có syncRunId duy nhất
+  // 1. Tự động vào trang tạo báo cáo mới có syncRunId duy nhất
   if (!canResumeRequest) {
-  console.log(`  [SEARCH TERM] Tự động tạo mới Search Term ${adType} với ID [${syncRunId}]...`);
-  const createUrl = `https://advertising.amazon.com/reports/new${entityParam}`;
-  await page.goto(createUrl, { waitUntil: "domcontentloaded" });
-  await page.waitForSelector("#urc_run_subscription_button, #report-settings-card-report-name-input", { timeout: 8000 }).catch(() => {});
+    console.log(`  [SEARCH TERM] Tự động tạo mới Search Term ${adType} với ID [${syncRunId}]...`);
+    const createUrl = `https://advertising.amazon.com/reports/new${entityParam}`;
+    await page.goto(createUrl, { waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(2500);
 
-  if (adType === "SB") {
-    const catBtn = await page.$("#report-configuration-form\\:report-category-control-component-0");
-    if (catBtn) {
-      await catBtn.click();
-      const sbOpt = await page.waitForSelector('[role="option"]:has-text("Sponsored Brands"), li:has-text("Sponsored Brands")', { timeout: 3000 }).catch(() => null);
-      if (sbOpt) {
-        await sbOpt.click();
-        await page.waitForTimeout(300);
+    const nameSelectors = [
+      "#report-settings-card-report-name-input",
+      'input[id*="report-settings-card"]',
+      'input[id*="report-name"]',
+      'input[data-testid*="report-name"]',
+      'input[name*="reportName"]',
+      'input[name*="report-name"]',
+      'input[aria-label*="Report name" i]',
+      'input[placeholder*="Report name" i]',
+    ];
+
+    // Nếu trang bị Amazon redirect về /reports hoặc form chưa mở, tìm và click nút "Create report"
+    let nameInput = await page.$(nameSelectors.join(", "));
+    if (!nameInput) {
+      const createBtnSelectors = [
+        'button[data-takt-id="storm-ui-button"][data-takt-feature*="urc-subscriptions-table-container"]',
+        'button[data-takt-feature*="urc-subscriptions-table-container"]',
+        'button[data-testid*="create-report"]',
+        'button:has-text("Create report")',
+        'a:has-text("Create report")',
+        'a[href*="/reports/new"]',
+      ];
+      for (const cSel of createBtnSelectors) {
+        const cBtn = await page.$(cSel);
+        if (cBtn && (await cBtn.isVisible().catch(() => false))) {
+          console.log(`  [SEARCH TERM] Phát hiện nút Create report, đang bấm để mở form...`);
+          await cBtn.click().catch(() => {});
+          await page.waitForTimeout(3000);
+          break;
+        }
       }
     }
-  }
 
-  const typeBtn = await page.$("#report-configuration-form\\:report-type-control-component-0");
-  if (typeBtn) {
-    const currentText = await typeBtn.innerText();
-    if (!/Search term/i.test(currentText)) {
-      await typeBtn.click();
-      const stOpt = await page.waitForSelector('[role="option"]:has-text("Search term"), li:has-text("Search term")', { timeout: 3000 }).catch(() => null);
-      if (stOpt) {
-        await stOpt.click();
-        await page.waitForTimeout(300);
-      }
+    // Chờ ô input tên báo cáo xuất hiện (tối đa 25s cho React SPA render)
+    if (!nameInput) {
+      nameInput = await page.waitForSelector(nameSelectors.join(", "), { timeout: 25000 }).catch(() => null);
     }
-  }
 
-  const dayRadio = await page.$("#time-units-day, input[value='DAILY'], label[for='time-units-day']");
-  if (dayRadio) {
-    await dayRadio.click().catch(() => page.evaluate((el: any) => el?.click(), dayRadio));
-    await page.waitForTimeout(300);
-  }
+    if (!nameInput) {
+      const currentUrl = page.url();
+      const bodySnippet = await page.evaluate(() => (document.body?.innerText || "").slice(0, 300).replace(/\s+/g, " "));
+      console.error(`  [SEARCH TERM LỖI] URL: ${currentUrl}`);
+      console.error(`  [SEARCH TERM LỖI] Body snippet: ${bodySnippet}`);
+      throw new Error(`Không tìm thấy ô tên report Search Term ${adType} tại [${currentUrl}]; không bấm Run để tránh tạo nhầm.`);
+    }
 
-  const nameInput = await page.$("#report-settings-card-report-name-input");
-  if (!nameInput) throw new Error(`Không tìm thấy ô tên report Search Term ${adType}; không bấm Run để tránh tạo nhầm.`);
-  await nameInput.click().catch(() => {});
-  await nameInput.fill(reportName);
-  await nameInput.dispatchEvent("input").catch(() => {});
-  await nameInput.dispatchEvent("change").catch(() => {});
-  const confirmedName = await nameInput.inputValue().catch(() => "");
-  if (!confirmedName.includes(syncRunId)) throw new Error(`Amazon chưa nhận tên report chứa ID ${syncRunId}.`);
-
-  // Tùy chọn 30 ngày nếu có dropdown Date Range
-  const dateRangeBtn = await page.$(
-    '#report-configuration-form\\:report-date-range-control-component-0, [id*="date-range"], button[data-testid*="date-range"]',
-  );
-  if (dateRangeBtn) {
-    const drText = await dateRangeBtn.innerText().catch(() => "");
-    if (!/30/i.test(drText)) {
-      await dateRangeBtn.click().catch(() => {});
-      const opt30 = await page.waitForSelector(
-        '[role="option"]:has-text("30 Days"), [role="option"]:has-text("Past 30 days"), [role="option"]:has-text("Last 30 days"), li:has-text("30 Days"), li:has-text("Past 30 days")',
-        { timeout: 2500 },
+    if (adType === "SB") {
+      const catBtn = await page.waitForSelector(
+        "#report-configuration-form\\:report-category-control-component-0, button[id*='report-category']",
+        { timeout: 5000 },
       ).catch(() => null);
-      if (opt30) {
-        await opt30.click().catch(() => {});
-        await page.waitForTimeout(300);
+      if (catBtn) {
+        await catBtn.click();
+        const sbOpt = await page.waitForSelector(
+          '[role="option"]:has-text("Sponsored Brands"), li:has-text("Sponsored Brands")',
+          { timeout: 3000 },
+        ).catch(() => null);
+        if (sbOpt) {
+          await sbOpt.click();
+          await page.waitForTimeout(500);
+        }
       }
     }
-  }
 
-  const runBtn = await page.$("#urc_run_subscription_button");
-  if (!runBtn) throw new Error(`Không tìm thấy nút Run report cho Search Term ${adType}.`);
-  await runBtn.click().catch(async () => {
-    await page.evaluate((el: any) => el?.click(), runBtn);
-  });
-  console.log(`  [SEARCH TERM] Đã bấm Run report cho Search Term ${adType} (${syncRunId})!`);
+    const typeBtn = await page.waitForSelector(
+      "#report-configuration-form\\:report-type-control-component-0, button[id*='report-type']",
+      { timeout: 5000 },
+    ).catch(() => null);
+    if (typeBtn) {
+      const currentText = await typeBtn.innerText().catch(() => "");
+      if (!/Search term/i.test(currentText)) {
+        await typeBtn.click();
+        const stOpt = await page.waitForSelector(
+          '[role="option"]:has-text("Search term"), li:has-text("Search term")',
+          { timeout: 3000 },
+        ).catch(() => null);
+        if (stOpt) {
+          await stOpt.click();
+          await page.waitForTimeout(500);
+        }
+      }
+    }
 
-  if (task) {
-    task.status = "AMAZON_PROCESSING";
-    saveCheckpoint?.();
-  }
+    const dayRadio = await page.$("#time-units-day, input[value='DAILY'], label[for='time-units-day']");
+    if (dayRadio) {
+      await dayRadio.click().catch(() => page.evaluate((el: any) => el?.click(), dayRadio));
+      await page.waitForTimeout(300);
+    }
+
+    await nameInput.click().catch(() => {});
+    await nameInput.fill("");
+    await nameInput.fill(reportName);
+    await nameInput.dispatchEvent("input").catch(() => {});
+    await nameInput.dispatchEvent("change").catch(() => {});
+    const confirmedName = await nameInput.inputValue().catch(() => "");
+    console.log(`  [SEARCH TERM] Đã điền tên report: "${confirmedName}"`);
+    if (!confirmedName.includes(syncRunId)) {
+      throw new Error(`Amazon chưa nhận tên report chứa ID ${syncRunId}.`);
+    }
+
+    // Tùy chọn 30 ngày nếu có dropdown Date Range
+    const dateRangeBtn = await page.$(
+      '#report-configuration-form\\:report-date-range-control-component-0, [id*="date-range"], button[data-testid*="date-range"]',
+    );
+    if (dateRangeBtn) {
+      const drText = await dateRangeBtn.innerText().catch(() => "");
+      if (!/30/i.test(drText)) {
+        await dateRangeBtn.click().catch(() => {});
+        const opt30 = await page.waitForSelector(
+          '[role="option"]:has-text("30 Days"), [role="option"]:has-text("Past 30 days"), [role="option"]:has-text("Last 30 days"), li:has-text("30 Days"), li:has-text("Past 30 days")',
+          { timeout: 2500 },
+        ).catch(() => null);
+        if (opt30) {
+          await opt30.click().catch(() => {});
+          await page.waitForTimeout(300);
+        }
+      }
+    }
+
+    const runSelectors = [
+      "#urc_run_subscription_button",
+      'button[id*="run_subscription"]',
+      'button:has-text("Run report")',
+      'button[data-testid*="run-report"]',
+    ];
+    const runBtn = await page.waitForSelector(runSelectors.join(", "), { timeout: 8000 }).catch(() => null);
+    if (!runBtn) throw new Error(`Không tìm thấy nút Run report cho Search Term ${adType}.`);
+    await runBtn.click().catch(async () => {
+      await page.evaluate((el: any) => el?.click(), runBtn);
+    });
+    console.log(`  [SEARCH TERM] ✅ Đã bấm Run report cho Search Term ${adType} (${syncRunId})!`);
+
+    if (task) {
+      task.status = "AMAZON_PROCESSING";
+      saveCheckpoint?.();
+    }
   } else {
     console.log(`  [SEARCH TERM] ♻️ Tiếp tục theo dõi report cũ ${adType} với ID [${syncRunId}], không tạo report trùng.`);
   }
@@ -1475,6 +1502,31 @@ async function autoCreateAndDownloadSearchTermReport(
   };
 }
 
+async function inspectWorkbookStreaming(filePath: string, headerRows = 0): Promise<{ sheetNames: string; headerText: string }> {
+  const reader = new ExcelJS.stream.xlsx.WorkbookReader(filePath, {
+    worksheets: "emit",
+    sharedStrings: "cache",
+    hyperlinks: "ignore",
+    styles: "ignore",
+    entries: "ignore",
+  });
+  const sheetNames: string[] = [];
+  let headerText = "";
+  for await (const worksheet of reader) {
+    sheetNames.push(String((worksheet as any).name || "").toLowerCase());
+    if (headerRows > 0 && sheetNames.length === 1) {
+      let rowsRead = 0;
+      for await (const row of worksheet) {
+        const values = row.values;
+        headerText += ` ${Array.isArray(values) ? values.map((value) => String(value ?? "")).join(" ") : String(values ?? "")}`;
+        rowsRead += 1;
+        if (rowsRead >= headerRows) break;
+      }
+    }
+  }
+  return { sheetNames: sheetNames.join(" "), headerText };
+}
+
 async function validateDownloadedBatch(files: DownloadedFileInfo[]): Promise<void> {
   const expected = new Set(["BULK_SP:30", "BULK_SB:30", "BULK_SP:7", "BULK_SB:7", "ST_SP:30", "ST_SB:30"]);
   const actual = new Set(files.map((file) => `${file.type}:${file.days}`));
@@ -1489,9 +1541,7 @@ async function validateDownloadedBatch(files: DownloadedFileInfo[]): Promise<voi
     if (!stat.isFile() || stat.size === 0) throw new Error(`File rỗng hoặc không hợp lệ: ${file.name}`);
     if (file.type.startsWith("BULK_")) {
       if (!file.name.toLowerCase().endsWith(".xlsx")) throw new Error(`Bulk phải là XLSX: ${file.name}`);
-      const workbook = new ExcelJS.Workbook();
-      await workbook.xlsx.readFile(file.path);
-      const sheetNames = workbook.worksheets.map((sheet) => sheet.name.toLowerCase()).join(" ");
+      const { sheetNames } = await inspectWorkbookStreaming(file.path);
       const expectedAdType = file.relativeSubdir;
       const valid = expectedAdType === "SP"
         ? /sponsored products|sp campaigns/.test(sheetNames)
@@ -1509,13 +1559,7 @@ async function validateDownloadedBatch(files: DownloadedFileInfo[]): Promise<voi
           fs.closeSync(fd);
         }
       } else if (file.name.toLowerCase().endsWith(".xlsx")) {
-        const workbook = new ExcelJS.Workbook();
-        await workbook.xlsx.readFile(file.path);
-        const sheet = workbook.worksheets[0];
-        for (let rowNumber = 1; rowNumber <= Math.min(10, sheet?.rowCount || 0); rowNumber++) {
-          const values = sheet.getRow(rowNumber).values;
-          headerText += ` ${Array.isArray(values) ? values.map((value) => String(value ?? "")).join(" ") : String(values ?? "")}`;
-        }
+        ({ headerText } = await inspectWorkbookStreaming(file.path, 10));
       } else {
         throw new Error(`Search Term phải là XLSX hoặc CSV: ${file.name}`);
       }

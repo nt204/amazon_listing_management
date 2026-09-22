@@ -43,6 +43,7 @@ import {
   replacePpcDataWithMock,
   upsertPpcSearchTerms,
   upsertPpcPerformance,
+  upsertPpcSnapshot,
   hasSuccessfulPpcSync,
   ingestPpcPerformanceStream,
 } from "./repository";
@@ -835,7 +836,13 @@ export async function resetPpcToMockData(scope: DataScope) {
   });
 }
 
-export async function syncPpcReportsFromR2(scope: DataScope) {
+export interface R2SyncTarget {
+  batchId: string;
+  batchDate: string;
+  storeNames: string[];
+}
+
+export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarget) {
   const accountId = process.env.R2_ACCOUNT_ID;
   const accessKeyId = process.env.R2_ACCESS_KEY_ID;
   const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
@@ -851,17 +858,34 @@ export async function syncPpcReportsFromR2(scope: DataScope) {
     credentials: { accessKeyId, secretAccessKey },
   });
   const objects: Array<{ Key?: string; ETag?: string; Size?: number; LastModified?: Date }> = [];
-  let continuationToken: string | undefined;
-  do {
-    const page = await s3.send(new ListObjectsV2Command({
-      Bucket: bucket,
-      Prefix: prefix,
-      ContinuationToken: continuationToken,
-      MaxKeys: 1_000,
-    }));
-    objects.push(...(page.Contents || []));
-    continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
-  } while (continuationToken);
+  const listPrefixes: string[] = [];
+  if (target) {
+    if (!/^[A-Za-z0-9_.-]{1,120}$/.test(target.batchId)) throw new PpcInputError("batchId không hợp lệ.");
+    const batchDate = target.batchDate.replace(/-/g, "");
+    if (!/^\d{8}$/.test(batchDate)) throw new PpcInputError("batchDate phải có dạng YYYY-MM-DD hoặc YYYYMMDD.");
+    const stores = [...new Set(target.storeNames.map(cleanStoreName))];
+    if (!stores.length || stores.length > 50) throw new PpcInputError("Danh sách store sync không hợp lệ.");
+    for (const storeName of stores) {
+      listPrefixes.push(`${prefix}input/${batchDate}/${storeName}/${target.batchId}/`);
+    }
+  } else {
+    // Tương thích thao tác sync thủ công cũ. Worker luôn truyền target để tránh
+    // quét toàn bộ lịch sử R2.
+    listPrefixes.push(prefix);
+  }
+  for (const listPrefix of listPrefixes) {
+    let continuationToken: string | undefined;
+    do {
+      const page = await s3.send(new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: listPrefix,
+        ContinuationToken: continuationToken,
+        MaxKeys: target ? 20 : 1_000,
+      }));
+      objects.push(...(page.Contents || []));
+      continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+    } while (continuationToken);
+  }
 
   // A marker is the commit record for one store/date batch. Read its exact key
   // list so repeated runs on the same day cannot combine old and new reports.
@@ -1018,20 +1042,12 @@ export async function syncPpcReportsFromR2(scope: DataScope) {
       continue;
     }
 
-    if (parsedSearchTerms.length) {
-      const mergedRows = parsedSearchTerms.flatMap((item) => item.rows);
-      const saved = await upsertPpcSearchTerms(scope, storeName, mergedRows, { replaceExisting: true });
-      totalParsed += mergedRows.length;
-      totalNew += saved.inserted;
-      totalUpdated += saved.updated;
-    }
-    if (parsedPerformance.length) {
-      const mergedRows = parsedPerformance.flatMap((item) => item.rows);
-      const saved = await upsertPpcPerformance(scope, storeName, mergedRows, { replaceExisting: true });
-      totalParsed += mergedRows.length;
-      totalNew += saved.inserted;
-      totalUpdated += saved.updated;
-    }
+    const mergedSearchTerms = parsedSearchTerms.flatMap((item) => item.rows);
+    const mergedPerformance = parsedPerformance.flatMap((item) => item.rows);
+    const saved = await upsertPpcSnapshot(scope, storeName, mergedSearchTerms, mergedPerformance);
+    totalParsed += mergedSearchTerms.length + mergedPerformance.length;
+    totalNew += saved.searchTerms.inserted + saved.performance.inserted;
+    totalUpdated += saved.searchTerms.updated + saved.performance.updated;
     const processed = [...parsedSearchTerms, ...parsedPerformance];
     filesProcessed += processed.length;
     for (const item of processed) {

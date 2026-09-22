@@ -9,6 +9,8 @@ LOG_FILE="$LOG_DIR/mac-crawler-worker.log"
 
 mkdir -p "$LOG_DIR"
 
+bash "$SCRIPT_DIR/maintenance.sh"
+
 if [ -f "$SCRIPT_DIR/config.env" ]; then
   set -a
   source "$SCRIPT_DIR/config.env"

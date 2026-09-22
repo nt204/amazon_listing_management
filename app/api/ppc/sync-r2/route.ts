@@ -9,7 +9,18 @@ export async function POST(request: Request) {
   try {
     const actor = authorize(request, "write");
     await enforceRateLimit(actor, "ppc-r2-sync", 3, 60);
-    const result = await syncPpcReportsFromR2(dataScope(actor));
+    const body = await request.json().catch(() => ({})) as {
+      batchId?: unknown;
+      batchDate?: unknown;
+      storeNames?: unknown;
+    };
+    const hasTarget = body.batchId != null || body.batchDate != null || body.storeNames != null;
+    const target = hasTarget ? {
+      batchId: String(body.batchId || ""),
+      batchDate: String(body.batchDate || ""),
+      storeNames: Array.isArray(body.storeNames) ? body.storeNames.map(String) : [],
+    } : undefined;
+    const result = await syncPpcReportsFromR2(dataScope(actor), target);
     const failureSuffix = result.failed ? ` Có ${result.failed} file lỗi.` : "";
     return Response.json({
       success: result.failed === 0,
