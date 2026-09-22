@@ -1515,8 +1515,12 @@ export async function exportBulkFromQueue(
   const exportItemsData: Array<{ actionId: string; entityType: string; op: string; row: any }> = [];
 
   for (const act of actions) {
+    const adType = (act.campaign_type || "SP").toUpperCase();
     const isProduct = act.entity_type === "PRODUCT" || (act.target_keyword && (act.target_keyword.includes("asin=") || act.target_keyword.includes("category=")));
-    const entity = isProduct ? "Product Targeting" : (act.action_type === "UPDATE_BUDGET" ? "Campaign" : "Keyword");
+    const entity = adType === "SD"
+      ? (act.action_type === "UPDATE_BUDGET" ? "Campaign" : "Contextual Targeting")
+      : (isProduct ? "Product Targeting" : (act.action_type === "UPDATE_BUDGET" ? "Campaign" : "Keyword"));
+    const product = adType === "SB" ? "Sponsored Brands" : (adType === "SD" ? "Sponsored Display" : "Sponsored Products");
     const op = "Update";
     if (act.action_type === "UPDATE_BID" || act.action_type === "BID_DECREASE" || act.action_type === "BID_INCREASE") {
       updateBidCount++;
@@ -1531,7 +1535,7 @@ export async function exportBulkFromQueue(
       entityType: entity,
       op,
       row: {
-        product: "Sponsored Products",
+        product,
         entity,
         operation: op,
         campaignId: act.campaign_id,
@@ -1547,20 +1551,55 @@ export async function exportBulkFromQueue(
     });
   }
 
+  // 1. Lấy Store Name để tránh nhầm lẫn tài khoản
+  const storeRows = await sql<{ id: string; name: string }[]>`
+    SELECT id, name FROM ppc_stores WHERE id = ${storeId} LIMIT 1
+  `;
+  const cleanStore = (storeRows[0]?.name || "STORE")
+    .replace(/[/\\?%*:|"<>]/g, "_")
+    .trim()
+    .replace(/\s+/g, "_");
+
+  // 2. Xác định Ad Type: SP, SB, SD hoặc MIXED
+  const adTypes = Array.from(new Set(actions.map((a: any) => (a.campaign_type || "SP").toUpperCase())));
+  const adTypeLabel = adTypes.length === 1 ? adTypes[0] : "MIXED";
+
+  // 3. Xác định Scope (Target / Phạm vi):
+  const distinctCamps = Array.from(new Set(actions.map((a: any) => a.campaign_name).filter(Boolean)));
+  const distinctSkus = Array.from(new Set(actions.map((a: any) => a.sku).filter(Boolean)));
+  let scopeLabel: string;
+  if (distinctCamps.length === 1) {
+    scopeLabel = String(distinctCamps[0])
+      .replace(/[/\\?%*:|"<>]/g, "_")
+      .trim()
+      .replace(/\s+/g, "_")
+      .slice(0, 35)
+      .replace(/_+$/, "");
+  } else if (distinctSkus.length === 1) {
+    scopeLabel = `SKU_${String(distinctSkus[0]).replace(/[/\\?%*:|"<>]/g, "_").trim().slice(0, 20)}`;
+  } else {
+    scopeLabel = `${distinctCamps.length}Camps`;
+  }
+
+  // 4. Xác định Action Type Summary:
+  let actionLabel: string;
+  if (updateBidCount > 0 && pauseCount === 0 && budgetCount === 0) {
+    actionLabel = "BidUpdate";
+  } else if (pauseCount > 0 && updateBidCount === 0 && budgetCount === 0) {
+    actionLabel = "Pause";
+  } else if (budgetCount > 0 && updateBidCount === 0 && pauseCount === 0) {
+    actionLabel = "Budget";
+  } else {
+    actionLabel = `${actions.length}Actions`;
+  }
+
+  // 5. Timestamp YYYYMMDD_HHMMSS
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
   const timeStr = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 
-  // Format: Upload + tên camp + time
-  const rawCampName = actions.find((a: any) => a.campaign_name)?.campaign_name || actions[0]?.sku || "AmazonAds";
-  const cleanCamp = rawCampName
-    .replace(/[/\\?%*:|"<>]/g, "_")
-    .trim()
-    .replace(/\s+/g, "_")
-    .slice(0, 70)
-    .replace(/_+$/, "");
-
-  const fileName = `Upload_${cleanCamp}_${timeStr}.xlsx`;
+  // Cấu trúc chuẩn: Upload_{STORE}_{AD_TYPE}_{SCOPE}_{ACTION_TYPE}_{TIMESTAMP}.xlsx
+  const fileName = `Upload_${cleanStore}_${adTypeLabel}_${scopeLabel}_${actionLabel}_${timeStr}.xlsx`;
 
   await sql.begin(async (tx: any) => {
     const bulkInsert = await tx`

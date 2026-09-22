@@ -562,3 +562,114 @@ print('INTEGRITY_OK')
   assert.equal(openpyxlCheck, "INTEGRITY_OK");
 });
 
+test("Bulksheet Export correctly routes and maps mixed SP, SB, and SD campaigns to their respective Amazon sheets", async () => {
+  const { spawn } = await import("node:child_process");
+  const path = (await import("node:path")).default;
+  const fs = (await import("node:fs")).default;
+
+  const pythonScript = path.join(process.cwd(), "scripts", "export_amazon_bulksheet.py");
+  const mixedActions = [
+    {
+      action_type: "UPDATE_BID",
+      campaign_type: "SP",
+      entity_type: "KEYWORD",
+      campaign_id: "11111111111111",
+      ad_group_id: "11111111111112",
+      target_id: "11111111111113",
+      campaign_name: "GOL1006YG01 SP03 KW Exact",
+      ad_group_name: "GOL1006YG01 SP03 KW Exact",
+      target_keyword: "yoga ornaments",
+      match_type: "exact",
+      final_value: 0.95,
+    },
+    {
+      action_type: "UPDATE_BID",
+      campaign_type: "SB",
+      entity_type: "KEYWORD",
+      campaign_id: "22222222222221",
+      ad_group_id: "22222222222222",
+      target_id: "22222222222223",
+      campaign_name: "OHN240802WF SB05 VIDEO Quynh Phrase",
+      target_keyword: "gifts for wife",
+      match_type: "phrase",
+      final_value: 1.35,
+    },
+    {
+      action_type: "UPDATE_BID",
+      campaign_type: "SD",
+      entity_type: "PRODUCT",
+      campaign_id: "33333333333331",
+      ad_group_id: "33333333333332",
+      target_id: "33333333333333",
+      campaign_name: "GOL1006YG01 SD01 Contextual",
+      ad_group_name: "Contextual Targets",
+      target_keyword: "asin=\"B07XYZ9999\"",
+      final_value: 0.70,
+    },
+  ];
+
+  const buffer = await new Promise<Buffer>((resolve, reject) => {
+    const proc = spawn("python3", [pythonScript], { stdio: ["pipe", "pipe", "pipe"] });
+    const chunks: Buffer[] = [];
+    const errChunks: Buffer[] = [];
+    proc.stdout.on("data", (c) => chunks.push(Buffer.from(c)));
+    proc.stderr.on("data", (c) => errChunks.push(Buffer.from(c)));
+    proc.on("close", (code) => {
+      if (code !== 0) return reject(new Error(Buffer.concat(errChunks).toString("utf-8")));
+      resolve(Buffer.concat(chunks));
+    });
+    proc.stdin.write(JSON.stringify(mixedActions));
+    proc.stdin.end();
+  });
+
+  const tempTestPath = path.join(process.cwd(), "scratch", "test_mixed_integrity.xlsx");
+  fs.writeFileSync(tempTestPath, buffer);
+
+  const checkResult = await new Promise<string>((resolve, reject) => {
+    const p = spawn("python3", ["-c", `
+import openpyxl
+wb = openpyxl.load_workbook('${tempTestPath}')
+
+# 1. SP Sheet Checks
+ws_sp = wb['Sponsored Products Campaigns']
+assert ws_sp.max_row == 2, f"Expected 2 rows in SP sheet, got {ws_sp.max_row}"
+assert ws_sp.cell(2, 1).value == 'Sponsored Products'
+assert ws_sp.cell(2, 2).value == 'Keyword'
+assert str(ws_sp.cell(2, 4).value) == '11111111111111'
+assert str(ws_sp.cell(2, 8).value) == '11111111111113' # Keyword ID
+assert float(ws_sp.cell(2, 19).value) == 0.95 # Bid
+assert ws_sp.cell(2, 20).value == 'yoga ornaments' # Keyword Text
+
+# 2. SB Sheet Checks
+ws_sb = wb['Sponsored Brands Campaigns']
+assert ws_sb.max_row == 2, f"Expected 2 rows in SB sheet, got {ws_sb.max_row}"
+assert ws_sb.cell(2, 1).value == 'Sponsored Brands'
+assert ws_sb.cell(2, 2).value == 'Keyword'
+assert str(ws_sb.cell(2, 4).value) == '22222222222221'
+assert str(ws_sb.cell(2, 8).value) == '22222222222223' # Keyword ID
+assert float(ws_sb.cell(2, 18).value) == 1.35 # Bid in SB
+assert ws_sb.cell(2, 19).value == 'gifts for wife' # Keyword Text in SB
+
+# 3. SD Sheet Checks
+ws_sd = wb['Sponsored Display Campaigns']
+assert ws_sd.max_row == 2, f"Expected 2 rows in SD sheet, got {ws_sd.max_row}"
+assert ws_sd.cell(2, 1).value == 'Sponsored Display'
+assert ws_sd.cell(2, 2).value == 'Contextual Targeting'
+assert str(ws_sd.cell(2, 4).value) == '33333333333331'
+assert str(ws_sd.cell(2, 8).value) == '33333333333333' # Targeting ID in SD
+assert float(ws_sd.cell(2, 19).value) == 0.70 # Bid in SD
+assert ws_sd.cell(2, 22).value == 'asin="B07XYZ9999"' # Targeting Expression in SD
+
+print('MIXED_INTEGRITY_OK')
+    `]);
+    let out = "";
+    let err = "";
+    p.stdout.on("data", (d) => out += d);
+    p.stderr.on("data", (d) => err += d);
+    p.on("close", (code) => code === 0 ? resolve(out.trim()) : reject(new Error("Python check failed: " + err)));
+  });
+
+  assert.equal(checkResult, "MIXED_INTEGRITY_OK");
+});
+
+

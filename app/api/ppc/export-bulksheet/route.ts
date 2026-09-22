@@ -21,18 +21,45 @@ function exportTimestamp(date: Date): string {
 }
 
 function exportFileName(recommendations: PpcRecommendation[], date = new Date()): string {
-  const campaignNames = Array.from(new Set(
-    recommendations.map((recommendation) => recommendation.campaignName?.trim()).filter(Boolean),
-  )) as string[];
-  const campaignLabel = campaignNames.length > 1
-    ? `Multi Campaigns (${campaignNames.length})`
-    : campaignNames[0] || "Unknown Campaign";
-  const safeCampaignLabel = campaignLabel
-    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ")
-    .replace(/\s+/g, " ")
+  const storeName = (recommendations[0]?.storeName || "STORE")
+    .replace(/[/\\?%*:|"<>]/g, "_")
     .trim()
-    .slice(0, 120) || "Unknown Campaign";
-  return `Update - ${safeCampaignLabel} - ${exportTimestamp(date)}.xlsx`;
+    .replace(/\s+/g, "_");
+
+  const adTypes = Array.from(new Set(recommendations.map((r) => (r.adType || "SP").toUpperCase())));
+  const adTypeLabel = adTypes.length === 1 ? adTypes[0] : "MIXED";
+
+  const campaignNames = Array.from(new Set(
+    recommendations.map((r) => r.campaignName?.trim()).filter(Boolean),
+  )) as string[];
+  const distinctSkus = Array.from(new Set(
+    recommendations.map((r) => r.sku?.trim()).filter(Boolean),
+  )) as string[];
+
+  let scopeLabel: string;
+  if (campaignNames.length === 1) {
+    scopeLabel = campaignNames[0]
+      .replace(/[/\\?%*:|"<>]/g, "_")
+      .trim()
+      .replace(/\s+/g, "_")
+      .slice(0, 35)
+      .replace(/_+$/, "");
+  } else if (distinctSkus.length === 1) {
+    scopeLabel = `SKU_${distinctSkus[0].replace(/[/\\?%*:|"<>]/g, "_").trim().slice(0, 20)}`;
+  } else {
+    scopeLabel = `${campaignNames.length}Camps`;
+  }
+
+  const recTypes = new Set(recommendations.map((r) => r.recType));
+  let actionLabel = `${recommendations.length}Actions`;
+  if (recTypes.size === 1) {
+    const only = Array.from(recTypes)[0];
+    if (only === "BID_DECREASE" || only === "BID_INCREASE") actionLabel = "BidUpdate";
+    else if (only === "PAUSE_TARGET") actionLabel = "Pause";
+    else if (only === "UPDATE_BUDGET") actionLabel = "Budget";
+  }
+
+  return `Upload_${storeName}_${adTypeLabel}_${scopeLabel}_${actionLabel}_${exportTimestamp(date)}.xlsx`;
 }
 
 function contentDisposition(fileName: string): string {

@@ -70,7 +70,7 @@ export function detectFileType(fileName: string): ManagedPpcFile["fileType"] {
   const lower = fileName.toLowerCase();
   const isSearchTerm = lower.includes("search") || lower.includes("term") || lower.includes("str");
   const isSb = lower.includes("sb") || lower.includes("brand");
-  const isBulkExport = lower.includes("bulk_export") || lower.includes("bulksheet_update");
+  const isBulkExport = lower.includes("bulk_export") || lower.includes("bulksheet_update") || lower.startsWith("upload_");
 
   if (isBulkExport) return "BULK_EXPORT";
   if (isSearchTerm) return isSb ? "SEARCH_TERM_SB" : "SEARCH_TERM_SP";
