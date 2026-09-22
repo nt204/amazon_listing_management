@@ -1120,20 +1120,33 @@ async function autoCreateAndDownloadSearchTermReport(
   await page.waitForTimeout(3000);
 
   const existingDownloadUrl = await page.evaluate((args: { targetId: string; adType: string }) => {
-    const allRowEls = Array.from(document.querySelectorAll("div.ag-row, tr, [role='row']"));
-    const adTypeLabel = args.adType === "SB" ? "Sponsored Brands" : "Sponsored Products";
+    const allRowEls = Array.from(document.querySelectorAll("div.ag-row[row-index], tr[row-index], table tbody tr"));
+    const rowIndexMap = new Map<string, { texts: string[]; href: string | null }>();
+
     for (const r of allRowEls) {
-      const text = ((r as HTMLElement).innerText || "").trim();
-      const hasSearchTerm = /Search Term|Search_Term/i.test(text);
-      const hasAdType = text.includes(args.adType) || text.includes(adTypeLabel);
-      if (hasSearchTerm && hasAdType) {
-        const link = r.querySelector<HTMLAnchorElement | HTMLButtonElement>(
-          "a[data-takt-id='storm-ui-link'], a[href*='download-report'], a[href*='download'], a[href*='export'], button:has-text('Download')",
-        );
-        if (link) {
-          const isCompleted = /completed|success|downloadable|hoàn thành/i.test(text) || (link as HTMLAnchorElement).href;
-          if (isCompleted && (link as HTMLAnchorElement).href) return (link as HTMLAnchorElement).href;
-        }
+      const idx = r.getAttribute("row-index") || r.getAttribute("aria-rowindex") || String(Math.random());
+      if (!rowIndexMap.has(idx)) {
+        rowIndexMap.set(idx, { texts: [], href: null });
+      }
+      const entry = rowIndexMap.get(idx)!;
+      const txt = ((r as HTMLElement).innerText || "").trim();
+      if (txt) entry.texts.push(txt);
+
+      const link = r.querySelector<HTMLAnchorElement>(
+        "a[data-takt-id='storm-ui-link'], a[href*='download-report'], a[href*='download'], a[href*='export']"
+      );
+      if (link?.href && !entry.href) {
+        entry.href = link.href.startsWith("http") ? link.href : (location.origin + link.href);
+      }
+    }
+
+    const adTypeLabel = args.adType === "SB" ? "Sponsored Brands" : "Sponsored Products";
+    for (const [, entry] of rowIndexMap.entries()) {
+      const fullText = entry.texts.join(" ");
+      const hasSearchTerm = /search\s*term/i.test(fullText);
+      const hasAdType = fullText.includes(args.adType) || fullText.includes(adTypeLabel);
+      if (hasSearchTerm && hasAdType && entry.href) {
+        return entry.href;
       }
     }
     return null;
@@ -1306,7 +1319,7 @@ async function autoCreateAndDownloadSearchTermReport(
           }
 
           const link = r.querySelector<HTMLAnchorElement | HTMLButtonElement>(
-            "a[data-takt-id='storm-ui-link'], a[href*='download-report'], a[href*='download'], a[href*='export'], button[data-takt-id*='download'], button:has-text('Download')",
+            "a[data-takt-id='storm-ui-link'], a[href*='download-report'], a[href*='download'], a[href*='export'], button[data-takt-id*='download'], button[aria-label*='download' i]"
           );
           if (link && !entry.href) {
             if ((link as HTMLAnchorElement).href) {
@@ -1441,15 +1454,17 @@ async function autoCreateAndDownloadSearchTermReport(
           await directLinkEl.click().catch(async () => {
             await page.evaluate((el: any) => el?.click(), directLinkEl);
           });
-        } else {
-          await page.evaluate((url: string) => {
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = "";
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-          }, downloadUrl);
+        } else if (downloadUrl) {
+          await page.goto(downloadUrl, { waitUntil: "commit" }).catch(async () => {
+            await page.evaluate((url: string) => {
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "";
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+            }, downloadUrl);
+          });
         }
       })(),
     ]);
