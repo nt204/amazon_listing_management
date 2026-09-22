@@ -52,6 +52,15 @@ async function main() {
         console.error("[PPC Ingestion Worker] Cannot persist failure:", updateError));
     } finally {
       clearInterval(heartbeat);
+      if (typeof global.gc === "function") {
+        try {
+          global.gc();
+          const memMb = (process.memoryUsage().heapUsed / (1024 * 1024)).toFixed(1);
+          console.log(`[PPC Ingestion Worker] Đã dọn dẹp RAM (Heap hiện tại: ${memMb} MB)`);
+        } catch {
+          // ignore
+        }
+      }
     }
   }
   console.log("[PPC Ingestion Worker] Stopped");

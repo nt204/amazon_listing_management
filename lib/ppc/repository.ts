@@ -1785,3 +1785,59 @@ export async function getPpcSearchTermSummaryFromDb(
     alertRows: alertTermsRows.map(mapSearchTerm),
   };
 }
+
+export interface PpcCleanupResult {
+  deletedPerformance: number;
+  deletedSearchTerms: number;
+  deletedDailySummary: number;
+  deletedJobs: number;
+  deletedLogs: number;
+}
+
+export async function cleanupPpcHistoricalData(
+  _scope?: DataScope,
+  retentionDays = 60,
+): Promise<PpcCleanupResult> {
+  const sql = await getDatabaseClient();
+  const safeDays = Math.max(30, retentionDays);
+
+  console.log(`[PPC Cleanup] Bắt đầu kiểm tra và dọn dẹp dữ liệu cũ hơn ${safeDays} ngày...`);
+
+  try {
+    const [perfRes, searchRes, summaryRes, jobRes, logRes] = await Promise.all([
+      sql`DELETE FROM ppc_performance_facts WHERE snapshot_date < CURRENT_DATE - ${safeDays} * INTERVAL '1 day' RETURNING id`,
+      sql`DELETE FROM ppc_search_terms WHERE report_date < CURRENT_DATE - ${safeDays} * INTERVAL '1 day' RETURNING id`,
+      sql`DELETE FROM ppc_daily_summary WHERE report_date < CURRENT_DATE - ${safeDays} * INTERVAL '1 day' RETURNING id`,
+      sql`DELETE FROM ppc_ingestion_jobs WHERE status IN ('COMPLETED', 'FAILED', 'CANCELLED') AND updated_at < NOW() - INTERVAL '30 days' RETURNING id`,
+      sql`DELETE FROM ppc_sync_logs WHERE created_at < NOW() - INTERVAL '30 days' RETURNING id`,
+    ]);
+
+    const result: PpcCleanupResult = {
+      deletedPerformance: perfRes.length,
+      deletedSearchTerms: searchRes.length,
+      deletedDailySummary: summaryRes.length,
+      deletedJobs: jobRes.length,
+      deletedLogs: logRes.length,
+    };
+
+    if (result.deletedPerformance > 0 || result.deletedSearchTerms > 0 || result.deletedJobs > 0) {
+      console.log(
+        `[PPC Cleanup] ✓ Hoàn tất: Xóa ${result.deletedPerformance.toLocaleString()} dòng performance, ${result.deletedSearchTerms.toLocaleString()} dòng search terms, ${result.deletedJobs} jobs cũ.`,
+      );
+    } else {
+      console.log("[PPC Cleanup] ✓ Database sạch sẽ, không có bản ghi nào quá hạn cần xóa.");
+    }
+
+    return result;
+  } catch (err) {
+    console.warn("[PPC Cleanup] Lỗi khi dọn dẹp:", err);
+    return {
+      deletedPerformance: 0,
+      deletedSearchTerms: 0,
+      deletedDailySummary: 0,
+      deletedJobs: 0,
+      deletedLogs: 0,
+    };
+  }
+}
+

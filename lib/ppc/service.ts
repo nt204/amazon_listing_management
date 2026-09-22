@@ -46,6 +46,7 @@ import {
   upsertPpcSnapshot,
   hasSuccessfulPpcSync,
   ingestPpcPerformanceStream,
+  cleanupPpcHistoricalData,
 } from "./repository";
 import { getCommonTargetRecommendations } from "./sku-architecture-service";
 import type {
@@ -1167,6 +1168,11 @@ export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarg
       });
     }
   }
+
+  // Tự động dọn dẹp các bản ghi lịch sử cũ hơn 60 ngày & log cũ hơn 30 ngày
+  await cleanupPpcHistoricalData(scope, 60).catch((err) => {
+    console.warn("[R2 Sync] Bỏ qua lỗi dọn dẹp dữ liệu cũ:", err);
+  });
 
   return {
     filesFound: reportFiles.length,
