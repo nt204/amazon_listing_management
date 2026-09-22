@@ -48,7 +48,7 @@ def main():
     r2_prefix = os.environ.get("PPC_R2_PREFIX", "ppc-reports").strip("/")
     default_store = os.environ.get("STORE_NAME", "HSOSTORE")
 
-    safe_base_dir = Path.home() / "Library" / "Application Support" / "AmazonPpcCrawler" / "downloads"
+    safe_base_dir = Path.home() / "AmazonPpcCrawler" / "downloads"
     base_dir_raw = os.environ.get("DOWNLOAD_BASE_DIR", str(safe_base_dir))
     base_dir = Path(os.path.expandvars(os.path.expanduser(base_dir_raw))).resolve()
     protected_dirs = [Path.home() / "Downloads", Path.home() / "Desktop"]

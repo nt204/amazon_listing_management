@@ -131,8 +131,8 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}));
     const sql = await getDatabaseClient();
 
-    // 1. Hủy Job cụ thể hoặc hủy toàn bộ job dở dang
-    if (action === "cancel" || action === "reset" || action === "cancel_all") {
+    // 1. Hủy Job cụ thể hoặc hủy toàn bộ job dở dang / dọn dẹp lịch sử
+    if (action === "cancel" || action === "reset" || action === "cancel_all" || action === "clear_history") {
       const jobId = body?.jobId;
       if (jobId && action === "cancel") {
         const rows = await sql`
@@ -148,6 +148,14 @@ export async function POST(request: Request) {
         `;
         if (rows.length === 0) throw new ApiError("Không tìm thấy job hoặc job đã kết thúc.", 404);
         return Response.json({ success: true, message: "Đã hủy job thành công.", job: rows[0] });
+      }
+
+      if (action === "clear_history") {
+        await sql`
+          DELETE FROM ppc_sync_jobs
+          WHERE team_id = ${actor.teamId} AND status IN ('CANCELLED', 'FAILED', 'COMPLETED')
+        `;
+        return Response.json({ success: true, message: "Đã dọn dẹp lịch sử lệnh thành công." });
       }
 
       // Hủy tất cả job dở dang

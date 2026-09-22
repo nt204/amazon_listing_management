@@ -106,7 +106,7 @@ function testDirWritable(dirPath: string): boolean {
   }
 }
 
-const safeDownloadDir = path.join(os.homedir(), "Library", "Application Support", "AmazonPpcCrawler", "downloads");
+const safeDownloadDir = path.join(os.homedir(), "AmazonPpcCrawler", "downloads");
 const configuredDownloadDir = (process.env.DOWNLOAD_BASE_DIR || safeDownloadDir)
   .replace("$HOME", os.homedir()).replace("~", os.homedir());
 const BASE_DOWNLOAD_DIR = testDirWritable(configuredDownloadDir) ? configuredDownloadDir : safeDownloadDir;

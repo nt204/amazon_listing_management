@@ -12,6 +12,7 @@ import {
   StopCircle,
   PlayCircle,
   FileText,
+  Trash,
 } from "@phosphor-icons/react";
 
 interface ReportTaskItem {
@@ -163,6 +164,26 @@ export function PpcRemoteCrawlerModal({
       await fetchJobs();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Không thể xóa job.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleClearHistory = async () => {
+    if (!confirm("Bạn có chắc chắn muốn dọn sạch toàn bộ lịch sử các lệnh cũ không?")) return;
+    setActionLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/ppc/crawler/job?action=clear_history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không thể dọn dẹp lịch sử.");
+      await fetchJobs();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Không thể dọn dẹp lịch sử.");
     } finally {
       setActionLoading(false);
     }
@@ -322,6 +343,28 @@ export function PpcRemoteCrawlerModal({
                 </>
               )}
             </button>
+
+            <div className="flex items-center justify-between pt-1 border-t border-slate-200/60 text-xs">
+              <button
+                type="button"
+                onClick={handleResetAllJobs}
+                disabled={actionLoading || isLoading}
+                className="text-[11px] font-bold text-rose-600 hover:text-rose-700 hover:underline flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+              >
+                <Trash size={13} weight="bold" />
+                <span>Xóa hết job dở dang</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleStartCrawl(true)}
+                disabled={actionLoading || isLoading}
+                className="text-[11px] font-bold text-indigo-600 hover:text-indigo-700 hover:underline flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+              >
+                <Lightning size={13} weight="fill" />
+                <span>Cưỡng chế tạo lượt mới (Force)</span>
+              </button>
+            </div>
           </div>
 
           {/* Tiến độ Job đang chạy */}
@@ -466,9 +509,21 @@ export function PpcRemoteCrawlerModal({
           {/* Lịch sử lệnh gần đây */}
           {historyJobs.length > 0 && (
             <div className="space-y-2">
-              <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400 block">
-                Lịch sử lệnh gần đây
-              </span>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400 block">
+                  Lịch sử lệnh gần đây
+                </span>
+                <button
+                  type="button"
+                  onClick={handleClearHistory}
+                  disabled={actionLoading || isLoading}
+                  className="text-[11px] font-bold text-slate-400 hover:text-rose-600 hover:underline flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+                  title="Dọn sạch danh sách lịch sử lệnh"
+                >
+                  <Trash size={12} weight="bold" />
+                  <span>Xóa lịch sử</span>
+                </button>
+              </div>
               <div className="max-h-36 overflow-y-auto space-y-1.5 divide-y divide-slate-100 border border-slate-100 rounded-xl p-2 bg-slate-50/30">
                 {historyJobs.slice(0, 4).map((job) => (
                   <div key={job.id} className="pt-1.5 first:pt-0 flex items-center justify-between text-xs">

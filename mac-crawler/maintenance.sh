@@ -3,6 +3,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -f "$SCRIPT_DIR/config.env" ]; then
+  # Sửa cấu hình cũ trước khi source; giá trị "Application Support" không quote
+  # sẽ khiến bash hiểu phần sau dấu cách là một command và làm worker thoát.
+  if grep -qE '^DOWNLOAD_BASE_DIR=.*(Downloads|Desktop|Application Support)' "$SCRIPT_DIR/config.env"; then
+    sed -i '' 's|^DOWNLOAD_BASE_DIR=.*|DOWNLOAD_BASE_DIR=$HOME/AmazonPpcCrawler/downloads|' "$SCRIPT_DIR/config.env"
+    echo "[CONFIG] Đã sửa DOWNLOAD_BASE_DIR thành \$HOME/AmazonPpcCrawler/downloads"
+  fi
   set -a
   source "$SCRIPT_DIR/config.env"
   set +a
@@ -14,7 +20,7 @@ LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-14}"
 LOCAL_RETENTION_DAYS="${LOCAL_RETENTION_DAYS:-14}"
 CHECKPOINT_RETENTION_DAYS="${CHECKPOINT_RETENTION_DAYS:-30}"
 MIN_FREE_DISK_GB="${MIN_FREE_DISK_GB:-10}"
-SAFE_DOWNLOAD_ROOT="$HOME/Library/Application Support/AmazonPpcCrawler/downloads"
+SAFE_DOWNLOAD_ROOT="$HOME/AmazonPpcCrawler/downloads"
 DOWNLOAD_ROOT="${DOWNLOAD_BASE_DIR:-$SAFE_DOWNLOAD_ROOT}"
 DOWNLOAD_ROOT="${DOWNLOAD_ROOT/\$HOME/$HOME}"
 DOWNLOAD_ROOT="${DOWNLOAD_ROOT/#\~/$HOME}"

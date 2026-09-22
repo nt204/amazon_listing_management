@@ -11,6 +11,12 @@ if [ ! -f "$SCRIPT_DIR/config.env" ]; then
   exit 1
 fi
 
+# Sửa cấu hình path cũ trước khi source để tránh lỗi bash tại dấu cách.
+if grep -qE '^DOWNLOAD_BASE_DIR=.*(Downloads|Desktop|Application Support)' "$SCRIPT_DIR/config.env"; then
+  sed -i '' 's|^DOWNLOAD_BASE_DIR=.*|DOWNLOAD_BASE_DIR=$HOME/AmazonPpcCrawler/downloads|' "$SCRIPT_DIR/config.env"
+  echo "[CONFIG] Đã sửa DOWNLOAD_BASE_DIR thành \$HOME/AmazonPpcCrawler/downloads"
+fi
+
 echo "============================================================"
 
 set -a
@@ -30,9 +36,9 @@ EXPANDED_DOWNLOAD_DIR="${EXPANDED_DOWNLOAD_DIR/\$HOME/$HOME}"
 EXPANDED_DOWNLOAD_DIR="${EXPANDED_DOWNLOAD_DIR/#\~/$HOME}"
 case "$EXPANDED_DOWNLOAD_DIR" in
   "$HOME/Downloads"|"$HOME/Downloads/"*|"$HOME/Desktop"|"$HOME/Desktop/"*)
-    SAFE_DOWNLOAD_VALUE='$HOME/Library/Application Support/AmazonPpcCrawler/downloads'
+    SAFE_DOWNLOAD_VALUE='$HOME/AmazonPpcCrawler/downloads'
     sed -i '' "s|^DOWNLOAD_BASE_DIR=.*|DOWNLOAD_BASE_DIR=$SAFE_DOWNLOAD_VALUE|" "$SCRIPT_DIR/config.env"
-    export DOWNLOAD_BASE_DIR="$HOME/Library/Application Support/AmazonPpcCrawler/downloads"
+    export DOWNLOAD_BASE_DIR="$HOME/AmazonPpcCrawler/downloads"
     echo "[CONFIG] Đã chuyển DOWNLOAD_BASE_DIR khỏi thư mục macOS bảo vệ sang: $DOWNLOAD_BASE_DIR"
     ;;
 esac

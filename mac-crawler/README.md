@@ -7,7 +7,7 @@ Thư mục này được thiết kế **hoàn toàn độc lập (standalone)**,
    - `Bulk SP 30d` & `Bulk SP 7d`
    - `Bulk SB 30d` & `Bulk SB 7d`
    - `Search Term SP 30d` & `Search Term SB 30d`
-4. **Phân loại & Lưu trữ cục bộ:** Lưu tại `~/Downloads/Bulk file/{YYYY-MM-DD}/{STORE_NAME}/` chia thành 2 thư mục con `SP/` và `SB/`.
+4. **Phân loại & Lưu trữ cục bộ:** Lưu tại `~/AmazonPpcCrawler/downloads/{YYYY-MM-DD}/{STORE_NAME}/`, chia thành `SP/` và `SB/`. Không dùng Desktop/Downloads vì LaunchAgent bị macOS TCC chặn.
 5. **Upload Cloudflare R2:** Mỗi file chỉ upload một lần vào batch riêng; kiểm tra SHA-256 và tạo marker `_COMPLETE.json` cuối cùng.
 6. **Đồng bộ Database:** Chỉ gửi đúng `batchId/store/date` vừa hoàn tất, không quét toàn bộ lịch sử R2. Search Term và Bulk được commit trong cùng transaction.
 
