@@ -42,6 +42,10 @@ cat <<EOF > "$TARGET_PLIST"
     <key>RunAtLoad</key>
     <true/>
 
+    <!-- Chế độ Standard: Không bị macOS App Nap đóng băng khi màn hình tắt -->
+    <key>ProcessType</key>
+    <string>Standard</string>
+
     <key>StandardOutPath</key>
     <string>$HOME/Library/Logs/mac-crawler-worker.log</string>
 

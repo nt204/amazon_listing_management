@@ -28,6 +28,9 @@ fi
 echo "============================================================"
 echo "KHỞI ĐỘNG CRAWLER REMOTE WORKER TRÊN MAC MINI"
 echo "Log file: $LOG_FILE"
-echo "============================================================"
-
-exec "$TSX_BIN" "$SCRIPT_DIR/remote_worker.ts" >> "$LOG_FILE" 2>&1
+if command -v caffeinate >/dev/null 2>&1; then
+  echo "[Power] Kích hoạt caffeinate (-s -i -m): Giữ CPU & Mạng luôn thức để nhận lệnh từ Server (cho phép màn hình tắt tiết kiệm điện)."
+  exec caffeinate -s -i -m "$TSX_BIN" "$SCRIPT_DIR/remote_worker.ts" >> "$LOG_FILE" 2>&1
+else
+  exec "$TSX_BIN" "$SCRIPT_DIR/remote_worker.ts" >> "$LOG_FILE" 2>&1
+fi
