@@ -1090,6 +1090,9 @@ async function autoCreateAndDownloadSearchTermReport(
     ? String(task!.amazonRequestId)
     : Math.random().toString(36).slice(2, 8).toUpperCase();
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  const now = new Date();
+  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const todayMonthDay = `${monthNames[now.getMonth()]} ${now.getDate()}`;
   const reportName = canResumeRequest && task?.reportName
     ? task.reportName
     : `${storeName} ST ${adType} 30D ${today} ${syncRunId}`;
@@ -1119,7 +1122,7 @@ async function autoCreateAndDownloadSearchTermReport(
   await page.goto(reportsUrl, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(3000);
 
-  const existingDownloadUrl = await page.evaluate((args: { targetId: string; adType: string }) => {
+  const existingDownloadUrl = await page.evaluate((args: { targetId: string; adType: string; today: string; todayMonthDay: string }) => {
     const allRowEls = Array.from(document.querySelectorAll("div.ag-row[row-index], tr[row-index], table tbody tr"));
     const rowIndexMap = new Map<string, { texts: string[]; href: string | null }>();
 
@@ -1145,12 +1148,13 @@ async function autoCreateAndDownloadSearchTermReport(
       const fullText = entry.texts.join(" ");
       const hasSearchTerm = /search\s*term/i.test(fullText);
       const hasAdType = fullText.includes(args.adType) || fullText.includes(adTypeLabel);
-      if (hasSearchTerm && hasAdType && entry.href) {
+      const hasToday = fullText.includes(args.today) || fullText.includes(args.todayMonthDay);
+      if (hasSearchTerm && hasAdType && hasToday && entry.href) {
         return entry.href;
       }
     }
     return null;
-  }, { targetId: syncRunId, adType });
+  }, { targetId: syncRunId, adType, today, todayMonthDay });
 
   if (existingDownloadUrl) {
     console.log(`  [SEARCH TERM] ⚡ PHÁT HIỆN BÁO CÁO CÓ SẴN! Đã có sẵn Search Term ${adType} hoàn thành trên Amazon. Bốc file ngay!`);
@@ -1301,7 +1305,7 @@ async function autoCreateAndDownloadSearchTermReport(
       pollIteration++;
       const waitSeconds = pollBackoff[Math.min(pollIteration - 1, pollBackoff.length - 1)];
 
-      const match = await page.evaluate((args: { targetId: string; adType: string }) => {
+      const match = await page.evaluate((args: { targetId: string; adType: string; today: string; todayMonthDay: string }) => {
         const allRowEls = Array.from(document.querySelectorAll("div.ag-row, tr, [role='row']"));
         const rowIndexMap = new Map<string, { texts: string[]; href: string | null; isCompleted: boolean; isFailed: boolean }>();
 
@@ -1355,19 +1359,20 @@ async function autoCreateAndDownloadSearchTermReport(
           }
         }
 
-        // Ưu tiên 2 (Fallback như Web): Khớp báo cáo Search Term cùng loại đã hoàn thành
+        // Ưu tiên 2 (Fallback như Web): Khớp báo cáo Search Term cùng loại đã hoàn thành trong ngày
         const adTypeLabel = args.adType === "SB" ? "Sponsored Brands" : "Sponsored Products";
         for (const [, entry] of rowIndexMap.entries()) {
           const fullText = entry.texts.join(" ");
           const hasSearchTerm = /search\s*term/i.test(fullText);
           const hasAdType = fullText.includes(args.adType) || fullText.includes(adTypeLabel);
-          if (hasSearchTerm && hasAdType && entry.href) {
+          const hasToday = fullText.includes(args.today) || fullText.includes(args.todayMonthDay);
+          if (hasSearchTerm && hasAdType && hasToday && entry.href) {
             return { found: true, isCompleted: true, isFailed: false, href: entry.href };
           }
         }
 
         return { found: false, isCompleted: false, isFailed: false, href: null };
-      }, { targetId: syncRunId, adType });
+      }, { targetId: syncRunId, adType, today, todayMonthDay });
 
       if (match.found && match.isFailed) {
         if (task) task.status = "FAILED";
