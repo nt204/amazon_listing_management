@@ -53,9 +53,11 @@ function exportFileName(recommendations: PpcRecommendation[], date = new Date())
   const recTypes = new Set(recommendations.map((r) => r.recType));
   let actionLabel = `${recommendations.length}Actions`;
   if (recTypes.size === 1) {
-    const only = Array.from(recTypes)[0];
+    const only: string = Array.from(recTypes)[0];
     if (only === "BID_DECREASE" || only === "BID_INCREASE") actionLabel = "BidUpdate";
     else if (only === "PAUSE_TARGET") actionLabel = "Pause";
+    else if (only === "NEGATIVE_KEYWORD") actionLabel = "Negative";
+    else if (only === "HARVEST_KEYWORD") actionLabel = "Harvest";
     else if (only === "UPDATE_BUDGET") actionLabel = "Budget";
   }
 
