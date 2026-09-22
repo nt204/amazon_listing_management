@@ -103,14 +103,14 @@ export function PpcRemoteCrawlerModal({
     return () => { clearTimeout(initial); clearInterval(timer); };
   }, [isOpen, fetchJobs]);
 
-  const handleStartCrawl = async () => {
+  const handleStartCrawl = async (forceNew: boolean = false) => {
     setIsLoading(true);
     setError(null);
     try {
       const res = await fetch("/api/ppc/crawler/job", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storeName: selectedStore }),
+        body: JSON.stringify({ storeName: selectedStore, forceNew }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -141,6 +141,28 @@ export function PpcRemoteCrawlerModal({
       await fetchJobs();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Không thể hủy job.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleResetAllJobs = async () => {
+    if (!confirm("Bạn có chắc chắn muốn xóa toàn bộ job đang chạy/kẹt và làm mới từ đầu?")) return;
+    setActionLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/ppc/crawler/job?action=reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không thể xóa job.");
+      setActiveJob(null);
+      trackedJobId.current = null;
+      await fetchJobs();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Không thể xóa job.");
     } finally {
       setActionLoading(false);
     }
@@ -233,9 +255,29 @@ export function PpcRemoteCrawlerModal({
         {/* Body */}
         <div className="p-5 space-y-4 overflow-y-auto">
           {error && (
-            <div className="flex items-start gap-2 rounded-xl bg-rose-50 border border-rose-200 p-3 text-xs text-rose-700">
-              <WarningCircle size={16} className="shrink-0 mt-0.5" weight="fill" />
-              <span>{error}</span>
+            <div className="flex flex-col gap-2 rounded-xl bg-rose-50 border border-rose-200 p-3 text-xs text-rose-700">
+              <div className="flex items-start gap-2">
+                <WarningCircle size={16} className="shrink-0 mt-0.5" weight="fill" />
+                <span className="font-medium">{error}</span>
+              </div>
+              <div className="flex items-center gap-2 pt-1 border-t border-rose-200/60">
+                <button
+                  type="button"
+                  onClick={() => handleStartCrawl(true)}
+                  disabled={actionLoading || isLoading}
+                  className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-[11px] cursor-pointer shadow-xs transition"
+                >
+                  Hủy Job cũ & Tạo Lượt Crawl Mới Ngay
+                </button>
+                <button
+                  type="button"
+                  onClick={handleResetAllJobs}
+                  disabled={actionLoading || isLoading}
+                  className="px-2.5 py-1 rounded-lg bg-white border border-rose-300 text-rose-700 hover:bg-rose-100 font-bold text-[11px] cursor-pointer transition"
+                >
+                  Xóa Hết Job Dở Dang
+                </button>
+              </div>
             </div>
           )}
 
@@ -260,7 +302,7 @@ export function PpcRemoteCrawlerModal({
 
             <button
               type="button"
-              onClick={handleStartCrawl}
+              onClick={() => handleStartCrawl(false)}
               disabled={isJobBusy || isLoading}
               className={`w-full flex items-center justify-center gap-2 rounded-xl py-2.5 px-4 text-xs font-bold shadow-xs transition cursor-pointer ${
                 isJobBusy

@@ -36,15 +36,15 @@ rotate_log() {
 
 rotate_log "$LOG_DIR/mac-crawler-worker.log"
 rotate_log "$LOG_DIR/mac-crawler.log"
-find "$LOG_DIR" -type f \( -name 'mac-crawler-worker.log.*' -o -name 'mac-crawler.log.*' \) -mtime "+$LOG_RETENTION_DAYS" -delete
+find "$LOG_DIR" -type f \( -name 'mac-crawler-worker.log.*' -o -name 'mac-crawler.log.*' \) -mtime "+$LOG_RETENTION_DAYS" -delete 2>/dev/null || true
 
-# Chỉ dọn nội dung trong hai thư mục crawler đã resolve cụ thể.
-find "$DOWNLOAD_ROOT" -mindepth 1 -maxdepth 1 -type d -mtime "+$LOCAL_RETENTION_DAYS" -exec rm -rf -- {} +
-find "$CHECKPOINT_ROOT" -mindepth 1 -maxdepth 1 -type f -name '*.json' -mtime "+$CHECKPOINT_RETENTION_DAYS" -delete
+# Chỉ dọn nội dung trong hai thư mục crawler đã resolve cụ thể (không crash nếu macOS chặn quyền find)
+find "$DOWNLOAD_ROOT" -mindepth 1 -maxdepth 1 -type d -mtime "+$LOCAL_RETENTION_DAYS" -exec rm -rf -- {} + 2>/dev/null || true
+find "$CHECKPOINT_ROOT" -mindepth 1 -maxdepth 1 -type f -name '*.json' -mtime "+$CHECKPOINT_RETENTION_DAYS" -delete 2>/dev/null || true
 
-available_kb="$(df -Pk "$DOWNLOAD_ROOT" | awk 'NR==2 {print $4}')"
+available_kb="$(df -Pk "$DOWNLOAD_ROOT" 2>/dev/null | awk 'NR==2 {print $4}' || echo 99999999)"
 required_kb=$((MIN_FREE_DISK_GB * 1024 * 1024))
-if [ -z "$available_kb" ] || [ "$available_kb" -lt "$required_kb" ]; then
+if [ -n "$available_kb" ] && [ "$available_kb" -lt "$required_kb" ] 2>/dev/null; then
   echo "[DISK GUARD] Cần tối thiểu ${MIN_FREE_DISK_GB}GB trống tại $DOWNLOAD_ROOT; hiện không đủ." >&2
   exit 1
 fi

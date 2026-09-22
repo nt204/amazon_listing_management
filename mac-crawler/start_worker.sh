@@ -17,12 +17,19 @@ if [ -f "$SCRIPT_DIR/config.env" ]; then
   set +a
 fi
 
-TSX_BIN="$SCRIPT_DIR/node_modules/.bin/tsx"
-if [ ! -f "$TSX_BIN" ]; then
-  TSX_BIN="$SCRIPT_DIR/../node_modules/.bin/tsx"
+export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:$PATH"
+
+if [ ! -f "$SCRIPT_DIR/node_modules/.bin/tsx" ]; then
+  echo "[Setup] Chưa có node_modules, đang tự động cài đặt thư viện..."
+  npm install --silent 2>/dev/null || true
 fi
-if [ ! -f "$TSX_BIN" ]; then
-  TSX_BIN="$(which tsx || echo "npx tsx")"
+
+if [ -x "$SCRIPT_DIR/node_modules/.bin/tsx" ]; then
+  RUN_CMD=("$SCRIPT_DIR/node_modules/.bin/tsx" "$SCRIPT_DIR/remote_worker.ts")
+elif command -v tsx >/dev/null 2>&1; then
+  RUN_CMD=("$(which tsx)" "$SCRIPT_DIR/remote_worker.ts")
+else
+  RUN_CMD=(npx tsx "$SCRIPT_DIR/remote_worker.ts")
 fi
 
 echo "============================================================"
@@ -30,4 +37,9 @@ echo "KHỞI ĐỘNG CRAWLER REMOTE WORKER TRÊN MAC MINI"
 echo "Log file: $LOG_FILE"
 echo "============================================================"
 
-exec "$TSX_BIN" "$SCRIPT_DIR/remote_worker.ts" >> "$LOG_FILE" 2>&1
+if command -v caffeinate >/dev/null 2>&1; then
+  echo "[Power] Kích hoạt caffeinate (-s -i -m): Giữ CPU & Mạng luôn thức để nhận lệnh từ Server."
+  exec caffeinate -s -i -m "${RUN_CMD[@]}" >> "$LOG_FILE" 2>&1
+else
+  exec "${RUN_CMD[@]}" >> "$LOG_FILE" 2>&1
+fi

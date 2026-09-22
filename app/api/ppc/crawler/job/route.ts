@@ -131,24 +131,37 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}));
     const sql = await getDatabaseClient();
 
-    // 1. Hủy Job
-    if (action === "cancel") {
+    // 1. Hủy Job cụ thể hoặc hủy toàn bộ job dở dang
+    if (action === "cancel" || action === "reset" || action === "cancel_all") {
       const jobId = body?.jobId;
-      if (!jobId) throw new ApiError("Thiếu jobId để hủy.", 400);
+      if (jobId && action === "cancel") {
+        const rows = await sql`
+          UPDATE ppc_sync_jobs
+          SET status = 'CANCELLED',
+              stage = 'CANCELLED',
+              current_step = 'Người dùng đã bấm hủy job trên giao diện Web',
+              lease_expires_at = NULL,
+              completed_at = NOW(),
+              updated_at = NOW()
+          WHERE id = ${jobId} AND team_id = ${actor.teamId} AND status IN ('PENDING', 'RUNNING', 'RETRY_WAIT')
+          RETURNING *
+        `;
+        if (rows.length === 0) throw new ApiError("Không tìm thấy job hoặc job đã kết thúc.", 404);
+        return Response.json({ success: true, message: "Đã hủy job thành công.", job: rows[0] });
+      }
 
-      const rows = await sql`
+      // Hủy tất cả job dở dang
+      await sql`
         UPDATE ppc_sync_jobs
         SET status = 'CANCELLED',
             stage = 'CANCELLED',
-            current_step = 'Người dùng đã bấm hủy job trên giao diện Web',
+            current_step = 'Người dùng đã xóa toàn bộ job cũ để chạy mới từ đầu',
             lease_expires_at = NULL,
             completed_at = NOW(),
             updated_at = NOW()
-        WHERE id = ${jobId} AND team_id = ${actor.teamId} AND status IN ('PENDING', 'RUNNING', 'RETRY_WAIT')
-        RETURNING *
+        WHERE team_id = ${actor.teamId} AND status IN ('PENDING', 'RUNNING', 'RETRY_WAIT')
       `;
-      if (rows.length === 0) throw new ApiError("Không tìm thấy job hoặc job đã kết thúc.", 404);
-      return Response.json({ success: true, message: "Đã hủy job thành công.", job: rows[0] });
+      return Response.json({ success: true, message: "Đã xóa toàn bộ job cũ thành công." });
     }
 
     // 2. Resume / Retry Job
@@ -203,13 +216,26 @@ export async function POST(request: Request) {
     `;
 
     if (runningCheck.length > 0) {
-      return Response.json(
-        {
-          error: "Hiện đang có một tiến trình crawl đang chạy dở. Bạn có thể theo dõi hoặc bấm Resume/Hủy.",
-          activeJob: runningCheck[0],
-        },
-        { status: 409 },
-      );
+      if (body?.forceNew) {
+        await sql`
+          UPDATE ppc_sync_jobs
+          SET status = 'CANCELLED',
+              stage = 'CANCELLED',
+              current_step = 'Đã hủy job cũ để bắt đầu lượt mới',
+              lease_expires_at = NULL,
+              completed_at = NOW(),
+              updated_at = NOW()
+          WHERE team_id = ${actor.teamId} AND status IN ('PENDING', 'RUNNING', 'RETRY_WAIT')
+        `;
+      } else {
+        return Response.json(
+          {
+            error: "Hiện đang có một tiến trình crawl đang chạy dở. Bạn có thể theo dõi hoặc bấm Resume/Hủy.",
+            activeJob: runningCheck[0],
+          },
+          { status: 409 },
+        );
+      }
     }
 
     // Khởi tạo batch_id và danh sách task_states ban đầu
