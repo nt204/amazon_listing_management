@@ -36,6 +36,11 @@ trap cleanup EXIT INT TERM
 NODE_BIN="$(which node || echo "/usr/local/bin/node")"
 PYTHON_BIN="$(which python3 || echo "/usr/bin/python3")"
 
+if [ ! -f "$SCRIPT_DIR/node_modules/.bin/tsx" ]; then
+  echo "[Node] Chưa có node_modules, đang tự động chạy npm install..."
+  (cd "$SCRIPT_DIR" && npm install --silent)
+fi
+
 if [ -f "$SCRIPT_DIR/node_modules/.bin/tsx" ]; then
   TSX_BIN="$SCRIPT_DIR/node_modules/.bin/tsx"
 elif [ -f "$SCRIPT_DIR/../node_modules/.bin/tsx" ]; then
@@ -54,7 +59,6 @@ if [ -f "$SCRIPT_DIR/config.env" ]; then
 fi
 
 echo "[Environment] Node: $NODE_BIN"
-echo "[Environment] TSX: $TSX_BIN"
 echo "[Environment] Python: $PYTHON_BIN"
 echo "[Store] $STORE_NAME"
 
@@ -63,7 +67,15 @@ echo "[Store] $STORE_NAME"
 # ====================================================================
 echo ""
 echo ">>> [BƯỚC 1/3] CRAWL 6 BÁO CÁO PPC VỀ MÁY MAC LOCAL..."
-"$TSX_BIN" "$SCRIPT_DIR/crawler.ts"
+if [ -f "$SCRIPT_DIR/node_modules/.bin/tsx" ]; then
+  "$SCRIPT_DIR/node_modules/.bin/tsx" "$SCRIPT_DIR/crawler.ts"
+elif [ -f "$SCRIPT_DIR/../node_modules/.bin/tsx" ]; then
+  "$SCRIPT_DIR/../node_modules/.bin/tsx" "$SCRIPT_DIR/crawler.ts"
+elif command -v tsx >/dev/null 2>&1; then
+  tsx "$SCRIPT_DIR/crawler.ts"
+else
+  npx tsx "$SCRIPT_DIR/crawler.ts"
+fi
 
 # crawler.ts chỉ publish marker sau khi đủ và xác minh đúng 6 file. Script
 # Python vẫn giữ lại để retry thủ công các batch cũ, nhưng không upload lặp ở đây.

@@ -43,7 +43,7 @@ fi
 
 if ! python3 -c "import boto3" 2>/dev/null; then
   echo "      -> Chưa có boto3, đang tự động cài đặt qua pip3..."
-  pip3 install boto3 --quiet || python3 -m pip install boto3 --quiet
+  pip3 install boto3 --break-system-packages --quiet 2>/dev/null || pip3 install boto3 --quiet || python3 -m pip install boto3 --break-system-packages --quiet || true
 fi
 echo "      -> Python 3 & Boto3: OK"
 
