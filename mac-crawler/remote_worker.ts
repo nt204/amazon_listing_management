@@ -357,6 +357,17 @@ async function processJob(job: {
 
 async function startLoop() {
   let isProcessing = false;
+  let lastPollError = "";
+  let lastPollErrorAt = 0;
+
+  const reportPollError = (message: string) => {
+    const now = Date.now();
+    if (message !== lastPollError || now - lastPollErrorAt >= 60_000) {
+      console.error(`[Worker Poll] ${message}`);
+      lastPollError = message;
+      lastPollErrorAt = now;
+    }
+  };
 
   const poll = async () => {
     if (isProcessing) return;
@@ -367,10 +378,17 @@ async function startLoop() {
       });
 
       if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        reportPollError(`Server trả HTTP ${res.status}: ${body.slice(0, 500) || res.statusText}`);
         return;
       }
 
       const data = await res.json();
+      if (lastPollError) {
+        console.log("[Worker Poll] Kết nối server đã phục hồi.");
+        lastPollError = "";
+        lastPollErrorAt = 0;
+      }
       if (data.hasJob && data.job) {
         isProcessing = true;
         try {
@@ -379,8 +397,8 @@ async function startLoop() {
           isProcessing = false;
         }
       }
-    } catch {
-      // Server offline hoặc chưa khởi động, tiếp tục thăm dò
+    } catch (error) {
+      reportPollError(`Không kết nối được server: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setTimeout(() => void poll(), POLL_INTERVAL_MS);
     }

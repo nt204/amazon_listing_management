@@ -188,6 +188,7 @@ cd "/Users/macbook/Desktop/Amazon Listing Management"
 zip -r ~/Desktop/mac-crawler.zip mac-crawler \
   -x "mac-crawler/node_modules/*" \
   -x "mac-crawler/__pycache__/*" \
+  -x "mac-crawler/config.env" \
   -x "mac-crawler/.*"
 ```
 
