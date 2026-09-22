@@ -48,8 +48,13 @@ def main():
     r2_prefix = os.environ.get("PPC_R2_PREFIX", "ppc-reports").strip("/")
     default_store = os.environ.get("STORE_NAME", "HSOSTORE")
 
-    base_dir_raw = os.environ.get("DOWNLOAD_BASE_DIR", "~/Downloads/Bulk file")
+    safe_base_dir = Path.home() / "Library" / "Application Support" / "AmazonPpcCrawler" / "downloads"
+    base_dir_raw = os.environ.get("DOWNLOAD_BASE_DIR", str(safe_base_dir))
     base_dir = Path(os.path.expandvars(os.path.expanduser(base_dir_raw))).resolve()
+    protected_dirs = [Path.home() / "Downloads", Path.home() / "Desktop"]
+    if any(base_dir == protected or protected in base_dir.parents for protected in protected_dirs):
+        print(f"[CONFIG] DOWNLOAD_BASE_DIR bị macOS bảo vệ; dùng {safe_base_dir}")
+        base_dir = safe_base_dir
 
     if not all([account_id, access_key, secret_key, bucket_name]):
         print("[LỖI] Thiếu thông tin cấu hình Cloudflare R2 trong config.env!", file=sys.stderr)

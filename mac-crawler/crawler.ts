@@ -94,8 +94,16 @@ loadEnv();
 const ADSPOWER_API_URL = process.env.ADSPOWER_API_URL || "http://local.adspower.net:50325";
 const DEFAULT_CDP_PORT = Number(process.env.ADSPOWER_CDP_PORT || 0);
 
-const rawBaseDir = process.env.DOWNLOAD_BASE_DIR || path.join(os.homedir(), "Downloads", "Bulk file");
-const BASE_DOWNLOAD_DIR = rawBaseDir.replace("$HOME", os.homedir()).replace("~", os.homedir());
+const safeDownloadDir = path.join(os.homedir(), "Library", "Application Support", "AmazonPpcCrawler", "downloads");
+const configuredDownloadDir = (process.env.DOWNLOAD_BASE_DIR || safeDownloadDir)
+  .replace("$HOME", os.homedir()).replace("~", os.homedir());
+const protectedMacDirs = [path.join(os.homedir(), "Downloads"), path.join(os.homedir(), "Desktop")];
+const BASE_DOWNLOAD_DIR = protectedMacDirs.some((dir) =>
+  configuredDownloadDir === dir || configuredDownloadDir.startsWith(`${dir}${path.sep}`),
+) ? safeDownloadDir : configuredDownloadDir;
+if (BASE_DOWNLOAD_DIR !== configuredDownloadDir) {
+  console.warn(`[CONFIG] DOWNLOAD_BASE_DIR nằm trong thư mục macOS bảo vệ; tự chuyển sang: ${BASE_DOWNLOAD_DIR}`);
+}
 
 export interface StoreTarget {
   store_name: string;

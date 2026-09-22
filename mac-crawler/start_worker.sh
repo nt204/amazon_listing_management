@@ -29,7 +29,8 @@ if [ -x "$SCRIPT_DIR/node_modules/.bin/tsx" ]; then
 elif command -v tsx >/dev/null 2>&1; then
   RUN_CMD=("$(which tsx)" "$SCRIPT_DIR/remote_worker.ts")
 else
-  RUN_CMD=(npx tsx "$SCRIPT_DIR/remote_worker.ts")
+  echo "[LỖI] Không tìm thấy tsx. Chạy 'npm install' trong $SCRIPT_DIR rồi cài lại worker." >&2
+  exit 1
 fi
 
 echo "============================================================"

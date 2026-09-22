@@ -22,6 +22,20 @@ for REQUIRED_VAR in R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY WEB_APP_
     exit 1
   fi
 done
+
+# LaunchAgent không được macOS cấp quyền truy cập Desktop/Downloads theo mặc định.
+# Tự sửa cấu hình cũ để worker không rơi vào crash-loop "Operation not permitted".
+EXPANDED_DOWNLOAD_DIR="${DOWNLOAD_BASE_DIR:-}"
+EXPANDED_DOWNLOAD_DIR="${EXPANDED_DOWNLOAD_DIR/\$HOME/$HOME}"
+EXPANDED_DOWNLOAD_DIR="${EXPANDED_DOWNLOAD_DIR/#\~/$HOME}"
+case "$EXPANDED_DOWNLOAD_DIR" in
+  "$HOME/Downloads"|"$HOME/Downloads/"*|"$HOME/Desktop"|"$HOME/Desktop/"*)
+    SAFE_DOWNLOAD_VALUE='$HOME/Library/Application Support/AmazonPpcCrawler/downloads'
+    sed -i '' "s|^DOWNLOAD_BASE_DIR=.*|DOWNLOAD_BASE_DIR=$SAFE_DOWNLOAD_VALUE|" "$SCRIPT_DIR/config.env"
+    export DOWNLOAD_BASE_DIR="$HOME/Library/Application Support/AmazonPpcCrawler/downloads"
+    echo "[CONFIG] Đã chuyển DOWNLOAD_BASE_DIR khỏi thư mục macOS bảo vệ sang: $DOWNLOAD_BASE_DIR"
+    ;;
+esac
 echo "    SETUP HỆ THỐNG MAC CRAWLER TỰ ĐỘNG CHO MAC MINI M1     "
 echo "============================================================"
 
