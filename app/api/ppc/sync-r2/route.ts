@@ -1,6 +1,7 @@
 import { ApiError, authorize, dataScope, enforceRateLimit, routeErrorResponse } from "@/lib/api-guard";
-import { enqueuePpcIngestion, getPpcIngestion } from "@/lib/ppc/ingestion-jobs";
-import { findLatestR2Markers } from "@/lib/ppc/service";
+import { enqueueCrawlerPpcIngestion, enqueuePpcIngestion, getPpcIngestion } from "@/lib/ppc/ingestion-jobs";
+import { findLatestR2Markers, verifyExactR2BatchMarkers } from "@/lib/ppc/service";
+import type postgres from "postgres";
 
 export const runtime = "nodejs";
 
@@ -29,6 +30,8 @@ export async function POST(request: Request) {
       : [];
     const isManualWebSync = !batchId;
     const force = Boolean(body.force ?? isManualWebSync);
+    const crawlerJobId = String(body.crawlerJobId || "").trim();
+    const crawlerLeaseToken = String(body.crawlerLeaseToken || "").trim();
 
     // Nếu không truyền batchId (thao tác click Đồng bộ R2 thủ công trên Web UI)
     if (!batchId) {
@@ -51,7 +54,47 @@ export async function POST(request: Request) {
     if (!/^\d{4}-?\d{2}-?\d{2}$|^\d{8}$/.test(batchDate)) throw new ApiError("batchDate không hợp lệ.", 400);
     if (!storeNames.length || storeNames.length > 50) throw new ApiError("storeNames không hợp lệ.", 400);
 
-    const job = await enqueuePpcIngestion(dataScope(actor), { batchId, batchDate, storeNames }, { force });
+    let job;
+    if (crawlerJobId || crawlerLeaseToken) {
+      if (!/^[0-9a-f-]{36}$/i.test(crawlerJobId) || !crawlerLeaseToken) {
+        throw new ApiError("Thiếu crawlerJobId hoặc crawlerLeaseToken hợp lệ.", 400);
+      }
+      const taskStates = Array.isArray(body.taskStates) ? body.taskStates : [];
+      const processedFiles = Number(body.processedFiles);
+      const taskIds = new Set<string>();
+      const expectedStores = new Set(storeNames.map((name) => name.toLowerCase()));
+      const tasksValid = taskStates.length === storeNames.length * 6 && taskStates.every((value) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+        const task = value as Record<string, unknown>;
+        const id = String(task.id || "");
+        const store = String(task.store || "").toLowerCase();
+        if (!id || taskIds.has(id) || task.status !== "UPLOADED" || !expectedStores.has(store)) return false;
+        taskIds.add(id);
+        return true;
+      });
+      if (!tasksValid || !Number.isInteger(processedFiles) || processedFiles !== taskStates.length) {
+        throw new ApiError("Crawler handoff yêu cầu đúng 6 task UPLOADED cho mỗi store.", 409);
+      }
+      await verifyExactR2BatchMarkers({ batchId, batchDate, storeNames });
+      try {
+        job = await enqueueCrawlerPpcIngestion(dataScope(actor), {
+          crawlerJobId,
+          crawlerLeaseToken,
+          batchId,
+          batchDate,
+          storeNames,
+          taskStates: taskStates as postgres.JSONValue[],
+          processedFiles,
+        });
+      } catch (error) {
+        if (error instanceof Error && error.message.includes("CRAWLER_HANDOFF_MISMATCH")) {
+          throw new ApiError(error.message.replace("CRAWLER_HANDOFF_MISMATCH: ", ""), 409);
+        }
+        throw error;
+      }
+    } else {
+      job = await enqueuePpcIngestion(dataScope(actor), { batchId, batchDate, storeNames }, { force });
+    }
     return Response.json(
       {
         success: true,

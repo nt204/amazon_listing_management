@@ -31,7 +31,7 @@ interface ActiveJobData {
   id: string;
   store_name: string;
   batch_id?: string;
-  status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | "RETRY_WAIT" | "CANCELLED";
+  status: "PENDING" | "RUNNING" | "INGESTING" | "COMPLETED" | "FAILED" | "RETRY_WAIT" | "CANCELLED";
   stage?: string;
   progress_pct: number;
   current_step: string;
@@ -77,7 +77,7 @@ export function PpcRemoteCrawlerModal({
         setHistoryJobs(jobs);
 
         const running = jobs.find(
-          (j) => j.status === "RUNNING" || j.status === "PENDING" || j.status === "RETRY_WAIT",
+          (j) => j.status === "RUNNING" || j.status === "PENDING" || j.status === "INGESTING" || j.status === "RETRY_WAIT",
         );
         if (running) {
           trackedJobId.current = running.id;
@@ -211,7 +211,8 @@ export function PpcRemoteCrawlerModal({
   if (!isOpen) return null;
 
   const isJobBusy =
-    activeJob && (activeJob.status === "RUNNING" || activeJob.status === "PENDING" || activeJob.status === "RETRY_WAIT");
+    activeJob && (activeJob.status === "RUNNING" || activeJob.status === "PENDING" || activeJob.status === "INGESTING" || activeJob.status === "RETRY_WAIT");
+  const isJobCancellable = activeJob && activeJob.status !== "INGESTING" && isJobBusy;
 
   // Tính toán thời gian Heartbeat
   let heartbeatBadge = null;
@@ -396,6 +397,8 @@ export function PpcRemoteCrawlerModal({
                       ? "Chờ Mac nhận"
                       : activeJob.status === "RUNNING"
                       ? "Đang chạy"
+                      : activeJob.status === "INGESTING"
+                      ? "Server đang nạp DB"
                       : activeJob.status === "RETRY_WAIT"
                       ? "Chờ Resume"
                       : activeJob.status === "COMPLETED"
@@ -404,7 +407,7 @@ export function PpcRemoteCrawlerModal({
                       ? "Đã hủy"
                       : "Lỗi"}
                   </span>
-                  {isJobBusy && (
+                  {isJobCancellable && (
                     <button
                       type="button"
                       onClick={handleCancelJob}

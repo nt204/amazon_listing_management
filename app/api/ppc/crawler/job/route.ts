@@ -191,7 +191,7 @@ export async function POST(request: Request) {
       const conflicting = await sql`
         SELECT id, store_name, status FROM ppc_sync_jobs
         WHERE team_id = ${actor.teamId} AND id <> ${jobId}
-          AND status IN ('PENDING', 'RUNNING', 'RETRY_WAIT')
+          AND status IN ('PENDING', 'RUNNING', 'INGESTING', 'RETRY_WAIT')
           AND (
             store_name = 'ALL'
             OR ${resumeStore} = 'ALL'
@@ -284,7 +284,7 @@ export async function POST(request: Request) {
     const runningCheck = await sql`
       SELECT id, store_name, status, stage FROM ppc_sync_jobs
       WHERE team_id = ${actor.teamId}
-        AND status IN ('PENDING', 'RUNNING', 'RETRY_WAIT')
+        AND status IN ('PENDING', 'RUNNING', 'INGESTING', 'RETRY_WAIT')
         AND (
           store_name = 'ALL'
           OR ${storeName} = 'ALL'
@@ -295,6 +295,9 @@ export async function POST(request: Request) {
 
     if (runningCheck.length > 0) {
       if (body?.forceNew) {
+        if (runningCheck.some((job) => job.status === "INGESTING")) {
+          throw new ApiError(`Store [${storeName}] đang được server ingest; không thể hủy để tạo job mới.`, 409);
+        }
         await sql`
           UPDATE ppc_sync_jobs
           SET status = 'CANCELLED',
@@ -479,13 +482,13 @@ export async function PATCH(request: Request) {
           current_step = COALESCE(${current_step ?? null}, current_step),
           error_message = COALESCE(${error_message ?? null}, error_message),
           processed_files = COALESCE(${processed_files ?? null}, processed_files),
-          task_states = ${effectiveTaskStates != null ? sql.json(effectiveTaskStates) : sql`task_states`},
+          task_states = ${effectiveTaskStates != null ? sql.json(JSON.parse(JSON.stringify(effectiveTaskStates))) : sql`task_states`},
           heartbeat_at = NOW(),
           lease_expires_at = CASE WHEN ${isFinished} THEN NULL ELSE NOW() + ${leaseSeconds} * INTERVAL '1 second' END,
           completed_at = CASE WHEN ${isFinished} THEN NOW() ELSE completed_at END,
           updated_at = NOW()
       WHERE id = ${jobId} AND team_id = ${actor.teamId}
-        AND status = 'RUNNING'
+        AND status IN ('RUNNING', 'RETRY_WAIT')
         AND (lease_token IS NULL OR lease_token = ${leaseToken ?? null})
       RETURNING *
     `;

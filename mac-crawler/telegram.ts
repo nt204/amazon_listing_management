@@ -166,12 +166,15 @@ export async function notifyCrawlerSummary(params: {
   totalFiles: number;
   elapsedMs: number;
   workerId?: string;
+  ingestionPending?: boolean;
 }): Promise<void> {
   if (!isTelegramConfigured()) return;
   const isAllSuccess = params.failedStores.length === 0;
   const icon = isAllSuccess ? "✅" : "⚠️";
   const header = isAllSuccess
-    ? `<b>[PPC CRAWLER] HOÀN TẤT XUẤT SẮC CA CHẠY!</b>`
+    ? (params.ingestionPending
+      ? `<b>[PPC CRAWLER] ĐÃ BÀN GIAO SERVER INGEST!</b>`
+      : `<b>[PPC CRAWLER] HOÀN TẤT XUẤT SẮC CA CHẠY!</b>`)
     : `<b>[PPC CRAWLER] KẾT THÚC CA CHẠY (CÓ STORE CẦN CHÚ Ý)</b>`;
 
   const successList = params.successStores.length > 0
@@ -191,7 +194,9 @@ export async function notifyCrawlerSummary(params: {
     lines.push(`🔴 <b>Thất bại:</b> ${failedList}`);
   }
 
-  lines.push(`📁 <b>Tổng số file:</b> <b>${params.totalFiles}</b> file đã đẩy R2 & nạp Server.`);
+  lines.push(params.ingestionPending
+    ? `📁 <b>Tổng số file:</b> <b>${params.totalFiles}</b> file đã đẩy R2; server đang nạp nền.`
+    : `📁 <b>Tổng số file:</b> <b>${params.totalFiles}</b> file đã đẩy R2 & nạp Server.`);
   if (params.workerId) {
     lines.push(`💻 <b>Máy Mac:</b> <code>${escapeHtml(params.workerId)}</code>`);
   }

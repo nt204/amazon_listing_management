@@ -214,12 +214,28 @@ async function processBulkUploadJob(job: RemoteBulkUploadJob) {
   }
 }
 
-async function triggerServerSync(batchId: string, batchDate: string, storeNames: string[]): Promise<string> {
+async function triggerServerSync(
+  crawlerJobId: string,
+  crawlerLeaseToken: string,
+  batchId: string,
+  batchDate: string,
+  storeNames: string[],
+  taskStates: ReportTaskState[],
+  processedFiles: number,
+): Promise<{ id: string; status: string }> {
   const accepted = await retryOperation("Tạo hàng đợi đồng bộ R2", configuredInt("DB_SYNC_MAX_ATTEMPTS", 5, 1, 10), async () => {
     const res = await fetchWithTimeout(`${WEB_APP_URL}/api/ppc/sync-r2`, {
       method: "POST",
       headers: getHeaders(),
-      body: JSON.stringify({ batchId, batchDate, storeNames }),
+      body: JSON.stringify({
+        crawlerJobId,
+        crawlerLeaseToken,
+        batchId,
+        batchDate,
+        storeNames,
+        taskStates,
+        processedFiles,
+      }),
     });
     const body = await res.text();
     if (!res.ok) {
@@ -229,28 +245,7 @@ async function triggerServerSync(batchId: string, batchDate: string, storeNames:
     if (!data.job?.id) throw new Error("Server không trả ingestion jobId.");
     return data as {job:{id:string;status:string};message?:string};
   });
-
-  const deadline=Date.now()+configuredInt("DB_SYNC_TIMEOUT_MINUTES",120,5,360)*60_000;
-  let consecutivePollFailures=0;
-  while(Date.now()<deadline){
-    let terminalError="";
-    try {
-      const res=await fetchWithTimeout(`${WEB_APP_URL}/api/ppc/sync-r2?jobId=${encodeURIComponent(accepted.job.id)}`,{headers:getHeaders()});
-      if(!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0,200)}`);
-      const data=await res.json() as {job?:{status?:string;stage?:string;progress_pct?:number;error_message?:string}};
-      consecutivePollFailures=0;
-      const status=data.job?.status;
-      if(status==="COMPLETED") return "Server đã đồng bộ R2 vào database thành công.";
-      if(status==="FAILED"||status==="CANCELLED") terminalError=data.job?.error_message||`Ingestion job ${status}.`;
-      console.log(`[Worker] Server ingest ${status||"QUEUED"} (${data.job?.progress_pct||0}%). Chờ 15s...`);
-    } catch(error) {
-      consecutivePollFailures+=1;
-      console.warn(`[Worker] Tạm mất trạng thái ingest (${consecutivePollFailures}): ${error instanceof Error?error.message:String(error)}. Sẽ thử lại...`);
-    }
-    if(terminalError) throw new Error(terminalError);
-    await new Promise(resolve=>setTimeout(resolve,15_000));
-  }
-  throw new Error(`Server ingest chưa hoàn tất sau ${configuredInt("DB_SYNC_TIMEOUT_MINUTES",120,5,360)} phút.`);
+  return accepted.job;
 }
 
 async function processJob(job: {
@@ -292,11 +287,19 @@ async function processJob(job: {
   const heartbeatLoop = async () => {
     if (!isJobActive || abortController.signal.aborted) return;
     const result = await sendHeartbeat(jobId, leaseToken);
-    if (result === "ok") heartbeatFailures = 0;
-    else heartbeatFailures += 1;
-    if (result === "revoked" || heartbeatFailures >= 3) {
-      abortController.abort(result === "revoked" ? "Lease bị thu hồi hoặc job đã hủy" : "Mất kết nối server quá 3 heartbeat");
+    if (result === "ok") {
+      heartbeatFailures = 0;
+    } else if (result === "revoked") {
+      abortController.abort("Lease bị thu hồi hoặc job đã hủy trên server");
       return;
+    } else {
+      heartbeatFailures += 1;
+      const maxFailures = configuredInt("WORKER_MAX_HEARTBEAT_FAILURES", 10, 3, 30);
+      console.warn(`[Worker Heartbeat] Tạm mất kết nối server (${heartbeatFailures}/${maxFailures}). Vẫn tiếp tục xử lý...`);
+      if (heartbeatFailures >= maxFailures) {
+        abortController.abort(`Mất kết nối server quá ${maxFailures} nhịp heartbeat (~${Math.round((maxFailures * HEARTBEAT_INTERVAL_MS) / 60000)} phút)`);
+        return;
+      }
     }
     heartbeatTimer = setTimeout(() => void heartbeatLoop(), HEARTBEAT_INTERVAL_MS);
   };
@@ -473,33 +476,21 @@ async function processJob(job: {
       throw new Error(`Đã crawl xong ${successfulStoreNames.length}/${storesToCrawl.length} store và giữ checkpoint; cần resume các store lỗi trước khi commit DB: ${storeFailures.join(" | ")}`);
     }
 
-    // Bước đồng bộ Server từ R2
+    // Bàn giao nguyên tử cho server. API xác minh job + lease + batch + store,
+    // enqueue ingestion và chuyển crawler job sang INGESTING trong cùng transaction.
     checkpoint.stage = "INGESTING";
     saveJobCheckpointAtomic(checkpoint);
 
-    await updateJob(jobId, leaseToken, {
-      stage: "INGESTING",
-      progress_pct: 90,
-      current_step: "Đã tải & đẩy R2 staging thành công! Đang kích hoạt Server nạp vào Database...",
-      processed_files: totalFilesCrawled,
-      task_states: checkpoint.tasks,
-    });
-
-    const syncMsg = await triggerServerSync(batchId, todayStr, successfulStoreNames);
-    console.log(`[Worker] Kết quả đồng bộ Server: ${syncMsg}`);
-
-    // Báo cáo hoàn tất
-    checkpoint.stage = "COMPLETED";
-    saveJobCheckpointAtomic(checkpoint);
-
-    await updateJob(jobId, leaseToken, {
-      status: "COMPLETED",
-      stage: "COMPLETED",
-      progress_pct: 100,
-      current_step: `Hoàn tất xuất sắc! Đã tải ${totalFilesCrawled} file và đồng bộ vào DB.`,
-      processed_files: totalFilesCrawled,
-      task_states: checkpoint.tasks,
-    });
+    const ingestionJob = await triggerServerSync(
+      jobId,
+      leaseToken,
+      batchId,
+      todayStr,
+      successfulStoreNames,
+      checkpoint.tasks,
+      totalFilesCrawled,
+    );
+    console.log(`[Worker] Đã bàn giao batch cho ingestion job ${ingestionJob.id} (${ingestionJob.status}); tiếp tục hàng đợi Mac.`);
 
     summarySent = true;
     await notifyCrawlerSummary({
@@ -509,9 +500,10 @@ async function processJob(job: {
       totalFiles: totalFilesCrawled,
       elapsedMs: Date.now() - jobStartTime,
       workerId: WORKER_ID,
+      ingestionPending: ingestionJob.status !== "COMPLETED",
     });
 
-    console.log(`\n[Worker] => JOB ${jobId} ĐÃ HOÀN TẤT THÀNH CÔNG!`);
+    console.log(`\n[Worker] => JOB ${jobId} ĐÃ UPLOAD R2 VÀ BÀN GIAO SERVER THÀNH CÔNG!`);
   } catch (err) {
     const errorMsg = (err as Error).message;
     console.error(`[Worker] => JOB ${jobId} THẤT BẠI: ${errorMsg}`);
@@ -520,8 +512,10 @@ async function processJob(job: {
       stage: "FAILED",
       error_message: errorMsg,
       current_step: `Lỗi: ${errorMsg}`,
-      task_states: activeCheckpoint?.tasks,
-    }).catch((updateError) => console.error(`[Worker] Không thể báo lỗi về server: ${(updateError as Error).message}`));
+    }).catch((updateError) => {
+      const msg = updateError instanceof Error ? updateError.message : String(updateError);
+      console.error(`[Worker] Không thể báo lỗi về server: ${msg}`);
+    });
 
     if (!summarySent && storesToCrawlNames.length > 0) {
       summarySent = true;

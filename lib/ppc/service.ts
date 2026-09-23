@@ -936,6 +936,39 @@ export async function findLatestR2Markers(
   return results;
 }
 
+export async function verifyExactR2BatchMarkers(target: {
+  batchId: string;
+  batchDate: string;
+  storeNames: string[];
+}): Promise<void> {
+  const accountId = process.env.R2_ACCOUNT_ID;
+  const accessKeyId = process.env.R2_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
+  const bucket = process.env.R2_BUCKET_NAME || "amazon-listing-production";
+  const prefix = (process.env.PPC_R2_PREFIX || "ppc-reports").replace(/^\/+|\/+$/g, "");
+  if (!accountId || !accessKeyId || !secretAccessKey) throw new Error("Chưa cấu hình đầy đủ thông tin Cloudflare R2.");
+  const s3 = new S3Client({
+    region: "auto",
+    endpoint: process.env.R2_ENDPOINT || `https://${accountId}.r2.cloudflarestorage.com`,
+    credentials: { accessKeyId, secretAccessKey },
+  });
+  const compactDate = target.batchDate.replace(/-/g, "");
+  for (const storeName of target.storeNames) {
+    const markerKey = `${prefix}/input/${compactDate}/${storeName}/${target.batchId}/_COMPLETE.json`;
+    let marker: { batchId?: string; storeName?: string; files?: unknown[] };
+    try {
+      const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: markerKey }));
+      if (!response.Body) throw new Error("marker rỗng");
+      marker = JSON.parse(await response.Body.transformToString()) as typeof marker;
+    } catch (error) {
+      throw new Error(`Không đọc được marker R2 chính xác cho ${storeName}/${target.batchId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (marker.batchId !== target.batchId || marker.storeName?.toLowerCase() !== storeName.toLowerCase() || marker.files?.length !== 6) {
+      throw new Error(`Marker R2 không khớp batch/store hoặc không đủ 6 file: ${markerKey}`);
+    }
+  }
+}
+
 export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarget) {
   const accountId = process.env.R2_ACCOUNT_ID;
   const accessKeyId = process.env.R2_ACCESS_KEY_ID;
