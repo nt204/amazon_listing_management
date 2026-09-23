@@ -222,9 +222,19 @@ export async function POST(request: Request) {
       const knownByName = new Map(stores.map((store) => [store.name.toLowerCase(), store.name]));
       const invalid = requestedStoreNames.filter((name) => !knownByName.has(name.toLowerCase()));
       if (invalid.length) throw new ApiError(`Store không tồn tại trong hệ thống: ${invalid.join(", ")}.`, 400);
-      targetStoreNames = requestedStoreNames.map((name) => knownByName.get(name.toLowerCase())!);
+      targetStoreNames = [...new Set(requestedStoreNames.map((name) => knownByName.get(name.toLowerCase())!))];
+    } else if (storeName === "ALL") {
+      const seen = new Set<string>();
+      targetStoreNames = [];
+      for (const s of stores) {
+        const key = s.name.trim().toLowerCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          targetStoreNames.push(s.name.trim());
+        }
+      }
     } else {
-      targetStoreNames = storeName === "ALL" ? stores.map((store) => store.name) : [storeName];
+      targetStoreNames = [storeName];
     }
     const totalFiles = targetStoreNames.length * 6;
 
@@ -377,11 +387,29 @@ export async function PATCH(request: Request) {
     if (progress_pct != null && (!Number.isInteger(progress_pct) || progress_pct < 0 || progress_pct > 100)) {
       throw new ApiError("Tiến độ crawler phải từ 0 đến 100.", 400);
     }
+
+    // Khử trùng lặp task_states theo task.id để tránh trường hợp duplicate task cản trở hoàn tất
+    let effectiveTaskStates = task_states;
+    if (Array.isArray(task_states)) {
+      const taskMap = new Map<string, Record<string, unknown>>();
+      for (const t of task_states) {
+        if (t && typeof t === "object" && "id" in t) {
+          const id = String((t as { id: unknown }).id);
+          const existing = taskMap.get(id);
+          // Ưu tiên trạng thái đã UPLOADED/VALIDATED/DOWNLOADED hơn NOT_STARTED
+          if (!existing || (t as { status?: string }).status === "UPLOADED" || existing.status !== "UPLOADED") {
+            taskMap.set(id, t as Record<string, unknown>);
+          }
+        }
+      }
+      effectiveTaskStates = [...taskMap.values()];
+    }
+
     if (status === "COMPLETED") {
-      if (!Array.isArray(task_states) || task_states.length === 0 || task_states.some((task: { status?: string }) => task?.status !== "UPLOADED")) {
+      if (!Array.isArray(effectiveTaskStates) || effectiveTaskStates.length === 0 || effectiveTaskStates.some((task: { status?: string }) => task?.status !== "UPLOADED")) {
         throw new ApiError("Không thể hoàn tất job khi chưa đủ task UPLOADED.", 409);
       }
-      if (!Number.isInteger(processed_files) || processed_files !== task_states.length) {
+      if (!Number.isInteger(processed_files) || processed_files !== effectiveTaskStates.length) {
         throw new ApiError("Số file hoàn tất không khớp checkpoint task.", 409);
       }
     }
@@ -397,10 +425,7 @@ export async function PATCH(request: Request) {
           current_step = COALESCE(${current_step ?? null}, current_step),
           error_message = COALESCE(${error_message ?? null}, error_message),
           processed_files = COALESCE(${processed_files ?? null}, processed_files),
-          task_states = CASE
-            WHEN ${task_states != null} THEN ${sql.json(task_states)}
-            ELSE task_states
-          END,
+          task_states = ${effectiveTaskStates != null ? sql.json(effectiveTaskStates) : sql`task_states`},
           heartbeat_at = NOW(),
           lease_expires_at = CASE WHEN ${isFinished} THEN NULL ELSE NOW() + ${leaseSeconds} * INTERVAL '1 second' END,
           completed_at = CASE WHEN ${isFinished} THEN NOW() ELSE completed_at END,

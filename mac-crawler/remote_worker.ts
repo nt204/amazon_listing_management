@@ -7,6 +7,7 @@ import {
   saveJobCheckpointAtomic,
   createDefaultTasksForStore,
 } from "./checkpoint";
+import { executeRemoteBulkUpload, type RemoteBulkUploadJob } from "./bulk_uploader";
 
 loadEnv();
 
@@ -128,6 +129,62 @@ async function updateJob(
   }
 }
 
+async function updateBulkUploadJob(
+  job: RemoteBulkUploadJob,
+  data: {
+    status?: "RUNNING" | "RETRY_WAIT" | "SUCCESS" | "FAILED";
+    stage?: string;
+    progress_pct?: number;
+    error_message?: string;
+    amazon_upload_id?: string;
+  },
+) {
+  const response = await fetchWithTimeout(`${WEB_APP_URL}/api/ppc/auto-upload/worker`, {
+    method: "PATCH",
+    headers: getHeaders(),
+    body: JSON.stringify({ jobId: job.id, leaseToken: job.lease_token, ...data }),
+  });
+  if (!response.ok) throw new Error(`Server từ chối cập nhật Bulk job (${response.status}): ${await response.text()}`);
+}
+
+async function processBulkUploadJob(job: RemoteBulkUploadJob) {
+  console.log(`\n[Bulk Upload] Nhận job ${job.id}: ${job.store_name}/${job.file_name}`);
+  const store = getStoreList().find((item) => item.store_name.toLowerCase() === job.store_name.toLowerCase());
+  if (!store) {
+    await updateBulkUploadJob(job, {
+      status: "FAILED", stage: "FAILED", progress_pct: 100,
+      error_message: `Store ${job.store_name} chưa được map trong stores.json trên Mac mini.`,
+    });
+    return;
+  }
+
+  const releaseLock = acquireCrawlerLock();
+  let active = true;
+  const heartbeat = setInterval(() => {
+    if (active) void updateBulkUploadJob(job, { status: "RUNNING" }).catch((error) =>
+      console.warn(`[Bulk Upload] Heartbeat lỗi: ${(error as Error).message}`));
+  }, HEARTBEAT_INTERVAL_MS);
+  try {
+    await updateBulkUploadJob(job, { stage: "DOWNLOADING", progress_pct: 15 });
+    const result = await executeRemoteBulkUpload(job, store);
+    await updateBulkUploadJob(job, {
+      status: "SUCCESS", stage: "SUBMITTED_TO_AMAZON", progress_pct: 100,
+      amazon_upload_id: result.amazonUploadId || undefined,
+    });
+    console.log(`[Bulk Upload] ✅ Amazon đã tiếp nhận ${job.file_name} cho ${job.store_name}.`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await updateBulkUploadJob(job, {
+      status: "FAILED", stage: "FAILED", progress_pct: 100, error_message: message,
+    }).catch((patchError) => console.error(`[Bulk Upload] Không báo lỗi được về server: ${(patchError as Error).message}`));
+    console.error(`[Bulk Upload] ❌ ${message}`);
+  } finally {
+    active = false;
+    clearInterval(heartbeat);
+    releaseLock();
+  }
+}
+
 async function triggerServerSync(batchId: string, batchDate: string, storeNames: string[]): Promise<string> {
   const accepted = await retryOperation("Tạo hàng đợi đồng bộ R2", configuredInt("DB_SYNC_MAX_ATTEMPTS", 5, 1, 10), async () => {
     const res = await fetchWithTimeout(`${WEB_APP_URL}/api/ppc/sync-r2`, {
@@ -211,6 +268,7 @@ async function processJob(job: {
   heartbeatTimer = setTimeout(() => void heartbeatLoop(), HEARTBEAT_INTERVAL_MS);
 
   let releaseLock: (() => void) | undefined;
+  let activeCheckpoint: JobCheckpoint | undefined;
   try {
     const allConfiguredStores = getStoreList();
     let storesToCrawl: StoreTarget[] = [];
@@ -253,6 +311,7 @@ async function processJob(job: {
         ? job.task_states
         : storesToCrawl.flatMap((s) => createDefaultTasksForStore(s.store_name)),
     };
+    activeCheckpoint = checkpoint;
     if (loadedCheckpoint && Array.isArray(job.task_states)) {
       for (const serverTask of job.task_states) {
         const localTask = checkpoint.tasks.find((task) => task.id === serverTask.id);
@@ -261,6 +320,16 @@ async function processJob(job: {
         }
       }
     }
+    // Deduplicate tasks by task.id
+    const uniqueTaskMap = new Map<string, ReportTaskState>();
+    for (const t of checkpoint.tasks) {
+      const existing = uniqueTaskMap.get(t.id);
+      if (!existing || t.status === "UPLOADED" || existing.status !== "UPLOADED") {
+        uniqueTaskMap.set(t.id, t);
+      }
+    }
+    checkpoint.tasks = [...uniqueTaskMap.values()];
+
     // reportDate bất biến kể cả resume qua nửa đêm.
     const todayStr = checkpoint.batchDate;
 
@@ -399,6 +468,7 @@ async function processJob(job: {
       stage: "FAILED",
       error_message: errorMsg,
       current_step: `Lỗi: ${errorMsg}`,
+      task_states: activeCheckpoint?.tasks,
     }).catch((updateError) => console.error(`[Worker] Không thể báo lỗi về server: ${(updateError as Error).message}`));
   } finally {
     isJobActive = false;
@@ -426,6 +496,27 @@ async function startLoop() {
     if (isProcessing) return;
 
     try {
+      // Bulk update is short and user-triggered, so it has priority over the daily report crawl.
+      const bulkRes = await fetchWithTimeout(
+        `${WEB_APP_URL}/api/ppc/auto-upload/worker?workerId=${encodeURIComponent(WORKER_ID)}`,
+        { headers: getHeaders() },
+      );
+      if (!bulkRes.ok) {
+        const body = await bulkRes.text().catch(() => "");
+        reportPollError(`Bulk queue trả HTTP ${bulkRes.status}: ${body.slice(0, 500) || bulkRes.statusText}`);
+        return;
+      }
+      const bulkData = await bulkRes.json();
+      if (bulkData.hasJob && bulkData.job) {
+        isProcessing = true;
+        try {
+          await processBulkUploadJob(bulkData.job as RemoteBulkUploadJob);
+        } finally {
+          isProcessing = false;
+        }
+        return;
+      }
+
       const res = await fetchWithTimeout(`${WEB_APP_URL}/api/ppc/crawler/job?action=poll&workerId=${encodeURIComponent(WORKER_ID)}`, {
         headers: getHeaders(),
       });

@@ -1122,7 +1122,7 @@ async function createAndDownloadAllBulkReports(
 // CRAWL LOGIC: SEARCH TERM (GẮN syncRunId ĐỂ TRÁNH TẢI NHẦM FILE CŨ)
 // ============================================================================
 
-async function autoCreateAndDownloadSearchTermReport(
+export async function autoCreateAndDownloadSearchTermReport(
   page: Page,
   entityParam: string,
   adType: "SP" | "SB",
@@ -1150,7 +1150,7 @@ async function autoCreateAndDownloadSearchTermReport(
   const todayMonthDay = `${monthNames[now.getMonth()]} ${now.getDate()}`;
   const reportName = canResumeRequest && task?.reportName
     ? task.reportName
-    : `${storeName} ST ${adType} 30D ${today} ${syncRunId}`;
+    : `${storeName} Search Term ${adType} ${today} (30 day) ${syncRunId}`;
   let downloadUrl: string | null = null;
   const reportsUrl = `https://advertising.amazon.com/reports${entityParam}`;
 
@@ -1177,29 +1177,23 @@ async function autoCreateAndDownloadSearchTermReport(
     console.log(`  [SEARCH TERM] Khôi phục từ checkpoint: Search Term ${adType} đã sẵn sàng tải (${task.amazonRequestId}).`);
   }
 
-  // 2. Tạo mới trên Amazon nếu chưa có checkpoint đang xử lý
+  // 2. Tạo mới trên Amazon (BẮT BUỘC: Không dùng fallback, tạo mới hoàn toàn với mã định danh duy nhất)
   if (!canResumeRequest) {
     console.log(`  [SEARCH TERM] Tự động tạo mới Search Term ${adType} 30 Ngày (Mã định danh: ${syncRunId})...`);
 
+    // Bước 2.1: Mở form tạo mới báo cáo (bấm nút "Create report" từ trang /reports hoặc vào /reports/new)
     const createUrl = `https://advertising.amazon.com/reports/new${entityParam}`;
-    await page.goto(createUrl, { waitUntil: "domcontentloaded" }).catch(() => { });
-    await page.waitForTimeout(2500);
+    const nameSelector = "#report-settings-card-report-name-input";
+    let nameInput = await page.$(nameSelector);
 
-    const nameSelectors = [
-      "#report-settings-card-report-name-input",
-      'input[id*="report-settings-card"]',
-      'input[id*="report-name"]',
-      'input[data-testid*="report-name"]',
-      'input[name*="reportName"]',
-      'input[name*="report-name"]',
-      'input[aria-label*="Report name" i]',
-      'input[placeholder*="Report name" i]',
-    ];
-
-    let nameInput = await page.$(nameSelectors.join(", "));
     if (!nameInput) {
+      if (!page.url().includes("/reports")) {
+        await page.goto(reportsUrl, { waitUntil: "domcontentloaded" }).catch(() => { });
+        await page.waitForTimeout(2500);
+      }
+
       const createBtnSelectors = [
-        'button[data-takt-id="storm-ui-button"][data-takt-feature*="urc-subscriptions-table-container"]',
+        'button[data-takt-id="storm-ui-button"][data-takt-feature="unified-report-center:urc-subscriptions-table-container"]',
         'button[data-takt-feature*="urc-subscriptions-table-container"]',
         'button[data-testid*="create-report"]',
         'button:has-text("Create report")',
@@ -1215,14 +1209,22 @@ async function autoCreateAndDownloadSearchTermReport(
           break;
         }
       }
+
+      nameInput = await page.$(nameSelector);
+      if (!nameInput && !page.url().includes("/reports/new")) {
+        console.log(`  [SEARCH TERM] Điều hướng trực tiếp đến trang tạo mới: ${createUrl}`);
+        await page.goto(createUrl, { waitUntil: "domcontentloaded" }).catch(() => { });
+        await page.waitForTimeout(2500);
+      }
     }
 
     if (!nameInput) {
-      nameInput = await page.waitForSelector(nameSelectors.join(", "), { timeout: 10000 }).catch(() => null);
+      nameInput = await page.waitForSelector(nameSelector, { timeout: 12000 }).catch(() => null);
     }
 
-    // Cấu hình Category (SP vs SB)
+    // Bước 2.2: Cấu hình Category (Sponsored Products cho SP, Sponsored Brands cho SB)
     const targetCat = adType === "SB" ? "Sponsored Brands" : "Sponsored Products";
+    const targetCatVal = adType === "SB" ? "sb" : "sp";
     const catBtn = await page.waitForSelector(
       "#report-configuration-form\\:report-category-control-component-0, button[id*='report-category'], button[data-testid*='report-category']",
       { timeout: 4000 },
@@ -1230,20 +1232,21 @@ async function autoCreateAndDownloadSearchTermReport(
     if (catBtn) {
       const currentCat = await catBtn.innerText().catch(() => "");
       if (!currentCat.includes(targetCat)) {
-        await catBtn.click();
+        await catBtn.click().catch(() => { });
+        await page.waitForTimeout(500);
         const catOpt = await page.waitForSelector(
-          `[role="option"]:has-text("${targetCat}"), li:has-text("${targetCat}"), button:has-text("${targetCat}")`,
+          `button[data-takt-id="storm-ui-dropdown-item"][value="${targetCatVal}"], [role="option"]:has-text("${targetCat}"), li:has-text("${targetCat}"), button:has-text("${targetCat}")`,
           { timeout: 3000 },
         ).catch(() => null);
         if (catOpt) {
-          await catOpt.click();
-          await page.waitForTimeout(400);
+          await catOpt.click().catch(() => { });
+          await page.waitForTimeout(500);
           console.log(`  [SEARCH TERM] Đã chọn Category: ${targetCat}`);
         }
       }
     }
 
-    // Cấu hình Report Type: Search term
+    // Bước 2.3: Cấu hình Report Type: Search term
     const typeBtn = await page.waitForSelector(
       "#report-configuration-form\\:report-type-control-component-0, button[id*='report-type'], button[data-testid*='report-type']",
       { timeout: 4000 },
@@ -1251,59 +1254,66 @@ async function autoCreateAndDownloadSearchTermReport(
     if (typeBtn) {
       const currentText = await typeBtn.innerText().catch(() => "");
       if (!/Search term/i.test(currentText)) {
-        await typeBtn.click();
+        await typeBtn.click().catch(() => { });
+        await page.waitForTimeout(500);
         const stOpt = await page.waitForSelector(
-          '[role="option"]:has-text("Search term"), li:has-text("Search term"), button:has-text("Search term")',
+          'button[data-takt-id="storm-ui-dropdown-item"][value="searchTerms"], [role="option"]:has-text("Search term"), li:has-text("Search term"), button:has-text("Search term")',
           { timeout: 3000 },
         ).catch(() => null);
         if (stOpt) {
-          await stOpt.click();
-          await page.waitForTimeout(400);
+          await stOpt.click().catch(() => { });
+          await page.waitForTimeout(500);
           console.log(`  [SEARCH TERM] Đã chọn Report Type: Search term`);
         }
       }
     }
 
-    // Cấu hình Time unit: Daily
+    // Bước 2.4: Cấu hình Time unit: Daily (#time-units-day)
     const dayRadio = await page.$("#time-units-day, input[value='DAILY'], label[for='time-units-day']");
     if (dayRadio) {
       await dayRadio.click().catch(() => page.evaluate((el: any) => el?.click(), dayRadio));
-      await page.waitForTimeout(300);
+      await page.waitForTimeout(400);
+      console.log(`  [SEARCH TERM] Đã chọn Time unit: Daily`);
     }
 
-    // Cấu hình Date range: Last 30 days
+    // Bước 2.5: Cấu hình Date range: Last 30 days
     const dateRangeBtn = await page.$(
       "#report-configuration-form\\:date-range-control-component-0, button[id*='date-range'], button[id*='dateRange'], button[aria-label*='Date range' i], button[data-testid*='date-range']",
     );
     if (dateRangeBtn && (await dateRangeBtn.isVisible().catch(() => false))) {
-      await dateRangeBtn.click().catch(() => { });
-      await page.waitForTimeout(500);
-      const opt30 = await page.waitForSelector(
-        '[role="option"]:has-text("Last 30 days"), [role="option"]:has-text("Past 30 days"), [role="option"]:has-text("30 days"), li:has-text("Last 30 days"), li:has-text("Past 30 days"), button:has-text("Last 30 days")',
-        { timeout: 3000 },
-      ).catch(() => null);
-      if (opt30) {
-        await opt30.click().catch(() => { });
-        await page.waitForTimeout(400);
-        console.log(`  [SEARCH TERM] Đã chọn Date Range: Last 30 days`);
-      } else {
-        await page.keyboard.press("Escape").catch(() => { });
+      const currentRange = await dateRangeBtn.innerText().catch(() => "");
+      if (!currentRange.toLowerCase().includes("30 day")) {
+        await dateRangeBtn.click().catch(() => { });
+        await page.waitForTimeout(500);
+        const opt30 = await page.waitForSelector(
+          'button[data-takt-id="storm-ui-dropdown-item"][value="30d"], [role="option"]:has-text("Last 30 days"), [role="option"]:has-text("Past 30 days"), [role="option"]:has-text("30 days"), li:has-text("Last 30 days"), li:has-text("Past 30 days"), button:has-text("Last 30 days")',
+          { timeout: 3000 },
+        ).catch(() => null);
+        if (opt30) {
+          await opt30.click().catch(() => { });
+          await page.waitForTimeout(400);
+          console.log(`  [SEARCH TERM] Đã chọn Date Range: Last 30 days`);
+        } else {
+          await page.keyboard.press("Escape").catch(() => { });
+        }
       }
     }
 
-    // Điền Report Name chứa syncRunId duy nhất
-    if (nameInput) {
-      await nameInput.click().catch(() => { });
-      await nameInput.fill("");
-      await nameInput.fill(reportName);
-      await nameInput.dispatchEvent("input").catch(() => { });
-      await nameInput.dispatchEvent("change").catch(() => { });
+    // Bước 2.6: Điền Report Name chứa syncRunId duy nhất (luôn query lại element để tránh lỗi stale element do Amazon re-render DOM sau khi chọn dropdown)
+    await page.waitForTimeout(500);
+    const freshNameInput = await page.waitForSelector(nameSelector, { timeout: 8000 }).catch(() => null);
+    if (freshNameInput) {
+      await freshNameInput.click().catch(() => { });
+      await freshNameInput.fill("");
+      await freshNameInput.fill(reportName);
+      await freshNameInput.dispatchEvent("input").catch(() => { });
+      await freshNameInput.dispatchEvent("change").catch(() => { });
       console.log(`  [SEARCH TERM] Đã điền tên report: "${reportName}"`);
     } else {
       console.warn(`  [SEARCH TERM] Không tìm thấy ô tên report, dùng tên mặc định của Amazon.`);
     }
 
-    // Bấm Run report
+    // Bước 2.7: Bấm Run report
     const runSelectors = [
       "#urc_run_subscription_button",
       'button[id*="run_subscription"]',
@@ -1316,7 +1326,7 @@ async function autoCreateAndDownloadSearchTermReport(
         await page.evaluate((el: any) => el?.click(), runBtn);
       });
       console.log(`  [SEARCH TERM] ✅ Đã bấm Run report cho Search Term ${adType} (${syncRunId})!`);
-      await page.waitForTimeout(2500);
+      await page.waitForTimeout(3000);
     }
 
     if (task) {
@@ -1461,6 +1471,27 @@ async function autoCreateAndDownloadSearchTermReport(
       }
       let savedPath: string | null = null;
       const beforeStats = getFileStatsMap(destDir);
+
+      // Cách 1: Tải trực tiếp qua HTTP request với session cookie của trình duyệt (nhanh, tức thì và không bị nghẽn event tải của Chrome CDP)
+      if (downloadUrl && downloadUrl.startsWith("http")) {
+        try {
+          console.log(`  [SEARCH TERM] Đang kéo file trực tiếp qua page.request.get()...`);
+          const res = await page.request.get(downloadUrl, { timeout: 60000 });
+          if (res.ok()) {
+            const buf = await res.body();
+            if (buf && buf.length > 0) {
+              const standardizedName = `${storeName}_Search_Term_${adType}_30Days_${today}_(${syncRunId}).xlsx`;
+              savedPath = path.join(destDir, standardizedName);
+              fs.writeFileSync(savedPath, buf);
+              console.log(`  [SEARCH TERM] ✅ Tải trực tiếp thành công (${(buf.length / 1024).toFixed(1)} KB): ${standardizedName}`);
+              return savedPath;
+            }
+          }
+        } catch (fetchErr) {
+          console.warn(`  [SEARCH TERM] Tải qua request.get() lỗi, chuyển sang cơ chế click/download:`, fetchErr);
+        }
+      }
+
       try {
         const [download] = await Promise.all([
           raceWithAbort(page.waitForEvent("download", { timeout: envInt("REPORT_DOWNLOAD_TIMEOUT_MINUTES", 15, 1, 60) * 60_000 }), signal),
@@ -1687,9 +1718,11 @@ export async function crawlStore(
   const findTask = (type: ReportTaskType, days: number) =>
     tasks.find((t) => t.store === store.store_name && t.type === type && t.days === days);
 
-  // Khôi phục trạng thái các file đã tải sẵn trên ổ cứng
+  // Khôi phục trạng thái các file đã tải sẵn trên ổ cứng (CHỈ ÁP DỤNG CHO BULK FILE, KHÔNG ÁP DỤNG CHO SEARCH TERM)
   for (const t of tasks) {
     if (t.store !== store.store_name) continue;
+    // BẮT BUỘC: Không tự quét khôi phục Search Term từ đĩa! Người dùng yêu cầu Search Term phải luôn tạo mới trên Amazon.
+    if (!t.type.startsWith("BULK_")) continue;
     const targetSubDir = t.type.includes("SP") ? spDir : sbDir;
     if (!t.localPath && fs.existsSync(targetSubDir)) {
       const diskFiles = fs.readdirSync(targetSubDir)
@@ -1697,9 +1730,7 @@ export async function crawlStore(
         .sort((a, b) => fs.statSync(path.join(targetSubDir, b)).mtimeMs - fs.statSync(path.join(targetSubDir, a)).mtimeMs);
       const matched = diskFiles.find((f) => {
         const lower = f.toLowerCase();
-        const hasType = t.type.startsWith("BULK_")
-          ? /(?:^|[_ -])bulk(?:[_ -])/.test(lower)
-          : /search[_ -]*term/.test(lower);
+        const hasType = /(?:^|[_ -])bulk(?:[_ -])/.test(lower);
         const hasAd = t.type.includes("SP") ? lower.includes("sp") : lower.includes("sb");
         const hasDays = lower.includes(`${t.days}days`) || lower.includes(`${t.days}d`);
         return hasType && hasAd && hasDays;
@@ -1811,10 +1842,18 @@ export async function crawlStore(
       }
     }
 
-    // 2. Search Term SP 30d
+    // 2. Search Term SP 30d (BẮT BUỘC: Tạo mới trực tiếp trên Amazon theo yêu cầu của user, không khôi phục từ file cũ trên đĩa)
     const stSpTask = findTask("ST_SP", 30);
-    if (stSpTask && stSpTask.localPath && fs.existsSync(stSpTask.localPath) && fs.statSync(stSpTask.localPath).size > 0) {
-      console.log(`  [ST CHECKPOINT] ✅ Khôi phục Search Term SP 30d từ đĩa: ${path.basename(stSpTask.localPath)}`);
+    const isStSpDoneInSession = Boolean(
+      stSpTask &&
+      (stSpTask.status === "DOWNLOADED" || stSpTask.status === "UPLOADED") &&
+      stSpTask.localPath &&
+      fs.existsSync(stSpTask.localPath) &&
+      fs.statSync(stSpTask.localPath).size > 0,
+    );
+
+    if (isStSpDoneInSession && stSpTask?.localPath) {
+      console.log(`  [ST CHECKPOINT] ✅ Giữ nguyên Search Term SP 30d đã tải trong phiên này: ${path.basename(stSpTask.localPath)}`);
       downloadedFiles.push({
         name: path.basename(stSpTask.localPath),
         path: stSpTask.localPath,
@@ -1824,7 +1863,12 @@ export async function crawlStore(
         sizeBytes: stSpTask.sizeBytes || fs.statSync(stSpTask.localPath).size,
       });
     } else {
-      if (onProgress) await onProgress(`[${store.store_name}] Tải Search Term SP 30 Ngày`, 85);
+      if (stSpTask) {
+        stSpTask.localPath = null;
+        stSpTask.status = "NOT_STARTED";
+        stSpTask.amazonRequestId = null;
+      }
+      if (onProgress) await onProgress(`[${store.store_name}] Tạo mới & Tải Search Term SP 30 Ngày`, 85);
       const stSp = await autoCreateAndDownloadSearchTermReport(page, entityParam, "SP", store.store_name, spDir, stSpTask, saveCheckpoint, options?.signal);
       downloadedFiles.push(stSp);
       if (stSpTask) {
@@ -1835,10 +1879,18 @@ export async function crawlStore(
       }
     }
 
-    // 3. Search Term SB 30d
+    // 3. Search Term SB 30d (BẮT BUỘC: Tạo mới trực tiếp trên Amazon theo yêu cầu của user, không khôi phục từ file cũ trên đĩa)
     const stSbTask = findTask("ST_SB", 30);
-    if (stSbTask && stSbTask.localPath && fs.existsSync(stSbTask.localPath) && fs.statSync(stSbTask.localPath).size > 0) {
-      console.log(`  [ST CHECKPOINT] ✅ Khôi phục Search Term SB 30d từ đĩa: ${path.basename(stSbTask.localPath)}`);
+    const isStSbDoneInSession = Boolean(
+      stSbTask &&
+      (stSbTask.status === "DOWNLOADED" || stSbTask.status === "UPLOADED") &&
+      stSbTask.localPath &&
+      fs.existsSync(stSbTask.localPath) &&
+      fs.statSync(stSbTask.localPath).size > 0,
+    );
+
+    if (isStSbDoneInSession && stSbTask?.localPath) {
+      console.log(`  [ST CHECKPOINT] ✅ Giữ nguyên Search Term SB 30d đã tải trong phiên này: ${path.basename(stSbTask.localPath)}`);
       downloadedFiles.push({
         name: path.basename(stSbTask.localPath),
         path: stSbTask.localPath,
@@ -1848,7 +1900,12 @@ export async function crawlStore(
         sizeBytes: stSbTask.sizeBytes || fs.statSync(stSbTask.localPath).size,
       });
     } else {
-      if (onProgress) await onProgress(`[${store.store_name}] Tải Search Term SB 30 Ngày`, 95);
+      if (stSbTask) {
+        stSbTask.localPath = null;
+        stSbTask.status = "NOT_STARTED";
+        stSbTask.amazonRequestId = null;
+      }
+      if (onProgress) await onProgress(`[${store.store_name}] Tạo mới & Tải Search Term SB 30 Ngày`, 95);
       const stSb = await autoCreateAndDownloadSearchTermReport(page, entityParam, "SB", store.store_name, sbDir, stSbTask, saveCheckpoint, options?.signal);
       downloadedFiles.push(stSb);
       if (stSbTask) {

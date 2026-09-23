@@ -671,8 +671,8 @@ async function autoCreateAndDownloadSearchTermReport(
         }
       }
 
-      // Ưu tiên 1: Khớp chính xác syncRunId
-      for (const [idx, entry] of rowIndexMap.entries()) {
+      // Ưu tiên 1: Khớp chính xác syncRunId vừa tạo mới
+      for (const [, entry] of rowIndexMap.entries()) {
         const fullText = entry.texts.join(" ");
         if (fullText.includes(args.targetId)) {
           const isCompleted = /completed|success|downloadable/i.test(fullText) || Boolean(entry.href);
@@ -680,17 +680,7 @@ async function autoCreateAndDownloadSearchTermReport(
         }
       }
 
-      // Ưu tiên 2 (Fallback): Khớp theo Search Term hôm nay đã hoàn thành
-      const adTypeLabel = args.adType === "SB" ? "Sponsored Brands" : "Sponsored Products";
-      for (const [idx, entry] of rowIndexMap.entries()) {
-        const fullText = entry.texts.join(" ");
-        const hasSearchTerm = /search\s*term/i.test(fullText);
-        const hasAdType = fullText.includes(args.adType) || fullText.includes(adTypeLabel);
-        if (hasSearchTerm && hasAdType && entry.href) {
-          return { found: true, isCompleted: true, href: entry.href };
-        }
-      }
-
+      // BẮT BUỘC: Không dùng fallback bốc file cũ! Chỉ nhận đúng file theo targetId (syncRunId) vừa tạo mới
       return { found: false, isCompleted: false, href: null };
     }, { targetId: syncRunId, adType });
 
