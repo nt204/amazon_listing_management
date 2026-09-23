@@ -394,7 +394,13 @@ export async function startAdsPowerProfile(profileId: string): Promise<string> {
     if (startData.data?.ws?.puppeteer) {
       return startData.data.ws.puppeteer;
     }
+    const apiMsg = startData.msg || `code ${startData.code}`;
+    console.warn(`[AdsPower API] Profile ${profileId} bị từ chối: ${apiMsg}`);
+    throw new Error(`AdsPower API từ chối mở profile ${profileId}: ${apiMsg}`);
   } catch (err) {
+    if ((err as Error).message.includes("AdsPower API từ chối")) {
+      throw err;
+    }
     console.warn(`[AdsPower API] Lỗi khởi động profile: ${(err as Error).message}`);
   }
 
