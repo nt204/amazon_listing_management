@@ -16,8 +16,11 @@ import {
 import {
   ChartLineUp,
   SquaresFour,
+  Eye,
 } from "@phosphor-icons/react";
 import type { PpcSummaryMetrics, PpcAdTypeBreakdown, PpcSearchTermRow, PpcDailyTrendPoint } from "@/lib/ppc/types";
+import { PpcDailyCampaignDrawer, type AvailableDateItem } from "./ppc-daily-campaign-drawer";
+import type { PpcDailyCampaignItem } from "@/lib/ppc/repository";
 
 interface PpcTimeSeriesChartProps {
   summary: PpcSummaryMetrics;
@@ -35,6 +38,7 @@ interface PpcTimeSeriesChartProps {
   endDate?: string;
   onCustomDateChange?: (start: string, end: string) => void;
   hideSummaryCards?: boolean;
+  storeName?: string;
 }
 
 type Granularity = "day" | "week" | "month";
@@ -78,6 +82,7 @@ export function PpcTimeSeriesChart({
   targetAcos = 30,
   currency = "$",
   hideSummaryCards = false,
+  storeName = "ALL",
 }: PpcTimeSeriesChartProps) {
   // Chế độ xem: Mặc định là "split" (Song song 7D & 30D trên 1 dòng)
   const [viewMode, setViewMode] = useState<ViewMode>("split");
@@ -86,6 +91,38 @@ export function PpcTimeSeriesChart({
   const [granularity, setGranularity] = useState<Granularity>("day");
   const [channel, setChannel] = useState<ChannelFilter>("ALL");
   const [rightMetric, setRightMetric] = useState<RightAxisMetric>("ACOS");
+
+  // State Drawer xem chi tiết Campaign theo ngày (On-Demand)
+  const [drilldownDate, setDrilldownDate] = useState<string | null>(null);
+  const [dailyCampaigns, setDailyCampaigns] = useState<PpcDailyCampaignItem[]>([]);
+  const [loadingDrilldown, setLoadingDrilldown] = useState(false);
+  const loadedCampaignsStoreRef = React.useRef<string | null>(null);
+
+  const fetchDailyCampaigns = React.useCallback(async (store = "ALL") => {
+    if (loadedCampaignsStoreRef.current === store && dailyCampaigns.length > 0) return;
+    try {
+      setLoadingDrilldown(true);
+      const res = await fetch(`/api/ppc/daily-campaigns?storeName=${encodeURIComponent(store)}&days=7`, {
+        cache: "no-store",
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data?.data) {
+        setDailyCampaigns(data.data);
+        loadedCampaignsStoreRef.current = store;
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingDrilldown(false);
+    }
+  }, [dailyCampaigns.length]);
+
+  const handleOpenDrilldown = (rawDate: string) => {
+    if (!rawDate) return;
+    setDrilldownDate(rawDate);
+    fetchDailyCampaigns(storeName || "ALL");
+  };
 
   // Target totals after channel filter - ĐỒNG BỘ CHÍNH XÁC THEO BULK FILE
   const channelTotals = useMemo(() => {
@@ -357,6 +394,18 @@ export function PpcTimeSeriesChart({
   const chartData7D = useMemo(() => aggregatePoints(rawData7D, granularity), [rawData7D, granularity]);
   const totals7D = useMemo(() => calculateTotals(rawData7D), [rawData7D]);
 
+  // Danh sách các ngày trong 7D kèm số đơn và chi tiêu để drawer chuyển ngày nhanh
+  const availableDates7D: AvailableDateItem[] = useMemo(() => {
+    return rawData7D.map((d) => ({
+      rawDate: d.rawDate,
+      displayDate: d.displayDate,
+      orders: d.orders,
+      spend: d.spend,
+      sales: d.revenue,
+      acos: d.acos,
+    }));
+  }, [rawData7D]);
+
   const rawData30D = useMemo(() => generateDailyPoints(30), [channel, dailyTrends, searchTerms, channelTotals, targetAcos, dateRangeEnd]);
   const chartData30D = useMemo(() => aggregatePoints(rawData30D, granularity), [rawData30D, granularity]);
   const totals30D = useMemo(() => calculateTotals(rawData30D), [rawData30D]);
@@ -477,6 +526,16 @@ export function PpcTimeSeriesChart({
             <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">
               {title}
             </h4>
+            {badgeText === "7D" && (
+              <button
+                type="button"
+                onClick={() => handleOpenDrilldown(data[data.length - 1]?.rawDate || "")}
+                className="text-[10px] text-indigo-700 bg-indigo-50 border border-indigo-200/80 hover:bg-indigo-100 hover:border-indigo-300 px-2 py-0.5 rounded-full font-bold flex items-center gap-1 transition shadow-2xs cursor-pointer ml-1"
+                title="Bấm để xem danh sách chiến dịch có nhiều đơn nhất theo ngày"
+              >
+                <Eye size={12} weight="bold" /> Chi tiết Top Camp
+              </button>
+            )}
           </div>
           <span className="text-[11px] text-slate-400 font-medium">
             {data.length > 0 ? `${data[0]?.displayDate} — ${data[data.length - 1]?.displayDate}` : ""}
@@ -571,7 +630,16 @@ export function PpcTimeSeriesChart({
           return (
             <div className="h-72 w-full pt-1">
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={data} margin={{ top: 22, right: 10, left: -10, bottom: 15 }}>
+                <ComposedChart
+                  data={data}
+                  margin={{ top: 22, right: 10, left: -10, bottom: 15 }}
+                  onClick={(state: any) => {
+                    if (badgeText === "7D" && state?.activePayload?.[0]?.payload?.rawDate) {
+                      handleOpenDrilldown(state.activePayload[0].payload.rawDate);
+                    }
+                  }}
+                  className={badgeText === "7D" ? "cursor-pointer" : undefined}
+                >
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                   <XAxis
                     dataKey="displayDate"
@@ -639,6 +707,14 @@ export function PpcTimeSeriesChart({
                             <span className="text-slate-500">CPC:</span>
                             <strong className="text-slate-700 text-right">{currency}{(d.clicks > 0 ? d.spend / d.clicks : 0).toFixed(2)}</strong>
                           </div>
+
+                          {badgeText === "7D" && (
+                            <div className="pt-1.5 border-t border-slate-100 mt-1 text-center">
+                              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">
+                                <Eye size={11} weight="bold" /> Click cột để xem Top Camp ({d.orders} đơn)
+                              </span>
+                            </div>
+                          )}
                         </div>
                       );
                     }}
@@ -654,6 +730,12 @@ export function PpcTimeSeriesChart({
                     fill="#3b82f6"
                     radius={[4, 4, 0, 0]}
                     maxBarSize={data.length > 15 ? 18 : 24}
+                    className={badgeText === "7D" ? "cursor-pointer hover:opacity-90 transition-opacity" : undefined}
+                    onClick={(entry: any) => {
+                      if (badgeText === "7D" && entry?.rawDate) {
+                        handleOpenDrilldown(entry.rawDate);
+                      }
+                    }}
                   >
                     <LabelList
                       dataKey="spend"
@@ -887,6 +969,19 @@ export function PpcTimeSeriesChart({
           false,
         )
       )}
+
+      {/* Drawer xem chi tiết Campaign theo ngày (Chỉ mở khi bấm vào ngày trên 7D) */}
+      <PpcDailyCampaignDrawer
+        isOpen={Boolean(drilldownDate)}
+        onClose={() => setDrilldownDate(null)}
+        selectedDate={drilldownDate || ""}
+        availableDates={availableDates7D}
+        onSelectDate={(newDate) => setDrilldownDate(newDate)}
+        campaigns={dailyCampaigns}
+        isLoading={loadingDrilldown}
+        currency={currency}
+        storeName={storeName || "ALL"}
+      />
     </div>
   );
 }

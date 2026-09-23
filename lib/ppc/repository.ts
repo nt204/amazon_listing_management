@@ -1672,6 +1672,89 @@ export async function listPpcDailyTrendsFromDb(
   });
 }
 
+export interface PpcDailyCampaignItem {
+  date: string;
+  campaignName: string;
+  adType: string;
+  orders: number;
+  sales: number;
+  spend: number;
+  clicks: number;
+  impressions: number;
+  acos: number;
+  roas: number;
+  cpc: number;
+}
+
+export async function listPpcDailyCampaignsFromDb(
+  scope: DataScope,
+  filters: { storeName?: string; days?: number } = {},
+): Promise<PpcDailyCampaignItem[]> {
+  const sql = await getDatabaseClient();
+  const teamId = (scope as any)?.teamId || "default";
+  const storeName = filters.storeName || "ALL";
+  const days = Math.max(1, filters.days || 7);
+
+  const rows = await sql<Array<{
+    date: string;
+    campaign_name: string;
+    ad_type: string;
+    orders: string | number;
+    sales: string | number;
+    spend: string | number;
+    clicks: string | number;
+    impressions: string | number;
+  }>>`
+    WITH anchor AS (
+      SELECT COALESCE(MAX(report_date), CURRENT_DATE - 1) AS max_date
+      FROM ppc_search_terms
+    )
+    SELECT 
+      to_char(p.report_date, 'YYYY-MM-DD') AS date,
+      p.campaign_name,
+      COALESCE(p.ad_type, 'SP') AS ad_type,
+      COALESCE(SUM(p.orders), 0) AS orders,
+      COALESCE(SUM(p.sales), 0) AS sales,
+      COALESCE(SUM(p.spend), 0) AS spend,
+      COALESCE(SUM(p.clicks), 0) AS clicks,
+      COALESCE(SUM(p.impressions), 0) AS impressions
+    FROM ppc_search_terms p
+    JOIN ppc_stores s ON s.id = p.store_id
+    CROSS JOIN anchor a
+    WHERE s.team_id = ${teamId}
+      AND (${storeName === "ALL"} OR lower(s.name) = lower(${storeName}))
+      AND p.report_date >= a.max_date - (${days} - 1)::integer
+      AND p.report_date <= a.max_date
+    GROUP BY p.report_date, p.campaign_name, p.ad_type
+    ORDER BY p.report_date DESC, orders DESC, sales DESC, spend DESC;
+  `;
+
+  return rows.map((r) => {
+    const spend = Math.round(Number(r.spend || 0) * 100) / 100;
+    const sales = Math.round(Number(r.sales || 0) * 100) / 100;
+    const orders = Number(r.orders || 0);
+    const clicks = Number(r.clicks || 0);
+    const impressions = Number(r.impressions || 0);
+    const acos = sales > 0 ? Math.round((spend / sales) * 1000) / 10 : (spend > 0 ? 999 : 0);
+    const roas = spend > 0 ? Math.round((sales / spend) * 100) / 100 : 0;
+    const cpc = clicks > 0 ? Math.round((spend / clicks) * 100) / 100 : 0;
+
+    return {
+      date: r.date,
+      campaignName: r.campaign_name,
+      adType: r.ad_type,
+      orders,
+      sales,
+      spend,
+      clicks,
+      impressions,
+      acos,
+      roas,
+      cpc,
+    };
+  });
+}
+
 export async function getPpcSearchTermSummaryFromDb(
   scope: DataScope,
   filters: { storeName?: string; sku?: string; days?: number; startDate?: string; endDate?: string; minClicksThreshold?: number; maxSpendThreshold?: number } = {},

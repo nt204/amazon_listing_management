@@ -2001,6 +2001,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
             searchTerms={searchTerms}
             targetAcos={targetAcos}
             currency="$"
+            storeName={selectedStore}
           />
 
           {/* BIỂU ĐỒ 2: So sánh hiệu suất theo dạng chạy */}
