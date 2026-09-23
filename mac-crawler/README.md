@@ -110,6 +110,8 @@ flowchart LR
     I --> J[COMPLETED]
 ```
 
+Sau khi tạo marker, Mac bàn giao nguyên tử `crawler job + lease + batch + store + 6 task` cho server rồi chuyển sang store kế tiếp ngay. Ingestion worker trên server chạy tuần tự (`concurrency = 1`) và tự chuyển crawler job từ `INGESTING` sang `COMPLETED` hoặc `FAILED`; Mac không giữ AdsPower để chờ database.
+
 ---
 
 ### 4. Quản lý Lịch Chạy Tự Động 12:00 Trưa (Daily LaunchAgent)
