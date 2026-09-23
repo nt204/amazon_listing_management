@@ -92,6 +92,10 @@ export function PpcTimeSeriesChart({
   const [channel, setChannel] = useState<ChannelFilter>("ALL");
   const [rightMetric, setRightMetric] = useState<RightAxisMetric>("ACOS");
 
+  // Chỉ kích hoạt xem chi tiết chiến dịch khi đang ở chế độ xem 1 store cụ thể (storeName !== "ALL")
+  // Chỗ tổng quan store gộp (ALL) sẽ không hiển thị nút hay kích hoạt popup này
+  const isStoreDetail = Boolean(storeName && storeName !== "ALL");
+
   // State Drawer xem chi tiết Campaign theo ngày (On-Demand)
   const [drilldownDate, setDrilldownDate] = useState<string | null>(null);
   const [dailyCampaigns, setDailyCampaigns] = useState<PpcDailyCampaignItem[]>([]);
@@ -119,9 +123,9 @@ export function PpcTimeSeriesChart({
   }, [dailyCampaigns.length]);
 
   const handleOpenDrilldown = (rawDate: string) => {
-    if (!rawDate) return;
+    if (!isStoreDetail || !rawDate) return;
     setDrilldownDate(rawDate);
-    fetchDailyCampaigns(storeName || "ALL");
+    fetchDailyCampaigns(storeName);
   };
 
   // Target totals after channel filter - ĐỒNG BỘ CHÍNH XÁC THEO BULK FILE
@@ -526,7 +530,7 @@ export function PpcTimeSeriesChart({
             <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">
               {title}
             </h4>
-            {badgeText === "7D" && (
+            {badgeText === "7D" && isStoreDetail && (
               <button
                 type="button"
                 onClick={() => handleOpenDrilldown(data[data.length - 1]?.rawDate || "")}
@@ -634,11 +638,11 @@ export function PpcTimeSeriesChart({
                   data={data}
                   margin={{ top: 22, right: 10, left: -10, bottom: 15 }}
                   onClick={(state: any) => {
-                    if (badgeText === "7D" && state?.activePayload?.[0]?.payload?.rawDate) {
+                    if (badgeText === "7D" && isStoreDetail && state?.activePayload?.[0]?.payload?.rawDate) {
                       handleOpenDrilldown(state.activePayload[0].payload.rawDate);
                     }
                   }}
-                  className={badgeText === "7D" ? "cursor-pointer" : undefined}
+                  className={badgeText === "7D" && isStoreDetail ? "cursor-pointer" : undefined}
                 >
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                   <XAxis
@@ -708,7 +712,7 @@ export function PpcTimeSeriesChart({
                             <strong className="text-slate-700 text-right">{currency}{(d.clicks > 0 ? d.spend / d.clicks : 0).toFixed(2)}</strong>
                           </div>
 
-                          {badgeText === "7D" && (
+                          {badgeText === "7D" && isStoreDetail && (
                             <div className="pt-1.5 border-t border-slate-100 mt-1 text-center">
                               <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">
                                 <Eye size={11} weight="bold" /> Click cột để xem Top Camp ({d.orders} đơn)
@@ -730,9 +734,9 @@ export function PpcTimeSeriesChart({
                     fill="#3b82f6"
                     radius={[4, 4, 0, 0]}
                     maxBarSize={data.length > 15 ? 18 : 24}
-                    className={badgeText === "7D" ? "cursor-pointer hover:opacity-90 transition-opacity" : undefined}
+                    className={badgeText === "7D" && isStoreDetail ? "cursor-pointer hover:opacity-90 transition-opacity" : undefined}
                     onClick={(entry: any) => {
-                      if (badgeText === "7D" && entry?.rawDate) {
+                      if (badgeText === "7D" && isStoreDetail && entry?.rawDate) {
                         handleOpenDrilldown(entry.rawDate);
                       }
                     }}
@@ -970,18 +974,20 @@ export function PpcTimeSeriesChart({
         )
       )}
 
-      {/* Drawer xem chi tiết Campaign theo ngày (Chỉ mở khi bấm vào ngày trên 7D) */}
-      <PpcDailyCampaignDrawer
-        isOpen={Boolean(drilldownDate)}
-        onClose={() => setDrilldownDate(null)}
-        selectedDate={drilldownDate || ""}
-        availableDates={availableDates7D}
-        onSelectDate={(newDate) => setDrilldownDate(newDate)}
-        campaigns={dailyCampaigns}
-        isLoading={loadingDrilldown}
-        currency={currency}
-        storeName={storeName || "ALL"}
-      />
+      {/* Drawer xem chi tiết Campaign theo ngày (Chỉ mở khi xem chi tiết store và bấm vào ngày trên 7D) */}
+      {isStoreDetail && (
+        <PpcDailyCampaignDrawer
+          isOpen={Boolean(drilldownDate)}
+          onClose={() => setDrilldownDate(null)}
+          selectedDate={drilldownDate || ""}
+          availableDates={availableDates7D}
+          onSelectDate={(newDate) => setDrilldownDate(newDate)}
+          campaigns={dailyCampaigns}
+          isLoading={loadingDrilldown}
+          currency={currency}
+          storeName={storeName || "ALL"}
+        />
+      )}
     </div>
   );
 }
