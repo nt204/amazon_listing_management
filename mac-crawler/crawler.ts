@@ -1406,20 +1406,38 @@ export async function autoCreateAndDownloadSearchTermReport(
       const timeoutStr = `${timeoutMinutes}:00`;
       console.log(`  [ST ${adType}] Amazon đang xử lý ${syncRunId} — ${elapsedStr}/${timeoutStr} — lần poll ${pollIteration}`);
 
-      await page.waitForTimeout(waitSeconds * 1000);
+      // Dùng setTimeout thay vì page.waitForTimeout để tránh crash nếu trang đang reload hoặc tab thay đổi
+      await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
+
+      // Kiểm tra và khôi phục page nếu tab bị đóng hoặc chuyển hướng
+      if (page.isClosed()) {
+        const pages = context.pages().filter((p) => !p.isClosed());
+        const validPage = pages.find((p) => p.url().includes("advertising.amazon.com")) || pages[0];
+        if (validPage) {
+          page = validPage;
+          console.log(`  [SEARCH TERM] 🔄 Phục hồi tab hợp lệ: ${page.url()}`);
+        } else {
+          try {
+            page = await context.newPage();
+            await page.goto(reportsUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
+          } catch {
+            throw new Error(`Trình duyệt AdsPower đã bị đóng hoàn toàn.`);
+          }
+        }
+      }
 
       // Refresh dữ liệu bảng báo cáo
       let refreshed = false;
       const refreshBtn = await page.$(
         'button[aria-label*="Refresh" i], button:has-text("Refresh"), button:has-text("Làm mới"), button[data-testid*="refresh" i], button[data-takt-id*="refresh" i], button:has(svg[data-icon="refresh"])',
-      );
+      ).catch(() => null);
       if (refreshBtn && (await refreshBtn.isVisible().catch(() => false))) {
         await refreshBtn.click().catch(() => { });
         refreshed = true;
       }
       if (!refreshed && pollIteration % 2 === 0) {
         await page.reload({ waitUntil: "domcontentloaded" }).catch(() => { });
-        await page.waitForTimeout(2000);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
       }
     }
   }
@@ -1863,10 +1881,9 @@ export async function crawlStore(
         sizeBytes: stSpTask.sizeBytes || fs.statSync(stSpTask.localPath).size,
       });
     } else {
-      if (stSpTask) {
+      if (stSpTask && !stSpTask.amazonRequestId) {
         stSpTask.localPath = null;
         stSpTask.status = "NOT_STARTED";
-        stSpTask.amazonRequestId = null;
       }
       if (onProgress) await onProgress(`[${store.store_name}] Tạo mới & Tải Search Term SP 30 Ngày`, 85);
       const stSp = await autoCreateAndDownloadSearchTermReport(page, entityParam, "SP", store.store_name, spDir, stSpTask, saveCheckpoint, options?.signal);
@@ -1900,10 +1917,9 @@ export async function crawlStore(
         sizeBytes: stSbTask.sizeBytes || fs.statSync(stSbTask.localPath).size,
       });
     } else {
-      if (stSbTask) {
+      if (stSbTask && !stSbTask.amazonRequestId) {
         stSbTask.localPath = null;
         stSbTask.status = "NOT_STARTED";
-        stSbTask.amazonRequestId = null;
       }
       if (onProgress) await onProgress(`[${store.store_name}] Tạo mới & Tải Search Term SB 30 Ngày`, 95);
       const stSb = await autoCreateAndDownloadSearchTermReport(page, entityParam, "SB", store.store_name, sbDir, stSbTask, saveCheckpoint, options?.signal);

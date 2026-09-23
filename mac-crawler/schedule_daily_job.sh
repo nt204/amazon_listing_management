@@ -58,8 +58,19 @@ while IFS= read -r store_name; do
 done < "$STORE_LIST_FILE"
 rm -f "$STORE_LIST_FILE"
 
+IS_FORCE=false
+for arg in "$@"; do
+  if [ "$arg" = "--force" ] || [ "$arg" = "-f" ] || [ "$arg" = "--test" ]; then
+    IS_FORCE=true
+  fi
+done
+
 echo "============================================================"
-echo "[SCHEDULER] $(date): xếp ${#STORE_NAMES[@]} job riêng theo store cho ngày $RUN_DATE."
+if [ "$IS_FORCE" = "true" ]; then
+  echo "[SCHEDULER] $(date): CHẾ ĐỘ FORCE TEST - xếp ${#STORE_NAMES[@]} job cho ngày $RUN_DATE."
+else
+  echo "[SCHEDULER] $(date): xếp ${#STORE_NAMES[@]} job riêng theo store cho ngày $RUN_DATE."
+fi
 echo "============================================================"
 
 enqueued=0
@@ -67,14 +78,19 @@ skipped=0
 failed=0
 
 for store_name in "${STORE_NAMES[@]}"; do
-  payload="$(STORE_NAME="$store_name" RUN_DATE="$RUN_DATE" python3 -c '
-import json, os
-name=os.environ["STORE_NAME"]
-date=os.environ["RUN_DATE"]
-print(json.dumps({
+  payload="$(STORE_NAME="$store_name" RUN_DATE="$RUN_DATE" IS_FORCE="$IS_FORCE" python3 -c '
+import json, os, time
+name = os.environ["STORE_NAME"]
+date = os.environ["RUN_DATE"]
+is_force = os.environ.get("IS_FORCE") == "true"
+enqueue_key = f"daily:{date}:{name.lower()}:{int(time.time())}" if is_force else f"daily:{date}:{name.lower()}"
+payload = {
     "storeName": name,
-    "enqueueKey": f"daily:{date}:{name.lower()}"
-}, separators=(",", ":")))
+    "enqueueKey": enqueue_key
+}
+if is_force:
+    payload["forceNew"] = True
+print(json.dumps(payload, separators=(",", ":")))
 ')"
 
   submitted=false

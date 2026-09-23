@@ -8,10 +8,10 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/macbook/Desktop/Amazon Listing Management/mac-crawler/run_daily.sh</string>
+        <string>schedule_daily_job.sh</string>
     </array>
 
-    <!-- Lịch chạy: Đúng 12 giờ 00 phút trưa mỗi ngày -->
+    <!-- Lịch chạy: Mặc định 12:00 trưa mỗi ngày. Chạy ./install_launchd.sh [HH:MM] để tự động sinh đúng thư mục và giờ -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
@@ -20,21 +20,21 @@
         <integer>0</integer>
     </dict>
 
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+
     <key>StandardOutPath</key>
-    <string>/Users/macbook/Library/Logs/mac-crawler.log</string>
+    <string>Library/Logs/mac-crawler.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/macbook/Library/Logs/mac-crawler.log</string>
-
-    <key>WorkingDirectory</key>
-    <string>/Users/macbook/Desktop/Amazon Listing Management/mac-crawler</string>
+    <string>Library/Logs/mac-crawler.log</string>
 
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
         <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
-        <key>HOME</key>
-        <string>/Users/macbook</string>
     </dict>
 </dict>
 </plist>

@@ -114,31 +114,53 @@ Sau khi tạo marker, Mac bàn giao nguyên tử `crawler job + lease + batch + 
 
 ---
 
-### 4. Quản lý Lịch Chạy Tự Động 12:00 Trưa (Daily LaunchAgent)
+### 4. Quản lý Lịch Chạy Tự Động (Daily LaunchAgent)
 
-Đúng 12:00, LaunchAgent chạy `schedule_daily_job.sh` để xếp một job cho từng store đang bật trong `stores.json`. Nó không gọi `crawler.ts` trực tiếp. Server cho phép nhiều store chờ trong hàng đợi nhưng Mac mini chỉ chạy một store tại một thời điểm. Khóa `daily:<ngày>:<store>` ngăn scheduler tạo trùng nếu chạy lại trong cùng ngày.
+LaunchAgent chạy `schedule_daily_job.sh` để xếp một job cho từng store đang bật trong `stores.json`. Server cho phép nhiều store chờ trong hàng đợi nhưng Mac mini chỉ chạy một store tại một thời điểm. Khóa `daily:<ngày>:<store>` ngăn scheduler tạo trùng nếu chạy lại trong cùng ngày.
 
 ```bash
 cd ~/mac-crawler
 
-# Cài đặt lịch 12:00 trưa:
+# 1. Cài đặt lịch mặc định (12:00 TRƯA MỖI NGÀY):
 ./install_launchd.sh
 
-# Kiểm tra xem lịch đã đăng ký chưa:
+# 2. Cài đặt lịch theo GIỜ BẤT KỲ (ví dụ 13:45 hoặc 14:05):
+./install_launchd.sh 13:45
+
+# 3. Cài đặt lịch test ép buộc chạy (bỏ qua kiểm tra trùng lặp trong ngày):
+./install_launchd.sh 13:45 --force
+
+# 4. Kiểm tra xem lịch đã đăng ký vào macOS launchd chưa:
 launchctl list | grep com.amazon.ppc.crawler
 
-# Xem log scheduler 12:00:
+# 5. Xem log tiến trình đặt lịch:
 tail -f ~/Library/Logs/mac-crawler.log
 
-# Gỡ bỏ lịch tự động 12:00 trưa:
+# 6. Gỡ bỏ lịch tự động:
 ./uninstall_launchd.sh
 ```
 
 ---
 
-### 5. Chạy Thử Thủ Công Ngay Lập Tức (Test Run)
+### 5. Chạy Thử Lệnh Lập Lịch Ngay Lập Tức (Test Scheduler)
 
-Nếu muốn test ngay trên Mac mini mà không cần qua Web và không cần chờ đến 12h:
+Nếu muốn test ngay lập tức việc xếp job vào hàng đợi Web App mà không cần chờ đến giờ hẹn:
+
+```bash
+cd ~/mac-crawler
+
+# Test xếp job bình thường:
+./schedule_daily_job.sh
+
+# FORCE TEST: Ép buộc tạo job mới ngay cả khi hôm nay đã crawl rồi:
+./schedule_daily_job.sh --force
+```
+
+---
+
+### 6. Chạy Thử Trực Tiếp Bằng Tay (Test Run Standalone)
+
+Nếu muốn test trực tiếp Playwright -> AdsPower mà không qua Web:
 
 ```bash
 cd ~/mac-crawler
@@ -209,7 +231,6 @@ cd "/Users/macbook/Desktop/Amazon Listing Management"
 zip -r ~/Desktop/mac-crawler.zip mac-crawler \
   -x "mac-crawler/node_modules/*" \
   -x "mac-crawler/__pycache__/*" \
-  -x "mac-crawler/config.env" \
   -x "mac-crawler/.*"
 ```
 
