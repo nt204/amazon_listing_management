@@ -67,32 +67,41 @@ export async function PATCH(request: Request) {
     const terminal = status === "SUCCESS" || status === "FAILED";
     const sql = await getDatabaseClient();
     const seconds = leaseSeconds();
-    const rows = await sql`
-      UPDATE ppc_auto_upload_logs
-      SET status = COALESCE(${status}, status),
-          stage = COALESCE(${body?.stage == null ? null : String(body.stage)}, stage),
-          progress_pct = COALESCE(${progress}, progress_pct),
-          error_message = ${body?.error_message == null ? null : String(body.error_message)},
-          amazon_upload_id = COALESCE(${body?.amazon_upload_id == null ? null : String(body.amazon_upload_id)}, amazon_upload_id),
-          heartbeat_at = NOW(), updated_at = NOW(),
-          lease_expires_at = CASE WHEN ${terminal} THEN NULL ELSE NOW() + ${seconds} * INTERVAL '1 second' END,
-          completed_at = CASE WHEN ${terminal} THEN NOW() ELSE completed_at END,
-          duration_ms = CASE WHEN ${terminal} THEN GREATEST(0, (EXTRACT(EPOCH FROM (NOW() - created_at)) * 1000)::integer) ELSE duration_ms END
-      WHERE id = ${jobId} AND team_id = ${actor.teamId}
-        AND status = 'RUNNING' AND lease_token = ${leaseToken}
-      RETURNING id, status, stage
-    `;
-    if (!rows.length) throw new ApiError("Lease upload Bulk không còn hợp lệ.", 409);
-
-    if (status === "SUCCESS") {
-      await sql`
-        UPDATE ppc_actions SET status = 'APPLIED', updated_at = NOW()
-        WHERE id IN (
-          SELECT jsonb_array_elements_text(action_ids)::uuid
-          FROM ppc_auto_upload_logs WHERE id = ${jobId}
-        )
+    const rows = await sql.begin(async (transaction) => {
+      const updated = await transaction`
+        UPDATE ppc_auto_upload_logs
+        SET status = COALESCE(${status}, status),
+            stage = COALESCE(${body?.stage == null ? null : String(body.stage)}, stage),
+            progress_pct = COALESCE(${progress}, progress_pct),
+            error_message = ${body?.error_message == null ? null : String(body.error_message)},
+            amazon_upload_id = COALESCE(${body?.amazon_upload_id == null ? null : String(body.amazon_upload_id)}, amazon_upload_id),
+            heartbeat_at = NOW(), updated_at = NOW(),
+            lease_expires_at = CASE WHEN ${terminal} THEN NULL ELSE NOW() + ${seconds} * INTERVAL '1 second' END,
+            completed_at = CASE WHEN ${terminal} THEN NOW() ELSE completed_at END,
+            duration_ms = CASE WHEN ${terminal} THEN GREATEST(0, (EXTRACT(EPOCH FROM (NOW() - created_at)) * 1000)::integer) ELSE duration_ms END
+        WHERE id = ${jobId} AND team_id = ${actor.teamId}
+          AND status = 'RUNNING' AND lease_token = ${leaseToken}
+        RETURNING id, status, stage
       `;
-    }
+      if (!updated.length) throw new ApiError("Lease upload Bulk không còn hợp lệ.", 409);
+
+      if (status === "SUCCESS") {
+        await transaction`
+          UPDATE ppc_actions SET status = 'APPLIED', updated_at = NOW()
+          WHERE id IN (
+            SELECT jsonb_array_elements_text(
+              CASE
+                WHEN jsonb_typeof(action_ids) = 'array' THEN action_ids
+                ELSE '[]'::jsonb
+              END
+            )::uuid
+            FROM ppc_auto_upload_logs
+            WHERE id = ${jobId} AND team_id = ${actor.teamId}
+          )
+        `;
+      }
+      return updated;
+    });
     return Response.json({ success: true, job: rows[0] });
   } catch (error) {
     return routeErrorResponse(error, "Lỗi khi cập nhật job upload Bulk.", 500);

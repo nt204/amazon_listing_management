@@ -159,11 +159,26 @@ export async function getPpcAnalyticsData(
   const isDetailSection = section && section !== "overview";
 
   if (section === "overview") {
+    const isAllStores = storeName === "ALL";
     const [stores, aggregates, dailyTrendsDb, searchTermData, syncLogs] = await Promise.all([
       listPpcStores(scope),
       getPpcOverviewAggregates(scope, { storeName, sku, days }),
       listPpcDailyTrendsFromDb(scope, { storeName, days, startDate, endDate }),
-      getPpcSearchTermSummaryFromDb(scope, { storeName, sku, days, startDate, endDate }),
+      isAllStores
+        ? Promise.resolve({
+            summary: {
+              totalTerms: 0,
+              totalSpend: 0,
+              totalSales: 0,
+              totalOrders: 0,
+              wastedSpend: 0,
+              bleedingTermsCount: 0,
+              profitableTermsCount: 0,
+            },
+            topProfitableAndBleeding: [],
+            alertRows: [],
+          })
+        : getPpcSearchTermSummaryFromDb(scope, { storeName, sku, days, startDate, endDate }),
       listPpcSyncLogs(scope),
     ]);
 

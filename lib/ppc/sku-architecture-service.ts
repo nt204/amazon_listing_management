@@ -1762,8 +1762,8 @@ export async function executeAutoUploadZeroSpendActions(
       progress_pct, r2_key, sha256, action_ids, updated_at
     ) VALUES (
       ${jobId}, ${teamId}, ${storeId}, ${exportResult.fileName}, ${zeroSpendActions.length},
-      ${JSON.stringify(distinctSkus)}::jsonb, 'PENDING', 'PENDING', 0,
-      ${r2Key}, ${sha256}, ${JSON.stringify(zeroSpendActionIds)}::jsonb, NOW()
+      ${sql.json(distinctSkus)}, 'PENDING', 'PENDING', 0,
+      ${r2Key}, ${sha256}, ${sql.json(zeroSpendActionIds)}, NOW()
     )
     RETURNING id, created_at
   `;
