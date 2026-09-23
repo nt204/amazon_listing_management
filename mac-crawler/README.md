@@ -2,7 +2,7 @@
 
 Thư mục này được thiết kế **hoàn toàn độc lập (standalone)**, tối ưu cho máy **Mac mini M1** cắm chạy tự động 24/7:
 1. **Nhận lệnh từ xa (Remote Worker):** Lắng nghe lệnh trực tiếp từ Web App (`https://ncehub.net`), hỗ trợ theo dõi tiến độ 6 file thời gian thực, cơ chế Lease Token chống trùng lặp, và Checkpoint khôi phục nguyên tử khi đứt đoạn.
-2. **Lịch cố định:** Đúng **12:00 trưa mỗi ngày**, scheduler gửi một job `ALL` lên server; remote worker là tiến trình duy nhất crawl, tránh tranh lock và chạy trùng.
+2. **Lịch cố định:** Đúng **12:00 trưa mỗi ngày**, scheduler xếp một job riêng cho mỗi store; remote worker xử lý tuần tự, tránh tranh lock và một store lỗi không chặn kết quả của store khác.
 3. **Tải đủ 6 báo cáo PPC Amazon:**
    - `Bulk SP 30d` & `Bulk SP 7d`
    - `Bulk SB 30d` & `Bulk SB 7d`
@@ -114,7 +114,7 @@ flowchart LR
 
 ### 4. Quản lý Lịch Chạy Tự Động 12:00 Trưa (Daily LaunchAgent)
 
-Đúng 12:00, LaunchAgent chạy `schedule_daily_job.sh` để enqueue job `ALL` lên Web. Nó không gọi `crawler.ts` trực tiếp. Nếu đang có job khác, scheduler chờ và retry có giới hạn; nếu đã có job `ALL`, nó không tạo trùng.
+Đúng 12:00, LaunchAgent chạy `schedule_daily_job.sh` để xếp một job cho từng store đang bật trong `stores.json`. Nó không gọi `crawler.ts` trực tiếp. Server cho phép nhiều store chờ trong hàng đợi nhưng Mac mini chỉ chạy một store tại một thời điểm. Khóa `daily:<ngày>:<store>` ngăn scheduler tạo trùng nếu chạy lại trong cùng ngày.
 
 ```bash
 cd ~/mac-crawler

@@ -8,6 +8,13 @@ import {
   createDefaultTasksForStore,
 } from "./checkpoint";
 import { executeRemoteBulkUpload, type RemoteBulkUploadJob } from "./bulk_uploader";
+import {
+  isTelegramConfigured,
+  notifyCrawlerStart,
+  notifyStoreFailure,
+  notifyCrawlerSummary,
+  notifyBulkUploadResult,
+} from "./telegram";
 
 loadEnv();
 
@@ -75,6 +82,7 @@ console.log(`Worker ID: ${WORKER_ID}`);
 console.log(`Server URL: ${WEB_APP_URL}`);
 console.log(`Chu kỳ thăm dò: ${POLL_INTERVAL_MS / 1000}s`);
 console.log(`Chu kỳ Heartbeat: ${HEARTBEAT_INTERVAL_MS / 1000}s`);
+console.log(`Telegram Bot: ${isTelegramConfigured() ? "Đã bật (Báo cáo tiến độ & sự cố qua Telegram)" : "Tắt (Chưa cấu hình TELEGRAM_BOT_TOKEN/CHAT_ID)"}`);
 console.log("============================================================");
 
 function getHeaders() {
@@ -151,9 +159,17 @@ async function processBulkUploadJob(job: RemoteBulkUploadJob) {
   console.log(`\n[Bulk Upload] Nhận job ${job.id}: ${job.store_name}/${job.file_name}`);
   const store = getStoreList().find((item) => item.store_name.toLowerCase() === job.store_name.toLowerCase());
   if (!store) {
+    const errorMsg = `Store ${job.store_name} chưa được map trong stores.json trên Mac mini.`;
     await updateBulkUploadJob(job, {
       status: "FAILED", stage: "FAILED", progress_pct: 100,
-      error_message: `Store ${job.store_name} chưa được map trong stores.json trên Mac mini.`,
+      error_message: errorMsg,
+    });
+    await notifyBulkUploadResult({
+      storeName: job.store_name,
+      fileName: job.file_name,
+      status: "FAILED",
+      error: errorMsg,
+      jobId: job.id,
     });
     return;
   }
@@ -172,12 +188,25 @@ async function processBulkUploadJob(job: RemoteBulkUploadJob) {
       amazon_upload_id: result.amazonUploadId || undefined,
     });
     console.log(`[Bulk Upload] ✅ Amazon đã tiếp nhận ${job.file_name} cho ${job.store_name}.`);
+    await notifyBulkUploadResult({
+      storeName: job.store_name,
+      fileName: job.file_name,
+      status: "SUCCESS",
+      jobId: job.id,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await updateBulkUploadJob(job, {
       status: "FAILED", stage: "FAILED", progress_pct: 100, error_message: message,
     }).catch((patchError) => console.error(`[Bulk Upload] Không báo lỗi được về server: ${(patchError as Error).message}`));
     console.error(`[Bulk Upload] ❌ ${message}`);
+    await notifyBulkUploadResult({
+      storeName: job.store_name,
+      fileName: job.file_name,
+      status: "FAILED",
+      error: message,
+      jobId: job.id,
+    });
   } finally {
     active = false;
     clearInterval(heartbeat);
@@ -235,6 +264,12 @@ async function processJob(job: {
   const leaseToken = job.lease_token || "";
   const targetStoreName = job.store_name;
   const batchId = job.batch_id || `${targetStoreName}_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}_${Math.random().toString(36).slice(2, 8)}`;
+  const jobStartTime = Date.now();
+  let storesToCrawlNames: string[] = [];
+  let summarySent = false;
+  const successfulStoreNames: string[] = [];
+  const storeFailures: string[] = [];
+  let totalFilesCrawled = 0;
 
   console.log(`\n============================================================`);
   console.log(`[Worker] NHẬN LỆNH CRAWL TỪ SERVER! Job ID: ${jobId}`);
@@ -347,9 +382,12 @@ async function processJob(job: {
       task_states: checkpoint.tasks,
     });
 
-    let totalFilesCrawled = 0;
-    const successfulStoreNames: string[] = [];
-    const storeFailures: string[] = [];
+    storesToCrawlNames = storesToCrawl.map((s) => s.store_name);
+    await notifyCrawlerStart({
+      batchDate: todayStr,
+      storeNames: storesToCrawlNames,
+      workerId: WORKER_ID,
+    });
 
     for (let i = 0; i < storesToCrawl.length; i++) {
       const store = storesToCrawl[i];
@@ -415,6 +453,10 @@ async function processJob(job: {
         const message = error instanceof Error ? error.message : String(error);
         storeFailures.push(`[${store.store_name}] ${message}`);
         console.error(`[Worker] Store [${store.store_name}] hết retry, tiếp tục store kế tiếp: ${message}`);
+        await notifyStoreFailure({
+          storeName: store.store_name,
+          error: message,
+        });
         await updateJob(jobId, leaseToken, {
           status: "RUNNING",
           stage: "CRAWLING",
@@ -459,6 +501,16 @@ async function processJob(job: {
       task_states: checkpoint.tasks,
     });
 
+    summarySent = true;
+    await notifyCrawlerSummary({
+      batchDate: todayStr,
+      successStores: successfulStoreNames,
+      failedStores: storeFailures.map((f) => f.split("] ")[0].replace("[", "")),
+      totalFiles: totalFilesCrawled,
+      elapsedMs: Date.now() - jobStartTime,
+      workerId: WORKER_ID,
+    });
+
     console.log(`\n[Worker] => JOB ${jobId} ĐÃ HOÀN TẤT THÀNH CÔNG!`);
   } catch (err) {
     const errorMsg = (err as Error).message;
@@ -470,6 +522,19 @@ async function processJob(job: {
       current_step: `Lỗi: ${errorMsg}`,
       task_states: activeCheckpoint?.tasks,
     }).catch((updateError) => console.error(`[Worker] Không thể báo lỗi về server: ${(updateError as Error).message}`));
+
+    if (!summarySent && storesToCrawlNames.length > 0) {
+      summarySent = true;
+      const failedNames = storesToCrawlNames.filter((name) => !successfulStoreNames.includes(name));
+      await notifyCrawlerSummary({
+        batchDate: activeCheckpoint?.batchDate || new Date().toISOString().slice(0, 10),
+        successStores: successfulStoreNames,
+        failedStores: failedNames.length > 0 ? failedNames : [targetStoreName],
+        totalFiles: totalFilesCrawled,
+        elapsedMs: Date.now() - jobStartTime,
+        workerId: WORKER_ID,
+      });
+    }
   } finally {
     isJobActive = false;
     if (heartbeatTimer) clearTimeout(heartbeatTimer);

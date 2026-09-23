@@ -86,6 +86,10 @@ export async function GET(request: Request) {
             SELECT id FROM ppc_sync_jobs
             WHERE team_id = ${actor.teamId}
               AND status IN ('PENDING', 'RETRY_WAIT')
+              AND NOT EXISTS (
+                SELECT 1 FROM ppc_sync_jobs running
+                WHERE running.team_id = ${actor.teamId} AND running.status = 'RUNNING'
+              )
             ORDER BY created_at ASC
             FOR UPDATE SKIP LOCKED
             LIMIT 1
@@ -178,11 +182,26 @@ export async function POST(request: Request) {
       if (!jobId) throw new ApiError("Thiếu jobId để resume.", 400);
 
       const existing = await sql`
-        SELECT task_states FROM ppc_sync_jobs
+        SELECT store_name, task_states FROM ppc_sync_jobs
         WHERE id = ${jobId} AND team_id = ${actor.teamId} AND status IN ('FAILED', 'RETRY_WAIT', 'CANCELLED')
         LIMIT 1
       `;
       if (existing.length === 0) throw new ApiError("Không tìm thấy job để resume.", 404);
+      const resumeStore = String(existing[0].store_name);
+      const conflicting = await sql`
+        SELECT id, store_name, status FROM ppc_sync_jobs
+        WHERE team_id = ${actor.teamId} AND id <> ${jobId}
+          AND status IN ('PENDING', 'RUNNING', 'RETRY_WAIT')
+          AND (
+            store_name = 'ALL'
+            OR ${resumeStore} = 'ALL'
+            OR lower(store_name) = lower(${resumeStore})
+          )
+        LIMIT 1
+      `;
+      if (conflicting.length > 0) {
+        throw new ApiError(`Store [${resumeStore}] đã có job khác trong hàng đợi hoặc đang chạy.`, 409);
+      }
       const resetTasks = (Array.isArray(existing[0].task_states) ? existing[0].task_states : []).map((task: Record<string, unknown>) =>
         task.status === "FAILED"
           ? { ...task, status: "NOT_STARTED", attempt: 0, amazonRequestId: null, lastError: null, nextRetryAt: null }
@@ -237,11 +256,40 @@ export async function POST(request: Request) {
       targetStoreNames = [storeName];
     }
     const totalFiles = targetStoreNames.length * 6;
+    const enqueueKey = body?.enqueueKey == null ? null : String(body.enqueueKey).trim();
+    if (enqueueKey && !/^[A-Za-z0-9._:-]{8,200}$/.test(enqueueKey)) {
+      throw new ApiError("enqueueKey của crawler không hợp lệ.", 400);
+    }
 
-    // Kiểm tra xem có job nào đang chạy không
+    // A scheduled request is idempotent even after its earlier job completed.
+    if (enqueueKey) {
+      const existingScheduled = await sql`
+        SELECT id, store_name, status, stage, batch_id, created_at
+        FROM ppc_sync_jobs
+        WHERE team_id = ${actor.teamId} AND enqueue_key = ${enqueueKey}
+        LIMIT 1
+      `;
+      if (existingScheduled.length > 0) {
+        return Response.json({
+          success: true,
+          duplicate: true,
+          message: `Job lịch [${storeName}] đã tồn tại, không tạo trùng.`,
+          job: existingScheduled[0],
+        });
+      }
+    }
+
+    // Allow different stores to queue together. ALL conflicts with every active job;
+    // a per-store job conflicts only with ALL or the same store.
     const runningCheck = await sql`
       SELECT id, store_name, status, stage FROM ppc_sync_jobs
-      WHERE team_id = ${actor.teamId} AND status IN ('PENDING', 'RUNNING', 'RETRY_WAIT')
+      WHERE team_id = ${actor.teamId}
+        AND status IN ('PENDING', 'RUNNING', 'RETRY_WAIT')
+        AND (
+          store_name = 'ALL'
+          OR ${storeName} = 'ALL'
+          OR lower(store_name) = lower(${storeName})
+        )
       LIMIT 1
     `;
 
@@ -255,12 +303,18 @@ export async function POST(request: Request) {
               lease_expires_at = NULL,
               completed_at = NOW(),
               updated_at = NOW()
-          WHERE team_id = ${actor.teamId} AND status IN ('PENDING', 'RUNNING', 'RETRY_WAIT')
+          WHERE team_id = ${actor.teamId}
+            AND status IN ('PENDING', 'RUNNING', 'RETRY_WAIT')
+            AND (
+              store_name = 'ALL'
+              OR ${storeName} = 'ALL'
+              OR lower(store_name) = lower(${storeName})
+            )
         `;
       } else {
         return Response.json(
           {
-            error: "Hiện đang có một tiến trình crawl đang chạy dở. Bạn có thể theo dõi hoặc bấm Resume/Hủy.",
+            error: `Store [${storeName}] đã có job trong hàng đợi hoặc đang chạy.`,
             activeJob: runningCheck[0],
           },
           { status: 409 },
@@ -306,12 +360,12 @@ export async function POST(request: Request) {
       insertRes = await sql`
         INSERT INTO ppc_sync_jobs (
           team_id, store_name, batch_id, status, stage, progress_pct,
-          current_step, total_files, processed_files, task_states
+          current_step, total_files, processed_files, task_states, enqueue_key
         )
         VALUES (
           ${actor.teamId}, ${storeName}, ${batchId}, 'PENDING', 'PENDING', 0,
           'Đã gửi lệnh, đang chờ máy Mac tiếp nhận...', ${totalFiles}, 0,
-          ${sql.json(initialTasks)}
+          ${sql.json(initialTasks)}, ${enqueueKey}
         )
         RETURNING *
       `;
