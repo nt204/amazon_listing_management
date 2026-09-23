@@ -1404,3 +1404,5 @@ export async function exportBulksheetUpdateExcel(recommendations: PpcRecommendat
 
   const buffer = await workbook.xlsx.writeBuffer();
   return Buffer.from(buffer);
+}
+
