@@ -118,6 +118,8 @@ Sau khi tạo marker, Mac bàn giao nguyên tử `crawler job + lease + batch + 
 
 LaunchAgent chạy `schedule_daily_job.sh` để xếp một job cho từng store đang bật trong `stores.json`. Server cho phép nhiều store chờ trong hàng đợi nhưng Mac mini chỉ chạy một store tại một thời điểm. Khóa `daily:<ngày>:<store>` ngăn scheduler tạo trùng nếu chạy lại trong cùng ngày.
 
+Đặt giờ cố định trong `config.env`, ví dụ `CRAWLER_SCHEDULE_TIME=13:45`. `setup_mac.sh` và `install_launchd.sh` đều dùng giá trị này nên chạy setup lại sẽ không tự đổi giờ về 12:00.
+
 ```bash
 cd ~/mac-crawler
 

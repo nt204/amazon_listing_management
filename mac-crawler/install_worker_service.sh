@@ -14,10 +14,9 @@ echo "============================================================"
 
 chmod +x "$SCRIPT_DIR/start_worker.sh"
 
-if launchctl list | grep -q "com.amazon.ppc.worker"; then
-  echo "[1/3] Gỡ bỏ worker cũ..."
-  launchctl unload "$TARGET_PLIST" 2>/dev/null || true
-fi
+echo "[1/3] Gỡ bỏ worker cũ (nếu có)..."
+launchctl bootout "gui/$(id -u)/com.amazon.ppc.worker" 2>/dev/null || launchctl unload "$TARGET_PLIST" 2>/dev/null || true
+sleep 1
 
 echo "[2/3] Tạo file dịch vụ tại $TARGET_PLIST..."
 cat <<EOF > "$TARGET_PLIST"

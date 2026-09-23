@@ -9,7 +9,7 @@ TARGET_PLIST="$TARGET_DIR/$PLIST_NAME"
 # Tham số duy nhất: giờ chạy (định dạng HH:MM, mặc định 12:00).
 # Không bao giờ lưu --force vào LaunchAgent: lịch tự động phải luôn idempotent
 # theo ngày để macOS chạy bù hoặc thay đổi giờ không tạo trùng job.
-TARGET_TIME="${1:-12:00}"
+TARGET_TIME="${1:-${CRAWLER_SCHEDULE_TIME:-12:00}}"
 if [ "$TARGET_TIME" = "--force" ] || [ "$TARGET_TIME" = "-f" ] || [ "$TARGET_TIME" = "--test" ] || [ -n "${2:-}" ]; then
   echo "[LỖI] Không được cài --force vào lịch tự động. Dùng './schedule_daily_job.sh --force' cho một lần test thủ công." >&2
   exit 1

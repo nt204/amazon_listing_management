@@ -81,9 +81,10 @@ if ! python3 -c "import boto3" 2>/dev/null; then
 fi
 echo "      -> Python 3 & Boto3: OK"
 
-# 5. Cài đặt lịch LaunchAgent 12:00 trưa mỗi ngày
-echo "[5/5] Cài đặt lịch tự động vào macOS LaunchAgent..."
-bash "$SCRIPT_DIR/install_launchd.sh"
+# 5. Cài đặt lịch LaunchAgent và Worker Service
+SCHEDULE_TIME="${1:-${CRAWLER_SCHEDULE_TIME:-12:00}}"
+echo "[5/5] Cài đặt lịch tự động ($SCHEDULE_TIME) và Worker vào macOS LaunchAgent..."
+bash "$SCRIPT_DIR/install_launchd.sh" "$SCHEDULE_TIME"
 bash "$SCRIPT_DIR/install_worker_service.sh"
 
 echo ""
@@ -91,9 +92,8 @@ echo "============================================================"
 echo "      CHÚC MỪNG! SETUP HOÀN TẤT TRÊN MAC MINI M1!          "
 echo "============================================================"
 echo "1. Đảm bảo AdsPower App đang mở và Local API đang hoạt động."
-echo "2. Kiểm tra file config.env nếu muốn đổi STORE_NAME hoặc PROFILE_ID."
-echo "3. Lịch chạy đã được nạp: Đúng 12:00 trưa mỗi ngày máy sẽ tự động chạy."
-echo "   Remote worker cũng đã được cài và sẽ nhận lệnh từ Web App."
-echo "4. Muốn chạy test thử ngay lập tức, gõ: ./test_run.sh"
-echo "5. Muốn theo dõi log thời gian thực, gõ: tail -f ~/Library/Logs/mac-crawler.log"
+echo "2. Remote Worker: ĐÃ KÍCH HOẠT (chạy ngầm nhận lệnh từ Web App)."
+echo "3. Lịch tự động: Đúng $SCHEDULE_TIME mỗi ngày sẽ tự động chạy."
+echo "4. Muốn chạy test ngay lập tức: ./schedule_daily_job.sh --force"
+echo "5. Theo dõi log Worker trực tiếp: tail -f ~/Library/Logs/mac-crawler-worker.log"
 echo "============================================================"
