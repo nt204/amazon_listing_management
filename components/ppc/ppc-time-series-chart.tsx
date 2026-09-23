@@ -369,18 +369,18 @@ export function PpcTimeSeriesChart({
   const totalsCurrent = useMemo(() => calculateTotals(rawDataCurrent), [rawDataCurrent]);
 
   // Custom Label Renderer cho Cột Spend (Hiển thị số tiền $ ngay trên đỉnh cột)
-  const renderBarSpendLabel = (props: any, isCompact: boolean) => {
+  const renderBarSpendLabel = (props: any, isCompact: boolean, isLongData: boolean) => {
     const { x, y, width, value } = props;
     if (value == null || value <= 0) return null;
     const text = `${currency}${Math.round(value)}`;
-    const isVeryNearTop = y < 18;
+    const isVeryNearTop = y < 16;
     return (
       <text
         x={x + width / 2}
-        y={isVeryNearTop ? y + 12 : y - 5}
-        fill={isVeryNearTop ? "#ffffff" : "#4338ca"}
+        y={isVeryNearTop ? y + 11 : y - 4}
+        fill={isVeryNearTop ? "#ffffff" : "#1d4ed8"}
         textAnchor="middle"
-        fontSize={isCompact ? 9 : 10}
+        fontSize={isLongData ? 8 : (isCompact ? 9 : 10)}
         fontWeight={700}
       >
         {text}
@@ -388,16 +388,40 @@ export function PpcTimeSeriesChart({
     );
   };
 
-  // Custom Label Renderer cho Đường ACOS / Revenue (Hiển thị Badge % hoặc $ rõ ràng)
-  const renderLineMetricLabel = (props: any, isCompact: boolean) => {
+  // Custom Label Renderer cho Đường ACOS / Revenue (Dây & Điểm màu Đỏ)
+  const renderLineMetricLabel = (props: any, isCompact: boolean, isLongData: boolean) => {
     const { x, y, value, index } = props;
     if (value == null || value <= 0) return null;
     const isAcos = rightMetric === "ACOS";
     const text = isAcos ? `${Math.round(value)}%` : `${currency}${Math.round(value)}`;
-    const isNearTop = y < 22;
-    const badgeW = text.length > 3 ? 30 : 25;
-    const rectY = isNearTop ? y + 6 : y - 19;
-    const textY = isNearTop ? y + 16 : y - 9;
+    const color = isAcos ? "#dc2626" : "#059669";
+    const isNearTop = y < 20;
+
+    // Trong 30D (nhiều điểm san sát): render chữ có viền trắng (stroke halo)
+    // KHÔNG dùng khung chữ nhật to để không che lấp số liệu cột liền kề
+    if (isLongData) {
+      return (
+        <text
+          key={`lbl-metric-${index}`}
+          x={x}
+          y={isNearTop ? y + 13 : y - 7}
+          fill={color}
+          textAnchor="middle"
+          fontSize={7.5}
+          fontWeight={800}
+          stroke="#ffffff"
+          strokeWidth={2.5}
+          paintOrder="stroke"
+        >
+          {text}
+        </text>
+      );
+    }
+
+    // Trong 7D (ít điểm): hiển thị pill badge đỏ viền đỏ nhạt rõ ràng
+    const badgeW = text.length > 3 ? 28 : 24;
+    const rectY = isNearTop ? y + 6 : y - 18;
+    const textY = isNearTop ? y + 16 : y - 8;
 
     return (
       <g key={`lbl-metric-${index}`}>
@@ -407,17 +431,17 @@ export function PpcTimeSeriesChart({
           width={badgeW}
           height={13}
           rx={3}
-          fill="#f0f9ff"
-          stroke="#0284c7"
+          fill={isAcos ? "#fef2f2" : "#ecfdf5"}
+          stroke={isAcos ? "#f87171" : "#34d399"}
           strokeWidth={0.8}
           opacity={0.95}
         />
         <text
           x={x}
           y={textY}
-          fill="#0284c7"
+          fill={color}
           textAnchor="middle"
-          fontSize={isCompact ? 8.5 : 9}
+          fontSize={8.5}
           fontWeight={800}
         >
           {text}
@@ -517,159 +541,192 @@ export function PpcTimeSeriesChart({
         )}
 
         {/* Khung Biểu Đồ Recharts */}
-        <div className="h-64 w-full pt-1">
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={data} margin={{ top: 22, right: 10, left: -10, bottom: 15 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-              <XAxis
-                dataKey="displayDate"
-                tick={{ fontSize: 9.5, fill: "#64748b" }}
-                interval={data.length > 15 ? 2 : 0}
-                angle={data.length > 7 ? -25 : 0}
-                textAnchor={data.length > 7 ? "end" : "middle"}
-                height={28}
-              />
+        {(() => {
+          const isLongData = data.length > 15;
+          const maxSpend = Math.max(...data.map((d) => d.spend || 0), 10);
+          const maxRevenue = Math.max(...data.map((d) => d.revenue || 0), 10);
+          const maxAcos = Math.max(...data.map((d) => d.acos || 0), 30);
 
-              {/* Trục trái: Spend ($) */}
-              <YAxis
-                yAxisId="left"
-                orientation="left"
-                tick={{ fontSize: 9.5, fill: "#64748b" }}
-                tickFormatter={(val) => `${currency}${val}`}
-                width={48}
-              />
+          let leftDomain: [number, number];
+          let rightDomain: [number, number];
 
-              {/* Trục phải: ACOS (%) hoặc Revenue ($) */}
-              <YAxis
-                yAxisId="right"
-                orientation="right"
-                tick={{ fontSize: 9.5, fill: "#64748b" }}
-                tickFormatter={(val) => (rightMetric === "ACOS" ? `${val}%` : `${currency}${val}`)}
-                width={40}
-              />
+          if (rightMetric === "Revenue") {
+            // Khi trục phải là Revenue ($), cả Spend và Revenue đều là tiền $.
+            // Dùng chung thang đo tuyệt đối để tương quan chiều cao 100% chuẩn xác
+            const sharedMax = Math.max(maxSpend, maxRevenue);
+            const topCeil = Math.ceil((sharedMax * 1.25) / 50) * 50;
+            leftDomain = [0, topCeil];
+            rightDomain = [0, topCeil];
+          } else {
+            // Khi trục phải là ACOS (%)
+            // Cột Spend ($): headroom 25% để nhãn tiền trên đỉnh cột không chạm nóc
+            const spendCeil = Math.ceil((maxSpend * 1.25) / 20) * 20;
+            leftDomain = [0, spendCeil];
 
-              <Tooltip
-                content={({ active, payload }) => {
-                  if (!active || !payload || !payload.length) return null;
-                  const d = payload[0]?.payload as DataPoint;
-                  if (!d) return null;
+            // Đường ACOS (%): thang đo % tối thiểu 100%
+            const acosCeil = Math.min(Math.max(Math.ceil((maxAcos * 1.2) / 10) * 10, 100), 250);
+            rightDomain = [0, acosCeil];
+          }
 
-                  return (
-                    <div className="bg-white/95 backdrop-blur-sm border border-slate-200 rounded-xl p-2.5 shadow-xl text-xs space-y-1 min-w-[190px] z-50">
-                      <div className="font-bold text-slate-800 border-b border-slate-100 pb-1 flex justify-between items-center">
-                        <span>{d.displayDate} ({d.rawDate})</span>
-                        {d.isLossWarning && (
-                          <span className="px-1.5 py-0.2 rounded bg-rose-50 text-rose-600 text-[9.5px] font-bold">
-                            {d.revenue === 0 && d.spend > 0 ? "0 Doanh Thu" : "ACOS Cao"}
-                          </span>
-                        )}
-                      </div>
-                      <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 pt-0.5 text-[11px]">
-                        <span className="text-slate-500">Spend:</span>
-                        <strong className="text-indigo-700 text-right">{currency}{d.spend.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+          return (
+            <div className="h-72 w-full pt-1">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={data} margin={{ top: 22, right: 10, left: -10, bottom: 15 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis
+                    dataKey="displayDate"
+                    tick={{ fontSize: 9.5, fill: "#64748b" }}
+                    interval={data.length > 15 ? 2 : 0}
+                    angle={data.length > 7 ? -25 : 0}
+                    textAnchor={data.length > 7 ? "end" : "middle"}
+                    height={28}
+                  />
 
-                        <span className="text-slate-500">Revenue:</span>
-                        <strong className="text-emerald-700 text-right">{currency}{d.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                  {/* Trục trái: Spend ($) */}
+                  <YAxis
+                    yAxisId="left"
+                    orientation="left"
+                    domain={leftDomain}
+                    tick={{ fontSize: 9.5, fill: "#64748b" }}
+                    tickFormatter={(val) => `${currency}${val}`}
+                    width={48}
+                  />
 
-                        <span className="text-slate-500">ACOS:</span>
-                        <strong className="text-slate-900 text-right font-black">
-                          {d.revenue > 0 ? `${d.acos.toFixed(1)}%` : d.spend > 0 ? "N/A" : "—"}
-                        </strong>
+                  {/* Trục phải: ACOS (%) hoặc Revenue ($) */}
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    domain={rightDomain}
+                    tick={{ fontSize: 9.5, fill: "#64748b" }}
+                    tickFormatter={(val) => (rightMetric === "ACOS" ? `${val}%` : `${currency}${val}`)}
+                    width={40}
+                  />
 
-                        <span className="text-slate-500">Đơn hàng:</span>
-                        <strong className="text-slate-800 text-right">{d.orders} đơn</strong>
+                  <Tooltip
+                    content={({ active, payload }) => {
+                      if (!active || !payload || !payload.length) return null;
+                      const d = payload[0]?.payload as DataPoint;
+                      if (!d) return null;
 
-                        <span className="text-slate-500">Clicks:</span>
-                        <strong className="text-slate-700 text-right">{d.clicks.toLocaleString()}</strong>
+                      return (
+                        <div className="bg-white/95 backdrop-blur-sm border border-slate-200 rounded-xl p-2.5 shadow-xl text-xs space-y-1 min-w-[190px] z-50">
+                          <div className="font-bold text-slate-800 border-b border-slate-100 pb-1 flex justify-between items-center">
+                            <span>{d.displayDate} ({d.rawDate})</span>
+                            {d.isLossWarning && (
+                              <span className="px-1.5 py-0.2 rounded bg-rose-50 text-rose-600 text-[9.5px] font-bold">
+                                {d.revenue === 0 && d.spend > 0 ? "0 Doanh Thu" : "ACOS Cao"}
+                              </span>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 pt-0.5 text-[11px]">
+                            <span className="text-slate-500">Spend:</span>
+                            <strong className="text-blue-700 text-right">{currency}{d.spend.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
 
-                        <span className="text-slate-500">CPC:</span>
-                        <strong className="text-slate-700 text-right">{currency}{(d.clicks > 0 ? d.spend / d.clicks : 0).toFixed(2)}</strong>
-                      </div>
-                    </div>
-                  );
-                }}
-              />
+                            <span className="text-slate-500">Revenue:</span>
+                            <strong className="text-emerald-700 text-right">{currency}{d.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
 
-              <Legend wrapperStyle={{ fontSize: "10px", paddingTop: "4px" }} />
+                            <span className="text-slate-500">ACOS:</span>
+                            <strong className="text-slate-900 text-right font-black">
+                              {d.revenue > 0 ? `${d.acos.toFixed(1)}%` : d.spend > 0 ? "N/A" : "—"}
+                            </strong>
 
-              {/* Cột Spend (Bar) có gắn số liệu trực tiếp */}
-              <Bar
-                yAxisId="left"
-                dataKey="spend"
-                name={`Spend (${currency})`}
-                fill="#6366f1"
-                radius={[4, 4, 0, 0]}
-                maxBarSize={data.length > 15 ? 18 : 24}
-              >
-                <LabelList
-                  dataKey="spend"
-                  position="top"
-                  content={(props) => renderBarSpendLabel(props, isCompact)}
-                />
-              </Bar>
+                            <span className="text-slate-500">Đơn hàng:</span>
+                            <strong className="text-slate-800 text-right">{d.orders} đơn</strong>
 
-              {/* Đường ACOS (%) có gắn nhãn số liệu trực tiếp */}
-              {rightMetric === "ACOS" && (
-                <Line
-                  yAxisId="right"
-                  type="monotone"
-                  dataKey="acos"
-                  name="ACOS (%)"
-                  stroke="#0284c7"
-                  strokeWidth={2.2}
-                  dot={(props: any) => {
-                    const { cx, cy, payload } = props;
-                    return (
-                      <circle
-                        key={`dot-${payload.rawDate}`}
-                        cx={cx}
-                        cy={cy}
-                        r={2.5}
-                        fill="#0284c7"
-                        stroke="#ffffff"
-                        strokeWidth={1.5}
+                            <span className="text-slate-500">Clicks:</span>
+                            <strong className="text-slate-700 text-right">{d.clicks.toLocaleString()}</strong>
+
+                            <span className="text-slate-500">CPC:</span>
+                            <strong className="text-slate-700 text-right">{currency}{(d.clicks > 0 ? d.spend / d.clicks : 0).toFixed(2)}</strong>
+                          </div>
+                        </div>
+                      );
+                    }}
+                  />
+
+                  <Legend wrapperStyle={{ fontSize: "10px", paddingTop: "4px" }} />
+
+                  {/* Cột Spend (Bar) - Màu xanh dương */}
+                  <Bar
+                    yAxisId="left"
+                    dataKey="spend"
+                    name={`Spend (${currency})`}
+                    fill="#3b82f6"
+                    radius={[4, 4, 0, 0]}
+                    maxBarSize={data.length > 15 ? 18 : 24}
+                  >
+                    <LabelList
+                      dataKey="spend"
+                      position="top"
+                      content={(props) => renderBarSpendLabel(props, isCompact, isLongData)}
+                    />
+                  </Bar>
+
+                  {/* Đường ACOS (%) - Dây kéo và các điểm màu ĐỎ */}
+                  {rightMetric === "ACOS" && (
+                    <Line
+                      yAxisId="right"
+                      type="monotone"
+                      dataKey="acos"
+                      name="ACOS (%)"
+                      stroke="#ef4444"
+                      strokeWidth={2}
+                      dot={(props: any) => {
+                        const { cx, cy, payload } = props;
+                        return (
+                          <circle
+                            key={`dot-${payload.rawDate}`}
+                            cx={cx}
+                            cy={cy}
+                            r={data.length > 15 ? 2.5 : 3.5}
+                            fill="#ef4444"
+                            stroke="#ffffff"
+                            strokeWidth={1.5}
+                          />
+                        );
+                      }}
+                    >
+                      <LabelList
+                        dataKey="acos"
+                        position="top"
+                        content={(props) => renderLineMetricLabel(props, isCompact, isLongData)}
                       />
-                    );
-                  }}
-                >
-                  <LabelList
-                    dataKey="acos"
-                    position="top"
-                    content={(props) => renderLineMetricLabel(props, isCompact)}
-                  />
-                </Line>
-              )}
+                    </Line>
+                  )}
 
-              {/* Đường Revenue ($) có gắn nhãn số liệu trực tiếp */}
-              {rightMetric === "Revenue" && (
-                <Line
-                  yAxisId="right"
-                  type="monotone"
-                  dataKey="revenue"
-                  name={`Revenue (${currency})`}
-                  stroke="#10b981"
-                  strokeWidth={2.2}
-                  dot={{ r: 2.5, fill: "#10b981" }}
-                >
-                  <LabelList
-                    dataKey="revenue"
-                    position="top"
-                    content={(props) => renderLineMetricLabel(props, isCompact)}
-                  />
-                </Line>
-              )}
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
+                  {/* Đường Revenue ($) có gắn nhãn số liệu trực tiếp */}
+                  {rightMetric === "Revenue" && (
+                    <Line
+                      yAxisId="right"
+                      type="monotone"
+                      dataKey="revenue"
+                      name={`Revenue (${currency})`}
+                      stroke="#10b981"
+                      strokeWidth={2}
+                      dot={{ r: data.length > 15 ? 2.5 : 3.5, fill: "#10b981", stroke: "#ffffff", strokeWidth: 1.5 }}
+                    >
+                      <LabelList
+                        dataKey="revenue"
+                        position="top"
+                        content={(props) => renderLineMetricLabel(props, isCompact, isLongData)}
+                      />
+                    </Line>
+                  )}
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          );
+        })()}
 
         {/* Chú thích trực quan dưới chân biểu đồ */}
         <div className="flex flex-wrap items-center justify-between gap-1.5 pt-2 border-t border-slate-100 text-[10.5px] text-slate-500">
           <div className="flex items-center gap-2.5">
             <span className="flex items-center gap-1">
-              <span className="w-2.5 h-2.5 rounded-sm bg-indigo-600 inline-block" /> Cột Spend ($)
+              <span className="w-2.5 h-2.5 rounded-sm bg-blue-500 inline-block" /> Cột Spend ($)
             </span>
             <span className="flex items-center gap-1">
-              <span className={`w-3 h-0.5 ${rightMetric === "ACOS" ? "bg-sky-600" : "bg-emerald-500"} inline-block`} /> Đường {rightMetric}
+              <span className={`w-3 h-0.5 ${rightMetric === "ACOS" ? "bg-red-500" : "bg-emerald-500"} inline-block`} />
+              {rightMetric === "ACOS" ? "Dây & Điểm ACOS (Đỏ)" : "Đường Revenue ($)"}
             </span>
           </div>
           <span className="text-[10px] text-slate-400 font-medium">
