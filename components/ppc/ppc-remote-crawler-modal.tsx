@@ -41,6 +41,7 @@ interface ActiveJobData {
   heartbeat_at?: string;
   lease_expires_at?: string;
   task_states?: ReportTaskItem[];
+  enqueue_key?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -541,6 +542,15 @@ export function PpcRemoteCrawlerModal({
                         <ArrowsClockwise size={14} className="text-indigo-500 animate-spin shrink-0" weight="bold" />
                       )}
                       <span className="font-bold text-slate-700 truncate">[{job.store_name}]</span>
+                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                        job.enqueue_key?.startsWith("daily:")
+                          ? "bg-sky-50 text-sky-700"
+                          : "bg-violet-50 text-violet-700"
+                      }`} title={job.enqueue_key || "Job được tạo từ giao diện web"}>
+                        {job.enqueue_key?.startsWith("daily:")
+                          ? job.enqueue_key.split(":").length > 3 ? "Lịch Force" : "Lịch Mac"
+                          : "Thao tác web"}
+                      </span>
                       <span className="text-[11px] text-slate-400 truncate">{job.current_step}</span>
                     </div>
                     <div className="flex items-center gap-2 shrink-0 ml-2">

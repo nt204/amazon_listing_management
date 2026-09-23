@@ -110,7 +110,7 @@ export async function GET(request: Request) {
     const rows = await sql`
       SELECT id, team_id, store_name, status, stage, batch_id, progress_pct, current_step,
              total_files, processed_files, error_message, worker_id, lease_token, heartbeat_at,
-             lease_expires_at, task_states, created_at, updated_at, completed_at
+             lease_expires_at, task_states, enqueue_key, created_at, updated_at, completed_at
       FROM ppc_sync_jobs
       WHERE team_id = ${actor.teamId}
       ORDER BY created_at DESC

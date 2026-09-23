@@ -6,18 +6,13 @@ PLIST_NAME="com.amazon.ppc.crawler.plist"
 TARGET_DIR="$HOME/Library/LaunchAgents"
 TARGET_PLIST="$TARGET_DIR/$PLIST_NAME"
 
-# Tham số 1: Giờ chạy (định dạng HH:MM, mặc định 12:00)
-# Tham số 2: Tùy chọn --force để test
+# Tham số duy nhất: giờ chạy (định dạng HH:MM, mặc định 12:00).
+# Không bao giờ lưu --force vào LaunchAgent: lịch tự động phải luôn idempotent
+# theo ngày để macOS chạy bù hoặc thay đổi giờ không tạo trùng job.
 TARGET_TIME="${1:-12:00}"
-EXTRA_ARG=""
-
-if [ "$TARGET_TIME" = "--force" ] || [ "$TARGET_TIME" = "-f" ] || [ "$TARGET_TIME" = "--test" ]; then
-  EXTRA_ARG="--force"
-  TARGET_TIME="12:00"
-fi
-
-if [ "${2:-}" = "--force" ] || [ "${2:-}" = "-f" ] || [ "${2:-}" = "--test" ]; then
-  EXTRA_ARG="--force"
+if [ "$TARGET_TIME" = "--force" ] || [ "$TARGET_TIME" = "-f" ] || [ "$TARGET_TIME" = "--test" ] || [ -n "${2:-}" ]; then
+  echo "[LỖI] Không được cài --force vào lịch tự động. Dùng './schedule_daily_job.sh --force' cho một lần test thủ công." >&2
+  exit 1
 fi
 
 # Tách Giờ và Phút từ chuỗi HH:MM
@@ -52,13 +47,6 @@ sleep 1
 # Sinh nội dung plist động theo đúng đường dẫn thư mục và user thực tế của máy
 echo "[2/3] Cài đặt plist vào $TARGET_PLIST (Giờ: $SCHED_HOUR, Phút: $SCHED_MIN)..."
 
-PROGRAM_ARGS="        <string>/bin/bash</string>
-        <string>$SCRIPT_DIR/schedule_daily_job.sh</string>"
-if [ -n "$EXTRA_ARG" ]; then
-  PROGRAM_ARGS="$PROGRAM_ARGS
-        <string>$EXTRA_ARG</string>"
-fi
-
 cat <<EOF > "$TARGET_PLIST"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -69,7 +57,8 @@ cat <<EOF > "$TARGET_PLIST"
 
     <key>ProgramArguments</key>
     <array>
-$PROGRAM_ARGS
+        <string>/bin/bash</string>
+        <string>$SCRIPT_DIR/schedule_daily_job.sh</string>
     </array>
 
     <!-- Lịch chạy hàng ngày: $PRINT_TIME -->
@@ -115,5 +104,5 @@ echo "=> ĐÃ CÀI ĐẶT THÀNH CÔNG!"
 echo "Tiến trình sẽ tự động kích hoạt vào lúc $PRINT_TIME MỖI NGÀY."
 echo "File log sẽ được ghi tại: $HOME/Library/Logs/mac-crawler.log"
 echo "Kiểm tra tiến trình đã nạp: launchctl list | grep com.amazon.ppc.crawler"
-echo "Để chạy test ngay lập tức: ./schedule_daily_job.sh --force"
+echo "Test thủ công một lần (không lưu vào lịch): ./schedule_daily_job.sh --force"
 echo "============================================================"

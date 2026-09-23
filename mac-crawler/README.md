@@ -127,18 +127,17 @@ cd ~/mac-crawler
 # 2. Cài đặt lịch theo GIỜ BẤT KỲ (ví dụ 13:45 hoặc 14:05):
 ./install_launchd.sh 13:45
 
-# 3. Cài đặt lịch test ép buộc chạy (bỏ qua kiểm tra trùng lặp trong ngày):
-./install_launchd.sh 13:45 --force
-
-# 4. Kiểm tra xem lịch đã đăng ký vào macOS launchd chưa:
+# 3. Kiểm tra xem lịch đã đăng ký vào macOS launchd chưa:
 launchctl list | grep com.amazon.ppc.crawler
 
-# 5. Xem log tiến trình đặt lịch:
+# 4. Xem log tiến trình đặt lịch:
 tail -f ~/Library/Logs/mac-crawler.log
 
-# 6. Gỡ bỏ lịch tự động:
+# 5. Gỡ bỏ lịch tự động:
 ./uninstall_launchd.sh
 ```
+
+Không cài `--force` vào LaunchAgent. Lịch tự động luôn dùng khóa cố định `daily:<ngày>:<store>` để dù macOS chạy bù sau khi thức dậy cũng không tạo trùng. `--force` chỉ dành cho một lần test thủ công.
 
 ---
 
