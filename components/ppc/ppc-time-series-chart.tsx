@@ -79,17 +79,19 @@ export function PpcTimeSeriesChart({
   // Custom date picker state
   const [showCustomPicker, setShowCustomPicker] = useState(false);
   const maxSelectableDate = useMemo(() => {
+    if (dateRangeEnd) return dateRangeEnd;
     const d = new Date();
     d.setDate(d.getDate() - 1);
     return d.toISOString().slice(0, 10);
-  }, []);
+  }, [dateRangeEnd]);
   const [tempStart, setTempStart] = useState(startDate || "");
-  const [tempEnd, setTempEnd] = useState(endDate || maxSelectableDate);
+  const [tempEnd, setTempEnd] = useState(endDate || dateRangeEnd || maxSelectableDate);
 
   React.useEffect(() => {
     if (startDate) setTempStart(startDate);
     if (endDate) setTempEnd(endDate);
-  }, [startDate, endDate]);
+    else if (dateRangeEnd) setTempEnd(dateRangeEnd);
+  }, [startDate, endDate, dateRangeEnd]);
 
   // Check if real daily search terms data exists
   const hasRealDaily = useMemo(() => {
@@ -480,7 +482,7 @@ export function PpcTimeSeriesChart({
                           <button
                             type="button"
                             onClick={() => {
-                              const end = maxSelectableDate;
+                              const end = dateRangeEnd || maxSelectableDate;
                               const d = new Date(end);
                               d.setDate(d.getDate() - 6);
                               const start = d.toISOString().slice(0, 10);
@@ -494,7 +496,7 @@ export function PpcTimeSeriesChart({
                           <button
                             type="button"
                             onClick={() => {
-                              const end = maxSelectableDate;
+                              const end = dateRangeEnd || maxSelectableDate;
                               const d = new Date(end);
                               d.setDate(d.getDate() - 13);
                               const start = d.toISOString().slice(0, 10);
@@ -508,7 +510,7 @@ export function PpcTimeSeriesChart({
                           <button
                             type="button"
                             onClick={() => {
-                              const end = maxSelectableDate;
+                              const end = dateRangeEnd || maxSelectableDate;
                               const d = new Date(end);
                               d.setDate(d.getDate() - 29);
                               const start = d.toISOString().slice(0, 10);

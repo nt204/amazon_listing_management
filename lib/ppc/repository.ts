@@ -354,23 +354,32 @@ export async function listPpcSearchTerms(
   const sql = await getDatabaseClient();
   const teamId = (scope as any)?.teamId || "default";
   const rows = await sql<SearchTermDbRow[]>`
-    WITH daily_counts AS (
-      SELECT store_id, ad_type, COUNT(*) as cnt
-      FROM ppc_search_terms
-      WHERE report_granularity = 'DAILY'
-        AND (${!filters.startDate} OR report_date >= ${filters.startDate || "1970-01-01"}::date)
-        AND (${!filters.endDate} OR report_date <= ${filters.endDate || "2099-12-31"}::date)
-        AND (${Boolean(filters.startDate || filters.endDate)} OR (report_date >= CURRENT_DATE - ${filters.days}::integer AND report_date <= CURRENT_DATE - 1))
-      GROUP BY store_id, ad_type
+    WITH anchor AS (
+      SELECT COALESCE(MAX(p0.report_date), CURRENT_DATE - 1) AS max_date
+      FROM ppc_search_terms p0
+      JOIN ppc_stores s0 ON s0.id = p0.store_id
+      WHERE s0.team_id = ${teamId}
+        AND (${filters.storeName === "ALL"} OR lower(s0.name) = lower(${filters.storeName}))
+    ),
+    daily_counts AS (
+      SELECT p0.store_id, p0.ad_type, COUNT(*) as cnt
+      FROM ppc_search_terms p0
+      CROSS JOIN anchor a
+      WHERE p0.report_granularity = 'DAILY'
+        AND (${!filters.startDate} OR p0.report_date >= ${filters.startDate || "1970-01-01"}::date)
+        AND (${!filters.endDate} OR p0.report_date <= ${filters.endDate || "2099-12-31"}::date)
+        AND (${Boolean(filters.startDate || filters.endDate)} OR (p0.report_date >= a.max_date - (${filters.days} - 1)::integer AND p0.report_date <= a.max_date))
+      GROUP BY p0.store_id, p0.ad_type
     ),
     latest_range AS (
-      SELECT store_id, ad_type, MAX(report_end_date) as max_end_date
-      FROM ppc_search_terms
-      WHERE report_granularity = 'RANGE'
-        AND (report_end_date - report_start_date + 1)
+      SELECT p0.store_id, p0.ad_type, MAX(p0.report_end_date) as max_end_date
+      FROM ppc_search_terms p0
+      CROSS JOIN anchor a
+      WHERE p0.report_granularity = 'RANGE'
+        AND (p0.report_end_date - p0.report_start_date + 1)
           BETWEEN ${filters.days - 3}::integer AND ${filters.days + 3}::integer
-        AND report_end_date <= CURRENT_DATE - 1
-      GROUP BY store_id, ad_type
+        AND p0.report_end_date <= a.max_date
+      GROUP BY p0.store_id, p0.ad_type
     )
     SELECT
       t.id, t.store_id, s.name AS store_name, t.report_date,
@@ -382,6 +391,7 @@ export async function listPpcSearchTerms(
       t.campaign_id, t.ad_group_id, t.keyword_id
     FROM ppc_search_terms t
     JOIN ppc_stores s ON s.id = t.store_id
+    CROSS JOIN anchor a
     LEFT JOIN daily_counts dc ON dc.store_id = t.store_id AND dc.ad_type = t.ad_type
     LEFT JOIN latest_range lr ON lr.store_id = t.store_id AND lr.ad_type = t.ad_type
     WHERE s.team_id = ${teamId}
@@ -396,7 +406,7 @@ export async function listPpcSearchTerms(
           t.report_granularity = 'DAILY'
           AND (${!filters.startDate} OR t.report_date >= ${filters.startDate || "1970-01-01"}::date)
           AND (${!filters.endDate} OR t.report_date <= ${filters.endDate || "2099-12-31"}::date)
-          AND (${Boolean(filters.startDate || filters.endDate)} OR (t.report_date >= CURRENT_DATE - ${filters.days}::integer AND t.report_date <= CURRENT_DATE - 1))
+          AND (${Boolean(filters.startDate || filters.endDate)} OR (t.report_date >= a.max_date - (${filters.days} - 1)::integer AND t.report_date <= a.max_date))
         )
         OR
         (
@@ -1540,6 +1550,16 @@ export async function listPpcDailyTrendsFromDb(
   const days = Math.max(1, filters.days || 30);
 
   let rows = await sql<DailyTrendSqlRow[]>`
+    WITH anchor AS (
+      SELECT COALESCE(
+        MAX(p0.report_date),
+        CURRENT_DATE - 1
+      ) AS max_date
+      FROM ppc_daily_summary p0
+      JOIN ppc_stores s0 ON s0.id = p0.store_id
+      WHERE s0.team_id = ${teamId}
+        AND (${storeName === "ALL"} OR lower(s0.name) = lower(${storeName}))
+    )
     SELECT 
       to_char(p.report_date, 'YYYY-MM-DD') AS date,
       COALESCE(SUM(p.spend), 0) AS spend,
@@ -1559,11 +1579,12 @@ export async function listPpcDailyTrendsFromDb(
       COALESCE(SUM(p.impressions) FILTER (WHERE p.ad_type = 'SB'), 0) AS sb_impressions
     FROM ppc_daily_summary p
     JOIN ppc_stores s ON s.id = p.store_id
+    CROSS JOIN anchor a
     WHERE s.team_id = ${teamId}
       AND (${storeName === "ALL"} OR lower(s.name) = lower(${storeName}))
       AND (${!filters.startDate} OR p.report_date >= ${filters.startDate || "1970-01-01"}::date)
       AND (${!filters.endDate} OR p.report_date <= ${filters.endDate || "2099-12-31"}::date)
-      AND (${Boolean(filters.startDate || filters.endDate)} OR (p.report_date >= CURRENT_DATE - ${days}::integer AND p.report_date <= CURRENT_DATE - 1))
+      AND (${Boolean(filters.startDate || filters.endDate)} OR (p.report_date >= a.max_date - (${days} - 1)::integer AND p.report_date <= a.max_date))
     GROUP BY p.report_date
     ORDER BY p.report_date ASC;
   `;
@@ -1571,6 +1592,16 @@ export async function listPpcDailyTrendsFromDb(
   if (rows.length === 0 && !filters.startDate && !filters.endDate) {
     await refreshPpcDailySummary(scope);
     rows = await sql<DailyTrendSqlRow[]>`
+      WITH anchor AS (
+        SELECT COALESCE(
+          MAX(p0.report_date),
+          CURRENT_DATE - 1
+        ) AS max_date
+        FROM ppc_daily_summary p0
+        JOIN ppc_stores s0 ON s0.id = p0.store_id
+        WHERE s0.team_id = ${teamId}
+          AND (${storeName === "ALL"} OR lower(s0.name) = lower(${storeName}))
+      )
       SELECT 
         to_char(p.report_date, 'YYYY-MM-DD') AS date,
         COALESCE(SUM(p.spend), 0) AS spend,
@@ -1590,9 +1621,10 @@ export async function listPpcDailyTrendsFromDb(
         COALESCE(SUM(p.impressions) FILTER (WHERE p.ad_type = 'SB'), 0) AS sb_impressions
       FROM ppc_daily_summary p
       JOIN ppc_stores s ON s.id = p.store_id
+      CROSS JOIN anchor a
       WHERE s.team_id = ${teamId}
         AND (${storeName === "ALL"} OR lower(s.name) = lower(${storeName}))
-        AND (p.report_date >= CURRENT_DATE - ${days}::integer AND p.report_date <= CURRENT_DATE - 1)
+        AND (p.report_date >= a.max_date - (${days} - 1)::integer AND p.report_date <= a.max_date)
       GROUP BY p.report_date
       ORDER BY p.report_date ASC;
     `;
@@ -1665,6 +1697,13 @@ export async function getPpcSearchTermSummaryFromDb(
       observed_clicks: string | number;
       wasted_spend: string | number;
     }>>`
+      WITH anchor AS (
+        SELECT COALESCE(MAX(p0.report_date), CURRENT_DATE - 1) AS max_date
+        FROM ppc_search_terms p0
+        JOIN ppc_stores s0 ON s0.id = p0.store_id
+        WHERE s0.team_id = ${teamId}
+          AND (${storeName === "ALL"} OR lower(s0.name) = lower(${storeName}))
+      )
       SELECT 
         COUNT(*) AS total_terms,
         COUNT(*) FILTER (WHERE p.orders > 0) AS terms_with_orders,
@@ -1677,6 +1716,7 @@ export async function getPpcSearchTermSummaryFromDb(
         COALESCE(SUM(p.spend) FILTER (WHERE p.orders = 0 AND (p.clicks >= ${minClicks} OR p.spend >= ${maxSpend})), 0) AS wasted_spend
       FROM ppc_search_terms p
       JOIN ppc_stores s ON s.id = p.store_id
+      CROSS JOIN anchor a
       WHERE s.team_id = ${teamId}
         AND (${storeName === "ALL"} OR lower(s.name) = lower(${storeName}))
         AND (
@@ -1686,14 +1726,22 @@ export async function getPpcSearchTermSummaryFromDb(
         )
         AND (${!filters.startDate} OR p.report_date >= ${filters.startDate || "1970-01-01"}::date)
         AND (${!filters.endDate} OR p.report_date <= ${filters.endDate || "2099-12-31"}::date)
-        AND (${Boolean(filters.startDate || filters.endDate)} OR (p.report_date >= CURRENT_DATE - ${days}::integer AND p.report_date <= CURRENT_DATE - 1));
+        AND (${Boolean(filters.startDate || filters.endDate)} OR (p.report_date >= a.max_date - (${days} - 1)::integer AND p.report_date <= a.max_date));
     `,
 
     sql<SearchTermDbRow[]>`
+      WITH anchor AS (
+        SELECT COALESCE(MAX(p0.report_date), CURRENT_DATE - 1) AS max_date
+        FROM ppc_search_terms p0
+        JOIN ppc_stores s0 ON s0.id = p0.store_id
+        WHERE s0.team_id = ${teamId}
+          AND (${storeName === "ALL"} OR lower(s0.name) = lower(${storeName}))
+      )
       (
         SELECT p.*
         FROM ppc_search_terms p
         JOIN ppc_stores s ON s.id = p.store_id
+        CROSS JOIN anchor a
         WHERE s.team_id = ${teamId}
           AND (${storeName === "ALL"} OR lower(s.name) = lower(${storeName}))
           AND (
@@ -1703,7 +1751,7 @@ export async function getPpcSearchTermSummaryFromDb(
           )
           AND (${!filters.startDate} OR p.report_date >= ${filters.startDate || "1970-01-01"}::date)
           AND (${!filters.endDate} OR p.report_date <= ${filters.endDate || "2099-12-31"}::date)
-          AND (${Boolean(filters.startDate || filters.endDate)} OR (p.report_date >= CURRENT_DATE - ${days}::integer AND p.report_date <= CURRENT_DATE - 1))
+          AND (${Boolean(filters.startDate || filters.endDate)} OR (p.report_date >= a.max_date - (${days} - 1)::integer AND p.report_date <= a.max_date))
           AND p.orders >= 2 AND p.acos <= 30
         ORDER BY p.sales DESC, p.id
         LIMIT 5
@@ -1713,6 +1761,7 @@ export async function getPpcSearchTermSummaryFromDb(
         SELECT p.*
         FROM ppc_search_terms p
         JOIN ppc_stores s ON s.id = p.store_id
+        CROSS JOIN anchor a
         WHERE s.team_id = ${teamId}
           AND (${storeName === "ALL"} OR lower(s.name) = lower(${storeName}))
           AND (
@@ -1722,7 +1771,7 @@ export async function getPpcSearchTermSummaryFromDb(
           )
           AND (${!filters.startDate} OR p.report_date >= ${filters.startDate || "1970-01-01"}::date)
           AND (${!filters.endDate} OR p.report_date <= ${filters.endDate || "2099-12-31"}::date)
-          AND (${Boolean(filters.startDate || filters.endDate)} OR (p.report_date >= CURRENT_DATE - ${days}::integer AND p.report_date <= CURRENT_DATE - 1))
+          AND (${Boolean(filters.startDate || filters.endDate)} OR (p.report_date >= a.max_date - (${days} - 1)::integer AND p.report_date <= a.max_date))
           AND p.clicks >= 9 AND p.orders = 0
         ORDER BY p.spend DESC, p.id
         LIMIT 5
@@ -1730,9 +1779,17 @@ export async function getPpcSearchTermSummaryFromDb(
     `,
 
     sql<SearchTermDbRow[]>`
+      WITH anchor AS (
+        SELECT COALESCE(MAX(p0.report_date), CURRENT_DATE - 1) AS max_date
+        FROM ppc_search_terms p0
+        JOIN ppc_stores s0 ON s0.id = p0.store_id
+        WHERE s0.team_id = ${teamId}
+          AND (${storeName === "ALL"} OR lower(s0.name) = lower(${storeName}))
+      )
       SELECT p.*
       FROM ppc_search_terms p
       JOIN ppc_stores s ON s.id = p.store_id
+      CROSS JOIN anchor a
       WHERE s.team_id = ${teamId}
         AND (${storeName === "ALL"} OR lower(s.name) = lower(${storeName}))
         AND (
@@ -1742,7 +1799,7 @@ export async function getPpcSearchTermSummaryFromDb(
         )
         AND (${!filters.startDate} OR p.report_date >= ${filters.startDate || "1970-01-01"}::date)
         AND (${!filters.endDate} OR p.report_date <= ${filters.endDate || "2099-12-31"}::date)
-        AND (${Boolean(filters.startDate || filters.endDate)} OR (p.report_date >= CURRENT_DATE - ${days}::integer AND p.report_date <= CURRENT_DATE - 1))
+        AND (${Boolean(filters.startDate || filters.endDate)} OR (p.report_date >= a.max_date - (${days} - 1)::integer AND p.report_date <= a.max_date))
         AND (
           (p.clicks >= 9 AND p.orders = 0 AND p.spend > 5)
           OR (p.orders > 0 AND p.acos > 60 AND p.spend >= 15)

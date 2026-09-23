@@ -518,6 +518,10 @@ export async function getPpcAnalyticsData(
       ? (sku === "ALL" ? allSkuPerformance : allSkuPerformance.filter((row) => row.sku.toLowerCase() === sku.toLowerCase()))
       : [];
 
+    const samplePerf = performanceRows.find((r) => r.reportStartDate && r.reportEndDate);
+    const detailDateStart = startDate || samplePerf?.reportStartDate || (rows.length > 0 ? rows[rows.length - 1]?.reportDate : "") || "";
+    const detailDateEnd = endDate || samplePerf?.reportEndDate || (rows.length > 0 ? rows[0]?.reportDate : "") || "";
+
     return {
       stores,
       summary: null,
@@ -554,8 +558,8 @@ export async function getPpcAnalyticsData(
       availableSkus: Array.from(new Set(performanceRows.map((row) => row.sku).filter(Boolean))).sort(),
       days,
       targetAcos,
-      dateRangeStart: new Date().toISOString().slice(0, 10),
-      dateRangeEnd: new Date().toISOString().slice(0, 10),
+      dateRangeStart: detailDateStart || new Date().toISOString().slice(0, 10),
+      dateRangeEnd: detailDateEnd || new Date().toISOString().slice(0, 10),
       lastSyncedAt: null,
       syncLogs: [],
     };
