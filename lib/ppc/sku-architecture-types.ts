@@ -143,7 +143,7 @@ export interface PpcAutoUploadLog {
   adspowerProfileName?: string | null;
   actionCount: number;
   skus: string[];
-  status: "SUCCESS" | "FAILED" | "RUNNING";
+  status: "PENDING" | "RUNNING" | "RETRY_WAIT" | "SUCCESS" | "FAILED" | "CANCELLED";
   errorMessage?: string | null;
   durationMs: number;
   createdAt: string;

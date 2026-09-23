@@ -147,6 +147,18 @@ cd ~/mac-crawler
 
 ---
 
+### Auto Upload Bulk từ server
+
+File mẫu trắng Amazon **không đặt trên Mac mini**. Nó phải được deploy cùng web server tại:
+
+`templates/ppc/AdvertisingBulksheetTemplate-seller.xlsx`
+
+Server dùng template này để tạo file update, lưu file lên R2 và tạo remote job. Mac mini tự tải từng file vào:
+
+`~/AmazonPpcCrawler/bulk-upload/inbox/<job-id>/`
+
+Sau khi Amazon tiếp nhận, worker tự chuyển file sang `completed/<job-id>/`; file lỗi được chuyển sang `failed/<job-id>/`. Có thể đổi thư mục gốc bằng `BULK_UPLOAD_DIR` trong `config.env`. Không chép file thủ công vào `inbox` vì file không có job, R2 key và SHA-256 sẽ không được xử lý.
+
 ### 6. Xử Lý Sự Cố Thường Gặp (Troubleshooting)
 
 #### Lỗi: `Operation not permitted`

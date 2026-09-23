@@ -1,6 +1,5 @@
 import "server-only";
-import fs from "node:fs";
-import path from "node:path";
+import crypto from "node:crypto";
 
 import { getDatabaseClient } from "@/lib/db";
 import {
@@ -23,13 +22,12 @@ import {
 } from "./sku-architecture-types";
 import type { PpcPerformanceRow, PpcRecommendation } from "./types";
 import { extractSkuFromText } from "./sku-extractor";
-import { AMAZON_BULKSHEET_SP_COLUMNS } from "./service";
 import {
   commonRuleToDefinitions,
   parseAmazonPpcCommonRuleSet,
   type AmazonPpcCommonRuleSet,
 } from "./common-rule-parser";
-import { uploadBulkFileToAmazonAds } from "./adspower-service";
+import { objectStorageDriver, putStoredObject, r2KeyPrefix } from "@/lib/object-storage";
 import { invalidateGroupedRecommendationsCache } from "./recommendation-cache";
 
 export async function resolveStoreId(storeIdOrName?: string | null): Promise<string> {
@@ -1701,6 +1699,7 @@ export async function getAutoUploadLogs(storeId: string): Promise<PpcAutoUploadL
 export async function executeAutoUploadZeroSpendActions(
   storeId: string,
   selectedActionIds?: string[],
+  teamId = "default",
 ): Promise<{
   success: boolean;
   log: PpcAutoUploadLog;
@@ -1710,6 +1709,14 @@ export async function executeAutoUploadZeroSpendActions(
 }> {
   const sql = await getDatabaseClient();
   const startTime = Date.now();
+
+  const storeRows = await sql<{ id: string; name: string }[]>`
+    SELECT id, name FROM ppc_stores
+    WHERE id = ${storeId} AND team_id = ${teamId}
+    LIMIT 1
+  `;
+  if (!storeRows.length) throw new Error("Store không tồn tại hoặc không thuộc team hiện tại.");
+  const storeName = storeRows[0].name;
 
   // 1. Get all pending/approved actions in the queue
   const queueActions = await getActionQueue(storeId);
@@ -1730,86 +1737,54 @@ export async function executeAutoUploadZeroSpendActions(
   const zeroSpendActionIds = zeroSpendActions.map((a) => a.id);
   const distinctSkus = Array.from(new Set(zeroSpendActions.map((a) => a.sku).filter(Boolean)));
 
-  // 3. Export Bulk file using canonical function
+  // 3. Export Bulk file using the canonical Amazon template.
   const exportResult = await exportBulkFromQueue(storeId, zeroSpendActionIds);
-
-  // 4. Save file to scratch directory
-  const scratchDir = path.join(process.cwd(), "scratch");
-  if (!fs.existsSync(scratchDir)) {
-    fs.mkdirSync(scratchDir, { recursive: true });
+  if (objectStorageDriver() !== "r2") {
+    throw new Error("Auto Upload remote yêu cầu OBJECT_STORAGE_DRIVER=r2.");
   }
-  const tempFilePath = path.join(scratchDir, exportResult.fileName);
-  fs.writeFileSync(tempFilePath, exportResult.buffer);
 
-  // 5. Get store name for AdsPower
-  const storeRows = await sql<{ id: string; name: string }[]>`
-    SELECT id, name FROM ppc_stores WHERE id = ${storeId} LIMIT 1
-  `;
-  const storeName = storeRows.length > 0 ? storeRows[0].name : "HSOSTORE";
+  const sha256 = crypto.createHash("sha256").update(exportResult.buffer).digest("hex");
+  const jobId = crypto.randomUUID();
+  const safeStore = storeName.replace(/[^A-Za-z0-9._-]+/g, "-");
+  const r2Key = `${r2KeyPrefix()}/ppc-bulk-upload/${safeStore}/${jobId}/${exportResult.fileName}`;
+  await putStoredObject({
+    key: r2Key,
+    bytes: exportResult.buffer,
+    contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    sha256,
+    metadata: { purpose: "amazon-ads-bulk-upload", store: safeStore, job: jobId },
+  });
 
-  // 6. Record initial RUNNING log
-  const initialLog = await sql<any[]>`
+  // 5. Enqueue. AdsPower lives on the Mac mini, so the web server never opens it.
+  const initialLog = await sql<Array<{ id: string; created_at: Date | string }>>`
     INSERT INTO ppc_auto_upload_logs (
-      store_id, file_name, action_count, skus, status
+      id, team_id, store_id, file_name, action_count, skus, status, stage,
+      progress_pct, r2_key, sha256, action_ids, updated_at
     ) VALUES (
-      ${storeId}, ${exportResult.fileName}, ${zeroSpendActions.length},
-      ${JSON.stringify(distinctSkus)}::jsonb, 'RUNNING'
+      ${jobId}, ${teamId}, ${storeId}, ${exportResult.fileName}, ${zeroSpendActions.length},
+      ${JSON.stringify(distinctSkus)}::jsonb, 'PENDING', 'PENDING', 0,
+      ${r2Key}, ${sha256}, ${JSON.stringify(zeroSpendActionIds)}::jsonb, NOW()
     )
     RETURNING id, created_at
   `;
   const logId = initialLog[0].id;
 
-  try {
-    // 7. Upload to Amazon Ads via AdsPower
-    const uploadRes = await uploadBulkFileToAmazonAds({
-      filePath: tempFilePath,
-      storeName,
-    });
-
-    const durationMs = Date.now() - startTime;
-
-    // 8. Update log as SUCCESS
-    await sql`
-      UPDATE ppc_auto_upload_logs
-      SET status = 'SUCCESS',
-          adspower_profile_id = ${uploadRes.profileId || null},
-          adspower_profile_name = ${uploadRes.profileName || storeName},
-          duration_ms = ${durationMs},
-          error_message = NULL
-      WHERE id = ${logId}
-    `;
-
-    return {
-      success: true,
-      log: {
-        id: logId,
-        storeId,
-        fileName: exportResult.fileName,
-        adspowerProfileId: uploadRes.profileId || null,
-        adspowerProfileName: uploadRes.profileName || storeName,
-        actionCount: zeroSpendActions.length,
-        skus: distinctSkus,
-        status: "SUCCESS",
-        errorMessage: null,
-        durationMs,
-        createdAt: new Date(initialLog[0].created_at).toISOString(),
-      },
+  return {
+    success: true,
+    log: {
+      id: logId,
+      storeId,
       fileName: exportResult.fileName,
-      fileBase64: exportResult.buffer.toString("base64"),
-      message: `Đã tự động xuất và upload thành công ${zeroSpendActions.length} actions của ${distinctSkus.length} SKU chưa cắn tiền lên Amazon Ads!`,
-    };
-  } catch (err: any) {
-    const durationMs = Date.now() - startTime;
-    const errorMsg = String(err?.message || err);
-
-    await sql`
-      UPDATE ppc_auto_upload_logs
-      SET status = 'FAILED',
-          duration_ms = ${durationMs},
-          error_message = ${errorMsg}
-      WHERE id = ${logId}
-    `;
-
-    throw new Error(`Auto Upload thất bại: ${errorMsg}`);
-  }
+      adspowerProfileId: null,
+      adspowerProfileName: storeName,
+      actionCount: zeroSpendActions.length,
+      skus: distinctSkus,
+      status: "PENDING",
+      errorMessage: null,
+      durationMs: Date.now() - startTime,
+      createdAt: new Date(initialLog[0].created_at).toISOString(),
+    },
+    fileName: exportResult.fileName,
+    message: `Đã tạo file Bulk và xếp hàng upload trên Mac mini (${zeroSpendActions.length} actions).`,
+  };
 }

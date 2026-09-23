@@ -1,5 +1,5 @@
 // app/api/ppc/auto-upload/route.ts
-import { ApiError, authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
+import { authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
 import {
   executeAutoUploadZeroSpendActions,
   getAutoUploadLogs,
@@ -23,7 +23,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    authorize(request, "write");
+    const actor = authorize(request, "write");
     enforceRequestSize(request);
 
     const body = await request.json().catch(() => ({}));
@@ -31,7 +31,7 @@ export async function POST(request: Request) {
     const storeId = await resolveStoreId(body?.storeId || searchParams.get("storeId"));
     const actionIds = Array.isArray(body?.actionIds) ? body.actionIds : undefined;
 
-    const result = await executeAutoUploadZeroSpendActions(storeId, actionIds);
+    const result = await executeAutoUploadZeroSpendActions(storeId, actionIds, actor.teamId);
 
     return Response.json({
       success: true,
@@ -39,8 +39,8 @@ export async function POST(request: Request) {
       fileName: result.fileName,
       fileBase64: result.fileBase64,
       message: result.message,
-    });
-  } catch (error: any) {
-    return routeErrorResponse(error, error?.message || "Lỗi khi tự động upload lên AdsPower.", 500);
+    }, { status: 202 });
+  } catch (error: unknown) {
+    return routeErrorResponse(error, error instanceof Error ? error.message : "Lỗi khi xếp hàng upload Bulk.", 500);
   }
 }

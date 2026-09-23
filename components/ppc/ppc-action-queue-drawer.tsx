@@ -1313,7 +1313,9 @@ export function PpcActionQueueDrawer({
                             className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${
                               log.status === "SUCCESS"
                                 ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                : log.status === "RUNNING"
+                                : log.status === "PENDING"
+                                ? "bg-blue-50 text-blue-700 border border-blue-200"
+                                : log.status === "RUNNING" || log.status === "RETRY_WAIT"
                                 ? "bg-amber-50 text-amber-700 border border-amber-200"
                                 : "bg-rose-50 text-rose-700 border border-rose-200"
                             }`}
