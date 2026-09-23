@@ -11,14 +11,10 @@ import {
   Tooltip,
   Legend,
   CartesianGrid,
-  ReferenceLine,
   LabelList,
 } from "recharts";
 import {
   ChartLineUp,
-  CalendarBlank,
-  Eye,
-  EyeSlash,
   SquaresFour,
 } from "@phosphor-icons/react";
 import type { PpcSummaryMetrics, PpcAdTypeBreakdown, PpcSearchTermRow, PpcDailyTrendPoint } from "@/lib/ppc/types";
@@ -75,51 +71,21 @@ export function PpcTimeSeriesChart({
   summary,
   selectedDays,
   onDaysChange,
-  dateRangeStart,
   dateRangeEnd,
   adTypeBreakdown,
   searchTerms,
   dailyTrends,
   targetAcos = 30,
   currency = "$",
-  isCustomDate = false,
-  startDate,
-  endDate,
-  onCustomDateChange,
   hideSummaryCards = false,
 }: PpcTimeSeriesChartProps) {
-  // Chế độ xem: Mặc định là "split" (Song song 7D & 30D trên 1 dòng theo yêu cầu người dùng)
+  // Chế độ xem: Mặc định là "split" (Song song 7D & 30D trên 1 dòng)
   const [viewMode, setViewMode] = useState<ViewMode>("split");
-  // Hiển thị trực tiếp số liệu cột (Spend) và điểm (ACOS / Revenue) trên biểu đồ
-  const [showDataLabels, setShowDataLabels] = useState<boolean>(true);
 
   // Filters state
   const [granularity, setGranularity] = useState<Granularity>("day");
   const [channel, setChannel] = useState<ChannelFilter>("ALL");
   const [rightMetric, setRightMetric] = useState<RightAxisMetric>("ACOS");
-
-  // Custom date picker state
-  const [showCustomPicker, setShowCustomPicker] = useState(false);
-  const maxSelectableDate = useMemo(() => {
-    if (dateRangeEnd) return dateRangeEnd;
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    return d.toISOString().slice(0, 10);
-  }, [dateRangeEnd]);
-  const [tempStart, setTempStart] = useState(startDate || "");
-  const [tempEnd, setTempEnd] = useState(endDate || dateRangeEnd || maxSelectableDate);
-
-  React.useEffect(() => {
-    if (startDate) setTempStart(startDate);
-    if (endDate) setTempEnd(endDate);
-    else if (dateRangeEnd) setTempEnd(dateRangeEnd);
-  }, [startDate, endDate, dateRangeEnd]);
-
-  // Check if real daily search terms data exists
-  const hasRealDaily = useMemo(() => {
-    if (dailyTrends && dailyTrends.length > 0) return true;
-    return searchTerms?.some((t) => t.reportGranularity === "DAILY") ?? false;
-  }, [dailyTrends, searchTerms]);
 
   // Target totals after channel filter - ĐỒNG BỘ CHÍNH XÁC THEO BULK FILE
   const channelTotals = useMemo(() => {
@@ -155,8 +121,8 @@ export function PpcTimeSeriesChart({
     };
   }, [channel, summary, adTypeBreakdown]);
 
-  // Hàm sinh dữ liệu chuỗi thời gian liên tục cho bất kỳ khoảng ngày nào (7D, 30D hoặc Custom)
-  const generateDailyPoints = (daysCount: number, customStart?: string, customEnd?: string): DataPoint[] => {
+  // Hàm sinh dữ liệu chuỗi thời gian liên tục cho bất kỳ khoảng ngày nào (7D hoặc 30D)
+  const generateDailyPoints = (daysCount: number): DataPoint[] => {
     const dailyMap = new Map<string, { spend: number; revenue: number; orders: number; clicks: number; impressions: number }>();
     let hasDaily = false;
 
@@ -201,31 +167,22 @@ export function PpcTimeSeriesChart({
       }
     }
 
-    let start: Date;
     let end: Date;
-
-    if (customStart && customEnd) {
-      const sParts = customStart.split("-").map(Number);
-      start = new Date(sParts[0], sParts[1] - 1, sParts[2]);
-      const eParts = customEnd.split("-").map(Number);
-      end = new Date(eParts[0], eParts[1] - 1, eParts[2]);
+    if (dailyMap.size > 0) {
+      const sortedDates = Array.from(dailyMap.keys()).sort();
+      const lastDate = sortedDates[sortedDates.length - 1];
+      const parts = lastDate.split("-").map(Number);
+      end = new Date(parts[0], parts[1] - 1, parts[2]);
+    } else if (dateRangeEnd) {
+      const parts = dateRangeEnd.split("-").map(Number);
+      end = new Date(parts[0], parts[1] - 1, parts[2]);
     } else {
-      if (dailyMap.size > 0) {
-        const sortedDates = Array.from(dailyMap.keys()).sort();
-        const lastDate = sortedDates[sortedDates.length - 1];
-        const parts = lastDate.split("-").map(Number);
-        end = new Date(parts[0], parts[1] - 1, parts[2]);
-      } else if (dateRangeEnd) {
-        const parts = dateRangeEnd.split("-").map(Number);
-        end = new Date(parts[0], parts[1] - 1, parts[2]);
-      } else {
-        end = new Date();
-        end.setDate(end.getDate() - 1);
-      }
-      const count = Math.max(daysCount, 1);
-      start = new Date(end);
-      start.setDate(end.getDate() - (count - 1));
+      end = new Date();
+      end.setDate(end.getDate() - 1);
     }
+    const count = Math.max(daysCount, 1);
+    const start = new Date(end);
+    start.setDate(end.getDate() - (count - 1));
 
     const diffDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1);
     const dayOfWeekWeights = [1.25, 1.2, 1.05, 0.95, 0.9, 0.8, 0.95];
@@ -404,14 +361,10 @@ export function PpcTimeSeriesChart({
   const chartData30D = useMemo(() => aggregatePoints(rawData30D, granularity), [rawData30D, granularity]);
   const totals30D = useMemo(() => calculateTotals(rawData30D), [rawData30D]);
 
-  // Dữ liệu cho chế độ Single View (khi người dùng chọn ngày tùy chỉnh hoặc 14 ngày)
+  // Dữ liệu cho chế độ Single View (khi người dùng bấm chọn riêng 7D hoặc 30D)
   const rawDataCurrent = useMemo(() => {
-    return generateDailyPoints(
-      selectedDays,
-      isCustomDate ? startDate : undefined,
-      isCustomDate ? endDate : undefined
-    );
-  }, [selectedDays, isCustomDate, startDate, endDate, channel, dailyTrends, searchTerms, channelTotals, targetAcos, dateRangeEnd]);
+    return generateDailyPoints(selectedDays || 7);
+  }, [selectedDays, channel, dailyTrends, searchTerms, channelTotals, targetAcos, dateRangeEnd]);
   const chartDataCurrent = useMemo(() => aggregatePoints(rawDataCurrent, granularity), [rawDataCurrent, granularity]);
   const totalsCurrent = useMemo(() => calculateTotals(rawDataCurrent), [rawDataCurrent]);
 
@@ -440,7 +393,6 @@ export function PpcTimeSeriesChart({
     const { x, y, value, index } = props;
     if (value == null || value <= 0) return null;
     const isAcos = rightMetric === "ACOS";
-    const isWarning = isAcos && value > targetAcos;
     const text = isAcos ? `${Math.round(value)}%` : `${currency}${Math.round(value)}`;
     const isNearTop = y < 22;
     const badgeW = text.length > 3 ? 30 : 25;
@@ -455,15 +407,15 @@ export function PpcTimeSeriesChart({
           width={badgeW}
           height={13}
           rx={3}
-          fill={isWarning ? "#fff1f2" : "#f0f9ff"}
-          stroke={isWarning ? "#f43f5e" : "#0284c7"}
+          fill="#f0f9ff"
+          stroke="#0284c7"
           strokeWidth={0.8}
           opacity={0.95}
         />
         <text
           x={x}
           y={textY}
-          fill={isWarning ? "#e11d48" : "#0369a1"}
+          fill="#0284c7"
           textAnchor="middle"
           fontSize={isCompact ? 8.5 : 9}
           fontWeight={800}
@@ -539,14 +491,12 @@ export function PpcTimeSeriesChart({
                 <span className={`text-sm font-black ${
                   totals.revenue === 0
                     ? totals.spend > 0 ? "text-rose-600" : "text-slate-400"
-                    : totals.acos <= targetAcos ? "text-emerald-600" : "text-rose-600"
+                    : totals.acos <= targetAcos ? "text-indigo-600" : "text-rose-600"
                 }`}>
                   {totals.revenue > 0 ? `${totals.acos.toFixed(1)}%` : totals.spend > 0 ? "N/A" : "—"}
                 </span>
-                <span className={`text-[9px] font-bold ${
-                  totals.revenue > 0 && totals.acos <= targetAcos ? "text-emerald-600" : "text-rose-600"
-                }`}>
-                  {totals.revenue > 0 && totals.acos <= targetAcos ? `≤${targetAcos}% ✓` : `>${targetAcos}%`}
+                <span className="text-[9px] font-bold text-slate-500">
+                  {totals.revenue > 0 ? "ACOS" : "Chưa có sales"}
                 </span>
               </div>
             </div>
@@ -621,11 +571,7 @@ export function PpcTimeSeriesChart({
                         <strong className="text-emerald-700 text-right">{currency}{d.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
 
                         <span className="text-slate-500">ACOS:</span>
-                        <strong className={`text-right font-black ${
-                          d.revenue === 0
-                            ? d.spend > 0 ? "text-rose-600" : "text-slate-400"
-                            : d.acos <= targetAcos ? "text-emerald-600" : "text-rose-600"
-                        }`}>
+                        <strong className="text-slate-900 text-right font-black">
                           {d.revenue > 0 ? `${d.acos.toFixed(1)}%` : d.spend > 0 ? "N/A" : "—"}
                         </strong>
 
@@ -645,17 +591,6 @@ export function PpcTimeSeriesChart({
 
               <Legend wrapperStyle={{ fontSize: "10px", paddingTop: "4px" }} />
 
-              {/* Đường mục tiêu ACOS Target */}
-              {rightMetric === "ACOS" && (
-                <ReferenceLine
-                  yAxisId="right"
-                  y={targetAcos}
-                  stroke="#10b981"
-                  strokeDasharray="3 3"
-                  label={{ value: `Mục tiêu ${targetAcos}%`, fill: "#10b981", fontSize: 9.5, position: "top" }}
-                />
-              )}
-
               {/* Cột Spend (Bar) có gắn số liệu trực tiếp */}
               <Bar
                 yAxisId="left"
@@ -665,13 +600,11 @@ export function PpcTimeSeriesChart({
                 radius={[4, 4, 0, 0]}
                 maxBarSize={data.length > 15 ? 14 : 26}
               >
-                {showDataLabels && (
-                  <LabelList
-                    dataKey="spend"
-                    position="top"
-                    content={(props) => renderBarSpendLabel(props, isCompact)}
-                  />
-                )}
+                <LabelList
+                  dataKey="spend"
+                  position="top"
+                  content={(props) => renderBarSpendLabel(props, isCompact)}
+                />
               </Bar>
 
               {/* Đường ACOS (%) có gắn nhãn số liệu trực tiếp */}
@@ -685,27 +618,24 @@ export function PpcTimeSeriesChart({
                   strokeWidth={2.2}
                   dot={(props: any) => {
                     const { cx, cy, payload } = props;
-                    const isWarning = payload.isLossWarning;
                     return (
                       <circle
                         key={`dot-${payload.rawDate}`}
                         cx={cx}
                         cy={cy}
-                        r={isWarning ? 4 : 2.5}
-                        fill={isWarning ? "#f43f5e" : "#0284c7"}
+                        r={2.5}
+                        fill="#0284c7"
                         stroke="#ffffff"
                         strokeWidth={1.5}
                       />
                     );
                   }}
                 >
-                  {showDataLabels && (
-                    <LabelList
-                      dataKey="acos"
-                      position="top"
-                      content={(props) => renderLineMetricLabel(props, isCompact)}
-                    />
-                  )}
+                  <LabelList
+                    dataKey="acos"
+                    position="top"
+                    content={(props) => renderLineMetricLabel(props, isCompact)}
+                  />
                 </Line>
               )}
 
@@ -720,13 +650,11 @@ export function PpcTimeSeriesChart({
                   strokeWidth={2.2}
                   dot={{ r: 2.5, fill: "#10b981" }}
                 >
-                  {showDataLabels && (
-                    <LabelList
-                      dataKey="revenue"
-                      position="top"
-                      content={(props) => renderLineMetricLabel(props, isCompact)}
-                    />
-                  )}
+                  <LabelList
+                    dataKey="revenue"
+                    position="top"
+                    content={(props) => renderLineMetricLabel(props, isCompact)}
+                  />
                 </Line>
               )}
             </ComposedChart>
@@ -742,14 +670,9 @@ export function PpcTimeSeriesChart({
             <span className="flex items-center gap-1">
               <span className={`w-3 h-0.5 ${rightMetric === "ACOS" ? "bg-sky-600" : "bg-emerald-500"} inline-block`} /> Đường {rightMetric}
             </span>
-            {rightMetric === "ACOS" && (
-              <span className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-rose-500 inline-block" /> Chấm đỏ: {`>`}{targetAcos}%
-              </span>
-            )}
           </div>
           <span className="text-[10px] text-slate-400 font-medium">
-            {showDataLabels ? "✓ Hiện số liệu cột & điểm" : "Số liệu ẩn"}
+            {badgeText} ({data.length} ngày)
           </span>
         </div>
       </div>
@@ -765,46 +688,25 @@ export function PpcTimeSeriesChart({
             <ChartLineUp size={18} weight="bold" />
           </div>
           <div>
-            <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-2">
+            <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
               SPEND VS REVENUE / ACOS THEO THỜI GIAN
-              <span className="text-[10px] px-2 py-0.5 rounded-md bg-indigo-100 text-indigo-700 font-extrabold normal-case">
-                {viewMode === "split" ? "Chế độ song song 7D & 30D" : `Chế độ đơn: ${selectedDays} ngày`}
-              </span>
             </h3>
-            <p className="text-[11px] text-slate-500">
-              Quan sát trực tiếp xu hướng chi tiêu và hiệu quả ACOS trên cùng một dòng
-            </p>
           </div>
         </div>
 
         {/* Toolbar điều khiển */}
         <div className="flex flex-wrap items-center gap-2">
-          {/* Nút bật/tắt hiển thị số liệu trực tiếp trên biểu đồ */}
-          <button
-            type="button"
-            onClick={() => setShowDataLabels((prev) => !prev)}
-            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer border ${
-              showDataLabels
-                ? "bg-indigo-50 border-indigo-200 text-indigo-700 shadow-2xs"
-                : "bg-white border-slate-200 text-slate-600 hover:text-slate-900"
-            }`}
-            title="Bật/Tắt hiển thị số liệu cột Spend và điểm ACOS trực tiếp trên biểu đồ"
-          >
-            {showDataLabels ? <Eye size={14} weight="bold" /> : <EyeSlash size={14} />}
-            <span>Số liệu: {showDataLabels ? "BẬT" : "ẨN"}</span>
-          </button>
-
-          {/* Chọn chế độ xem: Song song 7D & 30D (Mặc định) vs Xem đơn */}
+          {/* Chọn chế độ xem: Song song (7D & 30D) | 7D | 30D */}
           <div className="flex items-center bg-slate-100 rounded-lg p-0.5 text-xs font-semibold">
             <button
               type="button"
               onClick={() => setViewMode("split")}
-              className={`flex items-center gap-1 px-2 py-1 rounded-md transition cursor-pointer ${
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md transition cursor-pointer ${
                 viewMode === "split"
                   ? "bg-white text-indigo-700 shadow-2xs font-bold"
                   : "text-slate-600 hover:text-slate-900"
               }`}
-              title="Chia thành 2 biểu đồ 7D và 30D trên cùng 1 dòng"
+              title="Xem song song 7D và 30D trên cùng 1 dòng"
             >
               <SquaresFour size={13} weight="bold" />
               <span>Song song (7D & 30D)</span>
@@ -815,27 +717,13 @@ export function PpcTimeSeriesChart({
                 setViewMode("single");
                 onDaysChange?.(7);
               }}
-              className={`px-2 py-1 rounded-md transition cursor-pointer ${
-                viewMode === "single" && !isCustomDate && selectedDays === 7
+              className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
+                viewMode === "single" && selectedDays === 7
                   ? "bg-white text-indigo-700 shadow-2xs font-bold"
                   : "text-slate-600 hover:text-slate-900"
               }`}
             >
-              Chỉ 7D
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setViewMode("single");
-                onDaysChange?.(14);
-              }}
-              className={`px-2 py-1 rounded-md transition cursor-pointer ${
-                viewMode === "single" && !isCustomDate && selectedDays === 14
-                  ? "bg-white text-indigo-700 shadow-2xs font-bold"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              14D
+              7D
             </button>
             <button
               type="button"
@@ -843,99 +731,14 @@ export function PpcTimeSeriesChart({
                 setViewMode("single");
                 onDaysChange?.(30);
               }}
-              className={`px-2 py-1 rounded-md transition cursor-pointer ${
-                viewMode === "single" && !isCustomDate && selectedDays === 30
+              className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
+                viewMode === "single" && selectedDays === 30
                   ? "bg-white text-indigo-700 shadow-2xs font-bold"
                   : "text-slate-600 hover:text-slate-900"
               }`}
             >
-              Chỉ 30D
+              30D
             </button>
-
-            {/* Tùy chọn ngày */}
-            {onCustomDateChange && (
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setViewMode("single");
-                    setShowCustomPicker((prev) => !prev);
-                  }}
-                  className={`flex items-center gap-1 px-2 py-1 rounded-md transition cursor-pointer ${
-                    viewMode === "single" && isCustomDate ? "bg-indigo-600 text-white shadow-2xs font-bold" : "text-slate-600 hover:text-slate-900"
-                  }`}
-                  title="Chọn khoảng ngày tùy chỉnh"
-                >
-                  <CalendarBlank size={13} weight={isCustomDate ? "bold" : "regular"} />
-                  <span>{isCustomDate && startDate && endDate ? `${startDate.slice(5).replace("-", "/")}—${endDate.slice(5).replace("-", "/")}` : "Tùy chọn"}</span>
-                </button>
-
-                {showCustomPicker && (
-                  <div className="absolute right-0 top-full mt-1.5 z-40 w-72 rounded-xl border border-slate-200 bg-white p-3 shadow-xl text-slate-800 animate-in fade-in zoom-in-95 duration-100">
-                    <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-slate-100">
-                      <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                        <CalendarBlank size={14} className="text-indigo-600" weight="bold" />
-                        Chọn khoảng ngày cụ thể
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setShowCustomPicker(false)}
-                        className="text-slate-400 hover:text-slate-600 text-xs p-0.5 rounded cursor-pointer"
-                      >
-                        ✕
-                      </button>
-                    </div>
-
-                    <div className="space-y-2 text-xs">
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-500 mb-0.5">Từ ngày (Start):</label>
-                        <input
-                          type="date"
-                          value={tempStart}
-                          onChange={(e) => setTempStart(e.target.value)}
-                          max={maxSelectableDate}
-                          className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 font-medium text-slate-800 outline-none focus:border-indigo-500 focus:bg-white"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-500 mb-0.5">Đến ngày (End):</label>
-                        <input
-                          type="date"
-                          value={tempEnd}
-                          onChange={(e) => setTempEnd(e.target.value)}
-                          max={maxSelectableDate}
-                          min={tempStart}
-                          className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 font-medium text-slate-800 outline-none focus:border-indigo-500 focus:bg-white"
-                        />
-                      </div>
-
-                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 mt-2">
-                        <button
-                          type="button"
-                          onClick={() => setShowCustomPicker(false)}
-                          className="px-2.5 py-1 text-xs text-slate-500 hover:text-slate-800 rounded-md cursor-pointer"
-                        >
-                          Hủy
-                        </button>
-                        <button
-                          type="button"
-                          disabled={!tempStart || !tempEnd || tempStart > tempEnd}
-                          onClick={() => {
-                            if (tempStart && tempEnd && tempStart <= tempEnd) {
-                              onCustomDateChange(tempStart, tempEnd);
-                              setShowCustomPicker(false);
-                            }
-                          }}
-                          className="px-3 py-1 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-md cursor-pointer shadow-xs"
-                        >
-                          Áp dụng
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
 
           {/* Lọc Kênh Chạy: Tất cả / SP / SB */}
@@ -1014,13 +817,11 @@ export function PpcTimeSeriesChart({
           )}
         </div>
       ) : (
-        /* CHẾ ĐỘ XEM ĐƠN (FULL CHIỀU RỘNG KHI CHỌN 14 NGÀY HOẶC TÙY CHỌN) */
+        /* CHẾ ĐỘ XEM ĐƠN (7D HOẶC 30D) */
         renderChartCard(
-          isCustomDate
-            ? `SPEND VS REVENUE / ACOS (TÙY CHỌN ${startDate} — ${endDate})`
-            : `SPEND VS REVENUE / ACOS (${selectedDays} NGÀY GẦN NHẤT)`,
-          isCustomDate ? "Custom" : `${selectedDays}D`,
-          "amber",
+          `SPEND VS REVENUE / ACOS (${selectedDays} NGÀY GẦN NHẤT)`,
+          `${selectedDays}D`,
+          "indigo",
           chartDataCurrent,
           totalsCurrent,
           false,
