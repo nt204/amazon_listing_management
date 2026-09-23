@@ -434,6 +434,7 @@ export function PpcTimeSeriesChart({
     data: DataPoint[],
     totals: PeriodTotals,
     isCompact = false,
+    className = "",
   ) => {
     const badgeStyles = {
       indigo: "bg-indigo-50 text-indigo-700 border-indigo-200",
@@ -442,7 +443,7 @@ export function PpcTimeSeriesChart({
     }[badgeColor];
 
     return (
-      <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs space-y-3 flex flex-col justify-between">
+      <div className={`rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs space-y-3 flex flex-col justify-between ${className}`}>
         {/* Header của biểu đồ */}
         <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
           <div className="flex items-center gap-2">
@@ -598,7 +599,7 @@ export function PpcTimeSeriesChart({
                 name={`Spend (${currency})`}
                 fill="#6366f1"
                 radius={[4, 4, 0, 0]}
-                maxBarSize={data.length > 15 ? 14 : 26}
+                maxBarSize={data.length > 15 ? 18 : 24}
               >
                 <LabelList
                   dataKey="spend"
@@ -797,8 +798,8 @@ export function PpcTimeSeriesChart({
 
       {/* KHU VỰC HIỂN THỊ BIỂU ĐỒ */}
       {viewMode === "split" ? (
-        /* CHẾ ĐỘ SONG SONG: 7D và 30D TRÊN CÙNG 1 DÒNG (2 CỘT) */
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        /* CHẾ ĐỘ SONG SONG: 7D THON GỌN (4 CỘT), 30D DÃN RỘNG (8 CỘT) */
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
           {renderChartCard(
             "SPEND VS REVENUE / ACOS (7 NGÀY GẦN NHẤT)",
             "7D",
@@ -806,6 +807,7 @@ export function PpcTimeSeriesChart({
             chartData7D,
             totals7D,
             true,
+            "lg:col-span-5 xl:col-span-4",
           )}
           {renderChartCard(
             "SPEND VS REVENUE / ACOS (30 NGÀY QUA)",
@@ -814,6 +816,7 @@ export function PpcTimeSeriesChart({
             chartData30D,
             totals30D,
             true,
+            "lg:col-span-7 xl:col-span-8",
           )}
         </div>
       ) : (
