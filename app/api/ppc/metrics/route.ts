@@ -1,11 +1,13 @@
 import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { getPpcAnalyticsData } from "@/lib/ppc/service";
 import type { PpcPerformanceGrain, PpcSearchTermRow } from "@/lib/ppc/types";
+import { getCachedOrFetch, invalidateCachePattern } from "@/lib/redis";
 
 export const runtime = "nodejs";
 
-const METRICS_CACHE_TTL_MS = 30_000;
-const METRICS_CACHE_MAX_ENTRIES = 5;
+const METRICS_CACHE_TTL_MS = 60_000;
+const REDIS_METRICS_TTL_SEC = 900; // 15 phút lưu trong Redis
+const METRICS_CACHE_MAX_ENTRIES = 20;
 type MetricsData = Awaited<ReturnType<typeof getPpcAnalyticsData>>;
 type MetricsSection = "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "search_terms";
 type MetricsResponse = ReturnType<typeof projectMetrics>;
@@ -108,26 +110,63 @@ export async function GET(request: Request) {
     const startDate = /^\d{4}-\d{2}-\d{2}$/.test(startDateParam) ? startDateParam : undefined;
     const endDate = /^\d{4}-\d{2}-\d{2}$/.test(endDateParam) ? endDateParam : undefined;
 
+    if (refresh) {
+      metricsCache.clear();
+      await invalidateCachePattern(`ppc:metrics:${scope.teamId}:*`).catch(() => {});
+    }
+
+    const redisKey = `ppc:metrics:${scope.teamId}:${storeName}:${sku}:${days}:${startDate || "none"}:${endDate || "none"}:${section}`;
     const cacheKey = `${scope.teamId}\u0000${storeName}\u0000${sku}\u0000${days}\u0000${startDate || ""}\u0000${endDate || ""}\u0000${section}`;
-    const cached = refresh ? undefined : metricsCache.get(cacheKey);
+
+    // 1. Kiểm tra L1 In-Memory Cache
+    const memCached = refresh ? undefined : metricsCache.get(cacheKey);
+    let cacheStatus = "MISS";
     let data: MetricsResponse;
-    if (cached && cached.expiresAt > Date.now()) {
-      data = cached.data;
+
+    if (memCached && memCached.expiresAt > Date.now()) {
+      data = memCached.data;
+      cacheStatus = "HIT_MEMORY";
     } else {
-      if (cached) metricsCache.delete(cacheKey);
-      let pending = metricsInFlight.get(cacheKey);
-      if (!pending) {
-        pending = getPpcAnalyticsData(
-          scope,
-          { storeName, sku, days, startDate, endDate },
-          { grains: SECTION_GRAINS[section], includeRecommendations: false, section },
-        ).then((result) => projectMetrics(result, section));
-        metricsInFlight.set(cacheKey, pending);
-      }
-      try {
-        data = await pending;
-      } finally {
-        if (metricsInFlight.get(cacheKey) === pending) metricsInFlight.delete(cacheKey);
+      if (memCached) metricsCache.delete(cacheKey);
+
+      // 2. L2 Cache qua Redis (tồn tại 15 phút, truy xuất siêu nhanh ~5ms)
+      if (refresh) {
+        let pending = metricsInFlight.get(cacheKey);
+        if (!pending) {
+          pending = getPpcAnalyticsData(
+            scope,
+            { storeName, sku, days, startDate, endDate },
+            { grains: SECTION_GRAINS[section], includeRecommendations: false, section },
+          ).then((result) => projectMetrics(result, section));
+          metricsInFlight.set(cacheKey, pending);
+        }
+        try {
+          data = await pending;
+        } finally {
+          if (metricsInFlight.get(cacheKey) === pending) metricsInFlight.delete(cacheKey);
+        }
+      } else {
+        data = await getCachedOrFetch<MetricsResponse>(
+          redisKey,
+          REDIS_METRICS_TTL_SEC,
+          async () => {
+            let pending = metricsInFlight.get(cacheKey);
+            if (!pending) {
+              pending = getPpcAnalyticsData(
+                scope,
+                { storeName, sku, days, startDate, endDate },
+                { grains: SECTION_GRAINS[section], includeRecommendations: false, section },
+              ).then((result) => projectMetrics(result, section));
+              metricsInFlight.set(cacheKey, pending);
+            }
+            try {
+              return await pending;
+            } finally {
+              if (metricsInFlight.get(cacheKey) === pending) metricsInFlight.delete(cacheKey);
+            }
+          },
+        );
+        cacheStatus = "HIT_REDIS";
       }
       cacheMetrics(cacheKey, data);
     }
@@ -135,7 +174,7 @@ export async function GET(request: Request) {
     return Response.json(data, {
       headers: {
         "Cache-Control": "private, no-store",
-        "X-PPC-Cache": cached && cached.expiresAt > Date.now() ? "HIT" : "MISS",
+        "X-PPC-Cache": cacheStatus,
       },
     });
   } catch (error) {

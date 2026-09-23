@@ -41,6 +41,9 @@ export async function POST(request: Request) {
       endDate: reportEndDate || undefined,
     });
 
+    const { invalidateCachePattern } = await import("@/lib/redis");
+    await invalidateCachePattern(`ppc:metrics:${scope.teamId}:*`).catch(() => {});
+
     return Response.json({
       success: true,
       message: `Đã xử lý ${result.totalParsed} dòng: ${result.newInserted} dòng mới, ${result.updated} dòng cập nhật.`,

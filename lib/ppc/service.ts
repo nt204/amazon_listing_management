@@ -163,7 +163,7 @@ export async function getPpcAnalyticsData(
     const [stores, aggregates, dailyTrendsDb, searchTermData, syncLogs] = await Promise.all([
       listPpcStores(scope),
       getPpcOverviewAggregates(scope, { storeName, sku, days }),
-      listPpcDailyTrendsFromDb(scope, { storeName, days, startDate, endDate }),
+      listPpcDailyTrendsFromDb(scope, { storeName, days: Math.max(days, 30), startDate, endDate }),
       isAllStores
         ? Promise.resolve({
           summary: {
