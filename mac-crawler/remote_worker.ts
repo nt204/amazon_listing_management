@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import os from "node:os";
 import { acquireCrawlerLock, loadEnv, getStoreList, crawlStore, type StoreTarget } from "./crawler";
 import {
@@ -553,10 +555,84 @@ async function processJob(job: {
   }
 }
 
+function getScheduleConfig() {
+  let scheduleTime = "12:00";
+  let isForce = false;
+  try {
+    const envPath = path.join(__dirname, "config.env");
+    if (fs.existsSync(envPath)) {
+      const lines = fs.readFileSync(envPath, "utf8").split("\n");
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const idx = trimmed.indexOf("=");
+        if (idx !== -1) {
+          const key = trimmed.slice(0, idx).trim();
+          let val = trimmed.slice(idx + 1).trim();
+          if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+            val = val.slice(1, -1);
+          }
+          if (key === "CRAWLER_SCHEDULE_TIME" && val) scheduleTime = val;
+          if ((key === "CRAWLER_SCHEDULE_FORCE" || key === "FORCE_CRAWL") && (val === "true" || val === "1")) isForce = true;
+        }
+      }
+    }
+  } catch {}
+  return { scheduleTime, isForce };
+}
+
 async function startLoop() {
   let isProcessing = false;
   let lastPollError = "";
   let lastPollErrorAt = 0;
+  let lastScheduledKey = "";
+
+  const checkDailySchedule = async () => {
+    const { scheduleTime, isForce } = getScheduleConfig();
+    const match = scheduleTime.match(/^([0-9]{1,2}):([0-9]{1,2})$/);
+    if (!match) return;
+    const targetHour = parseInt(match[1], 10);
+    const targetMin = parseInt(match[2], 10);
+
+    const now = new Date();
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const currentKey = `${todayStr}:${scheduleTime}`;
+
+    if (now.getHours() === targetHour && now.getMinutes() >= targetMin && lastScheduledKey !== currentKey) {
+      lastScheduledKey = currentKey;
+      console.log(`\n============================================================`);
+      console.log(`[Worker Scheduler] ⏰ ĐẾN GIỜ HẸN HÀNG NGÀY (${scheduleTime})! Tự động xếp job...`);
+      if (isForce) console.log(`[Worker Scheduler] ⚡ Chế độ test FORCE=true kích hoạt.`);
+      console.log(`============================================================`);
+      try {
+        const stores = getStoreList();
+        for (const store of stores) {
+          const enqueueKey = isForce
+            ? `daily:${todayStr}:${scheduleTime.replace(":", "")}:${store.store_name.toLowerCase()}`
+            : `daily:${todayStr}:${store.store_name.toLowerCase()}`;
+          const body: Record<string, unknown> = {
+            storeName: store.store_name,
+            enqueueKey,
+          };
+          if (isForce) body.forceNew = true;
+
+          const res = await fetchWithTimeout(`${WEB_APP_URL}/api/ppc/crawler/job`, {
+            method: "POST",
+            headers: getHeaders(),
+            body: JSON.stringify(body),
+          });
+          const resJson = await res.json().catch(() => ({}));
+          if (resJson.duplicate) {
+            console.log(`[Worker Scheduler] ↪ [${store.store_name}] job hôm nay đã tồn tại.`);
+          } else {
+            console.log(`[Worker Scheduler] ✅ [${store.store_name}] đã vào hàng đợi (jobId: ${resJson.job?.id || "mới"}).`);
+          }
+        }
+      } catch (err) {
+        console.error(`[Worker Scheduler] Lỗi xếp job: ${(err as Error).message}`);
+      }
+    }
+  };
 
   const reportPollError = (message: string) => {
     const now = Date.now();
@@ -568,6 +644,7 @@ async function startLoop() {
   };
 
   const poll = async () => {
+    await checkDailySchedule().catch(() => {});
     if (isProcessing) return;
 
     try {
