@@ -159,7 +159,11 @@ Server dùng template này để tạo file update, lưu file lên R2 và tạo 
 
 `~/AmazonPpcCrawler/bulk-upload/inbox/<job-id>/`
 
-Sau khi Amazon tiếp nhận, worker tự chuyển file sang `completed/<job-id>/`; file lỗi được chuyển sang `failed/<job-id>/`. Có thể đổi thư mục gốc bằng `BULK_UPLOAD_DIR` trong `config.env`. Không chép file thủ công vào `inbox` vì file không có job, R2 key và SHA-256 sẽ không được xử lý.
+Sau khi bấm Upload, worker tiếp tục đọc đúng dòng lịch sử theo tên file và chỉ báo `SUCCESS` khi Amazon xử lý hoàn tất không lỗi. Kết quả có lỗi một phần là `PARTIAL_SUCCESS`; nếu quá thời gian chờ là `RESULT_TIMEOUT`. Hai trường hợp này không đánh dấu action là `APPLIED`.
+
+Mặc định worker kiểm tra mỗi 15 giây, tối đa 15 phút. Có thể chỉnh trong `config.env` bằng `BULK_RESULT_POLL_MS` và `BULK_RESULT_TIMEOUT_MS`. Trong lúc kiểm tra worker vẫn gửi heartbeat, giữ đúng profile/store và không chạy song song profile khác để tránh nhầm file trên Mac 8GB.
+
+File thành công được chuyển sang `completed/<job-id>/`; file lỗi, lỗi một phần hoặc chưa xác định được kết quả được chuyển sang `failed/<job-id>/`. Có thể đổi thư mục gốc bằng `BULK_UPLOAD_DIR` trong `config.env`. Không chép file thủ công vào `inbox` vì file không có job, R2 key và SHA-256 sẽ không được xử lý.
 
 ### 6. Xử Lý Sự Cố Thường Gặp (Troubleshooting)
 

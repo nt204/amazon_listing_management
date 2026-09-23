@@ -166,18 +166,18 @@ export async function getPpcAnalyticsData(
       listPpcDailyTrendsFromDb(scope, { storeName, days, startDate, endDate }),
       isAllStores
         ? Promise.resolve({
-            summary: {
-              totalTerms: 0,
-              totalSpend: 0,
-              totalSales: 0,
-              totalOrders: 0,
-              wastedSpend: 0,
-              bleedingTermsCount: 0,
-              profitableTermsCount: 0,
-            },
-            topProfitableAndBleeding: [],
-            alertRows: [],
-          })
+          summary: {
+            totalTerms: 0,
+            totalSpend: 0,
+            totalSales: 0,
+            totalOrders: 0,
+            wastedSpend: 0,
+            bleedingTermsCount: 0,
+            profitableTermsCount: 0,
+          },
+          topProfitableAndBleeding: [],
+          alertRows: [],
+        })
         : getPpcSearchTermSummaryFromDb(scope, { storeName, sku, days, startDate, endDate }),
       listPpcSyncLogs(scope),
     ]);
@@ -1005,10 +1005,10 @@ export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarg
     const batches = target.batches?.length
       ? target.batches
       : (target.storeNames || []).map((storeName) => ({
-          batchId: String(target.batchId || ""),
-          batchDate: String(target.batchDate || ""),
-          storeName,
-        }));
+        batchId: String(target.batchId || ""),
+        batchDate: String(target.batchDate || ""),
+        storeName,
+      }));
     if (!batches.length || batches.length > 50) throw new PpcInputError("Danh sách batch sync không hợp lệ.");
     for (const batch of batches) {
       if (!/^[A-Za-z0-9_.-]{1,120}$/.test(batch.batchId)) throw new PpcInputError("batchId không hợp lệ.");
@@ -1404,4 +1404,3 @@ export async function exportBulksheetUpdateExcel(recommendations: PpcRecommendat
 
   const buffer = await workbook.xlsx.writeBuffer();
   return Buffer.from(buffer);
-}

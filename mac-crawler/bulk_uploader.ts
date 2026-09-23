@@ -16,6 +16,21 @@ export interface RemoteBulkUploadJob {
   lease_token: string;
 }
 
+export type AmazonBulkResult = {
+  status: "SUCCESS" | "PARTIAL_SUCCESS" | "FAILED" | "RESULT_TIMEOUT";
+  amazonUploadId: string | null;
+  summary: string;
+};
+
+const BULK_RESULT_TIMEOUT_MS = Math.max(
+  60_000,
+  Number.parseInt(process.env.BULK_RESULT_TIMEOUT_MS || "900000", 10) || 900_000,
+);
+const BULK_RESULT_POLL_MS = Math.max(
+  5_000,
+  Number.parseInt(process.env.BULK_RESULT_POLL_MS || "15000", 10) || 15_000,
+);
+
 function uploadRoot() {
   return (process.env.BULK_UPLOAD_DIR || path.join(os.homedir(), "AmazonPpcCrawler", "bulk-upload"))
     .replace("$HOME", os.homedir()).replace(/^~/, os.homedir());
@@ -62,7 +77,68 @@ async function downloadWorkbook(job: RemoteBulkUploadJob) {
   return finalPath;
 }
 
-async function uploadThroughAdsPower(filePath: string, store: StoreTarget) {
+function classifyAmazonResult(text: string): AmazonBulkResult["status"] | "PROCESSING" | null {
+  const normalized = text.replace(/\s+/g, " ").trim().toLowerCase();
+  if (!normalized) return null;
+  if (/completed with errors|partially completed|partial success|processed with errors|hoàn tất.*lỗi/.test(normalized)) {
+    return "PARTIAL_SUCCESS";
+  }
+  if (/completed|processed|successful|success|hoàn tất|thành công/.test(normalized)) {
+    const errorCount = normalized.match(/(?:errors?|failed(?: records?| rows?)?|lỗi)\s*[:：]?\s*(\d+)/)?.[1];
+    return errorCount && Number(errorCount) > 0 ? "PARTIAL_SUCCESS" : "SUCCESS";
+  }
+  if (/failed|failure|rejected|upload error|không thành công|thất bại|bị từ chối/.test(normalized)) {
+    return "FAILED";
+  }
+  if (/processing|in progress|pending|uploading|đang xử lý|đang tải|chờ xử lý|submitted/.test(normalized)) {
+    return "PROCESSING";
+  }
+  return null;
+}
+
+async function findUploadedFileResult(page: import("playwright-core").Page, fileName: string) {
+  const rowCandidates = [
+    page.locator("tr").filter({ hasText: fileName }),
+    page.locator("[role='row']").filter({ hasText: fileName }),
+    page.locator("[data-testid*='upload'], [class*='upload']").filter({ hasText: fileName }),
+  ];
+  for (const candidates of rowCandidates) {
+    const row = candidates.first();
+    if (await row.count()) {
+      const text = (await row.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+      if (!text) continue;
+      const status = classifyAmazonResult(text);
+      const hrefs = await row.locator("a").evaluateAll((links) => links.map((link) => link.getAttribute("href") || ""));
+      const uploadId = [...text.matchAll(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi)][0]?.[0]
+        || hrefs.join(" ").match(/[?&/](?:uploadId|id)[=/]([^&/]+)/i)?.[1]
+        || null;
+      return { status, text: text.slice(0, 2_000), uploadId };
+    }
+  }
+  return null;
+}
+
+async function waitForAmazonResult(
+  page: import("playwright-core").Page,
+  fileName: string,
+): Promise<AmazonBulkResult> {
+  const deadline = Date.now() + BULK_RESULT_TIMEOUT_MS;
+  let lastSummary = "Amazon đã nhận file; chưa tìm thấy kết quả xử lý trong lịch sử Bulk.";
+  while (Date.now() < deadline) {
+    const result = await findUploadedFileResult(page, fileName);
+    if (result) {
+      lastSummary = result.text;
+      if (result.status && result.status !== "PROCESSING") {
+        return { status: result.status, amazonUploadId: result.uploadId, summary: result.text };
+      }
+    }
+    await page.waitForTimeout(BULK_RESULT_POLL_MS);
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 60_000 }).catch(() => {});
+  }
+  return { status: "RESULT_TIMEOUT", amazonUploadId: null, summary: lastSummary };
+}
+
+async function uploadThroughAdsPower(filePath: string, store: StoreTarget, fileName: string): Promise<AmazonBulkResult> {
   const endpoint = await startAdsPowerProfile(store.profile_id);
   const browser = await chromium.connectOverCDP(endpoint);
   const context = browser.contexts()[0];
@@ -98,8 +174,8 @@ async function uploadThroughAdsPower(filePath: string, store: StoreTarget) {
     if (/error|failed|invalid|không hợp lệ/i.test(alertText)) {
       throw new Error(`Amazon từ chối file Bulk: ${alertText.slice(0, 500)}`);
     }
-    await page.waitForTimeout(2_000);
-    return { amazonUploadId: null as string | null };
+    await page.waitForTimeout(3_000);
+    return await waitForAmazonResult(page, fileName);
   } finally {
     await page.close({ runBeforeUnload: false }).catch(() => {});
     await browser.close().catch(() => {});
@@ -110,8 +186,9 @@ async function uploadThroughAdsPower(filePath: string, store: StoreTarget) {
 export async function executeRemoteBulkUpload(job: RemoteBulkUploadJob, store: StoreTarget) {
   const filePath = await downloadWorkbook(job);
   try {
-    const result = await uploadThroughAdsPower(filePath, store);
-    const completedDir = path.join(uploadRoot(), "completed", job.id);
+    const result = await uploadThroughAdsPower(filePath, store, job.file_name);
+    const destination = result.status === "SUCCESS" ? "completed" : "failed";
+    const completedDir = path.join(uploadRoot(), destination, job.id);
     fs.mkdirSync(completedDir, { recursive: true });
     fs.renameSync(filePath, path.join(completedDir, path.basename(filePath)));
     fs.rmSync(path.dirname(filePath), { recursive: true, force: true });

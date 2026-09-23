@@ -18,15 +18,3 @@ ALTER TABLE ppc_auto_upload_logs
 ALTER TABLE ppc_auto_upload_logs
   ADD CONSTRAINT ppc_auto_upload_logs_action_ids_array_check
   CHECK (jsonb_typeof(action_ids) = 'array');
-
--- A legacy worker callback could set the job to SUCCESS and then fail while
--- expanding the scalar. Reconcile those already-submitted jobs during deploy.
-UPDATE ppc_actions AS action
-SET status = 'APPLIED', updated_at = NOW()
-FROM (
-  SELECT jsonb_array_elements_text(action_ids)::uuid AS action_id
-  FROM ppc_auto_upload_logs
-  WHERE status = 'SUCCESS'
-) AS submitted
-WHERE action.id = submitted.action_id
-  AND action.status <> 'APPLIED';

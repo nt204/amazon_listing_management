@@ -1266,7 +1266,7 @@ export async function getPpcOverviewAggregates(
     `,
 
     // 2. Top 7 Campaigns
-    isAllStores ? Promise.resolve([]) : sql<PerformanceDbRow[]>`
+    sql<PerformanceDbRow[]>`
       WITH latest_snapshots AS (
         SELECT DISTINCT ON (p2.store_id, p2.ad_type)
           p2.store_id, p2.ad_type, p2.snapshot_date AS max_snapshot,
@@ -1275,7 +1275,7 @@ export async function getPpcOverviewAggregates(
         FROM ppc_performance_facts p2
         JOIN ppc_stores s2 ON s2.id = p2.store_id
         WHERE s2.team_id = ${teamId}
-          AND lower(s2.name) = lower(${storeName})
+          AND (${storeName === "ALL"} OR lower(s2.name) = lower(${storeName}))
           AND (p2.report_end_date - p2.report_start_date + 1)
             BETWEEN ${days - 3}::integer AND ${days + 3}::integer
         ORDER BY p2.store_id, p2.ad_type, p2.snapshot_date DESC, p2.report_end_date DESC
@@ -1297,13 +1297,13 @@ export async function getPpcOverviewAggregates(
         AND ls.max_snapshot = p.snapshot_date AND ls.max_report_start = p.report_start_date AND ls.max_report_end = p.report_end_date
       WHERE s.team_id = ${teamId}
         AND p.grain = 'CAMPAIGN'
-        AND lower(s.name) = lower(${storeName})
+        AND (${storeName === "ALL"} OR lower(s.name) = lower(${storeName}))
       ORDER BY p.spend DESC, p.id
       LIMIT 7;
     `,
 
     // 3. Top 10 SKUs
-    isAllStores ? Promise.resolve([]) : sql<Array<{
+    sql<Array<{
       sku: string;
       store_name: string;
       spend: string | number;
@@ -1321,7 +1321,7 @@ export async function getPpcOverviewAggregates(
         FROM ppc_performance_facts p2
         JOIN ppc_stores s2 ON s2.id = p2.store_id
         WHERE s2.team_id = ${teamId}
-          AND lower(s2.name) = lower(${storeName})
+          AND (${storeName === "ALL"} OR lower(s2.name) = lower(${storeName}))
           AND (p2.report_end_date - p2.report_start_date + 1)
             BETWEEN ${days - 3}::integer AND ${days + 3}::integer
         ORDER BY p2.store_id, p2.ad_type, p2.snapshot_date DESC, p2.report_end_date DESC
@@ -1342,14 +1342,14 @@ export async function getPpcOverviewAggregates(
         AND ls.max_snapshot = p.snapshot_date AND ls.max_report_start = p.report_start_date AND ls.max_report_end = p.report_end_date
       WHERE s.team_id = ${teamId}
         AND p.grain = 'PRODUCT' AND p.sku IS NOT NULL AND p.sku != ''
-        AND lower(s.name) = lower(${storeName})
+        AND (${storeName === "ALL"} OR lower(s.name) = lower(${storeName}))
       GROUP BY p.sku, s.name
       ORDER BY spend DESC
       LIMIT 10;
     `,
 
     // 4. Combined Target Type and Keyword Match Type Breakdown
-    isAllStores ? Promise.resolve([]) : sql<Array<{
+    sql<Array<{
       target_type: "Keyword" | "Auto" | "Product Targeting";
       keyword_match_type: "Exact" | "Phrase" | "Broad" | "Unknown";
       spend: string | number;
@@ -1366,7 +1366,7 @@ export async function getPpcOverviewAggregates(
         FROM ppc_performance_facts p2
         JOIN ppc_stores s2 ON s2.id = p2.store_id
         WHERE s2.team_id = ${teamId}
-          AND lower(s2.name) = lower(${storeName})
+          AND (${storeName === "ALL"} OR lower(s2.name) = lower(${storeName}))
           AND (p2.report_end_date - p2.report_start_date + 1)
             BETWEEN ${days - 3}::integer AND ${days + 3}::integer
         ORDER BY p2.store_id, p2.ad_type, p2.snapshot_date DESC, p2.report_end_date DESC
@@ -1402,7 +1402,7 @@ export async function getPpcOverviewAggregates(
     `,
 
     // 5. Distinct Available SKUs
-    isAllStores ? Promise.resolve([]) : sql<{ sku: string }[]>`
+    sql<{ sku: string }[]>`
       WITH latest_snapshots AS (
         SELECT DISTINCT ON (p2.store_id, p2.ad_type)
           p2.store_id, p2.ad_type, p2.snapshot_date AS max_snapshot,
@@ -1411,7 +1411,7 @@ export async function getPpcOverviewAggregates(
         FROM ppc_performance_facts p2
         JOIN ppc_stores s2 ON s2.id = p2.store_id
         WHERE s2.team_id = ${teamId}
-          AND lower(s2.name) = lower(${storeName})
+          AND (${storeName === "ALL"} OR lower(s2.name) = lower(${storeName}))
           AND (p2.report_end_date - p2.report_start_date + 1)
             BETWEEN ${days - 3}::integer AND ${days + 3}::integer
         ORDER BY p2.store_id, p2.ad_type, p2.snapshot_date DESC, p2.report_end_date DESC

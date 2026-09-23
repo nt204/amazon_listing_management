@@ -140,11 +140,12 @@ async function updateJob(
 async function updateBulkUploadJob(
   job: RemoteBulkUploadJob,
   data: {
-    status?: "RUNNING" | "RETRY_WAIT" | "SUCCESS" | "FAILED";
+    status?: "RUNNING" | "RETRY_WAIT" | "SUCCESS" | "PARTIAL_SUCCESS" | "RESULT_TIMEOUT" | "FAILED";
     stage?: string;
     progress_pct?: number;
     error_message?: string;
     amazon_upload_id?: string;
+    result_summary?: string;
   },
 ) {
   const response = await fetchWithTimeout(`${WEB_APP_URL}/api/ppc/auto-upload/worker`, {
@@ -184,10 +185,25 @@ async function processBulkUploadJob(job: RemoteBulkUploadJob) {
     await updateBulkUploadJob(job, { stage: "DOWNLOADING", progress_pct: 15 });
     const result = await executeRemoteBulkUpload(job, store);
     await updateBulkUploadJob(job, {
-      status: "SUCCESS", stage: "SUBMITTED_TO_AMAZON", progress_pct: 100,
+      status: result.status,
+      stage: result.status === "SUCCESS" ? "AMAZON_COMPLETED" : `AMAZON_${result.status}`,
+      progress_pct: 100,
       amazon_upload_id: result.amazonUploadId || undefined,
+      result_summary: result.summary,
     });
-    console.log(`[Bulk Upload] ✅ Amazon đã tiếp nhận ${job.file_name} cho ${job.store_name}.`);
+    if (result.status !== "SUCCESS") {
+      const resultMessage = `Amazon trả kết quả ${result.status}: ${result.summary}`;
+      console.error(`[Bulk Upload] ❌ ${resultMessage}`);
+      await notifyBulkUploadResult({
+        storeName: job.store_name,
+        fileName: job.file_name,
+        status: "FAILED",
+        error: resultMessage,
+        jobId: job.id,
+      });
+      return;
+    }
+    console.log(`[Bulk Upload] ✅ Amazon đã xử lý hoàn tất ${job.file_name} cho ${job.store_name}.`);
     await notifyBulkUploadResult({
       storeName: job.store_name,
       fileName: job.file_name,

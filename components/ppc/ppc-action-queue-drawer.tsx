@@ -1307,6 +1307,11 @@ export function PpcActionQueueDrawer({
                               Lỗi: {log.errorMessage}
                             </div>
                           )}
+                          {log.resultSummary && (
+                            <div className="text-[10px] text-slate-600 font-medium line-clamp-2" title={log.resultSummary}>
+                              Amazon: {log.resultSummary}
+                            </div>
+                          )}
                         </div>
                         <div className="text-right">
                           <span

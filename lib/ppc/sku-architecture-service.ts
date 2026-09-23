@@ -1674,7 +1674,7 @@ export async function getAutoUploadLogs(storeId: string): Promise<PpcAutoUploadL
   const sql = await getDatabaseClient();
   const rows = await sql<any[]>`
     SELECT id, store_id, file_name, adspower_profile_id, adspower_profile_name,
-           action_count, skus, status, error_message, duration_ms, created_at
+           action_count, skus, status, error_message, result_summary, duration_ms, created_at
     FROM ppc_auto_upload_logs
     WHERE store_id = ${storeId}
     ORDER BY created_at DESC
@@ -1691,6 +1691,7 @@ export async function getAutoUploadLogs(storeId: string): Promise<PpcAutoUploadL
     skus: Array.isArray(r.skus) ? r.skus : (typeof r.skus === "string" ? JSON.parse(r.skus) : []),
     status: r.status,
     errorMessage: r.error_message,
+    resultSummary: r.result_summary,
     durationMs: Number(r.duration_ms || 0),
     createdAt: new Date(r.created_at).toISOString(),
   }));

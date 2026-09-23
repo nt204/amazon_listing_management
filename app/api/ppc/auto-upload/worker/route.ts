@@ -56,7 +56,7 @@ export async function PATCH(request: Request) {
     const leaseToken = String(body?.leaseToken || "");
     if (!jobId || !leaseToken) throw new ApiError("Thiếu jobId hoặc leaseToken.", 400);
 
-    const allowed = new Set(["RUNNING", "RETRY_WAIT", "SUCCESS", "FAILED"]);
+    const allowed = new Set(["RUNNING", "RETRY_WAIT", "SUCCESS", "PARTIAL_SUCCESS", "RESULT_TIMEOUT", "FAILED"]);
     const status = body?.status == null ? null : String(body.status);
     if (status && !allowed.has(status)) throw new ApiError("Trạng thái upload Bulk không hợp lệ.", 400);
     const progress = body?.progress_pct == null ? null : Number(body.progress_pct);
@@ -64,7 +64,7 @@ export async function PATCH(request: Request) {
       throw new ApiError("Tiến độ phải từ 0 đến 100.", 400);
     }
 
-    const terminal = status === "SUCCESS" || status === "FAILED";
+    const terminal = status === "SUCCESS" || status === "PARTIAL_SUCCESS" || status === "RESULT_TIMEOUT" || status === "FAILED";
     const sql = await getDatabaseClient();
     const seconds = leaseSeconds();
     const rows = await sql.begin(async (transaction) => {
@@ -75,6 +75,7 @@ export async function PATCH(request: Request) {
             progress_pct = COALESCE(${progress}, progress_pct),
             error_message = ${body?.error_message == null ? null : String(body.error_message)},
             amazon_upload_id = COALESCE(${body?.amazon_upload_id == null ? null : String(body.amazon_upload_id)}, amazon_upload_id),
+            result_summary = COALESCE(${body?.result_summary == null ? null : String(body.result_summary).slice(0, 4_000)}, result_summary),
             heartbeat_at = NOW(), updated_at = NOW(),
             lease_expires_at = CASE WHEN ${terminal} THEN NULL ELSE NOW() + ${seconds} * INTERVAL '1 second' END,
             completed_at = CASE WHEN ${terminal} THEN NOW() ELSE completed_at END,
