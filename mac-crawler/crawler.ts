@@ -1411,18 +1411,19 @@ export async function autoCreateAndDownloadSearchTermReport(
 
       // Kiểm tra và khôi phục page nếu tab bị đóng hoặc chuyển hướng
       if (page.isClosed()) {
-        const pages = context.pages().filter((p) => !p.isClosed());
-        const validPage = pages.find((p) => p.url().includes("advertising.amazon.com")) || pages[0];
-        if (validPage) {
-          page = validPage;
-          console.log(`  [SEARCH TERM] 🔄 Phục hồi tab hợp lệ: ${page.url()}`);
-        } else {
-          try {
-            page = await context.newPage();
+        try {
+          const ctx = page.context();
+          const pages = ctx.pages().filter((p: any) => !p.isClosed());
+          const validPage = pages.find((p: any) => p.url().includes("advertising.amazon.com")) || pages[0];
+          if (validPage) {
+            page = validPage;
+            console.log(`  [SEARCH TERM] 🔄 Phục hồi tab hợp lệ: ${page.url()}`);
+          } else {
+            page = await ctx.newPage();
             await page.goto(reportsUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
-          } catch {
-            throw new Error(`Trình duyệt AdsPower đã bị đóng hoàn toàn.`);
           }
+        } catch {
+          throw new Error(`Trình duyệt AdsPower đã bị đóng hoàn toàn.`);
         }
       }
 
