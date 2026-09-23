@@ -323,7 +323,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
         `/api/ppc/metrics?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}${dateParams}${refresh ? "&refresh=1" : ""}`,
         { cache: "no-store", signal: controller.signal }
       );
-      if (!res.ok) throw new Error("Không thể tải số liệu PPC");
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        const msg = errData.error || errData.message || (res.status === 401 ? "Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại." : `Lỗi máy chủ (HTTP ${res.status})`);
+        throw new Error(msg);
+      }
       const data = await res.json();
       loadedSectionsRef.current.clear();
       loadedSectionsRef.current.add("overview");
@@ -382,7 +386,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       `/api/ppc/metrics?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}&section=${encodeURIComponent(section)}${dateParams}`,
       { cache: "no-store" },
     );
-    if (!res.ok) throw new Error("Không thể tải bảng dữ liệu PPC");
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      const msg = errData.error || errData.message || (res.status === 401 ? "Phiên làm việc đã hết hạn" : `Lỗi tải bảng dữ liệu (HTTP ${res.status})`);
+      throw new Error(msg);
+    }
     const data = await res.json();
     if (requestId !== detailRequestIdRef.current) return;
     loadedSectionsRef.current.add(section);
