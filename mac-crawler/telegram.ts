@@ -18,17 +18,43 @@ export function isTelegramConfigured(): boolean {
   return Boolean(token && chatId);
 }
 
-export async function sendTelegramMessage(text: string, topicIdOverride?: string | number): Promise<boolean> {
+export function getTelegramConfig() {
   const token = getEnv("TELEGRAM_BOT_TOKEN", "PPC_TELEGRAM_BOT_TOKEN");
   const chatId = getEnv("TELEGRAM_CHAT_ID", "PPC_TELEGRAM_CHAT_ID");
-  const topicId = topicIdOverride ?? getEnv("TELEGRAM_TOPIC_ID", "PPC_TELEGRAM_TOPIC_ID");
+  const topicId = getEnv("TELEGRAM_TOPIC_ID", "PPC_TELEGRAM_TOPIC_ID");
   const proxyUrl = getEnv("TELEGRAM_PROXY_URL", "PPC_TELEGRAM_PROXY_URL");
+  const baseUrl = proxyUrl ? proxyUrl.replace(/\/+$/, "") : "https://api.telegram.org";
+  return { token, chatId, topicId, proxyUrl, baseUrl };
+}
+
+export async function answerTelegramCallbackQuery(callbackQueryId: string, text?: string): Promise<boolean> {
+  const { token, baseUrl } = getTelegramConfig();
+  if (!token || !callbackQueryId) return false;
+  const url = `${baseUrl}/bot${token}/answerCallbackQuery`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ callback_query_id: callbackQueryId, text: text || "" }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function sendTelegramMessage(
+  text: string,
+  topicIdOverride?: string | number,
+  replyMarkup?: any,
+): Promise<boolean> {
+  const { token, chatId, baseUrl } = getTelegramConfig();
+  const topicId = topicIdOverride ?? getEnv("TELEGRAM_TOPIC_ID", "PPC_TELEGRAM_TOPIC_ID");
 
   if (!token || !chatId) {
     return false;
   }
 
-  const baseUrl = proxyUrl ? proxyUrl.replace(/\/+$/, "") : "https://api.telegram.org";
   const url = `${baseUrl}/bot${token}/sendMessage`;
 
   const payload: Record<string, any> = {
@@ -37,6 +63,10 @@ export async function sendTelegramMessage(text: string, topicIdOverride?: string
     parse_mode: "HTML",
     disable_web_page_preview: true,
   };
+
+  if (replyMarkup) {
+    payload.reply_markup = replyMarkup;
+  }
 
   if (topicId && String(topicId).trim()) {
     payload.message_thread_id = Number(topicId);

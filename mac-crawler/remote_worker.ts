@@ -17,8 +17,10 @@ import {
   notifyCrawlerSummary,
   notifyBulkUploadResult,
 } from "./telegram";
+import { startTelegramListener, handleWatchdogError } from "./watchdog_agent";
 
 loadEnv();
+startTelegramListener();
 
 const WEB_APP_URL = (process.env.WEB_APP_URL || "http://localhost:2411").replace(/\/+$/, "");
 const AUTH_TOKEN = process.env.WEB_APP_AUTH_TOKEN || "";
@@ -478,6 +480,12 @@ async function processJob(job: {
           storeName: store.store_name,
           error: message,
         });
+        await handleWatchdogError({
+          storeName: store.store_name,
+          taskName: "crawlStore",
+          error,
+          logSnippet: message,
+        }).catch((wErr) => console.warn(`[Watchdog] Lỗi xử lý sự cố: ${wErr.message}`));
         await updateJob(jobId, leaseToken, {
           status: "RUNNING",
           stage: "CRAWLING",
