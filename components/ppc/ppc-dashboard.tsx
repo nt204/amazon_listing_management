@@ -3357,6 +3357,10 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
             isLoading={loadingRecs}
             recommendationWindowDays={selectedDays}
             loadedRecommendationWindowDays={loadedRecommendationWindowDays}
+            onRecommendationWindowChange={(days) => {
+              setIsCustomDate(false);
+              setSelectedDays(days);
+            }}
             onLoadSkuRecommendations={loadSkuRecommendationDetails}
             onApproveToQueue={handleApproveToQueue}
             onOpenActionQueue={() => setIsActionQueueOpen(true)}

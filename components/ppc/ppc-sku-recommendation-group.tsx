@@ -37,6 +37,7 @@ interface PpcSkuRecommendationGroupProps {
   isLoading: boolean;
   recommendationWindowDays: number;
   loadedRecommendationWindowDays: number | null;
+  onRecommendationWindowChange: (days: 7 | 30) => void;
   onLoadSkuRecommendations: (sku: string) => Promise<PpcRecommendation[]>;
   onApproveToQueue: (items: Array<{ recommendation: PpcRecommendation; userFinalBid?: number }>) => Promise<void>;
   onOpenActionQueue: () => void;
@@ -73,6 +74,7 @@ export function PpcSkuRecommendationGroupView({
   isLoading,
   recommendationWindowDays,
   loadedRecommendationWindowDays,
+  onRecommendationWindowChange,
   onLoadSkuRecommendations,
   onApproveToQueue,
   onOpenActionQueue,
@@ -594,10 +596,36 @@ export function PpcSkuRecommendationGroupView({
 
           {/* Counts & Aggregates Badge */}
           <div className="flex items-center gap-3">
-            <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-[11px] font-black text-indigo-700">
-              Dữ liệu chỉnh bid: {isLoading
-                ? `Đang tải ${recommendationWindowDays}D...`
-                : `${loadedRecommendationWindowDays ?? recommendationWindowDays}D`}
+            <div
+              className="flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 py-1 pl-2.5 pr-1 text-[11px] font-black text-indigo-700"
+              aria-label="Kỳ dữ liệu dùng để tính đề xuất chỉnh bid"
+            >
+              <span className="whitespace-nowrap">
+                Dữ liệu chỉnh bid{isLoading ? ` · Đang tải ${recommendationWindowDays}D` : ""}
+              </span>
+              <div className="flex items-center rounded-md border border-indigo-200 bg-white p-0.5" role="group" aria-label="Chọn kỳ dữ liệu chỉnh bid">
+                {([7, 30] as const).map((days) => {
+                  const isSelected = recommendationWindowDays === days;
+                  const isLoaded = loadedRecommendationWindowDays === days;
+                  return (
+                    <button
+                      key={days}
+                      type="button"
+                      onClick={() => onRecommendationWindowChange(days)}
+                      disabled={isLoading || isSelected}
+                      aria-pressed={isSelected}
+                      className={`min-w-9 rounded px-2 py-1 text-[11px] font-black transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1 ${
+                        isSelected
+                          ? `bg-indigo-600 text-white shadow-2xs ${isLoading ? "cursor-wait" : "cursor-default"}`
+                          : "text-slate-600 hover:bg-indigo-50 hover:text-indigo-700 active:scale-[0.98]"
+                      } disabled:opacity-100`}
+                      title={`Dùng dữ liệu ${days} ngày để tính đề xuất chỉnh bid`}
+                    >
+                      {isLoading && isSelected && !isLoaded ? "…" : `${days}D`}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
             <div className="flex items-center gap-2 text-xs text-slate-600 font-medium bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs">
               <span>
