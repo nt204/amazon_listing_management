@@ -1167,8 +1167,9 @@ export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarg
           const rows = fileName.toLowerCase().endsWith(".csv")
             ? parseSearchTermCsv(buffer, storeName, adType)
             : await parseSearchTermWorkbook(buffer, storeName, adType);
-          if (!rows.length) throw new Error("Không có dữ liệu Search Term hợp lệ.");
-          console.log(`[R2 Sync] [${fileIdx}/${selectedFiles.length}] ✓ Đã đọc ${rows.length.toLocaleString()} dòng Search Term.`);
+          console.log(
+            `[R2 Sync] [${fileIdx}/${selectedFiles.length}] ✓ Đã đọc ${rows.length.toLocaleString()} dòng Search Term${rows.length === 0 ? " (store không có click)" : ""}.`
+          );
           parsedSearchTerms.push({ object, rows });
         } else {
           if (fileName.toLowerCase().endsWith(".csv")) throw new Error("Bulk Operations cần định dạng .xlsx.");
