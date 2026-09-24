@@ -207,6 +207,39 @@ export function classifyError(error: unknown, context: { storeName?: string; tas
     };
   }
 
+  // 4.1. Tràn RAM (OOM - Out Of Memory / Heap Limit)
+  if (
+    message.includes("heap out of memory") ||
+    message.includes("enomem") ||
+    message.includes("out of memory") ||
+    message.includes("allocation failed")
+  ) {
+    return {
+      category: "NO_AI_RULE",
+      signature: "SYSTEM_OOM",
+      reason: "Tiến trình bị tràn RAM do dữ liệu lớn hoặc thiếu bộ nhớ trên Mac mini.",
+      alertTitle: "💥 <b>[WATCHDOG] CẢNH BÁO TRÀN BỘ NHỚ RAM (OOM)</b>",
+      alertBody: `• <b>Store:</b> ${store}\n• <b>Tác vụ:</b> ${task}\n• <b>Chi tiết:</b> Node.js hết bộ nhớ RAM (Heap Out of Memory).\n👉 <i>Tiến trình sẽ tự dọn dẹp và khởi động lại.</i>`,
+    };
+  }
+
+  // 4.2. Trình duyệt sập / Chrome crash / Target crashed
+  if (
+    message.includes("target closed") ||
+    message.includes("target crashed") ||
+    message.includes("page crashed") ||
+    message.includes("browser has been closed") ||
+    message.includes("browser disconnected")
+  ) {
+    return {
+      category: "NO_AI_RULE",
+      signature: "BROWSER_CRASH",
+      reason: "Trình duyệt Chromium của AdsPower bị đóng hoặc crash bất ngờ.",
+      alertTitle: "💥 <b>[WATCHDOG] TRÌNH DUYỆT BỊ SẬP (BROWSER CRASH)</b>",
+      alertBody: `• <b>Store:</b> ${store}\n• <b>Tác vụ:</b> ${task}\n• <b>Chi tiết:</b> Profile Chromium bị đóng bất ngờ.\n👉 <i>Crawler sẽ tự đóng profile cũ và mở lại để chạy tiếp.</i>`,
+    };
+  }
+
   // 5. Amazon thay đổi DOM / Selector không tìm thấy -> ĐỦ ĐIỀU KIỆN GỌI AI
   if (
     message.includes("waiting for selector") ||

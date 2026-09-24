@@ -22,6 +22,29 @@ import { startTelegramListener, handleWatchdogError } from "./watchdog_agent";
 loadEnv();
 startTelegramListener();
 
+process.on("uncaughtException", async (err) => {
+  console.error("[CRITICAL] Uncaught exception:", err);
+  const msg = (err?.message || String(err)).slice(0, 300);
+  await handleWatchdogError({
+    storeName: "System",
+    taskName: "WorkerProcess",
+    error: err,
+    logSnippet: err?.stack?.slice(0, 500) || msg,
+  }).catch(() => {});
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[CRITICAL] Unhandled rejection:", reason);
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  void handleWatchdogError({
+    storeName: "System",
+    taskName: "AsyncPromise",
+    error: reason,
+    logSnippet: reason instanceof Error ? reason.stack?.slice(0, 500) || msg : msg,
+  });
+});
+
 const WEB_APP_URL = (process.env.WEB_APP_URL || "http://localhost:2411").replace(/\/+$/, "");
 const AUTH_TOKEN = process.env.WEB_APP_AUTH_TOKEN || "";
 const WORKER_ID = (process.env.WORKER_ID || os.hostname()).trim();
