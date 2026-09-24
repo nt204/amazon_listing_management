@@ -586,8 +586,8 @@ async function waitForBulkFileDownload(
     throwIfAborted(signal);
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
-    // Nếu trình duyệt đang tích cực tải file (.crdownload đang lớn dần), gia hạn deadline liên tục
-    const scanDirs = [destDir, parentDir];
+    const userDownloadsDir = path.join(os.homedir(), "Downloads");
+    const scanDirs = [destDir, parentDir, userDownloadsDir];
     for (const d of scanDirs) {
       if (!fs.existsSync(d)) continue;
       try {
@@ -605,27 +605,27 @@ async function waitForBulkFileDownload(
     }
 
     if (expectedRawName) {
-      const destCandidate = path.join(destDir, expectedRawName);
-      const parentCandidate = path.join(parentDir, expectedRawName);
+      const candidates = [
+        path.join(destDir, expectedRawName),
+        path.join(parentDir, expectedRawName),
+        path.join(userDownloadsDir, expectedRawName),
+      ];
 
-      if (fs.existsSync(destCandidate)) {
-        const crdownload = path.join(destDir, `${expectedRawName}.crdownload`);
-        if (!fs.existsSync(crdownload)) {
-          const stat = fs.statSync(destCandidate);
-          if (stat.size > 50_000) return destCandidate;
-        }
-      }
-
-      if (fs.existsSync(parentCandidate)) {
-        const crdownload = path.join(parentDir, `${expectedRawName}.crdownload`);
-        if (!fs.existsSync(crdownload)) {
-          const stat = fs.statSync(parentCandidate);
-          if (stat.size > 50_000) {
-            if (fs.existsSync(destCandidate)) {
-              try { fs.unlinkSync(destCandidate); } catch { }
+      for (const cand of candidates) {
+        if (fs.existsSync(cand)) {
+          const crdownload = `${cand}.crdownload`;
+          if (!fs.existsSync(crdownload)) {
+            const stat = fs.statSync(cand);
+            if (stat.size > 50_000) {
+              const destCandidate = path.join(destDir, expectedRawName);
+              if (cand !== destCandidate) {
+                if (fs.existsSync(destCandidate)) {
+                  try { fs.unlinkSync(destCandidate); } catch { }
+                }
+                fs.renameSync(cand, destCandidate);
+              }
+              return destCandidate;
             }
-            fs.renameSync(parentCandidate, destCandidate);
-            return destCandidate;
           }
         }
       }
@@ -646,7 +646,7 @@ async function waitForBulkFileDownload(
         try {
           const stat = fs.statSync(fullPath);
           if (stat.size > 50_000 && Date.now() - stat.mtimeMs < 10 * 60 * 1000) {
-            if (d === parentDir) {
+            if (d !== destDir) {
               const targetPath = path.join(destDir, f);
               if (fs.existsSync(targetPath)) {
                 try { fs.unlinkSync(targetPath); } catch { }
