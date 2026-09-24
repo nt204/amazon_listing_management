@@ -461,10 +461,16 @@ ${contextCode}
     const patchedCode = fullCode.replace(patchResult.targetSnippet, patchResult.replacementSnippet);
     fs.writeFileSync(CRAWLER_FILE_PATH, patchedCode, "utf8");
 
-    // 3. Static check: Chạy npx tsc --noEmit
+    // 3. Static check: Chạy tsc --noEmit
     try {
-      execSync("npx tsc --noEmit", {
+      const localTsc = path.join(path.dirname(CRAWLER_FILE_PATH), "node_modules", ".bin", "tsc");
+      const tscCmd = fs.existsSync(localTsc) ? `"${localTsc}" --noEmit` : "npx tsc --noEmit";
+      execSync(tscCmd, {
         cwd: path.dirname(CRAWLER_FILE_PATH),
+        env: {
+          ...process.env,
+          PATH: `/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:${process.env.PATH || ""}`,
+        },
         timeout: 45000,
         stdio: "pipe",
       });
