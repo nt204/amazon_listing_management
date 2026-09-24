@@ -69,11 +69,12 @@ interface PendingIncident {
 }
 
 interface AiDiagnosisResult {
+  summary: string;
   rootCause: string;
   affectedFunction: string;
   canAutoPatch: boolean;
   risk: "LOW" | "MEDIUM" | "HIGH";
-  suggestedFix: string;
+  actionPlan: string;
 }
 
 const pendingIncidents = new Map<string, PendingIncident>();
@@ -328,21 +329,24 @@ export async function diagnoseIncident(params: {
   taskName: string;
   errorMessage: string;
   logSnippet: string;
+  signature?: string;
 }): Promise<AiDiagnosisResult> {
-  const systemPrompt = `Bạn là kỹ sư chẩn đoán lỗi crawler Amazon PPC viết bằng Playwright/TypeScript.
-Nhiệm vụ: Phân tích log lỗi ngắn gọn và trả về DUY NHẤT một chuỗi JSON hợp lệ với cấu trúc sau:
+  const systemPrompt = `Bạn là trợ lý AI Ops thông minh giám sát crawler Amazon PPC (Node.js/Playwright).
+Nhiệm vụ: Đọc kỹ lỗi và log, chẩn đoán nguyên nhân và trả về DUY NHẤT một chuỗi JSON hợp lệ với cấu trúc sau:
 {
-  "rootCause": "Mô tả nguyên nhân lỗi ngắn gọn 1 câu",
-  "affectedFunction": "Tên hàm trong crawler.ts (ví dụ downloadSearchTermReport, waitForBulkFileDownload, navigateToBulkPage)",
-  "canAutoPatch": true,
+  "summary": "Tóm tắt ngắn gọn sự cố bằng tiếng Việt dễ hiểu (1 câu)",
+  "rootCause": "Nguyên nhân cốt lõi dẫn đến sự cố",
+  "affectedFunction": "Tên hàm trong crawler.ts (ví dụ downloadSearchTermReport, waitForBulkFileDownload, v.v.)",
+  "canAutoPatch": true hoặc false (CHỈ ĐẶT true nếu là lỗi selector DOM, timeout logic, hoặc bug code có thể vá trong crawler.ts. ĐẶT false nếu là lỗi môi trường bên ngoài như AdsPower chưa bật, Amazon bắt OTP, hết RAM, mạng đứt)",
   "risk": "LOW" | "MEDIUM" | "HIGH",
-  "suggestedFix": "Cách khắc phục ngắn gọn 1 câu"
+  "actionPlan": "Khuyến nghị hành động tiếp theo cụ thể cho người quản trị hoặc hệ thống"
 }
-Lưu ý: Chỉ trả về JSON, không giải thích ngoài JSON.`;
+Lưu ý: Chỉ trả về JSON, tuyệt đối không giải thích chữ nào ngoài JSON.`;
 
   const userPrompt = `Store: ${params.storeName}
 Tác vụ: ${params.taskName}
 Lỗi bắt được: ${params.errorMessage}
+Phân loại sơ bộ: ${params.signature || "UNKNOWN"}
 Log gần nhất:
 ${params.logSnippet}`;
 
@@ -350,24 +354,26 @@ ${params.logSnippet}`;
     const raw = await callCheapKeyAI([
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
-    ], 300);
+    ], 350);
 
     const cleanJson = raw.replace(/```json/g, "").replace(/```/g, "").trim();
     const parsed = JSON.parse(cleanJson);
     return {
+      summary: parsed.summary || "Sự cố trong quá trình crawl dữ liệu",
       rootCause: parsed.rootCause || "Nghi vấn selector hoặc giao diện thay đổi",
       affectedFunction: parsed.affectedFunction || "crawler.ts",
-      canAutoPatch: parsed.canAutoPatch !== false,
+      canAutoPatch: parsed.canAutoPatch === true,
       risk: (parsed.risk || "LOW").toUpperCase() as any,
-      suggestedFix: parsed.suggestedFix || "Cập nhật selector mới",
+      actionPlan: parsed.actionPlan || parsed.suggestedFix || "Kiểm tra log chi tiết thủ công",
     };
   } catch (err) {
     return {
+      summary: "Gặp lỗi ngoại lệ trong quá trình crawl",
       rootCause: `Không thể parse chẩn đoán AI: ${(err as Error).message}`,
       affectedFunction: "crawler.ts",
       canAutoPatch: false,
       risk: "MEDIUM",
-      suggestedFix: "Kiểm tra log chi tiết thủ công",
+      actionPlan: "Kiểm tra log chi tiết thủ công",
     };
   }
 }
@@ -379,30 +385,53 @@ ${params.logSnippet}`;
 export async function requestTelegramApprovalForPatch(incident: PendingIncident): Promise<boolean> {
   if (!isTelegramConfigured()) return false;
 
-  const text = `${incident.diagnosis.risk === "HIGH" ? "⚠️" : "🤖"} <b>[WATCHDOG AI DIAGNOSIS]</b>
-• <b>Store:</b> ${incident.storeName}
-• <b>Tác vụ:</b> ${incident.taskName}
+  if (incident.diagnosis.canAutoPatch) {
+    // Trường hợp 1: Có thể tự vá bằng code -> Gửi đề xuất vá & hỏi duyệt
+    const text = `🤖 <b>[WATCHDOG AI DIAGNOSIS]</b>
+• <b>Store:</b> ${incident.storeName} (${incident.taskName})
+• <b>Sự cố:</b> ${incident.diagnosis.summary}
 • <b>Nguyên nhân:</b> ${incident.diagnosis.rootCause}
 • <b>Hàm liên quan:</b> <code>${incident.diagnosis.affectedFunction}</code>
 • <b>Mức độ rủi ro:</b> <b>${incident.diagnosis.risk}</b>
-• <b>Gợi ý sửa:</b> ${incident.diagnosis.suggestedFix}
+• <b>Đề xuất:</b> ${incident.diagnosis.actionPlan}
 
 <i>Chi phí dự kiến sinh code vá: ~500đ (${PRIMARY_MODEL}).</i>
 👉 <b>Bạn có đồng ý cho AI sinh mã vá và kiểm tra không?</b>`;
 
-  const replyMarkup = {
-    inline_keyboard: [
-      [
-        { text: "✅ Cho phép AI vá code", callback_data: `APPR:${incident.id}` },
-        { text: "❌ Bỏ qua", callback_data: `DISMISS:${incident.id}` },
+    const replyMarkup = {
+      inline_keyboard: [
+        [
+          { text: "✅ Cho phép AI vá code", callback_data: `APPR:${incident.id}` },
+          { text: "❌ Bỏ qua", callback_data: `DISMISS:${incident.id}` },
+        ],
+        [
+          { text: "🛑 Tắt Watchdog Agent", callback_data: `AGENT_OFF` },
+        ],
       ],
-      [
-        { text: "🛑 Tắt Watchdog Agent", callback_data: `AGENT_OFF` },
-      ],
-    ],
-  };
+    };
 
-  return await sendTelegramMessage(text, undefined, replyMarkup);
+    return await sendTelegramMessage(text, undefined, replyMarkup);
+  } else {
+    // Trường hợp 2: Lỗi môi trường (AdsPower sập, Amazon OTP, OOM) -> Giải thích & hướng dẫn hành động
+    const text = `🤖 <b>[WATCHDOG AI PHÂN TÍCH SỰ CỐ]</b>
+• <b>Store:</b> ${incident.storeName} (${incident.taskName})
+• <b>Sự cố:</b> ${incident.diagnosis.summary}
+• <b>Nguyên nhân:</b> ${incident.diagnosis.rootCause}
+• <b>Khuyến nghị xử lý:</b> 💡 ${incident.diagnosis.actionPlan}
+
+<i>Sự cố thuộc môi trường vận hành, không cần sửa mã nguồn crawler.</i>`;
+
+    const replyMarkup = {
+      inline_keyboard: [
+        [
+          { text: "👌 Đã rõ / Bỏ qua", callback_data: `DISMISS:${incident.id}` },
+          { text: "🛑 Tắt Agent", callback_data: `AGENT_OFF` },
+        ],
+      ],
+    };
+
+    return await sendTelegramMessage(text, undefined, replyMarkup);
+  }
 }
 
 // ============================================================================
@@ -453,7 +482,7 @@ YÊU CẦU BẮT BUỘC:
 
   const userPrompt = `Hàm bị lỗi: ${incident.diagnosis.affectedFunction}
 Lỗi: ${incident.errorMessage}
-Gợi ý sửa: ${incident.diagnosis.suggestedFix}
+Đề xuất sửa: ${incident.diagnosis.actionPlan}
 
 Đoạn mã nguồn ngữ cảnh:
 \`\`\`typescript
@@ -588,30 +617,28 @@ export async function handleWatchdogError(params: {
     return;
   }
 
-  // Nếu lỗi thuộc Rule cứng (AdsPower tắt, Amazon OTP) -> Không gọi AI, báo Telegram ngay!
-  if (classification.category === "NO_AI_RULE") {
-    console.warn(`[Watchdog Rule] ${classification.signature}: ${classification.reason}`);
-    await sendTelegramMessage(`${classification.alertTitle}\n${classification.alertBody}`);
-    return;
-  }
-
   // Nếu Watchdog Agent đang bị TẮT bởi người dùng
   if (!state.enabled) {
-    console.log(`[Watchdog] Agent đang TẮT. Bỏ qua phân tích AI cho lỗi: ${classification.signature}`);
+    console.log(`[Watchdog] Agent đang TẮT. Báo lỗi thô về Telegram: ${classification.signature}`);
+    await sendTelegramMessage(
+      `${classification.alertTitle || "⚠️ <b>[CRAWLER GẶP SỰ CỐ]</b>"}\n${classification.alertBody || params.error}\n<i>(Watchdog Agent đang TẮT - gõ /agent on để kích hoạt AI phân tích)</i>`
+    );
     return;
   }
 
-  // Sự cố thuộc nhóm AI_ELIGIBLE -> Tiến hành Tầng 1: Chẩn đoán nhanh
-  console.log(`[Watchdog] Kích hoạt AI Chẩn đoán cho lỗi: ${classification.signature}...`);
+  // ĐẨY NGAY CHO AGENT ĐỌC VÀ CHẨN ĐOÁN
+  console.log(`[Watchdog AI] Đang đẩy lỗi cho Agent ${PRIMARY_MODEL} đọc & phân tích: ${classification.signature}...`);
   const errorMsg =
     typeof params.error === "string"
       ? params.error
       : (params.error as Error)?.message || String(params.error || "");
+
   const diagnosis = await diagnoseIncident({
     storeName: params.storeName,
     taskName: params.taskName,
     errorMessage: errorMsg,
     logSnippet: params.logSnippet || errorMsg,
+    signature: classification.signature,
   });
 
   const incidentId = `inc_${Date.now().toString(36)}`;
@@ -632,7 +659,7 @@ export async function handleWatchdogError(params: {
     pendingIncidents.delete(incidentId);
   }, 30 * 60 * 1000);
 
-  // Gửi Telegram để xin duyệt (Duyệt rồi mới sinh code để tiết kiệm tiền!)
+  // Báo cáo Telegram kèm chẩn đoán thông minh của Agent
   await requestTelegramApprovalForPatch(incident);
 }
 
