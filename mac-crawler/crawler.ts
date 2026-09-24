@@ -573,17 +573,36 @@ async function getBulkTableRows(bulkPage: Page): Promise<BulkTableRow[]> {
 async function waitForBulkFileDownload(
   destDir: string,
   expectedRawName: string | null,
-  timeoutSeconds = 120,
+  timeoutSeconds = 300,
   signal?: AbortSignal,
   expectedGuid?: string | null,
 ): Promise<string> {
   const parentDir = path.dirname(destDir);
-  const deadline = Date.now() + timeoutSeconds * 1000;
+  let deadline = Date.now() + timeoutSeconds * 1000;
   const shortGuid = expectedGuid ? expectedGuid.toLowerCase().slice(0, 8) : null;
+  let lastCrdownloadSize = 0;
 
   while (Date.now() < deadline) {
     throwIfAborted(signal);
     await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    // Nếu trình duyệt đang tích cực tải file (.crdownload đang lớn dần), gia hạn deadline liên tục
+    const scanDirs = [destDir, parentDir];
+    for (const d of scanDirs) {
+      if (!fs.existsSync(d)) continue;
+      try {
+        const files = fs.readdirSync(d);
+        for (const f of files) {
+          if (f.endsWith(".crdownload")) {
+            const stat = fs.statSync(path.join(d, f));
+            if (stat.size > lastCrdownloadSize) {
+              lastCrdownloadSize = stat.size;
+              deadline = Math.max(deadline, Date.now() + 60_000); // Còn đang tải thì còn chờ thêm ít nhất 60s
+            }
+          }
+        }
+      } catch { }
+    }
 
     if (expectedRawName) {
       const destCandidate = path.join(destDir, expectedRawName);
@@ -612,7 +631,6 @@ async function waitForBulkFileDownload(
       }
     }
 
-    const scanDirs = [destDir, parentDir];
     for (const d of scanDirs) {
       if (!fs.existsSync(d)) continue;
       const files = fs.readdirSync(d);
@@ -648,6 +666,12 @@ async function waitForBulkFileDownload(
 
 async function detectActualBulkWorkbookAdType(filePath: string): Promise<"SP" | "SB" | null> {
   try {
+    // Nếu file quá lớn (> 40MB), không nạp toàn bộ workbook vào RAM để tránh OOM / tràn heap memory của Mac mini
+    const stat = fs.statSync(filePath);
+    if (stat.size > 40_000_000) {
+      return null;
+    }
+
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.readFile(filePath);
     for (const ws of wb.worksheets) {
@@ -894,7 +918,7 @@ async function downloadBulkFileByRow(
   if (downloadUrl && downloadUrl.startsWith("http")) {
     try {
       console.log(`  [BULK] ⚡ Đang kéo file trực tiếp qua bulkPage.request.get()...`);
-      const res = await bulkPage.request.get(downloadUrl, { timeout: 60000 });
+      const res = await bulkPage.request.get(downloadUrl, { timeout: 300000 });
       if (res.ok()) {
         const buf = await res.body();
         if (buf && buf.length > 5000) {
@@ -963,7 +987,7 @@ async function downloadBulkFileByRow(
     } catch { }
 
     if (!standardizedPath || !fs.existsSync(standardizedPath)) {
-      const downloadedPath = await waitForBulkFileDownload(initialDir, expectedRawName, 60, signal, guid);
+      const downloadedPath = await waitForBulkFileDownload(initialDir, expectedRawName, 300, signal, guid);
       const rawName = path.basename(downloadedPath);
       const cleanRawName = sanitizeRawFileName(rawName, storeName);
       const standardizedName = `${storeName}_Bulk_${task.adType}_${task.days}Days_${cleanRawName}`;
@@ -1579,7 +1603,7 @@ export async function autoCreateAndDownloadSearchTermReport(
       if (downloadUrl && downloadUrl.startsWith("http")) {
         try {
           console.log(`  [SEARCH TERM] Đang kéo file trực tiếp qua page.request.get()...`);
-          const res = await page.request.get(downloadUrl, { timeout: 60000 });
+          const res = await page.request.get(downloadUrl, { timeout: 300000 });
           if (res.ok()) {
             const buf = await res.body();
             if (buf && buf.length > 0) {
