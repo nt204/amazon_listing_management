@@ -202,9 +202,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
   const [skuEconomicsList, setSkuEconomicsList] = useState<SkuEconomics[]>([]);
   const [skuRecGroups, setSkuRecGroups] = useState<SkuRecommendationGroup[]>([]);
   const [skuRecAllRecs, setSkuRecAllRecs] = useState<PpcRecommendation[]>([]);
+  const [loadedRecommendationWindowDays, setLoadedRecommendationWindowDays] = useState<number | null>(null);
   const [actionQueue, setActionQueue] = useState<PpcAction[]>([]);
   const [actionQueueCount, setActionQueueCount] = useState<number>(0);
   const lastLoadedRecKeyRef = useRef<string>("");
+  const groupedRecRequestRef = useRef<{ controller: AbortController; id: number } | null>(null);
+  const groupedRecRequestIdRef = useRef(0);
   const currentFiltersRef = useRef({
     store: selectedStore,
     sku: selectedSku,
@@ -233,6 +236,13 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
   const [termPageSize, setTermPageSize] = useState(25);
   const [campaignPage, setCampaignPage] = useState(1);
   const [campaignPageSize, setCampaignPageSize] = useState(25);
+  const [loadingCampaignPage, setLoadingCampaignPage] = useState(false);
+  const [campaignServerMeta, setCampaignServerMeta] = useState({
+    total: 0,
+    activeCount: 0,
+    pausedCount: 0,
+    totals: { spend: 0, sales: 0, orders: 0, clicks: 0, impressions: 0 },
+  });
   const [adGroupPage, setAdGroupPage] = useState(1);
   const [adGroupPageSize, setAdGroupPageSize] = useState(25);
   const [targetPage, setTargetPage] = useState(1);
@@ -405,6 +415,43 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     });
   }, [selectedStore, selectedSku, selectedDays, isCustomDate, customStartDate, customEndDate]);
 
+  useEffect(() => {
+    if (activeTab !== "campaigns") return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setLoadingCampaignPage(true);
+      try {
+        const params = new URLSearchParams({
+          storeName: selectedStore, sku: selectedSku, days: String(selectedDays),
+          query: campaignQuery, status: campaignStatusFilter, adType: campaignFormatFilter,
+          spendFilter: campaignSpendFilter, groupFilter: campaignGroupFilter,
+          targetAcos: String(targetAcos), sortField: campaignSortField,
+          sortDirection: campaignSortDir, page: String(campaignPage), pageSize: String(campaignPageSize),
+        });
+        const res = await fetch(`/api/ppc/campaigns?${params}`, { cache: "no-store", signal: controller.signal });
+        if (!res.ok) throw new Error(`Không thể tải Campaign (HTTP ${res.status})`);
+        const data = await res.json();
+        setCampaignPerformance(data.campaigns || []);
+        setCampaignServerMeta({
+          total: Number(data.total || 0), activeCount: Number(data.activeCount || 0),
+          pausedCount: Number(data.pausedCount || 0),
+          totals: data.totals || { spend: 0, sales: 0, orders: 0, clicks: 0, impressions: 0 },
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        notify(error instanceof Error ? error.message : "Không thể tải Campaign", "error");
+      } finally {
+        if (!controller.signal.aborted) setLoadingCampaignPage(false);
+      }
+    }, campaignQuery ? 250 : 0);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [activeTab, selectedStore, selectedSku, selectedDays, campaignQuery, campaignStatusFilter,
+    campaignFormatFilter, campaignSpendFilter, campaignGroupFilter, targetAcos,
+    campaignSortField, campaignSortDir, campaignPage, campaignPageSize]);
+
   const loadSkuEconomics = useCallback(async () => {
     try {
       setLoadingSkuEcon(true);
@@ -422,31 +469,58 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
   }, [selectedDays]);
 
   const loadGroupedRecommendations = useCallback(async (force = false) => {
-    const currentKey = `${selectedStore}:${selectedSku}`;
-    if (!force && lastLoadedRecKeyRef.current === currentKey && skuRecGroups.length > 0) {
+    const currentKey = `${selectedStore}:${selectedSku}:${selectedDays}`;
+    if (!force && lastLoadedRecKeyRef.current === currentKey) {
       return;
     }
+
+    groupedRecRequestRef.current?.controller.abort();
+    const controller = new AbortController();
+    const requestId = ++groupedRecRequestIdRef.current;
+    groupedRecRequestRef.current = { controller, id: requestId };
+
     setLoadingRecs(true);
     try {
       const res = await fetch(
-        `/api/ppc/recommendations/grouped?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}${force ? "&refresh=1" : ""}`,
-        { cache: "no-store" },
+        `/api/ppc/recommendations/grouped?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}&summary=1${force ? "&refresh=1" : ""}`,
+        { cache: "no-store", signal: controller.signal },
       );
       if (!res.ok) return;
       const data = await res.json();
+      if (requestId !== groupedRecRequestIdRef.current || data?.recommendationWindowDays !== selectedDays) {
+        return;
+      }
       if (data?.data?.groups) {
         lastLoadedRecKeyRef.current = currentKey;
+        setLoadedRecommendationWindowDays(selectedDays);
         setSkuRecGroups(data.data.groups);
         if (Array.isArray(data?.data?.allRecommendations)) {
           setSkuRecAllRecs(data.data.allRecommendations);
         }
       }
     } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") return;
       console.error(e);
     } finally {
-      setLoadingRecs(false);
+      if (groupedRecRequestRef.current?.id === requestId) {
+        groupedRecRequestRef.current = null;
+        setLoadingRecs(false);
+      }
     }
-  }, [selectedStore, selectedSku, skuRecGroups.length]);
+  }, [selectedStore, selectedSku, selectedDays]);
+
+  const loadSkuRecommendationDetails = useCallback(async (sku: string) => {
+    const res = await fetch(
+      `/api/ppc/recommendations/grouped?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(sku)}&days=${selectedDays}`,
+      { cache: "no-store" },
+    );
+    if (!res.ok) throw new Error(`Không thể tải recommendation cho SKU ${sku}`);
+    const data = await res.json();
+    if (data?.recommendationWindowDays !== selectedDays) throw new Error("Recommendation trả về sai kỳ dữ liệu.");
+    const recommendations = Array.isArray(data?.data?.allRecommendations) ? data.data.allRecommendations : [];
+    setSkuRecAllRecs(recommendations);
+    return recommendations;
+  }, [selectedStore, selectedDays]);
 
   const loadActionQueueCount = useCallback(async () => {
     try {
@@ -580,11 +654,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     notify(`Đã lưu phiên bản mới cho phôi ${data.productType}`, "success");
   };
 
-  // Initial mount: load light action queue count and preload recommendations in background
+  // Initial mount: only load the lightweight queue count. Recommendations are
+  // intentionally lazy because a cold computation is expensive.
   useEffect(() => {
     void loadActionQueueCount();
-    void loadGroupedRecommendations();
-  }, [loadActionQueueCount, loadGroupedRecommendations]);
+  }, [loadActionQueueCount]);
 
   // Lazy-load drawer data only when opened
   useEffect(() => {
@@ -615,9 +689,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       };
       loadedSectionsRef.current.clear();
       lastLoadedRecKeyRef.current = "";
-      if (activeTab === "recommendations") {
-        void loadGroupedRecommendations();
-      }
     }
 
     if (activeTab === "overview") {
@@ -628,7 +699,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
           metricsRequestRef.current?.controller.abort();
         };
       }
-    } else if (["campaigns", "ad_groups", "targets", "skus", "search_terms"].includes(activeTab)) {
+    } else if (["ad_groups", "targets", "skus", "search_terms"].includes(activeTab)) {
       if (!loadedSectionsRef.current.has(activeTab)) {
         void loadSection(activeTab).catch((error) => {
           notify(error instanceof Error ? error.message : "Không thể tải bảng dữ liệu PPC", "error");
@@ -821,108 +892,20 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
   }, [targetPerformance]);
 
   // Filtered & Sorted Campaigns (Default: Active only, sorted Newest to Oldest)
-  const filteredSortedCampaigns = useMemo(() => {
-    let list = [...campaignPerformance];
-    if (campaignQuery.trim()) {
-      const q = campaignQuery.toLowerCase().trim();
-      list = list.filter((c) => {
-        const sku = extractSkuFromText(c.campaignName) || "";
-        return (
-          c.campaignName.toLowerCase().includes(q) ||
-          c.storeName.toLowerCase().includes(q) ||
-          sku.toLowerCase().includes(q)
-        );
-      });
-    }
-    // Status Filter: ACTIVE (default) | PAUSED | ALL
-    if (campaignStatusFilter === "ACTIVE") {
-      list = list.filter((c) => !/pause/i.test(c.state || "") && !/archive/i.test(c.state || ""));
-    } else if (campaignStatusFilter === "PAUSED") {
-      list = list.filter((c) => /pause/i.test(c.state || "") || /archive/i.test(c.state || ""));
-    }
-
-    // Ad Format Filter (SP, SB, SD)
-    if (campaignFormatFilter !== "ALL") {
-      list = list.filter((c) => {
-        const adType = (c.adType || "").toUpperCase();
-        return adType.includes(campaignFormatFilter);
-      });
-    }
-
-    // Spend Filter
-    if (campaignSpendFilter === "HAS_SPEND") {
-      list = list.filter((c) => c.spend > 0);
-    } else if (campaignSpendFilter === "ZERO_SPEND") {
-      list = list.filter((c) => c.spend === 0);
-    } else if (campaignSpendFilter === "SPEND_GT_50") {
-      list = list.filter((c) => c.spend >= 50);
-    } else if (campaignSpendFilter === "SPEND_GT_100") {
-      list = list.filter((c) => c.spend >= 100);
-    }
-
-    // Problem / Opportunity Group Filter
-    if (campaignGroupFilter === "BLEEDING") {
-      list = list.filter((c) => c.orders === 0 && c.spend >= 10);
-    } else if (campaignGroupFilter === "HIGH_ACOS") {
-      list = list.filter((c) => c.orders > 0 && c.acos > targetAcos);
-    } else if (campaignGroupFilter === "GOOD") {
-      list = list.filter((c) => c.orders > 0 && c.acos <= targetAcos && c.spend >= 5);
-    }
-
-    // Sorting: Chronological by default (newest creation date to oldest)
-    list.sort((a, b) => {
-      if (campaignSortField === "date") {
-        const dateA = extractCampaignDate(a.campaignName);
-        const dateB = extractCampaignDate(b.campaignName);
-        if (dateA !== dateB) {
-          return campaignSortDir === "asc" ? dateA - dateB : dateB - dateA;
-        }
-        return b.spend - a.spend; // Secondary tie-breaker
-      }
-      const valA = a[campaignSortField] ?? 0;
-      const valB = b[campaignSortField] ?? 0;
-      return campaignSortDir === "asc" ? valA - valB : valB - valA;
-    });
-
-    return list;
-  }, [
-    campaignPerformance,
-    campaignQuery,
-    campaignStatusFilter,
-    campaignFormatFilter,
-    campaignSpendFilter,
-    campaignGroupFilter,
-    targetAcos,
-    campaignSortField,
-    campaignSortDir,
-  ]);
+  const filteredSortedCampaigns = campaignPerformance;
 
   // Aggregated totals for currently filtered campaigns
   const filteredCampaignTotals = useMemo(() => {
-    let spend = 0;
-    let sales = 0;
-    let orders = 0;
-    let clicks = 0;
-    let impressions = 0;
-    for (const c of filteredSortedCampaigns) {
-      spend += c.spend || 0;
-      sales += c.sales || 0;
-      orders += c.orders || 0;
-      clicks += c.clicks || 0;
-      impressions += c.impressions || 0;
-    }
+    const { spend, sales, orders, clicks, impressions } = campaignServerMeta.totals;
     const acos = sales > 0 ? (spend / sales) * 100 : 0;
     const roas = spend > 0 ? sales / spend : 0;
     const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
-    return { spend, sales, orders, clicks, impressions, ctr, acos, roas, count: filteredSortedCampaigns.length };
-  }, [filteredSortedCampaigns]);
+    return { spend, sales, orders, clicks, impressions, ctr, acos, roas, count: campaignServerMeta.total };
+  }, [campaignServerMeta]);
 
   // Paginated Campaigns
-  const totalCampaignPages = Math.max(1, Math.ceil(filteredSortedCampaigns.length / campaignPageSize));
-  const paginatedCampaigns = useMemo(() => {
-    const start = (campaignPage - 1) * campaignPageSize;
-    return filteredSortedCampaigns.slice(start, start + campaignPageSize);
-  }, [filteredSortedCampaigns, campaignPage, campaignPageSize]);
+  const totalCampaignPages = Math.max(1, Math.ceil(campaignServerMeta.total / campaignPageSize));
+  const paginatedCampaigns = filteredSortedCampaigns;
 
   // Filtered & Sorted Ad Groups (Level 3 in hierarchy)
   const filteredSortedAdGroups = useMemo(() => {
@@ -1342,7 +1325,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
   };
 
   // CSV Exporter
-  const handleExportCsv = (type: "search_terms" | "campaigns" | "skus") => {
+  const handleExportCsv = async (type: "search_terms" | "campaigns" | "skus") => {
     let header = "";
     let rows: string[] = [];
     let filename = "";
@@ -1357,12 +1340,25 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       });
       filename = `ppc-search-terms-${Date.now()}.csv`;
     } else if (type === "campaigns") {
+      const params = new URLSearchParams({
+        storeName: selectedStore, sku: selectedSku, days: String(selectedDays), query: campaignQuery,
+        status: campaignStatusFilter, adType: campaignFormatFilter, spendFilter: campaignSpendFilter,
+        groupFilter: campaignGroupFilter, targetAcos: String(targetAcos), sortField: campaignSortField,
+        sortDirection: campaignSortDir, page: "1", pageSize: "20000", export: "1",
+      });
+      const exportResponse = await fetch(`/api/ppc/campaigns?${params}`, { cache: "no-store" });
+      if (!exportResponse.ok) {
+        notify("Không thể tải toàn bộ Campaign để xuất CSV.", "error");
+        return;
+      }
+      const exportData = await exportResponse.json();
+      const exportCampaigns: PpcCampaignPerformance[] = exportData.campaigns || [];
       header = "Campaign Name,Store,Targeting,Spend ($),Sales ($),Orders,Clicks,CPC ($),CTR (%),CVR (%),ACOS (%),ROAS\n";
-      rows = filteredSortedCampaigns.map((c) => {
+      rows = exportCampaigns.map((c) => {
         const campSafe = `"${c.campaignName.replace(/"/g, '""')}"`;
         return `${campSafe},"${c.storeName}","${c.targetingType}",${c.spend.toFixed(2)},${c.sales.toFixed(2)},${c.orders},${c.clicks},${c.cpc.toFixed(2)},${c.ctr.toFixed(2)},${c.cvr.toFixed(1)},${c.acos.toFixed(1)},${c.roas.toFixed(2)}`;
       });
-      const firstCamp = filteredSortedCampaigns[0];
+      const firstCamp = exportCampaigns[0];
       const autoSku = selectedSku !== "ALL" ? selectedSku : (firstCamp ? extractSkuFromText(firstCamp.campaignName) || "" : "");
       const autoTitle = firstCamp?.campaignName ? firstCamp.campaignName.replace(/^([A-Z0-9]+\s+)+/, "").trim() : "Campaigns";
       filename = formatPpcExportFilename({
@@ -2266,7 +2262,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                     }`}
                 >
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                  <span>Active ({campaignPerformance.filter((c) => !/pause|archive/i.test(c.state || "")).length.toLocaleString("vi-VN")})</span>
+                  <span>Active ({campaignServerMeta.activeCount.toLocaleString("vi-VN")})</span>
                 </button>
 
                 <button
@@ -2281,7 +2277,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                     }`}
                 >
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                  <span>Paused ({campaignPerformance.filter((c) => /pause|archive/i.test(c.state || "")).length.toLocaleString("vi-VN")})</span>
+                  <span>Paused ({campaignServerMeta.pausedCount.toLocaleString("vi-VN")})</span>
                 </button>
 
                 <button
@@ -2295,7 +2291,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                     : "text-slate-600 hover:text-slate-900"
                     }`}
                 >
-                  Tất cả ({campaignPerformance.length.toLocaleString("vi-VN")})
+                  Tất cả ({(campaignServerMeta.activeCount + campaignServerMeta.pausedCount).toLocaleString("vi-VN")})
                 </button>
               </div>
 
@@ -2325,8 +2321,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                 }}
                 className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 outline-none focus:bg-white focus:border-indigo-600 cursor-pointer shrink-0"
               >
-                <option value="date_desc">Ngày tạo: Mới nhất</option>
-                <option value="date_asc">Ngày tạo: Cũ nhất</option>
+                <option value="date_desc">Ngày campaign: Mới nhất</option>
+                <option value="date_asc">Ngày campaign: Cũ nhất</option>
                 <option value="spend_desc">Chi tiêu: Cao → Thấp</option>
                 <option value="sales_desc">Doanh số: Cao → Thấp</option>
                 <option value="orders_desc">Đơn hàng: Nhiều → Ít</option>
@@ -2425,7 +2421,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
           </div>
 
           {/* Campaigns Data Table */}
-          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
+          <div className={`overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs transition-opacity ${loadingCampaignPage ? "opacity-60" : "opacity-100"}`} aria-busy={loadingCampaignPage}>
             <table className="w-full text-left text-xs text-slate-700">
               <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
                 <tr>
@@ -2438,9 +2434,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                     onClick={() =>
                       handleSort("date", campaignSortField, campaignSortDir, setCampaignSortField, setCampaignSortDir, () => setCampaignPage(1))
                     }
-                    title="Nhấn để sắp xếp theo ngày tạo"
+                    title="Ngày được suy ra từ mã ngày trong tên campaign; nhấn để sắp xếp"
                   >
-                    Ngày tạo {campaignSortField === "date" && (campaignSortDir === "asc" ? "↑" : "↓")}
+                    Ngày campaign {campaignSortField === "date" && (campaignSortDir === "asc" ? "↑" : "↓")}
                   </th>
                   <th
                     className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
@@ -2627,7 +2623,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
             currentPage={campaignPage}
             totalPages={totalCampaignPages}
             pageSize={campaignPageSize}
-            totalItems={filteredSortedCampaigns.length}
+            totalItems={campaignServerMeta.total}
             pageSizeOptions={[15, 25, 50, 100, 200]}
             itemName="campaign"
             onPageChange={setCampaignPage}
@@ -3358,7 +3354,10 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
           <PpcSkuRecommendationGroupView
             groups={skuRecGroups}
             allRecommendations={skuRecAllRecs}
-            isLoading={loading}
+            isLoading={loadingRecs}
+            recommendationWindowDays={selectedDays}
+            loadedRecommendationWindowDays={loadedRecommendationWindowDays}
+            onLoadSkuRecommendations={loadSkuRecommendationDetails}
             onApproveToQueue={handleApproveToQueue}
             onOpenActionQueue={() => setIsActionQueueOpen(true)}
             pendingQueueCount={pendingActionCount}

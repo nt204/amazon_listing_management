@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import {
   Tag,
   Funnel,
@@ -21,12 +21,12 @@ import {
   WarningCircle,
   TrendUp,
   TrendDown,
-  Sparkle,
   Lightning,
   Calculator,
   ShieldCheck,
   Check,
   Info,
+  ClipboardText,
 } from "@phosphor-icons/react";
 import type { SkuRecommendationGroup, PpcAction } from "@/lib/ppc/sku-architecture-types";
 import type { PpcRecommendation } from "@/lib/ppc/types";
@@ -35,6 +35,9 @@ interface PpcSkuRecommendationGroupProps {
   groups: SkuRecommendationGroup[];
   allRecommendations: PpcRecommendation[];
   isLoading: boolean;
+  recommendationWindowDays: number;
+  loadedRecommendationWindowDays: number | null;
+  onLoadSkuRecommendations: (sku: string) => Promise<PpcRecommendation[]>;
   onApproveToQueue: (items: Array<{ recommendation: PpcRecommendation; userFinalBid?: number }>) => Promise<void>;
   onOpenActionQueue: () => void;
   pendingQueueCount: number;
@@ -68,6 +71,9 @@ export function PpcSkuRecommendationGroupView({
   groups,
   allRecommendations,
   isLoading,
+  recommendationWindowDays,
+  loadedRecommendationWindowDays,
+  onLoadSkuRecommendations,
   onApproveToQueue,
   onOpenActionQueue,
   pendingQueueCount,
@@ -79,6 +85,7 @@ export function PpcSkuRecommendationGroupView({
   const [sortField, setSortField] = useState<SortField>("totalRecommendations");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [selectedSkuGroup, setSelectedSkuGroup] = useState<SkuRecommendationGroup | null>(null);
+  const [loadingSkuDetails, setLoadingSkuDetails] = useState(false);
 
   // Detail View State
   const [selectedRecIds, setSelectedRecIds] = useState<Set<string>>(new Set());
@@ -88,58 +95,47 @@ export function PpcSkuRecommendationGroupView({
   const [modalActionFilter, setModalActionFilter] = useState<"ALL" | "BID_INCREASE" | "BID_DECREASE" | "PAUSE_TARGET">("ALL");
   const [recentlyApprovedIds, setRecentlyApprovedIds] = useState<Set<string>>(new Set());
   const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set());
-  const [explainingRecId, setExplainingRecId] = useState<string | null>(null);
-  const [aiExplanationModal, setAiExplanationModal] = useState<{
-    rec: PpcRecommendation;
-    explanation: string;
-    structured?: any;
-  } | null>(null);
+  const [ruleExplanationModal, setRuleExplanationModal] = useState<PpcRecommendation | null>(null);
+  const previousRecommendationWindowRef = useRef(recommendationWindowDays);
 
-  const handleExplainWithAi = async (rec: PpcRecommendation) => {
-    setExplainingRecId(rec.id);
-    try {
-      const res = await fetch("/api/ppc/ai-explain", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          keyword: rec.keyword,
-          matchType: rec.matchType,
-          campaignName: rec.campaignName,
-          recType: rec.recType,
-          currentBid: rec.currentBid,
-          recommendedBid: rec.recommendedBid,
-          clicks: rec.clicks,
-          spend: rec.spend,
-          sales: rec.sales,
-          orders: rec.orders,
-          cpc: rec.cpc,
-          breakEvenAcos: selectedSkuGroup?.economics?.breakEvenAcos,
-          maxBid: selectedSkuGroup?.economics?.maxBid,
-          productType: rec.productType || selectedSkuGroup?.productType,
-          ruleProfile: rec.ruleProfile,
-          ruleReason: rec.reason,
-          sku: rec.sku || selectedSkuGroup?.sku,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || "Không thể lấy giải thích từ AI");
-      }
-      setAiExplanationModal({
-        rec,
-        explanation: data.explanation,
-        structured: data.structured,
-      });
-    } catch (err: any) {
-      alert("Lỗi AI: " + (err.message || "Vui lòng thử lại"));
-    } finally {
-      setExplainingRecId(null);
+  // Keep an open SKU detail modal attached to the newly loaded attribution
+  // window instead of retaining the old group object in local state.
+  useEffect(() => {
+    setSelectedSkuGroup((current) => {
+      if (!current) return null;
+      return groups.find((group) => group.sku.toUpperCase() === current.sku.toUpperCase()) || null;
+    });
+  }, [groups]);
+
+  // AI explanations contain calculated values from one attribution window.
+  // Close them on a window change so 7D copy can never be shown as 30D data.
+  useEffect(() => {
+    if (previousRecommendationWindowRef.current !== recommendationWindowDays) {
+      setRuleExplanationModal(null);
+      setSelectedRecIds(new Set());
+      setUserFinalBids({});
+      previousRecommendationWindowRef.current = recommendationWindowDays;
     }
-  };
+  }, [recommendationWindowDays]);
+
+  const handleExplainRule = (rec: PpcRecommendation) => setRuleExplanationModal(rec);
 
   const handleOpenActionQueueModal = () => {
     setSelectedSkuGroup(null);
     onOpenActionQueue();
+  };
+
+  const handleOpenSkuGroup = async (group: SkuRecommendationGroup) => {
+    setSelectedSkuGroup(group);
+    setLoadingSkuDetails(true);
+    try {
+      await onLoadSkuRecommendations(group.sku);
+    } catch (error) {
+      console.error(error);
+      setSelectedSkuGroup(null);
+    } finally {
+      setLoadingSkuDetails(false);
+    }
   };
 
   // Handle ESC key to close modal
@@ -519,8 +515,19 @@ export function PpcSkuRecommendationGroupView({
 
   const isFilterActive = searchTerm !== "" || selectedPhôi !== "ALL" || quickFilter !== "ALL";
 
+  const isSwitchingWindow = isLoading
+    && loadedRecommendationWindowDays !== null
+    && loadedRecommendationWindowDays !== recommendationWindowDays;
+
   return (
-    <div className="space-y-4">
+    <div className="relative space-y-4" aria-busy={isLoading}>
+      {isSwitchingWindow && (
+        <div className="absolute inset-0 z-50 flex items-start justify-center rounded-2xl bg-white/45 pt-20 backdrop-blur-[1px] cursor-wait">
+          <div className="rounded-xl border border-indigo-200 bg-white px-4 py-2.5 text-xs font-black text-indigo-700 shadow-lg">
+            Updating recommendations to {recommendationWindowDays}D…
+          </div>
+        </div>
+      )}
       {/* Top Filter Area: Search, Phôi & Summary */}
       <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -588,7 +595,9 @@ export function PpcSkuRecommendationGroupView({
           {/* Counts & Aggregates Badge */}
           <div className="flex items-center gap-3">
             <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-[11px] font-black text-indigo-700">
-              Dữ liệu chỉnh bid: 30D
+              Dữ liệu chỉnh bid: {isLoading
+                ? `Đang tải ${recommendationWindowDays}D...`
+                : `${loadedRecommendationWindowDays ?? recommendationWindowDays}D`}
             </div>
             <div className="flex items-center gap-2 text-xs text-slate-600 font-medium bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs">
               <span>
@@ -809,7 +818,7 @@ export function PpcSkuRecommendationGroupView({
                   <tr
                     key={group.sku}
                     onClick={() => {
-                      setSelectedSkuGroup(group);
+                      void handleOpenSkuGroup(group);
                       setRecentlyApprovedIds(new Set());
                       setSelectedRecIds(new Set());
                     }}
@@ -896,7 +905,7 @@ export function PpcSkuRecommendationGroupView({
                   </span>
                 </div>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  ASIN: {selectedSkuGroup.asin} • Tổng cộng {currentSkuRecs.length} đề xuất tối ưu hóa
+                  ASIN: {selectedSkuGroup.asin} • {loadingSkuDetails ? "Đang tải chi tiết..." : `Tổng cộng ${currentSkuRecs.length} đề xuất tối ưu hóa`}
                 </p>
               </div>
               <button
@@ -1279,13 +1288,12 @@ export function PpcSkuRecommendationGroupView({
                                             <span>{rec.keyword}</span>
                                             <button
                                               type="button"
-                                              onClick={() => handleExplainWithAi(rec)}
-                                              disabled={explainingRecId === rec.id}
-                                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-200 transition cursor-pointer disabled:opacity-50 shrink-0"
-                                              title="AI (Gemini 2.5 Flash) giải thích tại sao đề xuất mức bid này"
+                                              onClick={() => handleExplainRule(rec)}
+                                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 transition cursor-pointer shrink-0"
+                                              title="Xem điều kiện rule và phép tính tạo ra mức bid này"
                                             >
-                                              <Sparkle size={10} weight="fill" className={explainingRecId === rec.id ? "animate-spin text-violet-600" : "text-violet-600"} />
-                                              <span>{explainingRecId === rec.id ? "Đang nghĩ..." : "AI"}</span>
+                                              <Info size={10} weight="bold" />
+                                              <span>Explain</span>
                                             </button>
                                           </div>
                                           {rec.matchType && (
@@ -1376,36 +1384,36 @@ export function PpcSkuRecommendationGroupView({
         </div>
       )}
 
-      {/* AI Explanation Modal */}
-      {aiExplanationModal && (() => {
-        const rec = aiExplanationModal.rec;
+      {/* Deterministic rule explanation modal */}
+      {ruleExplanationModal && (() => {
+        const rec = ruleExplanationModal;
         const breakEven = selectedSkuGroup?.economics?.breakEvenAcos;
         const maxBidCap = selectedSkuGroup?.economics?.maxBid;
-        const info = getStructuredAiExplanation(aiExplanationModal, breakEven, maxBidCap);
+        const info = getRuleExplanation(rec, breakEven, maxBidCap);
         const actualAcosStr = rec.sales && rec.sales > 0 && rec.spend ? `${((rec.spend / rec.sales) * 100).toFixed(1)}%` : "Chưa có";
         const isIncrease = rec.recType === "BID_INCREASE";
         const isPause = rec.recType === "PAUSE_TARGET";
 
         return (
-          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
-            <div className="bg-white rounded-2xl shadow-2xl border border-slate-200/80 max-w-lg w-full p-5 space-y-3.5 overflow-hidden flex flex-col">
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-3 sm:p-6 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+            <div className="bg-white rounded-2xl shadow-2xl border border-slate-200/80 max-w-4xl w-full max-h-[92dvh] overflow-y-auto p-5 sm:p-7 space-y-5 flex flex-col">
               {/* Header */}
-              <div className="flex items-start justify-between gap-3 pb-2 border-b border-slate-100">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-lg bg-violet-100 text-violet-700 flex items-center justify-center shrink-0">
-                    <Sparkle size={18} weight="fill" />
+              <div className="flex items-start justify-between gap-4 pb-4 border-b border-slate-100">
+                <div className="flex items-center gap-3.5 min-w-0">
+                  <div className="w-11 h-11 rounded-xl bg-violet-100 text-violet-700 flex items-center justify-center shrink-0">
+                    <Info size={24} weight="fill" />
                   </div>
-                  <div>
-                    <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
+                  <div className="min-w-0">
+                    <h3 className="font-bold text-slate-900 text-lg sm:text-xl flex items-center gap-2 flex-wrap">
                       <span>Giải thích Đề xuất Bid</span>
-                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 font-semibold border border-violet-200">
-                        AI Rule Engine
+                      <span className="text-xs sm:text-sm font-mono px-2.5 py-1 rounded-md bg-violet-50 text-violet-700 font-semibold border border-violet-200">
+                        Rule Calculation
                       </span>
                     </h3>
-                    <div className="flex items-center gap-1.5 text-xs text-slate-500 font-mono mt-0.5 flex-wrap">
+                    <div className="flex items-center gap-2 text-sm sm:text-base text-slate-500 font-mono mt-1 flex-wrap">
                       <span className="font-bold text-slate-800">{rec.keyword}</span>
                       {rec.matchType && (
-                        <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 font-semibold text-[10px] uppercase">
+                        <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold text-xs uppercase">
                           {rec.matchType}
                         </span>
                       )}
@@ -1414,18 +1422,19 @@ export function PpcSkuRecommendationGroupView({
                 </div>
                 <button
                   type="button"
-                  onClick={() => setAiExplanationModal(null)}
-                  className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition cursor-pointer shrink-0"
+                  onClick={() => setRuleExplanationModal(null)}
+                  className="text-slate-400 hover:text-slate-700 p-2 rounded-lg hover:bg-slate-100 transition cursor-pointer shrink-0"
+                  aria-label="Đóng giải thích"
                 >
-                  <X size={16} />
+                  <X size={22} />
                 </button>
               </div>
 
-              {/* 4 Quick Stat Pills */}
-              <div className="grid grid-cols-4 gap-1.5 text-center">
-                <div className="bg-slate-50 border border-slate-200/60 rounded-lg p-1.5">
-                  <div className="text-[9px] text-slate-400 uppercase">Giá thầu</div>
-                  <div className="font-bold text-xs">
+              {/* Quick Stat Pills */}
+              <div className="grid grid-cols-2 lg:grid-cols-5 gap-2.5 text-center">
+                <div className="bg-slate-50 border border-slate-200/60 rounded-xl px-3 py-3">
+                  <div className="text-[11px] text-slate-500 font-semibold uppercase tracking-wide">Bid</div>
+                  <div className="font-bold text-base mt-1">
                     <span className="text-slate-400 line-through mr-1">${rec.currentBid?.toFixed(2)}</span>
                     <span className={isPause ? "text-rose-600" : isIncrease ? "text-emerald-700" : "text-indigo-700"}>
                       ${rec.recommendedBid?.toFixed(2)}
@@ -1433,71 +1442,79 @@ export function PpcSkuRecommendationGroupView({
                   </div>
                 </div>
 
-                <div className="bg-slate-50 border border-slate-200/60 rounded-lg p-1.5">
-                  <div className="text-[9px] text-slate-400 uppercase">Avg CPC</div>
-                  <div className="font-bold text-xs text-indigo-700 font-mono">
+                <div className="bg-slate-50 border border-slate-200/60 rounded-xl px-3 py-3">
+                  <div className="text-[11px] text-slate-500 font-semibold uppercase tracking-wide">Avg CPC</div>
+                  <div className="font-bold text-base text-indigo-700 font-mono mt-1">
                     ${(rec.cpc || 0).toFixed(2)}
                   </div>
                 </div>
 
-                <div className="bg-slate-50 border border-slate-200/60 rounded-lg p-1.5">
-                  <div className="text-[9px] text-slate-400 uppercase">ACoS / Hòa vốn</div>
-                  <div className="font-bold text-xs text-slate-800 font-mono">
+                <div className="bg-slate-50 border border-slate-200/60 rounded-xl px-3 py-3">
+                  <div className="text-[11px] text-slate-500 font-semibold uppercase tracking-wide">Spend</div>
+                  <div className="font-bold text-base text-slate-800 font-mono mt-1">
+                    ${(rec.spend || 0).toFixed(2)}
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-200/60 rounded-xl px-3 py-3">
+                  <div className="text-[11px] text-slate-500 font-semibold uppercase tracking-wide whitespace-nowrap">ACoS / Break-even</div>
+                  <div className="font-bold text-base text-slate-800 font-mono mt-1">
                     {actualAcosStr} {breakEven ? `/ ${breakEven}%` : ""}
                   </div>
                 </div>
 
-                <div className="bg-slate-50 border border-slate-200/60 rounded-lg p-1.5">
-                  <div className="text-[9px] text-slate-400 uppercase">Đơn / Clicks</div>
-                  <div className="font-bold text-xs text-slate-800 font-mono">
-                    {rec.orders || 0} đơn / {rec.clicks || 0} clk
+                <div className="bg-slate-50 border border-slate-200/60 rounded-xl px-3 py-3 col-span-2 lg:col-span-1">
+                  <div className="text-[11px] text-slate-500 font-semibold uppercase tracking-wide whitespace-nowrap">Orders / Clicks</div>
+                  <div className="font-bold text-base text-slate-800 font-mono mt-1">
+                    {rec.orders || 0} ord / {rec.clicks || 0} clk
                   </div>
                 </div>
               </div>
 
               {/* Khối 1: Luật áp dụng & Điều kiện */}
-              <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-1.5 text-xs shadow-2xs">
+              <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-3 shadow-2xs">
                 <div className="flex items-center justify-between">
-                  <span className="font-bold text-slate-900 flex items-center gap-1.5">
-                    <span>📋 Luật áp dụng</span>
+                  <span className="font-bold text-slate-900 text-base sm:text-lg flex items-center gap-2">
+                    <ClipboardText size={20} weight="duotone" className="text-violet-700" />
+                    <span>Luật áp dụng</span>
                   </span>
                   {info.ruleName && (
-                    <span className="px-2 py-0.5 rounded bg-violet-50 text-violet-700 font-mono font-bold text-[10px] border border-violet-200">
+                    <span className="px-2.5 py-1 rounded-md bg-violet-50 text-violet-700 font-mono font-bold text-xs sm:text-sm border border-violet-200">
                       {info.ruleName}
                     </span>
                   )}
                 </div>
-                <p className="text-slate-700 leading-relaxed">
+                <p className="text-sm sm:text-base text-slate-700 leading-relaxed">
                   {info.ruleCondition}
                 </p>
               </div>
 
               {/* Khối 2: Phép tính số học & Trần/Sàn */}
-              <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-2 text-xs shadow-2xs">
+              <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-3 shadow-2xs">
                 <div className="flex items-center justify-between">
-                  <span className="font-bold text-slate-900 flex items-center gap-1.5">
-                    <span>🧮 Phép tính & Giới hạn</span>
+                  <span className="font-bold text-slate-900 text-base sm:text-lg flex items-center gap-2">
+                    <Calculator size={20} weight="duotone" className="text-violet-700" />
+                    <span>Phép tính & Giới hạn</span>
                   </span>
-                  <span className="text-[10px] font-bold text-emerald-700 flex items-center gap-1">
-                    <ShieldCheck size={13} weight="fill" className="text-emerald-600" />
+                  <span className="text-sm font-bold text-emerald-700 flex items-center gap-1.5">
+                    <ShieldCheck size={18} weight="fill" className="text-emerald-600" />
                     <span>Hợp lệ</span>
                   </span>
                 </div>
 
-                <div className="bg-slate-900 text-slate-100 rounded-lg p-2.5 font-mono text-xs flex items-center justify-between flex-wrap gap-2">
+                <div className="bg-slate-900 text-slate-100 rounded-xl px-4 py-4 font-mono text-sm sm:text-base leading-relaxed flex items-center justify-between flex-wrap gap-3 overflow-x-auto">
                   <span className="text-slate-300">{info.formula}</span>
                   <div className="flex items-center gap-1.5 font-bold">
-                    <span className="text-slate-400">➔</span>
-                    <span className="text-emerald-400 px-1.5 py-0.2 rounded bg-emerald-950 border border-emerald-800">
+                    <ArrowUpRight size={18} className="text-slate-400" />
+                    <span className="text-emerald-400 px-2.5 py-1 rounded-md bg-emerald-950 border border-emerald-800">
                       {info.resultBid}
                     </span>
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between text-[11px] text-slate-600 bg-slate-50 rounded-lg px-2.5 py-1 border border-slate-100 font-mono">
-                  <span>Sàn: $0.10</span>
-                  <span className="text-indigo-700 font-bold">Đề xuất: {info.resultBid}</span>
-                  <span>Trần: ${maxBidCap ? maxBidCap.toFixed(2) : "2.80"}</span>
+                <div className="flex items-center justify-between gap-3 text-sm sm:text-base text-slate-600 bg-slate-50 rounded-lg px-3.5 py-2.5 border border-slate-100 font-mono flex-wrap">
+                  <span>{info.boundaryNote}</span>
+                  <span className="text-indigo-700 font-bold whitespace-nowrap">Kết quả: {info.resultBid}</span>
                 </div>
               </div>
 
@@ -1505,8 +1522,8 @@ export function PpcSkuRecommendationGroupView({
               <div className="flex justify-end pt-1">
                 <button
                   type="button"
-                  onClick={() => setAiExplanationModal(null)}
-                  className="px-4 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition cursor-pointer"
+                  onClick={() => setRuleExplanationModal(null)}
+                  className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 active:scale-[0.98] text-white rounded-lg text-sm font-bold transition cursor-pointer"
                 >
                   Đã hiểu
                 </button>
@@ -1519,58 +1536,43 @@ export function PpcSkuRecommendationGroupView({
   );
 }
 
-function getStructuredAiExplanation(
-  modal: { rec: PpcRecommendation; explanation: string; structured?: any },
+function getRuleExplanation(
+  rec: PpcRecommendation,
   breakEvenAcos?: number,
   maxBidLimit?: number
 ) {
-  const structured = modal.structured;
-  if (structured && structured.ruleCondition && structured.formula) {
-    return {
-      ruleName: structured.ruleName || "MATCHED_RULE",
-      ruleCondition: structured.ruleCondition,
-      formula: structured.formula,
-      resultBid: structured.resultBid || `$${(modal.rec.recommendedBid || 0).toFixed(2)}`,
-      boundaryNote: structured.boundaryNote || "",
-    };
-  }
-
-  const rec = modal.rec;
   const beAcos = breakEvenAcos ?? 48;
   const actualAcos = rec.sales && rec.sales > 0 && rec.spend ? (rec.spend / rec.sales) * 100 : null;
   const isIncrease = rec.recType === "BID_INCREASE";
   const isPause = rec.recType === "PAUSE_TARGET";
-  const isWarning = actualAcos !== null && actualAcos > 40 && actualAcos <= beAcos;
-
-  let ruleName = rec.reason ? rec.reason.split(":")[0]?.replace(/\[.*?\]\s*/, "").trim() : "PPC_RULE";
-  let ruleCondition = "";
-
-  if (isPause) {
-    ruleCondition = `${rec.clicks || 0} clicks không ra đơn (vượt trần cho phép) ➔ Tạm dừng target (PAUSE).`;
-  } else if (isIncrease) {
-    ruleCondition = `ACoS ${actualAcos?.toFixed(1)}% ≤ 20% (vùng hiệu quả cao) ➔ Tăng +8% Current Bid.`;
-  } else if (isWarning) {
-    ruleCondition = `ACoS ${actualAcos?.toFixed(1)}% nằm trong khoảng [40% - ${beAcos}% hòa vốn] ➔ Quy định giảm -8% Avg CPC.`;
-  } else if (actualAcos !== null && actualAcos > beAcos) {
-    ruleCondition = `ACoS ${actualAcos?.toFixed(1)}% vượt ACoS hòa vốn (${beAcos}%) ➔ Giảm mạnh -15% Avg CPC.`;
-  } else {
-    ruleCondition = rec.reason || `Khớp điều kiện quy tắc tối ưu.`;
-  }
+  const ruleName = rec.ruleProfile || "PPC_RULE";
+  const fallbackCondition = rec.orders && rec.orders > 0
+    ? `${rec.orders} đơn, ACoS ${actualAcos?.toFixed(1) ?? "N/A"}% so với mức hòa vốn ${beAcos.toFixed(1)}%.`
+    : `${rec.clicks || 0} clicks, chưa có đơn và đã chi $${(rec.spend || 0).toFixed(2)}.`;
+  const ruleCondition = rec.reason || fallbackCondition;
 
   const exactCpc = rec.spend && rec.clicks && rec.clicks > 0 ? rec.spend / rec.clicks : (rec.cpc || rec.currentBid || 0);
+  const calculationBase = isIncrease ? (rec.currentBid || 0) : exactCpc;
+  const multiplier = calculationBase > 0 ? (rec.recommendedBid || 0) / calculationBase : 0;
+  const changePercent = (multiplier - 1) * 100;
   const formula = isPause
-    ? `Tạm dừng target (Bid = $${(rec.recommendedBid || 0).toFixed(2)})`
+    ? `Không tính bid mới: target được chuyển sang PAUSE để dừng phát sinh chi phí.`
     : isIncrease
-    ? `$${(rec.currentBid || 0).toFixed(2)} (Current Bid) × 1.08 = $${((rec.currentBid || 0) * 1.08).toFixed(3)}`
-    : `$${exactCpc.toFixed(2)} (Avg CPC) × 0.92 = $${(exactCpc * 0.92).toFixed(3)}`;
+    ? `$${calculationBase.toFixed(2)} Current Bid × ${multiplier.toFixed(3)} (${changePercent >= 0 ? "+" : ""}${changePercent.toFixed(1)}%) = $${(rec.recommendedBid || 0).toFixed(2)}`
+    : `$${calculationBase.toFixed(2)} Avg CPC × ${multiplier.toFixed(3)} (${changePercent.toFixed(1)}%) = $${(rec.recommendedBid || 0).toFixed(2)}`;
+
+  const minBidMatch = rec.reason?.match(/Sàn rule:\s*\$([0-9.]+)/i);
+  const minBid = Number(minBidMatch?.[1] || 0.10);
 
   return {
     ruleName,
     ruleCondition,
     formula,
-    resultBid: `$${(rec.recommendedBid || 0).toFixed(2)}`,
-    boundaryNote: maxBidLimit
-      ? `Sàn $0.10 ≤ $${(rec.recommendedBid || 0).toFixed(2)} ≤ Trần $${maxBidLimit.toFixed(2)}`
-      : `Nằm trong khoảng an toàn`,
+    resultBid: isPause ? "PAUSE" : `$${(rec.recommendedBid || 0).toFixed(2)}`,
+    boundaryNote: isPause
+      ? "Không áp dụng giới hạn bid khi hành động là PAUSE."
+      : maxBidLimit
+        ? `Sàn $${minBid.toFixed(2)} ≤ $${(rec.recommendedBid || 0).toFixed(2)} ≤ Trần $${maxBidLimit.toFixed(2)}`
+        : `Bid mới đã được rule engine kiểm tra giới hạn an toàn.`,
   };
 }

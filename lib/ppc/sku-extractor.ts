@@ -48,17 +48,18 @@ export function extractSkuFromText(text: string | null | undefined): string | nu
  * - "OHN200225MB SP03 Quynh Phrase 250902 3KW" -> 20250902
  * - "OD240905WFTYTH SB01 Quynh Phrase 100226" -> 20240905 / 20260210
  */
-export function extractCampaignDate(name: string | null | undefined): number {
+export function extractCampaignDate(name: string | null | undefined, now = new Date()): number {
   if (!name) return 0;
   // 1. Look for explicit 8-digit date YYYYMMDD (2023xxxx - 2029xxxx)
   const m8 = name.match(/\b(202[3-9][0-1][0-9][0-3][0-9])\b/);
   if (m8) return parseInt(m8[1], 10);
 
-  // 2. Look for 6-digit date YYMMDD (23xxxx - 29xxxx) towards middle/end
+  // 2. Campaign operators use both YYMMDD and DDMMYY. When both are valid,
+  // choose the date closest to today and reject implausibly distant futures.
   const matches = Array.from(name.matchAll(/\b(2[3-9][0-1][0-9][0-3][0-9])\b/g));
   if (matches.length > 0) {
-    const val = matches[matches.length - 1][1];
-    return parseInt(`20${val}`, 10);
+    const parsed = parseAmbiguousSixDigitDate(matches[matches.length - 1][1], now);
+    if (parsed) return parsed;
   }
 
   // 3. Look for 6-digit date in SKU prefix (e.g. OD240905 -> 20240905)
@@ -66,6 +67,31 @@ export function extractCampaignDate(name: string | null | undefined): number {
   if (mSku) return parseInt(`20${mSku[1]}`, 10);
 
   return 0;
+}
+
+function parseAmbiguousSixDigitDate(value: string, now = new Date()): number {
+  const candidates: Date[] = [];
+  const yy = Number(value.slice(0, 2));
+  const mm = Number(value.slice(2, 4));
+  const dd = Number(value.slice(4, 6));
+  const dmyDay = Number(value.slice(0, 2));
+  const dmyMonth = Number(value.slice(2, 4));
+  const dmyYear = Number(value.slice(4, 6));
+
+  const addCandidate = (year: number, month: number, day: number) => {
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day) {
+      const latestReasonable = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 180));
+      if (date <= latestReasonable) candidates.push(date);
+    }
+  };
+
+  addCandidate(2000 + yy, mm, dd);
+  addCandidate(2000 + dmyYear, dmyMonth, dmyDay);
+  if (candidates.length === 0) return 0;
+  candidates.sort((a, b) => Math.abs(a.getTime() - now.getTime()) - Math.abs(b.getTime() - now.getTime()));
+  const best = candidates[0];
+  return best.getUTCFullYear() * 10000 + (best.getUTCMonth() + 1) * 100 + best.getUTCDate();
 }
 
 /**

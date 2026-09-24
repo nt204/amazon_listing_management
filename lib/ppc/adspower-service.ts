@@ -24,6 +24,7 @@ import {
   upsertPpcSearchTerms,
 } from "./repository";
 import { organizePpcReportFile } from "./file-manager";
+import { warmGroupedRecommendationWindows } from "./recommendation-warmup";
 
 export interface AdsPowerSyncResult {
   success: boolean;
@@ -1732,6 +1733,12 @@ export async function ingestDownloadedPpcFiles(
     }
   }
 
+  if (totalParsed > 0) {
+    await warmGroupedRecommendationWindows(scope, storeName).catch((error) => {
+      console.warn("[AdsPower Ingest] Không thể warm recommendation cache:", error);
+    });
+  }
+
   return { totalParsed, totalNew, totalUpdated };
 }
 
@@ -1886,6 +1893,13 @@ export async function syncPpcFromAdsPower(
       count: r2Uploaded,
       message: `Đã sao lưu ${r2Uploaded} file báo cáo lên Cloudflare R2 an toàn`,
     }).catch(() => {});
+  }
+
+  if (totalParsed > 0) {
+    console.log("[AdsPower Sync] Đang chuẩn bị sẵn recommendation cache 7D/30D...");
+    await warmGroupedRecommendationWindows(scope, storeName).catch((error) => {
+      console.warn("[AdsPower Sync] Không thể warm recommendation cache:", error);
+    });
   }
 
   // Tắt web sau khi dùng theo yêu cầu
@@ -2062,4 +2076,3 @@ export async function uploadBulkFileToAmazonAds(options: {
     message: `Đã tự động tải file ${fileName} lên Amazon Ads Bulk Operations thành công qua AdsPower.`,
   };
 }
-

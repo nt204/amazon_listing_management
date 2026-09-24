@@ -556,8 +556,9 @@ async function getBulkTableRows(bulkPage: Page): Promise<BulkTableRow[]> {
 
     return Array.from(map.values()).map((item) => {
       const fullText = item.texts.join(" ");
-      const guidMatch = fullText.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-      const guid = guidMatch ? guidMatch[0].toLowerCase() : null;
+      const guidFromText = fullText.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0];
+      const guidFromHref = item.href ? item.href.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0] : null;
+      const guid = (guidFromText || guidFromHref || "").toLowerCase() || null;
       return {
         guid,
         text: fullText,
@@ -574,9 +575,11 @@ async function waitForBulkFileDownload(
   expectedRawName: string | null,
   timeoutSeconds = 120,
   signal?: AbortSignal,
+  expectedGuid?: string | null,
 ): Promise<string> {
   const parentDir = path.dirname(destDir);
   const deadline = Date.now() + timeoutSeconds * 1000;
+  const shortGuid = expectedGuid ? expectedGuid.toLowerCase().slice(0, 8) : null;
 
   while (Date.now() < deadline) {
     throwIfAborted(signal);
@@ -590,7 +593,7 @@ async function waitForBulkFileDownload(
         const crdownload = path.join(destDir, `${expectedRawName}.crdownload`);
         if (!fs.existsSync(crdownload)) {
           const stat = fs.statSync(destCandidate);
-          if (stat.size > 100_000) return destCandidate;
+          if (stat.size > 50_000) return destCandidate;
         }
       }
 
@@ -598,7 +601,7 @@ async function waitForBulkFileDownload(
         const crdownload = path.join(parentDir, `${expectedRawName}.crdownload`);
         if (!fs.existsSync(crdownload)) {
           const stat = fs.statSync(parentCandidate);
-          if (stat.size > 100_000) {
+          if (stat.size > 50_000) {
             if (fs.existsSync(destCandidate)) {
               try { fs.unlinkSync(destCandidate); } catch { }
             }
@@ -615,13 +618,16 @@ async function waitForBulkFileDownload(
       const files = fs.readdirSync(d);
       for (const f of files) {
         if (!f.endsWith(".xlsx") || f.includes(".crdownload") || f.startsWith(".")) continue;
-        if (!f.startsWith("bulk-") && !/amazon.*bulk/i.test(f)) continue;
+        if (!/bulk|BulkSheetExport/i.test(f)) continue;
         if (/search.*term|ST_/i.test(f)) continue;
+
+        // Nếu có mã GUID, ưu tiên khớp chính xác mã GUID trong tên file
+        if (shortGuid && !f.toLowerCase().includes(shortGuid)) continue;
 
         const fullPath = path.join(d, f);
         try {
           const stat = fs.statSync(fullPath);
-          if (stat.size > 1_000_000 && Date.now() - stat.mtimeMs < 10 * 60 * 1000) {
+          if (stat.size > 50_000 && Date.now() - stat.mtimeMs < 10 * 60 * 1000) {
             if (d === parentDir) {
               const targetPath = path.join(destDir, f);
               if (fs.existsSync(targetPath)) {
@@ -880,56 +886,105 @@ async function downloadBulkFileByRow(
   console.log(`  [BULK] Bắt đầu tải file cho ${task.adType} ${task.days}d (Khớp ID: ${task.requestId})...`);
 
   const guid = task.requestId;
-  const expectedRawName = downloadUrl.match(/bulk-[^/?]+\.xlsx/i)?.[0] || null;
-  const directLinkEl = await bulkPage.$(`a[href*="${guid}"]`).catch(() => null)
-    || await bulkPage.$(`.ag-row:has-text("${guid}") a, tr:has-text("${guid}") a`).catch(() => null);
-
   const initialDir = task.adType === "SP" ? spDir : sbDir;
   let standardizedPath: string | null = null;
 
-  try {
-    const [download] = await Promise.all([
-      raceWithAbort(bulkPage.waitForEvent("download", { timeout: 60_000 }), signal),
-      (async () => {
-        if (directLinkEl) {
-          await directLinkEl.click().catch(async () => {
-            await bulkPage.evaluate((el: any) => el?.click(), directLinkEl);
-          });
-        } else {
-          await bulkPage.evaluate((url: string) => {
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = "";
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-          }, downloadUrl);
-        }
-      })(),
-    ]);
-
-    const suggestedName = download.suggestedFilename();
-    const cleanRawName = sanitizeRawFileName(suggestedName, storeName);
-    const standardizedName = `${storeName}_Bulk_${task.adType}_${task.days}Days_${cleanRawName}`;
-    standardizedPath = path.join(initialDir, standardizedName);
+  // Phương án 1 (Khuyên dùng & Nhanh nhất): Tải trực tiếp qua HTTP session cookie của Amazon
+  // Tránh việc click tạo popup mới, nhảy tab, reload hoặc bị CDP chặn download
+  if (downloadUrl && downloadUrl.startsWith("http")) {
     try {
-      await download.saveAs(standardizedPath);
-    } catch { }
-  } catch { }
-
-  if (!standardizedPath || !fs.existsSync(standardizedPath)) {
-    const downloadedPath = await waitForBulkFileDownload(initialDir, expectedRawName, 120, signal);
-    const rawName = path.basename(downloadedPath);
-    const cleanRawName = sanitizeRawFileName(rawName, storeName);
-    const standardizedName = `${storeName}_Bulk_${task.adType}_${task.days}Days_${cleanRawName}`;
-    standardizedPath = path.join(initialDir, standardizedName);
-    if (downloadedPath !== standardizedPath) {
-      if (fs.existsSync(standardizedPath)) {
-        try { fs.unlinkSync(standardizedPath); } catch { }
+      console.log(`  [BULK] ⚡ Đang kéo file trực tiếp qua bulkPage.request.get()...`);
+      const res = await bulkPage.request.get(downloadUrl, { timeout: 60000 });
+      if (res.ok()) {
+        const buf = await res.body();
+        if (buf && buf.length > 5000) {
+          const urlRawMatch = downloadUrl.match(/(?:bulk-[^/?]+|BulkSheetExport[^/?]*)\.xlsx/i)?.[0];
+          const rawName = urlRawMatch || `bulk-${guid.slice(0, 8)}.xlsx`;
+          const cleanRawName = sanitizeRawFileName(rawName, storeName);
+          const standardizedName = `${storeName}_Bulk_${task.adType}_${task.days}Days_${cleanRawName}`;
+          standardizedPath = path.join(initialDir, standardizedName);
+          fs.writeFileSync(standardizedPath, buf);
+          console.log(`  [BULK] ✅ Tải trực tiếp thành công (${(buf.length / 1024).toFixed(1)} KB): ${standardizedName}`);
+        }
       }
-      fs.renameSync(downloadedPath, standardizedPath);
+    } catch (fetchErr) {
+      console.warn(`  [BULK] Kéo trực tiếp không thành công, thử cơ chế click/download:`, (fetchErr as Error).message);
     }
   }
+
+  // Phương án 2: Fallback click vào giao diện nếu phương án 1 chưa lưu được file
+  if (!standardizedPath || !fs.existsSync(standardizedPath)) {
+    const expectedRawName = downloadUrl.match(/(?:bulk-[^/?]+|BulkSheetExport[^/?]*)\.xlsx/i)?.[0] || null;
+    const downloadSelectors = [
+      `a[data-takt-id="Bulksheet_originalFileAction_download_original_file"][href*="${guid}"]`,
+      `a[href*="BulkSheetExportOutput"][href*="${guid}"]`,
+      `a[href*="bulk-operations/download"][href*="${guid}"]`,
+      `a[href*="${guid}"][href*="download"]`,
+      `a[href*="${guid}"]`,
+      `.ag-row:has-text("${guid}") a[data-takt-id="Bulksheet_originalFileAction_download_original_file"]`,
+      `.ag-row:has-text("${guid}") a[href*="BulkSheetExportOutput"]`,
+      `.ag-row:has-text("${guid}") a[href*="download"]`,
+      `tr:has-text("${guid}") a[href*="download"]`,
+    ];
+    let directLinkEl: any = null;
+    for (const sel of downloadSelectors) {
+      directLinkEl = await bulkPage.$(sel).catch(() => null);
+      if (directLinkEl) break;
+    }
+
+    try {
+      const [download] = await Promise.all([
+        raceWithAbort(bulkPage.waitForEvent("download", { timeout: 30_000 }), signal),
+        (async () => {
+          if (directLinkEl) {
+            await directLinkEl.click().catch(async () => {
+              await bulkPage.evaluate((el: any) => el?.click(), directLinkEl);
+            });
+          } else {
+            await bulkPage.evaluate((url: string) => {
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "";
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+            }, downloadUrl);
+          }
+        })(),
+      ]);
+
+      const suggestedName = download.suggestedFilename();
+      const cleanRawName = sanitizeRawFileName(suggestedName, storeName);
+      const standardizedName = `${storeName}_Bulk_${task.adType}_${task.days}Days_${cleanRawName}`;
+      standardizedPath = path.join(initialDir, standardizedName);
+      try {
+        await download.saveAs(standardizedPath);
+      } catch { }
+    } catch { }
+
+    if (!standardizedPath || !fs.existsSync(standardizedPath)) {
+      const downloadedPath = await waitForBulkFileDownload(initialDir, expectedRawName, 60, signal, guid);
+      const rawName = path.basename(downloadedPath);
+      const cleanRawName = sanitizeRawFileName(rawName, storeName);
+      const standardizedName = `${storeName}_Bulk_${task.adType}_${task.days}Days_${cleanRawName}`;
+      standardizedPath = path.join(initialDir, standardizedName);
+      if (downloadedPath !== standardizedPath) {
+        if (fs.existsSync(standardizedPath)) {
+          try { fs.unlinkSync(standardizedPath); } catch { }
+        }
+        fs.renameSync(downloadedPath, standardizedPath);
+      }
+    }
+  }
+
+  // Tự động đóng bất kỳ popup/tab mới nào vừa bị Chrome mở ra ngoài ý muốn
+  try {
+    for (const p of bulkPage.context().pages()) {
+      if (p !== bulkPage && (p.url() === "about:blank" || p.url().includes("download") || p.url().includes("BulkSheetExportOutput"))) {
+        await p.close().catch(() => {});
+      }
+    }
+  } catch { }
 
   if (!standardizedPath || !fs.existsSync(standardizedPath)) {
     throw new Error(`Không tìm thấy file Bulk sau khi tải và chuẩn hóa (ID: ${task.requestId}).`);
@@ -1029,6 +1084,10 @@ async function createAndDownloadAllBulkReports(
   console.log(`Amazon xử lý song song cả 4 file. Hàng có ID nào xong thì bốc đúng file của ID đó.`);
   console.log(`================================================================\n`);
 
+  // Đảm bảo không còn modal nào che khuất bảng
+  await bulkPage.keyboard.press("Escape").catch(() => {});
+  await bulkPage.waitForTimeout(500);
+
   const deadline = Date.now() + 1_800_000; // Tối đa 30 phút
   let pollIteration = 0;
   const usedHrefs = new Set<string>();
@@ -1037,6 +1096,24 @@ async function createAndDownloadAllBulkReports(
   while (Date.now() < deadline && tasks.some((t) => !t.filePath)) {
     throwIfAborted(signal);
     pollIteration++;
+
+    // Guard URL: Đảm bảo bulkPage luôn ở đúng trang bulk-operations, không bị trôi sang tab trắng hoặc URL khác
+    const expectedBulkUrl = `https://advertising.amazon.com/bulk-operations${entityParam}`;
+    if (!bulkPage.url().includes("bulk-operations")) {
+      console.log(`[BULK PHA 2] URL bị lệch (${bulkPage.url()}), điều hướng lại về ${expectedBulkUrl}...`);
+      await bulkPage.goto(expectedBulkUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
+      await bulkPage.waitForTimeout(2500);
+    }
+
+    // Tự động dọn dẹp các tab thừa hoặc popup trắng
+    try {
+      for (const p of bulkPage.context().pages()) {
+        if (p !== bulkPage && (p.url() === "about:blank" || p.url().includes("download") || p.url().includes("BulkSheetExportOutput"))) {
+          await p.close().catch(() => {});
+        }
+      }
+    } catch { }
+
     const rows = await getBulkTableRows(bulkPage);
 
     for (const task of tasks) {
@@ -1045,7 +1122,8 @@ async function createAndDownloadAllBulkReports(
       const matchingRow = rows.find(
         (r) =>
           (r.guid && r.guid.toLowerCase() === task.requestId.toLowerCase()) ||
-          (r.text && r.text.toLowerCase().includes(task.requestId.toLowerCase())),
+          (r.text && r.text.toLowerCase().includes(task.requestId.toLowerCase())) ||
+          (r.href && r.href.toLowerCase().includes(task.requestId.toLowerCase())),
       );
 
       if (matchingRow && matchingRow.isSuccess && matchingRow.href && !usedHrefs.has(matchingRow.href)) {
@@ -1820,6 +1898,26 @@ export async function crawlStore(
     });
     await page.waitForTimeout(3000);
   }
+
+  // Dọn dẹp tab rác của AdsPower (start.adspower, tab blank...), chỉ giữ lại 1 tab amazon chính
+  try {
+    for (const p of context.pages()) {
+      if (p !== page && (p.url().includes("adspower") || p.url() === "about:blank" || p.url().includes("chrome://"))) {
+        await p.close().catch(() => {});
+      }
+    }
+  } catch { }
+
+  // Tự động đóng popup tải file hoặc tab trắng nếu bị kích hoạt ngoài ý muốn
+  context.on("page", async (popup) => {
+    try {
+      await popup.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => {});
+      const u = popup.url();
+      if (u === "about:blank" || u.includes("bulk-operations/download") || u.includes("BulkSheetExportOutput")) {
+        await popup.close().catch(() => {});
+      }
+    } catch { }
+  });
 
   try {
     const entityId = page.url().match(/entityId=([A-Z0-9]+)/)?.[1] || "";

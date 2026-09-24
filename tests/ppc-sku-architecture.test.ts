@@ -10,6 +10,16 @@ import {
   SKU_PREFIX_ERROR_PRODUCT_TYPE,
   SKU_TO_PRODUCT_TYPE_RULE_SET,
 } from "../lib/ppc/sku-architecture-types";
+import { extractCampaignDate } from "../lib/ppc/sku-extractor";
+
+test("campaign dates resolve mixed YYMMDD and DDMMYY formats", () => {
+  const now = new Date("2026-09-24T00:00:00Z");
+  assert.equal(extractCampaignDate("Campaign 250902", now), 20250902);
+  assert.equal(extractCampaignDate("Campaign 290325", now), 20250329);
+  assert.equal(extractCampaignDate("Campaign 270725", now), 20250727);
+  assert.equal(extractCampaignDate("Campaign 241126", now), 20261124);
+  assert.equal(extractCampaignDate("Campaign 20260908", now), 20260908);
+});
 
 test("SKU Economics Mathematical Formulas", () => {
   // Test Glass Ornament economics
@@ -671,5 +681,3 @@ print('MIXED_INTEGRITY_OK')
 
   assert.equal(checkResult, "MIXED_INTEGRITY_OK");
 });
-
-

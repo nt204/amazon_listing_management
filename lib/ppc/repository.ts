@@ -515,6 +515,164 @@ export async function listPpcPerformance(
   return rows.map(mapPerformance);
 }
 
+export interface PpcCampaignPageFilters {
+  storeName: string;
+  sku: string;
+  days: number;
+  query: string;
+  status: "ALL" | "ACTIVE" | "PAUSED";
+  adType: string;
+  spendFilter: "ALL" | "HAS_SPEND" | "ZERO_SPEND" | "SPEND_GT_50" | "SPEND_GT_100";
+  groupFilter: "ALL" | "BLEEDING" | "HIGH_ACOS" | "GOOD";
+  targetAcos: number;
+  sortField: "date" | "spend" | "sales" | "orders" | "clicks" | "impressions" | "ctr" | "acos" | "cvr" | "roas";
+  sortDirection: "asc" | "desc";
+  page: number;
+  pageSize: number;
+}
+
+export async function listPpcCampaignPage(
+  scope: DataScope,
+  filters: PpcCampaignPageFilters,
+): Promise<{
+  rows: PpcPerformanceRow[];
+  total: number;
+  activeCount: number;
+  pausedCount: number;
+  totals: { spend: number; sales: number; orders: number; clicks: number; impressions: number };
+}> {
+  const sql = await getDatabaseClient();
+  const teamId = (scope as any)?.teamId || "default";
+  const offset = (filters.page - 1) * filters.pageSize;
+  const searchPattern = `%${filters.query.trim()}%`;
+
+  const rows = await sql<Array<PerformanceDbRow & {
+    filtered_total: string | number;
+    active_count: string | number;
+    paused_count: string | number;
+    total_spend: string | number;
+    total_sales: string | number;
+    total_orders: string | number;
+    total_clicks: string | number;
+    total_impressions: string | number;
+  }>>`
+    WITH latest_snapshots AS (
+      SELECT DISTINCT ON (p2.store_id, p2.ad_type)
+        p2.store_id, p2.ad_type, p2.snapshot_date, p2.report_start_date, p2.report_end_date
+      FROM ppc_performance_facts p2
+      JOIN ppc_stores s2 ON s2.id = p2.store_id
+      WHERE s2.team_id = ${teamId}
+        AND (${filters.storeName === "ALL"} OR lower(s2.name) = lower(${filters.storeName}))
+        AND (p2.report_end_date - p2.report_start_date + 1)
+          BETWEEN ${filters.days - 3}::integer AND ${filters.days + 3}::integer
+      ORDER BY p2.store_id, p2.ad_type, p2.snapshot_date DESC, p2.report_end_date DESC
+    ), base_raw AS (
+      SELECT p.*, s.name AS store_name,
+        (regexp_match(p.campaign_name, '(202[3-9][0-1][0-9][0-3][0-9])'))[1] AS explicit_date_token,
+        (regexp_match(p.campaign_name, '(^|[^0-9])(2[3-9](0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01]))([^0-9]|$)'))[2] AS short_date_token,
+        (regexp_match(p.campaign_name, '^[A-Za-z]{2,5}(2[3-9](0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01]))'))[1] AS sku_date_token,
+        CASE WHEN p.impressions > 0 THEN p.clicks::numeric / p.impressions * 100 ELSE 0 END AS calc_ctr,
+        CASE WHEN p.clicks > 0 THEN p.orders::numeric / p.clicks * 100 ELSE 0 END AS calc_cvr,
+        CASE WHEN p.sales > 0 THEN p.spend::numeric / p.sales * 100 ELSE CASE WHEN p.spend > 0 THEN 999 ELSE 0 END END AS calc_acos,
+        CASE WHEN p.spend > 0 THEN p.sales::numeric / p.spend ELSE 0 END AS calc_roas
+      FROM ppc_performance_facts p
+      JOIN ppc_stores s ON s.id = p.store_id
+      JOIN latest_snapshots ls ON ls.store_id = p.store_id AND ls.ad_type = p.ad_type
+        AND ls.snapshot_date = p.snapshot_date
+        AND ls.report_start_date = p.report_start_date
+        AND ls.report_end_date = p.report_end_date
+      WHERE p.grain = 'CAMPAIGN'
+        AND (${filters.sku === "ALL"} OR lower(p.sku) = lower(${filters.sku}) OR position(lower(${filters.sku}) in lower(p.campaign_name)) > 0)
+    ), base AS (
+      SELECT base_raw.*,
+        COALESCE(
+          explicit_date_token,
+          CASE WHEN short_date_token IS NOT NULL THEN
+            CASE
+              WHEN to_char(to_date(short_date_token, 'DDMMYY'), 'DDMMYY') = short_date_token
+                AND (
+                  to_char(to_date('20' || short_date_token, 'YYYYMMDD'), 'YYMMDD') <> short_date_token
+                  OR to_date('20' || short_date_token, 'YYYYMMDD') > CURRENT_DATE + 180
+                  OR abs(to_date(short_date_token, 'DDMMYY') - CURRENT_DATE) < abs(to_date('20' || short_date_token, 'YYYYMMDD') - CURRENT_DATE)
+                )
+              THEN to_char(to_date(short_date_token, 'DDMMYY'), 'YYYYMMDD')
+              WHEN to_char(to_date('20' || short_date_token, 'YYYYMMDD'), 'YYMMDD') = short_date_token
+                AND to_date('20' || short_date_token, 'YYYYMMDD') <= CURRENT_DATE + 180
+              THEN '20' || short_date_token
+              ELSE NULL
+            END
+          END,
+          CASE WHEN sku_date_token IS NOT NULL THEN '20' || sku_date_token END,
+          ''
+        ) AS campaign_date_key
+      FROM base_raw
+    ), status_counts AS (
+      SELECT count(*) FILTER (WHERE state !~* 'pause|archive') AS active_count,
+             count(*) FILTER (WHERE state ~* 'pause|archive') AS paused_count
+      FROM base
+    ), filtered AS (
+      SELECT * FROM base
+      WHERE (${!filters.query.trim()} OR campaign_name ILIKE ${searchPattern} OR store_name ILIKE ${searchPattern} OR sku ILIKE ${searchPattern})
+        AND (${filters.status === "ALL"}
+          OR (${filters.status === "ACTIVE"} AND state !~* 'pause|archive')
+          OR (${filters.status === "PAUSED"} AND state ~* 'pause|archive'))
+        AND (${filters.adType === "ALL"} OR upper(ad_type) = upper(${filters.adType}))
+        AND (${filters.spendFilter === "ALL"}
+          OR (${filters.spendFilter === "HAS_SPEND"} AND spend > 0)
+          OR (${filters.spendFilter === "ZERO_SPEND"} AND spend = 0)
+          OR (${filters.spendFilter === "SPEND_GT_50"} AND spend >= 50)
+          OR (${filters.spendFilter === "SPEND_GT_100"} AND spend >= 100))
+        AND (${filters.groupFilter === "ALL"}
+          OR (${filters.groupFilter === "BLEEDING"} AND orders = 0 AND spend >= 10)
+          OR (${filters.groupFilter === "HIGH_ACOS"} AND orders > 0 AND calc_acos > ${filters.targetAcos})
+          OR (${filters.groupFilter === "GOOD"} AND orders > 0 AND calc_acos <= ${filters.targetAcos} AND spend >= 5))
+    ), totals AS (
+      SELECT count(*) AS filtered_total, COALESCE(sum(spend),0) AS total_spend,
+        COALESCE(sum(sales),0) AS total_sales, COALESCE(sum(orders),0) AS total_orders,
+        COALESCE(sum(clicks),0) AS total_clicks, COALESCE(sum(impressions),0) AS total_impressions
+      FROM filtered
+    )
+    SELECT f.*, t.*, sc.active_count, sc.paused_count
+    FROM totals t CROSS JOIN status_counts sc LEFT JOIN filtered f ON true
+    ORDER BY
+      CASE WHEN ${filters.sortField} = 'date' AND ${filters.sortDirection} = 'asc' THEN campaign_date_key END ASC,
+      CASE WHEN ${filters.sortField} = 'date' AND ${filters.sortDirection} = 'desc' THEN campaign_date_key END DESC,
+      CASE WHEN ${filters.sortField} = 'spend' AND ${filters.sortDirection} = 'asc' THEN spend END ASC,
+      CASE WHEN ${filters.sortField} = 'spend' AND ${filters.sortDirection} = 'desc' THEN spend END DESC,
+      CASE WHEN ${filters.sortField} = 'sales' AND ${filters.sortDirection} = 'asc' THEN sales END ASC,
+      CASE WHEN ${filters.sortField} = 'sales' AND ${filters.sortDirection} = 'desc' THEN sales END DESC,
+      CASE WHEN ${filters.sortField} = 'orders' AND ${filters.sortDirection} = 'asc' THEN orders END ASC,
+      CASE WHEN ${filters.sortField} = 'orders' AND ${filters.sortDirection} = 'desc' THEN orders END DESC,
+      CASE WHEN ${filters.sortField} = 'clicks' AND ${filters.sortDirection} = 'asc' THEN clicks END ASC,
+      CASE WHEN ${filters.sortField} = 'clicks' AND ${filters.sortDirection} = 'desc' THEN clicks END DESC,
+      CASE WHEN ${filters.sortField} = 'impressions' AND ${filters.sortDirection} = 'asc' THEN impressions END ASC,
+      CASE WHEN ${filters.sortField} = 'impressions' AND ${filters.sortDirection} = 'desc' THEN impressions END DESC,
+      CASE WHEN ${filters.sortField} = 'ctr' AND ${filters.sortDirection} = 'asc' THEN calc_ctr END ASC,
+      CASE WHEN ${filters.sortField} = 'ctr' AND ${filters.sortDirection} = 'desc' THEN calc_ctr END DESC,
+      CASE WHEN ${filters.sortField} = 'acos' AND ${filters.sortDirection} = 'asc' THEN calc_acos END ASC,
+      CASE WHEN ${filters.sortField} = 'acos' AND ${filters.sortDirection} = 'desc' THEN calc_acos END DESC,
+      CASE WHEN ${filters.sortField} = 'cvr' AND ${filters.sortDirection} = 'asc' THEN calc_cvr END ASC,
+      CASE WHEN ${filters.sortField} = 'cvr' AND ${filters.sortDirection} = 'desc' THEN calc_cvr END DESC,
+      CASE WHEN ${filters.sortField} = 'roas' AND ${filters.sortDirection} = 'asc' THEN calc_roas END ASC,
+      CASE WHEN ${filters.sortField} = 'roas' AND ${filters.sortDirection} = 'desc' THEN calc_roas END DESC,
+      spend DESC, campaign_id ASC, id ASC
+    LIMIT ${filters.pageSize} OFFSET ${offset}
+  `;
+
+  const first = rows[0];
+  return {
+    rows: rows.filter((row) => Boolean(row.id)).map(mapPerformance),
+    total: Number(first?.filtered_total || 0),
+    activeCount: Number(first?.active_count || 0),
+    pausedCount: Number(first?.paused_count || 0),
+    totals: {
+      spend: Number(first?.total_spend || 0), sales: Number(first?.total_sales || 0),
+      orders: Number(first?.total_orders || 0), clicks: Number(first?.total_clicks || 0),
+      impressions: Number(first?.total_impressions || 0),
+    },
+  };
+}
+
 export async function listPpcSyncLogs(scope: DataScope, limit = 10): Promise<PpcSyncLog[]> {
   const sql = await getDatabaseClient();
   const teamId = (scope as any)?.teamId || "default";
@@ -1983,4 +2141,3 @@ export async function cleanupPpcHistoricalData(
     };
   }
 }
-
