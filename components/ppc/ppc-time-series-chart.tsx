@@ -149,16 +149,12 @@ export function PpcTimeSeriesChart({
         roas: targetBreakdown.roas,
       };
     }
-    const sp = adTypeBreakdown.find((a) => a.adType === "SP");
-    const sb = adTypeBreakdown.find((a) => a.adType === "SB");
-    const totalSpend = (sp?.spend || 0) + (sb?.spend || 0);
-    const mult = totalSpend > 0 && channel === "SP" ? (sp?.spend || 0) / totalSpend : 1;
     return {
-      spend: Math.round(summary.totalSpend * mult * 100) / 100,
-      revenue: Math.round(summary.totalSales * mult * 100) / 100,
-      orders: Math.round(summary.totalOrders * mult),
-      acos: summary.blendedAcos,
-      roas: summary.blendedRoas,
+      spend: 0,
+      revenue: 0,
+      orders: 0,
+      acos: 0,
+      roas: 0,
     };
   }, [channel, summary, adTypeBreakdown]);
 
@@ -184,16 +180,12 @@ export function PpcTimeSeriesChart({
         roas: targetBreakdown.roas,
       };
     }
-    const sp = (adTypeBreakdown7D || []).find((a) => a.adType === "SP");
-    const sb = (adTypeBreakdown7D || []).find((a) => a.adType === "SB");
-    const totalSpend = (sp?.spend || 0) + (sb?.spend || 0);
-    const mult = totalSpend > 0 && channel === "SP" ? (sp?.spend || 0) / totalSpend : 1;
     return {
-      spend: Math.round(summary7D.totalSpend * mult * 100) / 100,
-      revenue: Math.round(summary7D.totalSales * mult * 100) / 100,
-      orders: Math.round(summary7D.totalOrders * mult),
-      acos: summary7D.blendedAcos,
-      roas: summary7D.blendedRoas,
+      spend: 0,
+      revenue: 0,
+      orders: 0,
+      acos: 0,
+      roas: 0,
     };
   }, [channel, summary7D, adTypeBreakdown7D]);
 

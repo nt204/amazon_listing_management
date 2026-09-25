@@ -1082,7 +1082,7 @@ export async function refreshPpcSnapshotSummary(
     const start = new Date(reportStartDate);
     const end = new Date(reportEndDate);
     const spanDays = Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-    const coverageDays = Math.max(1, spanDays);
+    const coverageDays = canonicalCoverageDays(spanDays);
     const snapshotId = `snap_${storeId.replace(/-/g, "").slice(0, 8)}_${snapshotDate}_${coverageDays}_${Date.now()}`;
 
     // 1. Campaign summary
@@ -1784,6 +1784,17 @@ export interface PpcOverviewAggregates {
 
 const targetCountCache = new Map<string, { expiresAt: number; count: number }>();
 
+function canonicalCoverageDays(spanDays: number): number {
+  const safeSpan = Math.max(1, Math.trunc(spanDays));
+  // Some legacy uploads stored Amazon's start/end boundaries one day wider
+  // (for example 15/09..22/09 for the 7-day option). Normalize only known
+  // report windows; preserve genuinely custom ranges.
+  for (const standard of [7, 14, 30, 60, 90]) {
+    if (safeSpan === standard || safeSpan === standard + 1) return standard;
+  }
+  return safeSpan;
+}
+
 export async function getPpcOverviewAggregates(
   scope: DataScope,
   filters: { storeName?: string; sku?: string; days?: number; startDate?: string; endDate?: string } = {},
@@ -1797,7 +1808,7 @@ export async function getPpcOverviewAggregates(
   const customStart = filters.startDate ? Date.parse(`${filters.startDate}T00:00:00Z`) : NaN;
   const customEnd = filters.endDate ? Date.parse(`${filters.endDate}T00:00:00Z`) : NaN;
   const customCoverageDays = Number.isFinite(customStart) && Number.isFinite(customEnd) && customEnd >= customStart
-    ? Math.round((customEnd - customStart) / 86_400_000) + 1
+    ? canonicalCoverageDays(Math.round((customEnd - customStart) / 86_400_000) + 1)
     : null;
   const coverageDays = customCoverageDays || Math.max(1, Math.trunc(days));
 

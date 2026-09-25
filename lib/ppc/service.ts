@@ -417,12 +417,7 @@ export async function getPpcAnalyticsData(
         dateRangeStart = startObj.toISOString().slice(0, 10);
       }
     }
-    if (!dateRangeStart || !dateRangeEnd) {
-      dateRangeEnd = dailyTrends[dailyTrends.length - 1]?.date || new Date().toISOString().slice(0, 10);
-      const startObj = new Date(dateRangeEnd);
-      startObj.setDate(startObj.getDate() - (days - 1));
-      dateRangeStart = startObj.toISOString().slice(0, 10);
-    }
+    const hasBulkForPeriod = aggregates.kpiRows.length > 0;
 
     const dataHealth: PpcDataHealth = {
       performanceSource: "BULK",
@@ -436,13 +431,13 @@ export async function getPpcAnalyticsData(
       adTypes: aggregates.kpiRows.map((r) => r.ad_type),
       warnings: ["Chưa có placement grain; chưa thể đánh giá placement modifier."],
       strLoaded: true,
-      bulkLoaded: true,
+      bulkLoaded: hasBulkForPeriod,
       dateRangeStart,
       dateRangeEnd,
       totalRecords: searchTermData.summary.totalTerms,
-      granularity: "DAILY",
-      spendCoveragePct: 100,
-      clicksCoveragePct: 100,
+      granularity: dailyTrends.length > 0 ? "DAILY" : "RANGE",
+      spendCoveragePct: hasBulkForPeriod ? 100 : 0,
+      clicksCoveragePct: hasBulkForPeriod ? 100 : 0,
       lastSyncTime: syncLogs[0]?.time ?? null,
     };
 

@@ -154,6 +154,13 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
   const [customStartDate, setCustomStartDate] = useState<string>("");
   const [customEndDate, setCustomEndDate] = useState<string>("");
   const [isCustomDate, setIsCustomDate] = useState<boolean>(false);
+  const effectiveReportDays = useMemo(() => {
+    if (!isCustomDate || !customStartDate || !customEndDate) return Math.max(selectedDays, 1);
+    const start = Date.parse(`${customStartDate}T00:00:00Z`);
+    const end = Date.parse(`${customEndDate}T00:00:00Z`);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return Math.max(selectedDays, 1);
+    return Math.round((end - start) / 86_400_000) + 1;
+  }, [customEndDate, customStartDate, isCustomDate, selectedDays]);
   const [availableSkus, setAvailableSkus] = useState<string[]>([]);
 
   const [summary, setSummary] = useState<PpcSummaryMetrics | null>(null);
@@ -1689,7 +1696,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                 ${summary.totalSpend.toLocaleString("en-US", { minimumFractionDigits: 2 })}
               </div>
               <div className="text-[11px] font-semibold text-slate-500 mt-1">
-                Avg: <strong className="text-slate-800">${(summary.totalSpend / Math.max(selectedDays, 1)).toFixed(1)}/d</strong>
+                Avg: <strong className="text-slate-800">${(summary.totalSpend / effectiveReportDays).toFixed(1)}/d</strong>
               </div>
             </div>
 
@@ -1702,7 +1709,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                 ${summary.totalSales.toLocaleString("en-US", { minimumFractionDigits: 2 })}
               </div>
               <div className="text-[11px] font-semibold text-slate-500 mt-1">
-                Avg: <strong className="text-slate-800">${(summary.totalSales / Math.max(selectedDays, 1)).toFixed(1)}/d</strong>
+                Avg: <strong className="text-slate-800">${(summary.totalSales / effectiveReportDays).toFixed(1)}/d</strong>
               </div>
             </div>
 
@@ -1760,7 +1767,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                 {summary.totalImpressions.toLocaleString()}
               </div>
               <div className="text-[11px] font-semibold text-slate-500 mt-1">
-                Avg: <strong className="text-slate-800">{(summary.totalImpressions / Math.max(selectedDays, 1)).toLocaleString(undefined, { maximumFractionDigits: 0 })}/d</strong>
+                Avg: <strong className="text-slate-800">{(summary.totalImpressions / effectiveReportDays).toLocaleString(undefined, { maximumFractionDigits: 0 })}/d</strong>
               </div>
             </div>
 
@@ -1773,7 +1780,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                 {summary.totalClicks.toLocaleString()}
               </div>
               <div className="text-[11px] font-semibold text-slate-500 mt-1">
-                Avg: <strong className="text-slate-800">{(summary.totalClicks / Math.max(selectedDays, 1)).toFixed(1)}/d</strong>
+                Avg: <strong className="text-slate-800">{(summary.totalClicks / effectiveReportDays).toFixed(1)}/d</strong>
               </div>
             </div>
 
