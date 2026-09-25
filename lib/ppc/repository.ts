@@ -490,23 +490,7 @@ export async function listPpcPerformance(
       AND (
         p.spend > 0 OR p.clicks > 0 OR p.impressions > 0
         OR p.grain IN ('CAMPAIGN', 'AD_GROUP', 'PRODUCT')
-        OR (
-          p.grain = 'TARGET'
-          AND p.state = 'enabled'
-          AND (
-            p.campaign_name ILIKE '%GO%' OR p.sku ILIKE '%GO%'
-            OR EXISTS (
-              SELECT 1 FROM ppc_performance_facts c_act
-              WHERE c_act.store_id = p.store_id
-                AND c_act.ad_type = p.ad_type
-                AND c_act.snapshot_date = p.snapshot_date
-                AND c_act.report_end_date = p.report_end_date
-                AND c_act.grain = 'CAMPAIGN'
-                AND c_act.campaign_id = p.campaign_id
-                AND (c_act.state = 'enabled' OR c_act.spend > 0 OR c_act.impressions > 0)
-            )
-          )
-        )
+        OR (p.grain = 'TARGET' AND p.state = 'enabled')
       )
     ORDER BY p.ad_type, p.grain, p.spend DESC, p.id
     LIMIT ${Math.min(50_000, Math.max(1, options.limit || 50_000))}
@@ -1114,7 +1098,7 @@ export async function refreshPpcSnapshotSummary(
       )
       SELECT 
         ${teamId}, c.store_id, ${snapshotId}, ${coverageDays}, c.ad_type,
-        c.campaign_id, c.campaign_name, c.campaign_state, c.portfolio_name,
+        c.campaign_id, c.campaign_name, COALESCE(NULLIF(c.campaign_state, ''), NULLIF(c.state, ''), 'paused') AS campaign_state, c.portfolio_name,
         COALESCE(c.daily_budget, 0), c.impressions, c.clicks, c.spend, c.sales, c.orders, c.units,
         COALESCE(t.target_count, 0), COALESCE(t.active_target_count, 0), NOW()
       FROM ppc_performance_facts c
@@ -1858,8 +1842,9 @@ export async function getPpcOverviewAggregates(
         WHERE s.team_id = ${teamId}
           AND (${isAllStores} OR lower(s.name) = lower(${storeName}))
           AND cs.coverage_days = ${coverageDays}
+          AND (cs.spend > 0 OR cs.clicks > 0 OR cs.impressions > 0)
         ORDER BY cs.spend DESC
-        LIMIT 7;
+        LIMIT 500;
       `,
       // 3. Top 10 SKUs
       sql<Array<{

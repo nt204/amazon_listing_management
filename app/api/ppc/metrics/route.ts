@@ -57,7 +57,7 @@ function projectMetrics(data: MetricsData, section: MetricsSection) {
   if (section === "overview") {
     return {
       ...data,
-      campaignPerformance: data.campaignPerformance.slice(0, 7),
+      campaignPerformance: data.campaignPerformance,
       adGroups: [],
       targets: [],
       skuPerformance: data.skuPerformance.slice(0, 10),

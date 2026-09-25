@@ -349,10 +349,10 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
         setStoreSummaries(data.storeSummaries || []);
         setSummary(data.summary || null);
         setVelocity(data.velocity || null);
-        setSkuPerformance(data.skuPerformance || []);
-        setCampaignPerformance(data.campaignPerformance || []);
-        setAdGroupPerformance(data.adGroups || []);
-        setTargetPerformance(data.targets || []);
+        if (data.skuPerformance && data.skuPerformance.length > 0) setSkuPerformance(data.skuPerformance);
+        if (data.campaignPerformance && data.campaignPerformance.length > 0) setCampaignPerformance(data.campaignPerformance);
+        if (data.adGroups && data.adGroups.length > 0) setAdGroupPerformance(data.adGroups);
+        if (data.targets && data.targets.length > 0) setTargetPerformance(data.targets);
         setAdTypeBreakdown(data.adTypeBreakdown || []);
         setDataHealth(data.dataHealth || null);
         setTargetTypeBreakdown(data.targetTypeBreakdown || []);
@@ -691,15 +691,17 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       lastLoadedRecKeyRef.current = "";
     }
 
-    if (activeTab === "overview") {
-      if (!loadedSectionsRef.current.has("overview")) {
-        const timer = window.setTimeout(() => void loadData(), 0);
+    if (filtersChanged || !loadedSectionsRef.current.has("overview")) {
+      const timer = window.setTimeout(() => void loadData(), 0);
+      if (activeTab === "overview") {
         return () => {
           window.clearTimeout(timer);
           metricsRequestRef.current?.controller.abort();
         };
       }
-    } else if (["ad_groups", "targets", "skus", "search_terms"].includes(activeTab)) {
+    }
+
+    if (activeTab !== "overview" && ["ad_groups", "targets", "skus", "search_terms"].includes(activeTab)) {
       if (!loadedSectionsRef.current.has(activeTab)) {
         void loadSection(activeTab).catch((error) => {
           notify(error instanceof Error ? error.message : "Không thể tải bảng dữ liệu PPC", "error");
