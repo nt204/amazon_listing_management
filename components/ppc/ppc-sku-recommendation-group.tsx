@@ -1540,9 +1540,19 @@ export function PpcSkuRecommendationGroupView({
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between gap-3 text-sm sm:text-base text-slate-600 bg-slate-50 rounded-lg px-3.5 py-2.5 border border-slate-100 font-mono flex-wrap">
-                  <span>{info.boundaryNote}</span>
-                  <span className="text-indigo-700 font-bold whitespace-nowrap">Kết quả: {info.resultBid}</span>
+                <div className="grid grid-cols-3 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 divide-x divide-slate-200">
+                  <div className="px-3 py-3 text-center sm:px-4">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 sm:text-xs">Min Bid</div>
+                    <div className="mt-1 font-mono text-base font-bold text-slate-800 sm:text-lg">{info.minBid}</div>
+                  </div>
+                  <div className="px-3 py-3 text-center sm:px-4">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 sm:text-xs">Max Bid</div>
+                    <div className="mt-1 font-mono text-base font-bold text-slate-800 sm:text-lg">{info.maxBid}</div>
+                  </div>
+                  <div className="bg-emerald-50 px-3 py-3 text-center sm:px-4">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 sm:text-xs">Bid cuối</div>
+                    <div className="mt-1 font-mono text-base font-bold text-emerald-700 sm:text-lg">{info.resultBid}</div>
+                  </div>
                 </div>
               </div>
 
@@ -1577,30 +1587,40 @@ function getRuleExplanation(
   const fallbackCondition = rec.orders && rec.orders > 0
     ? `${rec.orders} đơn, ACoS ${actualAcos?.toFixed(1) ?? "N/A"}% so với mức hòa vốn ${beAcos.toFixed(1)}%.`
     : `${rec.clicks || 0} clicks, chưa có đơn và đã chi $${(rec.spend || 0).toFixed(2)}.`;
-  const ruleCondition = rec.reason || fallbackCondition;
+  const ruleCondition = (rec.reason || fallbackCondition)
+    .replace(/\s*\(Sàn rule:[^)]+\)\s*$/i, "")
+    .trim();
 
   const exactCpc = rec.spend && rec.clicks && rec.clicks > 0 ? rec.spend / rec.clicks : (rec.cpc || rec.currentBid || 0);
   const calculationBase = isIncrease ? (rec.currentBid || 0) : exactCpc;
-  const multiplier = calculationBase > 0 ? (rec.recommendedBid || 0) / calculationBase : 0;
-  const changePercent = (multiplier - 1) * 100;
+  const rulePercentMatch = rec.reason?.match(/->\s*([+-]?\d+(?:\.\d+)?)%/i);
+  const displayedRulePercent = rulePercentMatch ? Number(rulePercentMatch[1]) : null;
+  const actualMultiplier = calculationBase > 0 ? (rec.recommendedBid || 0) / calculationBase : 0;
+  const actualChangePercent = (actualMultiplier - 1) * 100;
+  const ruleMultiplier = displayedRulePercent === null ? actualMultiplier : 1 + displayedRulePercent / 100;
+  const ruleChangePercent = displayedRulePercent ?? actualChangePercent;
+  const rawRuleBid = calculationBase * ruleMultiplier;
+  const wasAdjusted = Math.abs(rawRuleBid - (rec.recommendedBid || 0)) >= 0.005;
+  const calculationResult = wasAdjusted
+    ? `$${rawRuleBid.toFixed(4)} → $${(rec.recommendedBid || 0).toFixed(2)}`
+    : `$${(rec.recommendedBid || 0).toFixed(2)}`;
   const formula = isPause
     ? `Không tính bid mới: target được chuyển sang PAUSE để dừng phát sinh chi phí.`
     : isIncrease
-    ? `$${calculationBase.toFixed(2)} Current Bid × ${multiplier.toFixed(3)} (${changePercent >= 0 ? "+" : ""}${changePercent.toFixed(1)}%) = $${(rec.recommendedBid || 0).toFixed(2)}`
-    : `$${calculationBase.toFixed(2)} Avg CPC × ${multiplier.toFixed(3)} (${changePercent.toFixed(1)}%) = $${(rec.recommendedBid || 0).toFixed(2)}`;
+    ? `$${calculationBase.toFixed(2)} Current Bid × ${ruleMultiplier.toFixed(3)} (${ruleChangePercent >= 0 ? "+" : ""}${ruleChangePercent.toFixed(1)}%) = ${calculationResult}`
+    : `$${calculationBase.toFixed(2)} Avg CPC × ${ruleMultiplier.toFixed(3)} (${ruleChangePercent.toFixed(1)}%) = ${calculationResult}`;
 
   const minBidMatch = rec.reason?.match(/Sàn rule:\s*\$([0-9.]+)/i);
   const minBid = Number(minBidMatch?.[1] || 0.10);
+  const maxBidMatch = rec.reason?.match(/trần campaign:\s*\$([0-9.]+)/i);
+  const maxBid = Number(maxBidMatch?.[1] || maxBidLimit || 0);
 
   return {
     ruleName,
     ruleCondition,
     formula,
     resultBid: isPause ? "PAUSE" : `$${(rec.recommendedBid || 0).toFixed(2)}`,
-    boundaryNote: isPause
-      ? "Không áp dụng giới hạn bid khi hành động là PAUSE."
-      : maxBidLimit
-        ? `Sàn $${minBid.toFixed(2)} ≤ $${(rec.recommendedBid || 0).toFixed(2)} ≤ Trần $${maxBidLimit.toFixed(2)}`
-        : `Bid mới đã được rule engine kiểm tra giới hạn an toàn.`,
+    minBid: isPause ? "—" : `$${minBid.toFixed(2)}`,
+    maxBid: isPause || maxBid <= 0 ? "—" : `$${maxBid.toFixed(2)}`,
   };
 }

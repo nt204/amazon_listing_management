@@ -100,12 +100,11 @@ export function PpcTimeSeriesChart({
   const [drilldownDate, setDrilldownDate] = useState<string | null>(null);
   const [dailyCampaigns, setDailyCampaigns] = useState<PpcDailyCampaignItem[]>([]);
   const [loadingDrilldown, setLoadingDrilldown] = useState(false);
-  const loadedCampaignsStoreRef = React.useRef<string | null>(null);
 
   const fetchDailyCampaigns = React.useCallback(async (store = "ALL") => {
-    if (loadedCampaignsStoreRef.current === store && dailyCampaigns.length > 0) return;
     try {
       setLoadingDrilldown(true);
+      setDailyCampaigns([]);
       const res = await fetch(`/api/ppc/daily-campaigns?storeName=${encodeURIComponent(store)}&days=7`, {
         cache: "no-store",
       });
@@ -113,14 +112,13 @@ export function PpcTimeSeriesChart({
       const data = await res.json();
       if (data?.data) {
         setDailyCampaigns(data.data);
-        loadedCampaignsStoreRef.current = store;
       }
     } catch (e) {
       console.error(e);
     } finally {
       setLoadingDrilldown(false);
     }
-  }, [dailyCampaigns.length]);
+  }, []);
 
   const handleOpenDrilldown = (rawDate: string) => {
     if (!isStoreDetail || !rawDate) return;

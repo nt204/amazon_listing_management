@@ -1849,7 +1849,7 @@ export async function listPpcDailyCampaignsFromDb(
   filters: { storeName?: string; days?: number } = {},
 ): Promise<PpcDailyCampaignItem[]> {
   const sql = await getDatabaseClient();
-  const teamId = (scope as any)?.teamId || "default";
+  const teamId = scope.teamId;
   const storeName = filters.storeName || "ALL";
   const days = Math.max(1, filters.days || 7);
 
@@ -1864,8 +1864,12 @@ export async function listPpcDailyCampaignsFromDb(
     impressions: string | number;
   }>>`
     WITH anchor AS (
-      SELECT COALESCE(MAX(report_date), CURRENT_DATE - 1) AS max_date
-      FROM ppc_search_terms
+      SELECT COALESCE(MAX(p0.report_date), CURRENT_DATE - 1) AS max_date
+      FROM ppc_search_terms p0
+      JOIN ppc_stores s0 ON s0.id = p0.store_id
+      WHERE s0.team_id = ${teamId}
+        AND (${storeName === "ALL"} OR lower(s0.name) = lower(${storeName}))
+        AND p0.report_granularity = 'DAILY'
     )
     SELECT 
       to_char(p.report_date, 'YYYY-MM-DD') AS date,
@@ -1881,6 +1885,7 @@ export async function listPpcDailyCampaignsFromDb(
     CROSS JOIN anchor a
     WHERE s.team_id = ${teamId}
       AND (${storeName === "ALL"} OR lower(s.name) = lower(${storeName}))
+      AND p.report_granularity = 'DAILY'
       AND p.report_date >= a.max_date - (${days} - 1)::integer
       AND p.report_date <= a.max_date
     GROUP BY p.report_date, p.campaign_name, p.ad_type

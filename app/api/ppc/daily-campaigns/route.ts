@@ -1,10 +1,7 @@
-import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
+import { authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { listPpcDailyCampaignsFromDb } from "@/lib/ppc/repository";
-import { getCachedOrFetch } from "@/lib/redis";
 
 export const runtime = "nodejs";
-
-const REDIS_TTL_SEC = 900; // 15 phút
 
 export async function GET(request: Request) {
   try {
@@ -13,11 +10,10 @@ export async function GET(request: Request) {
     const storeName = searchParams.get("storeName") || "ALL";
     const days = Math.min(Math.max(Number(searchParams.get("days") || 7), 1), 30);
 
-    const redisKey = `ppc:daily-campaigns:${scope.teamId}:${storeName}:${days}`;
-
-    const data = await getCachedOrFetch(redisKey, REDIS_TTL_SEC, async () => {
-      return await listPpcDailyCampaignsFromDb(scope, { storeName, days });
-    });
+    // Drill-down phải phản ánh ngay dữ liệu vừa ingest. Không cache kết quả này
+    // vì phần KPI theo ngày được cập nhật tức thời và cache cũ sẽ khiến hai phần
+    // cùng một màn hình hiển thị khác nhau.
+    const data = await listPpcDailyCampaignsFromDb(scope, { storeName, days });
 
     return Response.json({
       success: true,
