@@ -2,7 +2,7 @@ type LogLevel = "info" | "warn" | "error";
 
 function serializeError(error: unknown) {
   return error instanceof Error
-    ? { name: error.name, message: error.message, stack: process.env.NODE_ENV === "production" ? undefined : error.stack }
+    ? { name: error.name, message: error.message, stack: error.stack }
     : { message: String(error) };
 }
 

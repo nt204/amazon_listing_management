@@ -555,7 +555,7 @@ export async function listPpcCampaignPage(
       AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
       AND a.coverage_days = ${coverageDays}
   `;
-  const useSummary = !filters.sku && Number(activeSnapRows[0]?.count || 0) > 0;
+  const useSummary = (!filters.sku || filters.sku === "ALL") && Number(activeSnapRows[0]?.count || 0) > 0;
   type CampaignPageDbRow = PerformanceDbRow & {
     filtered_total: string | number;
     active_count: string | number;
@@ -684,29 +684,56 @@ export async function listPpcCampaignPage(
               BETWEEN ${filters.days - 3}::integer AND ${filters.days + 3}::integer
           ORDER BY p2.store_id, p2.ad_type, p2.snapshot_date DESC, p2.report_end_date DESC
         ), base_raw AS (
-      SELECT base_raw.*,
-        COALESCE(
-          explicit_date_token,
-          CASE WHEN short_date_token IS NOT NULL THEN
-            CASE
-              WHEN to_char(to_date(short_date_token, 'DDMMYY'), 'DDMMYY') = short_date_token
-                AND (
-                  to_char(to_date('20' || short_date_token, 'YYYYMMDD'), 'YYMMDD') <> short_date_token
-                  OR to_date('20' || short_date_token, 'YYYYMMDD') > CURRENT_DATE + 180
-                  OR abs(to_date(short_date_token, 'DDMMYY') - CURRENT_DATE) < abs(to_date('20' || short_date_token, 'YYYYMMDD') - CURRENT_DATE)
-                )
-              THEN to_char(to_date(short_date_token, 'DDMMYY'), 'YYYYMMDD')
-              WHEN to_char(to_date('20' || short_date_token, 'YYYYMMDD'), 'YYMMDD') = short_date_token
-                AND to_date('20' || short_date_token, 'YYYYMMDD') <= CURRENT_DATE + 180
-              THEN '20' || short_date_token
-              ELSE NULL
-            END
-          END,
-          CASE WHEN sku_date_token IS NOT NULL THEN '20' || sku_date_token END,
-          ''
-        ) AS campaign_date_key
-      FROM base_raw
-    ), status_counts AS (
+          SELECT 
+            p.id, p.store_id, s.name AS store_name, p.snapshot_date,
+            p.report_start_date, p.report_end_date, p.report_granularity,
+            p.ad_type, p.grain, p.entity_id, p.campaign_id, p.campaign_name,
+            p.ad_group_id, p.ad_group_name, p.target_id, p.target_expression,
+            p.match_type, p.portfolio_name, p.sku, p.asin, p.state,
+            p.campaign_state, p.ad_group_state, p.targeting_type,
+            p.bidding_strategy, p.placement, p.daily_budget, p.bid,
+            p.placement_adjustment, p.is_negative, p.impressions, p.clicks, p.spend,
+            p.sales, p.orders, p.units,
+            (regexp_match(p.campaign_name, '(202[3-9][0-1][0-9][0-3][0-9])'))[1] AS explicit_date_token,
+            (regexp_match(p.campaign_name, '(^|[^0-9])(2[3-9](0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01]))([^0-9]|$)'))[2] AS short_date_token,
+            (regexp_match(p.campaign_name, '^[A-Za-z]{2,5}(2[3-9](0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01]))'))[1] AS sku_date_token,
+            CASE WHEN p.impressions > 0 THEN p.clicks::numeric / p.impressions * 100 ELSE 0 END AS calc_ctr,
+            CASE WHEN p.clicks > 0 THEN p.orders::numeric / p.clicks * 100 ELSE 0 END AS calc_cvr,
+            CASE WHEN p.sales > 0 THEN p.spend::numeric / p.sales * 100 ELSE CASE WHEN p.spend > 0 THEN 999 ELSE 0 END END AS calc_acos,
+            CASE WHEN p.spend > 0 THEN p.sales::numeric / p.spend ELSE 0 END AS calc_roas
+          FROM ppc_performance_facts p
+          JOIN ppc_stores s ON s.id = p.store_id
+          JOIN latest_snapshots ls
+            ON ls.store_id = p.store_id AND ls.ad_type = p.ad_type
+            AND ls.snapshot_date = p.snapshot_date AND ls.report_start_date = p.report_start_date AND ls.report_end_date = p.report_end_date
+          WHERE s.team_id = ${teamId}
+            AND p.grain = 'CAMPAIGN'
+            AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
+            AND (${filters.sku === "ALL"} OR position(lower(${filters.sku}) in lower(p.campaign_name)) > 0)
+        ), base AS (
+          SELECT base_raw.*,
+            COALESCE(
+              explicit_date_token,
+              CASE WHEN short_date_token IS NOT NULL THEN
+                CASE
+                  WHEN to_char(to_date(short_date_token, 'DDMMYY'), 'DDMMYY') = short_date_token
+                    AND (
+                      to_char(to_date('20' || short_date_token, 'YYYYMMDD'), 'YYMMDD') <> short_date_token
+                      OR to_date('20' || short_date_token, 'YYYYMMDD') > CURRENT_DATE + 180
+                      OR abs(to_date(short_date_token, 'DDMMYY') - CURRENT_DATE) < abs(to_date('20' || short_date_token, 'YYYYMMDD') - CURRENT_DATE)
+                    )
+                  THEN to_char(to_date(short_date_token, 'DDMMYY'), 'YYYYMMDD')
+                  WHEN to_char(to_date('20' || short_date_token, 'YYYYMMDD'), 'YYMMDD') = short_date_token
+                    AND to_date('20' || short_date_token, 'YYYYMMDD') <= CURRENT_DATE + 180
+                  THEN '20' || short_date_token
+                  ELSE NULL
+                END
+              END,
+              CASE WHEN sku_date_token IS NOT NULL THEN '20' || sku_date_token END,
+              ''
+            ) AS campaign_date_key
+          FROM base_raw
+        ), status_counts AS (
       SELECT count(*) FILTER (WHERE state !~* 'pause|archive') AS active_count,
              count(*) FILTER (WHERE state ~* 'pause|archive') AS paused_count
       FROM base

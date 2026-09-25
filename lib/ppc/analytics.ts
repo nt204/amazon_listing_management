@@ -1158,7 +1158,10 @@ export function campaignPerformanceFromFacts(
 ): PpcCampaignPerformance[] {
   return rows.filter((row) => row.grain === "CAMPAIGN").map((row) => {
     const metrics = roundedPerformanceMetrics(row);
-    const targetingType: PpcCampaignPerformance["targetingType"] = row.targetingType.toLowerCase().includes("auto") ? "Auto" : "Manual";
+    const targetingType: PpcCampaignPerformance["targetingType"] =
+      (row.targetingType || "").toLowerCase().includes("auto") || (row.campaignName || "").toLowerCase().includes("auto")
+        ? "Auto"
+        : "Manual";
     const statusBadge: PpcCampaignPerformance["statusBadge"] = metrics.orders === 0 || metrics.acos > targetAcos * 2
       ? "CRITICAL"
       : metrics.acos > targetAcos
