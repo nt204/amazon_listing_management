@@ -22,6 +22,7 @@ export interface ManagedPpcFile {
   adType?: "SP" | "SB";
   days?: number;
   reportDate?: string;
+  batchFolder?: string; // Tên đợt crawl/thư mục batch trên R2 (e.g. CELSORIX_20260924_wblow0)
   relativePath?: string; // e.g. "2026-09-21/HSOSTORE/SP/fileName.xlsx"
   folderPath?: string;   // e.g. "2026-09-21/HSOSTORE/SP"
   sizeBytes: number;
@@ -101,6 +102,7 @@ export function parseReportMetadata(
   adType: "SP" | "SB";
   fileType: ManagedPpcFile["fileType"];
   days?: number;
+  batchFolder?: string;
 } {
   const fileType = detectFileType(fileName);
   const days = detectDays(fileName);
@@ -191,12 +193,26 @@ export function parseReportMetadata(
     reportDate = new Date().toISOString().split("T")[0];
   }
 
+  // 3. Nhận diện thư mục batch (Đợt chạy) từ đường dẫn R2/Local
+  let batchFolder: string | undefined = undefined;
+  if (relativeOrFullPath) {
+    const parts = relativeOrFullPath.split(/[/\\]/);
+    const inputIdx = parts.findIndex((p) => p.toLowerCase() === "input" || p.toLowerCase() === "output");
+    if (inputIdx >= 0 && parts.length >= inputIdx + 4) {
+      const candidate = parts[inputIdx + 3];
+      if (candidate && !["sp", "sb"].includes(candidate.toLowerCase()) && !candidate.includes(".")) {
+        batchFolder = candidate;
+      }
+    }
+  }
+
   return {
     reportDate,
     storeName: canonicalStoreName(storeCandidate),
     adType,
     fileType,
     days,
+    batchFolder,
   };
 }
 
@@ -435,40 +451,27 @@ export async function listManagedPpcFiles(scope: DataScope): Promise<{
           const meta = parseReportMetadata(baseName, key, knownStores);
           const r2FolderDisplay = key.includes("/") ? key.split("/").slice(0, -1).join("/") : "";
 
-          const existing = fileMap.get(baseName);
-          if (existing) {
-            existing.locations.r2 = true;
-            existing.locations.r2Key = key;
-            if (existing.sizeBytes === 0) existing.sizeBytes = size;
-            if (!existing.folderPath && r2FolderDisplay) existing.folderPath = r2FolderDisplay;
-            if ((!existing.reportDate || existing.reportDate === new Date().toISOString().split("T")[0]) && meta.reportDate) {
-              existing.reportDate = meta.reportDate;
-            }
-            if (meta.adType) existing.adType = meta.adType;
-            if (existing.storeName === "HSOSTORE" && meta.storeName !== "HSOSTORE") {
-              existing.storeName = meta.storeName;
-            }
-          } else {
-            fileMap.set(baseName, {
-              id: `r2-${baseName}`,
-              fileName: baseName,
-              storeName: meta.storeName,
-              fileType: meta.fileType,
-              adType: meta.adType,
-              days: meta.days,
-              reportDate: meta.reportDate,
-              folderPath: r2FolderDisplay,
-              relativePath: key,
-              sizeBytes: size,
-              lastModified: obj.LastModified ? obj.LastModified.toISOString() : new Date().toISOString(),
-              locations: {
-                server: false,
-                r2: true,
-                r2Key: key,
-                database: false,
-              },
-            });
-          }
+          const fileMapKey = `r2:${key}`;
+          fileMap.set(fileMapKey, {
+            id: `r2-${key}`,
+            fileName: baseName,
+            storeName: meta.storeName,
+            fileType: meta.fileType,
+            adType: meta.adType,
+            days: meta.days,
+            reportDate: meta.reportDate,
+            batchFolder: meta.batchFolder,
+            folderPath: r2FolderDisplay,
+            relativePath: key,
+            sizeBytes: size,
+            lastModified: obj.LastModified ? obj.LastModified.toISOString() : new Date().toISOString(),
+            locations: {
+              server: false,
+              r2: true,
+              r2Key: key,
+              database: false,
+            },
+          });
         }
 
         continuationToken = res.IsTruncated ? res.NextContinuationToken : undefined;
@@ -491,15 +494,20 @@ export async function listManagedPpcFiles(scope: DataScope): Promise<{
     if (!fn) continue;
 
     const baseName = path.basename(fn);
-    const existing = fileMap.get(baseName) || fileMap.get(fn);
     const count = Number(log.records_count || 0);
 
-    if (existing) {
-      existing.locations.database = true;
-      existing.locations.dbRecordsCount = Math.max(existing.locations.dbRecordsCount || 0, count);
-      existing.syncLogId = log.id;
-    } else {
-      fileMap.set(baseName, {
+    let matched = false;
+    for (const file of fileMap.values()) {
+      if (file.fileName === baseName || (file.relativePath && file.relativePath.endsWith(baseName))) {
+        file.locations.database = true;
+        file.locations.dbRecordsCount = Math.max(file.locations.dbRecordsCount || 0, count);
+        file.syncLogId = log.id;
+        matched = true;
+      }
+    }
+
+    if (!matched) {
+      fileMap.set(`db:${log.id}`, {
         id: `db-${log.id}`,
         fileName: baseName,
         storeName: baseName.toUpperCase().includes("WARMSTOREY") ? "Warmstorey" : "HSOSTORE",
@@ -511,7 +519,7 @@ export async function listManagedPpcFiles(scope: DataScope): Promise<{
           server: false,
           r2: false,
           database: true,
-          dbRecordsCount: Number(log.records_count || 0),
+          dbRecordsCount: count,
         },
         syncLogId: log.id,
       });
@@ -645,3 +653,140 @@ export async function deleteManagedPpcFile(
 
   return { deletedServer, deletedR2, purgedDbRows };
 }
+
+export interface CleanupR2BatchesResult {
+  deletedBatches: string[];
+  deletedFilesCount: number;
+  freedBytes: number;
+}
+
+/**
+ * Tự động quét và dọn dẹp các đợt crawl (batch) cũ trên Cloudflare R2
+ * Nếu trong cùng 1 ngày, 1 store có đợt crawl mới đã đủ file chuẩn (6/6 file + _COMPLETE.json),
+ * các đợt cũ hơn hoặc dở dang của cùng ngày đó sẽ được xóa an toàn khỏi R2.
+ */
+export async function cleanupDuplicateR2Batches(): Promise<CleanupR2BatchesResult> {
+  const r2 = getR2Client();
+  if (!r2) throw new Error("Cloudflare R2 chưa được cấu hình.");
+
+  let continuationToken: string | undefined;
+  const allObjects: { Key: string; Size: number; LastModified: Date }[] = [];
+
+  do {
+    const res = await r2.client.send(
+      new ListObjectsV2Command({
+        Bucket: r2.bucket,
+        Prefix: `${r2.prefix}/input/`,
+        ContinuationToken: continuationToken,
+        MaxKeys: 1000,
+      }),
+    );
+    for (const obj of res.Contents || []) {
+      if (obj.Key) {
+        allObjects.push({
+          Key: obj.Key,
+          Size: obj.Size || 0,
+          LastModified: obj.LastModified || new Date(),
+        });
+      }
+    }
+    continuationToken = res.IsTruncated ? res.NextContinuationToken : undefined;
+  } while (continuationToken);
+
+  interface BatchInfo {
+    date: string;
+    store: string;
+    batchId: string;
+    keys: { Key: string; Size: number }[];
+    hasComplete: boolean;
+    reportFilesCount: number;
+    lastModified: Date;
+  }
+
+  const batchMap = new Map<string, BatchInfo>();
+  for (const obj of allObjects) {
+    const parts = obj.Key.split("/");
+    const inputIdx = parts.findIndex((p) => p.toLowerCase() === "input");
+    if (inputIdx >= 0 && parts.length >= inputIdx + 4) {
+      const date = parts[inputIdx + 1];
+      const store = parts[inputIdx + 2];
+      const batchId = parts[inputIdx + 3];
+      const groupKey = `${date}::${store.toUpperCase()}::${batchId}`;
+
+      if (!batchMap.has(groupKey)) {
+        batchMap.set(groupKey, {
+          date,
+          store,
+          batchId,
+          keys: [],
+          hasComplete: false,
+          reportFilesCount: 0,
+          lastModified: obj.LastModified,
+        });
+      }
+      const b = batchMap.get(groupKey)!;
+      b.keys.push({ Key: obj.Key, Size: obj.Size });
+      if (obj.Key.endsWith("_COMPLETE.json")) {
+        b.hasComplete = true;
+      } else if (/\.(xlsx|csv)$/i.test(obj.Key)) {
+        b.reportFilesCount++;
+      }
+      if (obj.LastModified > b.lastModified) {
+        b.lastModified = obj.LastModified;
+      }
+    }
+  }
+
+  const storeDateGroups = new Map<string, BatchInfo[]>();
+  for (const b of batchMap.values()) {
+    const key = `${b.date}::${b.store.toUpperCase()}`;
+    if (!storeDateGroups.has(key)) storeDateGroups.set(key, []);
+    storeDateGroups.get(key)!.push(b);
+  }
+
+  const deletedBatches: string[] = [];
+  let deletedFilesCount = 0;
+  let freedBytes = 0;
+  const keysToDelete: { Key: string }[] = [];
+
+  for (const batches of storeDateGroups.values()) {
+    batches.sort((a, b) => b.lastModified.getTime() - a.lastModified.getTime());
+    const canonicalIndex = batches.findIndex((b) => b.hasComplete && b.reportFilesCount >= 6);
+
+    if (canonicalIndex !== -1) {
+      for (let i = 0; i < batches.length; i++) {
+        if (i !== canonicalIndex) {
+          const obsolete = batches[i];
+          deletedBatches.push(`${obsolete.date}/${obsolete.store}/${obsolete.batchId}`);
+          for (const item of obsolete.keys) {
+            keysToDelete.push({ Key: item.Key });
+            deletedFilesCount++;
+            freedBytes += item.Size;
+          }
+        }
+      }
+    }
+  }
+
+  if (keysToDelete.length > 0) {
+    for (let i = 0; i < keysToDelete.length; i += 1000) {
+      const chunk = keysToDelete.slice(i, i + 1000);
+      await r2.client.send(
+        new DeleteObjectsCommand({
+          Bucket: r2.bucket,
+          Delete: {
+            Objects: chunk,
+            Quiet: true,
+          },
+        }),
+      );
+    }
+  }
+
+  return {
+    deletedBatches,
+    deletedFilesCount,
+    freedBytes,
+  };
+}
+

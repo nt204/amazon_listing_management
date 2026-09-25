@@ -60,6 +60,20 @@ export async function POST(request: Request) {
       });
     }
 
+    if (action === "cleanup_duplicate_batches") {
+      const { cleanupDuplicateR2Batches } = await import("@/lib/ppc/file-manager");
+      const result = await cleanupDuplicateR2Batches();
+      const data = await listManagedPpcFiles(scope);
+      return Response.json({
+        success: true,
+        message: result.deletedBatches.length > 0
+          ? `Đã dọn dẹp ${result.deletedBatches.length} đợt cũ trùng ngày (${result.deletedFilesCount} file, ${(result.freedBytes / (1024 * 1024)).toFixed(1)} MB).`
+          : "Không có đợt dữ liệu cũ trùng ngày nào cần dọn dẹp (tất cả các ngày đều đang chuẩn).",
+        result,
+        data,
+      });
+    }
+
     throw new ApiError(`Hành động '${action}' không được hỗ trợ.`, 400);
   } catch (error) {
     return routeErrorResponse(error, "Lỗi khi xử lý thao tác file PPC.", 500);

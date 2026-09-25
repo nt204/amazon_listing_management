@@ -45,6 +45,17 @@ async function main() {
       }
       await completePpcIngestion(job.id, token, result);
       console.log(`[PPC Ingestion Worker] Completed ${job.batch_id}: ${result.filesProcessed} files`);
+
+      // Tự động dọn dẹp các đợt cũ trùng ngày trên R2 nếu đợt mới đã nạp thành công
+      try {
+        const { cleanupDuplicateR2Batches } = await import("../lib/ppc/file-manager");
+        const cleanup = await cleanupDuplicateR2Batches();
+        if (cleanup.deletedBatches.length > 0) {
+          console.log(`[PPC Ingestion Worker] 🧹 Đã tự động dọn dẹp ${cleanup.deletedBatches.length} batch cũ trùng ngày (${cleanup.deletedFilesCount} file, ${(cleanup.freedBytes / (1024 * 1024)).toFixed(1)} MB)`);
+        }
+      } catch (cleanupErr) {
+        console.warn("[PPC Ingestion Worker] Không thể dọn dẹp batch cũ:", cleanupErr);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`[PPC Ingestion Worker] Failed ${job.batch_id}:`, message);

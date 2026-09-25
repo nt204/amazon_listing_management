@@ -40,8 +40,21 @@ function formatBytes(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 }
 
+interface BatchGroup {
+  batchId: string;
+  batchName: string;
+  spGroup: ManagedPpcFile[];
+  sbGroup: ManagedPpcFile[];
+  otherGroup: ManagedPpcFile[];
+  files: ManagedPpcFile[];
+  totalBytes: number;
+  isLatest: boolean;
+  lastModified?: string;
+}
+
 interface StoreGroup {
   storeName: string;
+  batches: BatchGroup[];
   spGroup: ManagedPpcFile[];
   sbGroup: ManagedPpcFile[];
   otherGroup: ManagedPpcFile[];
@@ -63,6 +76,7 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [organizing, setOrganizing] = useState(false);
+  const [cleaningDuplicates, setCleaningDuplicates] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterLocation, setFilterLocation] = useState<"ALL" | "R2" | "SERVER" | "DB">("ALL");
   const [filterStore, setFilterStore] = useState<string>("ALL");
@@ -149,22 +163,27 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
     });
   }, [files, searchQuery, filterStore, filterDate, filterAdType, filterLocation]);
 
-  // Cấu trúc phân cấp: Ngày -> Store -> [SP | SB] -> Files
+  // Cấu trúc phân cấp chuẩn Cloudflare: Ngày -> Store -> Đợt chạy (Batch) -> [SP | SB] -> Files
   const hierarchicalData = useMemo<DateGroup[]>(() => {
-    const dateMap = new Map<string, Map<string, { SP: ManagedPpcFile[]; SB: ManagedPpcFile[]; OTHER: ManagedPpcFile[] }>>();
+    // date -> storeName -> batchFolder -> { SP: [], SB: [], OTHER: [] }
+    const dateMap = new Map<string, Map<string, Map<string, { SP: ManagedPpcFile[]; SB: ManagedPpcFile[]; OTHER: ManagedPpcFile[] }>>>();
 
     for (const file of filteredFiles) {
       const d = file.reportDate || "Khác";
       const s = file.storeName || "HSOSTORE";
+      const b = file.batchFolder || "default";
       const type = file.adType === "SB" ? "SB" : file.adType === "SP" ? "SP" : "OTHER";
 
       if (!dateMap.has(d)) dateMap.set(d, new Map());
       const storeMap = dateMap.get(d)!;
 
-      if (!storeMap.has(s)) {
-        storeMap.set(s, { SP: [], SB: [], OTHER: [] });
+      if (!storeMap.has(s)) storeMap.set(s, new Map());
+      const batchMap = storeMap.get(s)!;
+
+      if (!batchMap.has(b)) {
+        batchMap.set(b, { SP: [], SB: [], OTHER: [] });
       }
-      const typeGroup = storeMap.get(s)!;
+      const typeGroup = batchMap.get(b)!;
       typeGroup[type].push(file);
     }
 
@@ -175,13 +194,39 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
       const sortedStores = Array.from(storeMap.keys()).sort();
 
       const storeGroups: StoreGroup[] = sortedStores.map((storeName) => {
-        const g = storeMap.get(storeName)!;
-        const allStoreFiles = [...g.SP, ...g.SB, ...g.OTHER];
+        const batchMap = storeMap.get(storeName)!;
+        const rawBatches: BatchGroup[] = Array.from(batchMap.entries()).map(([batchId, g]) => {
+          const batchFiles = [...g.SP, ...g.SB, ...g.OTHER];
+          const latestMod = batchFiles.reduce(
+            (max, f) => (f.lastModified > max ? f.lastModified : max),
+            ""
+          );
+          return {
+            batchId,
+            batchName: batchId === "default" ? "Đợt mặc định" : batchId,
+            spGroup: g.SP,
+            sbGroup: g.SB,
+            otherGroup: g.OTHER,
+            files: batchFiles,
+            totalBytes: batchFiles.reduce((acc, f) => acc + (f.sizeBytes || 0), 0),
+            lastModified: latestMod,
+            isLatest: false,
+          };
+        });
+
+        // Sắp xếp các batch: batch mới nhất lên đầu
+        rawBatches.sort((a, b) => (b.lastModified || "").localeCompare(a.lastModified || ""));
+        if (rawBatches.length > 0) {
+          rawBatches[0].isLatest = true;
+        }
+
+        const allStoreFiles = rawBatches.flatMap((b) => b.files);
         return {
           storeName,
-          spGroup: g.SP,
-          sbGroup: g.SB,
-          otherGroup: g.OTHER,
+          batches: rawBatches,
+          spGroup: rawBatches.flatMap((b) => b.spGroup),
+          sbGroup: rawBatches.flatMap((b) => b.sbGroup),
+          otherGroup: rawBatches.flatMap((b) => b.otherGroup),
           files: allStoreFiles,
           totalBytes: allStoreFiles.reduce((acc, f) => acc + (f.sizeBytes || 0), 0),
         };
@@ -196,6 +241,20 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
       };
     });
   }, [filteredFiles]);
+
+  const toggleSelectBatch = (batchFiles: ManagedPpcFile[]) => {
+    const ids = batchFiles.map((f) => f.id);
+    const allSelected = ids.length > 0 && ids.every((id) => selectedFileIds.has(id));
+    setSelectedFileIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        ids.forEach((id) => next.delete(id));
+      } else {
+        ids.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
 
   const toggleSelectAll = () => {
     if (selectedFileIds.size === filteredFiles.length) {
@@ -302,6 +361,40 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
       setErrorMsg(err instanceof Error ? err.message : "Lỗi khi sắp xếp thư mục.");
     } finally {
       setOrganizing(false);
+    }
+  };
+
+  const handleCleanupDuplicateBatches = async () => {
+    if (
+      !confirm(
+        "Hệ thống sẽ quét Cloudflare R2 và xóa các đợt crawl cũ của cùng ngày (chỉ giữ lại đợt mới nhất đủ 6 file chuẩn). Bạn có chắc chắn muốn thực hiện?"
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setCleaningDuplicates(true);
+      setErrorMsg(null);
+      setSuccessMsg(null);
+      const res = await fetch("/api/ppc/files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "cleanup_duplicate_batches" }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.success) {
+        throw new Error(json.error?.message || json.message || "Không thể dọn dẹp đợt cũ.");
+      }
+
+      setSuccessMsg(json.message);
+      await loadFiles();
+      if (onDataChanged) onDataChanged();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Lỗi khi dọn dẹp đợt cũ.");
+    } finally {
+      setCleaningDuplicates(false);
     }
   };
 
@@ -570,6 +663,18 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
               <span>{organizing ? "Đang sắp..." : "Gom chuẩn"}</span>
             </button>
 
+            {/* Dọn đợt cũ trùng ngày */}
+            <button
+              type="button"
+              onClick={handleCleanupDuplicateBatches}
+              disabled={cleaningDuplicates || loading}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold transition disabled:opacity-50"
+              title="Tự động kiểm tra và dọn dẹp các đợt chạy cũ trùng ngày trên Cloudflare R2 (chỉ giữ lại đợt mới nhất đủ 6 file chuẩn)"
+            >
+              <Trash size={14} className={cleaningDuplicates ? "animate-spin text-rose-600" : "text-rose-600"} weight="bold" />
+              <span>{cleaningDuplicates ? "Đang dọn..." : "Dọn đợt cũ"}</span>
+            </button>
+
             {/* Refresh */}
             <button
               type="button"
@@ -777,6 +882,11 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
                                 </div>
 
                                 <div className="flex items-center gap-2">
+                                  {storeGroup.batches.length > 1 && (
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                                      {storeGroup.batches.length} đợt chạy
+                                    </span>
+                                  )}
                                   <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
                                     SP: {storeGroup.spGroup.length}
                                   </span>
@@ -786,84 +896,137 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
                                 </div>
                               </div>
 
-                              {/* Level 3: Ad Types (SP & SB) */}
+                              {/* Level 3: Đợt chạy (Batch / Thư mục Cloudflare R2) */}
                               {isStoreExpanded && (
-                                <div className="p-3 grid grid-cols-1 md:grid-cols-2 gap-3 bg-white">
-                                  {/* Cột SP (Sponsored Products) */}
-                                  <div className="rounded-lg border border-purple-100 bg-purple-50/20 p-2.5">
-                                    <div className="flex items-center justify-between mb-2 pb-1.5 border-b border-purple-100">
-                                      <div className="flex items-center gap-1.5">
-                                        <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase bg-purple-100 text-purple-800 border border-purple-200">
-                                          SP
-                                        </span>
-                                        <span className="text-xs font-bold text-slate-800">
-                                          Sponsored Products
-                                        </span>
-                                      </div>
-                                      <span className="text-[10px] font-semibold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded">
-                                        {storeGroup.spGroup.length} file
-                                      </span>
-                                    </div>
+                                <div className="p-3 bg-white space-y-3">
+                                  {storeGroup.batches.map((batch) => {
+                                    const isBatchAllSelected =
+                                      batch.files.length > 0 &&
+                                      batch.files.every((f) => selectedFileIds.has(f.id));
 
-                                    {storeGroup.spGroup.length === 0 ? (
-                                      <div className="p-4 text-center text-slate-400 text-[11px]">
-                                        Chưa có file SP nào
-                                      </div>
-                                    ) : (
-                                      <div className="space-y-1.5">
-                                        {storeGroup.spGroup.map((file) => (
-                                          <TreeFileItem
-                                            key={file.id}
-                                            file={file}
-                                            isSelected={selectedFileIds.has(file.id)}
-                                            onToggleSelect={() => toggleSelect(file.id)}
-                                            onCopyPath={() => handleCopyPath(file)}
-                                            isCopied={copiedId === file.id}
-                                            onDelete={() => void handleDelete([file])}
-                                            deleting={deleting}
-                                          />
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
+                                    return (
+                                      <div
+                                        key={batch.batchId}
+                                        className={`rounded-xl border p-2.5 space-y-2.5 transition ${
+                                          batch.isLatest
+                                            ? "border-emerald-200/90 bg-emerald-50/10"
+                                            : "border-slate-200 bg-slate-50/50 opacity-90"
+                                        }`}
+                                      >
+                                        {/* Batch Folder Header */}
+                                        <div className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-white/80 border border-slate-200/80 text-xs shadow-2xs">
+                                          <div className="flex items-center gap-2">
+                                            <input
+                                              type="checkbox"
+                                              checked={isBatchAllSelected}
+                                              onChange={(e) => {
+                                                e.stopPropagation();
+                                                toggleSelectBatch(batch.files);
+                                              }}
+                                              className="rounded-sm border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                            />
+                                            <FolderSimple size={15} weight="fill" className="text-amber-500" />
+                                            <span className="font-mono text-[11px] font-bold text-slate-800 tracking-tight">
+                                              {batch.batchName}
+                                            </span>
+                                            {batch.isLatest ? (
+                                              <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                                Đợt mới nhất (Chuẩn 6 file)
+                                              </span>
+                                            ) : (
+                                              <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                                                Đợt cũ (Có thể xóa)
+                                              </span>
+                                            )}
+                                          </div>
+                                          <div className="flex items-center gap-2 text-[11px] text-slate-500 font-medium">
+                                            <span>{batch.files.length} file</span>
+                                            <span>•</span>
+                                            <span>{formatBytes(batch.totalBytes)}</span>
+                                          </div>
+                                        </div>
 
-                                  {/* Cột SB (Sponsored Brands) */}
-                                  <div className="rounded-lg border border-sky-100 bg-sky-50/20 p-2.5">
-                                    <div className="flex items-center justify-between mb-2 pb-1.5 border-b border-sky-100">
-                                      <div className="flex items-center gap-1.5">
-                                        <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase bg-sky-100 text-sky-800 border border-sky-200">
-                                          SB
-                                        </span>
-                                        <span className="text-xs font-bold text-slate-800">
-                                          Sponsored Brands
-                                        </span>
-                                      </div>
-                                      <span className="text-[10px] font-semibold text-sky-700 bg-sky-50 px-1.5 py-0.5 rounded">
-                                        {storeGroup.sbGroup.length} file
-                                      </span>
-                                    </div>
+                                        {/* SP & SB Columns for this batch */}
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                          {/* SP Column */}
+                                          <div className="rounded-lg border border-purple-100 bg-purple-50/20 p-2.5">
+                                            <div className="flex items-center justify-between mb-2 pb-1.5 border-b border-purple-100">
+                                              <div className="flex items-center gap-1.5">
+                                                <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase bg-purple-100 text-purple-800 border border-purple-200">
+                                                  SP
+                                                </span>
+                                                <span className="text-xs font-bold text-slate-800">
+                                                  Sponsored Products
+                                                </span>
+                                              </div>
+                                              <span className="text-[10px] font-semibold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded">
+                                                {batch.spGroup.length} file
+                                              </span>
+                                            </div>
 
-                                    {storeGroup.sbGroup.length === 0 ? (
-                                      <div className="p-4 text-center text-slate-400 text-[11px]">
-                                        Chưa có file SB nào
+                                            {batch.spGroup.length === 0 ? (
+                                              <div className="p-3 text-center text-slate-400 text-[11px]">
+                                                Chưa có file SP nào
+                                              </div>
+                                            ) : (
+                                              <div className="space-y-1.5">
+                                                {batch.spGroup.map((file) => (
+                                                  <TreeFileItem
+                                                    key={file.id}
+                                                    file={file}
+                                                    isSelected={selectedFileIds.has(file.id)}
+                                                    onToggleSelect={() => toggleSelect(file.id)}
+                                                    onCopyPath={() => handleCopyPath(file)}
+                                                    isCopied={copiedId === file.id}
+                                                    onDelete={() => void handleDelete([file])}
+                                                    deleting={deleting}
+                                                  />
+                                                ))}
+                                              </div>
+                                            )}
+                                          </div>
+
+                                          {/* SB Column */}
+                                          <div className="rounded-lg border border-sky-100 bg-sky-50/20 p-2.5">
+                                            <div className="flex items-center justify-between mb-2 pb-1.5 border-b border-sky-100">
+                                              <div className="flex items-center gap-1.5">
+                                                <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase bg-sky-100 text-sky-800 border border-sky-200">
+                                                  SB
+                                                </span>
+                                                <span className="text-xs font-bold text-slate-800">
+                                                  Sponsored Brands
+                                                </span>
+                                              </div>
+                                              <span className="text-[10px] font-semibold text-sky-700 bg-sky-50 px-1.5 py-0.5 rounded">
+                                                {batch.sbGroup.length} file
+                                              </span>
+                                            </div>
+
+                                            {batch.sbGroup.length === 0 ? (
+                                              <div className="p-3 text-center text-slate-400 text-[11px]">
+                                                Chưa có file SB nào
+                                              </div>
+                                            ) : (
+                                              <div className="space-y-1.5">
+                                                {batch.sbGroup.map((file) => (
+                                                  <TreeFileItem
+                                                    key={file.id}
+                                                    file={file}
+                                                    isSelected={selectedFileIds.has(file.id)}
+                                                    onToggleSelect={() => toggleSelect(file.id)}
+                                                    onCopyPath={() => handleCopyPath(file)}
+                                                    isCopied={copiedId === file.id}
+                                                    onDelete={() => void handleDelete([file])}
+                                                    deleting={deleting}
+                                                  />
+                                                ))}
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
                                       </div>
-                                    ) : (
-                                      <div className="space-y-1.5">
-                                        {storeGroup.sbGroup.map((file) => (
-                                          <TreeFileItem
-                                            key={file.id}
-                                            file={file}
-                                            isSelected={selectedFileIds.has(file.id)}
-                                            onToggleSelect={() => toggleSelect(file.id)}
-                                            onCopyPath={() => handleCopyPath(file)}
-                                            isCopied={copiedId === file.id}
-                                            onDelete={() => void handleDelete([file])}
-                                            deleting={deleting}
-                                          />
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
+                                    );
+                                  })}
                                 </div>
                               )}
                             </div>
