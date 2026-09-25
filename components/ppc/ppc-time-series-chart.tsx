@@ -224,48 +224,27 @@ export function PpcTimeSeriesChart({
     start.setDate(end.getDate() - (count - 1));
 
     const diffDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1);
-    const dayOfWeekWeights = [1.25, 1.2, 1.05, 0.95, 0.9, 0.8, 0.95];
-    let totalWeight = 0;
-    const dateWeights: { date: Date; weight: number; isoDate: string }[] = [];
+    const points: DataPoint[] = [];
 
     for (let i = 0; i < diffDays; i++) {
       const d = new Date(start);
       d.setDate(start.getDate() + i);
-      const dow = d.getDay();
-      const wave = 1 + 0.15 * Math.sin((i / diffDays) * Math.PI * 3);
-      const w = dayOfWeekWeights[dow] * wave;
       const iso = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, "0")}-${d.getDate().toString().padStart(2, "0")}`;
-      dateWeights.push({ date: d, weight: w, isoDate: iso });
-      totalWeight += w;
-    }
+      const displayDate = `${d.getDate().toString().padStart(2, "0")}/${(d.getMonth() + 1).toString().padStart(2, "0")}`;
+      const realDay = dailyMap.get(iso);
 
-    const points: DataPoint[] = [];
+      let daySpend = 0;
+      let dayRevenue = 0;
+      let dayOrders = 0;
+      let dayClicks = 0;
+      let dayImpressions = 0;
 
-    for (let i = 0; i < dateWeights.length; i++) {
-      const { date, weight, isoDate } = dateWeights[i];
-      const displayDate = `${date.getDate().toString().padStart(2, "0")}/${(date.getMonth() + 1).toString().padStart(2, "0")}`;
-      const realDay = dailyMap.get(isoDate);
-
-      let daySpend: number;
-      let dayRevenue: number;
-      let dayOrders: number;
-      let dayClicks: number;
-      let dayImpressions: number;
-
-      if (hasDaily) {
-        daySpend = realDay ? Math.round(realDay.spend * 100) / 100 : 0;
-        dayRevenue = realDay ? Math.round(realDay.revenue * 100) / 100 : 0;
-        dayOrders = realDay ? realDay.orders : 0;
-        dayClicks = realDay ? realDay.clicks : 0;
-        dayImpressions = realDay ? realDay.impressions : 0;
-      } else {
-        const share = weight / totalWeight;
-        daySpend = Math.round(channelTotals.spend * share * 100) / 100;
-        const roasVariation = 1 + 0.22 * Math.sin(i * 1.3) + 0.08 * Math.cos(i * 0.7);
-        dayRevenue = Math.round(daySpend * (channelTotals.roas || 2.68) * roasVariation * 100) / 100;
-        dayOrders = Math.max(0, Math.round(channelTotals.orders * share * (0.9 + 0.2 * Math.sin(i * 1.5))));
-        dayClicks = Math.round(daySpend / Math.max(summary.avgCpc || 1.15, 0.1));
-        dayImpressions = Math.round(dayClicks / Math.max(summary.overallCtr || 0.0036, 0.001));
+      if (hasDaily && realDay) {
+        daySpend = Math.round(realDay.spend * 100) / 100;
+        dayRevenue = Math.round(realDay.revenue * 100) / 100;
+        dayOrders = realDay.orders;
+        dayClicks = realDay.clicks;
+        dayImpressions = realDay.impressions;
       }
 
       const roas = daySpend > 0 ? Math.round((dayRevenue / daySpend) * 100) / 100 : 0;
@@ -273,7 +252,7 @@ export function PpcTimeSeriesChart({
       const isLossWarning = (daySpend > 0 && dayRevenue === 0) || (dayRevenue > 0 && acos > targetAcos);
 
       points.push({
-        rawDate: isoDate,
+        rawDate: iso,
         displayDate,
         spend: daySpend,
         revenue: dayRevenue,
@@ -394,7 +373,22 @@ export function PpcTimeSeriesChart({
   // Chuẩn bị dữ liệu cho 7D và 30D (chạy song song độc lập)
   const rawData7D = useMemo(() => generateDailyPoints(7), [channel, dailyTrends, searchTerms, channelTotals, targetAcos, dateRangeEnd]);
   const chartData7D = useMemo(() => aggregatePoints(rawData7D, granularity), [rawData7D, granularity]);
-  const totals7D = useMemo(() => calculateTotals(rawData7D), [rawData7D]);
+  const totals7D = useMemo(() => {
+    const rawTotals = calculateTotals(rawData7D);
+    if (channelTotals && channelTotals.spend > 0 && selectedDays === 7) {
+      return {
+        ...rawTotals,
+        spend: channelTotals.spend,
+        revenue: channelTotals.revenue,
+        orders: channelTotals.orders,
+        acos: channelTotals.acos,
+        roas: channelTotals.roas,
+        avgDailySpend: Math.round((channelTotals.spend / 7) * 10) / 10,
+        avgOrderValue: channelTotals.orders > 0 ? Math.round((channelTotals.revenue / channelTotals.orders) * 10) / 10 : 0,
+      };
+    }
+    return rawTotals;
+  }, [rawData7D, channelTotals, selectedDays]);
 
   // Danh sách các ngày trong 7D kèm số đơn và chi tiêu để drawer chuyển ngày nhanh
   const availableDates7D: AvailableDateItem[] = useMemo(() => {
@@ -410,14 +404,45 @@ export function PpcTimeSeriesChart({
 
   const rawData30D = useMemo(() => generateDailyPoints(30), [channel, dailyTrends, searchTerms, channelTotals, targetAcos, dateRangeEnd]);
   const chartData30D = useMemo(() => aggregatePoints(rawData30D, granularity), [rawData30D, granularity]);
-  const totals30D = useMemo(() => calculateTotals(rawData30D), [rawData30D]);
+  const totals30D = useMemo(() => {
+    const rawTotals = calculateTotals(rawData30D);
+    if (channelTotals && channelTotals.spend > 0 && (selectedDays === 30 || selectedDays === undefined)) {
+      return {
+        ...rawTotals,
+        spend: channelTotals.spend,
+        revenue: channelTotals.revenue,
+        orders: channelTotals.orders,
+        acos: channelTotals.acos,
+        roas: channelTotals.roas,
+        avgDailySpend: Math.round((channelTotals.spend / 30) * 10) / 10,
+        avgOrderValue: channelTotals.orders > 0 ? Math.round((channelTotals.revenue / channelTotals.orders) * 10) / 10 : 0,
+      };
+    }
+    return rawTotals;
+  }, [rawData30D, channelTotals, selectedDays]);
 
   // Dữ liệu cho chế độ Single View (khi người dùng bấm chọn riêng 7D hoặc 30D)
   const rawDataCurrent = useMemo(() => {
     return generateDailyPoints(selectedDays || 7);
   }, [selectedDays, channel, dailyTrends, searchTerms, channelTotals, targetAcos, dateRangeEnd]);
   const chartDataCurrent = useMemo(() => aggregatePoints(rawDataCurrent, granularity), [rawDataCurrent, granularity]);
-  const totalsCurrent = useMemo(() => calculateTotals(rawDataCurrent), [rawDataCurrent]);
+  const totalsCurrent = useMemo(() => {
+    const rawTotals = calculateTotals(rawDataCurrent);
+    if (channelTotals && channelTotals.spend > 0) {
+      const days = selectedDays || 7;
+      return {
+        ...rawTotals,
+        spend: channelTotals.spend,
+        revenue: channelTotals.revenue,
+        orders: channelTotals.orders,
+        acos: channelTotals.acos,
+        roas: channelTotals.roas,
+        avgDailySpend: Math.round((channelTotals.spend / days) * 10) / 10,
+        avgOrderValue: channelTotals.orders > 0 ? Math.round((channelTotals.revenue / channelTotals.orders) * 10) / 10 : 0,
+      };
+    }
+    return rawTotals;
+  }, [rawDataCurrent, channelTotals, selectedDays]);
 
   // Custom Label Renderer cho Cột Spend (Hiển thị số tiền $ ngay trên đỉnh cột)
   const renderBarSpendLabel = (props: any, isCompact: boolean, isLongData: boolean) => {
