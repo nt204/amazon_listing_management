@@ -69,9 +69,11 @@ export function PpcMultiStoreView({
   const [isStoreManagerOpen, setIsStoreManagerOpen] = useState(false);
   const [isRemoteCrawlerModalOpen, setIsRemoteCrawlerModalOpen] = useState(false);
 
-  // Tổng các chỉ số của tất cả Store
+  // Tổng các chỉ số của tất cả Store (ưu tiên tổng thực tế từ storeSummaries nếu summary trống)
   const totals = useMemo(() => {
-    if (summary) {
+    const sumSpend = storeSummaries.reduce((sum, s) => sum + s.spend, 0);
+    const sumSales = storeSummaries.reduce((sum, s) => sum + s.sales, 0);
+    if (summary && (summary.totalSpend > 0 || summary.totalSales > 0 || sumSpend === 0)) {
       return {
         spend: summary.totalSpend,
         sales: summary.totalSales,
@@ -85,17 +87,15 @@ export function PpcMultiStoreView({
         ctr: summary.overallCtr * 100,
       };
     }
-    const spend = storeSummaries.reduce((sum, s) => sum + s.spend, 0);
-    const sales = storeSummaries.reduce((sum, s) => sum + s.sales, 0);
     const orders = storeSummaries.reduce((sum, s) => sum + s.orders, 0);
     const clicks = storeSummaries.reduce((sum, s) => sum + s.clicks, 0);
     const impressions = storeSummaries.reduce((sum, s) => sum + s.impressions, 0);
-    const acos = sales > 0 ? (spend / sales) * 100 : 0;
-    const roas = spend > 0 ? sales / spend : 0;
-    const cpc = clicks > 0 ? spend / clicks : 0;
+    const acos = sumSales > 0 ? (sumSpend / sumSales) * 100 : 0;
+    const roas = sumSpend > 0 ? sumSales / sumSpend : 0;
+    const cpc = clicks > 0 ? sumSpend / clicks : 0;
     const cvr = clicks > 0 ? (orders / clicks) * 100 : 0;
     const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
-    return { spend, sales, orders, clicks, impressions, acos, roas, cpc, cvr, ctr };
+    return { spend: sumSpend, sales: sumSales, orders, clicks, impressions, acos, roas, cpc, cvr, ctr };
   }, [summary, storeSummaries]);
 
   // Sắp xếp các store theo spend giảm dần
@@ -148,13 +148,27 @@ export function PpcMultiStoreView({
         </div>
       </div>
 
-      {/* 2. MỤC THỐNG KÊ */}
-      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs space-y-3">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
-            <ChartLineUp size={16} className="text-indigo-600" weight="bold" />
-            <span>THỐNG KÊ</span>
-          </h4>
+      {/* 2. MỤC THỐNG KÊ GIAN HÀNG */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-slate-100">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-indigo-500 text-white flex items-center justify-center shadow-xs">
+              <ChartLineUp size={20} weight="bold" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">
+                  THỐNG KÊ TỪNG GIAN HÀNG
+                </h3>
+                <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-[11px] font-black border border-indigo-200/60">
+                  {sortedStores.length} Stores
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 font-medium">
+                So sánh chi tiêu, doanh thu và hiệu quả quảng cáo giữa các shop
+              </p>
+            </div>
+          </div>
 
           <div className="flex items-center gap-2">
             {/* Nút Điều Khiển Crawl Từ Xa */}
@@ -173,7 +187,7 @@ export function PpcMultiStoreView({
               <button
                 type="button"
                 onClick={() => setViewMode("table")}
-                className={`p-1 rounded flex items-center gap-1 text-xs font-bold transition cursor-pointer ${
+                className={`p-1.5 rounded flex items-center gap-1 text-xs font-bold transition cursor-pointer ${
                   viewMode === "table"
                     ? "bg-white text-indigo-700 shadow-2xs"
                     : "text-slate-500 hover:text-slate-800"
@@ -186,7 +200,7 @@ export function PpcMultiStoreView({
               <button
                 type="button"
                 onClick={() => setViewMode("cards")}
-                className={`p-1 rounded flex items-center gap-1 text-xs font-bold transition cursor-pointer ${
+                className={`p-1.5 rounded flex items-center gap-1 text-xs font-bold transition cursor-pointer ${
                   viewMode === "cards"
                     ? "bg-white text-indigo-700 shadow-2xs"
                     : "text-slate-500 hover:text-slate-800"
@@ -201,75 +215,131 @@ export function PpcMultiStoreView({
         </div>
 
         {viewMode === "table" ? (
-          <div className="overflow-x-auto rounded-xl border border-slate-200/80 bg-white">
-            <table className="w-full text-left text-xs text-slate-700">
-              <thead className="bg-slate-50 text-[10px] font-extrabold uppercase text-slate-500 border-b border-slate-200">
+          <div className="overflow-x-auto rounded-2xl border border-slate-200/90 bg-white shadow-xs">
+            <table className="w-full text-left text-xs text-slate-700 border-collapse">
+              <thead className="bg-slate-100/80 text-[11px] font-black uppercase text-slate-600 border-b border-slate-200 tracking-wider">
                 <tr>
-                  <th className="py-2.5 px-3.5">Store</th>
-                  <th className="py-2.5 px-3 text-right">Spend</th>
-                  <th className="py-2.5 px-3 text-right font-black text-emerald-700">Sales</th>
-                  <th className="py-2.5 px-3 text-right">Orders</th>
-                  <th className="py-2.5 px-3 text-right">ACOS</th>
-                  <th className="py-2.5 px-3.5 text-center">Thao Tác</th>
+                  <th className="py-3.5 px-5 min-w-[220px]">Gian Hàng</th>
+                  <th className="py-3.5 px-4 text-right min-w-[130px]">Chi Tiêu (Spend)</th>
+                  <th className="py-3.5 px-4 text-right min-w-[140px] font-black text-emerald-700">Doanh Thu (Sales)</th>
+                  <th className="py-3.5 px-4 text-right min-w-[95px]">Đơn Hàng</th>
+                  <th className="py-3.5 px-4 text-right min-w-[110px]">ACOS</th>
+                  <th className="py-3.5 px-5 text-center min-w-[130px]">Thao Tác</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 font-medium">
-                {sortedStores.map((store) => {
+              <tbody className="divide-y divide-slate-200/70 font-medium">
+                {sortedStores.map((store, index) => {
                   const isGood = store.sales > 0 && store.acos <= store.targetAcos;
                   const isBleeding = store.sales > 0 && store.acos > store.targetAcos * 1.3;
+                  const isEven = index % 2 === 0;
 
                   return (
                     <tr
                       key={store.id}
                       onClick={() => onSelectStore(store.name)}
-                      className="hover:bg-indigo-50/40 transition cursor-pointer"
+                      className={`group transition-all cursor-pointer ${
+                        isEven ? "bg-white" : "bg-slate-100/60"
+                      } hover:bg-indigo-50/70`}
                     >
-                      <td className="py-3 px-3.5">
-                        <div className="font-bold text-slate-900 flex items-center gap-2">
-                          <Storefront size={16} className="text-indigo-600" weight="bold" />
-                          <span>{store.name}</span>
-                          <span className="px-1.5 py-0.2 rounded text-[10px] font-black uppercase bg-slate-100 text-slate-600">
-                            {store.marketplace || "US"}
-                          </span>
+                      {/* Cột Store */}
+                      <td className="py-4 px-5">
+                        <div className="flex items-center gap-3.5">
+                          <div className="w-10 h-10 rounded-xl flex items-center justify-center font-black shrink-0 bg-indigo-50 text-indigo-600 border border-indigo-200/80 group-hover:bg-indigo-600 group-hover:text-white transition-all shadow-2xs group-hover:scale-105">
+                            <Storefront size={20} weight="bold" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-black text-slate-900 text-sm group-hover:text-indigo-600 transition-colors">
+                                {store.name}
+                              </span>
+                              <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-slate-900 text-white shadow-2xs">
+                                {store.marketplace || "US"}
+                              </span>
+                            </div>
+                            <div className="text-xs text-slate-500 font-semibold mt-0.5 flex items-center gap-1.5">
+                              {store.totalCampaigns > 0 ? (
+                                <span className="text-slate-700 font-bold">{store.totalCampaigns.toLocaleString()} camps</span>
+                              ) : (
+                                <span className="text-slate-400">0 camp</span>
+                              )}
+                              <span>·</span>
+                              <span>Target: <strong className="text-slate-800">{store.targetAcos}%</strong></span>
+                            </div>
+                          </div>
                         </div>
                       </td>
-                      <td className="py-3 px-3 text-right font-mono font-bold text-slate-900">
-                        {currency}{store.spend.toFixed(2)}
+
+                      {/* Cột Spend */}
+                      <td className="py-4 px-4 text-right">
+                        <div className={`font-mono text-sm font-black ${store.spend > 0 ? "text-slate-900" : "text-slate-400"}`}>
+                          {currency}{store.spend.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                        {store.spend > 0 ? (
+                          <div className="text-[11px] text-slate-500 font-semibold mt-0.5">
+                            {store.clicks.toLocaleString()} clicks · ${store.cpc.toFixed(2)}/cpc
+                          </div>
+                        ) : (
+                          <div className="text-[11px] text-slate-300 font-medium mt-0.5">—</div>
+                        )}
                       </td>
-                      <td className="py-3 px-3 text-right font-mono font-black text-emerald-600">
-                        {currency}{store.sales.toFixed(2)}
+
+                      {/* Cột Sales */}
+                      <td className="py-4 px-4 text-right">
+                        <div className={`font-mono text-sm font-black ${store.sales > 0 ? "text-emerald-600" : "text-slate-400"}`}>
+                          {currency}{store.sales.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                        {store.sales > 0 ? (
+                          <div className="text-[11px] text-emerald-700 font-bold mt-0.5">
+                            CVR {store.cvr.toFixed(1)}%
+                          </div>
+                        ) : (
+                          <div className="text-[11px] text-slate-300 font-medium mt-0.5">—</div>
+                        )}
                       </td>
-                      <td className="py-3 px-3 text-right font-mono font-bold text-slate-800">
-                        {store.orders}
+
+                      {/* Cột Orders */}
+                      <td className="py-4 px-4 text-right font-mono">
+                        <div className={`text-sm font-black ${store.orders > 0 ? "text-slate-900" : "text-slate-400"}`}>
+                          {store.orders}
+                        </div>
+                        {store.orders > 0 ? (
+                          <div className="text-[11px] text-slate-400 font-medium mt-0.5">
+                            ${(store.sales / store.orders).toFixed(1)}/đơn
+                          </div>
+                        ) : null}
                       </td>
-                      <td className="py-3 px-3 text-right font-mono font-bold">
+
+                      {/* Cột ACOS */}
+                      <td className="py-4 px-4 text-right">
                         {store.sales === 0 ? (
-                          <span className="text-slate-400">—</span>
+                          <span className="text-slate-300 font-mono text-sm font-bold">—</span>
                         ) : (
                           <span
-                            className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${
+                            className={`inline-block px-3 py-1 rounded-lg text-xs font-black font-mono shadow-xs ${
                               isGood
-                                ? "bg-emerald-50 text-emerald-700"
+                                ? "bg-emerald-500 text-white"
                                 : isBleeding
-                                ? "bg-rose-50 text-rose-700"
-                                : "bg-amber-50 text-amber-800"
+                                ? "bg-rose-500 text-white"
+                                : "bg-amber-500 text-white"
                             }`}
                           >
                             {store.acos.toFixed(1)}%
                           </span>
                         )}
                       </td>
-                      <td className="py-3 px-3.5 text-center">
+
+                      {/* Cột Thao tác */}
+                      <td className="py-4 px-5 text-center">
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             onSelectStore(store.name);
                           }}
-                          className="inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition cursor-pointer"
+                          className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs hover:shadow-md active:scale-95 group-hover:scale-105"
                         >
                           <span>Vào shop</span>
-                          <ArrowRight size={12} weight="bold" />
+                          <ArrowRight size={13} weight="bold" className="transition-transform group-hover:translate-x-0.5" />
                         </button>
                       </td>
                     </tr>
@@ -288,67 +358,86 @@ export function PpcMultiStoreView({
                 <div
                   key={store.id}
                   onClick={() => onSelectStore(store.name)}
-                  className="group relative rounded-xl border border-slate-200 bg-white p-4 shadow-2xs hover:shadow-md hover:border-indigo-300 transition cursor-pointer flex flex-col justify-between"
+                  className="group relative rounded-xl border border-slate-200 bg-white p-4 transition-all cursor-pointer flex flex-col justify-between hover:border-indigo-300 hover:shadow-xs"
                 >
                   <div>
                     {/* Header */}
-                    <div className="flex items-center justify-between pb-2.5 border-b border-slate-100">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center font-black text-xs border border-indigo-100 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+                    <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs bg-slate-100 text-slate-500 border border-slate-200 group-hover:bg-indigo-50 group-hover:text-indigo-600 group-hover:border-indigo-200 transition-colors">
                           <Storefront size={16} weight="bold" />
                         </div>
-                        <div className="flex items-center gap-1.5">
-                          <h4 className="text-sm font-black text-slate-900 group-hover:text-indigo-600 transition-colors">
-                            {store.name}
-                          </h4>
-                          <span className="px-1.5 py-0.2 rounded text-[10px] font-black uppercase bg-slate-100 text-slate-600">
-                            {store.marketplace || "US"}
-                          </span>
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <h4 className="text-xs font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
+                              {store.name}
+                            </h4>
+                            <span className="px-1.5 py-0.2 rounded text-[10px] font-bold uppercase bg-slate-100 text-slate-600 border border-slate-200">
+                              {store.marketplace || "US"}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 font-medium mt-0.5">
+                            {store.totalCampaigns > 0 ? `${store.totalCampaigns.toLocaleString()} campaigns` : "Chưa có camp"}
+                          </div>
                         </div>
                       </div>
 
                       <span
-                        className={`text-[10px] font-black px-1.5 py-0.5 rounded ${
-                          isGoodAcos
-                            ? "bg-emerald-50 text-emerald-700"
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded font-mono ${
+                          store.sales === 0
+                            ? "bg-slate-100 text-slate-400"
+                            : isGoodAcos
+                            ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
                             : isHighAcos
-                            ? "bg-rose-50 text-rose-700"
-                            : "bg-amber-50 text-amber-800"
+                            ? "bg-rose-50 text-rose-700 border border-rose-200"
+                            : "bg-amber-50 text-amber-700 border border-amber-200"
                         }`}
                       >
-                        ACOS: {store.sales > 0 ? `${store.acos.toFixed(1)}%` : "—"}
+                        {store.sales > 0 ? `${store.acos.toFixed(1)}%` : "—"}
                       </span>
                     </div>
 
-                    {/* Metrics Grid: spend, sales, orders */}
+                    {/* Metrics Grid */}
                     <div className="grid grid-cols-3 gap-2 py-3 text-center">
-                      <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase block">Spend</span>
-                        <div className="text-xs font-black text-slate-900 mt-0.5">
+                      <div className="p-2 rounded-lg bg-slate-50/80 border border-slate-100">
+                        <span className="text-[10px] font-medium text-slate-400 uppercase block tracking-wider">Spend</span>
+                        <div className={`text-xs font-bold font-mono mt-0.5 ${store.spend > 0 ? "text-slate-900" : "text-slate-400"}`}>
                           {currency}{store.spend.toLocaleString("en-US", { minimumFractionDigits: 2 })}
                         </div>
                       </div>
 
-                      <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase block">Sales</span>
-                        <div className="text-xs font-black text-emerald-600 mt-0.5">
+                      <div className="p-2 rounded-lg bg-slate-50/80 border border-slate-100">
+                        <span className="text-[10px] font-medium text-slate-400 uppercase block tracking-wider">Sales</span>
+                        <div className={`text-xs font-bold font-mono mt-0.5 ${store.sales > 0 ? "text-emerald-600" : "text-slate-400"}`}>
                           {currency}{store.sales.toLocaleString("en-US", { minimumFractionDigits: 2 })}
                         </div>
                       </div>
 
-                      <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase block">Orders</span>
-                        <div className="text-xs font-black text-slate-800 mt-0.5">
+                      <div className="p-2 rounded-lg bg-slate-50/80 border border-slate-100">
+                        <span className="text-[10px] font-medium text-slate-400 uppercase block tracking-wider">Orders</span>
+                        <div className={`text-xs font-bold font-mono mt-0.5 ${store.orders > 0 ? "text-slate-800" : "text-slate-400"}`}>
                           {store.orders}
                         </div>
                       </div>
                     </div>
                   </div>
 
-                  {/* Footer */}
-                  <div className="pt-2 border-t border-slate-100 flex items-center justify-end text-xs font-bold text-indigo-600 group-hover:translate-x-1 transition-transform">
-                    <span>Vào shop</span>
-                    <ArrowRight size={12} weight="bold" />
+                  {/* Footer Button */}
+                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                    <span className="text-[11px] font-medium text-slate-400">
+                      Target: <strong className="text-slate-600">{store.targetAcos}%</strong>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectStore(store.name);
+                      }}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium text-slate-700 hover:text-indigo-600 hover:bg-indigo-50/60 border border-slate-200 transition-colors"
+                    >
+                      <span>Vào shop</span>
+                      <ArrowRight size={12} weight="bold" />
+                    </button>
                   </div>
                 </div>
               );

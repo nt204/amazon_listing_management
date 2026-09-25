@@ -527,7 +527,8 @@ export async function listPpcCampaignPage(
   const sql = await getDatabaseClient();
   const teamId = (scope as any)?.teamId || "default";
   const offset = (filters.page - 1) * filters.pageSize;
-  const searchPattern = `%${filters.query.trim()}%`;
+  const searchWords = filters.query.trim().split(/\s+/).filter(Boolean);
+  const searchPattern = searchWords.length > 0 ? `%${searchWords.join("%")}%` : "%";
   const coverageDays = Math.max(1, Math.trunc(filters.days));
 
   const activeSnapRows = await sql<{ count: string | number }[]>`
@@ -982,9 +983,17 @@ export async function refreshPpcDailySummary(
 ): Promise<void> {
   const sql = client || await getDatabaseClient();
   const teamId = (scope as any)?.teamId || "default";
-  // The overview time series must come only from true one-day CAMPAIGN rows
-  // in Bulk files. Multi-day snapshots cannot be divided into daily values
-  // without fabricating data.
+  // Check if true 1-day CAMPAIGN rows exist in Bulk
+  const bulkDailyCount = await sql<{ count: string | number }[]>`
+    SELECT count(*) as count
+    FROM ppc_performance_facts p
+    JOIN ppc_stores s ON s.id = p.store_id
+    WHERE s.team_id = ${teamId}
+      AND (${!storeId} OR p.store_id = ${storeId || null}::uuid)
+      AND p.grain = 'CAMPAIGN'
+      AND p.report_start_date = p.report_end_date
+  `;
+
   await sql`
     DELETE FROM ppc_daily_summary d
     USING ppc_stores s
@@ -992,50 +1001,98 @@ export async function refreshPpcDailySummary(
       AND s.team_id = ${teamId}
       AND (${!storeId} OR d.store_id = ${storeId || null}::uuid)
   `;
-  await sql`
-    INSERT INTO ppc_daily_summary (
-      store_id, report_date, ad_type,
-      impressions, clicks, spend, sales, orders, units,
-      cpc, ctr, cvr, acos, roas, updated_at
-    )
-    SELECT
-      p.store_id,
-      p.report_end_date,
-      COALESCE(p.ad_type, 'UNKNOWN') AS ad_type,
-      COALESCE(SUM(p.impressions), 0) AS impressions,
-      COALESCE(SUM(p.clicks), 0) AS clicks,
-      COALESCE(SUM(p.spend), 0) AS spend,
-      COALESCE(SUM(p.sales), 0) AS sales,
-      COALESCE(SUM(p.orders), 0) AS orders,
-      COALESCE(SUM(p.units), 0) AS units,
-      CASE WHEN SUM(p.clicks) > 0 THEN ROUND((SUM(p.spend) / SUM(p.clicks))::numeric, 2) ELSE 0 END AS cpc,
-      CASE WHEN SUM(p.impressions) > 0 THEN ROUND((SUM(p.clicks)::numeric / SUM(p.impressions)::numeric) * 100, 4) ELSE 0 END AS ctr,
-      CASE WHEN SUM(p.clicks) > 0 THEN ROUND((SUM(p.orders)::numeric / SUM(p.clicks)::numeric) * 100, 4) ELSE 0 END AS cvr,
-      CASE WHEN SUM(p.sales) > 0 THEN ROUND((SUM(p.spend) / SUM(p.sales) * 100)::numeric, 2) ELSE (CASE WHEN SUM(p.spend) > 0 THEN 999 ELSE 0 END) END AS acos,
-      CASE WHEN SUM(p.spend) > 0 THEN ROUND((SUM(p.sales) / SUM(p.spend))::numeric, 2) ELSE 0 END AS roas,
-      NOW() AS updated_at
-    FROM ppc_performance_facts p
-    JOIN ppc_stores s ON s.id = p.store_id
-    WHERE s.team_id = ${teamId}
-      AND (${!storeId} OR p.store_id = ${storeId || null}::uuid)
-      AND p.grain = 'CAMPAIGN'
-      AND p.report_start_date = p.report_end_date
-    GROUP BY p.store_id, p.report_end_date, COALESCE(p.ad_type, 'UNKNOWN')
-    ON CONFLICT (store_id, report_date, ad_type)
-    DO UPDATE SET
-      impressions = EXCLUDED.impressions,
-      clicks = EXCLUDED.clicks,
-      spend = EXCLUDED.spend,
-      sales = EXCLUDED.sales,
-      orders = EXCLUDED.orders,
-      units = EXCLUDED.units,
-      cpc = EXCLUDED.cpc,
-      ctr = EXCLUDED.ctr,
-      cvr = EXCLUDED.cvr,
-      acos = EXCLUDED.acos,
-      roas = EXCLUDED.roas,
-      updated_at = NOW();
-  `;
+
+  if (Number(bulkDailyCount[0]?.count || 0) > 0) {
+    await sql`
+      INSERT INTO ppc_daily_summary (
+        store_id, report_date, ad_type,
+        impressions, clicks, spend, sales, orders, units,
+        cpc, ctr, cvr, acos, roas, updated_at
+      )
+      SELECT
+        p.store_id,
+        p.report_end_date,
+        COALESCE(p.ad_type, 'UNKNOWN') AS ad_type,
+        COALESCE(SUM(p.impressions), 0) AS impressions,
+        COALESCE(SUM(p.clicks), 0) AS clicks,
+        COALESCE(SUM(p.spend), 0) AS spend,
+        COALESCE(SUM(p.sales), 0) AS sales,
+        COALESCE(SUM(p.orders), 0) AS orders,
+        COALESCE(SUM(p.units), 0) AS units,
+        CASE WHEN SUM(p.clicks) > 0 THEN ROUND((SUM(p.spend) / SUM(p.clicks))::numeric, 2) ELSE 0 END AS cpc,
+        CASE WHEN SUM(p.impressions) > 0 THEN ROUND((SUM(p.clicks)::numeric / SUM(p.impressions)::numeric) * 100, 4) ELSE 0 END AS ctr,
+        CASE WHEN SUM(p.clicks) > 0 THEN ROUND((SUM(p.orders)::numeric / SUM(p.clicks)::numeric) * 100, 4) ELSE 0 END AS cvr,
+        CASE WHEN SUM(p.sales) > 0 THEN ROUND((SUM(p.spend) / SUM(p.sales) * 100)::numeric, 2) ELSE (CASE WHEN SUM(p.spend) > 0 THEN 999 ELSE 0 END) END AS acos,
+        CASE WHEN SUM(p.spend) > 0 THEN ROUND((SUM(p.sales) / SUM(p.spend))::numeric, 2) ELSE 0 END AS roas,
+        NOW() AS updated_at
+      FROM ppc_performance_facts p
+      JOIN ppc_stores s ON s.id = p.store_id
+      WHERE s.team_id = ${teamId}
+        AND (${!storeId} OR p.store_id = ${storeId || null}::uuid)
+        AND p.grain = 'CAMPAIGN'
+        AND p.report_start_date = p.report_end_date
+      GROUP BY p.store_id, p.report_end_date, COALESCE(p.ad_type, 'UNKNOWN')
+      ON CONFLICT (store_id, report_date, ad_type)
+      DO UPDATE SET
+        impressions = EXCLUDED.impressions,
+        clicks = EXCLUDED.clicks,
+        spend = EXCLUDED.spend,
+        sales = EXCLUDED.sales,
+        orders = EXCLUDED.orders,
+        units = EXCLUDED.units,
+        cpc = EXCLUDED.cpc,
+        ctr = EXCLUDED.ctr,
+        cvr = EXCLUDED.cvr,
+        acos = EXCLUDED.acos,
+        roas = EXCLUDED.roas,
+        updated_at = NOW();
+    `;
+  } else {
+    // Fallback: Populate daily summary from Search Term report (which provides genuine daily records)
+    await sql`
+      INSERT INTO ppc_daily_summary (
+        store_id, report_date, ad_type,
+        impressions, clicks, spend, sales, orders, units,
+        cpc, ctr, cvr, acos, roas, updated_at
+      )
+      SELECT
+        p.store_id,
+        p.report_date,
+        COALESCE(p.ad_type, 'UNKNOWN') AS ad_type,
+        COALESCE(SUM(p.impressions), 0) AS impressions,
+        COALESCE(SUM(p.clicks), 0) AS clicks,
+        COALESCE(SUM(p.spend), 0) AS spend,
+        COALESCE(SUM(p.sales), 0) AS sales,
+        COALESCE(SUM(p.orders), 0) AS orders,
+        COALESCE(SUM(p.units), 0) AS units,
+        CASE WHEN SUM(p.clicks) > 0 THEN ROUND((SUM(p.spend) / SUM(p.clicks))::numeric, 2) ELSE 0 END AS cpc,
+        CASE WHEN SUM(p.impressions) > 0 THEN ROUND((SUM(p.clicks)::numeric / SUM(p.impressions)::numeric) * 100, 4) ELSE 0 END AS ctr,
+        CASE WHEN SUM(p.clicks) > 0 THEN ROUND((SUM(p.orders)::numeric / SUM(p.clicks)::numeric) * 100, 4) ELSE 0 END AS cvr,
+        CASE WHEN SUM(p.sales) > 0 THEN ROUND((SUM(p.spend) / SUM(p.sales) * 100)::numeric, 2) ELSE (CASE WHEN SUM(p.spend) > 0 THEN 999 ELSE 0 END) END AS acos,
+        CASE WHEN SUM(p.spend) > 0 THEN ROUND((SUM(p.sales) / SUM(p.spend))::numeric, 2) ELSE 0 END AS roas,
+        NOW() AS updated_at
+      FROM ppc_search_terms p
+      JOIN ppc_stores s ON s.id = p.store_id
+      WHERE s.team_id = ${teamId}
+        AND (${!storeId} OR p.store_id = ${storeId || null}::uuid)
+        AND p.report_date IS NOT NULL
+      GROUP BY p.store_id, p.report_date, COALESCE(p.ad_type, 'UNKNOWN')
+      ON CONFLICT (store_id, report_date, ad_type)
+      DO UPDATE SET
+        impressions = EXCLUDED.impressions,
+        clicks = EXCLUDED.clicks,
+        spend = EXCLUDED.spend,
+        sales = EXCLUDED.sales,
+        orders = EXCLUDED.orders,
+        units = EXCLUDED.units,
+        cpc = EXCLUDED.cpc,
+        ctr = EXCLUDED.ctr,
+        cvr = EXCLUDED.cvr,
+        acos = EXCLUDED.acos,
+        roas = EXCLUDED.roas,
+        updated_at = NOW();
+    `;
+  }
 }
 
 function performanceIdentity(row: PpcPerformanceRow): string {
@@ -1241,7 +1298,10 @@ export async function refreshPpcSnapshotSummary(
       target_stats AS (
         SELECT 
           ad_type,
-          count(*) FILTER (WHERE NOT is_negative) as target_count,
+          count(*) FILTER (
+            WHERE NOT is_negative
+              AND (spend > 0 OR clicks > 0 OR impressions > 0)
+          ) as target_count,
           count(*) FILTER (
             WHERE NOT is_negative
               AND lower(COALESCE(state, '')) = 'enabled'
@@ -2092,25 +2152,8 @@ export async function getPpcOverviewAggregates(
           ON ls.store_id = p.store_id AND ls.ad_type = p.ad_type
           AND ls.max_snapshot = p.snapshot_date AND ls.max_report_start = p.report_start_date AND ls.max_report_end = p.report_end_date
         WHERE p.grain = 'TARGET'
-          AND (
-            p.spend > 0 OR p.clicks > 0 OR p.impressions > 0
-            OR (
-              p.state = 'enabled'
-              AND (
-                p.campaign_name ILIKE '%GO%' OR p.sku ILIKE '%GO%'
-                OR EXISTS (
-                  SELECT 1 FROM ppc_performance_facts c_act
-                  WHERE c_act.store_id = p.store_id
-                    AND c_act.ad_type = p.ad_type
-                    AND c_act.snapshot_date = p.snapshot_date
-                    AND c_act.report_end_date = p.report_end_date
-                    AND c_act.grain = 'CAMPAIGN'
-                    AND c_act.campaign_id = p.campaign_id
-                    AND (c_act.state = 'enabled' OR c_act.spend > 0 OR c_act.impressions > 0)
-                )
-              )
-            )
-          );
+          AND NOT p.is_negative
+          AND (p.spend > 0 OR p.clicks > 0 OR p.impressions > 0);
       `;
       const count = Number(rows[0]?.count || 0);
       targetCountCache.set(targetCountKey, { expiresAt: Date.now() + 60_000, count });

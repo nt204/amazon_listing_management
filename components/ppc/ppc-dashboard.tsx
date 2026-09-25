@@ -740,6 +740,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       if (actionQueue.length === 0) {
         void loadActionQueue();
       }
+    } else if (skuRecGroups.length === 0 && !loadingRecs && detailCounts?.skus) {
+      const preloadTimer = window.setTimeout(() => {
+        void loadGroupedRecommendations();
+      }, 400);
+      return () => window.clearTimeout(preloadTimer);
     }
   }, [
     activeTab,
@@ -882,13 +887,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     }
 
     if (searchTermQuery.trim()) {
-      const q = searchTermQuery.toLowerCase();
-      list = list.filter(
-        (t) =>
-          t.customerSearchTerm.toLowerCase().includes(q) ||
-          t.campaignName.toLowerCase().includes(q) ||
-          (t.portfolioName && t.portfolioName.toLowerCase().includes(q))
-      );
+      const tokens = searchTermQuery.toLowerCase().split(/\s+/).filter(Boolean);
+      list = list.filter((t) => {
+        const text = `${t.customerSearchTerm} ${t.campaignName} ${t.portfolioName || ""}`.toLowerCase();
+        return tokens.every((tok) => text.includes(tok));
+      });
     }
 
     list.sort((a, b) => {
@@ -941,10 +944,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       list = list.filter((ag) => ag.campaignName === selectedCampaignForDrilldown);
     }
     if (adGroupQuery.trim()) {
-      const q = adGroupQuery.toLowerCase();
-      list = list.filter(
-        (ag) => ag.adGroupName.toLowerCase().includes(q) || ag.campaignName.toLowerCase().includes(q) || ag.storeName.toLowerCase().includes(q)
-      );
+      const tokens = adGroupQuery.toLowerCase().split(/\s+/).filter(Boolean);
+      list = list.filter((ag) => {
+        const text = `${ag.adGroupName} ${ag.campaignName} ${ag.storeName}`.toLowerCase();
+        return tokens.every((tok) => text.includes(tok));
+      });
     }
     list.sort((a, b) => {
       const valA = a[adGroupSortField];
@@ -971,13 +975,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       list = list.filter((t) => t.adGroupName === selectedAdGroupForDrilldown);
     }
     if (targetQuery.trim()) {
-      const q = targetQuery.toLowerCase();
-      list = list.filter(
-        (t) =>
-          (t.targetKeyword || "").toLowerCase().includes(q) ||
-          (t.campaignName || "").toLowerCase().includes(q) ||
-          (t.adGroupName || "").toLowerCase().includes(q)
-      );
+      const tokens = targetQuery.toLowerCase().split(/\s+/).filter(Boolean);
+      list = list.filter((t) => {
+        const text = `${t.targetKeyword || ""} ${t.campaignName || ""} ${t.adGroupName || ""}`.toLowerCase();
+        return tokens.every((tok) => text.includes(tok));
+      });
     }
     list.sort((a, b) => {
       const valA = a[targetSortField] ?? 0;
@@ -1187,8 +1189,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       }
     }
     if (skuQuery.trim()) {
-      const q = skuQuery.toLowerCase();
-      list = list.filter((s) => s.sku.toLowerCase().includes(q) || s.storeName.toLowerCase().includes(q));
+      const tokens = skuQuery.toLowerCase().split(/\s+/).filter(Boolean);
+      list = list.filter((s) => {
+        const text = `${s.sku} ${s.storeName}`.toLowerCase();
+        return tokens.every((tok) => text.includes(tok));
+      });
     }
     list.sort((a, b) => {
       const valA = a[skuSortField];
@@ -1423,17 +1428,19 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
 
           {/* Action Toolbar */}
           <div className="flex items-center gap-2 self-stretch lg:self-auto justify-end flex-wrap">
-            {selectedStore !== "ALL" && (
+            {(selectedStore !== "ALL" || activeTab !== "overview") && (
               <button
                 type="button"
                 onClick={() => {
                   setSelectedStore("ALL");
                   setSelectedSku("ALL");
+                  setActiveTab("overview");
                 }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50/80 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition cursor-pointer shadow-2xs"
-                title="Quay lại giao diện thống kê so sánh đa shop"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50/90 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition cursor-pointer shadow-2xs"
+                title="Quay lại giao diện thống kê so sánh tất cả các store"
               >
-                <span>← Tất cả Shop</span>
+                <Storefront size={14} weight="bold" />
+                <span>← Tất cả Store</span>
               </button>
             )}
             {!isEmbedded && (
@@ -1509,8 +1516,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
               <select
                 value={selectedStore}
                 onChange={(e) => {
-                  setSelectedStore(e.target.value);
+                  const val = e.target.value;
+                  setSelectedStore(val);
                   setSelectedSku("ALL");
+                  if (val === "ALL") {
+                    setActiveTab("overview");
+                  }
                 }}
                 className="bg-transparent text-slate-900 font-bold outline-none cursor-pointer text-xs"
               >
@@ -2005,7 +2016,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
         </div>
       )}
 
-      {/* DATA SLICING SUB-TABS (Bóc tách dữ liệu theo kiến trúc 5 tầng + SKU song song - LUÔN HIỂN THỊ ĐỂ ĐIỀU HƯỚNG DỄ DÀNG) */}
+      {/* DATA SLICING SUB-TABS (Bóc tách dữ liệu theo kiến trúc 5 tầng + SKU song song - ẨN KHI Ở TỔNG QUAN TẤT CẢ SHOP) */}
+      {(selectedStore !== "ALL" || activeTab !== "overview") && (
       <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-200/60 rounded-xl border border-slate-200/80 shadow-2xs">
         <button
           type="button"
@@ -2075,7 +2087,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
             : "text-slate-600 hover:text-slate-900"
             }`}
         >
-          <span>6. Đề Xuất ({skuRecGroups.length > 0 ? `${skuRecGroups.length.toLocaleString("vi-VN")} SKU` : (loadingRecs ? "..." : "0 SKU")})</span>
+          <span>6. Đề Xuất ({skuRecGroups.length > 0 ? `${skuRecGroups.length.toLocaleString("vi-VN")} SKU` : (detailCounts?.skus !== undefined ? `${detailCounts.skus.toLocaleString("vi-VN")} SKU` : (loadingRecs ? "..." : "0 SKU"))})</span>
         </button>
 
         {/* Action Queue Quick Trigger */}
@@ -2094,6 +2106,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
           </button>
         </div>
       </div>
+      )}
 
       {/* ========================================================================= */}
       {/* VIEW 1: OVERVIEW SUMMARY TABLE (CHỈ HIỂN THỊ KHI ĐANG XEM 1 SHOP CỤ THỂ) */}
