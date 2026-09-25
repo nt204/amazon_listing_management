@@ -24,8 +24,100 @@ import {
   CaretRight,
   CaretDown,
   Megaphone,
+  Copy,
+  Eye,
+  ArrowCounterClockwise,
+  SlidersHorizontal,
+  MagnifyingGlass,
 } from "@phosphor-icons/react";
 import type { BulkExport, PpcAction, PpcAutoUploadLog } from "@/lib/ppc/sku-architecture-types";
+
+export function formatCompactFileName(fileName: string, skus?: string[]) {
+  const match = fileName.match(/(\d{4}-\d{2}-\d{2})T(\d{2})[-:](\d{2})/);
+  if (match) {
+    const date = match[1];
+    const time = `${match[2]}:${match[3]}`;
+    const skuStr = skus && skus.length > 0 ? (skus.length <= 2 ? skus.join(", ") : `${skus[0]} +${skus.length - 1}`) : "";
+    return {
+      display: skuStr ? `${skuStr} · ${date} ${time}` : `${date} ${time}`,
+      full: fileName,
+    };
+  }
+  return {
+    display: fileName.length > 34 ? fileName.slice(0, 18) + "..." + fileName.slice(-10) : fileName,
+    full: fileName,
+  };
+}
+
+export function getAutoUploadStatusMeta(status: string) {
+  switch (status) {
+    case "PENDING":
+      return { label: "Đang chờ upload", color: "bg-blue-50 text-blue-700 border-blue-200" };
+    case "RUNNING":
+      return { label: "Đang thực thi", color: "bg-amber-50 text-amber-700 border-amber-200 animate-pulse" };
+    case "RETRY_WAIT":
+      return { label: "Đang chờ thử lại", color: "bg-amber-50 text-amber-800 border-amber-300" };
+    case "SUCCESS":
+      return { label: "Áp dụng thành công", color: "bg-emerald-50 text-emerald-700 border-emerald-200" };
+    case "PARTIAL_SUCCESS":
+      return { label: "Thành công một phần", color: "bg-orange-50 text-orange-700 border-orange-200" };
+    case "RESULT_TIMEOUT":
+      return { label: "Không xác nhận được", color: "bg-amber-50 text-amber-900 border-amber-300" };
+    case "FAILED":
+      return { label: "Thất bại", color: "bg-rose-50 text-rose-700 border-rose-200" };
+    case "CANCELLED":
+      return { label: "Đã hủy", color: "bg-slate-100 text-slate-600 border-slate-200" };
+    default:
+      return { label: status, color: "bg-slate-100 text-slate-700 border-slate-200" };
+  }
+}
+
+export function getActionTypeBadge(actionType: string) {
+  const norm = (actionType || "").toUpperCase();
+  if (norm.includes("PAUSE")) {
+    return {
+      label: "Pause",
+      className: "bg-amber-50 text-amber-800 border border-amber-200",
+      icon: Pause,
+    };
+  }
+  if (norm.includes("BUDGET")) {
+    return {
+      label: "Budget",
+      className: "bg-purple-50 text-purple-700 border border-purple-200",
+      icon: SlidersHorizontal,
+    };
+  }
+  if (norm.includes("ENABLE") || norm.includes("UNPAUSE")) {
+    return {
+      label: "Bật",
+      className: "bg-blue-50 text-blue-700 border border-blue-200",
+      icon: Check,
+    };
+  }
+  return {
+    label: "Đổi Bid",
+    className: "bg-slate-100 text-slate-700 border border-slate-200",
+    icon: ArrowUpRight,
+  };
+}
+
+export interface RunDetailItem {
+  type: "BULK" | "AUTO";
+  id: string;
+  fileName: string;
+  storeName?: string;
+  profileName?: string;
+  createdAt: string;
+  status: string;
+  actionCount: number;
+  durationMs?: number;
+  skus?: string[];
+  errorMessage?: string | null;
+  resultSummary?: string | null;
+  bulkExportId?: string;
+  rawLog?: PpcAutoUploadLog;
+}
 
 export interface ActionCampaignGroup {
   campaignName: string;
@@ -101,6 +193,20 @@ export function PpcActionQueueDrawer({
   const [autoLogs, setAutoLogs] = useState<PpcAutoUploadLog[]>([]);
   const [isLoadingAutoLogs, setIsLoadingAutoLogs] = useState(false);
 
+  // Run Detail State (Slide-over drawer/modal)
+  const [selectedRunDetail, setSelectedRunDetail] = useState<RunDetailItem | null>(null);
+  const [isLoadingDetail, setIsLoadingDetail] = useState(false);
+  const [detailActionItems, setDetailActionItems] = useState<any[]>([]);
+  const [detailSearchQuery, setDetailSearchQuery] = useState("");
+  const [copiedFileNameId, setCopiedFileNameId] = useState<string | null>(null);
+
+  // Safe Re-upload Modal State
+  const [reuploadTarget, setReuploadTarget] = useState<PpcAutoUploadLog | null>(null);
+  const [isReuploading, setIsReuploading] = useState(false);
+
+  // Cancelling Task State
+  const [isCancellingTaskId, setIsCancellingTaskId] = useState<string | null>(null);
+
   // Keyboard shortcut: ESC to close modal or drawer
   useEffect(() => {
     if (!isOpen) return;
@@ -108,7 +214,11 @@ export function PpcActionQueueDrawer({
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
-        if (isAutoUploadModalOpen) {
+        if (reuploadTarget) {
+          if (!isReuploading) setReuploadTarget(null);
+        } else if (selectedRunDetail) {
+          setSelectedRunDetail(null);
+        } else if (isAutoUploadModalOpen) {
           if (!isAutoUploading) setIsAutoUploadModalOpen(false);
         } else if (isExportWizardOpen) {
           setIsExportWizardOpen(false);
@@ -119,7 +229,7 @@ export function PpcActionQueueDrawer({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, isAutoUploadModalOpen, isExportWizardOpen, isAutoUploading, onClose]);
+  }, [isOpen, isAutoUploadModalOpen, isExportWizardOpen, isAutoUploading, selectedRunDetail, reuploadTarget, isReuploading, onClose]);
 
   // Available SKUs in Action Queue
   const availableSkus = useMemo(() => {
@@ -518,6 +628,137 @@ export function PpcActionQueueDrawer({
       setIsDownloading(false);
     }
   };
+
+  // Copy File Name helper
+  const handleCopyFileName = (text: string, id: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedFileNameId(id);
+    setTimeout(() => setCopiedFileNameId(null), 1800);
+  };
+
+  // Download Bulk Export .xlsx helper
+  const handleDownloadXlsx = async (exportId: string, fileName: string) => {
+    try {
+      const res = await fetch(`/api/ppc/bulk-export?downloadId=${encodeURIComponent(exportId)}`);
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.message || "Không thể tải file");
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      alert("Lỗi tải file: " + (err instanceof Error ? err.message : String(err)));
+    }
+  };
+
+  // Open Detail Drawer for a run
+  const handleOpenRunDetail = async (run: RunDetailItem) => {
+    setSelectedRunDetail(run);
+    setIsLoadingDetail(true);
+    setDetailActionItems([]);
+    setDetailSearchQuery("");
+    try {
+      if (run.type === "BULK") {
+        const res = await fetch(`/api/ppc/bulk-export?id=${encodeURIComponent(run.id)}`);
+        if (res.ok) {
+          const json = await res.json();
+          if (json.data?.items) {
+            setDetailActionItems(json.data.items);
+          }
+        }
+      } else {
+        const res = await fetch(`/api/ppc/auto-upload?id=${encodeURIComponent(run.id)}`);
+        if (res.ok) {
+          const json = await res.json();
+          if (json.data?.actions) {
+            setDetailActionItems(json.data.actions);
+          }
+          if (json.data?.log) {
+            setSelectedRunDetail((prev) => (prev ? { ...prev, rawLog: json.data.log } : null));
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Lỗi khi tải chi tiết run:", err);
+    } finally {
+      setIsLoadingDetail(false);
+    }
+  };
+
+  // Safe Re-upload Execution
+  const handleConfirmReupload = async () => {
+    if (!reuploadTarget) return;
+    try {
+      setIsReuploading(true);
+      const actionIds = Array.isArray((reuploadTarget as any).actionIds) && (reuploadTarget as any).actionIds.length > 0
+        ? (reuploadTarget as any).actionIds
+        : (detailActionItems.length > 0 ? detailActionItems.map((a) => a.id) : undefined);
+
+      const res = await fetch("/api/ppc/auto-upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          storeId: reuploadTarget.storeId || storeId,
+          actionIds,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.message || "Lỗi khi xếp hàng upload lại");
+      }
+      setReuploadTarget(null);
+      setSelectedRunDetail(null);
+      void loadAutoLogs();
+      alert(`Đã xếp hàng upload lại thành công: ${json.message || ""}`);
+    } catch (err) {
+      alert("Lỗi upload lại: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setIsReuploading(false);
+    }
+  };
+
+  // Cancel Pending Upload Task
+  const handleCancelPendingTask = async (logId: string) => {
+    if (!confirm("Bạn có chắc chắn muốn hủy tác vụ upload đang chờ này?")) return;
+    try {
+      setIsCancellingTaskId(logId);
+      const res = await fetch(`/api/ppc/auto-upload?id=${encodeURIComponent(logId)}`, {
+        method: "DELETE",
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.message || "Không thể hủy tác vụ");
+      }
+      void loadAutoLogs();
+      if (selectedRunDetail?.id === logId) {
+        setSelectedRunDetail((prev) => (prev ? { ...prev, status: "CANCELLED" } : null));
+      }
+    } catch (err) {
+      alert("Lỗi khi hủy: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setIsCancellingTaskId(null);
+    }
+  };
+
+  // Filtered detail actions
+  const filteredDetailActions = useMemo(() => {
+    if (!detailSearchQuery.trim()) return detailActionItems;
+    const q = detailSearchQuery.toLowerCase();
+    return detailActionItems.filter((item) =>
+      (item.sku || "").toLowerCase().includes(q) ||
+      (item.targetKeyword || "").toLowerCase().includes(q) ||
+      (item.campaignName || "").toLowerCase().includes(q) ||
+      (item.adGroupName || "").toLowerCase().includes(q) ||
+      (item.actionType || "").toLowerCase().includes(q)
+    );
+  }, [detailActionItems, detailSearchQuery]);
 
   // Batch delete selected actions
   const handleBatchDelete = async () => {
@@ -920,7 +1161,7 @@ export function PpcActionQueueDrawer({
                               >
                                 <div className="flex items-center gap-1.5 flex-wrap">
                                   {group.updateBidCount > 0 && (
-                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
                                       {group.updateBidCount} Bid
                                     </span>
                                   )}
@@ -1049,7 +1290,7 @@ export function PpcActionQueueDrawer({
                                       <td className="py-2 px-3 whitespace-nowrap">
                                         <div className="flex items-center gap-1.5 flex-wrap">
                                           {camp.updateBidCount > 0 && (
-                                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
                                               {camp.updateBidCount} Bid
                                             </span>
                                           )}
@@ -1157,8 +1398,8 @@ export function PpcActionQueueDrawer({
                                                   <Pause size={11} weight="bold" /> Pause
                                                 </span>
                                               ) : (
-                                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                                  <ArrowUpRight size={11} weight="bold" /> Update Bid
+                                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                                  <ArrowUpRight size={11} weight="bold" /> Đổi Bid
                                                 </span>
                                               )}
                                             </td>
@@ -1210,8 +1451,8 @@ export function PpcActionQueueDrawer({
                         : "text-slate-500 hover:text-slate-800"
                     }`}
                   >
-                    <ClockCounterClockwise size={14} weight="bold" />
-                    <span>Lịch sử xuất Bulk ({bulkHistory.length})</span>
+                    <FileXls size={14} weight="fill" className="text-emerald-600" />
+                    <span>File đã xuất ({bulkHistory.length})</span>
                   </button>
 
                   <button
@@ -1223,7 +1464,7 @@ export function PpcActionQueueDrawer({
                     }`}
                   >
                     <Lightning size={14} weight="fill" className="text-amber-600" />
-                    <span>Lịch sử Auto AdsPower ({autoLogs.length})</span>
+                    <span>Kết quả thực thi ({autoLogs.length})</span>
                   </button>
                 </div>
 
@@ -1244,7 +1485,7 @@ export function PpcActionQueueDrawer({
                 </button>
               </div>
 
-              <div className="max-h-52 overflow-y-auto">
+              <div className="max-h-64 overflow-y-auto">
                 {activeHistoryTab === "BULK" ? (
                   bulkHistory.length === 0 ? (
                     <div className="px-4 py-8 text-center text-xs text-slate-400">
@@ -1252,27 +1493,84 @@ export function PpcActionQueueDrawer({
                     </div>
                   ) : (
                     <div className="divide-y divide-slate-100">
-                      {bulkHistory.map((item) => (
-                        <div key={item.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3.5 py-2.5 hover:bg-slate-50">
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <FileXls size={14} className="shrink-0 text-emerald-600" weight="fill" />
-                              <span className="truncate text-xs font-bold text-slate-800" title={item.fileName}>{item.fileName}</span>
+                      {bulkHistory.map((item) => {
+                        const fileMeta = formatCompactFileName(item.fileName);
+                        return (
+                          <div
+                            key={item.id}
+                            className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-3.5 py-2.5 hover:bg-slate-50 transition"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5">
+                                <FileXls size={15} className="shrink-0 text-emerald-600" weight="fill" />
+                                <span
+                                  className="truncate text-xs font-bold text-slate-800"
+                                  title={fileMeta.full}
+                                >
+                                  {fileMeta.display}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyFileName(item.fileName, item.id)}
+                                  className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+                                  title="Sao chép tên file"
+                                >
+                                  {copiedFileNameId === item.id ? (
+                                    <Check size={12} className="text-emerald-600 font-bold" />
+                                  ) : (
+                                    <Copy size={12} />
+                                  )}
+                                </button>
+                              </div>
+                              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                                <span className="font-semibold text-slate-700">{item.actionCount} actions</span>
+                                <span className="text-slate-600">Bid: {item.summary.updateBidCount || 0}</span>
+                                <span className="text-amber-700">Pause: {item.summary.pauseCount || 0}</span>
+                                {item.summary.budgetCount > 0 && (
+                                  <span className="text-purple-700">Budget: {item.summary.budgetCount}</span>
+                                )}
+                                <span className="text-slate-400">•</span>
+                                <time className="text-slate-400">
+                                  {new Date(item.createdAt).toLocaleString("vi-VN")}
+                                </time>
+                              </div>
                             </div>
-                            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-500">
-                              <span>{item.actionCount} actions</span>
-                              <span className="text-emerald-700">Bid: {item.summary.updateBidCount || 0}</span>
-                              <span className="text-amber-700">Pause: {item.summary.pauseCount || 0}</span>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                Đã xuất file
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleOpenRunDetail({
+                                    type: "BULK",
+                                    id: item.id,
+                                    fileName: item.fileName,
+                                    createdAt: item.createdAt,
+                                    status: "Đã xuất file",
+                                    actionCount: item.actionCount,
+                                    storeName,
+                                  })
+                                }
+                                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer"
+                              >
+                                <Eye size={13} weight="bold" />
+                                <span>Chi tiết</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDownloadXlsx(item.id, item.fileName)}
+                                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition cursor-pointer"
+                                title="Tải lại file Excel này"
+                              >
+                                <DownloadSimple size={13} weight="bold" />
+                                <span>Tải lại</span>
+                              </button>
                             </div>
                           </div>
-                          <div className="text-right">
-                            <div className="text-[10px] font-bold text-emerald-700">{item.status}</div>
-                            <time className="mt-0.5 block whitespace-nowrap text-[10px] text-slate-400">
-                              {new Date(item.createdAt).toLocaleString("vi-VN")}
-                            </time>
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )
                 ) : autoLogs.length === 0 ? (
@@ -1281,58 +1579,150 @@ export function PpcActionQueueDrawer({
                   </div>
                 ) : (
                   <div className="divide-y divide-slate-100">
-                    {autoLogs.map((log) => (
-                      <div key={log.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3.5 py-2.5 hover:bg-slate-50">
-                        <div className="min-w-0 space-y-1">
-                          <div className="flex items-center gap-1.5">
-                            <Lightning size={14} className="shrink-0 text-amber-600" weight="fill" />
-                            <span className="truncate text-xs font-bold text-slate-800" title={log.fileName}>
-                              {log.fileName}
-                            </span>
-                            <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 font-mono text-[10px]">
-                              {log.actionCount} actions
-                            </span>
-                          </div>
-                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-slate-500">
-                            <span>Profile: <strong>{log.adspowerProfileName || log.adspowerProfileId || storeName}</strong></span>
-                            {log.durationMs > 0 && <span>• {(log.durationMs / 1000).toFixed(1)}s</span>}
-                            {log.skus && log.skus.length > 0 && (
-                              <span className="text-indigo-600 truncate max-w-[200px]" title={log.skus.join(", ")}>
-                                SKUs: {log.skus.join(", ")}
+                    {autoLogs.map((log) => {
+                      const statusMeta = getAutoUploadStatusMeta(log.status);
+                      const fileMeta = formatCompactFileName(log.fileName, log.skus);
+                      const matchedBulk = bulkHistory.find((b) => b.fileName === log.fileName);
+                      const canReupload = ["FAILED", "PARTIAL_SUCCESS", "RESULT_TIMEOUT"].includes(log.status);
+                      const isPending = log.status === "PENDING";
+
+                      return (
+                        <div
+                          key={log.id}
+                          className="flex flex-col gap-2 px-3.5 py-2.5 hover:bg-slate-50 transition"
+                        >
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5">
+                                <Lightning size={15} className="shrink-0 text-amber-600" weight="fill" />
+                                <span
+                                  className="truncate text-xs font-bold text-slate-800"
+                                  title={fileMeta.full}
+                                >
+                                  {fileMeta.display}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyFileName(log.fileName, log.id)}
+                                  className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+                                  title="Sao chép tên file"
+                                >
+                                  {copiedFileNameId === log.id ? (
+                                    <Check size={12} className="text-emerald-600 font-bold" />
+                                  ) : (
+                                    <Copy size={12} />
+                                  )}
+                                </button>
+                                <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 font-mono text-[10px] font-semibold">
+                                  {log.actionCount} actions
+                                </span>
+                              </div>
+
+                              <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-slate-500">
+                                <span>
+                                  Profile:{" "}
+                                  <strong className="text-slate-700">
+                                    {log.adspowerProfileName || log.adspowerProfileId || storeName}
+                                  </strong>
+                                </span>
+                                {log.durationMs > 0 && <span>• {(log.durationMs / 1000).toFixed(1)}s</span>}
+                                {log.skus && log.skus.length > 0 && (
+                                  <span className="text-indigo-600 truncate max-w-[200px]" title={log.skus.join(", ")}>
+                                    • SKUs: {log.skus.join(", ")}
+                                  </span>
+                                )}
+                                <span className="text-slate-400">•</span>
+                                <time className="text-slate-400">
+                                  {new Date(log.createdAt).toLocaleString("vi-VN")}
+                                </time>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold border ${statusMeta.color}`}
+                              >
+                                {statusMeta.label}
                               </span>
-                            )}
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleOpenRunDetail({
+                                    type: "AUTO",
+                                    id: log.id,
+                                    fileName: log.fileName,
+                                    createdAt: log.createdAt,
+                                    status: log.status,
+                                    actionCount: log.actionCount,
+                                    durationMs: log.durationMs,
+                                    skus: log.skus,
+                                    profileName: log.adspowerProfileName || log.adspowerProfileId || storeName,
+                                    storeName,
+                                    errorMessage: log.errorMessage,
+                                    resultSummary: log.resultSummary,
+                                    bulkExportId: matchedBulk?.id,
+                                    rawLog: log,
+                                  })
+                                }
+                                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer"
+                              >
+                                <Eye size={13} weight="bold" />
+                                <span>Chi tiết</span>
+                              </button>
+
+                              {isPending && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleCancelPendingTask(log.id)}
+                                  disabled={isCancellingTaskId === log.id}
+                                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 transition cursor-pointer"
+                                  title="Hủy tác vụ đang chờ"
+                                >
+                                  <X size={13} weight="bold" />
+                                  <span>{isCancellingTaskId === log.id ? "Đang hủy..." : "Hủy"}</span>
+                                </button>
+                              )}
+
+                              {canReupload && (
+                                <button
+                                  type="button"
+                                  onClick={() => setReuploadTarget(log)}
+                                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 transition cursor-pointer"
+                                  title="Upload lại lượt thất bại này"
+                                >
+                                  <ArrowCounterClockwise size={13} weight="bold" />
+                                  <span>Upload lại</span>
+                                </button>
+                              )}
+
+                              {matchedBulk && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDownloadXlsx(matchedBulk.id, log.fileName)}
+                                  className="p-1 rounded text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 transition cursor-pointer"
+                                  title="Tải file .xlsx tương ứng"
+                                >
+                                  <DownloadSimple size={14} weight="bold" />
+                                </button>
+                              )}
+                            </div>
                           </div>
+
+                          {/* Quick summary line if error or Amazon feedback */}
                           {log.errorMessage && (
-                            <div className="text-[10px] text-rose-600 font-medium truncate" title={log.errorMessage}>
-                              Lỗi: {log.errorMessage}
+                            <div className="rounded bg-rose-50 border border-rose-200 px-2.5 py-1 text-[11px] text-rose-700 font-medium">
+                              <strong>Lỗi:</strong> {log.errorMessage}
                             </div>
                           )}
-                          {log.resultSummary && (
-                            <div className="text-[10px] text-slate-600 font-medium line-clamp-2" title={log.resultSummary}>
-                              Amazon: {log.resultSummary}
+                          {log.resultSummary && !log.errorMessage && (
+                            <div className="rounded bg-slate-50 border border-slate-200 px-2.5 py-1 text-[11px] text-slate-700 font-medium truncate">
+                              <strong>Amazon:</strong> {log.resultSummary}
                             </div>
                           )}
                         </div>
-                        <div className="text-right">
-                          <span
-                            className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                              log.status === "SUCCESS"
-                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                : log.status === "PENDING"
-                                ? "bg-blue-50 text-blue-700 border border-blue-200"
-                                : log.status === "RUNNING" || log.status === "RETRY_WAIT"
-                                ? "bg-amber-50 text-amber-700 border border-amber-200"
-                                : "bg-rose-50 text-rose-700 border border-rose-200"
-                            }`}
-                          >
-                            {log.status}
-                          </span>
-                          <time className="mt-1 block whitespace-nowrap text-[10px] text-slate-400">
-                            {new Date(log.createdAt).toLocaleString("vi-VN")}
-                          </time>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1619,6 +2009,385 @@ export function PpcActionQueueDrawer({
               >
                 <DownloadSimple size={16} weight="bold" />
                 {isDownloading ? "Đang tạo file..." : "Tải Amazon Bulk File (.xlsx)"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* RUN DETAIL SLIDE-OVER / MODAL */}
+      {selectedRunDetail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-3 sm:p-6 animate-in fade-in duration-150">
+          <div className="w-full max-w-4xl max-h-[90vh] flex flex-col bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="flex items-start justify-between border-b border-slate-200 px-5 py-4 bg-slate-50/70">
+              <div className="space-y-1 min-w-0 pr-4">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span
+                    className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${
+                      selectedRunDetail.type === "BULK"
+                        ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                        : getAutoUploadStatusMeta(selectedRunDetail.status).color
+                    }`}
+                  >
+                    {selectedRunDetail.type === "BULK"
+                      ? "Đã xuất file"
+                      : getAutoUploadStatusMeta(selectedRunDetail.status).label}
+                  </span>
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    {selectedRunDetail.type === "BULK" ? "Bulk Export" : "Auto Upload AdsPower"}
+                  </span>
+                  {selectedRunDetail.durationMs && selectedRunDetail.durationMs > 0 ? (
+                    <span className="text-xs text-slate-400">
+                      • Thời lượng: {(selectedRunDetail.durationMs / 1000).toFixed(1)}s
+                    </span>
+                  ) : null}
+                </div>
+                <div className="flex items-center gap-2 mt-1">
+                  <h3
+                    className="text-sm sm:text-base font-extrabold text-slate-900 truncate"
+                    title={selectedRunDetail.fileName}
+                  >
+                    {selectedRunDetail.fileName}
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => handleCopyFileName(selectedRunDetail.fileName, "detail-title")}
+                    className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition"
+                    title="Sao chép tên file"
+                  >
+                    {copiedFileNameId === "detail-title" ? (
+                      <Check size={14} className="text-emerald-600 font-bold" />
+                    ) : (
+                      <Copy size={14} />
+                    )}
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center gap-x-3 text-xs text-slate-500">
+                  <span>Store: <strong>{selectedRunDetail.storeName || storeName}</strong></span>
+                  {selectedRunDetail.profileName && (
+                    <span>• Profile AdsPower: <strong>{selectedRunDetail.profileName}</strong></span>
+                  )}
+                  <span>• Thời gian: {new Date(selectedRunDetail.createdAt).toLocaleString("vi-VN")}</span>
+                  <span>• <strong>{selectedRunDetail.actionCount}</strong> hành động</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedRunDetail(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition cursor-pointer shrink-0"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Content Body */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              {/* Error Alert if any */}
+              {selectedRunDetail.errorMessage && (
+                <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-start gap-2.5">
+                  <WarningCircle size={18} weight="fill" className="text-rose-600 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <strong className="text-rose-900 font-bold">Lỗi trong quá trình upload:</strong>
+                    <p className="text-rose-700 leading-relaxed font-mono text-[11px]">
+                      {selectedRunDetail.errorMessage}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Amazon Result Summary if any */}
+              {selectedRunDetail.resultSummary && (
+                <div className="p-3.5 bg-emerald-50/70 border border-emerald-200 rounded-xl text-xs text-emerald-900 flex items-start gap-2.5">
+                  <CheckCircle size={18} weight="fill" className="text-emerald-600 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <strong className="text-emerald-950 font-bold">Phản hồi từ Amazon:</strong>
+                    <p className="text-emerald-800 leading-relaxed font-mono text-[11px]">
+                      {selectedRunDetail.resultSummary}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Toolbar: Search & Action Breakdown */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+                <div className="relative flex-1 max-w-sm">
+                  <MagnifyingGlass size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={detailSearchQuery}
+                    onChange={(e) => setDetailSearchQuery(e.target.value)}
+                    placeholder="Lọc theo SKU, Keyword, Campaign..."
+                    className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:bg-white focus:border-indigo-500 outline-none"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2 text-xs text-slate-500">
+                  <span>Hiển thị <strong>{filteredDetailActions.length}</strong> / {detailActionItems.length} actions</span>
+                </div>
+              </div>
+
+              {/* Table of Actions */}
+              <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
+                {isLoadingDetail ? (
+                  <div className="py-16 text-center text-slate-400 space-y-2">
+                    <SpinnerGap size={24} className="animate-spin mx-auto text-indigo-600" />
+                    <p className="text-xs">Đang tải danh sách hành động...</p>
+                  </div>
+                ) : filteredDetailActions.length === 0 ? (
+                  <div className="py-12 text-center text-xs text-slate-400">
+                    {detailSearchQuery ? "Không tìm thấy hành động phù hợp." : "Chưa có danh sách chi tiết cho đợt này."}
+                  </div>
+                ) : (
+                  <div className="max-h-[380px] overflow-y-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead className="sticky top-0 bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600 uppercase tracking-wider z-10">
+                        <tr>
+                          <th className="py-2.5 px-3">SKU</th>
+                          <th className="py-2.5 px-3">Campaign / Ad Group</th>
+                          <th className="py-2.5 px-3">Target Keyword</th>
+                          <th className="py-2.5 px-3">Thao tác</th>
+                          <th className="py-2.5 px-3 text-right">Thay đổi</th>
+                          <th className="py-2.5 px-3 text-center">Trạng thái</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {filteredDetailActions.map((act, idx) => {
+                          const badge = getActionTypeBadge(act.actionType);
+                          const Icon = badge.icon;
+                          const isPause = (act.actionType || "").toUpperCase().includes("PAUSE");
+
+                          return (
+                            <tr key={act.id || idx} className="hover:bg-slate-50/80 transition">
+                              <td className="py-2.5 px-3 font-bold text-slate-900 font-mono text-xs whitespace-nowrap">
+                                {act.sku || "—"}
+                              </td>
+                              <td className="py-2.5 px-3 text-slate-600 max-w-[220px]">
+                                <div className="truncate font-medium text-slate-800" title={act.campaignName}>
+                                  {act.campaignName || "—"}
+                                </div>
+                                {act.adGroupName && (
+                                  <div className="truncate text-[10px] text-slate-400 mt-0.5" title={act.adGroupName}>
+                                    Nhóm: {act.adGroupName}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3 max-w-[200px]">
+                                <div className="truncate font-semibold text-slate-900" title={act.targetKeyword}>
+                                  {act.targetKeyword || "—"}
+                                </div>
+                                {act.matchType && (
+                                  <span className="inline-block mt-0.5 text-[9px] font-mono font-medium px-1.5 py-0.2 rounded bg-slate-100 text-slate-500">
+                                    {act.matchType}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3 whitespace-nowrap">
+                                <span
+                                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${badge.className}`}
+                                >
+                                  <Icon size={12} weight="bold" />
+                                  <span>{badge.label}</span>
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-right whitespace-nowrap font-mono text-xs">
+                                {isPause ? (
+                                  <span className="text-amber-700 font-semibold text-[11px]">Bật → Tạm dừng</span>
+                                ) : (
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <span className="text-slate-400 line-through text-[11px]">
+                                      {act.oldValue !== null && act.oldValue !== undefined
+                                        ? `$${Number(act.oldValue).toFixed(2)}`
+                                        : "—"}
+                                    </span>
+                                    <span className="text-slate-400">→</span>
+                                    <span className="font-extrabold text-indigo-700">
+                                      {act.finalValue !== null && act.finalValue !== undefined
+                                        ? `$${Number(act.finalValue).toFixed(2)}`
+                                        : "—"}
+                                    </span>
+                                  </div>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                                <span
+                                  className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                    act.status === "APPLIED" || act.status === "SUCCESS"
+                                      ? "bg-emerald-50 text-emerald-700"
+                                      : act.status === "PENDING"
+                                      ? "bg-blue-50 text-blue-700"
+                                      : "bg-slate-100 text-slate-600"
+                                  }`}
+                                >
+                                  {act.status === "APPLIED" || act.status === "SUCCESS"
+                                    ? "Đã áp dụng"
+                                    : act.status === "PENDING"
+                                    ? "Chờ xử lý"
+                                    : act.status || "Hoàn tất"}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-between border-t border-slate-200 px-5 py-3.5 bg-slate-50/50">
+              <div className="flex items-center gap-2">
+                {selectedRunDetail.type === "BULK" && (
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadXlsx(selectedRunDetail.id, selectedRunDetail.fileName)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition shadow-xs cursor-pointer"
+                  >
+                    <DownloadSimple size={14} weight="bold" />
+                    <span>Tải file Excel (.xlsx)</span>
+                  </button>
+                )}
+
+                {selectedRunDetail.type === "AUTO" && selectedRunDetail.bulkExportId && (
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadXlsx(selectedRunDetail.bulkExportId!, selectedRunDetail.fileName)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-bold transition shadow-xs cursor-pointer"
+                  >
+                    <DownloadSimple size={14} weight="bold" />
+                    <span>Tải file .xlsx tương ứng</span>
+                  </button>
+                )}
+
+                {selectedRunDetail.type === "AUTO" &&
+                  ["FAILED", "PARTIAL_SUCCESS", "RESULT_TIMEOUT"].includes(selectedRunDetail.status) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (selectedRunDetail.rawLog) {
+                          setReuploadTarget(selectedRunDetail.rawLog);
+                        } else {
+                          setReuploadTarget({
+                            id: selectedRunDetail.id,
+                            storeId: storeId || "",
+                            fileName: selectedRunDetail.fileName,
+                            adspowerProfileId: null,
+                            adspowerProfileName: selectedRunDetail.profileName || null,
+                            actionCount: selectedRunDetail.actionCount,
+                            skus: selectedRunDetail.skus || [],
+                            status: selectedRunDetail.status as any,
+                            errorMessage: selectedRunDetail.errorMessage || null,
+                            durationMs: selectedRunDetail.durationMs || 0,
+                            createdAt: selectedRunDetail.createdAt,
+                          });
+                        }
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition shadow-xs cursor-pointer"
+                    >
+                      <ArrowCounterClockwise size={14} weight="bold" />
+                      <span>Upload lại lên Amazon</span>
+                    </button>
+                  )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedRunDetail(null)}
+                className="px-4 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition cursor-pointer"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SAFE RE-UPLOAD CONFIRMATION MODAL */}
+      {reuploadTarget && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl p-6 shadow-2xl space-y-5">
+            <div className="flex items-start justify-between border-b border-slate-100 pb-3.5">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-amber-50 text-amber-600 border border-amber-200">
+                  <ShieldCheck size={22} weight="fill" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">
+                    Xác nhận Upload lại lên Amazon
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Profile AdsPower: {reuploadTarget.adspowerProfileName || storeName}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => !isReuploading && setReuploadTarget(null)}
+                disabled={isReuploading}
+                className="p-1 text-slate-400 hover:text-slate-600 disabled:opacity-40 cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-3.5 space-y-2 text-xs text-amber-900">
+              <div className="flex items-center gap-1.5 font-bold">
+                <WarningCircle size={16} weight="fill" className="text-amber-700 shrink-0" />
+                <span>Cảnh báo an toàn thao tác</span>
+              </div>
+              <p className="text-[11px] leading-relaxed text-amber-800">
+                Bạn sắp gửi lệnh thực thi lại <strong>{reuploadTarget.actionCount} hành động</strong> thuộc SKU{" "}
+                <strong>{reuploadTarget.skus?.join(", ") || "Zero Spend"}</strong> lên Amazon Ads.
+              </p>
+              <p className="text-[11px] leading-relaxed text-amber-800">
+                Hãy chắc chắn rằng đợt thực thi trước đó <strong>chưa được áp dụng</strong> trên Amazon Ads Console để tránh việc thay đổi Bid hoặc Pause bị lặp lại.
+              </p>
+            </div>
+
+            <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-200 text-xs space-y-1.5">
+              <div className="flex justify-between text-slate-600">
+                <span>Tên file:</span>
+                <span className="font-mono font-bold text-slate-800 truncate max-w-[220px]" title={reuploadTarget.fileName}>
+                  {reuploadTarget.fileName}
+                </span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Số lượng hành động:</span>
+                <strong className="text-amber-700 font-mono">{reuploadTarget.actionCount} actions</strong>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>SKUs:</span>
+                <strong className="text-indigo-700">{reuploadTarget.skus?.join(", ") || "—"}</strong>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setReuploadTarget(null)}
+                disabled={isReuploading}
+                className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs font-bold transition disabled:opacity-40 cursor-pointer"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmReupload}
+                disabled={isReuploading}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-black transition shadow-xs disabled:opacity-40 cursor-pointer"
+              >
+                {isReuploading ? (
+                  <>
+                    <SpinnerGap size={15} className="animate-spin" />
+                    <span>Đang xếp hàng...</span>
+                  </>
+                ) : (
+                  <>
+                    <ArrowCounterClockwise size={15} weight="bold" />
+                    <span>Xác nhận Upload lại</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

@@ -1670,6 +1670,133 @@ export async function getBulkExportHistory(storeId: string): Promise<BulkExport[
   }));
 }
 
+export async function getBulkExportDetails(bulkExportId: string): Promise<{
+  exportRecord: BulkExport;
+  items: Array<{
+    id: string;
+    actionId?: string | null;
+    entityType: string;
+    operation: string;
+    exportStatus: string;
+    sku: string;
+    campaignName: string;
+    adGroupName: string;
+    targetKeyword: string;
+    matchType: string;
+    actionType: string;
+    oldValue: number | null;
+    finalValue: number | null;
+    rowData: Record<string, unknown>;
+    errorMessage?: string | null;
+  }>;
+}> {
+  const sql = await getDatabaseClient();
+  const exportRows = await sql<any[]>`
+    SELECT id, store_id, file_name, action_count, summary, status, created_at
+    FROM bulk_exports
+    WHERE id = ${bulkExportId}
+    LIMIT 1
+  `;
+  if (exportRows.length === 0) throw new Error("Không tìm thấy đợt xuất file");
+  const r = exportRows[0];
+  const exportRecord: BulkExport = {
+    id: r.id,
+    storeId: r.store_id,
+    fileName: r.file_name,
+    actionCount: Number(r.action_count),
+    summary: typeof r.summary === "string" ? JSON.parse(r.summary) : r.summary,
+    status: r.status,
+    createdAt: new Date(r.created_at).toISOString(),
+  };
+
+  const itemRows = await sql<any[]>`
+    SELECT i.id, i.action_id, i.amazon_entity_type, i.amazon_operation, i.export_status, i.row_data, i.error_message,
+           a.sku, a.campaign_name, a.ad_group_name, a.target_keyword, a.match_type, a.action_type,
+           a.old_value, a.final_value
+    FROM bulk_export_items i
+    LEFT JOIN ppc_actions a ON a.id = i.action_id
+    WHERE i.bulk_export_id = ${bulkExportId}
+    ORDER BY i.created_at ASC
+  `;
+
+  const items = itemRows.map((it: any) => {
+    const rawRow = typeof it.row_data === "string" ? JSON.parse(it.row_data) : (it.row_data || {});
+    return {
+      id: it.id,
+      actionId: it.action_id,
+      entityType: it.amazon_entity_type,
+      operation: it.amazon_operation,
+      exportStatus: it.export_status,
+      sku: it.sku || rawRow.sku || "",
+      campaignName: it.campaign_name || rawRow.campaignName || "",
+      adGroupName: it.ad_group_name || rawRow.adGroupName || "",
+      targetKeyword: it.target_keyword || rawRow.targetKeyword || "",
+      matchType: it.match_type || rawRow.matchType || "",
+      actionType: it.action_type || (rawRow.state === "paused" ? "PAUSE_TARGET" : "UPDATE_BID"),
+      oldValue: it.old_value ? Number(it.old_value) : null,
+      finalValue: it.final_value ? Number(it.final_value) : (rawRow.bid ? Number(rawRow.bid) : null),
+      rowData: rawRow,
+      errorMessage: it.error_message,
+    };
+  });
+
+  return { exportRecord, items };
+}
+
+export async function reExportBulkFile(bulkExportId: string): Promise<{ buffer: Buffer; fileName: string }> {
+  const { exportRecord, items } = await getBulkExportDetails(bulkExportId);
+
+  const actionsForPython = items.map((it) => ({
+    id: it.actionId || it.id,
+    sku: it.sku,
+    campaign_id: String(it.rowData.campaignId || ""),
+    campaign_name: it.campaignName,
+    campaign_type: String(it.rowData.product || "SP").includes("Brand") ? "SB" : "SP",
+    ad_group_id: String(it.rowData.adGroupId || ""),
+    ad_group_name: it.adGroupName,
+    target_id: String(it.rowData.targetId || ""),
+    target_keyword: it.targetKeyword,
+    match_type: it.matchType,
+    entity_type: it.entityType,
+    action_type: it.actionType,
+    old_value: it.oldValue,
+    final_value: it.finalValue,
+  }));
+
+  const { spawn } = await import("node:child_process");
+  const path = (await import("node:path")).default;
+  const fs = (await import("node:fs")).default;
+
+  const pythonScript = path.join(process.cwd(), "scripts", "export_amazon_bulksheet.py");
+  const templatePath = path.join(process.cwd(), "templates", "ppc", "AdvertisingBulksheetTemplate-seller.xlsx");
+
+  if (!fs.existsSync(templatePath)) {
+    throw new Error(`Template Amazon không tồn tại tại: ${templatePath}`);
+  }
+
+  const buffer = await new Promise<Buffer>((resolve, reject) => {
+    const proc = spawn("python3", [pythonScript], { stdio: ["pipe", "pipe", "pipe"] });
+    const chunks: Buffer[] = [];
+    const errChunks: Buffer[] = [];
+
+    proc.stdout.on("data", (c) => chunks.push(Buffer.from(c)));
+    proc.stderr.on("data", (c) => errChunks.push(Buffer.from(c)));
+
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        const errText = Buffer.concat(errChunks).toString("utf-8");
+        return reject(new Error(`Lỗi khi tạo Bulksheet từ mẫu Amazon: ${errText}`));
+      }
+      resolve(Buffer.concat(chunks));
+    });
+
+    proc.stdin.write(JSON.stringify(actionsForPython));
+    proc.stdin.end();
+  });
+
+  return { buffer, fileName: exportRecord.fileName };
+}
+
 export async function getAutoUploadLogs(storeId: string): Promise<PpcAutoUploadLog[]> {
   const sql = await getDatabaseClient();
   const rows = await sql<any[]>`
@@ -1696,6 +1823,92 @@ export async function getAutoUploadLogs(storeId: string): Promise<PpcAutoUploadL
     createdAt: new Date(r.created_at).toISOString(),
   }));
 }
+
+export async function getAutoUploadDetails(logId: string): Promise<{
+  log: PpcAutoUploadLog & { actionIds?: string[] };
+  actions: Array<{
+    id: string;
+    sku: string;
+    campaignName: string;
+    adGroupName: string;
+    targetKeyword: string;
+    matchType: string;
+    actionType: string;
+    oldValue: number | null;
+    finalValue: number | null;
+    status: string;
+  }>;
+}> {
+  const sql = await getDatabaseClient();
+  const logRows = await sql<any[]>`
+    SELECT id, store_id, file_name, adspower_profile_id, adspower_profile_name,
+           action_count, action_ids, skus, status, error_message, result_summary, duration_ms, created_at
+    FROM ppc_auto_upload_logs
+    WHERE id = ${logId}
+    LIMIT 1
+  `;
+  if (logRows.length === 0) throw new Error("Không tìm thấy nhật ký auto upload");
+  const r = logRows[0];
+  const actionIds = Array.isArray(r.action_ids)
+    ? r.action_ids
+    : (typeof r.action_ids === "string" ? JSON.parse(r.action_ids) : []);
+
+  let actions: any[] = [];
+  if (actionIds.length > 0) {
+    const actRows = await sql<any[]>`
+      SELECT id, sku, campaign_name, ad_group_name, target_keyword, match_type,
+             action_type, old_value, final_value, status
+      FROM ppc_actions
+      WHERE id = ANY(${actionIds})
+      ORDER BY sku ASC, campaign_name ASC
+    `;
+    actions = actRows.map((a: any) => ({
+      id: a.id,
+      sku: a.sku,
+      campaignName: a.campaign_name,
+      adGroupName: a.ad_group_name,
+      targetKeyword: a.target_keyword,
+      matchType: a.match_type,
+      actionType: a.action_type,
+      oldValue: a.old_value ? Number(a.old_value) : null,
+      finalValue: a.final_value ? Number(a.final_value) : null,
+      status: a.status,
+    }));
+  }
+
+  return {
+    log: {
+      id: r.id,
+      storeId: r.store_id,
+      fileName: r.file_name,
+      adspowerProfileId: r.adspower_profile_id,
+      adspowerProfileName: r.adspower_profile_name,
+      actionCount: Number(r.action_count || 0),
+      skus: Array.isArray(r.skus) ? r.skus : (typeof r.skus === "string" ? JSON.parse(r.skus) : []),
+      status: r.status,
+      errorMessage: r.error_message,
+      resultSummary: r.result_summary,
+      durationMs: Number(r.duration_ms || 0),
+      createdAt: new Date(r.created_at).toISOString(),
+      actionIds,
+    },
+    actions,
+  };
+}
+
+export async function cancelAutoUploadJob(logId: string): Promise<boolean> {
+  const sql = await getDatabaseClient();
+  const rows = await sql<{ id: string; status: string }[]>`
+    UPDATE ppc_auto_upload_logs
+    SET status = 'CANCELLED',
+        error_message = 'Đã hủy bởi người dùng',
+        updated_at = NOW()
+    WHERE id = ${logId} AND status = 'PENDING'
+    RETURNING id, status
+  `;
+  return rows.length > 0;
+}
+
 
 export async function executeAutoUploadZeroSpendActions(
   storeId: string,

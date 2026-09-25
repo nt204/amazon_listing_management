@@ -1,7 +1,9 @@
 // app/api/ppc/auto-upload/route.ts
 import { authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
 import {
+  cancelAutoUploadJob,
   executeAutoUploadZeroSpendActions,
+  getAutoUploadDetails,
   getAutoUploadLogs,
   resolveStoreId,
 } from "@/lib/ppc/sku-architecture-service";
@@ -12,12 +14,38 @@ export async function GET(request: Request) {
   try {
     authorize(request, "read");
     const { searchParams } = new URL(request.url);
-    const storeId = await resolveStoreId(searchParams.get("storeId"));
+    const id = searchParams.get("id");
+    if (id) {
+      const details = await getAutoUploadDetails(id);
+      return Response.json({ success: true, data: details });
+    }
 
+    const storeId = await resolveStoreId(searchParams.get("storeId"));
     const logs = await getAutoUploadLogs(storeId);
     return Response.json({ success: true, data: logs });
   } catch (error) {
-    return routeErrorResponse(error, "Lỗi khi lấy lịch sử Auto Upload AdsPower.", 500);
+    return routeErrorResponse(error, "Lỗi khi lấy thông tin Auto Upload AdsPower.", 500);
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    authorize(request, "write");
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get("id");
+    if (!id) {
+      return Response.json({ success: false, message: "Thiếu ID tác vụ" }, { status: 400 });
+    }
+    const cancelled = await cancelAutoUploadJob(id);
+    if (!cancelled) {
+      return Response.json(
+        { success: false, message: "Không thể hủy tác vụ (chỉ hủy được tác vụ đang ở trạng thái PENDING)." },
+        { status: 400 }
+      );
+    }
+    return Response.json({ success: true, message: "Đã hủy tác vụ thành công." });
+  } catch (error) {
+    return routeErrorResponse(error, "Lỗi khi hủy tác vụ.", 500);
   }
 }
 
