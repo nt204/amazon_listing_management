@@ -342,7 +342,7 @@ export async function getPpcAnalyticsData(
       };
     }).sort((a, b) => b.spend - a.spend);
 
-    const campaignPerformance = campaignPerformanceFromFacts(aggregates.topCampaigns, targetAcos).slice(0, 7);
+    const campaignPerformance = campaignPerformanceFromFacts(aggregates.topCampaigns, targetAcos);
 
     const skuPerformance: PpcSkuPerformance[] = aggregates.topSkus.map((row) => {
       const metrics = roundedPerformanceMetrics(row);
