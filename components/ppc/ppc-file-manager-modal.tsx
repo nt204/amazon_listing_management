@@ -83,7 +83,7 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
   const [filterDate, setFilterDate] = useState<string>("ALL");
   const [filterAdType, setFilterAdType] = useState<"ALL" | "SP" | "SB">("ALL");
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
-  const [purgeDb, setPurgeDb] = useState(true);
+  const [purgeDb, setPurgeDb] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);

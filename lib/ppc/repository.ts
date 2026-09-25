@@ -1851,7 +1851,7 @@ export async function listPpcDailyCampaignsFromDb(
   const sql = await getDatabaseClient();
   const teamId = scope.teamId;
   const storeName = filters.storeName || "ALL";
-  const days = Math.max(1, filters.days || 7);
+  const days = Math.max(14, filters.days || 14);
 
   const rows = await sql<Array<{
     date: string;
@@ -1864,12 +1864,24 @@ export async function listPpcDailyCampaignsFromDb(
     impressions: string | number;
   }>>`
     WITH anchor AS (
-      SELECT COALESCE(MAX(p0.report_date), CURRENT_DATE - 1) AS max_date
-      FROM ppc_search_terms p0
-      JOIN ppc_stores s0 ON s0.id = p0.store_id
-      WHERE s0.team_id = ${teamId}
-        AND (${storeName === "ALL"} OR lower(s0.name) = lower(${storeName}))
-        AND p0.report_granularity = 'DAILY'
+      SELECT COALESCE(
+        (
+          SELECT MAX(p1.report_date)
+          FROM ppc_daily_summary p1
+          JOIN ppc_stores s1 ON s1.id = p1.store_id
+          WHERE s1.team_id = ${teamId}
+            AND (${storeName === "ALL"} OR lower(s1.name) = lower(${storeName}))
+        ),
+        (
+          SELECT MAX(p0.report_date)
+          FROM ppc_search_terms p0
+          JOIN ppc_stores s0 ON s0.id = p0.store_id
+          WHERE s0.team_id = ${teamId}
+            AND (${storeName === "ALL"} OR lower(s0.name) = lower(${storeName}))
+            AND p0.report_granularity = 'DAILY'
+        ),
+        CURRENT_DATE - 1
+      ) AS max_date
     )
     SELECT 
       to_char(p.report_date, 'YYYY-MM-DD') AS date,

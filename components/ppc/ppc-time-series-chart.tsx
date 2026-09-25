@@ -105,7 +105,7 @@ export function PpcTimeSeriesChart({
     try {
       setLoadingDrilldown(true);
       setDailyCampaigns([]);
-      const res = await fetch(`/api/ppc/daily-campaigns?storeName=${encodeURIComponent(store)}&days=7`, {
+      const res = await fetch(`/api/ppc/daily-campaigns?storeName=${encodeURIComponent(store)}&days=14`, {
         cache: "no-store",
       });
       if (!res.ok) return;

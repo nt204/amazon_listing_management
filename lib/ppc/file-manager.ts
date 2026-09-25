@@ -632,20 +632,7 @@ export async function deleteManagedPpcFile(
         purgedDbRows.facts = deletedFacts.length;
       }
 
-      // c. Xóa search terms nếu là file search term có chứa ngày
-      const singleDateMatch = params.fileName.match(/(\d{4})(\d{2})(\d{2})/);
-      if (singleDateMatch && (params.fileName.toLowerCase().includes("search") || params.fileName.toLowerCase().includes("term"))) {
-        const dateIso = `${singleDateMatch[1]}-${singleDateMatch[2]}-${singleDateMatch[3]}`;
-        const adType = reportAdType(params.fileName);
-
-        const deletedSt = await sql<{ id: string }[]>`
-          DELETE FROM ppc_search_terms
-          WHERE (report_date = ${dateIso}::date OR report_end_date = ${dateIso}::date)
-            AND (${adType === "UNKNOWN"} OR ad_type = ${adType})
-          RETURNING id
-        `;
-        purgedDbRows.searchTerms = deletedSt.length;
-      }
+      // c. Dữ liệu Search Term được giữ an toàn theo snapshot của shop, không xóa diện rộng bằng regex tên file để tránh làm mất ngày của snapshot hợp lệ.
     } catch (err) {
       console.warn(`[File Manager] Lỗi dọn dẹp Database cho file ${params.fileName}:`, err);
     }
