@@ -164,21 +164,7 @@ export async function getPpcAnalyticsData(
       listPpcStores(scope),
       getPpcOverviewAggregates(scope, { storeName, sku, days }),
       listPpcDailyTrendsFromDb(scope, { storeName, days: Math.max(days, 30), startDate, endDate }),
-      isAllStores
-        ? Promise.resolve({
-          summary: {
-            totalTerms: 0,
-            totalSpend: 0,
-            totalSales: 0,
-            totalOrders: 0,
-            wastedSpend: 0,
-            bleedingTermsCount: 0,
-            profitableTermsCount: 0,
-          },
-          topProfitableAndBleeding: [],
-          alertRows: [],
-        })
-        : getPpcSearchTermSummaryFromDb(scope, { storeName, sku, days, startDate, endDate }),
+      getPpcSearchTermSummaryFromDb(scope, { storeName, sku, days, startDate, endDate }),
       listPpcSyncLogs(scope),
     ]);
 
@@ -520,7 +506,7 @@ export async function getPpcAnalyticsData(
 
   const rows = storeRows;
 
-  const currentStore = stores.find((store) => store.name.toLowerCase() === storeName.toLowerCase());
+  const currentStore = stores.find((store) => (store.name || "").toLowerCase() === storeName.toLowerCase());
   const targetAcos = currentStore?.targetAcos ?? DEFAULT_TARGET_ACOS;
 
   // Fast path for detail sections: skip computing overview alerts, breakdowns, and summaries
@@ -580,7 +566,7 @@ export async function getPpcAnalyticsData(
     };
   }
   const alerts: PpcAlert[] = generatePpcAlerts(rows, targetAcos);
-  const normalizedTarget = (value: string) => value.trim().toLowerCase().replace(/\s+/g, " ");
+  const normalizedTarget = (value: string | undefined | null) => (value || "").trim().toLowerCase().replace(/\s+/g, " ");
   const targetState = performanceRows.filter((row) => row.grain === "TARGET");
   const targetKey = (adType: PpcAdType | undefined, value: string) => `${adType || "UNKNOWN"}\u0000${normalizedTarget(value)}`;
   const existingTargets = new Set(targetState.filter((row) => !row.isNegative).map((row) => targetKey(row.adType, row.targetExpression)));

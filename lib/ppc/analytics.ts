@@ -305,8 +305,8 @@ export function groupPpcByCampaign(
     const existing = map.get(key);
     const isAuto =
       r.matchType === "Auto" ||
-      r.campaignName.toLowerCase().includes("auto") ||
-      r.targetKeyword.toLowerCase().includes("close-match");
+      (r.campaignName || "").toLowerCase().includes("auto") ||
+      (r.targetKeyword || "").toLowerCase().includes("close-match");
 
     if (!existing) {
       map.set(key, {
@@ -1422,7 +1422,7 @@ export function generatePpcRecommendations(
     // Đánh giá Harvest Candidate theo HARVEST_SCORE
     const harvestScore = calculateHarvestScore(r, targetAcos);
     if (
-      (r.campaignName.toLowerCase().includes("auto") || r.matchType === "Broad" || r.matchType === "Auto") &&
+      ((r.campaignName || "").toLowerCase().includes("auto") || r.matchType === "Broad" || r.matchType === "Auto") &&
       r.orders >= 2 &&
       harvestScore >= 50
     ) {

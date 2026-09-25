@@ -1916,17 +1916,15 @@ export async function getPpcOverviewAggregates(
         ORDER BY sk.sku;
       `,
       // 6. Target Count directly from snapshot summary
-      isAllStores
-        ? Promise.resolve([{ target_count: 0 }])
-        : sql<{ target_count: string | number }[]>`
-          SELECT COALESCE(SUM(sm.active_target_count), 0) AS target_count
-          FROM ppc_snapshot_summary sm
-          JOIN ppc_active_snapshots a ON a.store_id = sm.store_id AND a.snapshot_id = sm.snapshot_id AND a.coverage_days = sm.coverage_days
-          JOIN ppc_stores s ON s.id = sm.store_id
-          WHERE s.team_id = ${teamId}
-            AND lower(s.name) = lower(${storeName})
-            AND sm.coverage_days = ${coverageDays};
-        `,
+      sql<{ target_count: string | number }[]>`
+        SELECT COALESCE(SUM(sm.active_target_count), 0) AS target_count
+        FROM ppc_snapshot_summary sm
+        JOIN ppc_active_snapshots a ON a.store_id = sm.store_id AND a.snapshot_id = sm.snapshot_id AND a.coverage_days = sm.coverage_days
+        JOIN ppc_stores s ON s.id = sm.store_id
+        WHERE s.team_id = ${teamId}
+          AND (${isAllStores} OR lower(s.name) = lower(${storeName}))
+          AND sm.coverage_days = ${coverageDays};
+      `,
       // 7. Store Summaries directly from snapshot summary (no separate table needed!)
       sql<Array<{
         id: string;
@@ -1999,25 +1997,23 @@ export async function getPpcOverviewAggregates(
   // 2. Fallback: scan raw facts if no active snapshot summary exists
   const targetCountKey = `${teamId}::${storeName}::${sku}::${days}`;
   const cachedTargetCount = targetCountCache.get(targetCountKey);
-  const targetCountPromise: Promise<number> = isAllStores
-    ? Promise.resolve(0)
-    : cachedTargetCount && cachedTargetCount.expiresAt > Date.now()
-      ? Promise.resolve(cachedTargetCount.count)
-      : (async () => {
-      const rows = await sql<{ count: string | number }[]>`
-        WITH latest_snapshots AS (
-          SELECT DISTINCT ON (p2.store_id, p2.ad_type)
-            p2.store_id, p2.ad_type, p2.snapshot_date AS max_snapshot,
-            p2.report_start_date AS max_report_start,
-            p2.report_end_date AS max_report_end
-          FROM ppc_performance_facts p2
-          JOIN ppc_stores s2 ON s2.id = p2.store_id
-          WHERE s2.team_id = ${teamId}
-            AND lower(s2.name) = lower(${storeName})
-            AND (p2.report_end_date - p2.report_start_date + 1)
-              BETWEEN ${days - 3}::integer AND ${days + 3}::integer
-          ORDER BY p2.store_id, p2.ad_type, p2.snapshot_date DESC, p2.report_end_date DESC
-        )
+  const targetCountPromise: Promise<number> = cachedTargetCount && cachedTargetCount.expiresAt > Date.now()
+    ? Promise.resolve(cachedTargetCount.count)
+    : (async () => {
+    const rows = await sql<{ count: string | number }[]>`
+      WITH latest_snapshots AS (
+        SELECT DISTINCT ON (p2.store_id, p2.ad_type)
+          p2.store_id, p2.ad_type, p2.snapshot_date AS max_snapshot,
+          p2.report_start_date AS max_report_start,
+          p2.report_end_date AS max_report_end
+        FROM ppc_performance_facts p2
+        JOIN ppc_stores s2 ON s2.id = p2.store_id
+        WHERE s2.team_id = ${teamId}
+          AND (${isAllStores} OR lower(s2.name) = lower(${storeName}))
+          AND (p2.report_end_date - p2.report_start_date + 1)
+            BETWEEN ${days - 3}::integer AND ${days + 3}::integer
+        ORDER BY p2.store_id, p2.ad_type, p2.snapshot_date DESC, p2.report_end_date DESC
+      )
         SELECT count(*) as count
         FROM ppc_performance_facts p
         JOIN latest_snapshots ls

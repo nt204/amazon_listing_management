@@ -24,6 +24,7 @@ import {
   Clock,
   Sliders,
   Plus,
+  CircleNotch,
 } from "@phosphor-icons/react";
 import { PpcPagination } from "./ppc-pagination";
 import {
@@ -171,6 +172,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
   const [targetAcos, setTargetAcos] = useState(30);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [detailCounts, setDetailCounts] = useState<PpcDetailCounts | null>(null);
+  const [loadingSection, setLoadingSection] = useState<string | null>(null);
   const loadedSectionsRef = useRef(new Set<string>());
   const detailRequestIdRef = useRef(0);
 
@@ -339,7 +341,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
         throw new Error(msg);
       }
       const data = await res.json();
-      loadedSectionsRef.current.clear();
       loadedSectionsRef.current.add("overview");
       if (refresh) {
         lastLoadedRecKeyRef.current = "";
@@ -389,30 +390,37 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
   const loadSection = useCallback(async (section: string) => {
     if (loadedSectionsRef.current.has(section)) return;
     const requestId = ++detailRequestIdRef.current;
-    const dateParams = isCustomDate && customStartDate && customEndDate
-      ? `&startDate=${encodeURIComponent(customStartDate)}&endDate=${encodeURIComponent(customEndDate)}`
-      : "";
-    const res = await fetch(
-      `/api/ppc/metrics?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}&section=${encodeURIComponent(section)}${dateParams}`,
-      { cache: "no-store" },
-    );
-    if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      const msg = errData.error || errData.message || (res.status === 401 ? "Phiên làm việc đã hết hạn" : `Lỗi tải bảng dữ liệu (HTTP ${res.status})`);
-      throw new Error(msg);
+    setLoadingSection(section);
+    try {
+      const dateParams = isCustomDate && customStartDate && customEndDate
+        ? `&startDate=${encodeURIComponent(customStartDate)}&endDate=${encodeURIComponent(customEndDate)}`
+        : "";
+      const res = await fetch(
+        `/api/ppc/metrics?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}&section=${encodeURIComponent(section)}${dateParams}`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        const msg = errData.error || errData.message || (res.status === 401 ? "Phiên làm việc đã hết hạn" : `Lỗi tải bảng dữ liệu (HTTP ${res.status})`);
+        throw new Error(msg);
+      }
+      const data = await res.json();
+      if (requestId !== detailRequestIdRef.current) return;
+      loadedSectionsRef.current.add(section);
+      startTransition(() => {
+        if (data.stores && data.stores.length > 0) setStores(data.stores);
+        if (section === "campaigns") setCampaignPerformance(data.campaignPerformance || []);
+        if (section === "ad_groups") setAdGroupPerformance(data.adGroups || []);
+        if (section === "targets") setTargetPerformance(data.targets || []);
+        if (section === "skus") setSkuPerformance(data.skuPerformance || []);
+        if (section === "search_terms") setSearchTerms(data.searchTerms || []);
+        setDetailCounts((current) => data.detailCounts ? { ...current, ...data.detailCounts } : current);
+      });
+    } finally {
+      if (detailRequestIdRef.current === requestId) {
+        setLoadingSection(null);
+      }
     }
-    const data = await res.json();
-    if (requestId !== detailRequestIdRef.current) return;
-    loadedSectionsRef.current.add(section);
-    startTransition(() => {
-      if (data.stores && data.stores.length > 0) setStores(data.stores);
-      if (section === "campaigns") setCampaignPerformance(data.campaignPerformance || []);
-      if (section === "ad_groups") setAdGroupPerformance(data.adGroups || []);
-      if (section === "targets") setTargetPerformance(data.targets || []);
-      if (section === "skus") setSkuPerformance(data.skuPerformance || []);
-      if (section === "search_terms") setSearchTerms(data.searchTerms || []);
-      setDetailCounts((current) => data.detailCounts ? { ...current, ...data.detailCounts } : current);
-    });
   }, [selectedStore, selectedSku, selectedDays, isCustomDate, customStartDate, customEndDate]);
 
   useEffect(() => {
@@ -689,6 +697,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       };
       loadedSectionsRef.current.clear();
       lastLoadedRecKeyRef.current = "";
+      setSelectedCampaignForDrilldown(null);
+      setSelectedAdGroupForDrilldown(null);
     }
 
     if (filtersChanged || !loadedSectionsRef.current.has("overview")) {
@@ -949,9 +959,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       const q = targetQuery.toLowerCase();
       list = list.filter(
         (t) =>
-          t.targetKeyword.toLowerCase().includes(q) ||
-          t.campaignName.toLowerCase().includes(q) ||
-          t.adGroupName.toLowerCase().includes(q)
+          (t.targetKeyword || "").toLowerCase().includes(q) ||
+          (t.campaignName || "").toLowerCase().includes(q) ||
+          (t.adGroupName || "").toLowerCase().includes(q)
       );
     }
     list.sort((a, b) => {
@@ -2011,8 +2021,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
         </div>
       )}
 
-      {/* DATA SLICING SUB-TABS (Bóc tách dữ liệu theo kiến trúc 5 tầng + SKU song song - CHỈ HIỂN THỊ KHI XEM 1 SHOP HOẶC KHI CHỌN TAB CỤ THỂ) */}
-      {(selectedStore !== "ALL" || activeTab !== "overview") && (
+      {/* DATA SLICING SUB-TABS (Bóc tách dữ liệu theo kiến trúc 5 tầng + SKU song song - LUÔN HIỂN THỊ ĐỂ ĐIỀU HƯỚNG DỄ DÀNG) */}
       <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-200/60 rounded-xl border border-slate-200/80 shadow-2xs">
         <button
           type="button"
@@ -2101,7 +2110,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
           </button>
         </div>
       </div>
-      )}
 
       {/* ========================================================================= */}
       {/* VIEW 1: OVERVIEW SUMMARY TABLE (CHỈ HIỂN THỊ KHI ĐANG XEM 1 SHOP CỤ THỂ) */}
@@ -2788,7 +2796,17 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredSortedTargets.length === 0 ? (
+                {loadingSection === "targets" ? (
+                  <tr>
+                    <td colSpan={15} className="p-12 text-center text-xs text-slate-500">
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <CircleNotch size={24} className="animate-spin text-indigo-600" />
+                        <span className="font-bold text-slate-700">Đang tải danh sách Target / Keyword...</span>
+                        <span className="text-[11px] text-slate-400">Đang tải dữ liệu từ máy chủ, vui lòng đợi trong giây lát</span>
+                      </div>
+                    </td>
+                  </tr>
+                ) : filteredSortedTargets.length === 0 ? (
                   <tr>
                     <td colSpan={15} className="p-8 text-center text-xs text-slate-400">
                       {targetQuery ? (
@@ -3044,7 +3062,23 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium">
-                {paginatedSkus.map((s, i) => (
+                {loadingSection === "skus" ? (
+                  <tr>
+                    <td colSpan={10} className="p-12 text-center text-xs text-slate-500">
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <CircleNotch size={24} className="animate-spin text-indigo-600" />
+                        <span className="font-bold text-slate-700">Đang tải danh sách SKU...</span>
+                      </div>
+                    </td>
+                  </tr>
+                ) : paginatedSkus.length === 0 ? (
+                  <tr>
+                    <td colSpan={10} className="p-8 text-center text-xs text-slate-400">
+                      Không tìm thấy SKU nào trong kỳ đang chọn.
+                    </td>
+                  </tr>
+                ) : (
+                  paginatedSkus.map((s, i) => (
                   <tr key={i} className="hover:bg-slate-50/80 transition">
                     <td className="py-2.5 px-3.5 font-bold text-slate-900 flex items-center gap-2">
                       <Tag size={14} className="text-indigo-600 shrink-0" />
@@ -3081,8 +3115,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                       </span>
                     </td>
                   </tr>
-                ))}
-              </tbody>
+                ))
+              )}
+            </tbody>
             </table>
           </div>
 
@@ -3270,7 +3305,16 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
-                {paginatedSearchTerms.length === 0 ? (
+                {loadingSection === "search_terms" ? (
+                  <tr>
+                    <td colSpan={13} className="p-12 text-center text-xs text-slate-500">
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <CircleNotch size={24} className="animate-spin text-indigo-600" />
+                        <span className="font-bold text-slate-700">Đang tải dữ liệu Search Terms...</span>
+                      </div>
+                    </td>
+                  </tr>
+                ) : paginatedSearchTerms.length === 0 ? (
                   <tr>
                     <td colSpan={13} className="p-8 text-center text-slate-400 font-sans font-medium">
                       Không tìm thấy từ khóa nào phù hợp bộ lọc.

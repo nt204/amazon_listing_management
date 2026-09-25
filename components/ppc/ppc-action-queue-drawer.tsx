@@ -1486,7 +1486,7 @@ export function PpcActionQueueDrawer({
                 </button>
               </div>
 
-              <div className="max-h-64 overflow-y-auto">
+              <div className="max-h-[min(56vh,38rem)] overflow-y-auto overscroll-contain">
                 {autoLogs.length === 0 ? (
                   <div className="px-4 py-8 text-center text-xs text-slate-400">
                     Chưa có lượt Auto Upload AdsPower nào được ghi nhận.
@@ -1505,9 +1505,9 @@ export function PpcActionQueueDrawer({
                       return (
                         <div
                           key={log.id}
-                          className="flex flex-col gap-2 px-3.5 py-2.5 hover:bg-slate-50 transition"
+                          className="flex flex-col gap-1.5 px-3 py-2 hover:bg-slate-50 transition"
                         >
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between">
                             <div className="min-w-0 flex-1">
                               <div className="flex items-start gap-1.5">
                                 <Lightning size={15} className="shrink-0 text-amber-600" weight="fill" />
@@ -1536,7 +1536,7 @@ export function PpcActionQueueDrawer({
                                 </span>
                               </div>
 
-                              <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-slate-500">
+                              <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-slate-500">
                                 <span>
                                   Profile:{" "}
                                   <strong className="text-slate-700">
@@ -1556,7 +1556,7 @@ export function PpcActionQueueDrawer({
                               </div>
                             </div>
 
-                            <div className="flex items-center gap-2 shrink-0">
+                            <div className="flex shrink-0 items-center gap-1.5">
                               <button
                                 type="button"
                                 onClick={() =>
@@ -1577,7 +1577,7 @@ export function PpcActionQueueDrawer({
                                     rawLog: log,
                                   })
                                 }
-                                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer"
+                                className="flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-700 transition hover:bg-slate-200 cursor-pointer"
                               >
                                 <Eye size={13} weight="bold" />
                                 <span>Chi tiết</span>
@@ -1588,7 +1588,7 @@ export function PpcActionQueueDrawer({
                                   type="button"
                                   onClick={() => handleCancelPendingTask(log.id)}
                                   disabled={isCancellingTaskId === log.id}
-                                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 transition cursor-pointer"
+                                  className="flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-600 transition hover:bg-rose-50 hover:text-rose-700 cursor-pointer"
                                   title="Hủy tác vụ đang chờ"
                                 >
                                   <X size={13} weight="bold" />
@@ -1600,7 +1600,7 @@ export function PpcActionQueueDrawer({
                                 <button
                                   type="button"
                                   onClick={() => setReuploadTarget(log)}
-                                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 transition cursor-pointer"
+                                  className="flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-bold text-amber-800 transition hover:bg-amber-100 cursor-pointer"
                                   title="Upload lại lượt thất bại này"
                                 >
                                   <ArrowCounterClockwise size={13} weight="bold" />
@@ -1621,49 +1621,43 @@ export function PpcActionQueueDrawer({
                             </div>
                           </div>
 
-                          <div className="grid gap-1.5 sm:grid-cols-2">
-                            <div className={`flex min-w-0 items-start gap-2 rounded-lg border px-2.5 py-2 ${fileStatusMeta.color}`}>
+                          <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                            <div className={`flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-1 ${fileStatusMeta.color}`}>
                               <FileStatusIcon
-                                size={15}
+                                size={13}
                                 weight="bold"
-                                className={`mt-0.5 shrink-0 ${log.fileStatus === "PENDING" ? "animate-spin" : ""}`}
+                                className={`shrink-0 ${log.fileStatus === "PENDING" ? "animate-spin" : ""}`}
                               />
-                              <div className="min-w-0">
-                                <div className="text-[10px] font-bold uppercase tracking-wide opacity-70">Tạo file</div>
-                                <div className="text-[11px] font-bold">{fileStatusMeta.label}</div>
-                                {log.fileErrorMessage && (
-                                  <div className="mt-0.5 text-[10px] leading-4 [overflow-wrap:anywhere]">{log.fileErrorMessage}</div>
-                                )}
-                              </div>
+                              <span className="text-[10px] font-bold">{fileStatusMeta.label}</span>
                             </div>
 
-                            <div className={`flex min-w-0 items-start gap-2 rounded-lg border px-2.5 py-2 ${uploadNotStarted ? "border-slate-200 bg-slate-50 text-slate-500" : statusMeta.color}`}>
+                            <div className={`flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-1 ${uploadNotStarted ? "border-slate-200 bg-slate-50 text-slate-500" : statusMeta.color}`}>
                               {uploadNotStarted ? (
-                                <Clock size={15} weight="bold" className="mt-0.5 shrink-0" />
+                                <Clock size={13} weight="bold" className="shrink-0" />
                               ) : log.status === "SUCCESS" ? (
-                                <CheckCircle size={15} weight="bold" className="mt-0.5 shrink-0" />
+                                <CheckCircle size={13} weight="bold" className="shrink-0" />
                               ) : log.status === "FAILED" ? (
-                                <WarningCircle size={15} weight="bold" className="mt-0.5 shrink-0" />
+                                <WarningCircle size={13} weight="bold" className="shrink-0" />
                               ) : (
-                                <SpinnerGap size={15} weight="bold" className="mt-0.5 shrink-0" />
+                                <SpinnerGap size={13} weight="bold" className="shrink-0" />
                               )}
-                              <div className="min-w-0">
-                                <div className="text-[10px] font-bold uppercase tracking-wide opacity-70">Upload Amazon</div>
-                                <div className="text-[11px] font-bold">
-                                  {uploadNotStarted
-                                    ? log.fileStatus === "FAILED"
-                                      ? "Chưa chạy do lỗi tạo file"
-                                      : "Chưa chạy, đang chờ tạo file"
-                                    : statusMeta.label}
-                                </div>
-                                {log.errorMessage && !uploadNotStarted && (
-                                  <div className="mt-0.5 text-[10px] leading-4 [overflow-wrap:anywhere]">{log.errorMessage}</div>
-                                )}
-                                {log.resultSummary && !log.errorMessage && (
-                                  <div className="mt-0.5 text-[10px] leading-4 [overflow-wrap:anywhere]">{log.resultSummary}</div>
-                                )}
-                              </div>
+                              <span className="text-[10px] font-bold">
+                                Upload: {uploadNotStarted
+                                  ? log.fileStatus === "FAILED"
+                                    ? "Chưa chạy do lỗi tạo file"
+                                    : "Đang chờ tạo file"
+                                  : statusMeta.label}
+                              </span>
                             </div>
+
+                            {(log.fileErrorMessage || (!uploadNotStarted && (log.errorMessage || log.resultSummary))) && (
+                              <p
+                                className={`min-w-0 flex-1 truncate text-[10px] leading-4 ${log.fileErrorMessage || log.errorMessage ? "text-rose-600" : "text-slate-500"}`}
+                                title={log.fileErrorMessage || log.errorMessage || log.resultSummary || undefined}
+                              >
+                                {log.fileErrorMessage || log.errorMessage || log.resultSummary}
+                              </p>
+                            )}
                           </div>
                         </div>
                       );
