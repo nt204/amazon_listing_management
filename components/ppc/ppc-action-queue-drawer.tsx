@@ -827,11 +827,13 @@ export function PpcActionQueueDrawer({
         throw new Error(data.error || data.message || "Tự động upload thất bại.");
       }
 
-      // Ghi nhận thành công - không tự động trigger a.click() để tránh bật hộp thoại Save As của máy
-      setAutoUploadStep(4); // 4. Hoàn thành
-      setAutoUploadSuccess(data.message || `Đã tự động upload thành công file ${data.fileName || ""} lên Amazon Ads Bulk Operations!`);
+      setAutoUploadStep(3);
+      setAutoUploadSuccess(
+        data.message || `Đã tạo file Bulk và xếp hàng upload lên Mac mini cho ${modalZeroSpendCandidates.length} actions.`
+      );
 
-      // Refresh dữ liệu
+      // Chuyển sang tab Kết quả thực thi để người dùng theo dõi tiến trình thực tế
+      setActiveHistoryTab("AUTO");
       void loadAutoLogs();
       onRefreshBulkHistory();
       if (onRefreshActionQueue) {
@@ -1841,27 +1843,23 @@ export function PpcActionQueueDrawer({
 
             {/* Stepper / Progress Status when running */}
             {isAutoUploading && (
-              <div className="bg-sky-50/60 border border-sky-200 rounded-xl p-4 space-y-3">
+              <div className="bg-sky-50/70 border border-sky-200 rounded-xl p-4 space-y-2.5">
                 <div className="flex items-center gap-2 text-xs font-bold text-sky-900">
                   <SpinnerGap size={16} className="animate-spin text-sky-600" />
-                  <span>Đang tự động thực thi quy trình RPA AdsPower...</span>
+                  <span>Đang tạo file Bulk và gửi vào hàng đợi Mac mini...</span>
                 </div>
-                <div className="space-y-1.5 text-xs text-slate-600">
+                <div className="space-y-1.5 text-xs text-slate-600 pl-1">
                   <div className={`flex items-center gap-2 ${autoUploadStep >= 1 ? "text-emerald-700 font-bold" : "text-slate-400"}`}>
                     {autoUploadStep >= 1 ? <Check size={14} weight="bold" /> : <span className="w-3.5 h-3.5 rounded-full border border-slate-300 inline-block" />}
-                    <span>1. Lọc và chuẩn hóa {modalZeroSpendCandidates.length} action SKU chưa cắn tiền</span>
+                    <span>1. Lọc {modalZeroSpendCandidates.length} actions SKU chưa cắn tiền</span>
                   </div>
                   <div className={`flex items-center gap-2 ${autoUploadStep >= 2 ? "text-emerald-700 font-bold" : "text-slate-400"}`}>
                     {autoUploadStep >= 2 ? <Check size={14} weight="bold" /> : <span className="w-3.5 h-3.5 rounded-full border border-slate-300 inline-block" />}
-                    <span>2. Xuất Amazon Bulk (.xlsx) & Kết nối CDP AdsPower</span>
+                    <span>2. Xuất file Amazon Bulksheet (.xlsx) chuẩn mẫu</span>
                   </div>
                   <div className={`flex items-center gap-2 ${autoUploadStep >= 3 ? "text-emerald-700 font-bold" : "text-slate-400"}`}>
                     {autoUploadStep >= 3 ? <Check size={14} weight="bold" /> : <span className="w-3.5 h-3.5 rounded-full border border-slate-300 inline-block" />}
-                    <span>3. Mở Bulk Operations & Upload campaigns</span>
-                  </div>
-                  <div className={`flex items-center gap-2 ${autoUploadStep >= 4 ? "text-emerald-700 font-bold" : "text-slate-400"}`}>
-                    {autoUploadStep >= 4 ? <Check size={14} weight="bold" /> : <span className="w-3.5 h-3.5 rounded-full border border-slate-300 inline-block" />}
-                    <span>4. Hoàn tất và lưu lịch sử thực thi</span>
+                    <span>3. Đẩy lên Cloudflare R2 & xếp hàng cho Mac mini AdsPower</span>
                   </div>
                 </div>
               </div>
@@ -1869,22 +1867,37 @@ export function PpcActionQueueDrawer({
 
             {/* Error Display */}
             {autoUploadError && (
-              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-start gap-2">
-                <WarningCircle size={16} weight="fill" className="text-rose-600 shrink-0 mt-0.5" />
+              <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-start gap-2.5">
+                <WarningCircle size={18} weight="fill" className="text-rose-600 shrink-0 mt-0.5" />
                 <div>
-                  <strong>Không thể hoàn tất Auto Upload:</strong>
+                  <strong>Không thể xếp hàng Auto Upload:</strong>
                   <p className="mt-0.5 text-rose-600">{autoUploadError}</p>
                 </div>
               </div>
             )}
 
-            {/* Success Display */}
+            {/* Queued / Success Display */}
             {autoUploadSuccess && (
-              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 flex items-start gap-2">
-                <CheckCircle size={16} weight="fill" className="text-emerald-600 shrink-0 mt-0.5" />
-                <div>
-                  <strong>Thành công!</strong>
-                  <p className="mt-0.5 text-emerald-700">{autoUploadSuccess}</p>
+              <div className="p-4 bg-sky-50/80 border border-sky-200 rounded-xl text-xs text-sky-950 space-y-2">
+                <div className="flex items-center gap-2 font-bold text-sky-900">
+                  <CheckCircle size={18} weight="fill" className="text-sky-600 shrink-0" />
+                  <span>Đã xếp hàng upload lên Mac mini thành công!</span>
+                </div>
+                <p className="text-[11px] text-sky-800 leading-relaxed">
+                  File Bulk đã được tạo và gửi vào hàng đợi. Mac mini đang kết nối AdsPower để đẩy file lên Amazon Ads.
+                </p>
+                <div className="pt-1 flex items-center gap-1.5 text-[11px] text-sky-900 font-bold">
+                  <span>👉 Vui lòng xem tiến độ thực tế tại tab</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveHistoryTab("AUTO");
+                      setIsAutoUploadModalOpen(false);
+                    }}
+                    className="underline text-indigo-700 hover:text-indigo-900 cursor-pointer"
+                  >
+                    "Kết quả thực thi"
+                  </button>
                 </div>
               </div>
             )}
@@ -1898,7 +1911,19 @@ export function PpcActionQueueDrawer({
               >
                 {autoUploadSuccess ? "Đóng" : "Hủy"}
               </button>
-              {!autoUploadSuccess && (
+              {autoUploadSuccess ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveHistoryTab("AUTO");
+                    setIsAutoUploadModalOpen(false);
+                  }}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition shadow-xs cursor-pointer"
+                >
+                  <Eye size={14} weight="bold" />
+                  <span>Xem kết quả thực thi</span>
+                </button>
+              ) : (
                 <button
                   onClick={handleExecuteAutoUpload}
                   disabled={isAutoUploading || modalZeroSpendCandidates.length === 0}
@@ -1907,7 +1932,7 @@ export function PpcActionQueueDrawer({
                   {isAutoUploading ? (
                     <>
                       <SpinnerGap size={15} className="animate-spin" />
-                      <span>Đang xử lý AdsPower...</span>
+                      <span>Đang xếp hàng...</span>
                     </>
                   ) : (
                     <>
