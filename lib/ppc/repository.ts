@@ -490,7 +490,6 @@ export async function listPpcPerformance(
       AND (
         p.spend > 0 OR p.clicks > 0 OR p.impressions > 0
         OR p.grain IN ('CAMPAIGN', 'AD_GROUP', 'PRODUCT')
-        OR (p.grain = 'TARGET' AND p.state = 'enabled')
       )
     ORDER BY p.ad_type, p.grain, p.spend DESC, p.id
     LIMIT ${Math.min(50_000, Math.max(1, options.limit || 50_000))}

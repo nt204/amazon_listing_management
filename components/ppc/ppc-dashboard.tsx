@@ -160,6 +160,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
   const [velocity, setVelocity] = useState<PpcVelocityComparison | null>(null);
   const [skuPerformance, setSkuPerformance] = useState<PpcSkuPerformance[]>([]);
   const [campaignPerformance, setCampaignPerformance] = useState<PpcCampaignPerformance[]>([]);
+  const [overviewCampaigns, setOverviewCampaigns] = useState<PpcCampaignPerformance[]>([]);
   const [adGroupPerformance, setAdGroupPerformance] = useState<PpcAdGroupPerformance[]>([]);
   const [targetPerformance, setTargetPerformance] = useState<PpcTargetPerformance[]>([]);
   const [adTypeBreakdown, setAdTypeBreakdown] = useState<PpcAdTypeBreakdown[]>([]);
@@ -351,7 +352,10 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
         setSummary(data.summary || null);
         setVelocity(data.velocity || null);
         if (data.skuPerformance && data.skuPerformance.length > 0) setSkuPerformance(data.skuPerformance);
-        if (data.campaignPerformance && data.campaignPerformance.length > 0) setCampaignPerformance(data.campaignPerformance);
+        if (data.campaignPerformance && data.campaignPerformance.length > 0) {
+          setCampaignPerformance(data.campaignPerformance);
+          setOverviewCampaigns(data.campaignPerformance);
+        }
         if (data.adGroups && data.adGroups.length > 0) setAdGroupPerformance(data.adGroups);
         if (data.targets && data.targets.length > 0) setTargetPerformance(data.targets);
         setAdTypeBreakdown(data.adTypeBreakdown || []);
@@ -2014,7 +2018,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
 
           {/* BIỂU ĐỒ 2: So sánh hiệu suất theo dạng chạy */}
           <PpcPerformanceRankingChart
-            campaigns={campaignPerformance}
+            campaigns={overviewCampaigns.length > 0 ? overviewCampaigns : campaignPerformance}
             targetAcos={targetAcos}
             currency="$"
           />
@@ -2843,9 +2847,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                     target.targetId || target.targetKeyword,
                     target.matchType,
                   ].join("\u0000");
-                  const childSearchTerms = getChildSearchTerms(target);
-                  const childTerms = [...childSearchTerms.confirmed, ...childSearchTerms.inferred];
                   const isExpanded = expandedTargetKey === targetKey;
+                  const childTerms = isExpanded ? (() => {
+                    const res = getChildSearchTerms(target);
+                    return [...res.confirmed, ...res.inferred];
+                  })() : [];
 
                   return (
                     <Fragment key={targetKey}>
@@ -2876,16 +2882,14 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                           <button
                             type="button"
                             onClick={() => setExpandedTargetKey(isExpanded ? null : targetKey)}
-                            className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-extrabold transition cursor-pointer border ${isExpanded
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-extrabold transition cursor-pointer border ${isExpanded
                               ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
-                              : childTerms.length > 0
-                                ? "bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border-indigo-200"
-                                : "bg-slate-100 text-slate-400 border-slate-200 hover:bg-slate-200"
+                              : "bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border-indigo-200"
                               }`}
                             title="Xem các customer search terms do target này kích hoạt"
                           >
                             <MagnifyingGlass size={11} weight="bold" />
-                            <span>{childTerms.length} Terms</span>
+                            <span>{isExpanded ? "Đóng Terms" : "Xem Terms"}</span>
                             <span>{isExpanded ? "▲" : "▼"}</span>
                           </button>
                         </td>
