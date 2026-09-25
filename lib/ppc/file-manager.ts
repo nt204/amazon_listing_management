@@ -11,6 +11,7 @@ import {
 } from "@aws-sdk/client-s3";
 import { getDatabaseClient, type DataScope } from "@/lib/db";
 import { canonicalStoreName, reportAdType } from "./service";
+import { listPpcStores } from "./repository";
 import { extractCampaignDate } from "./sku-extractor";
 
 export interface ManagedPpcFile {
@@ -93,6 +94,7 @@ export function detectDays(fileName: string): number | undefined {
 export function parseReportMetadata(
   fileName: string,
   relativeOrFullPath?: string,
+  knownStores: string[] = [],
 ): {
   reportDate: string;
   storeName: string;
@@ -103,39 +105,68 @@ export function parseReportMetadata(
   const fileType = detectFileType(fileName);
   const days = detectDays(fileName);
   const adType: "SP" | "SB" =
-    fileType === "BULK_SB" || fileType === "SEARCH_TERM_SB" || /_SB_|\bSB\b/i.test(fileName)
+    fileType === "BULK_SB" ||
+    fileType === "SEARCH_TERM_SB" ||
+    /(?:^|[_\-/])SB(?:[_\-.]|$)/i.test(fileName) ||
+    /(?:^|[/\\])SB(?:[/\\]|$)/i.test(relativeOrFullPath || "")
       ? "SB"
       : "SP";
 
-  // 1. Nhận diện store từ đường dẫn hoặc tên file
-  let storeName = "HSOSTORE";
-  if (relativeOrFullPath) {
-    const parts = relativeOrFullPath.split(path.sep);
-    // Nếu có dạng 2026-09-21/StoreName/...
-    for (const p of parts) {
-      if (/warmstorey/i.test(p)) {
-        storeName = "Warmstorey";
-        break;
-      }
-      if (/hsostore/i.test(p)) {
-        storeName = "HSOSTORE";
-        break;
+  // 1. Nhận diện store từ tiền tố tên file, knownStores hoặc đường dẫn
+  let storeCandidate: string | null = null;
+
+  // 1a. Kiểm tra tiền tố tên file: ví dụ CELSORIX_Search_Term_..., HSOSTORE_Bulk_...
+  const prefixMatch = fileName.match(/^([A-Za-z0-9_-]+?)_(?:Bulk|Search_Term|SP|SB)/i);
+  if (prefixMatch && prefixMatch[1]) {
+    storeCandidate = prefixMatch[1];
+  }
+
+  // 1b. Khớp với danh sách store đã biết (knownStores)
+  if (!storeCandidate && knownStores.length > 0) {
+    const fnLower = fileName.toLowerCase();
+    const matchedKnown = knownStores.find(
+      (ks) => fnLower.includes(ks.toLowerCase()) || (relativeOrFullPath && relativeOrFullPath.toLowerCase().includes(ks.toLowerCase()))
+    );
+    if (matchedKnown) {
+      storeCandidate = matchedKnown;
+    }
+  }
+
+  // 1c. Kiểm tra từ đường dẫn phân cấp (R2 hoặc Local path)
+  if (!storeCandidate && relativeOrFullPath) {
+    const parts = relativeOrFullPath.split(/[/\\]/);
+    const inputIdx = parts.findIndex((p) => p.toLowerCase() === "input" || p.toLowerCase() === "output");
+    if (inputIdx >= 0 && parts[inputIdx + 2]) {
+      // Dạng ppc-reports/input/20260924/CELSORIX/...
+      storeCandidate = parts[inputIdx + 2];
+    } else {
+      for (const p of parts) {
+        if (/warmstorey/i.test(p)) { storeCandidate = "Warmstorey"; break; }
+        if (/celsorix/i.test(p)) { storeCandidate = "CELSORIX"; break; }
+        if (/hsostore/i.test(p)) { storeCandidate = "HSOSTORE"; break; }
       }
     }
   }
-  if (fileName.toUpperCase().includes("WARMSTOREY")) {
-    storeName = "Warmstorey";
-  } else if (fileName.toUpperCase().includes("HSOSTORE")) {
-    storeName = "HSOSTORE";
+
+  // 1d. Fallback nếu vẫn chưa tìm thấy
+  if (!storeCandidate) {
+    if (fileName.toUpperCase().includes("WARMSTOREY")) storeCandidate = "Warmstorey";
+    else if (fileName.toUpperCase().includes("CELSORIX")) storeCandidate = "CELSORIX";
+    else if (fileName.toUpperCase().includes("HSOSTORE")) storeCandidate = "HSOSTORE";
+    else storeCandidate = "HSOSTORE";
   }
 
-  // 2. Nhận diện ngày báo cáo (Ưu tiên: thư mục YYYY-MM-DD -> Range cuối trong tên file -> Ngày đơn lẻ trong tên file -> Hôm nay)
+  // 2. Nhận diện ngày báo cáo (Ưu tiên: thư mục YYYY-MM-DD hoặc YYYYMMDD -> Range cuối -> Ngày đơn lẻ trong tên file -> Hôm nay)
   let reportDate = "";
   if (relativeOrFullPath) {
-    const parts = relativeOrFullPath.split(path.sep);
+    const parts = relativeOrFullPath.split(/[/\\]/);
     for (const p of parts) {
       if (/^\d{4}-\d{2}-\d{2}$/.test(p)) {
         reportDate = p;
+        break;
+      }
+      if (/^\d{8}$/.test(p) && p.startsWith("20")) {
+        reportDate = `${p.slice(0, 4)}-${p.slice(4, 6)}-${p.slice(6, 8)}`;
         break;
       }
     }
@@ -147,7 +178,7 @@ export function parseReportMetadata(
     if (rangeMatch) {
       reportDate = `${rangeMatch[4]}-${rangeMatch[5]}-${rangeMatch[6]}`;
     } else {
-      // Tìm ngày đơn lẻ YYYYMMDD (ví dụ: 20260921)
+      // Tìm ngày đơn lẻ YYYYMMDD (ví dụ: 20260924)
       const singleMatch = fileName.match(/(?:20\d{2})(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])/);
       if (singleMatch) {
         const s = singleMatch[0];
@@ -162,7 +193,7 @@ export function parseReportMetadata(
 
   return {
     reportDate,
-    storeName: canonicalStoreName(storeName),
+    storeName: canonicalStoreName(storeCandidate),
     adType,
     fileType,
     days,
@@ -327,6 +358,7 @@ export async function listManagedPpcFiles(scope: DataScope): Promise<{
 }> {
   const sql = await getDatabaseClient();
   const fileMap = new Map<string, ManagedPpcFile>();
+  const knownStores = (await listPpcStores(scope).catch(() => [])).map((s: { name: string }) => s.name);
 
   let serverFilesCount = 0;
   let serverTotalBytes = 0;
@@ -348,7 +380,7 @@ export async function listManagedPpcFiles(scope: DataScope): Promise<{
           const fileName = path.basename(fullPath);
           const relativePath = path.relative(LOCAL_BULK_DIR, fullPath);
           const folderPath = path.dirname(relativePath) === "." ? "" : path.dirname(relativePath);
-          const meta = parseReportMetadata(fileName, relativePath);
+          const meta = parseReportMetadata(fileName, relativePath, knownStores);
 
           fileMap.set(fileName, {
             id: `server-${fileName}`,
@@ -393,31 +425,40 @@ export async function listManagedPpcFiles(scope: DataScope): Promise<{
 
         for (const obj of res.Contents || []) {
           const key = obj.Key || "";
-          if (key.endsWith("/")) continue;
+          if (key.endsWith("/") || key.endsWith("/_COMPLETE.json")) continue;
 
           r2FilesCount++;
           const size = obj.Size || 0;
           r2TotalBytes += size;
 
           const baseName = path.basename(key);
-          const storeName = key.includes("Warmstorey")
-            ? "Warmstorey"
-            : key.includes("HSOSTORE")
-              ? "HSOSTORE"
-              : "HSOSTORE";
+          const meta = parseReportMetadata(baseName, key, knownStores);
+          const r2FolderDisplay = key.includes("/") ? key.split("/").slice(0, -1).join("/") : "";
 
           const existing = fileMap.get(baseName);
           if (existing) {
             existing.locations.r2 = true;
             existing.locations.r2Key = key;
             if (existing.sizeBytes === 0) existing.sizeBytes = size;
+            if (!existing.folderPath && r2FolderDisplay) existing.folderPath = r2FolderDisplay;
+            if ((!existing.reportDate || existing.reportDate === new Date().toISOString().split("T")[0]) && meta.reportDate) {
+              existing.reportDate = meta.reportDate;
+            }
+            if (meta.adType) existing.adType = meta.adType;
+            if (existing.storeName === "HSOSTORE" && meta.storeName !== "HSOSTORE") {
+              existing.storeName = meta.storeName;
+            }
           } else {
             fileMap.set(baseName, {
               id: `r2-${baseName}`,
               fileName: baseName,
-              storeName,
-              fileType: detectFileType(baseName),
-              days: detectDays(baseName),
+              storeName: meta.storeName,
+              fileType: meta.fileType,
+              adType: meta.adType,
+              days: meta.days,
+              reportDate: meta.reportDate,
+              folderPath: r2FolderDisplay,
+              relativePath: key,
               sizeBytes: size,
               lastModified: obj.LastModified ? obj.LastModified.toISOString() : new Date().toISOString(),
               locations: {
