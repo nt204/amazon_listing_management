@@ -72,6 +72,17 @@ export function getAutoUploadStatusMeta(status: string) {
   }
 }
 
+export function getFileCreationStatusMeta(status?: string) {
+  switch (status) {
+    case "FAILED":
+      return { label: "Tạo file thất bại", color: "bg-rose-50 text-rose-700 border-rose-200", icon: WarningCircle };
+    case "PENDING":
+      return { label: "Đang tạo file", color: "bg-amber-50 text-amber-800 border-amber-200", icon: SpinnerGap };
+    default:
+      return { label: "Tạo file thành công", color: "bg-emerald-50 text-emerald-700 border-emerald-200", icon: CheckCircle };
+  }
+}
+
 export function getActionTypeBadge(actionType: string) {
   const norm = (actionType || "").toUpperCase();
   if (norm.includes("PAUSE")) {
@@ -189,7 +200,6 @@ export function PpcActionQueueDrawer({
   const [autoUploadSuccess, setAutoUploadSuccess] = useState<string | null>(null);
 
   // Auto Upload Logs State
-  const [activeHistoryTab, setActiveHistoryTab] = useState<"BULK" | "AUTO">("BULK");
   const [autoLogs, setAutoLogs] = useState<PpcAutoUploadLog[]>([]);
   const [isLoadingAutoLogs, setIsLoadingAutoLogs] = useState(false);
 
@@ -615,6 +625,16 @@ export function PpcActionQueueDrawer({
     }
   }, [isOpen, loadAutoLogs]);
 
+  const hasActiveAutoUpload = autoLogs.some((log) =>
+    ["PENDING", "RUNNING", "RETRY_WAIT"].includes(log.status),
+  );
+
+  useEffect(() => {
+    if (!isOpen || !hasActiveAutoUpload) return;
+    const timer = window.setInterval(() => void loadAutoLogs(), 3_000);
+    return () => window.clearInterval(timer);
+  }, [isOpen, hasActiveAutoUpload, loadAutoLogs]);
+
   const handleExecuteDownload = async () => {
     try {
       setIsDownloading(true);
@@ -832,8 +852,6 @@ export function PpcActionQueueDrawer({
         data.message || `Đã tạo file Bulk và xếp hàng upload lên Mac mini cho ${modalZeroSpendCandidates.length} actions.`
       );
 
-      // Chuyển sang tab Kết quả thực thi để người dùng theo dõi tiến trình thực tế
-      setActiveHistoryTab("AUTO");
       void loadAutoLogs();
       onRefreshBulkHistory();
       if (onRefreshActionQueue) {
@@ -841,6 +859,8 @@ export function PpcActionQueueDrawer({
       }
     } catch (err: any) {
       setAutoUploadError(err?.message || String(err));
+      void loadAutoLogs();
+      onRefreshBulkHistory();
     } finally {
       setIsAutoUploading(false);
     }
@@ -1441,33 +1461,12 @@ export function PpcActionQueueDrawer({
               </div>
             </div>
 
-            {/* History Section: Bulk Export vs Auto Upload AdsPower */}
+            {/* Execution history */}
             <section className="rounded-xl border border-slate-200 bg-white shadow-2xs">
               <div className="flex items-center justify-between border-b border-slate-200 px-3.5 py-2.5 bg-slate-50/50">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setActiveHistoryTab("BULK")}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
-                      activeHistoryTab === "BULK"
-                        ? "bg-white text-slate-800 shadow-xs border border-slate-200"
-                        : "text-slate-500 hover:text-slate-800"
-                    }`}
-                  >
-                    <FileXls size={14} weight="fill" className="text-emerald-600" />
-                    <span>File đã xuất ({bulkHistory.length})</span>
-                  </button>
-
-                  <button
-                    onClick={() => setActiveHistoryTab("AUTO")}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
-                      activeHistoryTab === "AUTO"
-                        ? "bg-amber-50 text-amber-900 shadow-xs border border-amber-200"
-                        : "text-slate-500 hover:text-amber-700"
-                    }`}
-                  >
-                    <Lightning size={14} weight="fill" className="text-amber-600" />
-                    <span>Kết quả thực thi ({autoLogs.length})</span>
-                  </button>
+                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
+                  <Lightning size={14} weight="fill" className="text-amber-600" />
+                  <span>Kết quả thực thi ({autoLogs.length})</span>
                 </div>
 
                 <button
@@ -1488,94 +1487,7 @@ export function PpcActionQueueDrawer({
               </div>
 
               <div className="max-h-64 overflow-y-auto">
-                {activeHistoryTab === "BULK" ? (
-                  bulkHistory.length === 0 ? (
-                    <div className="px-4 py-8 text-center text-xs text-slate-400">
-                      Chưa có file Bulk nào được xuất.
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-slate-100">
-                      {bulkHistory.map((item) => {
-                        const fileMeta = formatCompactFileName(item.fileName);
-                        return (
-                          <div
-                            key={item.id}
-                            className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-3.5 py-2.5 hover:bg-slate-50 transition"
-                          >
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-1.5">
-                                <FileXls size={15} className="shrink-0 text-emerald-600" weight="fill" />
-                                <span
-                                  className="truncate text-xs font-bold text-slate-800"
-                                  title={fileMeta.full}
-                                >
-                                  {fileMeta.display}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleCopyFileName(item.fileName, item.id)}
-                                  className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
-                                  title="Sao chép tên file"
-                                >
-                                  {copiedFileNameId === item.id ? (
-                                    <Check size={12} className="text-emerald-600 font-bold" />
-                                  ) : (
-                                    <Copy size={12} />
-                                  )}
-                                </button>
-                              </div>
-                              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
-                                <span className="font-semibold text-slate-700">{item.actionCount} actions</span>
-                                <span className="text-slate-600">Bid: {item.summary.updateBidCount || 0}</span>
-                                <span className="text-amber-700">Pause: {item.summary.pauseCount || 0}</span>
-                                {item.summary.budgetCount > 0 && (
-                                  <span className="text-purple-700">Budget: {item.summary.budgetCount}</span>
-                                )}
-                                <span className="text-slate-400">•</span>
-                                <time className="text-slate-400">
-                                  {new Date(item.createdAt).toLocaleString("vi-VN")}
-                                </time>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-2 shrink-0">
-                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                Đã xuất file
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  handleOpenRunDetail({
-                                    type: "BULK",
-                                    id: item.id,
-                                    fileName: item.fileName,
-                                    createdAt: item.createdAt,
-                                    status: "Đã xuất file",
-                                    actionCount: item.actionCount,
-                                    storeName,
-                                  })
-                                }
-                                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer"
-                              >
-                                <Eye size={13} weight="bold" />
-                                <span>Chi tiết</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDownloadXlsx(item.id, item.fileName)}
-                                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition cursor-pointer"
-                                title="Tải lại file Excel này"
-                              >
-                                <DownloadSimple size={13} weight="bold" />
-                                <span>Tải lại</span>
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )
-                ) : autoLogs.length === 0 ? (
+                {autoLogs.length === 0 ? (
                   <div className="px-4 py-8 text-center text-xs text-slate-400">
                     Chưa có lượt Auto Upload AdsPower nào được ghi nhận.
                   </div>
@@ -1583,10 +1495,12 @@ export function PpcActionQueueDrawer({
                   <div className="divide-y divide-slate-100">
                     {autoLogs.map((log) => {
                       const statusMeta = getAutoUploadStatusMeta(log.status);
-                      const fileMeta = formatCompactFileName(log.fileName, log.skus);
                       const matchedBulk = bulkHistory.find((b) => b.fileName === log.fileName);
-                      const canReupload = ["FAILED", "PARTIAL_SUCCESS", "RESULT_TIMEOUT"].includes(log.status);
+                      const canReupload = log.fileStatus !== "FAILED" && ["FAILED", "PARTIAL_SUCCESS", "RESULT_TIMEOUT"].includes(log.status);
                       const isPending = log.status === "PENDING";
+                      const fileStatusMeta = getFileCreationStatusMeta(log.fileStatus);
+                      const FileStatusIcon = fileStatusMeta.icon;
+                      const uploadNotStarted = log.fileStatus !== "SUCCESS" || log.stage === "FILE_GENERATION_FAILED";
 
                       return (
                         <div
@@ -1595,26 +1509,28 @@ export function PpcActionQueueDrawer({
                         >
                           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                             <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-1.5">
+                              <div className="flex items-start gap-1.5">
                                 <Lightning size={15} className="shrink-0 text-amber-600" weight="fill" />
                                 <span
-                                  className="truncate text-xs font-bold text-slate-800"
-                                  title={fileMeta.full}
+                                  className="min-w-0 text-xs font-bold leading-5 text-slate-800 [overflow-wrap:anywhere]"
+                                  title={log.fileName || "File chưa được tạo"}
                                 >
-                                  {fileMeta.display}
+                                  {log.fileName || "File chưa được tạo"}
                                 </span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleCopyFileName(log.fileName, log.id)}
-                                  className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
-                                  title="Sao chép tên file"
-                                >
-                                  {copiedFileNameId === log.id ? (
-                                    <Check size={12} className="text-emerald-600 font-bold" />
-                                  ) : (
-                                    <Copy size={12} />
-                                  )}
-                                </button>
+                                {log.fileName && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCopyFileName(log.fileName, log.id)}
+                                    className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+                                    title="Sao chép tên file"
+                                  >
+                                    {copiedFileNameId === log.id ? (
+                                      <Check size={12} className="text-emerald-600 font-bold" />
+                                    ) : (
+                                      <Copy size={12} />
+                                    )}
+                                  </button>
+                                )}
                                 <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 font-mono text-[10px] font-semibold">
                                   {log.actionCount} actions
                                 </span>
@@ -1641,12 +1557,6 @@ export function PpcActionQueueDrawer({
                             </div>
 
                             <div className="flex items-center gap-2 shrink-0">
-                              <span
-                                className={`px-2 py-0.5 rounded text-[10px] font-bold border ${statusMeta.color}`}
-                              >
-                                {statusMeta.label}
-                              </span>
-
                               <button
                                 type="button"
                                 onClick={() =>
@@ -1711,17 +1621,50 @@ export function PpcActionQueueDrawer({
                             </div>
                           </div>
 
-                          {/* Quick summary line if error or Amazon feedback */}
-                          {log.errorMessage && (
-                            <div className="rounded bg-rose-50 border border-rose-200 px-2.5 py-1 text-[11px] text-rose-700 font-medium">
-                              <strong>Lỗi:</strong> {log.errorMessage}
+                          <div className="grid gap-1.5 sm:grid-cols-2">
+                            <div className={`flex min-w-0 items-start gap-2 rounded-lg border px-2.5 py-2 ${fileStatusMeta.color}`}>
+                              <FileStatusIcon
+                                size={15}
+                                weight="bold"
+                                className={`mt-0.5 shrink-0 ${log.fileStatus === "PENDING" ? "animate-spin" : ""}`}
+                              />
+                              <div className="min-w-0">
+                                <div className="text-[10px] font-bold uppercase tracking-wide opacity-70">Tạo file</div>
+                                <div className="text-[11px] font-bold">{fileStatusMeta.label}</div>
+                                {log.fileErrorMessage && (
+                                  <div className="mt-0.5 text-[10px] leading-4 [overflow-wrap:anywhere]">{log.fileErrorMessage}</div>
+                                )}
+                              </div>
                             </div>
-                          )}
-                          {log.resultSummary && !log.errorMessage && (
-                            <div className="rounded bg-slate-50 border border-slate-200 px-2.5 py-1 text-[11px] text-slate-700 font-medium truncate">
-                              <strong>Amazon:</strong> {log.resultSummary}
+
+                            <div className={`flex min-w-0 items-start gap-2 rounded-lg border px-2.5 py-2 ${uploadNotStarted ? "border-slate-200 bg-slate-50 text-slate-500" : statusMeta.color}`}>
+                              {uploadNotStarted ? (
+                                <Clock size={15} weight="bold" className="mt-0.5 shrink-0" />
+                              ) : log.status === "SUCCESS" ? (
+                                <CheckCircle size={15} weight="bold" className="mt-0.5 shrink-0" />
+                              ) : log.status === "FAILED" ? (
+                                <WarningCircle size={15} weight="bold" className="mt-0.5 shrink-0" />
+                              ) : (
+                                <SpinnerGap size={15} weight="bold" className="mt-0.5 shrink-0" />
+                              )}
+                              <div className="min-w-0">
+                                <div className="text-[10px] font-bold uppercase tracking-wide opacity-70">Upload Amazon</div>
+                                <div className="text-[11px] font-bold">
+                                  {uploadNotStarted
+                                    ? log.fileStatus === "FAILED"
+                                      ? "Chưa chạy do lỗi tạo file"
+                                      : "Chưa chạy, đang chờ tạo file"
+                                    : statusMeta.label}
+                                </div>
+                                {log.errorMessage && !uploadNotStarted && (
+                                  <div className="mt-0.5 text-[10px] leading-4 [overflow-wrap:anywhere]">{log.errorMessage}</div>
+                                )}
+                                {log.resultSummary && !log.errorMessage && (
+                                  <div className="mt-0.5 text-[10px] leading-4 [overflow-wrap:anywhere]">{log.resultSummary}</div>
+                                )}
+                              </div>
                             </div>
-                          )}
+                          </div>
                         </div>
                       );
                     })}
@@ -1891,7 +1834,6 @@ export function PpcActionQueueDrawer({
                   <button
                     type="button"
                     onClick={() => {
-                      setActiveHistoryTab("AUTO");
                       setIsAutoUploadModalOpen(false);
                     }}
                     className="underline text-indigo-700 hover:text-indigo-900 cursor-pointer"
@@ -1915,7 +1857,6 @@ export function PpcActionQueueDrawer({
                 <button
                   type="button"
                   onClick={() => {
-                    setActiveHistoryTab("AUTO");
                     setIsAutoUploadModalOpen(false);
                   }}
                   className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition shadow-xs cursor-pointer"

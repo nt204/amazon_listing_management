@@ -1,6 +1,6 @@
 import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { campaignPerformanceFromFacts } from "@/lib/ppc/analytics";
-import { listPpcCampaignPage, type PpcCampaignPageFilters } from "@/lib/ppc/repository";
+import { listPpcCampaignPage, getActiveSnapshotId, type PpcCampaignPageFilters } from "@/lib/ppc/repository";
 import { getCachedOrFetch } from "@/lib/redis";
 
 export const runtime = "nodejs";
@@ -30,7 +30,8 @@ export async function GET(request: Request) {
       groupFilter: (["ALL", "BLEEDING", "HIGH_ACOS", "GOOD"].includes(p.get("groupFilter") || "") ? p.get("groupFilter") : "ALL") as PpcCampaignPageFilters["groupFilter"],
       targetAcos: Number(p.get("targetAcos") || 30), sortField, sortDirection, page, pageSize,
     };
-    const cacheKey = `ppc:campaign-page:${scope.teamId}:${Buffer.from(JSON.stringify(filters)).toString("base64url")}`;
+    const snapshotId = await getActiveSnapshotId(scope, filters.storeName, filters.days);
+    const cacheKey = `ppc:campaign-page:${scope.teamId}:${snapshotId}:${Buffer.from(JSON.stringify(filters)).toString("base64url")}`;
     const data = await getCachedOrFetch(cacheKey, 60, async () => {
       const result = await listPpcCampaignPage(scope, filters);
       return { ...result, campaigns: campaignPerformanceFromFacts(result.rows, filters.targetAcos) };

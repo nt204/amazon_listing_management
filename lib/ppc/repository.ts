@@ -545,8 +545,18 @@ export async function listPpcCampaignPage(
   const teamId = (scope as any)?.teamId || "default";
   const offset = (filters.page - 1) * filters.pageSize;
   const searchPattern = `%${filters.query.trim()}%`;
+  const coverageDays = filters.days <= 10 ? 7 : (filters.days <= 18 ? 14 : 30);
 
-  const rows = await sql<Array<PerformanceDbRow & {
+  const activeSnapRows = await sql<{ count: string | number }[]>`
+    SELECT count(*) as count
+    FROM ppc_active_snapshots a
+    JOIN ppc_stores s ON s.id = a.store_id
+    WHERE s.team_id = ${teamId}
+      AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
+      AND a.coverage_days = ${coverageDays}
+  `;
+  const useSummary = !filters.sku && Number(activeSnapRows[0]?.count || 0) > 0;
+  type CampaignPageDbRow = PerformanceDbRow & {
     filtered_total: string | number;
     active_count: string | number;
     paused_count: string | number;
@@ -555,35 +565,125 @@ export async function listPpcCampaignPage(
     total_orders: string | number;
     total_clicks: string | number;
     total_impressions: string | number;
-  }>>`
-    WITH latest_snapshots AS (
-      SELECT DISTINCT ON (p2.store_id, p2.ad_type)
-        p2.store_id, p2.ad_type, p2.snapshot_date, p2.report_start_date, p2.report_end_date
-      FROM ppc_performance_facts p2
-      JOIN ppc_stores s2 ON s2.id = p2.store_id
-      WHERE s2.team_id = ${teamId}
-        AND (${filters.storeName === "ALL"} OR lower(s2.name) = lower(${filters.storeName}))
-        AND (p2.report_end_date - p2.report_start_date + 1)
-          BETWEEN ${filters.days - 3}::integer AND ${filters.days + 3}::integer
-      ORDER BY p2.store_id, p2.ad_type, p2.snapshot_date DESC, p2.report_end_date DESC
-    ), base_raw AS (
-      SELECT p.*, s.name AS store_name,
-        (regexp_match(p.campaign_name, '(202[3-9][0-1][0-9][0-3][0-9])'))[1] AS explicit_date_token,
-        (regexp_match(p.campaign_name, '(^|[^0-9])(2[3-9](0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01]))([^0-9]|$)'))[2] AS short_date_token,
-        (regexp_match(p.campaign_name, '^[A-Za-z]{2,5}(2[3-9](0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01]))'))[1] AS sku_date_token,
-        CASE WHEN p.impressions > 0 THEN p.clicks::numeric / p.impressions * 100 ELSE 0 END AS calc_ctr,
-        CASE WHEN p.clicks > 0 THEN p.orders::numeric / p.clicks * 100 ELSE 0 END AS calc_cvr,
-        CASE WHEN p.sales > 0 THEN p.spend::numeric / p.sales * 100 ELSE CASE WHEN p.spend > 0 THEN 999 ELSE 0 END END AS calc_acos,
-        CASE WHEN p.spend > 0 THEN p.sales::numeric / p.spend ELSE 0 END AS calc_roas
-      FROM ppc_performance_facts p
-      JOIN ppc_stores s ON s.id = p.store_id
-      JOIN latest_snapshots ls ON ls.store_id = p.store_id AND ls.ad_type = p.ad_type
-        AND ls.snapshot_date = p.snapshot_date
-        AND ls.report_start_date = p.report_start_date
-        AND ls.report_end_date = p.report_end_date
-      WHERE p.grain = 'CAMPAIGN'
-        AND (${filters.sku === "ALL"} OR lower(p.sku) = lower(${filters.sku}) OR position(lower(${filters.sku}) in lower(p.campaign_name)) > 0)
-    ), base AS (
+  };
+
+  let rows: CampaignPageDbRow[];
+  if (useSummary) {
+    rows = await sql<CampaignPageDbRow[]>`
+        WITH base_raw AS (
+          SELECT 
+            cs.id, cs.store_id, s.name AS store_name, a.report_start_date AS snapshot_date,
+            a.report_start_date, a.report_end_date, 'DAILY' AS report_granularity,
+            cs.ad_type, 'CAMPAIGN' AS grain, cs.campaign_id AS entity_id,
+            cs.campaign_id, cs.campaign_name,
+            NULL AS ad_group_id, NULL AS ad_group_name, NULL AS target_id, NULL AS target_expression,
+            NULL AS match_type, cs.portfolio_name, NULL AS sku, NULL AS asin,
+            cs.campaign_state AS state, cs.campaign_state, NULL AS ad_group_state,
+            NULL AS targeting_type, NULL AS bidding_strategy, NULL AS placement,
+            cs.daily_budget, NULL AS bid, NULL AS placement_adjustment, false AS is_negative,
+            cs.impressions, cs.clicks, cs.spend, cs.sales, cs.orders, cs.units,
+            (regexp_match(cs.campaign_name, '(202[3-9][0-1][0-9][0-3][0-9])'))[1] AS explicit_date_token,
+            (regexp_match(cs.campaign_name, '(^|[^0-9])(2[3-9](0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01]))([^0-9]|$)'))[2] AS short_date_token,
+            (regexp_match(cs.campaign_name, '^[A-Za-z]{2,5}(2[3-9](0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01]))'))[1] AS sku_date_token,
+            CASE WHEN cs.impressions > 0 THEN cs.clicks::numeric / cs.impressions * 100 ELSE 0 END AS calc_ctr,
+            CASE WHEN cs.clicks > 0 THEN cs.orders::numeric / cs.clicks * 100 ELSE 0 END AS calc_cvr,
+            CASE WHEN cs.sales > 0 THEN cs.spend::numeric / cs.sales * 100 ELSE CASE WHEN cs.spend > 0 THEN 999 ELSE 0 END END AS calc_acos,
+            CASE WHEN cs.spend > 0 THEN cs.sales::numeric / cs.spend ELSE 0 END AS calc_roas
+          FROM ppc_campaign_summary cs
+          JOIN ppc_stores s ON s.id = cs.store_id
+          JOIN ppc_active_snapshots a ON a.store_id = cs.store_id AND a.snapshot_id = cs.snapshot_id AND a.coverage_days = cs.coverage_days
+          WHERE s.team_id = ${teamId}
+            AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
+            AND cs.coverage_days = ${coverageDays}
+            AND (${filters.sku === "ALL"} OR position(lower(${filters.sku}) in lower(cs.campaign_name)) > 0)
+        ), base AS (
+          SELECT base_raw.*,
+            COALESCE(
+              explicit_date_token,
+              CASE WHEN short_date_token IS NOT NULL THEN
+                CASE
+                  WHEN to_char(to_date(short_date_token, 'DDMMYY'), 'DDMMYY') = short_date_token
+                    AND (
+                      to_char(to_date('20' || short_date_token, 'YYYYMMDD'), 'YYMMDD') <> short_date_token
+                      OR to_date('20' || short_date_token, 'YYYYMMDD') > CURRENT_DATE + 180
+                      OR abs(to_date(short_date_token, 'DDMMYY') - CURRENT_DATE) < abs(to_date('20' || short_date_token, 'YYYYMMDD') - CURRENT_DATE)
+                    )
+                  THEN to_char(to_date(short_date_token, 'DDMMYY'), 'YYYYMMDD')
+                  WHEN to_char(to_date('20' || short_date_token, 'YYYYMMDD'), 'YYMMDD') = short_date_token
+                    AND to_date('20' || short_date_token, 'YYYYMMDD') <= CURRENT_DATE + 180
+                  THEN '20' || short_date_token
+                  ELSE NULL
+                END
+              END,
+              CASE WHEN sku_date_token IS NOT NULL THEN '20' || sku_date_token END,
+              ''
+            ) AS campaign_date_key
+          FROM base_raw
+        ), status_counts AS (
+          SELECT count(*) FILTER (WHERE state !~* 'pause|archive') AS active_count,
+                 count(*) FILTER (WHERE state ~* 'pause|archive') AS paused_count
+          FROM base
+        ), filtered AS (
+          SELECT * FROM base
+          WHERE (${!filters.query.trim()} OR campaign_name ILIKE ${searchPattern} OR store_name ILIKE ${searchPattern})
+            AND (${filters.status === "ALL"}
+              OR (${filters.status === "ACTIVE"} AND state !~* 'pause|archive')
+              OR (${filters.status === "PAUSED"} AND state ~* 'pause|archive'))
+            AND (${filters.adType === "ALL"} OR upper(ad_type) = upper(${filters.adType}))
+            AND (${filters.spendFilter === "ALL"}
+              OR (${filters.spendFilter === "HAS_SPEND"} AND spend > 0)
+              OR (${filters.spendFilter === "ZERO_SPEND"} AND spend = 0)
+              OR (${filters.spendFilter === "SPEND_GT_50"} AND spend >= 50)
+              OR (${filters.spendFilter === "SPEND_GT_100"} AND spend >= 100))
+            AND (${filters.groupFilter === "ALL"}
+              OR (${filters.groupFilter === "BLEEDING"} AND orders = 0 AND spend >= 10)
+              OR (${filters.groupFilter === "HIGH_ACOS"} AND orders > 0 AND calc_acos > ${filters.targetAcos})
+              OR (${filters.groupFilter === "GOOD"} AND orders > 0 AND calc_acos <= ${filters.targetAcos} AND spend >= 5))
+        ), totals AS (
+          SELECT count(*) AS filtered_total, COALESCE(sum(spend),0) AS total_spend,
+            COALESCE(sum(sales),0) AS total_sales, COALESCE(sum(orders),0) AS total_orders,
+            COALESCE(sum(clicks),0) AS total_clicks, COALESCE(sum(impressions),0) AS total_impressions
+          FROM filtered
+        )
+        SELECT f.*, t.*, sc.active_count, sc.paused_count
+        FROM totals t CROSS JOIN status_counts sc LEFT JOIN filtered f ON true
+        ORDER BY
+          CASE WHEN ${filters.sortField} = 'date' AND ${filters.sortDirection} = 'asc' THEN campaign_date_key END ASC,
+          CASE WHEN ${filters.sortField} = 'date' AND ${filters.sortDirection} = 'desc' THEN campaign_date_key END DESC,
+          CASE WHEN ${filters.sortField} = 'spend' AND ${filters.sortDirection} = 'asc' THEN spend END ASC,
+          CASE WHEN ${filters.sortField} = 'spend' AND ${filters.sortDirection} = 'desc' THEN spend END DESC,
+          CASE WHEN ${filters.sortField} = 'sales' AND ${filters.sortDirection} = 'asc' THEN sales END ASC,
+          CASE WHEN ${filters.sortField} = 'sales' AND ${filters.sortDirection} = 'desc' THEN sales END DESC,
+          CASE WHEN ${filters.sortField} = 'orders' AND ${filters.sortDirection} = 'asc' THEN orders END ASC,
+          CASE WHEN ${filters.sortField} = 'orders' AND ${filters.sortDirection} = 'desc' THEN orders END DESC,
+          CASE WHEN ${filters.sortField} = 'clicks' AND ${filters.sortDirection} = 'asc' THEN clicks END ASC,
+          CASE WHEN ${filters.sortField} = 'clicks' AND ${filters.sortDirection} = 'desc' THEN clicks END DESC,
+          CASE WHEN ${filters.sortField} = 'impressions' AND ${filters.sortDirection} = 'asc' THEN impressions END ASC,
+          CASE WHEN ${filters.sortField} = 'impressions' AND ${filters.sortDirection} = 'desc' THEN impressions END DESC,
+          CASE WHEN ${filters.sortField} = 'ctr' AND ${filters.sortDirection} = 'asc' THEN calc_ctr END ASC,
+          CASE WHEN ${filters.sortField} = 'ctr' AND ${filters.sortDirection} = 'desc' THEN calc_ctr END DESC,
+          CASE WHEN ${filters.sortField} = 'acos' AND ${filters.sortDirection} = 'asc' THEN calc_acos END ASC,
+          CASE WHEN ${filters.sortField} = 'acos' AND ${filters.sortDirection} = 'desc' THEN calc_acos END DESC,
+          CASE WHEN ${filters.sortField} = 'cvr' AND ${filters.sortDirection} = 'asc' THEN calc_cvr END ASC,
+          CASE WHEN ${filters.sortField} = 'cvr' AND ${filters.sortDirection} = 'desc' THEN calc_cvr END DESC,
+          CASE WHEN ${filters.sortField} = 'roas' AND ${filters.sortDirection} = 'asc' THEN calc_roas END ASC,
+          CASE WHEN ${filters.sortField} = 'roas' AND ${filters.sortDirection} = 'desc' THEN calc_roas END DESC,
+          spend DESC, campaign_id ASC, id ASC
+        LIMIT ${filters.pageSize} OFFSET ${offset}
+      `;
+  } else {
+    rows = await sql<CampaignPageDbRow[]>`
+        WITH latest_snapshots AS (
+          SELECT DISTINCT ON (p2.store_id, p2.ad_type)
+            p2.store_id, p2.ad_type, p2.snapshot_date, p2.report_start_date, p2.report_end_date
+          FROM ppc_performance_facts p2
+          JOIN ppc_stores s2 ON s2.id = p2.store_id
+          WHERE s2.team_id = ${teamId}
+            AND (${filters.storeName === "ALL"} OR lower(s2.name) = lower(${filters.storeName}))
+            AND (p2.report_end_date - p2.report_start_date + 1)
+              BETWEEN ${filters.days - 3}::integer AND ${filters.days + 3}::integer
+          ORDER BY p2.store_id, p2.ad_type, p2.snapshot_date DESC, p2.report_end_date DESC
+        ), base_raw AS (
       SELECT base_raw.*,
         COALESCE(
           explicit_date_token,
@@ -657,7 +757,8 @@ export async function listPpcCampaignPage(
       CASE WHEN ${filters.sortField} = 'roas' AND ${filters.sortDirection} = 'desc' THEN calc_roas END DESC,
       spend DESC, campaign_id ASC, id ASC
     LIMIT ${filters.pageSize} OFFSET ${offset}
-  `;
+    `;
+  }
 
   const first = rows[0];
   return {
@@ -924,6 +1025,312 @@ function performanceIdentity(row: PpcPerformanceRow): string {
   ].join(":::");
 }
 
+export async function getActiveSnapshotId(
+  scope: DataScope,
+  storeName: string,
+  days: number = 30,
+): Promise<string> {
+  const sql = await getDatabaseClient();
+  const teamId = (scope as any)?.teamId || "default";
+  const coverageDays = days <= 10 ? 7 : (days <= 18 ? 14 : 30);
+  const rows = await sql<{ snapshot_id: string }[]>`
+    SELECT a.snapshot_id
+    FROM ppc_active_snapshots a
+    JOIN ppc_stores s ON s.id = a.store_id
+    WHERE s.team_id = ${teamId}
+      AND (${storeName === "ALL"} OR lower(s.name) = lower(${storeName}))
+      AND a.coverage_days = ${coverageDays}
+    ORDER BY a.activated_at DESC
+    LIMIT 1
+  `;
+  return rows[0]?.snapshot_id || "no-snap";
+}
+
+export async function refreshPpcSnapshotSummary(
+  scope: DataScope,
+  storeId: string,
+  snapshotDate: string,
+  reportStartDate: string,
+  reportEndDate: string,
+  options: { transaction?: PpcTransaction } = {},
+): Promise<{ snapshotId: string; coverageDays: number }> {
+  const sql = await getDatabaseClient();
+  const teamId = (scope as any)?.teamId || "default";
+
+  const operation = async (tx: PpcTransaction) => {
+    const start = new Date(reportStartDate);
+    const end = new Date(reportEndDate);
+    const spanDays = Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    const coverageDays = spanDays <= 10 ? 7 : (spanDays <= 18 ? 14 : (spanDays <= 35 ? 30 : spanDays));
+    const snapshotId = `snap_${storeId.replace(/-/g, "").slice(0, 8)}_${snapshotDate}_${coverageDays}_${Date.now()}`;
+
+    // 1. Campaign summary
+    await tx`
+      WITH camp_targets AS (
+        SELECT 
+          campaign_id,
+          count(*) as target_count,
+          count(*) FILTER (WHERE spend > 0 OR clicks > 0 OR impressions > 0) as active_target_count
+        FROM ppc_performance_facts
+        WHERE store_id = ${storeId}
+          AND snapshot_date = ${snapshotDate}
+          AND report_start_date = ${reportStartDate}
+          AND report_end_date = ${reportEndDate}
+          AND grain = 'TARGET'
+        GROUP BY campaign_id
+      )
+      INSERT INTO ppc_campaign_summary (
+        team_id, store_id, snapshot_id, coverage_days, ad_type,
+        campaign_id, campaign_name, campaign_state, portfolio_name,
+        daily_budget, impressions, clicks, spend, sales, orders, units,
+        target_count, active_target_count, updated_at
+      )
+      SELECT 
+        ${teamId}, c.store_id, ${snapshotId}, ${coverageDays}, c.ad_type,
+        c.campaign_id, c.campaign_name, c.campaign_state, c.portfolio_name,
+        COALESCE(c.daily_budget, 0), c.impressions, c.clicks, c.spend, c.sales, c.orders, c.units,
+        COALESCE(t.target_count, 0), COALESCE(t.active_target_count, 0), NOW()
+      FROM ppc_performance_facts c
+      LEFT JOIN camp_targets t ON t.campaign_id = c.campaign_id
+      WHERE c.store_id = ${storeId}
+        AND c.snapshot_date = ${snapshotDate}
+        AND c.report_start_date = ${reportStartDate}
+        AND c.report_end_date = ${reportEndDate}
+        AND c.grain = 'CAMPAIGN'
+      ON CONFLICT (store_id, snapshot_id, coverage_days, ad_type, campaign_id)
+      DO UPDATE SET
+        campaign_name = EXCLUDED.campaign_name,
+        campaign_state = EXCLUDED.campaign_state,
+        portfolio_name = EXCLUDED.portfolio_name,
+        daily_budget = EXCLUDED.daily_budget,
+        impressions = EXCLUDED.impressions,
+        clicks = EXCLUDED.clicks,
+        spend = EXCLUDED.spend,
+        sales = EXCLUDED.sales,
+        orders = EXCLUDED.orders,
+        units = EXCLUDED.units,
+        target_count = EXCLUDED.target_count,
+        active_target_count = EXCLUDED.active_target_count,
+        updated_at = NOW();
+    `;
+
+    // 2. SKU summary
+    await tx`
+      INSERT INTO ppc_sku_summary (
+        team_id, store_id, snapshot_id, coverage_days, ad_type,
+        sku, product_type, campaign_count, target_count,
+        impressions, clicks, spend, sales, orders, units, updated_at
+      )
+      SELECT 
+        ${teamId}, p.store_id, ${snapshotId}, ${coverageDays}, p.ad_type,
+        p.sku, NULL, COUNT(DISTINCT p.campaign_id), 0,
+        COALESCE(SUM(p.impressions), 0), COALESCE(SUM(p.clicks), 0),
+        COALESCE(SUM(p.spend), 0), COALESCE(SUM(p.sales), 0),
+        COALESCE(SUM(p.orders), 0), COALESCE(SUM(p.units), 0),
+        NOW()
+      FROM ppc_performance_facts p
+      WHERE p.store_id = ${storeId}
+        AND p.snapshot_date = ${snapshotDate}
+        AND p.report_start_date = ${reportStartDate}
+        AND p.report_end_date = ${reportEndDate}
+        AND p.grain = 'PRODUCT' AND p.sku IS NOT NULL AND p.sku != ''
+      GROUP BY p.store_id, p.ad_type, p.sku
+      ON CONFLICT (store_id, snapshot_id, coverage_days, ad_type, sku)
+      DO UPDATE SET
+        campaign_count = EXCLUDED.campaign_count,
+        impressions = EXCLUDED.impressions,
+        clicks = EXCLUDED.clicks,
+        spend = EXCLUDED.spend,
+        sales = EXCLUDED.sales,
+        orders = EXCLUDED.orders,
+        units = EXCLUDED.units,
+        updated_at = NOW();
+    `;
+
+    // 3. Target breakdown summary
+    await tx`
+      INSERT INTO ppc_target_breakdown_summary (
+        team_id, store_id, snapshot_id, coverage_days, ad_type,
+        target_type, keyword_match_type,
+        impressions, clicks, spend, sales, orders, units, updated_at
+      )
+      SELECT 
+        ${teamId}, p.store_id, ${snapshotId}, ${coverageDays}, p.ad_type,
+        CASE
+          WHEN lower(p.target_expression) IN ('close-match', 'loose-match', 'substitutes', 'complements')
+               OR lower(p.target_expression) LIKE '%auto targeting%' THEN 'Auto'
+          WHEN upper(p.match_type) = 'TARGETING'
+               OR lower(p.target_expression) LIKE 'asin=%'
+               OR lower(p.target_expression) LIKE 'asin-expanded=%'
+               OR lower(p.target_expression) LIKE 'category=%' THEN 'Product Targeting'
+          ELSE 'Keyword'
+        END AS target_type,
+        CASE
+          WHEN upper(p.match_type) LIKE '%EXACT%' THEN 'Exact'
+          WHEN upper(p.match_type) LIKE '%PHRASE%' THEN 'Phrase'
+          WHEN upper(p.match_type) LIKE '%BROAD%' THEN 'Broad'
+          ELSE 'Unknown'
+        END AS keyword_match_type,
+        COALESCE(SUM(p.impressions), 0), COALESCE(SUM(p.clicks), 0),
+        COALESCE(SUM(p.spend), 0), COALESCE(SUM(p.sales), 0),
+        COALESCE(SUM(p.orders), 0), COALESCE(SUM(p.units), 0),
+        NOW()
+      FROM ppc_performance_facts p
+      WHERE p.store_id = ${storeId}
+        AND p.snapshot_date = ${snapshotDate}
+        AND p.report_start_date = ${reportStartDate}
+        AND p.report_end_date = ${reportEndDate}
+        AND p.grain = 'TARGET' AND NOT p.is_negative
+        AND (p.spend > 0 OR p.clicks > 0 OR p.impressions > 0)
+      GROUP BY p.store_id, p.ad_type, 6, 7
+      ON CONFLICT (store_id, snapshot_id, coverage_days, ad_type, target_type, keyword_match_type)
+      DO UPDATE SET
+        impressions = EXCLUDED.impressions,
+        clicks = EXCLUDED.clicks,
+        spend = EXCLUDED.spend,
+        sales = EXCLUDED.sales,
+        orders = EXCLUDED.orders,
+        units = EXCLUDED.units,
+        updated_at = NOW();
+    `;
+
+    // 4. Snapshot summary
+    await tx`
+      WITH camp_stats AS (
+        SELECT 
+          ad_type,
+          count(*) as campaign_count,
+          count(*) FILTER (WHERE spend > 0) as active_campaign_count,
+          COALESCE(SUM(spend), 0) as spend,
+          COALESCE(SUM(sales), 0) as sales,
+          COALESCE(SUM(orders), 0) as orders,
+          COALESCE(SUM(units), 0) as units,
+          COALESCE(SUM(clicks), 0) as clicks,
+          COALESCE(SUM(impressions), 0) as impressions
+        FROM ppc_performance_facts
+        WHERE store_id = ${storeId}
+          AND snapshot_date = ${snapshotDate}
+          AND report_start_date = ${reportStartDate}
+          AND report_end_date = ${reportEndDate}
+          AND grain = 'CAMPAIGN'
+        GROUP BY ad_type
+      ),
+      target_stats AS (
+        SELECT 
+          ad_type,
+          count(*) as target_count,
+          count(*) FILTER (
+            WHERE spend > 0 OR clicks > 0 OR impressions > 0
+            OR (state = 'enabled' AND (campaign_name ILIKE '%GO%' OR sku ILIKE '%GO%'))
+          ) as active_target_count
+        FROM ppc_performance_facts
+        WHERE store_id = ${storeId}
+          AND snapshot_date = ${snapshotDate}
+          AND report_start_date = ${reportStartDate}
+          AND report_end_date = ${reportEndDate}
+          AND grain = 'TARGET'
+        GROUP BY ad_type
+      ),
+      sku_stats AS (
+        SELECT 
+          ad_type,
+          count(DISTINCT sku) as sku_count
+        FROM ppc_performance_facts
+        WHERE store_id = ${storeId}
+          AND snapshot_date = ${snapshotDate}
+          AND report_start_date = ${reportStartDate}
+          AND report_end_date = ${reportEndDate}
+          AND grain = 'PRODUCT' AND sku IS NOT NULL AND sku != ''
+        GROUP BY ad_type
+      )
+      INSERT INTO ppc_snapshot_summary (
+        team_id, store_id, snapshot_id, coverage_days, ad_type,
+        report_start_date, report_end_date,
+        campaign_count, active_campaign_count,
+        target_count, active_target_count, sku_count,
+        impressions, clicks, spend, sales, orders, units, updated_at
+      )
+      SELECT 
+        ${teamId}, ${storeId}, ${snapshotId}, ${coverageDays}, c.ad_type,
+        ${reportStartDate}, ${reportEndDate},
+        c.campaign_count, c.active_campaign_count,
+        COALESCE(t.target_count, 0), COALESCE(t.active_target_count, 0),
+        COALESCE(s.sku_count, 0),
+        c.impressions, c.clicks, c.spend, c.sales, c.orders, c.units, NOW()
+      FROM camp_stats c
+      LEFT JOIN target_stats t ON t.ad_type = c.ad_type
+      LEFT JOIN sku_stats s ON s.ad_type = c.ad_type
+      ON CONFLICT (store_id, snapshot_id, coverage_days, ad_type)
+      DO UPDATE SET
+        report_start_date = EXCLUDED.report_start_date,
+        report_end_date = EXCLUDED.report_end_date,
+        campaign_count = EXCLUDED.campaign_count,
+        active_campaign_count = EXCLUDED.active_campaign_count,
+        target_count = EXCLUDED.target_count,
+        active_target_count = EXCLUDED.active_target_count,
+        sku_count = EXCLUDED.sku_count,
+        impressions = EXCLUDED.impressions,
+        clicks = EXCLUDED.clicks,
+        spend = EXCLUDED.spend,
+        sales = EXCLUDED.sales,
+        orders = EXCLUDED.orders,
+        units = EXCLUDED.units,
+        updated_at = NOW();
+    `;
+
+    // 5. Integrity verification
+    const [raw] = await tx`
+      SELECT 
+        COALESCE(SUM(spend), 0) AS raw_spend,
+        COALESCE(SUM(sales), 0) AS raw_sales,
+        COALESCE(SUM(orders), 0) AS raw_orders
+      FROM ppc_performance_facts
+      WHERE store_id = ${storeId}
+        AND snapshot_date = ${snapshotDate}
+        AND report_start_date = ${reportStartDate}
+        AND report_end_date = ${reportEndDate}
+        AND grain = 'CAMPAIGN';
+    `;
+
+    const [summary] = await tx`
+      SELECT 
+        COALESCE(SUM(spend), 0) AS summary_spend,
+        COALESCE(SUM(sales), 0) AS summary_sales,
+        COALESCE(SUM(orders), 0) AS summary_orders
+      FROM ppc_snapshot_summary
+      WHERE store_id = ${storeId}
+        AND snapshot_id = ${snapshotId}
+        AND coverage_days = ${coverageDays};
+    `;
+
+    const diffSpend = Math.abs(Number(raw?.raw_spend || 0) - Number(summary?.summary_spend || 0));
+    const diffSales = Math.abs(Number(raw?.raw_sales || 0) - Number(summary?.summary_sales || 0));
+    const diffOrders = Math.abs(Number(raw?.raw_orders || 0) - Number(summary?.summary_orders || 0));
+
+    if (diffSpend > 0.05 || diffSales > 0.05 || diffOrders > 0) {
+      throw new Error(`Summary integrity check failed: diffSpend=${diffSpend}, diffSales=${diffSales}, diffOrders=${diffOrders}`);
+    }
+
+    // 6. Atomically activate snapshot
+    await tx`
+      INSERT INTO ppc_active_snapshots (
+        team_id, store_id, coverage_days, snapshot_id, report_start_date, report_end_date, activated_at
+      ) VALUES (
+        ${teamId}, ${storeId}, ${coverageDays}, ${snapshotId}, ${reportStartDate}, ${reportEndDate}, NOW()
+      )
+      ON CONFLICT (store_id, coverage_days) DO UPDATE SET
+        snapshot_id = EXCLUDED.snapshot_id,
+        report_start_date = EXCLUDED.report_start_date,
+        report_end_date = EXCLUDED.report_end_date,
+        activated_at = NOW();
+    `;
+
+    return { snapshotId, coverageDays };
+  };
+
+  return options.transaction ? operation(options.transaction) : sql.begin(operation);
+}
+
 export async function upsertPpcPerformance(
   scope: DataScope,
   storeName: string,
@@ -1035,6 +1442,17 @@ export async function upsertPpcPerformance(
       inserted += saved.filter((row: { inserted: boolean }) => row.inserted).length;
       updated += saved.filter((row: { inserted: boolean }) => !row.inserted).length;
     }
+
+    const scopes = Array.from(new Set(uniqueRows.map((row) => [
+      row.snapshotDate, row.reportStartDate, row.reportEndDate
+    ].join(":::"))));
+    for (const item of scopes) {
+      const [snapshotDate, startDate, endDate] = item.split(":::");
+      if (snapshotDate && startDate && endDate) {
+        await refreshPpcSnapshotSummary(scope, storeId, snapshotDate, startDate, endDate, { transaction });
+      }
+    }
+
     return { inserted, updated, deduplicated: rows.length - uniqueRows.length };
   };
   return options.transaction ? operation(options.transaction) : sql.begin(operation);
@@ -1217,6 +1635,23 @@ export async function ingestPpcPerformanceStream(
     const insertedCount = insertResult.count;
     const deduplicated = Math.max(0, totalEmitted - insertedCount);
 
+    // 6. Refresh summary tables atomically inside the same transaction
+    const distinctScopes = await transaction<{
+      store_id: string;
+      snapshot_date: Date | string;
+      report_start_date: Date | string;
+      report_end_date: Date | string;
+    }[]>`
+      SELECT DISTINCT store_id, snapshot_date, report_start_date, report_end_date
+      FROM ppc_perf_staging
+    `;
+    for (const sc of distinctScopes) {
+      const snapDateStr = sc.snapshot_date instanceof Date ? sc.snapshot_date.toISOString().slice(0, 10) : String(sc.snapshot_date).slice(0, 10);
+      const startStr = sc.report_start_date instanceof Date ? sc.report_start_date.toISOString().slice(0, 10) : String(sc.report_start_date).slice(0, 10);
+      const endStr = sc.report_end_date instanceof Date ? sc.report_end_date.toISOString().slice(0, 10) : String(sc.report_end_date).slice(0, 10);
+      await refreshPpcSnapshotSummary(scope, sc.store_id, snapDateStr, startStr, endStr, { transaction });
+    }
+
     return {
       totalParsed,
       inserted: insertedCount,
@@ -1324,7 +1759,232 @@ export async function getPpcOverviewAggregates(
   const sku = filters.sku || "ALL";
   const days = Math.max(1, filters.days || 30);
   const isAllStores = storeName === "ALL";
+  const coverageDays = days <= 10 ? 7 : (days <= 18 ? 14 : 30);
 
+  // 1. Fast path: check if precomputed summary snapshots exist
+  const activeSnapshots = await sql<Array<{
+    store_id: string;
+    coverage_days: number;
+    snapshot_id: string;
+    report_start_date: Date | string;
+    report_end_date: Date | string;
+  }>>`
+    SELECT a.store_id, a.coverage_days, a.snapshot_id, a.report_start_date, a.report_end_date
+    FROM ppc_active_snapshots a
+    JOIN ppc_stores s ON s.id = a.store_id
+    WHERE s.team_id = ${teamId}
+      AND (${isAllStores} OR lower(s.name) = lower(${storeName}))
+      AND a.coverage_days = ${coverageDays}
+  `;
+
+  if (activeSnapshots.length > 0) {
+    const [kpiRows, topCampaignRows, topSkuRows, targetBreakdownRows, availableSkuRows, targetCountRow, storeSummaryRows] = await Promise.all([
+      // 1. KPI and Ad Type breakdown
+      sql<Array<{
+        ad_type: PpcAdType;
+        campaign_count: string | number;
+        spend: string | number;
+        sales: string | number;
+        orders: string | number;
+        units: string | number;
+        clicks: string | number;
+        impressions: string | number;
+        max_report_start: string | Date;
+        max_report_end: string | Date;
+      }>>`
+        SELECT 
+          sm.ad_type,
+          SUM(sm.campaign_count) AS campaign_count,
+          SUM(sm.spend) AS spend,
+          SUM(sm.sales) AS sales,
+          SUM(sm.orders) AS orders,
+          SUM(sm.units) AS units,
+          SUM(sm.clicks) AS clicks,
+          SUM(sm.impressions) AS impressions,
+          MIN(sm.report_start_date) AS max_report_start,
+          MAX(sm.report_end_date) AS max_report_end
+        FROM ppc_snapshot_summary sm
+        JOIN ppc_active_snapshots a ON a.store_id = sm.store_id AND a.snapshot_id = sm.snapshot_id AND a.coverage_days = sm.coverage_days
+        JOIN ppc_stores s ON s.id = sm.store_id
+        WHERE s.team_id = ${teamId}
+          AND (${isAllStores} OR lower(s.name) = lower(${storeName}))
+          AND sm.coverage_days = ${coverageDays}
+        GROUP BY sm.ad_type
+        ORDER BY sm.ad_type;
+      `,
+      // 2. Top 7 Campaigns
+      sql<PerformanceDbRow[]>`
+        SELECT 
+          cs.id, cs.store_id, s.name AS store_name, a.report_start_date AS snapshot_date,
+          a.report_start_date, a.report_end_date, 'DAILY' AS report_granularity,
+          cs.ad_type, 'CAMPAIGN' AS grain, cs.campaign_id AS entity_id,
+          cs.campaign_id, cs.campaign_name,
+          NULL AS ad_group_id, NULL AS ad_group_name, NULL AS target_id, NULL AS target_expression,
+          NULL AS match_type, cs.portfolio_name, NULL AS sku, NULL AS asin,
+          cs.campaign_state AS state, cs.campaign_state, NULL AS ad_group_state,
+          NULL AS targeting_type, NULL AS bidding_strategy, NULL AS placement,
+          cs.daily_budget, NULL AS bid, NULL AS placement_adjustment, false AS is_negative,
+          cs.impressions, cs.clicks, cs.spend, cs.sales, cs.orders, cs.units
+        FROM ppc_campaign_summary cs
+        JOIN ppc_active_snapshots a ON a.store_id = cs.store_id AND a.snapshot_id = cs.snapshot_id AND a.coverage_days = cs.coverage_days
+        JOIN ppc_stores s ON s.id = cs.store_id
+        WHERE s.team_id = ${teamId}
+          AND (${isAllStores} OR lower(s.name) = lower(${storeName}))
+          AND cs.coverage_days = ${coverageDays}
+        ORDER BY cs.spend DESC
+        LIMIT 7;
+      `,
+      // 3. Top 10 SKUs
+      sql<Array<{
+        sku: string;
+        store_name: string;
+        spend: string | number;
+        sales: string | number;
+        orders: string | number;
+        clicks: string | number;
+        impressions: string | number;
+        campaigns_count: string | number;
+      }>>`
+        SELECT 
+          sk.sku,
+          s.name AS store_name,
+          COALESCE(SUM(sk.spend), 0) AS spend,
+          COALESCE(SUM(sk.sales), 0) AS sales,
+          COALESCE(SUM(sk.orders), 0) AS orders,
+          COALESCE(SUM(sk.clicks), 0) AS clicks,
+          COALESCE(SUM(sk.impressions), 0) AS impressions,
+          MAX(sk.campaign_count) AS campaigns_count
+        FROM ppc_sku_summary sk
+        JOIN ppc_active_snapshots a ON a.store_id = sk.store_id AND a.snapshot_id = sk.snapshot_id AND a.coverage_days = sk.coverage_days
+        JOIN ppc_stores s ON s.id = sk.store_id
+        WHERE s.team_id = ${teamId}
+          AND (${isAllStores} OR lower(s.name) = lower(${storeName}))
+          AND sk.coverage_days = ${coverageDays}
+          AND (${sku === "ALL"} OR lower(sk.sku) = lower(${sku}))
+        GROUP BY sk.sku, s.name
+        ORDER BY spend DESC
+        LIMIT 10;
+      `,
+      // 4. Target Breakdown
+      sql<Array<{
+        target_type: "Keyword" | "Auto" | "Product Targeting";
+        keyword_match_type: "Exact" | "Phrase" | "Broad" | "Unknown";
+        spend: string | number;
+        sales: string | number;
+        orders: string | number;
+        clicks: string | number;
+        impressions: string | number;
+      }>>`
+        SELECT 
+          tb.target_type,
+          tb.keyword_match_type,
+          COALESCE(SUM(tb.spend), 0) AS spend,
+          COALESCE(SUM(tb.sales), 0) AS sales,
+          COALESCE(SUM(tb.orders), 0) AS orders,
+          COALESCE(SUM(tb.clicks), 0) AS clicks,
+          COALESCE(SUM(tb.impressions), 0) AS impressions
+        FROM ppc_target_breakdown_summary tb
+        JOIN ppc_active_snapshots a ON a.store_id = tb.store_id AND a.snapshot_id = tb.snapshot_id AND a.coverage_days = tb.coverage_days
+        JOIN ppc_stores s ON s.id = tb.store_id
+        WHERE s.team_id = ${teamId}
+          AND (${isAllStores} OR lower(s.name) = lower(${storeName}))
+          AND tb.coverage_days = ${coverageDays}
+        GROUP BY tb.target_type, tb.keyword_match_type
+        ORDER BY spend DESC;
+      `,
+      // 5. Distinct Available SKUs
+      sql<{ sku: string }[]>`
+        SELECT DISTINCT sk.sku
+        FROM ppc_sku_summary sk
+        JOIN ppc_active_snapshots a ON a.store_id = sk.store_id AND a.snapshot_id = sk.snapshot_id AND a.coverage_days = sk.coverage_days
+        JOIN ppc_stores s ON s.id = sk.store_id
+        WHERE s.team_id = ${teamId}
+          AND (${isAllStores} OR lower(s.name) = lower(${storeName}))
+          AND sk.coverage_days = ${coverageDays}
+        ORDER BY sk.sku;
+      `,
+      // 6. Target Count directly from snapshot summary
+      isAllStores
+        ? Promise.resolve([{ target_count: 0 }])
+        : sql<{ target_count: string | number }[]>`
+          SELECT COALESCE(SUM(sm.active_target_count), 0) AS target_count
+          FROM ppc_snapshot_summary sm
+          JOIN ppc_active_snapshots a ON a.store_id = sm.store_id AND a.snapshot_id = sm.snapshot_id AND a.coverage_days = sm.coverage_days
+          JOIN ppc_stores s ON s.id = sm.store_id
+          WHERE s.team_id = ${teamId}
+            AND lower(s.name) = lower(${storeName})
+            AND sm.coverage_days = ${coverageDays};
+        `,
+      // 7. Store Summaries directly from snapshot summary (no separate table needed!)
+      sql<Array<{
+        id: string;
+        name: string;
+        marketplace: string;
+        target_acos: string | number;
+        daily_budget: string | number;
+        status: string;
+        total_campaigns: string | number;
+        active_campaigns: string | number;
+        spend: string | number;
+        sales: string | number;
+        orders: string | number;
+        clicks: string | number;
+        impressions: string | number;
+      }>>`
+        SELECT 
+          s.id,
+          s.name,
+          s.marketplace,
+          s.target_acos,
+          s.daily_budget,
+          s.status,
+          COALESCE(SUM(sm.campaign_count), 0) AS total_campaigns,
+          COALESCE(SUM(sm.active_campaign_count), 0) AS active_campaigns,
+          COALESCE(SUM(sm.spend), 0) AS spend,
+          COALESCE(SUM(sm.sales), 0) AS sales,
+          COALESCE(SUM(sm.orders), 0) AS orders,
+          COALESCE(SUM(sm.clicks), 0) AS clicks,
+          COALESCE(SUM(sm.impressions), 0) AS impressions
+        FROM ppc_stores s
+        LEFT JOIN ppc_active_snapshots a ON a.store_id = s.id AND a.coverage_days = ${coverageDays}
+        LEFT JOIN ppc_snapshot_summary sm ON sm.store_id = s.id AND sm.snapshot_id = a.snapshot_id AND sm.coverage_days = a.coverage_days
+        WHERE s.team_id = ${teamId}
+        GROUP BY s.id, s.name, s.marketplace, s.target_acos, s.daily_budget, s.status
+        ORDER BY lower(s.name);
+      `,
+    ]);
+
+    let snapshotDates: { startDate: string; endDate: string } | null = null;
+    const sampleKpi = kpiRows.find((r) => r.max_report_start && r.max_report_end);
+    if (sampleKpi && sampleKpi.max_report_start && sampleKpi.max_report_end) {
+      snapshotDates = {
+        startDate: asDateString(sampleKpi.max_report_start),
+        endDate: asDateString(sampleKpi.max_report_end),
+      };
+    }
+
+    return {
+      kpiRows,
+      topCampaigns: topCampaignRows.map(mapPerformance),
+      topSkus: topSkuRows.map((r) => ({
+        sku: r.sku,
+        storeName: r.store_name,
+        spend: asNumber(r.spend),
+        sales: asNumber(r.sales),
+        orders: Number(r.orders || 0),
+        clicks: Number(r.clicks || 0),
+        impressions: Number(r.impressions || 0),
+        campaignsCount: Number(r.campaigns_count || 0),
+      })),
+      targetBreakdown: targetBreakdownRows,
+      targetCount: Number(targetCountRow[0]?.target_count || 0),
+      availableSkus: availableSkuRows.map((r) => r.sku),
+      snapshotDates,
+      storeSummaries: storeSummaryRows,
+    };
+  }
+
+  // 2. Fallback: scan raw facts if no active snapshot summary exists
   const targetCountKey = `${teamId}::${storeName}::${sku}::${days}`;
   const cachedTargetCount = targetCountCache.get(targetCountKey);
   const targetCountPromise: Promise<number> = isAllStores

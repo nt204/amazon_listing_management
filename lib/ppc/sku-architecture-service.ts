@@ -1801,7 +1801,8 @@ export async function getAutoUploadLogs(storeId: string): Promise<PpcAutoUploadL
   const sql = await getDatabaseClient();
   const rows = await sql<any[]>`
     SELECT id, store_id, file_name, adspower_profile_id, adspower_profile_name,
-           action_count, skus, status, error_message, result_summary, duration_ms, created_at
+           action_count, skus, status, stage, file_status, file_error_message,
+           error_message, result_summary, duration_ms, created_at
     FROM ppc_auto_upload_logs
     WHERE store_id = ${storeId}
     ORDER BY created_at DESC
@@ -1811,12 +1812,15 @@ export async function getAutoUploadLogs(storeId: string): Promise<PpcAutoUploadL
   return rows.map((r: any) => ({
     id: r.id,
     storeId: r.store_id,
-    fileName: r.file_name,
+    fileName: r.file_name || "",
     adspowerProfileId: r.adspower_profile_id,
     adspowerProfileName: r.adspower_profile_name,
     actionCount: Number(r.action_count || 0),
     skus: Array.isArray(r.skus) ? r.skus : (typeof r.skus === "string" ? JSON.parse(r.skus) : []),
     status: r.status,
+    stage: r.stage,
+    fileStatus: r.file_status || "SUCCESS",
+    fileErrorMessage: r.file_error_message,
     errorMessage: r.error_message,
     resultSummary: r.result_summary,
     durationMs: Number(r.duration_ms || 0),
@@ -1842,7 +1846,8 @@ export async function getAutoUploadDetails(logId: string): Promise<{
   const sql = await getDatabaseClient();
   const logRows = await sql<any[]>`
     SELECT id, store_id, file_name, adspower_profile_id, adspower_profile_name,
-           action_count, action_ids, skus, status, error_message, result_summary, duration_ms, created_at
+           action_count, action_ids, skus, status, stage, file_status, file_error_message,
+           error_message, result_summary, duration_ms, created_at
     FROM ppc_auto_upload_logs
     WHERE id = ${logId}
     LIMIT 1
@@ -1880,12 +1885,15 @@ export async function getAutoUploadDetails(logId: string): Promise<{
     log: {
       id: r.id,
       storeId: r.store_id,
-      fileName: r.file_name,
+      fileName: r.file_name || "",
       adspowerProfileId: r.adspower_profile_id,
       adspowerProfileName: r.adspower_profile_name,
       actionCount: Number(r.action_count || 0),
       skus: Array.isArray(r.skus) ? r.skus : (typeof r.skus === "string" ? JSON.parse(r.skus) : []),
       status: r.status,
+      stage: r.stage,
+      fileStatus: r.file_status || "SUCCESS",
+      fileErrorMessage: r.file_error_message,
       errorMessage: r.error_message,
       resultSummary: r.result_summary,
       durationMs: Number(r.duration_ms || 0),
@@ -1950,43 +1958,84 @@ export async function executeAutoUploadZeroSpendActions(
 
   const zeroSpendActionIds = zeroSpendActions.map((a) => a.id);
   const distinctSkus = Array.from(new Set(zeroSpendActions.map((a) => a.sku).filter(Boolean)));
-
-  // 3. Export Bulk file using the canonical Amazon template.
-  const exportResult = await exportBulkFromQueue(storeId, zeroSpendActionIds);
-  if (objectStorageDriver() !== "r2") {
-    throw new Error("Auto Upload remote yêu cầu OBJECT_STORAGE_DRIVER=r2.");
-  }
-
-  const sha256 = crypto.createHash("sha256").update(exportResult.buffer).digest("hex");
   const jobId = crypto.randomUUID();
-  const safeStore = storeName.replace(/[^A-Za-z0-9._-]+/g, "-");
-  const r2Key = `${r2KeyPrefix()}/ppc-bulk-upload/${safeStore}/${jobId}/${exportResult.fileName}`;
-  await putStoredObject({
-    key: r2Key,
-    bytes: exportResult.buffer,
-    contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    sha256,
-    metadata: { purpose: "amazon-ads-bulk-upload", store: safeStore, job: jobId },
-  });
 
-  // 5. Enqueue. AdsPower lives on the Mac mini, so the web server never opens it.
+  // Ghi nhận job trước khi tạo file để lỗi tại bước export cũng xuất hiện trong
+  // lịch sử thực thi, thay vì biến mất và chỉ hiện như một lỗi request tạm thời.
   const initialLog = await sql<Array<{ id: string; created_at: Date | string }>>`
     INSERT INTO ppc_auto_upload_logs (
       id, team_id, store_id, file_name, action_count, skus, status, stage,
-      progress_pct, r2_key, sha256, action_ids, updated_at
+      file_status, progress_pct, action_ids, updated_at
     ) VALUES (
-      ${jobId}, ${teamId}, ${storeId}, ${exportResult.fileName}, ${zeroSpendActions.length},
-      ${sql.json(distinctSkus)}, 'PENDING', 'PENDING', 0,
-      ${r2Key}, ${sha256}, ${sql.json(zeroSpendActionIds)}, NOW()
+      ${jobId}, ${teamId}, ${storeId}, NULL, ${zeroSpendActions.length},
+      ${sql.json(distinctSkus)}, 'RUNNING', 'GENERATING_FILE',
+      'PENDING', 0, ${sql.json(zeroSpendActionIds)}, NOW()
     )
     RETURNING id, created_at
   `;
-  const logId = initialLog[0].id;
+
+  // 3. Export Bulk file using the canonical Amazon template.
+  let exportResult: Awaited<ReturnType<typeof exportBulkFromQueue>>;
+  try {
+    exportResult = await exportBulkFromQueue(storeId, zeroSpendActionIds);
+    await sql`
+      UPDATE ppc_auto_upload_logs
+      SET file_name = ${exportResult.fileName}, file_status = 'SUCCESS',
+          stage = 'FILE_CREATED', progress_pct = 20, updated_at = NOW()
+      WHERE id = ${jobId} AND team_id = ${teamId}
+    `;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await sql`
+      UPDATE ppc_auto_upload_logs
+      SET status = 'FAILED', stage = 'FILE_GENERATION_FAILED',
+          file_status = 'FAILED', file_error_message = ${message.slice(0, 4_000)},
+          error_message = ${`Tạo file thất bại: ${message}`.slice(0, 4_000)},
+          progress_pct = 0, duration_ms = ${Date.now() - startTime},
+          completed_at = NOW(), updated_at = NOW()
+      WHERE id = ${jobId} AND team_id = ${teamId}
+    `;
+    throw error;
+  }
+
+  const sha256 = crypto.createHash("sha256").update(exportResult.buffer).digest("hex");
+  const safeStore = storeName.replace(/[^A-Za-z0-9._-]+/g, "-");
+  const r2Key = `${r2KeyPrefix()}/ppc-bulk-upload/${safeStore}/${jobId}/${exportResult.fileName}`;
+  try {
+    if (objectStorageDriver() !== "r2") {
+      throw new Error("Auto Upload remote yêu cầu OBJECT_STORAGE_DRIVER=r2.");
+    }
+    await putStoredObject({
+      key: r2Key,
+      bytes: exportResult.buffer,
+      contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      sha256,
+      metadata: { purpose: "amazon-ads-bulk-upload", store: safeStore, job: jobId },
+    });
+
+    // AdsPower lives on the Mac mini, so the web server only queues the file.
+    await sql`
+      UPDATE ppc_auto_upload_logs
+      SET status = 'PENDING', stage = 'FILE_READY', progress_pct = 25,
+          r2_key = ${r2Key}, sha256 = ${sha256}, updated_at = NOW()
+      WHERE id = ${jobId} AND team_id = ${teamId}
+    `;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await sql`
+      UPDATE ppc_auto_upload_logs
+      SET status = 'FAILED', stage = 'FILE_STORAGE_FAILED',
+          error_message = ${`Đã tạo file nhưng không thể xếp hàng upload: ${message}`.slice(0, 4_000)},
+          duration_ms = ${Date.now() - startTime}, completed_at = NOW(), updated_at = NOW()
+      WHERE id = ${jobId} AND team_id = ${teamId}
+    `;
+    throw error;
+  }
 
   return {
     success: true,
     log: {
-      id: logId,
+      id: initialLog[0].id,
       storeId,
       fileName: exportResult.fileName,
       adspowerProfileId: null,
@@ -1994,6 +2043,9 @@ export async function executeAutoUploadZeroSpendActions(
       actionCount: zeroSpendActions.length,
       skus: distinctSkus,
       status: "PENDING",
+      stage: "FILE_READY",
+      fileStatus: "SUCCESS",
+      fileErrorMessage: null,
       errorMessage: null,
       durationMs: Date.now() - startTime,
       createdAt: new Date(initialLog[0].created_at).toISOString(),

@@ -144,6 +144,9 @@ export interface PpcAutoUploadLog {
   actionCount: number;
   skus: string[];
   status: "PENDING" | "RUNNING" | "RETRY_WAIT" | "SUCCESS" | "PARTIAL_SUCCESS" | "RESULT_TIMEOUT" | "FAILED" | "CANCELLED";
+  stage?: string | null;
+  fileStatus?: "PENDING" | "SUCCESS" | "FAILED";
+  fileErrorMessage?: string | null;
   errorMessage?: string | null;
   resultSummary?: string | null;
   durationMs: number;

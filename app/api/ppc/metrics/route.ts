@@ -1,5 +1,6 @@
 import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { getPpcAnalyticsData } from "@/lib/ppc/service";
+import { getActiveSnapshotId } from "@/lib/ppc/repository";
 import type { PpcPerformanceGrain, PpcSearchTermRow } from "@/lib/ppc/types";
 import { getCachedOrFetch, invalidateCachePattern } from "@/lib/redis";
 
@@ -115,8 +116,9 @@ export async function GET(request: Request) {
       await invalidateCachePattern(`ppc:metrics:${scope.teamId}:*`).catch(() => {});
     }
 
-    const redisKey = `ppc:metrics:${scope.teamId}:${storeName}:${sku}:${days}:${startDate || "none"}:${endDate || "none"}:${section}`;
-    const cacheKey = `${scope.teamId}\u0000${storeName}\u0000${sku}\u0000${days}\u0000${startDate || ""}\u0000${endDate || ""}\u0000${section}`;
+    const snapshotId = await getActiveSnapshotId(scope, storeName, days);
+    const redisKey = `ppc:metrics:${scope.teamId}:${storeName}:${snapshotId}:${sku}:${days}:${startDate || "none"}:${endDate || "none"}:${section}`;
+    const cacheKey = `${scope.teamId}\u0000${storeName}\u0000${snapshotId}\u0000${sku}\u0000${days}\u0000${startDate || ""}\u0000${endDate || ""}\u0000${section}`;
 
     // 1. Kiểm tra L1 In-Memory Cache
     const memCached = refresh ? undefined : metricsCache.get(cacheKey);
