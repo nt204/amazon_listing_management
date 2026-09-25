@@ -298,6 +298,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
   const [dailyTrends, setDailyTrends] = useState<PpcDailyTrendPoint[]>([]);
   const [uploading, setUploading] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [summary7D, setSummary7D] = useState<PpcSummaryMetrics | null>(null);
+  const [adTypeBreakdown7D, setAdTypeBreakdown7D] = useState<PpcAdTypeBreakdown[]>([]);
   const metricsRequestRef = useRef<{ controller: AbortController; id: number } | null>(null);
   const metricsRequestIdRef = useRef(0);
 
@@ -350,6 +352,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
         setStores(data.stores || []);
         setStoreSummaries(data.storeSummaries || []);
         setSummary(data.summary || null);
+        setSummary7D(data.summary7D || null);
+        setAdTypeBreakdown7D(data.adTypeBreakdown7D || []);
         setVelocity(data.velocity || null);
         if (data.skuPerformance && data.skuPerformance.length > 0) setSkuPerformance(data.skuPerformance);
         if (data.campaignPerformance && data.campaignPerformance.length > 0) {
@@ -1204,25 +1208,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
         acos: c.acos > 150 ? 150 : c.acos,
       }));
     }
-    // Fallback from searchTerms when Bulk is not yet ingested
-    const map = new Map<string, { spend: number; sales: number }>();
-    for (const st of searchTerms) {
-      const name = st.campaignName || "Unknown Campaign";
-      const cur = map.get(name) || { spend: 0, sales: 0 };
-      cur.spend += st.spend;
-      cur.sales += st.sales;
-      map.set(name, cur);
-    }
-    return Array.from(map.entries())
-      .map(([name, val]) => ({
-        name: name.length > 20 ? `${name.slice(0, 18)}...` : name,
-        spend: Math.round(val.spend * 100) / 100,
-        sales: Math.round(val.sales * 100) / 100,
-        acos: val.sales > 0 ? Math.round((val.spend / val.sales) * 1000) / 10 : 0,
-      }))
-      .sort((a, b) => b.spend - a.spend)
-      .slice(0, 7);
-  }, [campaignPerformance, searchTerms]);
+    return [];
+  }, [campaignPerformance]);
 
   // Chart Data: Target Type Spend Distribution
   const targetTypePieData = useMemo(() => {
@@ -1253,27 +1240,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
           color: KEYWORD_MATCH_TYPE_COLORS[m.matchType] || "#94a3b8",
         }));
     }
-    // Fallback from searchTerms when Bulk is not yet ingested
-    const map = new Map<string, { spend: number; sales: number }>();
-    let totalSpend = 0;
-    for (const st of searchTerms) {
-      const mt = st.matchType ? st.matchType.toUpperCase() : "UNKNOWN";
-      if (!mt.includes("EXACT") && !mt.includes("PHRASE") && !mt.includes("BROAD")) continue;
-      const key = mt.includes("EXACT") ? "Exact" : mt.includes("PHRASE") ? "Phrase" : "Broad";
-      const cur = map.get(key) || { spend: 0, sales: 0 };
-      cur.spend += st.spend;
-      cur.sales += st.sales;
-      totalSpend += st.spend;
-      map.set(key, cur);
-    }
-    return Array.from(map.entries()).map(([name, val]) => ({
-      name,
-      value: Math.round(val.spend * 100) / 100,
-      sales: Math.round(val.sales * 100) / 100,
-      spendShare: totalSpend > 0 ? Math.round((val.spend / totalSpend) * 1000) / 10 : 0,
-      color: KEYWORD_MATCH_TYPE_COLORS[name] || "#94a3b8",
-    }));
-  }, [keywordMatchTypeBreakdown, searchTerms]);
+    return [];
+  }, [keywordMatchTypeBreakdown]);
 
   // Chart Data: Legacy Match Type Spend & Sales Share
   const matchTypePieData = useMemo(() => {
@@ -1707,7 +1675,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
             <div className="flex items-center gap-2 rounded-xl bg-sky-50 border border-sky-200 px-4 py-2.5 text-xs text-sky-900 font-medium">
               <span className="flex h-2 w-2 rounded-full bg-sky-500 animate-pulse" />
               <span>
-                Các chỉ số KPI và biểu đồ bên dưới đang được tổng hợp trực tiếp từ <strong>Search Term Report ({searchTerms.length.toLocaleString()} truy vấn)</strong> do hệ thống chưa có dữ liệu Bulk Operations. Khi nạp file Bulk, bạn sẽ mở khóa thêm phân tích cấp Chiến Dịch, Nhóm QC, Target và Placement.
+                Chưa có Bulk Operations cho kỳ đang chọn. Search Term Report chỉ được dùng trong mục Search Term, Wasted Spend và Harvest; KPI và biểu đồ không lấy số thay thế từ báo cáo này.
               </span>
             </div>
           )}
@@ -1991,8 +1959,10 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       {(selectedStore !== "ALL" || activeTab !== "overview") && mounted && summary && ((dataHealth?.campaignRows || 0) > 0 || searchTerms.length > 0) && (
         <div className="space-y-4">
           {/* BIỂU ĐỒ 1: Spend vs Revenue / ROAS theo thời gian */}
-          <PpcTimeSeriesChart
+          {dailyTrends.length > 0 ? <PpcTimeSeriesChart
             summary={summary}
+            summary7D={summary7D}
+            adTypeBreakdown7D={adTypeBreakdown7D}
             dailyTrends={dailyTrends}
             selectedDays={selectedDays}
             onDaysChange={(days) => {
@@ -2010,11 +1980,14 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
             dateRangeStart={dateRangeStart || undefined}
             dateRangeEnd={dateRangeEnd || undefined}
             adTypeBreakdown={adTypeBreakdown}
-            searchTerms={searchTerms}
             targetAcos={targetAcos}
             currency="$"
             storeName={selectedStore}
-          />
+          /> : (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+              Chưa có Bulk Campaign snapshot theo từng ngày cho kỳ này. Hệ thống không dùng Search Term Report hoặc chia đều snapshot nhiều ngày để tạo số liệu giả.
+            </div>
+          )}
 
           {/* BIỂU ĐỒ 2: So sánh hiệu suất theo dạng chạy */}
           <PpcPerformanceRankingChart
@@ -2128,6 +2101,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                 <h4 className="text-xs font-black uppercase text-emerald-800 flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-emerald-500" />
                   Top Profitable Search Terms (ACOS &le; {targetAcos.toFixed(1)}%)
+                  <span className="normal-case text-[9px] font-semibold text-slate-400">Nguồn: Search Term Report</span>
                 </h4>
                 <button
                   type="button"
@@ -2177,6 +2151,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                 <h4 className="text-xs font-black uppercase text-rose-800 flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-rose-500" />
                   Top Bleeding Terms (0 Orders, Clicks &ge; 9)
+                  <span className="normal-case text-[9px] font-semibold text-slate-400">Nguồn: Search Term Report</span>
                 </h4>
                 <button
                   type="button"

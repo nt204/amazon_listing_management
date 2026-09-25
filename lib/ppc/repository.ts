@@ -528,7 +528,7 @@ export async function listPpcCampaignPage(
   const teamId = (scope as any)?.teamId || "default";
   const offset = (filters.page - 1) * filters.pageSize;
   const searchPattern = `%${filters.query.trim()}%`;
-  const coverageDays = filters.days <= 10 ? 7 : (filters.days <= 18 ? 14 : 30);
+  const coverageDays = Math.max(1, Math.trunc(filters.days));
 
   const activeSnapRows = await sql<{ count: string | number }[]>`
     SELECT count(*) as count
@@ -603,15 +603,15 @@ export async function listPpcCampaignPage(
             ) AS campaign_date_key
           FROM base_raw
         ), status_counts AS (
-          SELECT count(*) FILTER (WHERE state !~* 'pause|archive') AS active_count,
-                 count(*) FILTER (WHERE state ~* 'pause|archive') AS paused_count
+          SELECT count(*) FILTER (WHERE lower(COALESCE(state, '')) = 'enabled') AS active_count,
+                 count(*) FILTER (WHERE lower(COALESCE(state, '')) = 'paused') AS paused_count
           FROM base
         ), filtered AS (
           SELECT * FROM base
           WHERE (${!filters.query.trim()} OR campaign_name ILIKE ${searchPattern} OR store_name ILIKE ${searchPattern})
             AND (${filters.status === "ALL"}
-              OR (${filters.status === "ACTIVE"} AND state !~* 'pause|archive')
-              OR (${filters.status === "PAUSED"} AND state ~* 'pause|archive'))
+              OR (${filters.status === "ACTIVE"} AND lower(COALESCE(state, '')) = 'enabled')
+              OR (${filters.status === "PAUSED"} AND lower(COALESCE(state, '')) = 'paused'))
             AND (${filters.adType === "ALL"} OR upper(ad_type) = upper(${filters.adType}))
             AND (${filters.spendFilter === "ALL"}
               OR (${filters.spendFilter === "HAS_SPEND"} AND spend > 0)
@@ -717,15 +717,15 @@ export async function listPpcCampaignPage(
             ) AS campaign_date_key
           FROM base_raw
         ), status_counts AS (
-      SELECT count(*) FILTER (WHERE state !~* 'pause|archive') AS active_count,
-             count(*) FILTER (WHERE state ~* 'pause|archive') AS paused_count
+      SELECT count(*) FILTER (WHERE lower(COALESCE(state, '')) = 'enabled') AS active_count,
+             count(*) FILTER (WHERE lower(COALESCE(state, '')) = 'paused') AS paused_count
       FROM base
     ), filtered AS (
       SELECT * FROM base
       WHERE (${!filters.query.trim()} OR campaign_name ILIKE ${searchPattern} OR store_name ILIKE ${searchPattern} OR sku ILIKE ${searchPattern})
         AND (${filters.status === "ALL"}
-          OR (${filters.status === "ACTIVE"} AND state !~* 'pause|archive')
-          OR (${filters.status === "PAUSED"} AND state ~* 'pause|archive'))
+          OR (${filters.status === "ACTIVE"} AND lower(COALESCE(state, '')) = 'enabled')
+          OR (${filters.status === "PAUSED"} AND lower(COALESCE(state, '')) = 'paused'))
         AND (${filters.adType === "ALL"} OR upper(ad_type) = upper(${filters.adType}))
         AND (${filters.spendFilter === "ALL"}
           OR (${filters.spendFilter === "HAS_SPEND"} AND spend > 0)
@@ -982,6 +982,16 @@ export async function refreshPpcDailySummary(
 ): Promise<void> {
   const sql = client || await getDatabaseClient();
   const teamId = (scope as any)?.teamId || "default";
+  // The overview time series must come only from true one-day CAMPAIGN rows
+  // in Bulk files. Multi-day snapshots cannot be divided into daily values
+  // without fabricating data.
+  await sql`
+    DELETE FROM ppc_daily_summary d
+    USING ppc_stores s
+    WHERE d.store_id = s.id
+      AND s.team_id = ${teamId}
+      AND (${!storeId} OR d.store_id = ${storeId || null}::uuid)
+  `;
   await sql`
     INSERT INTO ppc_daily_summary (
       store_id, report_date, ad_type,
@@ -990,7 +1000,7 @@ export async function refreshPpcDailySummary(
     )
     SELECT
       p.store_id,
-      p.report_date,
+      p.report_end_date,
       COALESCE(p.ad_type, 'UNKNOWN') AS ad_type,
       COALESCE(SUM(p.impressions), 0) AS impressions,
       COALESCE(SUM(p.clicks), 0) AS clicks,
@@ -1004,12 +1014,13 @@ export async function refreshPpcDailySummary(
       CASE WHEN SUM(p.sales) > 0 THEN ROUND((SUM(p.spend) / SUM(p.sales) * 100)::numeric, 2) ELSE (CASE WHEN SUM(p.spend) > 0 THEN 999 ELSE 0 END) END AS acos,
       CASE WHEN SUM(p.spend) > 0 THEN ROUND((SUM(p.sales) / SUM(p.spend))::numeric, 2) ELSE 0 END AS roas,
       NOW() AS updated_at
-    FROM ppc_search_terms p
+    FROM ppc_performance_facts p
     JOIN ppc_stores s ON s.id = p.store_id
     WHERE s.team_id = ${teamId}
       AND (${!storeId} OR p.store_id = ${storeId || null}::uuid)
-      AND p.report_date IS NOT NULL
-    GROUP BY p.store_id, p.report_date, COALESCE(p.ad_type, 'UNKNOWN')
+      AND p.grain = 'CAMPAIGN'
+      AND p.report_start_date = p.report_end_date
+    GROUP BY p.store_id, p.report_end_date, COALESCE(p.ad_type, 'UNKNOWN')
     ON CONFLICT (store_id, report_date, ad_type)
     DO UPDATE SET
       impressions = EXCLUDED.impressions,
@@ -1042,7 +1053,7 @@ export async function getActiveSnapshotId(
 ): Promise<string> {
   const sql = await getDatabaseClient();
   const teamId = (scope as any)?.teamId || "default";
-  const coverageDays = days <= 10 ? 7 : (days <= 18 ? 14 : 30);
+  const coverageDays = Math.max(1, Math.trunc(days));
   const rows = await sql<{ snapshot_id: string }[]>`
     SELECT a.snapshot_id
     FROM ppc_active_snapshots a
@@ -1071,7 +1082,7 @@ export async function refreshPpcSnapshotSummary(
     const start = new Date(reportStartDate);
     const end = new Date(reportEndDate);
     const spanDays = Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-    const coverageDays = spanDays <= 10 ? 7 : (spanDays <= 18 ? 14 : (spanDays <= 35 ? 30 : spanDays));
+    const coverageDays = Math.max(1, spanDays);
     const snapshotId = `snap_${storeId.replace(/-/g, "").slice(0, 8)}_${snapshotDate}_${coverageDays}_${Date.now()}`;
 
     // 1. Campaign summary
@@ -1079,8 +1090,8 @@ export async function refreshPpcSnapshotSummary(
       WITH camp_targets AS (
         SELECT 
           campaign_id,
-          count(*) as target_count,
-          count(*) FILTER (WHERE spend > 0 OR clicks > 0 OR impressions > 0) as active_target_count
+          count(*) FILTER (WHERE NOT is_negative) as target_count,
+          count(*) FILTER (WHERE NOT is_negative AND lower(COALESCE(state, '')) = 'enabled') as active_target_count
         FROM ppc_performance_facts
         WHERE store_id = ${storeId}
           AND snapshot_date = ${snapshotDate}
@@ -1210,7 +1221,9 @@ export async function refreshPpcSnapshotSummary(
         SELECT 
           ad_type,
           count(*) as campaign_count,
-          count(*) FILTER (WHERE spend > 0) as active_campaign_count,
+          count(*) FILTER (
+            WHERE lower(COALESCE(NULLIF(campaign_state, ''), NULLIF(state, ''), '')) = 'enabled'
+          ) as active_campaign_count,
           COALESCE(SUM(spend), 0) as spend,
           COALESCE(SUM(sales), 0) as sales,
           COALESCE(SUM(orders), 0) as orders,
@@ -1228,10 +1241,10 @@ export async function refreshPpcSnapshotSummary(
       target_stats AS (
         SELECT 
           ad_type,
-          count(*) as target_count,
+          count(*) FILTER (WHERE NOT is_negative) as target_count,
           count(*) FILTER (
-            WHERE spend > 0 OR clicks > 0 OR impressions > 0
-            OR (state = 'enabled' AND (campaign_name ILIKE '%GO%' OR sku ILIKE '%GO%'))
+            WHERE NOT is_negative
+              AND lower(COALESCE(state, '')) = 'enabled'
           ) as active_target_count
         FROM ppc_performance_facts
         WHERE store_id = ${storeId}
@@ -1462,6 +1475,7 @@ export async function upsertPpcPerformance(
         await refreshPpcSnapshotSummary(scope, storeId, snapshotDate, startDate, endDate, { transaction });
       }
     }
+    await refreshPpcDailySummary(scope, storeId, transaction);
 
     return { inserted, updated, deduplicated: rows.length - uniqueRows.length };
   };
@@ -1661,6 +1675,7 @@ export async function ingestPpcPerformanceStream(
       const endStr = sc.report_end_date instanceof Date ? sc.report_end_date.toISOString().slice(0, 10) : String(sc.report_end_date).slice(0, 10);
       await refreshPpcSnapshotSummary(scope, sc.store_id, snapDateStr, startStr, endStr, { transaction });
     }
+    await refreshPpcDailySummary(scope, storeId, transaction);
 
     return {
       totalParsed,
@@ -1755,13 +1770,23 @@ export interface PpcOverviewAggregates {
     clicks: string | number;
     impressions: string | number;
   }>;
+  kpiRows7D?: Array<{
+    ad_type: PpcAdType;
+    campaign_count: string | number;
+    spend: string | number;
+    sales: string | number;
+    orders: string | number;
+    units: string | number;
+    clicks: string | number;
+    impressions: string | number;
+  }>;
 }
 
 const targetCountCache = new Map<string, { expiresAt: number; count: number }>();
 
 export async function getPpcOverviewAggregates(
   scope: DataScope,
-  filters: { storeName?: string; sku?: string; days?: number } = {},
+  filters: { storeName?: string; sku?: string; days?: number; startDate?: string; endDate?: string } = {},
 ): Promise<PpcOverviewAggregates> {
   const sql = await getDatabaseClient();
   const teamId = (scope as any)?.teamId || "default";
@@ -1769,7 +1794,12 @@ export async function getPpcOverviewAggregates(
   const sku = filters.sku || "ALL";
   const days = Math.max(1, filters.days || 30);
   const isAllStores = storeName === "ALL";
-  const coverageDays = days <= 10 ? 7 : (days <= 18 ? 14 : 30);
+  const customStart = filters.startDate ? Date.parse(`${filters.startDate}T00:00:00Z`) : NaN;
+  const customEnd = filters.endDate ? Date.parse(`${filters.endDate}T00:00:00Z`) : NaN;
+  const customCoverageDays = Number.isFinite(customStart) && Number.isFinite(customEnd) && customEnd >= customStart
+    ? Math.round((customEnd - customStart) / 86_400_000) + 1
+    : null;
+  const coverageDays = customCoverageDays || Math.max(1, Math.trunc(days));
 
   // 1. Fast path: check if precomputed summary snapshots exist
   const activeSnapshots = await sql<Array<{
@@ -1785,10 +1815,12 @@ export async function getPpcOverviewAggregates(
     WHERE s.team_id = ${teamId}
       AND (${isAllStores} OR lower(s.name) = lower(${storeName}))
       AND a.coverage_days = ${coverageDays}
+      AND (${!filters.startDate} OR a.report_start_date = ${filters.startDate || "1970-01-01"}::date)
+      AND (${!filters.endDate} OR a.report_end_date = ${filters.endDate || "2099-12-31"}::date)
   `;
 
   if (activeSnapshots.length > 0) {
-    const [kpiRows, topCampaignRows, topSkuRows, targetBreakdownRows, availableSkuRows, targetCountRow, storeSummaryRows] = await Promise.all([
+    const [kpiRows, kpiRows7D, topCampaignRows, topSkuRows, targetBreakdownRows, availableSkuRows, targetCountRow, storeSummaryRows] = await Promise.all([
       // 1. KPI and Ad Type breakdown
       sql<Array<{
         ad_type: PpcAdType;
@@ -1819,6 +1851,35 @@ export async function getPpcOverviewAggregates(
         WHERE s.team_id = ${teamId}
           AND (${isAllStores} OR lower(s.name) = lower(${storeName}))
           AND sm.coverage_days = ${coverageDays}
+        GROUP BY sm.ad_type
+        ORDER BY sm.ad_type;
+      `,
+      // 1b. 7-Day KPI breakdown from Bulk Sheet CAMPAIGN grain
+      sql<Array<{
+        ad_type: PpcAdType;
+        campaign_count: string | number;
+        spend: string | number;
+        sales: string | number;
+        orders: string | number;
+        units: string | number;
+        clicks: string | number;
+        impressions: string | number;
+      }>>`
+        SELECT 
+          sm.ad_type,
+          SUM(sm.campaign_count) AS campaign_count,
+          SUM(sm.spend) AS spend,
+          SUM(sm.sales) AS sales,
+          SUM(sm.orders) AS orders,
+          SUM(sm.units) AS units,
+          SUM(sm.clicks) AS clicks,
+          SUM(sm.impressions) AS impressions
+        FROM ppc_snapshot_summary sm
+        JOIN ppc_active_snapshots a ON a.store_id = sm.store_id AND a.snapshot_id = sm.snapshot_id AND a.coverage_days = sm.coverage_days
+        JOIN ppc_stores s ON s.id = sm.store_id
+        WHERE s.team_id = ${teamId}
+          AND (${isAllStores} OR lower(s.name) = lower(${storeName}))
+          AND sm.coverage_days = 7
         GROUP BY sm.ad_type
         ORDER BY sm.ad_type;
       `,
@@ -1916,7 +1977,7 @@ export async function getPpcOverviewAggregates(
       `,
       // 6. Target Count directly from snapshot summary
       sql<{ target_count: string | number }[]>`
-        SELECT COALESCE(SUM(sm.active_target_count), 0) AS target_count
+        SELECT COALESCE(SUM(sm.target_count), 0) AS target_count
         FROM ppc_snapshot_summary sm
         JOIN ppc_active_snapshots a ON a.store_id = sm.store_id AND a.snapshot_id = sm.snapshot_id AND a.coverage_days = sm.coverage_days
         JOIN ppc_stores s ON s.id = sm.store_id
@@ -1974,6 +2035,7 @@ export async function getPpcOverviewAggregates(
 
     return {
       kpiRows,
+      kpiRows7D,
       topCampaigns: topCampaignRows.map(mapPerformance),
       topSkus: topSkuRows.map((r) => ({
         sku: r.sku,
@@ -2285,7 +2347,9 @@ export async function getPpcOverviewAggregates(
         SELECT 
           p.store_id,
           COUNT(DISTINCT p.campaign_id) as total_campaigns,
-          COUNT(DISTINCT p.campaign_id) FILTER (WHERE p.spend > 0) as active_campaigns,
+          COUNT(DISTINCT p.campaign_id) FILTER (
+            WHERE lower(COALESCE(NULLIF(p.campaign_state, ''), NULLIF(p.state, ''), '')) = 'enabled'
+          ) as active_campaigns,
           COALESCE(SUM(p.spend), 0) as spend,
           COALESCE(SUM(p.sales), 0) as sales,
           COALESCE(SUM(p.orders), 0) as orders,

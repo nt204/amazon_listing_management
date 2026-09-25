@@ -162,7 +162,7 @@ export async function getPpcAnalyticsData(
     const isAllStores = storeName === "ALL";
     const [stores, aggregates, dailyTrendsDb, searchTermData, syncLogs] = await Promise.all([
       listPpcStores(scope),
-      getPpcOverviewAggregates(scope, { storeName, sku, days }),
+      getPpcOverviewAggregates(scope, { storeName, sku, days, startDate, endDate }),
       listPpcDailyTrendsFromDb(scope, { storeName, days: Math.max(days, 30), startDate, endDate }),
       getPpcSearchTermSummaryFromDb(scope, { storeName, sku, days, startDate, endDate }),
       listPpcSyncLogs(scope),
@@ -220,6 +220,61 @@ export async function getPpcAnalyticsData(
     };
 
     const adTypeBreakdown: PpcAdTypeBreakdown[] = aggregates.kpiRows.map((row) => {
+      const spend = Math.round(Number(row.spend || 0) * 100) / 100;
+      const sales = Math.round(Number(row.sales || 0) * 100) / 100;
+      const orders = Number(row.orders || 0);
+      const clicks = Number(row.clicks || 0);
+      const impressions = Number(row.impressions || 0);
+      const acos = sales > 0 ? Math.round((spend / sales) * 1000) / 10 : (spend > 0 ? 999 : 0);
+      const roas = spend > 0 ? Math.round((sales / spend) * 100) / 100 : 0;
+      return {
+        adType: row.ad_type,
+        spend,
+        sales,
+        orders,
+        clicks,
+        impressions,
+        acos,
+        roas,
+      };
+    }).sort((a, b) => b.spend - a.spend);
+
+    let totalSpend7D = 0;
+    let totalSales7D = 0;
+    let totalOrders7D = 0;
+    let totalUnits7D = 0;
+    let totalClicks7D = 0;
+    let totalImpressions7D = 0;
+    if (aggregates.kpiRows7D && aggregates.kpiRows7D.length > 0) {
+      for (const row of aggregates.kpiRows7D) {
+        totalSpend7D += Number(row.spend || 0);
+        totalSales7D += Number(row.sales || 0);
+        totalOrders7D += Number(row.orders || 0);
+        totalUnits7D += Number(row.units || 0);
+        totalClicks7D += Number(row.clicks || 0);
+        totalImpressions7D += Number(row.impressions || 0);
+      }
+    }
+    const summary7D: PpcSummaryMetrics | null = (totalSpend7D > 0 || totalSales7D > 0) ? {
+      totalSpend: Math.round(totalSpend7D * 100) / 100,
+      totalSales: Math.round(totalSales7D * 100) / 100,
+      totalOrders: totalOrders7D,
+      totalUnits: totalUnits7D,
+      totalClicks: totalClicks7D,
+      totalImpressions: totalImpressions7D,
+      blendedAcos: totalSales7D > 0 ? Math.round((totalSpend7D / totalSales7D) * 1000) / 10 : (totalSpend7D > 0 ? 999 : 0),
+      blendedRoas: totalSpend7D > 0 ? Math.round((totalSales7D / totalSpend7D) * 100) / 100 : 0,
+      avgCpc: totalClicks7D > 0 ? Math.round((totalSpend7D / totalClicks7D) * 100) / 100 : 0,
+      overallCtr: totalImpressions7D > 0 ? totalClicks7D / totalImpressions7D : 0,
+      overallCvr: totalClicks7D > 0 ? totalOrders7D / totalClicks7D : 0,
+      cpa: totalOrders7D > 0 ? Math.round((totalSpend7D / totalOrders7D) * 100) / 100 : 0,
+      aov: totalOrders7D > 0 ? Math.round((totalSales7D / totalOrders7D) * 100) / 100 : 0,
+      wastedSpend: 0,
+      activeAlertsCount: 0,
+      pendingRecsCount: 0,
+    } : null;
+
+    const adTypeBreakdown7D: PpcAdTypeBreakdown[] = (aggregates.kpiRows7D || []).map((row) => {
       const spend = Math.round(Number(row.spend || 0) * 100) / 100;
       const sales = Math.round(Number(row.sales || 0) * 100) / 100;
       const orders = Number(row.orders || 0);
@@ -434,11 +489,13 @@ export async function getPpcAnalyticsData(
       stores,
       storeSummaries,
       summary,
+      summary7D,
       skuPerformance,
       campaignPerformance,
       adGroups: [],
       targets: [],
       adTypeBreakdown,
+      adTypeBreakdown7D,
       dataHealth,
       searchTermSummary,
       targetTypeBreakdown,
@@ -1392,4 +1449,3 @@ export async function exportBulksheetUpdateExcel(recommendations: PpcRecommendat
   const buffer = await workbook.xlsx.writeBuffer();
   return Buffer.from(buffer);
 }
-

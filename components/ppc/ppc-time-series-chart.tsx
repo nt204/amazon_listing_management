@@ -18,18 +18,19 @@ import {
   SquaresFour,
   Eye,
 } from "@phosphor-icons/react";
-import type { PpcSummaryMetrics, PpcAdTypeBreakdown, PpcSearchTermRow, PpcDailyTrendPoint } from "@/lib/ppc/types";
+import type { PpcSummaryMetrics, PpcAdTypeBreakdown, PpcDailyTrendPoint } from "@/lib/ppc/types";
 import { PpcDailyCampaignDrawer, type AvailableDateItem } from "./ppc-daily-campaign-drawer";
 import type { PpcDailyCampaignItem } from "@/lib/ppc/repository";
 
 interface PpcTimeSeriesChartProps {
   summary: PpcSummaryMetrics;
+  summary7D?: PpcSummaryMetrics | null;
+  adTypeBreakdown7D?: PpcAdTypeBreakdown[];
   selectedDays: number;
   onDaysChange?: (days: number) => void;
   dateRangeStart?: string;
   dateRangeEnd?: string;
   adTypeBreakdown: PpcAdTypeBreakdown[];
-  searchTerms: PpcSearchTermRow[];
   dailyTrends?: PpcDailyTrendPoint[];
   targetAcos?: number;
   currency?: string;
@@ -73,11 +74,12 @@ interface PeriodTotals {
 
 export function PpcTimeSeriesChart({
   summary,
+  summary7D,
+  adTypeBreakdown7D,
   selectedDays,
   onDaysChange,
   dateRangeEnd,
   adTypeBreakdown,
-  searchTerms,
   dailyTrends,
   targetAcos = 30,
   currency = "$",
@@ -160,6 +162,41 @@ export function PpcTimeSeriesChart({
     };
   }, [channel, summary, adTypeBreakdown]);
 
+  // Target totals cho kỳ 7D từ Bulk Sheet CAMPAIGN grain
+  const channelTotals7D = useMemo(() => {
+    if (!summary7D) return null;
+    if (channel === "ALL") {
+      return {
+        spend: summary7D.totalSpend,
+        revenue: summary7D.totalSales,
+        orders: summary7D.totalOrders,
+        acos: summary7D.blendedAcos,
+        roas: summary7D.blendedRoas,
+      };
+    }
+    const targetBreakdown = (adTypeBreakdown7D || []).find((a) => a.adType === channel);
+    if (targetBreakdown) {
+      return {
+        spend: targetBreakdown.spend,
+        revenue: targetBreakdown.sales,
+        orders: targetBreakdown.orders,
+        acos: targetBreakdown.acos,
+        roas: targetBreakdown.roas,
+      };
+    }
+    const sp = (adTypeBreakdown7D || []).find((a) => a.adType === "SP");
+    const sb = (adTypeBreakdown7D || []).find((a) => a.adType === "SB");
+    const totalSpend = (sp?.spend || 0) + (sb?.spend || 0);
+    const mult = totalSpend > 0 && channel === "SP" ? (sp?.spend || 0) / totalSpend : 1;
+    return {
+      spend: Math.round(summary7D.totalSpend * mult * 100) / 100,
+      revenue: Math.round(summary7D.totalSales * mult * 100) / 100,
+      orders: Math.round(summary7D.totalOrders * mult),
+      acos: summary7D.blendedAcos,
+      roas: summary7D.blendedRoas,
+    };
+  }, [channel, summary7D, adTypeBreakdown7D]);
+
   // Hàm sinh dữ liệu chuỗi thời gian liên tục cho bất kỳ khoảng ngày nào (7D hoặc 30D)
   const generateDailyPoints = (daysCount: number): DataPoint[] => {
     const dailyMap = new Map<string, { spend: number; revenue: number; orders: number; clicks: number; impressions: number }>();
@@ -187,22 +224,6 @@ export function PpcTimeSeriesChart({
           impressions = pt.sbImpressions ?? 0;
         }
         dailyMap.set(pt.date.slice(0, 10), { spend, revenue, orders, clicks, impressions });
-      }
-    } else if (searchTerms && searchTerms.length > 0) {
-      for (const term of searchTerms) {
-        if (term.reportGranularity === "DAILY" && term.reportDate) {
-          if (channel === "SP" && term.adType !== "SP") continue;
-          if (channel === "SB" && term.adType !== "SB") continue;
-          hasDaily = true;
-          const key = term.reportDate.slice(0, 10);
-          const current = dailyMap.get(key) || { spend: 0, revenue: 0, orders: 0, clicks: 0, impressions: 0 };
-          current.spend += term.spend || 0;
-          current.revenue += term.sales || 0;
-          current.orders += term.orders || 0;
-          current.clicks += term.clicks || 0;
-          current.impressions += term.impressions || 0;
-          dailyMap.set(key, current);
-        }
       }
     }
 
@@ -371,24 +392,25 @@ export function PpcTimeSeriesChart({
   };
 
   // Chuẩn bị dữ liệu cho 7D và 30D (chạy song song độc lập)
-  const rawData7D = useMemo(() => generateDailyPoints(7), [channel, dailyTrends, searchTerms, channelTotals, targetAcos, dateRangeEnd]);
+  const rawData7D = useMemo(() => generateDailyPoints(7), [channel, dailyTrends, channelTotals, targetAcos, dateRangeEnd]);
   const chartData7D = useMemo(() => aggregatePoints(rawData7D, granularity), [rawData7D, granularity]);
   const totals7D = useMemo(() => {
     const rawTotals = calculateTotals(rawData7D);
-    if (channelTotals && channelTotals.spend > 0 && selectedDays === 7) {
+    const target7D = channelTotals7D || (selectedDays === 7 ? channelTotals : null);
+    if (target7D && target7D.spend > 0) {
       return {
         ...rawTotals,
-        spend: channelTotals.spend,
-        revenue: channelTotals.revenue,
-        orders: channelTotals.orders,
-        acos: channelTotals.acos,
-        roas: channelTotals.roas,
-        avgDailySpend: Math.round((channelTotals.spend / 7) * 10) / 10,
-        avgOrderValue: channelTotals.orders > 0 ? Math.round((channelTotals.revenue / channelTotals.orders) * 10) / 10 : 0,
+        spend: target7D.spend,
+        revenue: target7D.revenue,
+        orders: target7D.orders,
+        acos: target7D.acos,
+        roas: target7D.roas,
+        avgDailySpend: Math.round((target7D.spend / 7) * 10) / 10,
+        avgOrderValue: target7D.orders > 0 ? Math.round((target7D.revenue / target7D.orders) * 10) / 10 : 0,
       };
     }
     return rawTotals;
-  }, [rawData7D, channelTotals, selectedDays]);
+  }, [rawData7D, channelTotals7D, channelTotals, selectedDays]);
 
   // Danh sách các ngày trong 7D kèm số đơn và chi tiêu để drawer chuyển ngày nhanh
   const availableDates7D: AvailableDateItem[] = useMemo(() => {
@@ -402,7 +424,7 @@ export function PpcTimeSeriesChart({
     }));
   }, [rawData7D]);
 
-  const rawData30D = useMemo(() => generateDailyPoints(30), [channel, dailyTrends, searchTerms, channelTotals, targetAcos, dateRangeEnd]);
+  const rawData30D = useMemo(() => generateDailyPoints(30), [channel, dailyTrends, channelTotals, targetAcos, dateRangeEnd]);
   const chartData30D = useMemo(() => aggregatePoints(rawData30D, granularity), [rawData30D, granularity]);
   const totals30D = useMemo(() => {
     const rawTotals = calculateTotals(rawData30D);
@@ -424,7 +446,7 @@ export function PpcTimeSeriesChart({
   // Dữ liệu cho chế độ Single View (khi người dùng bấm chọn riêng 7D hoặc 30D)
   const rawDataCurrent = useMemo(() => {
     return generateDailyPoints(selectedDays || 7);
-  }, [selectedDays, channel, dailyTrends, searchTerms, channelTotals, targetAcos, dateRangeEnd]);
+  }, [selectedDays, channel, dailyTrends, channelTotals, targetAcos, dateRangeEnd]);
   const chartDataCurrent = useMemo(() => aggregatePoints(rawDataCurrent, granularity), [rawDataCurrent, granularity]);
   const totalsCurrent = useMemo(() => {
     const rawTotals = calculateTotals(rawDataCurrent);

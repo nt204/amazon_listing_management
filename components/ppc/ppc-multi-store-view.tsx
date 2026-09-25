@@ -371,7 +371,6 @@ export function PpcMultiStoreView({
           dateRangeStart={dateRangeStart}
           dateRangeEnd={dateRangeEnd}
           adTypeBreakdown={adTypeBreakdown || []}
-          searchTerms={searchTerms || []}
           targetAcos={30}
           currency={currency}
           hideSummaryCards={true}
