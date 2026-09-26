@@ -3043,59 +3043,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
             </div>
           </div>
 
-          {/* Live Metrics Strip for Filtered Targets (Tone Xanh - Trắng) */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 p-2.5 rounded-xl bg-gradient-to-r from-blue-50/80 via-indigo-50/50 to-sky-50/60 border border-blue-100 shadow-2xs text-xs">
-            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
-              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Số Target</div>
-              <div className="text-base font-black text-slate-900 mt-0.5">{filteredTargetTotals.count.toLocaleString()}</div>
-              <div className="text-[10px] text-slate-500 font-medium">
-                {targetQuery ? "Đã lọc tìm kiếm" : "Tất cả target"}
-              </div>
-            </div>
-            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
-              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Lượt Hiển Thị (Impr)</div>
-              <div className="text-base font-black text-slate-900 mt-0.5">{filteredTargetTotals.impressions.toLocaleString()}</div>
-              <div className="text-[10px] text-slate-500 font-medium">
-                CTR {filteredTargetTotals.ctr.toFixed(2)}% · {filteredTargetTotals.clicks.toLocaleString()} clicks
-              </div>
-            </div>
-            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
-              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Tổng Chi Tiêu</div>
-              <div className="text-base font-black text-rose-600 mt-0.5">${filteredTargetTotals.spend.toFixed(2)}</div>
-              <div className="text-[10px] text-slate-500 font-medium">
-                CPC ${filteredTargetTotals.cpc.toFixed(2)}
-              </div>
-            </div>
-            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
-              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Doanh Số</div>
-              <div className="text-base font-black text-emerald-600 mt-0.5">${filteredTargetTotals.sales.toFixed(2)}</div>
-              <div className="text-[10px] text-slate-500 font-medium">{filteredTargetTotals.orders.toLocaleString()} đơn hàng</div>
-            </div>
-            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
-              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Đơn Hàng</div>
-              <div className="text-base font-black text-indigo-700 mt-0.5">{filteredTargetTotals.orders.toLocaleString()}</div>
-              <div className="text-[10px] text-slate-500 font-medium">
-                {filteredTargetTotals.clicks > 0
-                  ? `${filteredTargetTotals.cvr.toFixed(1)}% CVR`
-                  : "0% CVR"}
-              </div>
-            </div>
-            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
-              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">ACOS Trung Bình</div>
-              <div
-                className={`text-base font-black mt-0.5 ${filteredTargetTotals.acos <= targetAcos
-                  ? "text-emerald-600"
-                  : filteredTargetTotals.acos <= 50
-                    ? "text-amber-600"
-                    : "text-rose-600"
-                  }`}
-              >
-                {filteredTargetTotals.sales > 0 ? `${filteredTargetTotals.acos.toFixed(1)}%` : filteredTargetTotals.spend > 0 ? "0 sales" : "0.0%"}
-              </div>
-              <div className="text-[10px] text-slate-500 font-medium">Mục tiêu ≤ {targetAcos}%</div>
-            </div>
-          </div>
-
           <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
             <table className="w-full min-w-[1050px] text-left text-xs text-slate-700">
               <thead className="border-b border-slate-200 bg-slate-50 text-[10px] font-extrabold uppercase text-slate-500">
@@ -3111,7 +3058,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                     }
                     title="Nhấn để sắp xếp theo lượt hiển thị (Impressions)"
                   >
-                    Hiển Thị {targetSortField === "impressions" && (targetSortDir === "asc" ? "↑" : "↓")}
+                    Impression {targetSortField === "impressions" && (targetSortDir === "asc" ? "↑" : "↓")}
                   </th>
                   <th
                     className="px-3 py-3 text-right cursor-pointer hover:text-indigo-600"
@@ -3330,7 +3277,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                                   <thead className="bg-slate-50 text-[10px] uppercase font-bold text-slate-500 border-b border-slate-200">
                                     <tr>
                                       <th className="py-2 px-3.5">Customer Search Term</th>
-                                      <th className="py-2 px-2.5 text-right">Hiển Thị</th>
+                                      <th className="py-2 px-2.5 text-right">Impression</th>
                                       <th className="py-2 px-2.5 text-right">Clicks</th>
                                       <th className="py-2 px-2.5 text-right">Spend ($)</th>
                                       <th className="py-2 px-2.5 text-right">Sales ($)</th>
