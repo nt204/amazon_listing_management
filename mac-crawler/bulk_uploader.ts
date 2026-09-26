@@ -80,41 +80,110 @@ async function downloadWorkbook(job: RemoteBulkUploadJob) {
 function classifyAmazonResult(text: string): AmazonBulkResult["status"] | "PROCESSING" | null {
   const normalized = text.replace(/\s+/g, " ").trim().toLowerCase();
   if (!normalized) return null;
-  if (/completed with errors|partially completed|partial success|processed with errors|hoàn tất.*lỗi/.test(normalized)) {
+
+  // 1. Phân tích chi tiết số lượng bản ghi nếu có (Amazon Upload Processing Summary)
+  // Ví dụ: "Number of records processed: 2, Number of records successful: 2, Number of records with errors: 0"
+  const successMatch = normalized.match(/(?:records? successful|successful records?|thành công)\s*[:：]?\s*(\d+)/i);
+  const errorMatch = normalized.match(/(?:records? with errors?|error records?|failed records?|lỗi)\s*[:：]?\s*(\d+)/i);
+  const successCount = successMatch ? Number(successMatch[1]) : null;
+  const errorCount = errorMatch ? Number(errorMatch[1]) : null;
+
+  if (errorCount !== null && successCount !== null) {
+    if (errorCount > 0 && successCount === 0) return "FAILED";
+    if (errorCount > 0 && successCount > 0) return "PARTIAL_SUCCESS";
+    if (errorCount === 0 && successCount > 0) return "SUCCESS";
+  }
+
+  // 2. Kiểm tra các trạng thái lỗi rõ ràng (FAILED)
+  if (
+    /finished with errors|completed with errors|processed with errors|hoàn tất.*lỗi/.test(normalized) ||
+    /partial success|partially completed/.test(normalized)
+  ) {
+    if (successCount === 0) return "FAILED";
     return "PARTIAL_SUCCESS";
   }
-  if (/completed|processed|successful|success|hoàn tất|thành công/.test(normalized)) {
-    const errorCount = normalized.match(/(?:errors?|failed(?: records?| rows?)?|lỗi)\s*[:：]?\s*(\d+)/)?.[1];
-    return errorCount && Number(errorCount) > 0 ? "PARTIAL_SUCCESS" : "SUCCESS";
-  }
-  if (/failed|failure|rejected|upload error|không thành công|thất bại|bị từ chối/.test(normalized)) {
+
+  if (
+    /\bfailed\b|\bfailure\b|\brejected\b|upload error|system error|input error|không thành công|thất bại|bị từ chối/.test(normalized)
+  ) {
     return "FAILED";
   }
-  if (/processing|in progress|pending|uploading|đang xử lý|đang tải|chờ xử lý|submitted/.test(normalized)) {
+
+  // 3. Kiểm tra các trạng thái hoàn tất (Amazon Ads thường dùng "Finished", "Completed", "Processed", "Success")
+  if (
+    /\bfinished\b|\bfinish\b|\bcompleted\b|\bprocessed\b|\bsuccessful\b|\bsuccess\b|\bhoàn tất\b|\bthành công\b/.test(normalized)
+  ) {
+    if (errorCount !== null && errorCount > 0) {
+      return successCount === 0 ? "FAILED" : "PARTIAL_SUCCESS";
+    }
+    return "SUCCESS";
+  }
+
+  // 4. Kiểm tra trạng thái đang xử lý ngầm (chưa xong)
+  if (
+    /\bin progress\b|\bprocessing\b|\bpending\b|\buploading\b|đang xử lý|đang tải|chờ xử lý|\bsubmitted\b/.test(normalized)
+  ) {
     return "PROCESSING";
   }
+
   return null;
 }
 
 async function findUploadedFileResult(page: import("playwright-core").Page, fileName: string) {
-  const rowCandidates = [
-    page.locator("tr").filter({ hasText: fileName }),
-    page.locator("[role='row']").filter({ hasText: fileName }),
-    page.locator("[data-testid*='upload'], [class*='upload']").filter({ hasText: fileName }),
-  ];
-  for (const candidates of rowCandidates) {
-    const row = candidates.first();
-    if (await row.count()) {
-      const text = (await row.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
-      if (!text) continue;
-      const status = classifyAmazonResult(text);
-      const hrefs = await row.locator("a").evaluateAll((links) => links.map((link) => link.getAttribute("href") || ""));
-      const uploadId = [...text.matchAll(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi)][0]?.[0]
-        || hrefs.join(" ").match(/[?&/](?:uploadId|id)[=/]([^&/]+)/i)?.[1]
-        || null;
-      return { status, text: text.slice(0, 2_000), uploadId };
+  const baseName = fileName.replace(/\.xlsx$/i, "");
+  const shortPrefix = baseName.slice(0, Math.min(25, baseName.length));
+
+  // 1. Tìm theo các query: tên file đầy đủ, tên không đuôi .xlsx, hoặc 25 ký tự đầu
+  const searchQueries = [fileName, baseName, shortPrefix].filter(Boolean);
+  for (const query of searchQueries) {
+    const candidates = [
+      page.locator("tr").filter({ hasText: query }),
+      page.locator("[role='row']").filter({ hasText: query }),
+      page.locator("[data-testid*='upload'], [class*='upload']").filter({ hasText: query }),
+    ];
+    for (const locator of candidates) {
+      const row = locator.first();
+      if (await row.count()) {
+        const text = (await row.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+        if (!text) continue;
+        const status = classifyAmazonResult(text);
+        const hrefs = await row.locator("a").evaluateAll((links) => links.map((link) => link.getAttribute("href") || "")).catch(() => []);
+        const uploadId = [...text.matchAll(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi)][0]?.[0]
+          || hrefs.join(" ").match(/[?&/](?:uploadId|id)[=/]([^&/]+)/i)?.[1]
+          || null;
+        return { status, text: text.slice(0, 2_000), uploadId };
+      }
     }
   }
+
+  // 2. Fallback: Kiểm tra dòng đầu tiên của bảng lịch sử upload (dòng mới nhất vừa gửi lên)
+  const firstRow = page.locator("table tbody tr, [role='table'] [role='row']").first();
+  if (await firstRow.count()) {
+    const text = (await firstRow.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+    if (text && (text.includes("Upload") || /[0-9a-f]{8}-[0-9a-f-]{27,}/i.test(text))) {
+      const status = classifyAmazonResult(text);
+      if (status) {
+        const hrefs = await firstRow.locator("a").evaluateAll((links) => links.map((link) => link.getAttribute("href") || "")).catch(() => []);
+        const uploadId = [...text.matchAll(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi)][0]?.[0]
+          || hrefs.join(" ").match(/[?&/](?:uploadId|id)[=/]([^&/]+)/i)?.[1]
+          || null;
+        return { status, text: text.slice(0, 2_000), uploadId };
+      }
+    }
+  }
+
+  // 3. Fallback: Kiểm tra thông báo toast / alert / banner trên trang
+  const banner = page.locator("[role='alert'], [data-testid*='alert'], [class*='banner'], [class*='notification'], [role='dialog']").first();
+  if (await banner.count()) {
+    const bannerText = (await banner.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+    if (bannerText && bannerText.length > 5) {
+      const status = classifyAmazonResult(bannerText);
+      if (status && status !== "PROCESSING") {
+        return { status, text: bannerText.slice(0, 1_000), uploadId: null };
+      }
+    }
+  }
+
   return null;
 }
 
@@ -122,29 +191,40 @@ async function waitForAmazonResult(
   page: import("playwright-core").Page,
   fileName: string,
 ): Promise<AmazonBulkResult> {
-  // Amazon Ads Bulksheet xử lý theo hàng đợi nền (có thể mất 1 đến 30 phút).
-  // Worker chỉ chờ tối đa 35 giây để bắt kết quả hoàn tất nhanh (nếu file nhỏ hoàn tất ngay).
-  // Nếu Amazon đã tiếp nhận file (thấy dòng trong lịch sử hoặc có Upload ID / Processing),
-  // worker trả kết quả THÀNH CÔNG ngay để giải phóng AdsPower và không làm nghẽn server.
-  const waitDuration = Math.min(BULK_RESULT_TIMEOUT_MS, 35_000);
+  const waitDuration = Math.min(BULK_RESULT_TIMEOUT_MS, 45_000);
   const deadline = Date.now() + waitDuration;
   let lastSummary = "Amazon đã nhận file; đang xử lý ngầm trong hàng đợi tài khoản.";
   let capturedUploadId: string | null = null;
+  let pollCount = 0;
 
   while (Date.now() < deadline) {
+    pollCount++;
     const result = await findUploadedFileResult(page, fileName);
     if (result) {
       lastSummary = result.text;
       if (result.uploadId) capturedUploadId = result.uploadId;
+      // Nếu có kết quả dứt điểm (SUCCESS, FAILED, PARTIAL_SUCCESS) -> Báo về NGAY LẬP TỨC!
       if (result.status && result.status !== "PROCESSING") {
+        console.log(`[Bulk Uploader] 🎯 Bắt được kết quả Amazon Ads: ${result.status} (Upload ID: ${result.uploadId || "N/A"})`);
         return { status: result.status, amazonUploadId: result.uploadId, summary: result.text };
       }
     }
-    await page.waitForTimeout(BULK_RESULT_POLL_MS);
-    await page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
+
+    // Đợi 2.5s giữa các lần kiểm tra (không reload toàn trang để tránh làm mất DOM kết quả)
+    await page.waitForTimeout(2_500);
+
+    // Ưu tiên bấm nút Refresh của bảng nếu có
+    const refreshBtn = page.locator("button:has-text('Refresh'), button[aria-label*='Refresh' i]").first();
+    if (await refreshBtn.count() && await refreshBtn.isVisible().catch(() => false)) {
+      await refreshBtn.click().catch(() => {});
+      await page.waitForTimeout(1_000);
+    } else if (pollCount % 5 === 0) {
+      // Chỉ reload trang sau mỗi ~15 giây nếu không có nút refresh
+      await page.reload({ waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => {});
+    }
   }
 
-  // File đã được gửi và Amazon đang xử lý ngầm trong tài khoản: ghi nhận SUCCESS
+  // Quá deadline nhưng Amazon đã tiếp nhận file: báo SUCCESS để không bắt user chờ
   return {
     status: "SUCCESS",
     amazonUploadId: capturedUploadId,
