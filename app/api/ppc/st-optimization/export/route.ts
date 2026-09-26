@@ -70,6 +70,8 @@ export async function POST(request: Request) {
     // 2. Tra cứu Amazon campaign_id và ad_group_id từ ppc_performance_facts nếu thiếu
     const needsCampId = uniqueItems.some((it) => !it.campaignId || !it.adGroupId);
     const campaignIdLookup = new Map<string, string>();
+    const campaignAdTypeLookup = new Map<string, string>();
+    const campaignDefaultAgId = new Map<string, string>();
     const adGroupIdLookup = new Map<string, string>();
 
     if (needsCampId) {
@@ -77,10 +79,11 @@ export async function POST(request: Request) {
       const facts = await sql<Array<{
         campaign_name: string;
         campaign_id: string;
+        ad_type: string;
         ad_group_name: string;
         ad_group_id: string;
       }>>`
-        SELECT DISTINCT campaign_name, campaign_id, ad_group_name, ad_group_id
+        SELECT DISTINCT campaign_name, campaign_id, ad_type, ad_group_name, ad_group_id
         FROM ppc_performance_facts
         WHERE campaign_id IS NOT NULL AND length(campaign_id) > 0
       `;
@@ -89,6 +92,12 @@ export async function POST(request: Request) {
         const campKey = (f.campaign_name || "").trim().toLowerCase();
         if (campKey && f.campaign_id && !campaignIdLookup.has(campKey)) {
           campaignIdLookup.set(campKey, f.campaign_id);
+        }
+        if (campKey && f.ad_type && !campaignAdTypeLookup.has(campKey)) {
+          campaignAdTypeLookup.set(campKey, f.ad_type);
+        }
+        if (campKey && f.ad_group_id && !campaignDefaultAgId.has(campKey)) {
+          campaignDefaultAgId.set(campKey, f.ad_group_id);
         }
         const agKey = `${campKey}|||${(f.ad_group_name || "").trim().toLowerCase()}`;
         if (campKey && f.ad_group_id && !adGroupIdLookup.has(agKey)) {
@@ -105,7 +114,8 @@ export async function POST(request: Request) {
       const agKey = `${campKey}|||${agName.toLowerCase()}`;
 
       const resolvedCampId = it.campaignId || campaignIdLookup.get(campKey) || "";
-      const resolvedAgId = it.adGroupId || adGroupIdLookup.get(agKey) || "";
+      const resolvedAgId = it.adGroupId || adGroupIdLookup.get(agKey) || campaignDefaultAgId.get(campKey) || "";
+      const resolvedAdType = it.adType || campaignAdTypeLookup.get(campKey) || "SP";
 
       const term = it.customerSearchTerm.trim();
       const isProduct =
@@ -117,7 +127,7 @@ export async function POST(request: Request) {
         id: `st-opt-${idx}-${Date.now()}`,
         storeId: it.storeId || "store-default",
         storeName: storeName || "STORE",
-        adType: (it.adType as any) || "SP",
+        adType: (resolvedAdType as any) || "SP",
         recType: "NEGATIVE_KEYWORD",
         targetType: isProduct ? "PRODUCT" : "EXACT",
         keyword: term,

@@ -93,7 +93,12 @@ def export_bulksheet(recommendations, output_path=None):
 
         if rec_type in ("NEGATIVE_KEYWORD",):
             level = str(rec.get("level") or "").upper()
-            if level == "CAMPAIGN" or not ad_group_id:
+            if ad_type == "SB":
+                # Amazon Sponsored Brands DOES NOT have "Campaign Negative Keyword".
+                # Negative targeting in Sponsored Brands is ALWAYS at the Ad Group level:
+                # "Negative Keyword" or "Negative Product Targeting".
+                entity = "Negative Product Targeting" if is_product_target else "Negative Keyword"
+            elif level == "CAMPAIGN" or not ad_group_id:
                 entity = "Campaign Negative Product Targeting" if is_product_target else "Campaign Negative Keyword"
             else:
                 entity = "Negative Product Targeting" if is_product_target else "Negative Keyword"
