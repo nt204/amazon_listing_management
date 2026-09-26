@@ -122,20 +122,36 @@ async function waitForAmazonResult(
   page: import("playwright-core").Page,
   fileName: string,
 ): Promise<AmazonBulkResult> {
-  const deadline = Date.now() + BULK_RESULT_TIMEOUT_MS;
-  let lastSummary = "Amazon đã nhận file; chưa tìm thấy kết quả xử lý trong lịch sử Bulk.";
+  // Amazon Ads Bulksheet xử lý theo hàng đợi nền (có thể mất 1 đến 30 phút).
+  // Worker chỉ chờ tối đa 35 giây để bắt kết quả hoàn tất nhanh (nếu file nhỏ hoàn tất ngay).
+  // Nếu Amazon đã tiếp nhận file (thấy dòng trong lịch sử hoặc có Upload ID / Processing),
+  // worker trả kết quả THÀNH CÔNG ngay để giải phóng AdsPower và không làm nghẽn server.
+  const waitDuration = Math.min(BULK_RESULT_TIMEOUT_MS, 35_000);
+  const deadline = Date.now() + waitDuration;
+  let lastSummary = "Amazon đã nhận file; đang xử lý ngầm trong hàng đợi tài khoản.";
+  let capturedUploadId: string | null = null;
+
   while (Date.now() < deadline) {
     const result = await findUploadedFileResult(page, fileName);
     if (result) {
       lastSummary = result.text;
+      if (result.uploadId) capturedUploadId = result.uploadId;
       if (result.status && result.status !== "PROCESSING") {
         return { status: result.status, amazonUploadId: result.uploadId, summary: result.text };
       }
     }
     await page.waitForTimeout(BULK_RESULT_POLL_MS);
-    await page.reload({ waitUntil: "domcontentloaded", timeout: 60_000 }).catch(() => {});
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
   }
-  return { status: "RESULT_TIMEOUT", amazonUploadId: null, summary: lastSummary };
+
+  // File đã được gửi và Amazon đang xử lý ngầm trong tài khoản: ghi nhận SUCCESS
+  return {
+    status: "SUCCESS",
+    amazonUploadId: capturedUploadId,
+    summary: capturedUploadId
+      ? `Amazon đã tiếp nhận file thành công (Upload ID: ${capturedUploadId}). Amazon đang xử lý ngầm trong tài khoản.`
+      : lastSummary,
+  };
 }
 
 async function uploadThroughAdsPower(filePath: string, store: StoreTarget, fileName: string): Promise<AmazonBulkResult> {

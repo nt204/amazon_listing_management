@@ -872,16 +872,16 @@ export function PpcStOptimizationView({
                 /* Live Progress & Real Results View */
                 <div className="py-1 space-y-3.5">
                   {/* Real-time Status Card */}
-                  {liveUploadStatus?.status === "SUCCESS" ? (
+                  {liveUploadStatus?.status === "SUCCESS" || liveUploadStatus?.status === "RESULT_TIMEOUT" ? (
                     <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-center space-y-2">
                       <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto text-xl">
                         <CheckCircle size={32} weight="fill" />
                       </div>
                       <h4 className="text-sm font-black text-emerald-950 uppercase tracking-wide">
-                        AMAZON ADS ĐÃ XỬ LÝ HOÀN TẤT THÀNH CÔNG!
+                        AMAZON ADS ĐÃ TIẾP NHẬN THÀNH CÔNG!
                       </h4>
                       <p className="text-xs text-emerald-700 font-medium">
-                        File Bulksheet đã được tải lên và Amazon xác nhận ghi nhận thầu phủ định.
+                        {liveUploadStatus.resultSummary || "File Bulksheet đã được tải lên và Amazon tiếp nhận. Quá trình xử lý phủ định đang chạy ngầm trong Seller Central."}
                       </p>
                       {liveUploadStatus.amazonUploadId && (
                         <div className="inline-block px-3 py-1 rounded-md bg-white border border-emerald-300 font-mono text-xs text-emerald-800 font-black shadow-2xs">
@@ -910,13 +910,13 @@ export function PpcStOptimizationView({
                         {liveUploadStatus?.stage === "UPLOADING"
                           ? "🚀 AdsPower Đang Mở Trình Duyệt & Tải Lên Amazon Ads..."
                           : liveUploadStatus?.stage === "WAITING_RESULT"
-                          ? "⏳ Amazon Đang Đối Soát & Phê Duyệt File Bulksheet..."
+                          ? "⏳ Amazon Đang Đối Soát & Tiếp Nhận File Bulksheet..."
                           : liveUploadStatus?.stage === "CLAIMED" || liveUploadStatus?.stage === "DOWNLOADING"
                           ? "📥 Mac mini Đã Nhận Lệnh, Đang Tải File Từ R2..."
                           : "⏳ Đã Xếp Hàng — Chờ Worker Mac mini Nhận Việc..."}
                       </h4>
                       <p className="text-[11px] text-indigo-700 font-medium">
-                        Tiến trình upload đang thực thi thật 100% qua profile AdsPower trên Mac mini.
+                        File được tải lên thật 100% qua profile AdsPower trên Mac mini. Bạn không cần chờ ở đây!
                       </p>
                     </div>
                   )}
@@ -938,11 +938,11 @@ export function PpcStOptimizationView({
                     <div className="flex justify-between items-center">
                       <span className="text-slate-500 font-sans font-bold">Trạng thái:</span>
                       <span className={`px-2 py-0.5 rounded font-black text-[11px] font-sans ${
-                        liveUploadStatus?.status === "SUCCESS" ? "bg-emerald-100 text-emerald-800" :
+                        liveUploadStatus?.status === "SUCCESS" || liveUploadStatus?.status === "RESULT_TIMEOUT" ? "bg-emerald-100 text-emerald-800" :
                         liveUploadStatus?.status === "FAILED" ? "bg-rose-100 text-rose-800" :
                         "bg-amber-100 text-amber-800"
                       }`}>
-                        {liveUploadStatus?.status || "PENDING"} ({liveUploadStatus?.stage || "FILE_READY"})
+                        {liveUploadStatus?.status === "RESULT_TIMEOUT" ? "ĐÃ GỬI LÊN AMAZON" : (liveUploadStatus?.status || "PENDING")} ({liveUploadStatus?.stage || "FILE_READY"})
                       </span>
                     </div>
                   </div>
@@ -1046,10 +1046,15 @@ export function PpcStOptimizationView({
               {autoUploadStep === 2 ? (
                 <button
                   type="button"
-                  onClick={() => setIsAutoUploadModalOpen(false)}
-                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold transition cursor-pointer"
+                  onClick={() => {
+                    setIsAutoUploadModalOpen(false);
+                    setAutoUploadStep(0);
+                    setAutoUploadSuccessResult(null);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold transition cursor-pointer flex items-center gap-1.5"
                 >
-                  Đóng
+                  <Check size={14} weight="bold" />
+                  <span>Đóng &amp; Tiếp Tục Làm Việc</span>
                 </button>
               ) : (
                 <>

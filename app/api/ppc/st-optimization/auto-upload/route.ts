@@ -110,13 +110,20 @@ export async function POST(request: Request) {
     }
 
     // 3. Tra cứu Amazon campaign_id và ad_group_id từ ppc_performance_facts nếu thiếu
-    const needsCampId = uniqueItems.some((it) => !it.campaignId || !it.adGroupId);
+    const missingCampaignNames = [
+      ...new Set(
+        uniqueItems
+          .filter((it) => !it.campaignId || !it.adGroupId)
+          .map((it) => it.campaignName?.trim())
+          .filter((name): name is string => Boolean(name)),
+      ),
+    ];
     const campaignIdLookup = new Map<string, string>();
     const campaignAdTypeLookup = new Map<string, string>();
     const campaignDefaultAgId = new Map<string, string>();
     const adGroupIdLookup = new Map<string, string>();
 
-    if (needsCampId) {
+    if (missingCampaignNames.length > 0) {
       const facts = await sql<Array<{
         campaign_name: string;
         campaign_id: string;
@@ -126,7 +133,10 @@ export async function POST(request: Request) {
       }>>`
         SELECT DISTINCT campaign_name, campaign_id, ad_type, ad_group_name, ad_group_id
         FROM ppc_performance_facts
-        WHERE campaign_id IS NOT NULL AND length(campaign_id) > 0
+        WHERE store_id = ${storeId}
+          AND campaign_name = ANY(${missingCampaignNames})
+          AND campaign_id IS NOT NULL
+          AND length(campaign_id) > 0
       `;
 
       for (const f of facts) {
