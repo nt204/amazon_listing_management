@@ -130,61 +130,89 @@ function classifyAmazonResult(text: string): AmazonBulkResult["status"] | "PROCE
 }
 
 async function findUploadedFileResult(page: import("playwright-core").Page, fileName: string) {
-  const baseName = fileName.replace(/\.xlsx$/i, "");
-  const shortPrefix = baseName.slice(0, Math.min(25, baseName.length));
+  try {
+    const evalResult = await page.evaluate((targetFileName) => {
+      const baseName = targetFileName.replace(/\.xlsx$/i, "").toLowerCase();
+      const shortPrefix = baseName.slice(0, Math.min(25, baseName.length)).toLowerCase();
+      const targetLower = targetFileName.toLowerCase();
 
-  // 1. Tìm theo các query: tên file đầy đủ, tên không đuôi .xlsx, hoặc 25 ký tự đầu
-  const searchQueries = [fileName, baseName, shortPrefix].filter(Boolean);
-  for (const query of searchQueries) {
-    const candidates = [
-      page.locator("tr").filter({ hasText: query }),
-      page.locator("[role='row']").filter({ hasText: query }),
-      page.locator("[data-testid*='upload'], [class*='upload']").filter({ hasText: query }),
-    ];
-    for (const locator of candidates) {
-      const row = locator.first();
-      if (await row.count()) {
-        const text = (await row.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
-        if (!text) continue;
-        const status = classifyAmazonResult(text);
-        const hrefs = await row.locator("a").evaluateAll((links) => links.map((link) => link.getAttribute("href") || "")).catch(() => []);
-        const uploadId = [...text.matchAll(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi)][0]?.[0]
-          || hrefs.join(" ").match(/[?&/](?:uploadId|id)[=/]([^&/]+)/i)?.[1]
-          || null;
-        return { status, text: text.slice(0, 2_000), uploadId };
+      // 1. Quét toàn bộ DOM để gom nhóm theo row-index (Amazon Ads dùng AG-Grid với các cột pinned/center tách rời)
+      const allRowEls = Array.from(
+        document.querySelectorAll("div.ag-row[row-index], tr[row-index], tr[role='row'], [role='row'][row-index], table tbody tr"),
+      );
+
+      const rowMap = new Map<string, { texts: string[]; hrefs: string[]; hasTarget: boolean }>();
+
+      for (const r of allRowEls) {
+        const idx = r.getAttribute("row-index") || r.getAttribute("aria-rowindex") || r.getAttribute("data-row-index") || "0";
+        if (!rowMap.has(idx)) {
+          rowMap.set(idx, { texts: [], hrefs: [], hasTarget: false });
+        }
+        const entry = rowMap.get(idx)!;
+        const text = ((r as HTMLElement).innerText || "").replace(/\s+/g, " ").trim();
+        if (text) {
+          entry.texts.push(text);
+          const lower = text.toLowerCase();
+          if (lower.includes(targetLower) || lower.includes(baseName) || (shortPrefix.length > 8 && lower.includes(shortPrefix))) {
+            entry.hasTarget = true;
+          }
+        }
+        const links = Array.from(r.querySelectorAll("a[href]")).map((a) => (a as HTMLAnchorElement).href);
+        entry.hrefs.push(...links);
       }
-    }
-  }
 
-  // 2. Fallback: Kiểm tra dòng đầu tiên của bảng lịch sử upload (dòng mới nhất vừa gửi lên)
-  const firstRow = page.locator("table tbody tr, [role='table'] [role='row']").first();
-  if (await firstRow.count()) {
-    const text = (await firstRow.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
-    if (text && (text.includes("Upload") || /[0-9a-f]{8}-[0-9a-f-]{27,}/i.test(text))) {
-      const status = classifyAmazonResult(text);
-      if (status) {
-        const hrefs = await firstRow.locator("a").evaluateAll((links) => links.map((link) => link.getAttribute("href") || "")).catch(() => []);
-        const uploadId = [...text.matchAll(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi)][0]?.[0]
-          || hrefs.join(" ").match(/[?&/](?:uploadId|id)[=/]([^&/]+)/i)?.[1]
-          || null;
-        return { status, text: text.slice(0, 2_000), uploadId };
+      // 2. Tìm dòng khớp với tên file
+      for (const [idx, entry] of rowMap.entries()) {
+        if (entry.hasTarget) {
+          return {
+            fullText: entry.texts.join(" "),
+            hrefs: entry.hrefs,
+            matchedIndex: idx,
+          };
+        }
       }
-    }
-  }
 
-  // 3. Fallback: Kiểm tra thông báo toast / alert / banner trên trang
-  const banner = page.locator("[role='alert'], [data-testid*='alert'], [class*='banner'], [class*='notification'], [role='dialog']").first();
-  if (await banner.count()) {
-    const bannerText = (await banner.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
-    if (bannerText && bannerText.length > 5) {
-      const status = classifyAmazonResult(bannerText);
-      if (status && status !== "PROCESSING") {
-        return { status, text: bannerText.slice(0, 1_000), uploadId: null };
+      // 3. Fallback: Kiểm tra dòng đầu tiên (dòng mới nhất vừa nạp lên)
+      const firstEntry = rowMap.get("0") || Array.from(rowMap.values())[0];
+      if (firstEntry && firstEntry.texts.length > 0) {
+        const combined = firstEntry.texts.join(" ");
+        if (combined.toLowerCase().includes("upload") || /[0-9a-f]{8}-[0-9a-f-]{27,}/i.test(combined)) {
+          return {
+            fullText: combined,
+            hrefs: firstEntry.hrefs,
+            matchedIndex: "first",
+          };
+        }
       }
-    }
-  }
 
-  return null;
+      // 4. Fallback: Kiểm tra alert/banner/toast trên màn hình
+      const alertEls = Array.from(document.querySelectorAll("[role='alert'], [data-testid*='alert'], [class*='alert'], [class*='banner'], [class*='notification'], [role='dialog']"));
+      for (const a of alertEls) {
+        const alertText = ((a as HTMLElement).innerText || "").replace(/\s+/g, " ").trim();
+        if (alertText && alertText.length > 10) {
+          return {
+            fullText: alertText,
+            hrefs: [],
+            matchedIndex: "alert",
+          };
+        }
+      }
+
+      return null;
+    }, fileName);
+
+    if (!evalResult || !evalResult.fullText) return null;
+
+    const fullText = evalResult.fullText;
+    const status = classifyAmazonResult(fullText);
+    const uploadId = [...fullText.matchAll(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi)][0]?.[0]
+      || evalResult.hrefs.join(" ").match(/[?&/](?:uploadId|id)[=/]([^&/]+)/i)?.[1]
+      || null;
+
+    return { status, text: fullText.slice(0, 2_000), uploadId };
+  } catch (err) {
+    return null;
+  }
 }
 
 async function waitForAmazonResult(
