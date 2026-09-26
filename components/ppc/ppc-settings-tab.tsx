@@ -538,7 +538,12 @@ export function PpcSettingsTab({
                   bulkHistory.map((item) => (
                     <tr key={item.id} className="hover:bg-indigo-50/20 transition">
                       <td className="py-3 px-4 font-bold text-slate-900 flex items-center gap-2">
-                        <FileXls size={18} className="text-emerald-600" weight="fill" />
+                        <FileXls size={18} className="text-emerald-600 shrink-0" weight="fill" />
+                        {item.storeName && (
+                          <span className="shrink-0 px-1.5 py-0.2 rounded bg-blue-50 border border-blue-200 text-blue-700 text-[10px] font-bold uppercase">
+                            {item.storeName}
+                          </span>
+                        )}
                         <span>{item.fileName}</span>
                       </td>
                       <td className="py-3 px-4 text-center">

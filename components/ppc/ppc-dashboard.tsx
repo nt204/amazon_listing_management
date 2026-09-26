@@ -582,9 +582,13 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     }
   }, []);
 
-  const loadBulkHistory = useCallback(async () => {
+  const loadBulkHistory = useCallback(async (targetStore?: string) => {
     try {
-      const resHistory = await fetch("/api/ppc/bulk-export", { cache: "no-store" });
+      const activeStore = targetStore !== undefined ? targetStore : selectedStore;
+      const query = activeStore && activeStore !== "ALL"
+        ? `?storeName=${encodeURIComponent(activeStore)}`
+        : "?storeId=ALL";
+      const resHistory = await fetch(`/api/ppc/bulk-export${query}`, { cache: "no-store" });
       if (resHistory.ok) {
         const d = await resHistory.json();
         if (d?.data) setBulkHistory(d.data);
@@ -592,7 +596,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     } catch (e) {
       console.error(e);
     }
-  }, []);
+  }, [selectedStore]);
 
   const handleUpdateSkuEconomics = async (sku: string, updates: Partial<SkuEconomics>) => {
     const res = await fetch("/api/ppc/sku-economics", {
@@ -3896,9 +3900,13 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
         onRemoveActions={handleRemoveActions}
         onExportBulk={handleExportBulk}
         bulkHistory={bulkHistory}
-        onRefreshBulkHistory={() => void loadBulkHistory()}
-        storeName={selectedStore === "ALL" ? (stores[0]?.name || "HSOSTORE") : selectedStore}
-        storeId={stores.find((s) => s.name === selectedStore)?.id || stores[0]?.id}
+        onRefreshBulkHistory={() => void loadBulkHistory(selectedStore)}
+        storeName={selectedStore}
+        storeId={
+          selectedStore === "ALL"
+            ? "ALL"
+            : (stores.find((s) => s.name.toLowerCase() === selectedStore.toLowerCase())?.id || "")
+        }
         onRefreshActionQueue={() => void loadActionQueue()}
       />
 

@@ -138,6 +138,7 @@ export interface PpcAction {
 export interface PpcAutoUploadLog {
   id: string;
   storeId: string;
+  storeName?: string;
   fileName: string;
   adspowerProfileId?: string | null;
   adspowerProfileName?: string | null;
@@ -168,6 +169,7 @@ export interface BulkExportItem {
 export interface BulkExport {
   id: string;
   storeId: string;
+  storeName?: string;
   fileName: string;
   actionCount: number;
   summary: {

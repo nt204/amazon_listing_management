@@ -1649,19 +1649,29 @@ export async function exportBulkFromQueue(
   };
 }
 
-export async function getBulkExportHistory(storeId: string): Promise<BulkExport[]> {
+export async function getBulkExportHistory(storeId?: string | null): Promise<BulkExport[]> {
   const sql = await getDatabaseClient();
-  const rows = await sql<any[]>`
-    SELECT id, store_id, file_name, action_count, summary, status, created_at
-    FROM bulk_exports
-    WHERE store_id = ${storeId}
-    ORDER BY created_at DESC
-    LIMIT 50
-  `;
+  const rows = storeId && storeId !== "ALL"
+    ? await sql<any[]>`
+        SELECT b.id, b.store_id, s.name as store_name, b.file_name, b.action_count, b.summary, b.status, b.created_at
+        FROM bulk_exports b
+        LEFT JOIN ppc_stores s ON b.store_id = s.id
+        WHERE b.store_id = ${storeId}
+        ORDER BY b.created_at DESC
+        LIMIT 50
+      `
+    : await sql<any[]>`
+        SELECT b.id, b.store_id, s.name as store_name, b.file_name, b.action_count, b.summary, b.status, b.created_at
+        FROM bulk_exports b
+        LEFT JOIN ppc_stores s ON b.store_id = s.id
+        ORDER BY b.created_at DESC
+        LIMIT 50
+      `;
 
   return rows.map((r: any) => ({
     id: r.id,
     storeId: r.store_id,
+    storeName: r.store_name || "",
     fileName: r.file_name,
     actionCount: Number(r.action_count),
     summary: typeof r.summary === "string" ? JSON.parse(r.summary) : r.summary,
@@ -1797,21 +1807,33 @@ export async function reExportBulkFile(bulkExportId: string): Promise<{ buffer: 
   return { buffer, fileName: exportRecord.fileName };
 }
 
-export async function getAutoUploadLogs(storeId: string): Promise<PpcAutoUploadLog[]> {
+export async function getAutoUploadLogs(storeId?: string | null): Promise<PpcAutoUploadLog[]> {
   const sql = await getDatabaseClient();
-  const rows = await sql<any[]>`
-    SELECT id, store_id, file_name, adspower_profile_id, adspower_profile_name,
-           action_count, skus, status, stage, file_status, file_error_message,
-           error_message, result_summary, duration_ms, created_at
-    FROM ppc_auto_upload_logs
-    WHERE store_id = ${storeId}
-    ORDER BY created_at DESC
-    LIMIT 50
-  `;
+  const rows = storeId && storeId !== "ALL"
+    ? await sql<any[]>`
+        SELECT l.id, l.store_id, s.name as store_name, l.file_name, l.adspower_profile_id, l.adspower_profile_name,
+               l.action_count, l.skus, l.status, l.stage, l.file_status, l.file_error_message,
+               l.error_message, l.result_summary, l.duration_ms, l.created_at
+        FROM ppc_auto_upload_logs l
+        LEFT JOIN ppc_stores s ON l.store_id = s.id
+        WHERE l.store_id = ${storeId}
+        ORDER BY l.created_at DESC
+        LIMIT 50
+      `
+    : await sql<any[]>`
+        SELECT l.id, l.store_id, s.name as store_name, l.file_name, l.adspower_profile_id, l.adspower_profile_name,
+               l.action_count, l.skus, l.status, l.stage, l.file_status, l.file_error_message,
+               l.error_message, l.result_summary, l.duration_ms, l.created_at
+        FROM ppc_auto_upload_logs l
+        LEFT JOIN ppc_stores s ON l.store_id = s.id
+        ORDER BY l.created_at DESC
+        LIMIT 50
+      `;
 
   return rows.map((r: any) => ({
     id: r.id,
     storeId: r.store_id,
+    storeName: r.store_name || "",
     fileName: r.file_name || "",
     adspowerProfileId: r.adspower_profile_id,
     adspowerProfileName: r.adspower_profile_name,

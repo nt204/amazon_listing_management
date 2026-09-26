@@ -20,7 +20,11 @@ export async function GET(request: Request) {
       return Response.json({ success: true, data: details });
     }
 
-    const storeId = await resolveStoreId(searchParams.get("storeId"));
+    const rawStore = searchParams.get("storeId") || searchParams.get("storeName");
+    let storeId: string | null = null;
+    if (rawStore && rawStore !== "ALL") {
+      storeId = await resolveStoreId(rawStore);
+    }
     const logs = await getAutoUploadLogs(storeId);
     return Response.json({ success: true, data: logs });
   } catch (error) {

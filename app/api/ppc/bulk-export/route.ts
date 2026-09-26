@@ -33,7 +33,11 @@ export async function GET(request: Request) {
     }
 
     // 3. Lấy danh sách lịch sử
-    const storeId = await resolveStoreId(searchParams.get("storeId"));
+    const rawStore = searchParams.get("storeId") || searchParams.get("storeName");
+    let storeId: string | null = null;
+    if (rawStore && rawStore !== "ALL") {
+      storeId = await resolveStoreId(rawStore);
+    }
     const history = await getBulkExportHistory(storeId);
     return Response.json({ success: true, data: history });
   } catch (error) {

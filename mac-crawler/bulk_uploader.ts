@@ -23,12 +23,12 @@ export type AmazonBulkResult = {
 };
 
 const BULK_RESULT_TIMEOUT_MS = Math.max(
-  60_000,
-  Number.parseInt(process.env.BULK_RESULT_TIMEOUT_MS || "900000", 10) || 900_000,
+  30_000,
+  Number.parseInt(process.env.BULK_RESULT_TIMEOUT_MS || "180000", 10) || 180_000,
 );
 const BULK_RESULT_POLL_MS = Math.max(
-  5_000,
-  Number.parseInt(process.env.BULK_RESULT_POLL_MS || "15000", 10) || 15_000,
+  3_000,
+  Number.parseInt(process.env.BULK_RESULT_POLL_MS || "10000", 10) || 10_000,
 );
 
 function uploadRoot() {

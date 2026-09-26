@@ -360,8 +360,14 @@ export function PpcStOptimizationView({
     setAutoUploadStep(1);
 
     try {
+      const activeStoreName = selectedStore !== "ALL"
+        ? selectedStore
+        : (modalCandidates.find((c) => c.storeName)?.storeName || modalCandidates[0]?.storeName || "");
+      const activeStoreId = modalCandidates.find((c) => c.storeId)?.storeId || modalCandidates[0]?.storeId;
+
       const payload = {
-        storeName: selectedStore,
+        storeName: activeStoreName,
+        storeId: activeStoreId,
         items: modalCandidates.map((c) => ({
           customerSearchTerm: c.customerSearchTerm,
           campaignName: c.campaignName,
@@ -374,6 +380,8 @@ export function PpcStOptimizationView({
           clicks: c.clicks,
           orders: c.orders,
           spend: c.spend,
+          storeId: c.storeId,
+          storeName: c.storeName,
         })),
       };
 

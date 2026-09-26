@@ -617,9 +617,9 @@ export function PpcActionQueueDrawer({
   const loadAutoLogs = useCallback(async () => {
     try {
       setIsLoadingAutoLogs(true);
-      const url = storeId
+      const url = storeId && storeId !== "ALL"
         ? `/api/ppc/auto-upload?storeId=${encodeURIComponent(storeId)}`
-        : `/api/ppc/auto-upload`;
+        : `/api/ppc/auto-upload?storeId=ALL`;
       const res = await fetch(url);
       if (res.ok) {
         const json = await res.json();
@@ -634,13 +634,22 @@ export function PpcActionQueueDrawer({
     }
   }, [storeId]);
 
+  const displayedAutoLogs = useMemo(() => {
+    if (!storeName || storeName === "ALL") return autoLogs;
+    return autoLogs.filter((l) => {
+      if (l.storeName && l.storeName.toLowerCase() === storeName.toLowerCase()) return true;
+      if (storeId && storeId !== "ALL" && l.storeId === storeId) return true;
+      return false;
+    });
+  }, [autoLogs, storeName, storeId]);
+
   useEffect(() => {
     if (isOpen) {
       void loadAutoLogs();
     }
   }, [isOpen, loadAutoLogs]);
 
-  const hasActiveAutoUpload = autoLogs.some((log) =>
+  const hasActiveAutoUpload = displayedAutoLogs.some((log) =>
     ["PENDING", "RUNNING", "RETRY_WAIT"].includes(log.status),
   );
 
@@ -1483,7 +1492,16 @@ export function PpcActionQueueDrawer({
               <div className="flex items-center justify-between border-b border-slate-200 px-3.5 py-2.5 bg-slate-50/50">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
                   <Lightning size={14} weight="fill" className="text-amber-600" />
-                  <span>Kết quả thực thi ({autoLogs.length})</span>
+                  <span>Kết quả thực thi ({displayedAutoLogs.length})</span>
+                  {storeName && storeName !== "ALL" ? (
+                    <span className="ml-1 rounded-md bg-blue-50 border border-blue-200 px-1.5 py-0.5 text-[10px] font-bold text-blue-700 uppercase tracking-wider">
+                      {storeName}
+                    </span>
+                  ) : (
+                    <span className="ml-1 rounded-md bg-slate-100 border border-slate-200 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">
+                      Tất cả shop
+                    </span>
+                  )}
                 </div>
 
                 <button
@@ -1504,13 +1522,13 @@ export function PpcActionQueueDrawer({
               </div>
 
               <div className="max-h-[min(56vh,38rem)] overflow-y-auto overscroll-contain">
-                {autoLogs.length === 0 ? (
+                {displayedAutoLogs.length === 0 ? (
                   <div className="px-4 py-8 text-center text-xs text-slate-400">
-                    Chưa có lượt Auto Upload AdsPower nào được ghi nhận.
+                    Chưa có lượt Auto Upload AdsPower nào được ghi nhận{storeName && storeName !== "ALL" ? ` cho shop ${storeName}` : ""}.
                   </div>
                 ) : (
                   <div className="divide-y divide-slate-100">
-                    {autoLogs.map((log) => {
+                    {displayedAutoLogs.map((log) => {
                       const statusMeta = getAutoUploadStatusMeta(log.status);
                       const matchedBulk = bulkHistory.find((b) => b.fileName === log.fileName);
                       const canReupload = log.fileStatus !== "FAILED" && ["FAILED", "PARTIAL_SUCCESS", "RESULT_TIMEOUT"].includes(log.status);
@@ -1526,8 +1544,13 @@ export function PpcActionQueueDrawer({
                         >
                           <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between">
                             <div className="min-w-0 flex-1">
-                              <div className="flex items-start gap-1.5">
-                                <Lightning size={15} className="shrink-0 text-amber-600" weight="fill" />
+                              <div className="flex items-start gap-1.5 flex-wrap">
+                                <Lightning size={15} className="shrink-0 text-amber-600 mt-0.5" weight="fill" />
+                                {log.storeName && (
+                                  <span className="shrink-0 px-1.5 py-0.2 rounded bg-blue-50 border border-blue-200 text-blue-700 text-[10px] font-bold uppercase">
+                                    {log.storeName}
+                                  </span>
+                                )}
                                 <span
                                   className="min-w-0 text-xs font-bold leading-5 text-slate-800 [overflow-wrap:anywhere]"
                                   title={log.fileName || "File chưa được tạo"}
