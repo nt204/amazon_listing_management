@@ -18,9 +18,11 @@ import {
   X,
   Info,
   WarningCircle,
+  ShieldCheck,
 } from "@phosphor-icons/react";
 import type { PpcSearchTermRow, MatchType, PpcAdType } from "@/lib/ppc/types";
 import { PpcPagination } from "./ppc-pagination";
+import { PpcNegativeHubView, type NegativeRegistryItem } from "./ppc-negative-hub-view";
 
 export interface StOptimizationCandidate {
   key: string;
@@ -41,6 +43,7 @@ export interface StOptimizationCandidate {
   sales: number;
   orders: number;
   cpc: number;
+  isAlreadyNegated?: boolean;
 }
 
 interface PpcStOptimizationViewProps {
@@ -60,6 +63,24 @@ export function PpcStOptimizationView({
   loading,
   notify,
 }: PpcStOptimizationViewProps) {
+  // 0. Sub-tab state (Tab 1: Candidates, Tab 2: Negative Hub)
+  const [subTab, setSubTab] = useState<"candidates" | "registry">("candidates");
+
+  // Negative Registry state
+  const [registryItems, setRegistryItems] = useState<NegativeRegistryItem[]>([]);
+  const [registrySummary, setRegistrySummary] = useState<{
+    totalNegatives: number;
+    totalCampaigns: number;
+    totalSpendPrevented: number;
+  }>({
+    totalNegatives: 0,
+    totalCampaigns: 0,
+    totalSpendPrevented: 0,
+  });
+  const [negatedLookupSet, setNegatedLookupSet] = useState<Set<string>>(new Set());
+  const [loadingRegistry, setLoadingRegistry] = useState<boolean>(false);
+  const [hideNegated, setHideNegated] = useState<boolean>(true);
+
   // 1. Threshold controls (User requirement: mặc định clicks > 20, có 1 ô nhỏ điều chỉnh ngưỡng click)
   const [clickThreshold, setClickThreshold] = useState<number>(20);
   const [clickOperator, setClickOperator] = useState<">" | ">=">(">");
@@ -70,6 +91,35 @@ export function PpcStOptimizationView({
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  // Fetch registry
+  const fetchRegistry = async () => {
+    try {
+      setLoadingRegistry(true);
+      const params = new URLSearchParams();
+      if (selectedStore && selectedStore !== "ALL") {
+        params.set("storeName", selectedStore);
+      }
+      const res = await fetch(`/api/ppc/negative-keywords?${params.toString()}`);
+      if (!res.ok) return;
+      const json = await res.json();
+      if (json.success && json.data) {
+        setRegistryItems(json.data.items || []);
+        setRegistrySummary(
+          json.data.summary || { totalNegatives: 0, totalCampaigns: 0, totalSpendPrevented: 0 },
+        );
+        setNegatedLookupSet(new Set(json.data.lookupKeys || []));
+      }
+    } catch (err) {
+      console.error("Lỗi khi tải Negative Registry:", err);
+    } finally {
+      setLoadingRegistry(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRegistry();
+  }, [selectedStore]);
 
   // Auto Upload AdsPower modal state
   const [isAutoUploadModalOpen, setIsAutoUploadModalOpen] = useState<boolean>(false);
@@ -154,10 +204,16 @@ export function PpcStOptimizationView({
 
     for (const c of candidates) {
       c.cpc = c.clicks > 0 ? Math.round((c.spend / c.clicks) * 100) / 100 : 0;
+      c.isAlreadyNegated = negatedLookupSet.has(c.key);
     }
 
     return candidates;
-  }, [searchTerms, clickThreshold, clickOperator]);
+  }, [searchTerms, clickThreshold, clickOperator, negatedLookupSet]);
+
+  // Đếm số từ khóa vi phạm nhưng đã bị phủ định trước đó
+  const negatedCount = useMemo(() => {
+    return allCandidates.filter((c) => c.isAlreadyNegated).length;
+  }, [allCandidates]);
 
   // Unique campaigns among candidates for filter dropdown
   const candidateCampaigns = useMemo(() => {
@@ -167,6 +223,11 @@ export function PpcStOptimizationView({
   // 4. Filtered & Sorted candidates
   const filteredCandidates = useMemo(() => {
     let list = [...allCandidates];
+
+    // Lọc bỏ từ đã phủ định nếu bật toggle hideNegated
+    if (hideNegated) {
+      list = list.filter((c) => !c.isAlreadyNegated);
+    }
 
     if (campaignFilter !== "ALL") {
       list = list.filter((c) => c.campaignName === campaignFilter);
@@ -211,7 +272,7 @@ export function PpcStOptimizationView({
 
   // Checkbox handlers
   const handleToggleSelectAll = () => {
-    const visibleKeys = paginatedCandidates.map((c) => c.key);
+    const visibleKeys = paginatedCandidates.filter((c) => !c.isAlreadyNegated).map((c) => c.key);
     const allSelected = visibleKeys.length > 0 && visibleKeys.every((k) => selectedKeys.has(k));
 
     setSelectedKeys((prev) => {
@@ -333,9 +394,10 @@ export function PpcStOptimizationView({
 
   // Target list for modal and execution
   const modalCandidates = useMemo(() => {
-    return selectedKeys.size > 0
+    const list = selectedKeys.size > 0
       ? filteredCandidates.filter((c) => selectedKeys.has(c.key))
       : filteredCandidates;
+    return list.filter((c) => !c.isAlreadyNegated);
   }, [filteredCandidates, selectedKeys]);
 
   const handleOpenAutoUploadModal = () => {
@@ -435,6 +497,9 @@ export function PpcStOptimizationView({
             resultSummary: l.result_summary ?? l.resultSummary,
             errorMessage: l.error_message ?? l.errorMessage,
           });
+          if (l.status === "SUCCESS" || l.status === "COMPLETED") {
+            fetchRegistry();
+          }
         }
       } catch {
         // ignore background poll error
@@ -460,8 +525,78 @@ export function PpcStOptimizationView({
 
   return (
     <div className="space-y-4">
-      {/* 1. Rule & Filter Control Bar */}
-      <div className="flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+      {/* 0. Sub-tab Navigation (User preference: Tab con ngay trong mục Phủ Định ST) */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setSubTab("candidates")}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer ${
+              subTab === "candidates"
+                ? "bg-rose-600 text-white shadow-xs"
+                : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            <Prohibit size={15} weight="bold" />
+            <span>Đề Xuất Phủ Định ST</span>
+            <span
+              className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                subTab === "candidates" ? "bg-rose-700 text-white" : "bg-slate-100 text-slate-700"
+              }`}
+            >
+              {allCandidates.filter((c) => !c.isAlreadyNegated).length}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSubTab("registry")}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer ${
+              subTab === "registry"
+                ? "bg-indigo-600 text-white shadow-xs"
+                : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            <ShieldCheck size={15} weight="bold" />
+            <span>Danh Sách Đã Phủ Định (Negative Hub)</span>
+            <span
+              className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                subTab === "registry" ? "bg-indigo-700 text-white" : "bg-slate-100 text-slate-700"
+              }`}
+            >
+              {registrySummary.totalNegatives}
+            </span>
+          </button>
+        </div>
+
+        {subTab === "candidates" && (
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-2 cursor-pointer bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition shadow-2xs">
+              <input
+                type="checkbox"
+                checked={hideNegated}
+                onChange={(e) => {
+                  setHideNegated(e.target.checked);
+                  setPage(1);
+                  setSelectedKeys(new Set());
+                }}
+                className="rounded border-slate-300 text-rose-600 focus:ring-rose-500 h-4 w-4 cursor-pointer"
+              />
+              <span>Ẩn từ khóa đã phủ định</span>
+              {negatedCount > 0 && (
+                <span className="bg-emerald-100 text-emerald-800 text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+                  {negatedCount} từ đã ẩn
+                </span>
+              )}
+            </label>
+          </div>
+        )}
+      </div>
+
+      {subTab === "candidates" ? (
+        <>
+          {/* 1. Rule & Filter Control Bar */}
+          <div className="flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
         {/* Left: Rule Configuration Controls */}
         <div className="flex flex-wrap items-center gap-2.5">
           {/* Rule Badge: Orders = 0 */}
@@ -739,8 +874,10 @@ export function PpcStOptimizationView({
                       <input
                         type="checkbox"
                         checked={isSelected}
+                        disabled={c.isAlreadyNegated}
                         onChange={() => handleToggleRow(c.key)}
-                        className="rounded border-slate-300 accent-rose-600 cursor-pointer"
+                        className="rounded border-slate-300 accent-rose-600 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                        title={c.isAlreadyNegated ? "Từ khóa này đã được phủ định trước đó" : undefined}
                       />
                     </td>
 
@@ -759,10 +896,17 @@ export function PpcStOptimizationView({
                           {isCopied ? <CheckCircle size={13} className="text-emerald-600" /> : <Copy size={13} />}
                         </button>
                       </div>
-                      {isProduct && (
-                        <span className="inline-block mt-0.5 text-[9px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded px-1">
-                          ASIN / Product
+                      {c.isAlreadyNegated ? (
+                        <span className="inline-flex items-center gap-1 mt-0.5 text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5">
+                          <ShieldCheck size={11} weight="bold" />
+                          <span>Đã Phủ Định</span>
                         </span>
+                      ) : (
+                        isProduct && (
+                          <span className="inline-block mt-0.5 text-[9px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded px-1">
+                            ASIN / Product
+                          </span>
+                        )
                       )}
                     </td>
 
@@ -808,10 +952,17 @@ export function PpcStOptimizationView({
 
                     {/* Action Tag */}
                     <td className="py-2.5 px-3 text-center">
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[10px] font-black border border-rose-200">
-                        <Prohibit size={11} weight="bold" />
-                        <span>Negative Exact</span>
-                      </span>
+                      {c.isAlreadyNegated ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[10px] font-bold border border-emerald-200">
+                          <ShieldCheck size={11} weight="bold" />
+                          <span>Đã Chặn</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[10px] font-black border border-rose-200">
+                          <Prohibit size={11} weight="bold" />
+                          <span>Negative Exact</span>
+                        </span>
+                      )}
                     </td>
                   </tr>
                 );
@@ -834,6 +985,17 @@ export function PpcStOptimizationView({
           setPage(1);
         }}
       />
+        </>
+      ) : (
+        <PpcNegativeHubView
+          selectedStore={selectedStore}
+          items={registryItems}
+          summary={registrySummary}
+          loading={loadingRegistry}
+          onRefresh={fetchRegistry}
+          notify={notify}
+        />
+      )}
 
       {/* 6. Auto Upload AdsPower Confirmation & Execution Modal */}
       {isAutoUploadModalOpen && (
