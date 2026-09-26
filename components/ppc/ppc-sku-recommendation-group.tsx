@@ -1591,24 +1591,43 @@ function getRuleExplanation(
     .replace(/\s*\(Sàn rule:[^)]+\)\s*$/i, "")
     .trim();
 
+  // 1. Nhận diện chính xác Base tính toán theo nội dung luật trong reason
+  // - Nếu rule chứa "Avg CPC" -> base là Avg CPC (exactCpc)
+  // - Nếu rule chứa "Current Bid" -> base là Current Bid
+  // - Fallback: BID_INCREASE dùng Current Bid, BID_DECREASE dùng Avg CPC
+  const isAvgCpcBase = /avg\s*cpc/i.test(rec.reason || "");
+  const isCurrentBidBase = /current\s*bid/i.test(rec.reason || "");
+
   const exactCpc = rec.spend && rec.clicks && rec.clicks > 0 ? rec.spend / rec.clicks : (rec.cpc || rec.currentBid || 0);
-  const calculationBase = isIncrease ? (rec.currentBid || 0) : exactCpc;
+  const calculationBase = isAvgCpcBase
+    ? exactCpc
+    : isCurrentBidBase
+    ? (rec.currentBid || 0)
+    : (rec.recType === "BID_INCREASE" ? (rec.currentBid || 0) : exactCpc);
+  const baseLabel = isAvgCpcBase
+    ? "Avg CPC"
+    : isCurrentBidBase
+    ? "Current Bid"
+    : (rec.recType === "BID_INCREASE" ? "Current Bid" : "Avg CPC");
+
+  // 2. Lấy % điều chỉnh từ rule text (ví dụ: -> -15% Avg CPC)
   const rulePercentMatch = rec.reason?.match(/->\s*([+-]?\d+(?:\.\d+)?)%/i);
   const displayedRulePercent = rulePercentMatch ? Number(rulePercentMatch[1]) : null;
-  const actualMultiplier = calculationBase > 0 ? (rec.recommendedBid || 0) / calculationBase : 0;
-  const actualChangePercent = (actualMultiplier - 1) * 100;
-  const ruleMultiplier = displayedRulePercent === null ? actualMultiplier : 1 + displayedRulePercent / 100;
-  const ruleChangePercent = displayedRulePercent ?? actualChangePercent;
+
+  const ruleMultiplier = displayedRulePercent !== null
+    ? 1 + displayedRulePercent / 100
+    : (calculationBase > 0 ? (rec.recommendedBid || 0) / calculationBase : 1);
+  const ruleChangePercent = displayedRulePercent ?? ((ruleMultiplier - 1) * 100);
+
   const rawRuleBid = calculationBase * ruleMultiplier;
   const wasAdjusted = Math.abs(rawRuleBid - (rec.recommendedBid || 0)) >= 0.005;
   const calculationResult = wasAdjusted
     ? `$${rawRuleBid.toFixed(4)} → $${(rec.recommendedBid || 0).toFixed(2)}`
     : `$${(rec.recommendedBid || 0).toFixed(2)}`;
+
   const formula = isPause
     ? `Không tính bid mới: target được chuyển sang PAUSE để dừng phát sinh chi phí.`
-    : isIncrease
-    ? `$${calculationBase.toFixed(2)} Current Bid × ${ruleMultiplier.toFixed(3)} (${ruleChangePercent >= 0 ? "+" : ""}${ruleChangePercent.toFixed(1)}%) = ${calculationResult}`
-    : `$${calculationBase.toFixed(2)} Avg CPC × ${ruleMultiplier.toFixed(3)} (${ruleChangePercent.toFixed(1)}%) = ${calculationResult}`;
+    : `$${calculationBase.toFixed(2)} ${baseLabel} × ${ruleMultiplier.toFixed(3)} (${ruleChangePercent >= 0 ? "+" : ""}${ruleChangePercent.toFixed(1)}%) = ${calculationResult}`;
 
   const minBidMatch = rec.reason?.match(/Sàn rule:\s*\$([0-9.]+)/i);
   const minBid = Number(minBidMatch?.[1] || 0.10);
