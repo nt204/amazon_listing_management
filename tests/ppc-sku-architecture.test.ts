@@ -231,21 +231,27 @@ test("evaluateRowWithRuleEngine evaluates common rules for SP01, SP03, SP04, SB0
   assert.equal(sp03ZeroClick?.recType, "BID_INCREASE");
   assert.equal(sp03ZeroClick?.recommendedBid, 1.05);
 
+  // SP01, SP02, SP04 tạm thời không áp dụng chỉnh bid
   const sp01ZeroClick = evaluateRowWithRuleEngine(
     makeRow({ campaignName: "BHL180660A01 SP01 Broad", sales: 0, spend: 0, clicks: 0, orders: 0 }),
     ruleMap,
     econMap,
   );
-  assert.equal(sp01ZeroClick?.ruleProfile, "SP01 v1.0");
-  assert.match(sp01ZeroClick?.reason || "", /^\[SP01\]/);
+  assert.equal(sp01ZeroClick, null);
+
+  const sp02ZeroClick = evaluateRowWithRuleEngine(
+    makeRow({ campaignName: "BHL180660A01 SP02 Phrase", sales: 0, spend: 0, clicks: 0, orders: 0 }),
+    ruleMap,
+    econMap,
+  );
+  assert.equal(sp02ZeroClick, null);
 
   const sp04ZeroClick = evaluateRowWithRuleEngine(
     makeRow({ campaignName: "BHL180660A01 SP04 Auto", sales: 0, spend: 0, clicks: 0, orders: 0 }),
     ruleMap,
     econMap,
   );
-  assert.equal(sp04ZeroClick?.ruleProfile, "SP04 v1.0");
-  assert.match(sp04ZeroClick?.reason || "", /^\[SP04\]/);
+  assert.equal(sp04ZeroClick, null);
 
   // Không tự gán campaign không có mã rule thành SP03/SB01.
   const unknownCampaign = evaluateRowWithRuleEngine(

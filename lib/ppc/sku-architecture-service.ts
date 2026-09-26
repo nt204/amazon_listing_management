@@ -946,20 +946,23 @@ export function evaluateRowWithRuleEngine(
     (row.sku || (row.campaignName ? row.campaignName.trim().split(/\s+/)[0] : ""))
   ).toUpperCase();
   const campaignName = (row.campaignName || "").toUpperCase();
+
+  // Yêu cầu: Phần chỉnh bid chỉ áp dụng cho SP03, SB05, SB01.
+  // SP04, SP01, SP02 tạm thời không áp dụng.
+  if (/\bSP01\b|SP01|\bSP02\b|SP02|\bSP04\b|SP04/.test(campaignName)) {
+    return null;
+  }
+
   const format = /SB05|\bVIDEO\b/.test(campaignName)
     ? "SB05"
     : /SB01/.test(campaignName)
       ? "SB01"
-      : /SP01/.test(campaignName)
-        ? "SP01"
-        : /SP03/.test(campaignName)
-          ? "SP03"
-          : /SP04/.test(campaignName)
-            ? "SP04"
-            : null;
+      : /SP03/.test(campaignName)
+        ? "SP03"
+        : null;
+
   if (!format) return null;
-  const isSponsoredProduct = format.startsWith("SP");
-  const rule = ruleMap.get(format) || (isSponsoredProduct ? ruleMap.get("SP03") : undefined);
+  const rule = ruleMap.get(format);
   if (!rule) return null;
 
   const econ = econMap.get(sku);

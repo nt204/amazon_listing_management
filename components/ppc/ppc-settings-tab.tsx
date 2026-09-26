@@ -386,7 +386,7 @@ export function PpcSettingsTab({
                       : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
                   }`}
                 >
-                  [{type === "SP03" ? "SP01 / SP03 / SP04" : type}]
+                  [{type}]
                 </button>
               ))}
             </div>
@@ -1888,7 +1888,7 @@ export function PpcRuleManagerStandalone() {
                       : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
                   }`}
                 >
-                  [{type === "SP03" ? "SP01 / SP03 / SP04" : type}]
+                  [{type}]
                 </button>
               ))}
             </div>
