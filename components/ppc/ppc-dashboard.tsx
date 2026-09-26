@@ -1010,6 +1010,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       else map.set(key, [term]);
     };
     for (const term of searchTerms) {
+      const storeKey = (term.storeId || term.storeName || "").trim().toLowerCase();
       const camp = norm(term.campaignName);
       const ag = norm(term.adGroupName);
       const campaignId = (term.campaignId || "").trim();
@@ -1017,9 +1018,13 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
 
       if (campaignId) append(byCampId, campaignId, term);
       if (campaignId && adGroupId) append(byAgId, `${campaignId}\u0000${adGroupId}`, term);
-      if (camp) append(byCamp, camp, term);
+      if (camp) {
+        append(byCamp, `${storeKey}\u0000${camp}`, term);
+        append(byCamp, camp, term);
+      }
 
       if (camp && ag) {
+        append(byAg, `${storeKey}\u0000${camp}|||${ag}`, term);
         append(byAg, `${camp}|||${ag}`, term);
       }
     }
@@ -1031,10 +1036,34 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     };
   }, [searchTerms]);
 
-  // Search terms are shown in two layers: confirmed source attribution first,
-  // then a conservative inference only when one target is the sole match.
+  // Search terms are attributed in two layers:
+  // Layer 1: Confirmed source attribution directly from Amazon reporting (Keyword ID or Targeting expression + Match Type).
+  // Layer 2: Conservative inference ONLY when the search term report leaves targeting blank, requiring unambiguous sole match.
   const getChildSearchTerms = useCallback((target: PpcTargetPerformance) => {
     const norm = (s: string) => (s || "").toLowerCase().replace(/\s+/g, " ").trim();
+    const normalizeTarget = (val: string | undefined | null) => {
+      if (!val) return "";
+      let s = val.toLowerCase().trim();
+      s = s.replace(/^["'\[]+|["'\]]+$/g, "").trim();
+      const asinMatch = s.match(/^asin\s*=\s*["']?([a-z0-9]{10})["']?$/i);
+      if (asinMatch) return asinMatch[1];
+      return s.replace(/\s+/g, " ");
+    };
+    const normalizeMatchType = (m: string | undefined | null) => {
+      const s = (m || "").toLowerCase().trim();
+      if (s.includes("exact")) return "exact";
+      if (s.includes("phrase")) return "phrase";
+      if (s.includes("broad")) return "broad";
+      if (s.includes("auto")) return "auto";
+      if (s.includes("target")) return "targeting";
+      return "unknown";
+    };
+    const isMatchTypeCompatible = (tm: string | undefined | null, targetM: string | undefined | null) => {
+      const a = normalizeMatchType(tm);
+      const b = normalizeMatchType(targetM);
+      if (a === "unknown" || b === "unknown") return true;
+      return a === b;
+    };
     const lexicalNorm = (s: string) => norm(s)
       .replace(/['’]s\b/g, "")
       .replace(/\+/g, " ")
@@ -1043,128 +1072,169 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       .trim();
     const id = (value: string | undefined) => (value || "").trim();
     const stopWords = new Set(["a", "an", "the", "for", "to", "my"]);
+    const stemWord = (word: string) => {
+      if (word.endsWith("ies") && word.length > 4) return `${word.slice(0, -3)}y`;
+      if (word.endsWith("es") && word.length > 3 && !word.endsWith("sses")) return word.slice(0, -2);
+      if (word.endsWith("s") && word.length > 2 && !word.endsWith("ss")) return word.slice(0, -1);
+      return word;
+    };
     const canonicalTokens = (value: string) => lexicalNorm(value)
       .split(" ")
       .filter((word) => word && !stopWords.has(word))
-      .map((word) => word.endsWith("ies") ? `${word.slice(0, -3)}y` : word.endsWith("s") && !word.endsWith("ss") ? word.slice(0, -1) : word)
+      .map(stemWord)
       .sort();
-    const targetKwNorm = norm(target.targetKeyword);
+
+    const targetKwNorm = normalizeTarget(target.targetKeyword);
     const targetId = id(target.targetId);
     const targetCampaignId = id(target.campaignId);
     const targetAdGroupId = id(target.adGroupId);
+    const storeKey = id(target.storeId) || norm(target.storeName);
     const campNorm = norm(target.campaignName);
     const agNorm = norm(target.adGroupName);
     const isSb = target.adType === "SB";
     const isNumericAg = /^\d+$/.test(agNorm);
 
-    // Determine candidates:
-    // 1. If real named ad group in SP, look up by campaign + adGroup
-    // 2. Otherwise (SB or numeric fallback ad group ID), look up by campaign
-    // 3. Fallback to all search terms if not found
+    // Determine candidate pool
     let candidates: PpcSearchTermRow[];
     const idAgKey = `${targetCampaignId}\u0000${targetAdGroupId}`;
-    const agKey = `${campNorm}|||${agNorm}`;
+    const scopedAgKey = `${storeKey}\u0000${campNorm}|||${agNorm}`;
+    const rawAgKey = `${campNorm}|||${agNorm}`;
+    const scopedCampKey = `${storeKey}\u0000${campNorm}`;
+
     if (targetCampaignId && targetAdGroupId && searchTermsByAdGroupId.has(idAgKey)) {
       candidates = searchTermsByAdGroupId.get(idAgKey)!;
     } else if (targetCampaignId && searchTermsByCampaignId.has(targetCampaignId)) {
       candidates = searchTermsByCampaignId.get(targetCampaignId)!;
-    } else if (campNorm && agNorm && !isNumericAg && !isSb && searchTermsByAdGroup.has(agKey)) {
-      candidates = searchTermsByAdGroup.get(agKey)!;
-    } else if (campNorm && searchTermsByCampaign.has(campNorm)) {
-      candidates = searchTermsByCampaign.get(campNorm)!;
+    } else if (campNorm && agNorm && !isNumericAg && !isSb && (searchTermsByAdGroup.has(scopedAgKey) || searchTermsByAdGroup.has(rawAgKey))) {
+      candidates = searchTermsByAdGroup.get(scopedAgKey) || searchTermsByAdGroup.get(rawAgKey)!;
+    } else if (campNorm && (searchTermsByCampaign.has(scopedCampKey) || searchTermsByCampaign.has(campNorm))) {
+      candidates = searchTermsByCampaign.get(scopedCampKey) || searchTermsByCampaign.get(campNorm)!;
     } else {
       candidates = searchTerms;
     }
 
     const isInTargetScope = (term: PpcSearchTermRow, candidate: PpcTargetPerformance) => {
+      // 1. Store scope
       const termStoreId = id(term.storeId);
-      const candidateStoreId = id(candidate.storeId);
-      if (termStoreId && candidateStoreId && termStoreId !== candidateStoreId) return false;
-      if ((!termStoreId || !candidateStoreId) && norm(term.storeName || "") && norm(candidate.storeName) && norm(term.storeName || "") !== norm(candidate.storeName)) return false;
+      const candStoreId = id(candidate.storeId);
+      if (termStoreId && candStoreId && termStoreId !== candStoreId) return false;
+      const termStoreName = norm(term.storeName || "");
+      const candStoreName = norm(candidate.storeName || "");
+      if (termStoreName && candStoreName && termStoreName !== candStoreName) return false;
 
+      // 2. Ad Type scope (SP vs SB vs SD)
       if (term.adType && term.adType !== "UNKNOWN" && candidate.adType && candidate.adType !== "UNKNOWN" && term.adType !== candidate.adType) return false;
 
-      const termCampaignId = id(term.campaignId);
-      const candidateCampaignId = id(candidate.campaignId);
-      const candidateCamp = norm(candidate.campaignName);
-      if (termCampaignId && candidateCampaignId) {
-        if (termCampaignId !== candidateCampaignId) return false;
-      } else if (candidateCamp && norm(term.campaignName) !== candidateCamp) {
+      // 3. Campaign scope
+      const termCampId = id(term.campaignId);
+      const candCampId = id(candidate.campaignId);
+      const termCampName = norm(term.campaignName);
+      const candCampName = norm(candidate.campaignName);
+      if (termCampId && candCampId) {
+        if (termCampId !== candCampId) return false;
+      } else if (candCampName && termCampName && termCampName !== candCampName) {
         return false;
       }
 
-      const termAdGroupId = id(term.adGroupId);
-      const candidateAdGroupId = id(candidate.adGroupId);
-      const candidateAg = norm(candidate.adGroupName);
-      const candidateIsSb = candidate.adType === "SB";
-      const candidateIsNumericAg = /^\d+$/.test(candidateAg);
-      if (!candidateIsSb) {
-        if (termAdGroupId && candidateAdGroupId) {
-          if (termAdGroupId !== candidateAdGroupId) return false;
-        } else if (candidateAg && !candidateIsNumericAg && norm(term.adGroupName) !== candidateAg) {
+      // 4. Ad Group scope (SB campaigns omit ad groups or have default ad group)
+      const candIsSb = candidate.adType === "SB" || term.adType === "SB";
+      if (!candIsSb) {
+        const termAgId = id(term.adGroupId);
+        const candAgId = id(candidate.adGroupId);
+        const termAgName = norm(term.adGroupName);
+        const candAgName = norm(candidate.adGroupName);
+        const isNumeric = /^\d+$/.test(candAgName);
+        if (termAgId && candAgId) {
+          if (termAgId !== candAgId) return false;
+        } else if (candAgName && termAgName && !isNumeric && termAgName !== candAgName) {
           return false;
         }
       }
       return true;
     };
 
-    const matchesByRule = (term: PpcSearchTermRow, candidate: PpcTargetPerformance) => {
-      const candidateTokens = canonicalTokens(candidate.targetKeyword);
-      const queryTokens = canonicalTokens(term.customerSearchTerm);
-      if (!candidateTokens.length || !queryTokens.length) return false;
-      const candidateMatchType = (candidate.matchType || "").toLowerCase();
-      if (candidateMatchType === "exact") {
-        return candidateTokens.length === queryTokens.length && candidateTokens.every((word, index) => word === queryTokens[index]);
+    const matchesTargetForInference = (term: PpcSearchTermRow, candidate: PpcTargetPerformance) => {
+      const candNorm = normalizeTarget(candidate.targetKeyword);
+      const queryNorm = normalizeTarget(term.customerSearchTerm);
+      if (!candNorm || !queryNorm) return false;
+
+      const candMatch = normalizeMatchType(candidate.matchType);
+      const candTokens = canonicalTokens(candNorm);
+      const queryTokens = canonicalTokens(queryNorm);
+
+      if (candMatch === "exact") {
+        return candTokens.length === queryTokens.length && candTokens.every((word, idx) => word === queryTokens[idx]);
       }
-      if (candidateMatchType === "phrase") {
-        return lexicalNorm(term.customerSearchTerm).includes(lexicalNorm(candidate.targetKeyword));
+      if (candMatch === "phrase") {
+        const candWords = lexicalNorm(candNorm).split(" ").filter(Boolean).map(stemWord);
+        const queryWords = lexicalNorm(queryNorm).split(" ").filter(Boolean).map(stemWord);
+        if (!candWords.length || queryWords.length < candWords.length) return false;
+        for (let i = 0; i <= queryWords.length - candWords.length; i++) {
+          let seqMatch = true;
+          for (let j = 0; j < candWords.length; j++) {
+            if (queryWords[i + j] !== candWords[j]) {
+              seqMatch = false;
+              break;
+            }
+          }
+          if (seqMatch) return true;
+        }
+        return false;
       }
-      if (candidateMatchType === "broad") {
-        return candidateTokens.every((word) => queryTokens.includes(word));
+      if (candMatch === "broad") {
+        if (!candTokens.length) return false;
+        return candTokens.every((word) => queryTokens.includes(word));
+      }
+      if (candMatch === "targeting") {
+        return candNorm === queryNorm;
       }
       return false;
     };
 
     const confirmed: PpcSearchTermRow[] = [];
     const inferred: PpcSearchTermRow[] = [];
+
     for (const term of candidates) {
       if (!isInTargetScope(term, target)) continue;
 
-      const termKw = norm(term.targetKeyword);
       const termTargetId = id(term.keywordId);
+      const termKwNorm = normalizeTarget(term.targetKeyword);
 
-      // Only a stable Amazon ID is strong enough to confirm attribution.
+      // Layer 1: Confirmed attribution directly from Amazon reporting
+      // 1.1 Match by Amazon Keyword / Target ID
       if (targetId && termTargetId) {
         if (targetId === termTargetId) confirmed.push(term);
         continue;
       }
 
-      // Target text without an ID is not sufficient on its own: some SB
-      // exports associate unrelated queries with an Exact keyword. Keep it
-      // only when the shopper query also satisfies that target's match rule.
-      if (termKw) {
-        const termMatchType = (term.matchType || "Unknown").toLowerCase();
-        const targetMatchType = (target.matchType || "Unknown").toLowerCase();
-        const matchTypeCompatible = termMatchType === "unknown" || targetMatchType === "unknown" || termMatchType === targetMatchType;
-        if (termKw === targetKwNorm && matchTypeCompatible && matchesByRule(term, target)) inferred.push(term);
+      // 1.2 Match by Amazon Targeting expression + compatible Match Type
+      if (termKwNorm) {
+        if (termKwNorm === targetKwNorm && isMatchTypeCompatible(term.matchType, target.matchType)) {
+          confirmed.push(term);
+        }
+        // If term already has an Amazon target that doesn't match this target, do not steal it.
         continue;
       }
 
-      // Without a source key, infer only when this is the sole matching target
-      // in the same campaign/ad group. Ambiguous terms remain unassigned.
+      // Layer 2: Conservative inference ONLY when the term has NO targetKeyword in report.
+      // Prevent hallucinations ("ảo giác") by requiring unambiguous sole matching target.
       const plausibleTargets = targetPerformance.filter((candidate) =>
-        isInTargetScope(term, candidate) && matchesByRule(term, candidate),
+        isInTargetScope(term, candidate) && matchesTargetForInference(term, candidate),
       );
       const uniqueTargets = new Map<string, PpcTargetPerformance>();
-      for (const candidate of plausibleTargets) {
-        const key = id(candidate.targetId) || [
-          id(candidate.campaignId), id(candidate.adGroupId), norm(candidate.targetKeyword), candidate.matchType,
+      for (const cand of plausibleTargets) {
+        const key = id(cand.targetId) || [
+          id(cand.campaignId), id(cand.adGroupId), normalizeTarget(cand.targetKeyword), normalizeMatchType(cand.matchType),
         ].join("\u0000");
-        if (!uniqueTargets.has(key)) uniqueTargets.set(key, candidate);
+        if (!uniqueTargets.has(key)) uniqueTargets.set(key, cand);
       }
       const soleTarget = uniqueTargets.size === 1 ? Array.from(uniqueTargets.values())[0] : undefined;
-      if (soleTarget && (id(soleTarget.targetId) || norm(soleTarget.targetKeyword)) === (targetId || targetKwNorm)) {
-        inferred.push(term);
+      if (soleTarget) {
+        const soleKey = id(soleTarget.targetId) || normalizeTarget(soleTarget.targetKeyword);
+        const thisKey = targetId || targetKwNorm;
+        if (soleKey === thisKey && isMatchTypeCompatible(soleTarget.matchType, target.matchType)) {
+          inferred.push(term);
+        }
       }
     }
     return { confirmed, inferred };
@@ -2723,7 +2793,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
           </div>
 
           <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
-            <table className="w-full min-w-[1100px] text-left text-xs text-slate-700">
+            <table className="w-full min-w-[1300px] text-left text-xs text-slate-700">
               <thead className="border-b border-slate-200 bg-slate-50 text-[10px] font-extrabold uppercase text-slate-500">
                 <tr>
                   <th className="px-3.5 py-3 text-left">Target / Keyword</th>
@@ -2791,7 +2861,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                   >
                     ACOS (%) {targetSortField === "acos" && (targetSortDir === "asc" ? "↑" : "↓")}
                   </th>
-                  <th className="px-3 py-3 text-center">Search Terms</th>
+                  <th className="px-3.5 py-3 text-center whitespace-nowrap min-w-[125px] sticky right-0 z-20 bg-slate-50 border-l border-slate-200 shadow-[-4px_0_8px_rgba(0,0,0,0.04)]">
+                    Search Terms
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -2845,7 +2917,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                   const isExpanded = expandedTargetKey === targetKey;
                   const childTerms = isExpanded ? (() => {
                     const res = getChildSearchTerms(target);
-                    return [...res.confirmed, ...res.inferred];
+                    return [...res.confirmed, ...res.inferred].sort(
+                      (a, b) => b.spend - a.spend || b.orders - a.orders || b.clicks - a.clicks,
+                    );
                   })() : [];
 
                   return (
@@ -2873,19 +2947,21 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                         <td className={`px-3 py-2.5 text-right font-mono font-black whitespace-nowrap ${target.acos <= targetAcos ? "text-emerald-700" : "text-rose-700"}`}>
                           {target.acos > 500 ? "0 sales" : `${target.acos.toFixed(1)}%`}
                         </td>
-                        <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                        <td className={`px-3.5 py-2.5 text-center whitespace-nowrap min-w-[125px] sticky right-0 z-10 border-l border-slate-200 shadow-[-4px_0_8px_rgba(0,0,0,0.04)] transition ${
+                          isExpanded ? "bg-indigo-50" : "bg-white group-hover:bg-slate-50"
+                        }`}>
                           <button
                             type="button"
                             onClick={() => setExpandedTargetKey(isExpanded ? null : targetKey)}
-                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-extrabold transition cursor-pointer border ${isExpanded
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-extrabold transition cursor-pointer border shrink-0 ${isExpanded
                               ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
                               : "bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border-indigo-200"
                               }`}
                             title="Xem các customer search terms do target này kích hoạt"
                           >
-                            <MagnifyingGlass size={11} weight="bold" />
+                            <MagnifyingGlass size={12} weight="bold" />
                             <span>{isExpanded ? "Đóng Terms" : "Xem Terms"}</span>
-                            <span>{isExpanded ? "▲" : "▼"}</span>
+                            <span className="text-[9px]">{isExpanded ? "▲" : "▼"}</span>
                           </button>
                         </td>
                       </tr>
@@ -2916,7 +2992,21 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                                   <tbody className="divide-y divide-slate-100 font-medium">
                                     {childTerms.map((term, tIdx) => (
                                       <tr key={`${searchTermKey(term)}-${tIdx}`} className="hover:bg-slate-50/80 transition">
-                                        <td className="py-2 px-3.5 font-bold text-slate-900">{term.customerSearchTerm}</td>
+                                        <td className="py-2 px-3.5 font-bold text-slate-900">
+                                          <div className="flex items-center gap-1.5 flex-wrap">
+                                            <span>{term.customerSearchTerm}</span>
+                                            {term.matchType && term.matchType !== "Unknown" && (
+                                              <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold text-slate-600">
+                                                {term.matchType}
+                                              </span>
+                                            )}
+                                            {!term.targetKeyword && (
+                                              <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 border border-amber-200" title="Từ khóa suy luận do báo cáo gốc của Amazon thiếu cột Targeting">
+                                                Suy luận
+                                              </span>
+                                            )}
+                                          </div>
+                                        </td>
                                         <td className="py-2 px-2.5 text-right font-mono text-slate-600">{(term.impressions || 0).toLocaleString()}</td>
                                         <td className="py-2 px-2.5 text-right font-mono text-slate-600">{term.clicks}</td>
                                         <td className="py-2 px-2.5 text-right font-mono text-slate-900">${term.spend.toFixed(2)}</td>

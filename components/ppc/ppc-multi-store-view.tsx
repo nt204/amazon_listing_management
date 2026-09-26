@@ -108,41 +108,41 @@ export function PpcMultiStoreView({
       {/* 1. 4 THÔNG SỐ TỔNG QUAN: SPEND, SALES, ORDERS, ACOS */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {/* SPEND */}
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
-          <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider block">
+        <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
+          <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
             SPEND
           </span>
-          <div className="text-2xl font-black text-rose-600 mt-1 truncate">
+          <div className="text-xl font-bold text-rose-600 mt-0.5 truncate">
             {currency}{totals.spend.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
         </div>
 
         {/* SALES */}
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
-          <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider block">
+        <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
+          <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
             SALES
           </span>
-          <div className="text-2xl font-black text-emerald-600 mt-1 truncate">
+          <div className="text-xl font-bold text-emerald-600 mt-0.5 truncate">
             {currency}{totals.sales.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
         </div>
 
         {/* ORDERS */}
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
-          <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider block">
+        <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
+          <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
             ORDERS
           </span>
-          <div className="text-2xl font-black text-slate-900 mt-1">
+          <div className="text-xl font-bold text-slate-900 mt-0.5">
             {totals.orders.toLocaleString()}
           </div>
         </div>
 
         {/* ACOS */}
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
-          <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider block">
+        <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
+          <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
             ACOS
           </span>
-          <div className="text-2xl font-black text-amber-600 mt-1">
+          <div className="text-xl font-bold text-amber-600 mt-0.5">
             {totals.acos.toFixed(1)}%
           </div>
         </div>
@@ -217,14 +217,34 @@ export function PpcMultiStoreView({
         {viewMode === "table" ? (
           <div className="overflow-x-auto rounded-2xl border border-slate-200/90 bg-white shadow-xs">
             <table className="w-full text-left text-xs text-slate-700 border-collapse">
-              <thead className="bg-slate-100/80 text-[11px] font-black uppercase text-slate-600 border-b border-slate-200 tracking-wider">
+              <thead className="bg-slate-100/90 text-[11px] font-bold uppercase tracking-wider border-b border-slate-200">
                 <tr>
-                  <th className="py-3.5 px-5 min-w-[220px]">Gian Hàng</th>
-                  <th className="py-3.5 px-4 text-right min-w-[130px]">Chi Tiêu (Spend)</th>
-                  <th className="py-3.5 px-4 text-right min-w-[140px] font-black text-emerald-700">Doanh Thu (Sales)</th>
-                  <th className="py-3.5 px-4 text-right min-w-[95px]">Đơn Hàng</th>
-                  <th className="py-3.5 px-4 text-right min-w-[110px]">ACOS</th>
-                  <th className="py-3.5 px-5 text-center min-w-[130px]">Thao Tác</th>
+                  <th className="py-3.5 px-5 min-w-[200px] text-slate-700">STORE</th>
+                  <th className="py-3.5 px-4 text-right min-w-[140px] text-rose-700">
+                    <span className="inline-flex items-center gap-1.5 justify-end">
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0"></span>
+                      SPEND
+                    </span>
+                  </th>
+                  <th className="py-3.5 px-4 text-right min-w-[145px] text-emerald-700">
+                    <span className="inline-flex items-center gap-1.5 justify-end">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0"></span>
+                      SALES
+                    </span>
+                  </th>
+                  <th className="py-3.5 px-4 text-right min-w-[105px] text-indigo-700">
+                    <span className="inline-flex items-center gap-1.5 justify-end">
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0"></span>
+                      ORDERS
+                    </span>
+                  </th>
+                  <th className="py-3.5 px-4 text-right min-w-[110px] text-amber-700">
+                    <span className="inline-flex items-center gap-1.5 justify-end">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"></span>
+                      ACOS
+                    </span>
+                  </th>
+                  <th className="py-3.5 px-5 text-center min-w-[120px] text-slate-700">ACTION</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200/70 font-medium">
@@ -242,21 +262,21 @@ export function PpcMultiStoreView({
                       } hover:bg-indigo-50/70`}
                     >
                       {/* Cột Store */}
-                      <td className="py-4 px-5">
+                      <td className="py-3.5 px-5">
                         <div className="flex items-center gap-3.5">
-                          <div className="w-10 h-10 rounded-xl flex items-center justify-center font-black shrink-0 bg-indigo-50 text-indigo-600 border border-indigo-200/80 group-hover:bg-indigo-600 group-hover:text-white transition-all shadow-2xs group-hover:scale-105">
-                            <Storefront size={20} weight="bold" />
+                          <div className="w-9 h-9 rounded-xl flex items-center justify-center font-black shrink-0 bg-indigo-50 text-indigo-600 border border-indigo-200/80 group-hover:bg-indigo-600 group-hover:text-white transition-all shadow-2xs group-hover:scale-105">
+                            <Storefront size={18} weight="bold" />
                           </div>
                           <div>
                             <div className="flex items-center gap-2">
-                              <span className="font-black text-slate-900 text-sm group-hover:text-indigo-600 transition-colors">
+                              <span className="font-bold text-slate-900 text-sm group-hover:text-indigo-600 transition-colors">
                                 {store.name}
                               </span>
-                              <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-slate-900 text-white shadow-2xs">
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-black uppercase bg-slate-900 text-white shadow-2xs">
                                 {store.marketplace || "US"}
                               </span>
                             </div>
-                            <div className="text-xs text-slate-500 font-semibold mt-0.5 flex items-center gap-1.5">
+                            <div className="text-[11px] text-slate-500 font-semibold mt-0.5 flex items-center gap-1.5">
                               {store.totalCampaigns > 0 ? (
                                 <span className="text-slate-700 font-bold">{store.totalCampaigns.toLocaleString()} camps</span>
                               ) : (
@@ -270,52 +290,75 @@ export function PpcMultiStoreView({
                       </td>
 
                       {/* Cột Spend */}
-                      <td className="py-4 px-4 text-right">
-                        <div className={`font-mono text-sm font-black ${store.spend > 0 ? "text-slate-900" : "text-slate-400"}`}>
-                          {currency}{store.spend.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </div>
+                      <td className="py-3.5 px-4 text-right">
                         {store.spend > 0 ? (
-                          <div className="text-[11px] text-slate-500 font-semibold mt-0.5">
-                            {store.clicks.toLocaleString()} clicks · ${store.cpc.toFixed(2)}/cpc
-                          </div>
+                          <>
+                            <div className="font-mono text-base font-bold text-rose-600 tracking-tight leading-tight">
+                              {currency}{store.spend.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                            <div className="text-[11px] text-rose-900/70 font-semibold mt-0.5">
+                              {store.clicks.toLocaleString()} clicks · ${store.cpc.toFixed(2)}/cpc
+                            </div>
+                          </>
                         ) : (
-                          <div className="text-[11px] text-slate-300 font-medium mt-0.5">—</div>
+                          <>
+                            <div className="font-mono text-sm font-semibold text-slate-300">
+                              {currency}0.00
+                            </div>
+                            <div className="text-[11px] text-slate-300 font-medium mt-0.5">—</div>
+                          </>
                         )}
                       </td>
 
                       {/* Cột Sales */}
-                      <td className="py-4 px-4 text-right">
-                        <div className={`font-mono text-sm font-black ${store.sales > 0 ? "text-emerald-600" : "text-slate-400"}`}>
-                          {currency}{store.sales.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </div>
+                      <td className="py-3.5 px-4 text-right">
                         {store.sales > 0 ? (
-                          <div className="text-[11px] text-emerald-700 font-bold mt-0.5">
-                            CVR {store.cvr.toFixed(1)}%
-                          </div>
+                          <>
+                            <div className="font-mono text-base font-bold text-emerald-600 tracking-tight leading-tight">
+                              {currency}{store.sales.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                            <div className="inline-block text-[11px] text-emerald-700 font-bold mt-0.5 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200/70">
+                              CVR {store.cvr.toFixed(1)}%
+                            </div>
+                          </>
                         ) : (
-                          <div className="text-[11px] text-slate-300 font-medium mt-0.5">—</div>
+                          <>
+                            <div className="font-mono text-sm font-semibold text-slate-300">
+                              {currency}0.00
+                            </div>
+                            <div className="text-[11px] text-slate-300 font-medium mt-0.5">—</div>
+                          </>
                         )}
                       </td>
 
                       {/* Cột Orders */}
-                      <td className="py-4 px-4 text-right font-mono">
-                        <div className={`text-sm font-black ${store.orders > 0 ? "text-slate-900" : "text-slate-400"}`}>
-                          {store.orders}
-                        </div>
+                      <td className="py-3.5 px-4 text-right font-mono">
                         {store.orders > 0 ? (
-                          <div className="text-[11px] text-slate-400 font-medium mt-0.5">
-                            ${(store.sales / store.orders).toFixed(1)}/đơn
-                          </div>
-                        ) : null}
+                          <>
+                            <div className="text-base font-bold text-indigo-700 tracking-tight leading-tight">
+                              {store.orders.toLocaleString()}
+                            </div>
+                            <div className="text-[11px] text-slate-500 font-semibold mt-0.5">
+                              ${(store.sales / store.orders).toFixed(1)}/order
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="text-sm font-semibold text-slate-300">
+                              0
+                            </div>
+                            <div className="text-[11px] text-slate-300 font-medium mt-0.5">—</div>
+                          </>
+                        )}
                       </td>
 
                       {/* Cột ACOS */}
-                      <td className="py-4 px-4 text-right">
+                      <td className="py-3.5 px-4 text-right">
                         {store.sales === 0 ? (
-                          <span className="text-slate-300 font-mono text-sm font-bold">—</span>
+                          <span className="text-slate-300 font-mono text-sm font-semibold">—</span>
                         ) : (
                           <span
-                            className={`inline-block px-3 py-1 rounded-lg text-xs font-black font-mono shadow-xs ${
+                            className={`inline-block px-2.5 py-1 rounded-md text-xs font-bold font-mono shadow-2xs ${
                               isGood
                                 ? "bg-emerald-500 text-white"
                                 : isBleeding
@@ -399,23 +442,23 @@ export function PpcMultiStoreView({
 
                     {/* Metrics Grid */}
                     <div className="grid grid-cols-3 gap-2 py-3 text-center">
-                      <div className="p-2 rounded-lg bg-slate-50/80 border border-slate-100">
-                        <span className="text-[10px] font-medium text-slate-400 uppercase block tracking-wider">Spend</span>
-                        <div className={`text-xs font-bold font-mono mt-0.5 ${store.spend > 0 ? "text-slate-900" : "text-slate-400"}`}>
+                      <div className="p-2 rounded-lg bg-rose-50/50 border border-rose-100/70">
+                        <span className="text-[10px] font-black text-rose-700 uppercase block tracking-wider">Spend</span>
+                        <div className={`text-sm font-black font-mono mt-0.5 ${store.spend > 0 ? "text-rose-600" : "text-slate-300 font-semibold"}`}>
                           {currency}{store.spend.toLocaleString("en-US", { minimumFractionDigits: 2 })}
                         </div>
                       </div>
 
-                      <div className="p-2 rounded-lg bg-slate-50/80 border border-slate-100">
-                        <span className="text-[10px] font-medium text-slate-400 uppercase block tracking-wider">Sales</span>
-                        <div className={`text-xs font-bold font-mono mt-0.5 ${store.sales > 0 ? "text-emerald-600" : "text-slate-400"}`}>
+                      <div className="p-2 rounded-lg bg-emerald-50/50 border border-emerald-100/70">
+                        <span className="text-[10px] font-black text-emerald-700 uppercase block tracking-wider">Sales</span>
+                        <div className={`text-sm font-black font-mono mt-0.5 ${store.sales > 0 ? "text-emerald-600" : "text-slate-300 font-semibold"}`}>
                           {currency}{store.sales.toLocaleString("en-US", { minimumFractionDigits: 2 })}
                         </div>
                       </div>
 
-                      <div className="p-2 rounded-lg bg-slate-50/80 border border-slate-100">
-                        <span className="text-[10px] font-medium text-slate-400 uppercase block tracking-wider">Orders</span>
-                        <div className={`text-xs font-bold font-mono mt-0.5 ${store.orders > 0 ? "text-slate-800" : "text-slate-400"}`}>
+                      <div className="p-2 rounded-lg bg-indigo-50/50 border border-indigo-100/70">
+                        <span className="text-[10px] font-black text-indigo-700 uppercase block tracking-wider">Orders</span>
+                        <div className={`text-sm font-black font-mono mt-0.5 ${store.orders > 0 ? "text-indigo-700" : "text-slate-300 font-semibold"}`}>
                           {store.orders}
                         </div>
                       </div>

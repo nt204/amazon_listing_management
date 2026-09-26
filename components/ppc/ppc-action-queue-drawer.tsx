@@ -194,6 +194,7 @@ export function PpcActionQueueDrawer({
   // Auto Upload State
   const [isAutoUploadModalOpen, setIsAutoUploadModalOpen] = useState(false);
   const [skuModalTarget, setSkuModalTarget] = useState<string>("ALL");
+  const [confirmAllSkusRisk, setConfirmAllSkusRisk] = useState<boolean>(false);
   const [isAutoUploading, setIsAutoUploading] = useState(false);
   const [autoUploadStep, setAutoUploadStep] = useState<number>(0); // 0: Idle, 1: Prep, 2: AdsPower, 3: Upload, 4: Done
   const [autoUploadError, setAutoUploadError] = useState<string | null>(null);
@@ -552,15 +553,29 @@ export function PpcActionQueueDrawer({
     return Array.from(new Set(zeroSpendCandidates.map((a) => a.sku).filter(Boolean)));
   }, [zeroSpendCandidates]);
 
-  // Zero-spend candidates filtered by modal target (if user picks a specific SKU inside the modal)
-  const modalZeroSpendCandidates = useMemo(() => {
+  // Unique SKUs across all target actions
+  const uniqueTargetSkus = useMemo(() => {
+    return Array.from(new Set(targetActions.map((a) => a.sku).filter(Boolean)));
+  }, [targetActions]);
+
+  // Candidates filtered by modal target (Tất cả SKU, Chỉ SKU chưa cắn tiền, hoặc SKU cụ thể)
+  const modalUploadCandidates = useMemo(() => {
     if (skuModalTarget === "ALL") {
+      return targetActions;
+    }
+    if (skuModalTarget === "ZERO_SPEND") {
       return zeroSpendCandidates;
     }
-    return zeroSpendCandidates.filter(
+    return targetActions.filter(
       (a) => (a.sku || "").toUpperCase() === skuModalTarget.toUpperCase()
     );
-  }, [zeroSpendCandidates, skuModalTarget]);
+  }, [targetActions, zeroSpendCandidates, skuModalTarget]);
+
+  const activeSpendInModal = useMemo(() => {
+    return modalUploadCandidates.filter((a) => !a.isZeroSpend);
+  }, [modalUploadCandidates]);
+
+  const hasActiveSpendInModal = activeSpendInModal.length > 0;
 
   const summary = useMemo(() => {
     let updateBid = 0;
@@ -810,6 +825,7 @@ export function PpcActionQueueDrawer({
     setAutoUploadError(null);
     setAutoUploadSuccess(null);
     setAutoUploadStep(0);
+    setConfirmAllSkusRisk(false);
     // If filtering by SKU, pre-select that SKU in modal
     if (selectedSkuFilter !== "ALL") {
       setSkuModalTarget(selectedSkuFilter);
@@ -819,7 +835,7 @@ export function PpcActionQueueDrawer({
     setIsAutoUploadModalOpen(true);
   };
 
-  // Execute Auto Upload AdsPower for Zero Spend SKUs
+  // Execute Auto Upload AdsPower for selected candidates (supports all SKUs)
   const handleExecuteAutoUpload = async () => {
     try {
       setIsAutoUploading(true);
@@ -830,13 +846,14 @@ export function PpcActionQueueDrawer({
       await new Promise((r) => setTimeout(r, 500));
       setAutoUploadStep(2); // 2. Tạo file & kết nối AdsPower
 
-      const actionIds = modalZeroSpendCandidates.map((a) => a.id);
+      const actionIds = modalUploadCandidates.map((a) => a.id);
       const res = await fetch("/api/ppc/auto-upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           storeId: storeId || undefined,
           actionIds,
+          allowAllSkus: true,
         }),
       });
 
@@ -849,7 +866,7 @@ export function PpcActionQueueDrawer({
 
       setAutoUploadStep(3);
       setAutoUploadSuccess(
-        data.message || `Đã tạo file Bulk và xếp hàng upload lên Mac mini cho ${modalZeroSpendCandidates.length} actions.`
+        data.message || `Đã tạo file Bulk và xếp hàng upload lên Mac mini cho ${modalUploadCandidates.length} actions.`
       );
 
       void loadAutoLogs();
@@ -989,21 +1006,21 @@ export function PpcActionQueueDrawer({
 
               {/* Right: Auto Upload & Bulk Export Buttons */}
               <div className="flex items-center gap-2">
-                {/* Nút Auto Upload AdsPower dành riêng cho SKU chưa cắn tiền */}
+                {/* Nút Auto Upload AdsPower áp dụng cho toàn bộ SKU */}
                 <button
                   onClick={handleOpenAutoUploadModal}
-                  disabled={zeroSpendCandidateCount === 0}
+                  disabled={targetActions.length === 0}
                   className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-linear-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-xs font-black transition shadow-xs disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
                   title={
-                    zeroSpendCandidateCount === 0
-                      ? "Không có action nào thuộc SKU chưa cắn tiền để Auto Upload"
-                      : `Tự động xuất & mở AdsPower upload ${zeroSpendCandidateCount} action SKU chưa cắn tiền`
+                    targetActions.length === 0
+                      ? "Không có action nào trong hàng đợi để Auto Upload"
+                      : `Tự động xuất & mở AdsPower upload ${targetActions.length} action`
                   }
                 >
                   <Lightning size={15} weight="fill" />
                   <span>Auto Upload AdsPower</span>
                   <span className="px-1.5 py-0.5 rounded-full bg-black/20 text-[10px] font-black leading-none">
-                    {zeroSpendCandidateCount}
+                    {targetActions.length}
                   </span>
                 </button>
 
@@ -1689,7 +1706,11 @@ export function PpcActionQueueDrawer({
           <div className="w-full max-w-lg bg-white border border-slate-200 rounded-2xl p-6 shadow-2xl space-y-5">
             <div className="flex items-start justify-between border-b border-slate-100 pb-4">
               <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-xl bg-amber-50 text-amber-600 border border-amber-100">
+                <div className={`p-2 rounded-xl border ${
+                  hasActiveSpendInModal
+                    ? "bg-rose-50 text-rose-600 border-rose-100"
+                    : "bg-amber-50 text-amber-600 border-amber-100"
+                }`}>
                   <Lightning size={22} weight="fill" />
                 </div>
                 <div>
@@ -1697,7 +1718,7 @@ export function PpcActionQueueDrawer({
                     Auto Upload AdsPower
                   </h3>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Áp dụng riêng cho các SKU chưa cắn tiền (Zero Spend)
+                    Tự động tạo file Bulk và gửi lệnh upload trực tiếp qua AdsPower
                   </p>
                 </div>
               </div>
@@ -1710,16 +1731,39 @@ export function PpcActionQueueDrawer({
               </button>
             </div>
 
-            {/* Scope / Protection Alert */}
-            <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-3.5 space-y-1.5 text-xs text-amber-900">
-              <div className="flex items-center gap-1.5 font-bold">
-                <ShieldCheck size={16} weight="fill" className="text-amber-700 shrink-0" />
-                <span>Quy tắc bảo vệ dữ liệu</span>
+            {/* Warning & Confirmation Box */}
+            {hasActiveSpendInModal ? (
+              <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 space-y-2.5 text-xs text-rose-950">
+                <div className="flex items-center gap-2 font-black text-rose-700 uppercase tracking-wide">
+                  <WarningCircle size={18} weight="fill" className="text-rose-600 shrink-0" />
+                  <span>Cảnh báo quan trọng: Áp dụng cho SKU đang chạy</span>
+                </div>
+                <p className="text-[11px] leading-relaxed text-rose-800">
+                  Phạm vi thực thi bao gồm <strong>{activeSpendInModal.length} hành động</strong> thuộc các <strong>SKU đang cắn tiền thực tế</strong>. Các lệnh điều chỉnh Bid/Budget này sẽ được tự động gửi thẳng lên Amazon Ads qua AdsPower.
+                </p>
+                <label className="flex items-start gap-2.5 pt-2 border-t border-rose-200/80 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={confirmAllSkusRisk}
+                    onChange={(e) => setConfirmAllSkusRisk(e.target.checked)}
+                    className="mt-0.5 rounded text-rose-600 focus:ring-rose-500 cursor-pointer w-4 h-4 shrink-0"
+                  />
+                  <span className="text-[11px] font-bold text-rose-900 leading-snug">
+                    Tôi đã kiểm tra kỹ các đề xuất và xác nhận tự động upload cho toàn bộ các SKU này lên Amazon Ads.
+                  </span>
+                </label>
               </div>
-              <p className="text-[11px] leading-relaxed text-amber-800">
-                Hệ thống sẽ <strong>chỉ xuất và upload các action thuộc SKU chưa cắn tiền</strong>. Các SKU đã cắn tiền sẽ được giữ an toàn trong Action Queue, không tự động upload nhầm.
-              </p>
-            </div>
+            ) : (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 space-y-1 text-xs text-emerald-950">
+                <div className="flex items-center gap-1.5 font-bold text-emerald-700">
+                  <ShieldCheck size={16} weight="fill" className="text-emerald-600 shrink-0" />
+                  <span>Chế độ an toàn: Chỉ SKU chưa cắn tiền (Zero Spend)</span>
+                </div>
+                <p className="text-[11px] leading-relaxed text-emerald-800">
+                  Tất cả {modalUploadCandidates.length} hành động được chọn đều thuộc SKU chưa cắn tiền, không ảnh hưởng đến các chiến dịch đang chạy chính.
+                </p>
+              </div>
+            )}
 
             {/* SKU Target Selector inside Modal */}
             <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 space-y-3 text-xs">
@@ -1727,17 +1771,26 @@ export function PpcActionQueueDrawer({
                 <span className="font-bold">Chọn SKU thực thi:</span>
                 <select
                   value={skuModalTarget}
-                  onChange={(e) => setSkuModalTarget(e.target.value)}
-                  className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg font-bold text-slate-800 outline-none cursor-pointer text-xs"
+                  onChange={(e) => {
+                    setSkuModalTarget(e.target.value);
+                    setConfirmAllSkusRisk(false);
+                  }}
+                  className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-bold text-slate-800 outline-none cursor-pointer text-xs max-w-[260px]"
                 >
                   <option value="ALL">
-                    Tất cả SKU chưa cắn tiền ({zeroSpendCandidateCount} actions)
+                    Tất cả SKU ({targetActions.length} actions)
                   </option>
-                  {uniqueZeroSpendSkus.map((sku) => {
-                    const count = zeroSpendCandidates.filter((a) => (a.sku || "").toUpperCase() === sku.toUpperCase()).length;
+                  {zeroSpendCandidateCount > 0 && (
+                    <option value="ZERO_SPEND">
+                      Chỉ SKU chưa cắn tiền ({zeroSpendCandidateCount} actions)
+                    </option>
+                  )}
+                  {uniqueTargetSkus.map((sku) => {
+                    const count = targetActions.filter((a) => (a.sku || "").toUpperCase() === sku.toUpperCase()).length;
+                    const isZero = targetActions.some((a) => (a.sku || "").toUpperCase() === sku.toUpperCase() && a.isZeroSpend);
                     return (
                       <option key={sku} value={sku}>
-                        Chỉ SKU {sku} ({count} actions)
+                        Chỉ SKU {sku} ({count} actions) {isZero ? "• Chưa cắn tiền" : "• Đang cắn tiền"}
                       </option>
                     );
                   })}
@@ -1745,10 +1798,17 @@ export function PpcActionQueueDrawer({
               </div>
 
               <div className="flex justify-between items-center text-slate-700">
-                <span>Số lượng actions SKU chưa cắn tiền:</span>
-                <strong className="text-amber-700 font-mono text-sm">
-                  {modalZeroSpendCandidates.length} actions
-                </strong>
+                <span>Số lượng actions sẽ upload:</span>
+                <div className="flex items-center gap-2">
+                  <strong className="text-indigo-700 font-mono text-sm">
+                    {modalUploadCandidates.length} actions
+                  </strong>
+                  {activeSpendInModal.length > 0 && (
+                    <span className="rounded bg-rose-100 text-rose-700 px-1.5 py-0.5 text-[10px] font-bold">
+                      {activeSpendInModal.length} cắn tiền
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="flex justify-between items-center text-slate-700">
                 <span>Store / Profile AdsPower:</span>
@@ -1759,20 +1819,27 @@ export function PpcActionQueueDrawer({
               </div>
 
               {/* SKU Chips */}
-              {uniqueZeroSpendSkus.length > 0 && (
+              {modalUploadCandidates.length > 0 && (
                 <div className="pt-2 border-t border-slate-200/60">
                   <span className="text-[10px] text-slate-500 block mb-1 font-semibold uppercase">
-                    Danh sách SKU thực thi:
+                    Danh sách SKU thực thi ({Array.from(new Set(modalUploadCandidates.map((a) => a.sku).filter(Boolean))).length} SKUs):
                   </span>
-                  <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
-                    {(skuModalTarget === "ALL" ? uniqueZeroSpendSkus : [skuModalTarget]).map((sku) => (
-                      <span
-                        key={sku}
-                        className="px-2 py-0.5 bg-white border border-slate-200 rounded text-[11px] font-bold text-indigo-700 font-mono"
-                      >
-                        {sku}
-                      </span>
-                    ))}
+                  <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+                    {Array.from(new Set(modalUploadCandidates.map((a) => a.sku).filter(Boolean))).map((sku) => {
+                      const isZero = modalUploadCandidates.some((a) => (a.sku || "").toUpperCase() === sku.toUpperCase() && a.isZeroSpend);
+                      return (
+                        <span
+                          key={sku}
+                          className={`px-2 py-0.5 border rounded text-[11px] font-bold font-mono ${
+                            isZero
+                              ? "bg-white border-slate-200 text-indigo-700"
+                              : "bg-orange-50 border-orange-200 text-orange-800"
+                          }`}
+                        >
+                          {sku} {!isZero && "• Active"}
+                        </span>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -1788,7 +1855,7 @@ export function PpcActionQueueDrawer({
                 <div className="space-y-1.5 text-xs text-slate-600 pl-1">
                   <div className={`flex items-center gap-2 ${autoUploadStep >= 1 ? "text-emerald-700 font-bold" : "text-slate-400"}`}>
                     {autoUploadStep >= 1 ? <Check size={14} weight="bold" /> : <span className="w-3.5 h-3.5 rounded-full border border-slate-300 inline-block" />}
-                    <span>1. Lọc {modalZeroSpendCandidates.length} actions SKU chưa cắn tiền</span>
+                    <span>1. Lọc {modalUploadCandidates.length} actions cần upload</span>
                   </div>
                   <div className={`flex items-center gap-2 ${autoUploadStep >= 2 ? "text-emerald-700 font-bold" : "text-slate-400"}`}>
                     {autoUploadStep >= 2 ? <Check size={14} weight="bold" /> : <span className="w-3.5 h-3.5 rounded-full border border-slate-300 inline-block" />}
@@ -1861,8 +1928,21 @@ export function PpcActionQueueDrawer({
               ) : (
                 <button
                   onClick={handleExecuteAutoUpload}
-                  disabled={isAutoUploading || modalZeroSpendCandidates.length === 0}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-linear-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-xs font-black transition shadow-xs disabled:opacity-40 cursor-pointer"
+                  disabled={
+                    isAutoUploading ||
+                    modalUploadCandidates.length === 0 ||
+                    (hasActiveSpendInModal && !confirmAllSkusRisk)
+                  }
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-white text-xs font-black transition shadow-xs disabled:opacity-40 cursor-pointer ${
+                    hasActiveSpendInModal
+                      ? "bg-linear-to-r from-orange-500 to-rose-600 hover:from-orange-600 hover:to-rose-700"
+                      : "bg-linear-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600"
+                  }`}
+                  title={
+                    hasActiveSpendInModal && !confirmAllSkusRisk
+                      ? "Vui lòng tick xác nhận kiểm tra rủi ro trước khi thực thi"
+                      : `Bắt đầu tự động upload ${modalUploadCandidates.length} actions`
+                  }
                 >
                   {isAutoUploading ? (
                     <>
@@ -1872,7 +1952,7 @@ export function PpcActionQueueDrawer({
                   ) : (
                     <>
                       <Lightning size={15} weight="fill" />
-                      <span>⚡ Bắt Đầu Auto Upload ({modalZeroSpendCandidates.length})</span>
+                      <span>⚡ Bắt Đầu Auto Upload ({modalUploadCandidates.length})</span>
                     </>
                   )}
                 </button>

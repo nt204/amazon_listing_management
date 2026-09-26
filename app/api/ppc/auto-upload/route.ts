@@ -58,8 +58,9 @@ export async function POST(request: Request) {
     const { searchParams } = new URL(request.url);
     const storeId = await resolveStoreId(body?.storeId || searchParams.get("storeId"));
     const actionIds = Array.isArray(body?.actionIds) ? body.actionIds : undefined;
+    const allowAllSkus = body?.allowAllSkus === true || (Array.isArray(actionIds) && actionIds.length > 0);
 
-    const result = await executeAutoUploadZeroSpendActions(storeId, actionIds, actor.teamId);
+    const result = await executeAutoUploadZeroSpendActions(storeId, actionIds, actor.teamId, { allowAllSkus });
 
     return Response.json({
       success: true,

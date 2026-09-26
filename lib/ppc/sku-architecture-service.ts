@@ -1922,6 +1922,7 @@ export async function executeAutoUploadZeroSpendActions(
   storeId: string,
   selectedActionIds?: string[],
   teamId = "default",
+  options: { allowAllSkus?: boolean } = {},
 ): Promise<{
   success: boolean;
   log: PpcAutoUploadLog;
@@ -1948,16 +1949,21 @@ export async function executeAutoUploadZeroSpendActions(
     candidateActions = queueActions.filter((a) => idSet.has(a.id));
   }
 
-  // 2. Filter ONLY actions belonging to Zero-Spend SKUs (chưa cắn tiền)
-  const zeroSpendActions = candidateActions.filter((a) => a.isZeroSpend);
-  if (zeroSpendActions.length === 0) {
+  // 2. Filter actions to upload:
+  // If allowAllSkus is enabled or specific actionIds were passed, include candidateActions;
+  // otherwise default to zero-spend only.
+  const allowAllSkus = options.allowAllSkus ?? Boolean(selectedActionIds && selectedActionIds.length > 0);
+  const actionsToUpload = allowAllSkus ? candidateActions : candidateActions.filter((a) => a.isZeroSpend);
+  if (actionsToUpload.length === 0) {
     throw new Error(
-      "Không có hành động nào thuộc SKU chưa cắn tiền (Zero Spend). Chức năng Auto Upload AdsPower chỉ áp dụng cho SKU chưa cắn tiền.",
+      allowAllSkus
+        ? "Không có hành động nào trong hàng đợi để Auto Upload."
+        : "Không có hành động nào thuộc SKU chưa cắn tiền (Zero Spend). Chức năng Auto Upload AdsPower chỉ áp dụng cho SKU chưa cắn tiền.",
     );
   }
 
-  const zeroSpendActionIds = zeroSpendActions.map((a) => a.id);
-  const distinctSkus = Array.from(new Set(zeroSpendActions.map((a) => a.sku).filter(Boolean)));
+  const uploadActionIds = actionsToUpload.map((a) => a.id);
+  const distinctSkus = Array.from(new Set(actionsToUpload.map((a) => a.sku).filter(Boolean)));
   const jobId = crypto.randomUUID();
 
   // Ghi nhận job trước khi tạo file để lỗi tại bước export cũng xuất hiện trong
@@ -1967,9 +1973,9 @@ export async function executeAutoUploadZeroSpendActions(
       id, team_id, store_id, file_name, action_count, skus, status, stage,
       file_status, progress_pct, action_ids, updated_at
     ) VALUES (
-      ${jobId}, ${teamId}, ${storeId}, NULL, ${zeroSpendActions.length},
+      ${jobId}, ${teamId}, ${storeId}, NULL, ${actionsToUpload.length},
       ${sql.json(distinctSkus)}, 'RUNNING', 'GENERATING_FILE',
-      'PENDING', 0, ${sql.json(zeroSpendActionIds)}, NOW()
+      'PENDING', 0, ${sql.json(uploadActionIds)}, NOW()
     )
     RETURNING id, created_at
   `;
@@ -1977,7 +1983,7 @@ export async function executeAutoUploadZeroSpendActions(
   // 3. Export Bulk file using the canonical Amazon template.
   let exportResult: Awaited<ReturnType<typeof exportBulkFromQueue>>;
   try {
-    exportResult = await exportBulkFromQueue(storeId, zeroSpendActionIds);
+    exportResult = await exportBulkFromQueue(storeId, uploadActionIds);
     await sql`
       UPDATE ppc_auto_upload_logs
       SET file_name = ${exportResult.fileName}, file_status = 'SUCCESS',
@@ -2040,7 +2046,7 @@ export async function executeAutoUploadZeroSpendActions(
       fileName: exportResult.fileName,
       adspowerProfileId: null,
       adspowerProfileName: storeName,
-      actionCount: zeroSpendActions.length,
+      actionCount: actionsToUpload.length,
       skus: distinctSkus,
       status: "PENDING",
       stage: "FILE_READY",
@@ -2051,6 +2057,6 @@ export async function executeAutoUploadZeroSpendActions(
       createdAt: new Date(initialLog[0].created_at).toISOString(),
     },
     fileName: exportResult.fileName,
-    message: `Đã tạo file Bulk và xếp hàng upload trên Mac mini (${zeroSpendActions.length} actions).`,
+    message: `Đã tạo file Bulk và xếp hàng upload trên Mac mini (${actionsToUpload.length} actions).`,
   };
 }
