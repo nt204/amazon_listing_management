@@ -1144,7 +1144,7 @@ export async function refreshPpcSnapshotSummary(
 
     // 1. Campaign summary
     await tx`
-      WITH camp_targets AS (
+      WITH camp_targets AS MATERIALIZED (
         SELECT 
           campaign_id,
           count(*) FILTER (WHERE NOT is_negative) as target_count,
@@ -1274,7 +1274,7 @@ export async function refreshPpcSnapshotSummary(
 
     // 4. Snapshot summary
     await tx`
-      WITH camp_stats AS (
+      WITH camp_stats AS MATERIALIZED (
         SELECT 
           ad_type,
           count(*) as campaign_count,
@@ -1295,7 +1295,7 @@ export async function refreshPpcSnapshotSummary(
           AND grain = 'CAMPAIGN'
         GROUP BY ad_type
       ),
-      target_stats AS (
+      target_stats AS MATERIALIZED (
         SELECT 
           ad_type,
           count(*) FILTER (
@@ -1314,7 +1314,7 @@ export async function refreshPpcSnapshotSummary(
           AND grain = 'TARGET'
         GROUP BY ad_type
       ),
-      sku_stats AS (
+      sku_stats AS MATERIALIZED (
         SELECT 
           ad_type,
           count(DISTINCT sku) as sku_count
