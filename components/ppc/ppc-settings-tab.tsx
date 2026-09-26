@@ -803,6 +803,7 @@ export function PpcCostMasterStandalone() {
     new Date().toISOString().split("T")[0]
   );
   const [formNotes, setFormNotes] = useState("");
+  const [formSkuPrefixes, setFormSkuPrefixes] = useState("");
   const [isSavingPhoi, setIsSavingPhoi] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -880,6 +881,10 @@ export function PpcCostMasterStandalone() {
     if (phoi) {
       setEditingPhoi(phoi);
       setFormProductType(phoi.productType);
+      const initialPrefixes = (phoi.skuPrefixes && phoi.skuPrefixes.length > 0)
+        ? phoi.skuPrefixes
+        : getSkuPrefixesForProductType(phoi.productType).map((p) => p.replace(/\*$/, ""));
+      setFormSkuPrefixes(initialPrefixes.join(", "));
       setFormBaseCost(phoi.baseCost.toFixed(2));
       setFormFee(phoi.defaultAmazonFee.toFixed(2));
       setFormTaxRate((phoi.taxRate * 100).toFixed(1));
@@ -890,6 +895,7 @@ export function PpcCostMasterStandalone() {
     } else {
       setEditingPhoi(null);
       setFormProductType("");
+      setFormSkuPrefixes("");
       setFormBaseCost("2.00");
       setFormFee("6.32");
       setFormTaxRate("3.0");
@@ -906,6 +912,10 @@ export function PpcCostMasterStandalone() {
       alert("Vui lòng nhập tên loại phôi.");
       return;
     }
+    if (!formSkuPrefixes.trim()) {
+      alert("Vui lòng nhập Prefix SKU (ví dụ: ORN, GL-ORN hoặc BDL, BQL...).");
+      return;
+    }
     try {
       setIsSavingPhoi(true);
       const res = await fetch("/api/ppc/cost-master", {
@@ -914,6 +924,7 @@ export function PpcCostMasterStandalone() {
         body: JSON.stringify({
           storeId: selectedStoreId || undefined,
           productType: formProductType.trim(),
+          skuPrefixes: formSkuPrefixes.trim() || undefined,
           baseCost: parseInputNumber(formBaseCost),
           defaultAmazonFee: parseInputNumber(formFee),
           taxRate: (parseInputNumber(formTaxRate) || 3.0) / 100,
@@ -951,6 +962,11 @@ export function PpcCostMasterStandalone() {
       alert("Vui lòng nhập tên loại phôi (Ví dụ: Ornament 2D, Tumbler 20oz...)");
       return;
     }
+    const trimmedPrefix = fastSkuPrefix.trim();
+    if (!trimmedPrefix) {
+      alert("Vui lòng nhập Prefix SKU (Ví dụ: ORN, GL-ORN hoặc BDL, BQL...)");
+      return;
+    }
 
     try {
       setIsSavingFast(true);
@@ -960,7 +976,7 @@ export function PpcCostMasterStandalone() {
         body: JSON.stringify({
           storeId: selectedStoreId || undefined,
           productType: trimmedType,
-          skuPrefix: fastSkuPrefix.trim() || undefined,
+          skuPrefixes: fastSkuPrefix.trim() || undefined,
           baseCost: fastC,
           defaultAmazonFee: fastF,
           taxRate: fastT,
@@ -987,15 +1003,21 @@ export function PpcCostMasterStandalone() {
   const handleDeletePhoi = async (phoi: ProductCostMaster) => {
     if (!window.confirm(`Xác nhận xóa phôi "${phoi.productType}" khỏi store?`)) return;
 
+    const targetStoreId = phoi.storeId || selectedStoreId;
     try {
       setDeletingPhoiId(phoi.id);
-      const res = await fetch(`/api/ppc/cost-master?id=${encodeURIComponent(phoi.id)}&storeId=${encodeURIComponent(selectedStoreId)}`, {
+      // Cập nhật ngay trên giao diện để người dùng thấy phôi biến mất tức thì
+      setCostMasters((prev) => prev.filter((p) => p.productType.toLowerCase() !== phoi.productType.toLowerCase()));
+
+      const res = await fetch(`/api/ppc/cost-master?id=${encodeURIComponent(phoi.id)}&storeId=${encodeURIComponent(targetStoreId)}`, {
         method: "DELETE",
       });
-      if (!res.ok) throw new Error("Không thể xóa dòng phôi.");
-      await loadCostMasters(selectedStoreId);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || data.error || "Không thể xóa dòng phôi.");
+      await loadCostMasters(targetStoreId);
     } catch (err: any) {
       alert(err.message || "Lỗi khi xóa dòng phôi.");
+      await loadCostMasters(targetStoreId);
     } finally {
       setDeletingPhoiId(null);
     }
@@ -1220,7 +1242,7 @@ export function PpcCostMasterStandalone() {
                 <span>2. Điền File Excel Mẫu</span>
               </div>
               <p className="text-[11px] text-slate-500 leading-relaxed">
-                Tải file mẫu định dạng sẵn với 2 dòng ví dụ minh họa, chỉnh sửa trên máy tính rồi upload lên lại.
+                Tải file mẫu: Bắt buộc điền 5 cột đầu (Tên, Prefix, Giá vốn, Phí sàn, Giá bán). Các cột còn lại để trống hệ thống tự tính ACoS hòa vốn!
               </p>
               <button
                 type="button"
@@ -1293,15 +1315,17 @@ export function PpcCostMasterStandalone() {
 
             {/* SKU Prefix */}
             <div>
-              <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1">
-                SKU Prefix
+              <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center justify-between">
+                <span>SKU Prefix <span className="text-rose-500">*</span></span>
+                <span className="text-[10px] text-slate-400 font-normal">1 hoặc nhiều</span>
               </label>
               <input
                 type="text"
-                placeholder="ORN, TUM, MUG..."
+                required
+                placeholder="e.g. ORN, TUM hoặc BDL, BQL..."
                 value={fastSkuPrefix}
                 onChange={(e) => setFastSkuPrefix(e.target.value.toUpperCase())}
-                className="w-full px-3 py-1.5 bg-white border border-slate-300 focus:border-indigo-600 rounded-lg font-bold text-slate-900 text-xs shadow-2xs outline-none font-mono tracking-widest uppercase"
+                className="w-full px-3 py-1.5 bg-white border border-slate-300 focus:border-indigo-600 rounded-lg font-bold text-slate-900 text-xs shadow-2xs outline-none font-mono tracking-wider uppercase"
               />
             </div>
 
@@ -1431,9 +1455,9 @@ export function PpcCostMasterStandalone() {
                         <div className="font-bold text-slate-900 group-hover:text-indigo-600 transition">
                           {phoi.productType}
                         </div>
-                        {getSkuPrefixesForProductType(phoi.productType).length > 0 && (
+                        {getSkuPrefixesForProductType(phoi.productType, phoi.skuPrefixes).length > 0 && (
                           <div className="mt-0.5 font-mono text-[10px] font-semibold text-slate-400">
-                            {getSkuPrefixesForProductType(phoi.productType).join(" · ")}
+                            {getSkuPrefixesForProductType(phoi.productType, phoi.skuPrefixes).join(" · ")}
                           </div>
                         )}
                       </td>
@@ -1564,6 +1588,26 @@ export function PpcCostMasterStandalone() {
                     disabled={!!editingPhoi}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-600 focus:bg-white disabled:opacity-50"
                   />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-slate-700 font-bold">
+                      Prefix SKU (Tiền tố nhận diện SKU) <span className="text-rose-500">*</span>:
+                    </label>
+                    <span className="text-[10px] text-slate-400 font-normal">1 hoặc nhiều, cách nhau bằng dấu phẩy</span>
+                  </div>
+                  <input
+                    type="text"
+                    required
+                    value={formSkuPrefixes}
+                    onChange={(e) => setFormSkuPrefixes(e.target.value.toUpperCase())}
+                    placeholder="e.g. BDL, BQL, CB hoặc FL, ORN..."
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono text-xs placeholder-slate-400 focus:outline-none focus:border-indigo-600 focus:bg-white uppercase tracking-wider"
+                  />
+                  <p className="mt-1 text-[11px] text-slate-400 leading-tight">
+                    Bắt buộc. Hệ thống sẽ dùng các tiền tố này để tự động gán SKU của store vào loại phôi này khi phân tích & tối ưu PPC.
+                  </p>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">

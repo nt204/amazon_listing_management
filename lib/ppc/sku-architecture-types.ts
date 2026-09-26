@@ -15,6 +15,7 @@ export interface ProductCostMaster {
   effectiveTo?: string | null;
   notes?: string | null;
   skuPrefix?: string | null;
+  skuPrefixes?: string[];
   skuCount?: number;
   createdAt: string;
   updatedAt: string;
@@ -293,9 +294,29 @@ const SORTED_PREFIX_RULES = [...SKU_TO_PRODUCT_TYPE_RULE_SET.prefix_rules].sort(
 );
 
 /**
- * Danh sách ký hiệu đầu SKU của một loại phôi, dùng chung cho logic và giao diện.
+ * Chuẩn hóa danh sách tiền tố SKU: loại bỏ ký tự *, +, viết hoa, loại bỏ trùng lặp và khoảng trắng
  */
-export function getSkuPrefixesForProductType(productType: string): string[] {
+export function normalizeSkuPrefixes(input: string[] | string | undefined | null): string[] {
+  if (!input) return [];
+  const rawList = Array.isArray(input) ? input : String(input).split(/[,;\s]+/);
+  const cleaned = rawList
+    .map((p) => p.trim().replace(/[\*\+]+$/g, "").toUpperCase())
+    .filter((p) => p.length > 0);
+  return Array.from(new Set(cleaned));
+}
+
+export interface SkuPrefixRule {
+  prefix: string;
+  productType: string;
+}
+
+/**
+ * Danh sách ký hiệu đầu SKU của một loại phôi, ưu tiên customPrefixes nếu có, ngược lại lấy từ bộ quy tắc chuẩn.
+ */
+export function getSkuPrefixesForProductType(productType: string, customPrefixes?: string[] | null): string[] {
+  if (customPrefixes && customPrefixes.length > 0) {
+    return customPrefixes.map((p) => (p.endsWith("*") ? p : `${p}*`));
+  }
   return SKU_TO_PRODUCT_TYPE_RULE_SET.prefix_rules
     .filter((rule) => {
       const normalizedType = SKU_TO_PRODUCT_TYPE_RULE_SET.taxonomy[rule.product_type] || rule.product_type;
@@ -305,9 +326,16 @@ export function getSkuPrefixesForProductType(productType: string): string[] {
 }
 
 /**
- * Phân loại loại Phôi tự động dựa trên mã SKU (theo matching_strategy)
+ * Phân loại loại Phôi tự động dựa trên mã SKU:
+ * 1. Exception map
+ * 2. Store custom prefix rules (nếu có truyền vào)
+ * 3. Global prefix rules (longest_prefix_match)
  */
-export function detectProductTypeFromSku(sku: string, campaignName?: string): string {
+export function detectProductTypeFromSku(
+  sku: string,
+  campaignName?: string,
+  customRules?: SkuPrefixRule[]
+): string {
   let s = sku || "";
   if (SKU_TO_PRODUCT_TYPE_RULE_SET.normalization.trim_whitespace) s = s.trim();
   if (SKU_TO_PRODUCT_TYPE_RULE_SET.normalization.uppercase) s = s.toUpperCase();
@@ -319,7 +347,19 @@ export function detectProductTypeFromSku(sku: string, campaignName?: string): st
     return SKU_TO_PRODUCT_TYPE_RULE_SET.taxonomy[raw] || raw;
   }
 
-  // 2. Longest prefix match
+  // 2. Custom store-level prefix rules (ưu tiên cao hơn global)
+  if (customRules && customRules.length > 0) {
+    const sortedCustom = [...customRules].sort((a, b) => b.prefix.length - a.prefix.length);
+    for (const rule of sortedCustom) {
+      const cleanPrefix = rule.prefix.replace(/[\*\+]+$/g, "").toUpperCase();
+      if (cleanPrefix && s.startsWith(cleanPrefix)) {
+        const raw = rule.productType;
+        return SKU_TO_PRODUCT_TYPE_RULE_SET.taxonomy[raw] || raw;
+      }
+    }
+  }
+
+  // 3. Global longest prefix match
   for (const rule of SORTED_PREFIX_RULES) {
     if (s.startsWith(rule.prefix)) {
       const raw = rule.product_type;

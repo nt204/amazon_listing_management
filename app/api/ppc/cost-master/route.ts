@@ -69,6 +69,7 @@ export async function POST(request: Request) {
     const saved = await saveCostMasterNewVersion({
       storeId: body.storeId || undefined,
       productType: String(body.productType).trim(),
+      skuPrefixes: body.skuPrefixes !== undefined ? body.skuPrefixes : body.skuPrefix,
       baseCost: Number(body.baseCost || 0),
       defaultAmazonFee: Number(body.defaultAmazonFee || 0),
       taxRate: Number(body.taxRate || 0.03),

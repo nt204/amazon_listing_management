@@ -39,8 +39,9 @@ function exportTimestamp(date: Date): string {
 
 export async function POST(request: Request) {
   try {
-    authorize(request, "export");
+    const actor = authorize(request, "export");
     enforceRequestSize(request);
+    const sql = await getDatabaseClient();
 
     const body = await request.json();
     const storeName = String(body?.storeName || "STORE").trim();
@@ -75,7 +76,6 @@ export async function POST(request: Request) {
     const adGroupIdLookup = new Map<string, string>();
 
     if (needsCampId) {
-      const sql = await getDatabaseClient();
       const facts = await sql<Array<{
         campaign_name: string;
         campaign_id: string;
@@ -165,6 +165,52 @@ export async function POST(request: Request) {
 
     // 4. Xuất file Excel chuẩn Amazon Bulksheet
     const buffer = await exportBulksheetUpdateExcel(recommendations);
+
+    // 5. Đăng ký các từ khóa vào bảng ppc_negative_registry để quản lý và tránh phủ định trùng lặp
+    try {
+      let resolvedStoreId = "";
+      if (storeName && storeName !== "STORE") {
+        const storeRes = await sql<{ id: string }[]>`
+          SELECT id FROM ppc_stores
+          WHERE LOWER(name) = LOWER(${storeName}) AND team_id = ${actor.teamId}
+          LIMIT 1
+        `;
+        if (storeRes.length > 0) resolvedStoreId = storeRes[0].id;
+      }
+
+      if (resolvedStoreId) {
+        for (const rec of recommendations) {
+          const campName = String(rec.campaignName || "").trim();
+          const matchingInput = uniqueItems.find(
+            (it) =>
+              it.campaignName.trim().toLowerCase() === campName.toLowerCase() &&
+              it.customerSearchTerm.trim().toLowerCase() === rec.keyword.toLowerCase(),
+          );
+          await sql`
+            INSERT INTO ppc_negative_registry (
+              team_id, store_id, store_name, ad_type, campaign_id, campaign_name,
+              ad_group_id, ad_group_name, keyword_text, match_type, level,
+              state, source, clicks, spend, reason, created_at, updated_at
+            ) VALUES (
+              ${actor.teamId}, ${resolvedStoreId}, ${storeName}, ${rec.adType || "SP"},
+              ${rec.campaignId || null}, ${campName},
+              ${rec.adGroupId || null}, ${rec.adGroupName || null},
+              ${rec.keyword}, 'negativeExact', ${rec.adGroupId ? "AD_GROUP" : "CAMPAIGN"},
+              'enabled', 'MANUAL_EXPORT',
+              ${matchingInput?.clicks || 0}, ${matchingInput?.spend || 0},
+              ${rec.reason || null}, NOW(), NOW()
+            )
+            ON CONFLICT (store_id, campaign_name, keyword_text, match_type) DO UPDATE SET
+              updated_at = NOW(),
+              reason = EXCLUDED.reason,
+              clicks = EXCLUDED.clicks,
+              spend = EXCLUDED.spend
+          `;
+        }
+      }
+    } catch (registryErr) {
+      console.error("Lỗi khi ghi nhận vào ppc_negative_registry từ export:", registryErr);
+    }
 
     const cleanStore = storeName
       .replace(/[/\\?%*:|"<>]/g, "_")

@@ -7,6 +7,8 @@ import {
   calculateMaxBid,
   calculateProfitBeforeAds,
   detectProductTypeFromSku,
+  getSkuPrefixesForProductType,
+  normalizeSkuPrefixes,
   SKU_PREFIX_ERROR_PRODUCT_TYPE,
   type ActionType,
   type BulkExport,
@@ -18,6 +20,7 @@ import {
   type PpcRuleVersion,
   type ProductCostMaster,
   type SkuEconomics,
+  type SkuPrefixRule,
   type SkuRecommendationGroup,
 } from "./sku-architecture-types";
 import type { PpcPerformanceRow, PpcRecommendation } from "./types";
@@ -63,35 +66,40 @@ export async function getCostMasters(storeIdOrName?: string | null): Promise<Pro
       WHERE store_id = ${storeId}
     )
     SELECT r.id, r.store_id, r.product_type, r.base_cost, r.default_amazon_fee, r.tax_rate,
-           r.default_price, r.break_even_acos,
+           r.default_price, r.break_even_acos, r.sku_prefixes,
            r.version, r.effective_from, r.effective_to, r.notes, r.created_at, r.updated_at,
            COUNT(DISTINCT s.sku)::int as sku_count
     FROM ranked r
     LEFT JOIN sku_economics s ON s.product_type = r.product_type AND s.store_id = ${storeId}
     WHERE r.rn = 1
     GROUP BY r.id, r.store_id, r.product_type, r.base_cost, r.default_amazon_fee, r.tax_rate,
-             r.default_price, r.break_even_acos,
+             r.default_price, r.break_even_acos, r.sku_prefixes,
              r.version, r.effective_from, r.effective_to, r.notes, r.created_at, r.updated_at
     ORDER BY r.product_type ASC
   `;
 
-  return rows.map((r: any) => ({
-    id: r.id,
-    storeId: r.store_id,
-    productType: r.product_type,
-    baseCost: Number(r.base_cost),
-    defaultAmazonFee: Number(r.default_amazon_fee),
-    taxRate: Number(r.tax_rate),
-    defaultPrice: Number(r.default_price || 0),
-    breakEvenAcos: Number(r.break_even_acos || 0),
-    version: Number(r.version),
-    effectiveFrom: r.effective_from ? new Date(r.effective_from).toISOString().split("T")[0] : "",
-    effectiveTo: r.effective_to ? new Date(r.effective_to).toISOString().split("T")[0] : null,
-    notes: r.notes || null,
-    skuCount: Number(r.sku_count || 0),
-    createdAt: r.created_at ? new Date(r.created_at).toISOString() : "",
-    updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : "",
-  }));
+  return rows.map((r: any) => {
+    const prefixes = Array.isArray(r.sku_prefixes) ? r.sku_prefixes : [];
+    return {
+      id: r.id,
+      storeId: r.store_id,
+      productType: r.product_type,
+      baseCost: Number(r.base_cost),
+      defaultAmazonFee: Number(r.default_amazon_fee),
+      taxRate: Number(r.tax_rate),
+      defaultPrice: Number(r.default_price || 0),
+      breakEvenAcos: Number(r.break_even_acos || 0),
+      skuPrefixes: prefixes,
+      skuPrefix: prefixes.length > 0 ? prefixes.join(", ") : null,
+      version: Number(r.version),
+      effectiveFrom: r.effective_from ? new Date(r.effective_from).toISOString().split("T")[0] : "",
+      effectiveTo: r.effective_to ? new Date(r.effective_to).toISOString().split("T")[0] : null,
+      notes: r.notes || null,
+      skuCount: Number(r.sku_count || 0),
+      createdAt: r.created_at ? new Date(r.created_at).toISOString() : "",
+      updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : "",
+    };
+  });
 }
 
 export async function getCostMastersWithStores(storeIdOrName?: string | null): Promise<{
@@ -115,6 +123,8 @@ export async function getCostMastersWithStores(storeIdOrName?: string | null): P
 export async function saveCostMasterNewVersion(data: {
   storeId?: string;
   productType: string;
+  skuPrefixes?: string[] | string;
+  skuPrefix?: string;
   baseCost: number;
   defaultAmazonFee: number;
   taxRate: number;
@@ -147,12 +157,22 @@ export async function saveCostMasterNewVersion(data: {
 
     // 2. Find latest version for this store and product_type
     const latest = await tx`
-      SELECT version FROM product_cost_master
+      SELECT version, sku_prefixes FROM product_cost_master
       WHERE store_id = ${storeId} AND product_type = ${data.productType}
       ORDER BY version DESC LIMIT 1
     `;
 
     const nextVersion = latest.length > 0 ? Number(latest[0].version) + 1 : 1;
+
+    // Handle sku prefixes per store
+    let prefixes: string[];
+    if (data.skuPrefixes !== undefined || data.skuPrefix !== undefined) {
+      prefixes = normalizeSkuPrefixes(data.skuPrefixes ?? data.skuPrefix);
+    } else if (latest.length > 0 && Array.isArray(latest[0].sku_prefixes) && latest[0].sku_prefixes.length > 0) {
+      prefixes = latest[0].sku_prefixes;
+    } else {
+      prefixes = getSkuPrefixesForProductType(data.productType).map((p) => p.replace(/\*$/, ""));
+    }
 
     // 3. Set effective_to for previous version of this store
     await tx`
@@ -165,10 +185,10 @@ export async function saveCostMasterNewVersion(data: {
     const inserted = await tx`
       INSERT INTO product_cost_master (
         store_id, product_type, base_cost, default_amazon_fee, tax_rate,
-        default_price, break_even_acos, version, effective_from, notes
+        default_price, break_even_acos, sku_prefixes, version, effective_from, notes
       ) VALUES (
         ${storeId}, ${data.productType}, ${data.baseCost}, ${data.defaultAmazonFee},
-        ${data.taxRate}, ${defPrice}, ${beAcos}, ${nextVersion},
+        ${data.taxRate}, ${defPrice}, ${beAcos}, ${prefixes}, ${nextVersion},
         ${effectiveDate}, ${data.notes || null}
       )
       RETURNING *
@@ -191,6 +211,7 @@ export async function saveCostMasterNewVersion(data: {
     `;
 
     const r = inserted[0];
+    const savedPrefixes = Array.isArray(r.sku_prefixes) ? r.sku_prefixes : prefixes;
     const result = {
       id: r.id,
       storeId: r.store_id,
@@ -200,6 +221,8 @@ export async function saveCostMasterNewVersion(data: {
       taxRate: Number(r.tax_rate),
       defaultPrice: Number(r.default_price || 0),
       breakEvenAcos: Number(r.break_even_acos || 0),
+      skuPrefixes: savedPrefixes,
+      skuPrefix: savedPrefixes.length > 0 ? savedPrefixes.join(", ") : null,
       version: Number(r.version),
       effectiveFrom: r.effective_from ? new Date(r.effective_from).toISOString().split("T")[0] : "",
       effectiveTo: null,
@@ -238,28 +261,30 @@ export async function exportCostMasterToExcel(storeIdOrName?: string | null): Pr
   });
 
   sheet.columns = [
-    { header: "Product Type", key: "productType", width: 22 },
-    { header: "Base Cost ($)", key: "baseCost", width: 16 },
-    { header: "Default Amazon Fee ($)", key: "defaultAmazonFee", width: 24 },
-    { header: "Default Price ($)", key: "defaultPrice", width: 18 },
-    { header: "Profit Before Ads ($)", key: "profitBeforeAds", width: 22 },
-    { header: "Break-even ACoS", key: "breakEvenAcos", width: 20 },
-    { header: "Min Bid ($)", key: "minBid", width: 14 },
-    { header: "Max Bid ($)", key: "maxBid", width: 14 },
-    { header: "Tax Rate", key: "taxRate", width: 14 },
+    { header: "[BẮT BUỘC] Product Type", key: "productType", width: 26 },
+    { header: "[BẮT BUỘC] SKU Prefixes", key: "skuPrefixes", width: 28 },
+    { header: "[BẮT BUỘC] Base Cost ($)", key: "baseCost", width: 22 },
+    { header: "[BẮT BUỘC] Default Amazon Fee ($)", key: "defaultAmazonFee", width: 28 },
+    { header: "[BẮT BUỘC] Default Price ($)", key: "defaultPrice", width: 24 },
+    { header: "[TỰ TÍNH - Để trống] Profit Before Ads ($)", key: "profitBeforeAds", width: 30 },
+    { header: "[TỰ TÍNH - Để trống] Break-even ACoS (%)", key: "breakEvenAcos", width: 30 },
+    { header: "[TỰ TÍNH - Để trống] Min Bid ($)", key: "minBid", width: 24 },
+    { header: "[TỰ TÍNH - Để trống] Max Bid ($)", key: "maxBid", width: 24 },
+    { header: "[MẶC ĐỊNH 3% - Để trống] Tax Rate", key: "taxRate", width: 26 },
     { header: "Version", key: "version", width: 12 },
     { header: "Số SKU áp dụng", key: "skuCount", width: 16 },
-    { header: "Ghi chú", key: "notes", width: 38 },
+    { header: "[TÙY CHỌN] Ghi chú", key: "notes", width: 45 },
   ];
 
-  // Header styling
+  // Header styling: Cột 1-5 (thông tin chính cần nhập) tô màu Indigo, các cột còn lại (tự tính/tùy chọn) tô màu xám Slate
   const headerRow = sheet.getRow(1);
-  headerRow.height = 28;
-  headerRow.eachCell((cell) => {
+  headerRow.height = 32;
+  headerRow.eachCell((cell, colNumber) => {
+    const isPrimaryInput = colNumber <= 5;
     cell.fill = {
       type: "pattern",
       pattern: "solid",
-      fgColor: { argb: "FF4F46E5" }, // Indigo 600
+      fgColor: { argb: isPrimaryInput ? "FF4F46E5" : "FF64748B" }, // Indigo 600 vs Slate 500
     };
     cell.font = {
       name: "Calibri",
@@ -270,12 +295,13 @@ export async function exportCostMasterToExcel(storeIdOrName?: string | null): Pr
     cell.alignment = {
       vertical: "middle",
       horizontal: "center",
+      wrapText: true,
     };
     cell.border = {
-      top: { style: "thin", color: { argb: "FF3730A3" } },
-      bottom: { style: "medium", color: { argb: "FF3730A3" } },
-      left: { style: "thin", color: { argb: "FF3730A3" } },
-      right: { style: "thin", color: { argb: "FF3730A3" } },
+      top: { style: "thin", color: { argb: isPrimaryInput ? "FF3730A3" : "FF475569" } },
+      bottom: { style: "medium", color: { argb: isPrimaryInput ? "FF3730A3" : "FF475569" } },
+      left: { style: "thin", color: { argb: isPrimaryInput ? "FF3730A3" : "FF475569" } },
+      right: { style: "thin", color: { argb: isPrimaryInput ? "FF3730A3" : "FF475569" } },
     };
   });
 
@@ -285,14 +311,15 @@ export async function exportCostMasterToExcel(storeIdOrName?: string | null): Pr
       id: "sample-1",
       storeId,
       productType: "Ornament 2D (Ví dụ)",
+      skuPrefixes: ["ORN", "GL-ORN"],
       baseCost: 2.00,
       defaultAmazonFee: 6.32,
       defaultPrice: 24.99,
-      breakEvenAcos: 58.7,
+      breakEvenAcos: 63.7,
       taxRate: 0.03,
       version: 1,
       skuCount: 0,
-      notes: "Mẫu tham khảo - Hãy sửa tên và giá theo đúng sản phẩm của bạn",
+      notes: "👉 HƯỚNG DẪN: Bắt buộc điền 5 cột đầu (A-E). Các cột F->M có thể để trống, hệ thống sẽ tự tính ACoS hòa vốn!",
       effectiveFrom: new Date().toISOString().split("T")[0],
       effectiveTo: null,
       createdAt: new Date().toISOString(),
@@ -302,6 +329,7 @@ export async function exportCostMasterToExcel(storeIdOrName?: string | null): Pr
       id: "sample-2",
       storeId,
       productType: "Tumbler 20oz (Ví dụ)",
+      skuPrefixes: ["TUM", "BL-TUM"],
       baseCost: 4.50,
       defaultAmazonFee: 7.20,
       defaultPrice: 32.99,
@@ -309,7 +337,7 @@ export async function exportCostMasterToExcel(storeIdOrName?: string | null): Pr
       taxRate: 0.03,
       version: 1,
       skuCount: 0,
-      notes: "Mẫu tham khảo - Hãy sửa tên và giá theo đúng sản phẩm của bạn",
+      notes: "👉 SKU Prefixes: [BẮT BUỘC] Nhập 1 hoặc nhiều mã tiền tố SKU nhận diện, cách nhau bằng dấu phẩy",
       effectiveFrom: new Date().toISOString().split("T")[0],
       effectiveTo: null,
       createdAt: new Date().toISOString(),
@@ -320,8 +348,13 @@ export async function exportCostMasterToExcel(storeIdOrName?: string | null): Pr
   rowsToExport.forEach((m, idx) => {
     const profitBeforeAds = m.defaultPrice > 0 ? (m.defaultPrice - m.defaultAmazonFee - m.baseCost) : 0;
     const maxBid = profitBeforeAds > 0 ? Number((0.10 * profitBeforeAds).toFixed(2)) : 0.05;
+    const prefixes = (m.skuPrefixes && m.skuPrefixes.length > 0)
+      ? m.skuPrefixes.join(", ")
+      : getSkuPrefixesForProductType(m.productType).map((p) => p.replace(/\*$/, "")).join(", ");
+
     const row = sheet.addRow({
       productType: m.productType,
+      skuPrefixes: prefixes,
       baseCost: m.baseCost,
       defaultAmazonFee: m.defaultAmazonFee,
       defaultPrice: m.defaultPrice,
@@ -335,7 +368,7 @@ export async function exportCostMasterToExcel(storeIdOrName?: string | null): Pr
       notes: m.notes || "",
     });
 
-    row.height = 22;
+    row.height = 24;
     const isEven = idx % 2 === 0;
     row.eachCell((cell, colNumber) => {
       cell.font = { name: "Calibri", size: 10 };
@@ -353,25 +386,68 @@ export async function exportCostMasterToExcel(storeIdOrName?: string | null): Pr
         right: { style: "thin", color: { argb: "FFE2E8F0" } },
       };
 
-      // Currency format for Base Cost (2), Fee (3), Price (4), Profit Before Ads (5), Min Bid (7), Max Bid (8)
-      if ([2, 3, 4, 5, 7, 8].includes(colNumber)) {
+      // Currency format for Base Cost (3), Fee (4), Price (5), Profit Before Ads (6), Min Bid (8), Max Bid (9)
+      if ([3, 4, 5, 6, 8, 9].includes(colNumber)) {
         cell.numFmt = "$#,##0.00";
         cell.alignment = { vertical: "middle", horizontal: "right" };
       }
-      // ACoS col 6
-      if (colNumber === 6) {
+      // ACoS col 7
+      if (colNumber === 7) {
         cell.alignment = { vertical: "middle", horizontal: "center" };
       }
-      // Tax rate col 9
-      if (colNumber === 9) {
+      // Tax rate col 10
+      if (colNumber === 10) {
         cell.numFmt = "0.0%";
         cell.alignment = { vertical: "middle", horizontal: "right" };
       }
-      // Version col 10, SKU Count col 11
-      if (colNumber === 10 || colNumber === 11) {
+      // Version col 11, SKU Count col 12
+      if (colNumber === 11 || colNumber === 12) {
         cell.alignment = { vertical: "middle", horizontal: "center" };
       }
     });
+  });
+
+  // Tạo thêm Tab 2: "Hướng Dẫn Điền File" để người dùng đọc chi tiết nếu cần
+  const guideSheet = workbook.addWorksheet("Hướng Dẫn Điền File", {
+    views: [{ showGridLines: true }],
+  });
+  guideSheet.columns = [
+    { header: "Cột", key: "col", width: 10 },
+    { header: "Tên Cột", key: "name", width: 32 },
+    { header: "Quy Định Nhập", key: "rule", width: 22 },
+    { header: "Mô Tả & Hướng Dẫn Chi Tiết", key: "desc", width: 60 },
+  ];
+
+  const guideHeaderRow = guideSheet.getRow(1);
+  guideHeaderRow.height = 28;
+  guideHeaderRow.eachCell((cell) => {
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF3730A3" } };
+    cell.font = { name: "Calibri", bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
+    cell.alignment = { vertical: "middle", horizontal: "center" };
+  });
+
+  const guideRules = [
+    { col: "A", name: "[BẮT BUỘC] Product Type", rule: "Bắt buộc điền", desc: "Tên loại phôi sản phẩm (ví dụ: Ornament, Tumbler 20oz, Blanket...)" },
+    { col: "B", name: "[BẮT BUỘC] SKU Prefixes", rule: "Bắt buộc điền", desc: "Mã tiền tố SKU trên Amazon (ví dụ: ORN, GL-ORN hoặc BDL, BQL). Có thể điền nhiều mã cách nhau bằng dấu phẩy. BẮT BUỘC để hệ thống nhận diện đúng sản phẩm của store." },
+    { col: "C", name: "[BẮT BUỘC] Base Cost ($)", rule: "Bắt buộc điền", desc: "Giá vốn sản xuất / nhập hàng (ví dụ: 2.00 hoặc $2.00)" },
+    { col: "D", name: "[BẮT BUỘC] Default Amazon Fee ($)", rule: "Bắt buộc điền", desc: "Phí sàn Amazon ước tính (ví dụ: 6.32 hoặc $6.32). Nếu không có điền 0." },
+    { col: "E", name: "[BẮT BUỘC] Default Price ($)", rule: "Bắt buộc điền", desc: "Giá bán niêm yết trên Amazon (ví dụ: 24.99 hoặc $24.99)" },
+    { col: "F", name: "[TỰ TÍNH] Profit Before Ads ($)", rule: "CÓ THỂ ĐỂ TRỐNG", desc: "Hệ thống tự động tính: Giá bán - Phí sàn - Giá vốn - (Giá bán x Thuế)" },
+    { col: "G", name: "[TỰ TÍNH] Break-even ACoS (%)", rule: "CÓ THỂ ĐỂ TRỐNG", desc: "Hệ thống tự động tính: (Lãi trước ads / Giá bán) x 100%" },
+    { col: "H", name: "[TỰ TÍNH] Min Bid ($)", rule: "CÓ THỂ ĐỂ TRỐNG", desc: "Mặc định $0.05" },
+    { col: "I", name: "[TỰ TÍNH] Max Bid ($)", rule: "CÓ THỂ ĐỂ TRỐNG", desc: "Hệ thống tự động tính: 10% x Lãi trước ads" },
+    { col: "J", name: "[MẶC ĐỊNH 3%] Tax Rate", rule: "CÓ THỂ ĐỂ TRỐNG", desc: "Mặc định 3% nếu bạn để trống" },
+    { col: "K", name: "Version", rule: "CÓ THỂ ĐỂ TRỐNG", desc: "Hệ thống tự động quản lý phiên bản v1.0, v2.0..." },
+    { col: "L", name: "Số SKU áp dụng", rule: "CÓ THỂ ĐỂ TRỐNG", desc: "Hệ thống tự động đếm SKU thực tế của store đang dùng phôi này" },
+    { col: "M", name: "[TÙY CHỌN] Ghi chú", rule: "CÓ THỂ ĐỂ TRỐNG", desc: "Ghi chú nội bộ của bạn (tùy chọn)" },
+  ];
+
+  guideRules.forEach((g) => {
+    const r = guideSheet.addRow(g);
+    r.height = 22;
+    r.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
+    r.getCell(2).font = { bold: true };
+    r.getCell(3).font = { bold: true, color: { argb: g.rule.includes("Bắt buộc") ? "FFB91C1C" : "FF047857" } };
   });
 
   const buffer = await workbook.xlsx.writeBuffer();
@@ -389,14 +465,44 @@ export async function deleteCostMaster(
   storeIdOrName?: string | null,
 ): Promise<boolean> {
   const sql = await getDatabaseClient();
-  const storeId = await resolveStoreId(storeIdOrName);
+
+  // 1. Tìm bản ghi phôi để xác định store_id và product_type chính xác
+  let target: { id: string; store_id: string; product_type: string } | null = null;
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+
+  if (isUuid) {
+    const rows = await sql<{ id: string; store_id: string; product_type: string }[]>`
+      SELECT id, store_id, product_type FROM product_cost_master WHERE id = ${id} LIMIT 1
+    `;
+    if (rows[0]) target = rows[0];
+  }
+
+  if (!target && storeIdOrName) {
+    const storeId = await resolveStoreId(storeIdOrName);
+    const rows = await sql<{ id: string; store_id: string; product_type: string }[]>`
+      SELECT id, store_id, product_type FROM product_cost_master 
+      WHERE (id = ${id} OR lower(product_type) = lower(${id})) AND store_id = ${storeId}
+      LIMIT 1
+    `;
+    if (rows[0]) target = rows[0];
+  }
+
+  if (!target) {
+    return false;
+  }
+
+  const actualStoreId = target.store_id;
+  const productType = target.product_type;
+
+  // 2. Xóa TẤT CẢ các version của product_type này trong store đó
   const res = await sql`
     DELETE FROM product_cost_master
-    WHERE id = ${id} AND store_id = ${storeId}
+    WHERE store_id = ${actualStoreId} AND lower(product_type) = lower(${productType})
     RETURNING id
   `;
+
   if (res.length > 0) {
-    invalidateGroupedRecommendationsCache(storeId);
+    invalidateGroupedRecommendationsCache(actualStoreId);
   }
   return res.length > 0;
 }
@@ -422,6 +528,7 @@ export async function cloneCostMasters(
     await saveCostMasterNewVersion({
       storeId: targetId,
       productType: m.productType,
+      skuPrefixes: m.skuPrefixes,
       baseCost: m.baseCost,
       defaultAmazonFee: m.defaultAmazonFee,
       taxRate: m.taxRate,
@@ -438,7 +545,47 @@ export async function cloneCostMasters(
 }
 
 /**
- * Nhập bảng Cost Master từ file Excel (.xlsx) theo từng store
+ * Helper bóc tách số từ ô Excel (loại bỏ $, ký hiệu tiền tệ, dấu phẩy, khoảng trắng, hoặc formula object)
+ */
+function parseExcelNumericValue(val: unknown): number {
+  if (val === null || val === undefined || val === "") return 0;
+  if (typeof val === "number") return isNaN(val) ? 0 : val;
+  if (typeof val === "object") {
+    const obj = val as Record<string, unknown>;
+    if ("result" in obj && obj.result !== null && obj.result !== undefined) {
+      return parseExcelNumericValue(obj.result);
+    }
+    if ("text" in obj && typeof obj.text === "string") {
+      return parseExcelNumericValue(obj.text);
+    }
+  }
+  const clean = String(val).replace(/[$€₫,\s]/g, "").trim();
+  const n = parseFloat(clean);
+  return isNaN(n) ? 0 : n;
+}
+
+function parseExcelTaxRate(val: unknown): number {
+  if (val === null || val === undefined || val === "") return 0.03;
+  if (typeof val === "number") {
+    if (isNaN(val) || val <= 0) return 0.03;
+    return val > 1 ? val / 100 : val;
+  }
+  if (typeof val === "object") {
+    const obj = val as Record<string, unknown>;
+    if ("result" in obj && obj.result !== null && obj.result !== undefined) {
+      return parseExcelTaxRate(obj.result);
+    }
+  }
+  const clean = String(val).replace(/[%,\s]/g, "").trim();
+  const n = parseFloat(clean);
+  if (isNaN(n) || n <= 0) return 0.03;
+  return n > 1 ? n / 100 : n;
+}
+
+/**
+ * Nhập bảng Cost Master từ file Excel (.xlsx) theo từng store:
+ * Người dùng chỉ cần nhập 5 cột chính: Product Type, SKU Prefixes, Base Cost, Amazon Fee, Price.
+ * Các cột còn lại (Profit, Break-even ACoS, Min/Max Bid, Version...) nếu để trống hệ thống sẽ tự tính toán.
  */
 export async function importCostMasterFromExcel(
   buffer: Buffer,
@@ -466,25 +613,32 @@ export async function importCostMasterFromExcel(
     if (headerRowNumber !== -1) return;
     const values = (row.values as any[]) || [];
     const textJoined = values.map((v) => String(v || "").toLowerCase()).join(" ");
+    const normTextJoined = textJoined.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
-    if (textJoined.includes("product") || textJoined.includes("phôi") || textJoined.includes("type") || textJoined.includes("loại")) {
+    if (normTextJoined.includes("product") || normTextJoined.includes("phoi") || normTextJoined.includes("type") || normTextJoined.includes("loai")) {
       headerRowNumber = rowNumber;
       values.forEach((v, idx) => {
-        const str = String(v || "").trim().toLowerCase();
-        if (!str) return;
-        if (str.includes("product") || str.includes("phôi") || str.includes("loại")) colMap.productType = idx;
-        else if (str.includes("base") || str.includes("vốn") || str.includes("nhập")) colMap.baseCost = idx;
-        else if (str.includes("fee") || str.includes("phí")) colMap.defaultAmazonFee = idx;
-        else if (str.includes("tax") || str.includes("thuế")) colMap.taxRate = idx;
-        else if (str.includes("price") || str.includes("giá bán")) colMap.defaultPrice = idx;
-        else if (str.includes("acos") || str.includes("hòa")) colMap.breakEvenAcos = idx;
-        else if (str.includes("ghi chú") || str.includes("note")) colMap.notes = idx;
+        if (!v) return;
+        const raw = String(v).trim().toLowerCase();
+        const norm = raw.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+        if (norm.includes("product") || norm.includes("phoi") || norm.includes("loai")) colMap.productType = idx;
+        else if (norm.includes("prefix") || norm.includes("tien to")) colMap.skuPrefixes = idx;
+        else if (norm.includes("base") || norm.includes("von") || norm.includes("nhap") || norm.includes("gia goc")) colMap.baseCost = idx;
+        else if (norm.includes("fee") || norm.includes("phi") || norm.includes("amz fee")) colMap.defaultAmazonFee = idx;
+        else if (norm.includes("price") || norm.includes("gia ban") || norm.includes("don gia")) colMap.defaultPrice = idx;
+        else if (norm.includes("acos") || norm.includes("hoa von")) colMap.breakEvenAcos = idx;
+        else if (norm.includes("tax") || norm.includes("thue")) colMap.taxRate = idx;
+        else if (norm.includes("ghi chu") || norm.includes("note")) colMap.notes = idx;
       });
     }
   });
 
   if (headerRowNumber === -1 || colMap.productType === undefined) {
     throw new Error("Không nhận diện được tiêu đề cột 'Product Type' hoặc 'Phôi' trong file Excel.");
+  }
+  if (colMap.skuPrefixes === undefined) {
+    throw new Error("Không nhận diện được cột '[BẮT BUỘC] SKU Prefixes' trong file Excel. Vui lòng tải file mẫu mới nhất.");
   }
 
   const items: Array<{ productType: string; baseCost: number; breakEvenAcos: number }> = [];
@@ -494,57 +648,53 @@ export async function importCostMasterFromExcel(
     const productTypeRaw = colMap.productType ? String(row.getCell(colMap.productType).value || "").trim() : "";
     if (!productTypeRaw) continue;
 
-    // Parse Base Cost
-    const baseCostRaw = colMap.baseCost ? Number(row.getCell(colMap.baseCost).value) : 0;
-    const baseCost = isNaN(baseCostRaw) ? 0 : baseCostRaw;
-
-    // Parse Default Fee
-    const feeRaw = colMap.defaultAmazonFee ? Number(row.getCell(colMap.defaultAmazonFee).value) : 0;
-    const defaultAmazonFee = isNaN(feeRaw) ? 0 : feeRaw;
-
-    // Parse Tax Rate
-    let taxRate = 0.03;
-    if (colMap.taxRate) {
-      const val = row.getCell(colMap.taxRate).value;
-      if (typeof val === "number") {
-        taxRate = val > 1 ? val / 100 : val;
-      } else if (typeof val === "string") {
-        const cleaned = parseFloat(val.replace("%", "").trim());
-        if (!isNaN(cleaned)) taxRate = cleaned > 1 ? cleaned / 100 : cleaned;
-      }
+    // Tự động bỏ qua các dòng ví dụ mẫu nếu người dùng quên chưa xóa
+    const lowerType = productTypeRaw.toLowerCase();
+    if (lowerType.includes("(ví dụ)") || lowerType.includes("(vi du)") || lowerType.includes("(sample)") || lowerType.includes("(mẫu)")) {
+      continue;
     }
 
-    // Parse Default Price
-    const priceRaw = colMap.defaultPrice ? Number(row.getCell(colMap.defaultPrice).value) : 0;
-    const defaultPrice = isNaN(priceRaw) ? 0 : priceRaw;
+    // Parse Base Cost, Default Amazon Fee, Default Price
+    const baseCost = colMap.baseCost ? parseExcelNumericValue(row.getCell(colMap.baseCost).value) : 0;
+    const defaultAmazonFee = colMap.defaultAmazonFee ? parseExcelNumericValue(row.getCell(colMap.defaultAmazonFee).value) : 0;
+    const defaultPrice = colMap.defaultPrice ? parseExcelNumericValue(row.getCell(colMap.defaultPrice).value) : 0;
+    const taxRate = colMap.taxRate ? parseExcelTaxRate(row.getCell(colMap.taxRate).value) : 0.03;
 
-    // Parse Break Even ACoS
+    // Parse Break Even ACoS or auto calculate if left blank
     let breakEvenAcos = 0;
     if (colMap.breakEvenAcos) {
-      const val = row.getCell(colMap.breakEvenAcos).value;
-      if (typeof val === "number") {
-        breakEvenAcos = val <= 1 && val > 0 ? val * 100 : val;
-      } else if (typeof val === "string") {
-        const cleaned = parseFloat(val.replace("%", "").trim());
-        if (!isNaN(cleaned)) {
-          breakEvenAcos = cleaned <= 1 && cleaned > 0 ? cleaned * 100 : cleaned;
-        }
+      breakEvenAcos = parseExcelNumericValue(row.getCell(colMap.breakEvenAcos).value);
+      if (breakEvenAcos > 0 && breakEvenAcos <= 1) {
+        breakEvenAcos = breakEvenAcos * 100;
       }
     }
 
-    if (!breakEvenAcos && defaultPrice > 0) {
-      const profit = defaultPrice - defaultAmazonFee - baseCost;
+    // Tự động tính Break-even ACoS nếu người dùng để trống
+    if (breakEvenAcos <= 0 && defaultPrice > 0) {
+      const profit = defaultPrice - defaultAmazonFee - baseCost - (defaultPrice * taxRate);
       if (profit > 0) {
-        breakEvenAcos = Math.round((profit / defaultPrice) * 100);
+        breakEvenAcos = Math.round((profit / defaultPrice) * 1000) / 10;
       }
     }
 
-    // Parse Notes
+    // Parse Notes & SKU Prefixes
     const notes = colMap.notes ? String(row.getCell(colMap.notes).value || "").trim() : "";
+    const prefixRaw = colMap.skuPrefixes ? String(row.getCell(colMap.skuPrefixes).value || "").trim() : "";
+
+    // Cột SKU Prefixes là bắt buộc: nếu người dùng bỏ trống cột này thì báo lỗi rõ ràng
+    if (!prefixRaw) {
+      throw new Error(`Dòng ${r} (${productTypeRaw}): Cột '[BẮT BUỘC] SKU Prefixes' chưa có dữ liệu. Vui lòng điền tiền tố SKU (ví dụ: ORN, GL-ORN hoặc BDL, BQL...) để hệ thống nhận diện sản phẩm.`);
+    }
+
+    const prefixes = normalizeSkuPrefixes(prefixRaw);
+    if (!prefixes || prefixes.length === 0) {
+      throw new Error(`Dòng ${r} (${productTypeRaw}): Tiền tố SKU không hợp lệ.`);
+    }
 
     const saved = await saveCostMasterNewVersion({
       storeId,
       productType: productTypeRaw,
+      skuPrefixes: prefixes,
       baseCost,
       defaultAmazonFee,
       taxRate,
@@ -632,6 +782,17 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
   `;
   const econMap = new Map<string, any>(existingEconomics.map((e: any) => [String(e.sku).toUpperCase(), e]));
 
+  // Build store-level prefix rules based on configured cost masters
+  const storePrefixRules: SkuPrefixRule[] = [];
+  for (const m of masters) {
+    const prefixes = (m.skuPrefixes && m.skuPrefixes.length > 0)
+      ? m.skuPrefixes
+      : getSkuPrefixesForProductType(m.productType).map((p) => p.replace(/\*$/, ""));
+    for (const prefix of prefixes) {
+      storePrefixRules.push({ prefix, productType: m.productType });
+    }
+  }
+
   const result: SkuEconomics[] = [];
 
   for (const p of perfRows) {
@@ -648,7 +809,7 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
     const actualCr = clicks > 0 ? orders / clicks : 0;
     const actualAcos = sales > 0 ? (spend / sales) * 100 : 0;
 
-    const detected = detectProductTypeFromSku(sku, p.sample_campaign);
+    const detected = detectProductTypeFromSku(sku, p.sample_campaign, storePrefixRules);
     const productType = existing?.cost_source === "OVERRIDE" && existing?.product_type
       ? existing.product_type
       : detected;
