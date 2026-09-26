@@ -2288,7 +2288,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
             }`}
         >
           <MagnifyingGlass size={15} weight={activeTab === "search_terms" ? "bold" : "regular"} />
-          <span>4. Search Terms ({loading ? "..." : (aggregatedSearchTerms.length > 0 ? aggregatedSearchTerms.length : (detailCounts?.searchTerms ?? searchTerms.length)).toLocaleString("vi-VN")})</span>
+          <span>4. Search Terms ({detailCounts?.searchTerms !== undefined ? detailCounts.searchTerms.toLocaleString("vi-VN") : (loading ? "..." : (aggregatedSearchTerms.length > 0 ? aggregatedSearchTerms.length : searchTerms.length).toLocaleString("vi-VN"))})</span>
         </button>
 
         <button

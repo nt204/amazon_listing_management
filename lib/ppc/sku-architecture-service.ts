@@ -1846,7 +1846,7 @@ export async function getAutoUploadDetails(logId: string): Promise<{
   const sql = await getDatabaseClient();
   const logRows = await sql<any[]>`
     SELECT id, store_id, file_name, adspower_profile_id, adspower_profile_name,
-           action_count, action_ids, skus, status, stage, file_status, file_error_message,
+           action_count, action_ids, actions_payload, skus, status, stage, file_status, file_error_message,
            error_message, result_summary, duration_ms, created_at
     FROM ppc_auto_upload_logs
     WHERE id = ${logId}
@@ -1878,6 +1878,43 @@ export async function getAutoUploadDetails(logId: string): Promise<{
       oldValue: a.old_value ? Number(a.old_value) : null,
       finalValue: a.final_value ? Number(a.final_value) : null,
       status: a.status,
+    }));
+  }
+
+  // Fallback 1: Custom actions payload (e.g. ST Optimization direct negative uploads)
+  if (actions.length === 0 && r.actions_payload) {
+    const rawPayload = Array.isArray(r.actions_payload)
+      ? r.actions_payload
+      : (typeof r.actions_payload === "string" ? JSON.parse(r.actions_payload) : []);
+    if (rawPayload.length > 0) {
+      actions = rawPayload.map((p: any, idx: number) => ({
+        id: p.id || `act-${idx}`,
+        sku: p.sku || "ST_OPTI",
+        campaignName: p.campaignName || p.campaign_name || "",
+        adGroupName: p.adGroupName || p.ad_group_name || "",
+        targetKeyword: p.targetKeyword || p.target_keyword || p.keyword || "Phủ định",
+        matchType: p.matchType || p.match_type || "Negative Exact",
+        actionType: p.actionType || p.action_type || "NEGATIVE_KEYWORD",
+        oldValue: p.oldValue != null ? Number(p.oldValue) : null,
+        finalValue: p.finalValue != null ? Number(p.finalValue) : null,
+        status: p.status || (r.status === "SUCCESS" ? "APPLIED" : (r.status === "FAILED" ? "FAILED" : "PENDING")),
+      }));
+    }
+  }
+
+  // Fallback 2: Generate from campaigns in skus column if payload was not preserved
+  if (actions.length === 0 && Array.isArray(r.skus) && r.skus.length > 0) {
+    actions = r.skus.map((campName: string, idx: number) => ({
+      id: `fallback-act-${idx}`,
+      sku: "ST_OPTI",
+      campaignName: campName,
+      adGroupName: "Search Term Negative",
+      targetKeyword: "Phủ định Search Term lãng phí",
+      matchType: "Negative Exact",
+      actionType: "NEGATIVE_KEYWORD",
+      oldValue: null,
+      finalValue: null,
+      status: r.status === "SUCCESS" ? "APPLIED" : (r.status === "FAILED" ? "FAILED" : "PENDING"),
     }));
   }
 

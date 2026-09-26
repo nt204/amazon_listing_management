@@ -204,15 +204,30 @@ export async function POST(request: Request) {
 
     const distinctCamps = Array.from(new Set(uniqueItems.map((c) => c.campaignName))).slice(0, 50);
 
+    const actionsPayload = recommendations.map((rec) => ({
+      id: rec.id,
+      sku: "ST_NEGATIVE",
+      campaignName: rec.campaignName,
+      adGroupName: rec.adGroupName || "",
+      targetKeyword: rec.keyword,
+      matchType: rec.matchType || "Negative Exact",
+      actionType: "NEGATIVE_KEYWORD",
+      oldValue: null,
+      finalValue: null,
+      status: "PENDING",
+      reason: rec.reason,
+      estimatedSavings: rec.estimatedSavings,
+    }));
+
     // 7. Ghi nhận tác vụ vào ppc_auto_upload_logs ở trạng thái PENDING để Mac mini worker pick up
     await sql`
       INSERT INTO ppc_auto_upload_logs (
         id, team_id, store_id, file_name, action_count, skus, status, stage,
-        file_status, progress_pct, action_ids, r2_key, sha256, updated_at
+        file_status, progress_pct, action_ids, actions_payload, r2_key, sha256, updated_at
       ) VALUES (
         ${jobId}, ${actor.teamId}, ${storeId}, ${fileName}, ${recommendations.length},
         ${sql.json(distinctCamps)}, 'PENDING', 'FILE_READY',
-        'SUCCESS', 25, ${sql.json([])}, ${r2Key}, ${sha256}, NOW()
+        'SUCCESS', 25, ${sql.json([])}, ${sql.json(actionsPayload)}, ${r2Key}, ${sha256}, NOW()
       )
     `;
 
