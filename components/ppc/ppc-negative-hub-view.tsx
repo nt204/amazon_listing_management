@@ -11,6 +11,8 @@ import {
   CircleNotch,
   WarningCircle,
   FileXls,
+  CheckSquare,
+  Square,
 } from "@phosphor-icons/react";
 import { PpcPagination } from "./ppc-pagination";
 
@@ -63,8 +65,12 @@ export function PpcNegativeHubView({
   const [pageSize, setPageSize] = useState(50);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
+  // Selection state for bulk actions
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
   // Delete modal state
   const [deleteTarget, setDeleteTarget] = useState<NegativeRegistryItem | null>(null);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
   // Filtered items
@@ -94,6 +100,37 @@ export function PpcNegativeHubView({
     return filteredItems.slice(start, start + pageSize);
   }, [filteredItems, page, pageSize]);
 
+  // Checkbox helpers
+  const isAllPageSelected = useMemo(() => {
+    if (paginatedItems.length === 0) return false;
+    return paginatedItems.every((item) => selectedIds.has(item.id));
+  }, [paginatedItems, selectedIds]);
+
+  const isSomePageSelected = useMemo(() => {
+    if (paginatedItems.length === 0) return false;
+    return paginatedItems.some((item) => selectedIds.has(item.id)) && !isAllPageSelected;
+  }, [paginatedItems, selectedIds, isAllPageSelected]);
+
+  const handleToggleSelectAllPage = () => {
+    const next = new Set(selectedIds);
+    if (isAllPageSelected) {
+      paginatedItems.forEach((item) => next.delete(item.id));
+    } else {
+      paginatedItems.forEach((item) => next.add(item.id));
+    }
+    setSelectedIds(next);
+  };
+
+  const handleToggleSelectItem = (id: string) => {
+    const next = new Set(selectedIds);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    setSelectedIds(next);
+  };
+
   const handleCopy = async (text: string, id: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -117,7 +154,36 @@ export function PpcNegativeHubView({
         throw new Error(json.error || json.message || "Lỗi khi xóa từ khóa.");
       }
       notify(`Đã xóa "${deleteTarget.keyword_text}" khỏi Negative Hub.`, "success");
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(deleteTarget.id);
+        return next;
+      });
       setDeleteTarget(null);
+      onRefresh();
+    } catch (err: any) {
+      notify(err.message || "Lỗi khi xóa từ khóa", "error");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    setIsDeleting(true);
+    try {
+      const res = await fetch("/api/ppc/negative-keywords", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: Array.from(selectedIds) }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || json.message || "Lỗi khi xóa từ khóa.");
+      }
+      notify(`Đã xóa thành công ${selectedIds.size} từ khóa khỏi Negative Hub.`, "success");
+      setSelectedIds(new Set());
+      setIsBulkDeleting(false);
       onRefresh();
     } catch (err: any) {
       notify(err.message || "Lỗi khi xóa từ khóa", "error");
@@ -246,12 +312,53 @@ export function PpcNegativeHubView({
         </div>
       </div>
 
+      {/* Bulk Selection Bar */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center justify-between p-3 px-4 rounded-xl bg-linear-to-r from-rose-50 to-indigo-50 border border-rose-200 text-slate-800 animate-in fade-in duration-150">
+          <div className="flex items-center gap-2 text-xs font-bold">
+            <CheckSquare size={18} weight="fill" className="text-indigo-600 shrink-0" />
+            <span>
+              Đã chọn <strong className="text-indigo-700 font-mono text-sm px-1.5 py-0.5 rounded bg-indigo-100/70">{selectedIds.size}</strong> từ khóa trong danh sách
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSelectedIds(new Set())}
+              className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-xs font-bold text-slate-700 transition cursor-pointer"
+            >
+              Bỏ chọn
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsBulkDeleting(true)}
+              className="px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-xs cursor-pointer"
+            >
+              <Trash size={14} weight="bold" />
+              <span>Xóa {selectedIds.size} từ đã chọn</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 3. Negative Keywords Table */}
       <div className="rounded-xl border border-slate-200 bg-white shadow-2xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50/75 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                <th className="py-2.5 px-3 w-10 text-center">
+                  <input
+                    type="checkbox"
+                    checked={isAllPageSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = isSomePageSelected;
+                    }}
+                    onChange={handleToggleSelectAllPage}
+                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                    title={isAllPageSelected ? "Bỏ chọn trang này" : "Chọn tất cả trên trang này"}
+                  />
+                </th>
                 <th className="py-2.5 px-3 w-12 text-center">STT</th>
                 <th className="py-2.5 px-3 w-16">Loại</th>
                 <th className="py-2.5 px-3">Từ Khóa / ASIN Phủ Định</th>
@@ -266,14 +373,14 @@ export function PpcNegativeHubView({
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-slate-400">
+                  <td colSpan={10} className="py-12 text-center text-slate-400">
                     <CircleNotch size={24} className="animate-spin mx-auto text-indigo-600 mb-2" />
                     <span>Đang tải danh sách Negative Registry...</span>
                   </td>
                 </tr>
               ) : paginatedItems.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-slate-400">
+                  <td colSpan={10} className="py-12 text-center text-slate-400">
                     <ShieldCheck size={36} className="mx-auto text-slate-300 mb-2" />
                     <span className="font-semibold block text-slate-600">
                       Chưa có từ khóa nào trong Negative Hub của shop này.
@@ -287,12 +394,28 @@ export function PpcNegativeHubView({
                 paginatedItems.map((item, index) => {
                   const globalIdx = (page - 1) * pageSize + index + 1;
                   const isCopied = copiedKey === item.id;
+                  const isSelected = selectedIds.has(item.id);
                   const isASIN =
                     item.keyword_text.toLowerCase().startsWith("b0") ||
                     item.keyword_text.toLowerCase().startsWith("asin=");
 
                   return (
-                    <tr key={item.id} className="hover:bg-slate-50/70 transition">
+                    <tr
+                      key={item.id}
+                      className={`transition ${
+                        isSelected ? "bg-indigo-50/50" : "hover:bg-slate-50/70"
+                      }`}
+                    >
+                      {/* Checkbox */}
+                      <td className="py-2.5 px-3 text-center">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => handleToggleSelectItem(item.id)}
+                          className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                        />
+                      </td>
+
                       <td className="py-2.5 px-3 text-center text-slate-400 font-mono text-[11px]">
                         {globalIdx}
                       </td>
@@ -435,7 +558,7 @@ export function PpcNegativeHubView({
         )}
       </div>
 
-      {/* Delete Confirmation Modal */}
+      {/* Single Delete Confirmation Modal */}
       {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-150">
           <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
@@ -470,6 +593,45 @@ export function PpcNegativeHubView({
               >
                 {isDeleting ? <CircleNotch size={14} className="animate-spin" /> : <Trash size={14} />}
                 <span>Xác Nhận Xóa</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Delete Confirmation Modal */}
+      {isBulkDeleting && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+            <div className="p-5 space-y-3">
+              <div className="flex items-center gap-2 text-rose-600 font-bold text-sm">
+                <WarningCircle size={20} weight="fill" />
+                <span>Xác nhận xóa hàng loạt ({selectedIds.size} từ khóa)</span>
+              </div>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Bạn có chắc chắn muốn xóa <b className="font-extrabold text-rose-600">{selectedIds.size} từ khóa đã chọn</b> khỏi danh sách Negative Hub không?
+              </p>
+              <p className="text-[11px] text-slate-400 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                Lưu ý: Thao tác này sẽ xóa các bản ghi lưu vết trên hệ thống để những từ này có thể xuất hiện lại trong đề xuất tối ưu nếu tiếp tục phát sinh click không chuyển đổi.
+              </p>
+            </div>
+            <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsBulkDeleting(false)}
+                disabled={isDeleting}
+                className="px-3.5 py-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold transition cursor-pointer"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={handleBulkDelete}
+                disabled={isDeleting}
+                className="px-4 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                {isDeleting ? <CircleNotch size={14} className="animate-spin" /> : <Trash size={14} />}
+                <span>Xác Nhận Xóa {selectedIds.size} Từ Khóa</span>
               </button>
             </div>
           </div>

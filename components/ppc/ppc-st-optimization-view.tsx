@@ -53,6 +53,7 @@ interface PpcStOptimizationViewProps {
   selectedDays: number;
   loading: boolean;
   notify: (message: string, type?: "success" | "error") => void;
+  onOpenActionQueue?: () => void;
 }
 
 export function PpcStOptimizationView({
@@ -62,6 +63,7 @@ export function PpcStOptimizationView({
   selectedDays,
   loading,
   notify,
+  onOpenActionQueue,
 }: PpcStOptimizationViewProps) {
   // 0. Sub-tab state (Tab 1: Candidates, Tab 2: Negative Hub)
   const [subTab, setSubTab] = useState<"candidates" | "registry">("candidates");
@@ -1116,6 +1118,24 @@ export function PpcStOptimizationView({
                       <b className="text-sky-900">Báo cáo Telegram tự động:</b> Khi Mac mini hoàn tất upload và nhận kết quả từ Amazon Ads, bot Telegram sẽ <b>tự động nổ tin nhắn thông báo</b> kèm tên file và kết quả chi tiết. Bạn có thể bấm <b>Đóng</b> ngay lúc này, tác vụ vẫn chạy ngầm trên Mac mini!
                     </div>
                   </div>
+
+                  {/* Link to Action Queue History */}
+                  <div className="pt-2 flex items-center justify-between gap-1.5 text-xs text-indigo-900 bg-indigo-50/70 p-3 rounded-xl border border-indigo-100">
+                    <span className="font-semibold text-slate-700">Theo dõi tiến độ &amp; lịch sử chi tiết:</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAutoUploadModalOpen(false);
+                        setAutoUploadStep(0);
+                        setAutoUploadSuccessResult(null);
+                        if (onOpenActionQueue) onOpenActionQueue();
+                      }}
+                      className="underline text-indigo-700 hover:text-indigo-900 font-bold flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>Lịch sử / Kết quả thực thi</span>
+                      <ArrowSquareOut size={13} weight="bold" />
+                    </button>
+                  </div>
                 </div>
               ) : (
                 /* Confirmation View */
@@ -1206,18 +1226,32 @@ export function PpcStOptimizationView({
             {/* Modal Footer */}
             <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/80 flex items-center justify-end gap-2">
               {autoUploadStep === 2 ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsAutoUploadModalOpen(false);
-                    setAutoUploadStep(0);
-                    setAutoUploadSuccessResult(null);
-                  }}
-                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold transition cursor-pointer flex items-center gap-1.5"
-                >
-                  <Check size={14} weight="bold" />
-                  <span>Đóng &amp; Tiếp Tục Làm Việc</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAutoUploadModalOpen(false);
+                      setAutoUploadStep(0);
+                      setAutoUploadSuccessResult(null);
+                    }}
+                    className="px-3.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold transition cursor-pointer"
+                  >
+                    Đóng
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAutoUploadModalOpen(false);
+                      setAutoUploadStep(0);
+                      setAutoUploadSuccessResult(null);
+                      if (onOpenActionQueue) onOpenActionQueue();
+                    }}
+                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-xs"
+                  >
+                    <Lightning size={14} weight="bold" />
+                    <span>Xem lịch sử thực thi</span>
+                  </button>
+                </div>
               ) : (
                 <>
                   <button

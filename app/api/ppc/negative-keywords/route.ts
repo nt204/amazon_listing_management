@@ -83,24 +83,41 @@ export async function DELETE(request: Request) {
   try {
     const actor = authorize(request, "write");
     const { searchParams } = new URL(request.url);
-    const id = searchParams.get("id")?.trim() || "";
 
-    if (!id) {
-      throw new ApiError("Vui lòng cung cấp ID của từ khóa cần xóa.", 400);
+    // Support single id or ids from query or body
+    let ids: string[] = [];
+    const queryId = searchParams.get("id")?.trim();
+    const queryIds = searchParams.get("ids")?.trim();
+
+    if (queryIds) {
+      ids = queryIds.split(",").map((s) => s.trim()).filter(Boolean);
+    } else if (queryId) {
+      ids = [queryId];
+    } else {
+      const body = await request.json().catch(() => null);
+      if (body?.ids && Array.isArray(body.ids)) {
+        ids = body.ids.map((s: any) => String(s).trim()).filter(Boolean);
+      } else if (body?.id) {
+        ids = [String(body.id).trim()];
+      }
+    }
+
+    if (ids.length === 0) {
+      throw new ApiError("Vui lòng cung cấp ít nhất một ID cần xóa.", 400);
     }
 
     const sql = await getDatabaseClient();
     const result = await sql`
       DELETE FROM ppc_negative_registry
-      WHERE id = ${id} AND team_id = ${actor.teamId}
+      WHERE id = ANY(${ids}::uuid[]) AND team_id = ${actor.teamId}
       RETURNING id
     `;
 
-    if (result.length === 0) {
-      throw new ApiError("Không tìm thấy từ khóa hoặc không có quyền thao tác.", 404);
-    }
-
-    return Response.json({ success: true, message: "Đã xóa từ khóa khỏi danh sách Negative Hub." });
+    return Response.json({
+      success: true,
+      message: `Đã xóa ${result.length} từ khóa khỏi danh sách Negative Hub.`,
+      deletedCount: result.length,
+    });
   } catch (error) {
     return routeErrorResponse(error, "Lỗi khi xóa từ khóa Negative.", 500);
   }

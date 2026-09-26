@@ -3762,6 +3762,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
           selectedDays={selectedDays}
           loading={loading || loadingSection === "search_terms"}
           notify={notify}
+          onOpenActionQueue={() => setIsActionQueueOpen(true)}
         />
       )}
 
