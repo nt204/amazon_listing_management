@@ -80,13 +80,23 @@ def export_bulksheet(recommendations, output_path=None):
         else:
             match_type = "exact"
 
+        campaign_id = str(rec.get("campaignId") or rec.get("campaign_id") or "")
+        ad_group_id = str(rec.get("adGroupId") or rec.get("ad_group_id") or "")
+        target_id = str(rec.get("keywordId") or rec.get("targetId") or rec.get("target_id") or "")
+        campaign_name = str(rec.get("campaignName") or rec.get("campaign_name") or "")
+        ad_group_name = str(rec.get("adGroupName") or rec.get("ad_group_name") or "")
+
         operation = "Update"
         state = "enabled"
         bid_val = ""
         daily_budget = ""
 
         if rec_type in ("NEGATIVE_KEYWORD",):
-            entity = "Negative Product Targeting" if is_product_target else "Negative Keyword"
+            level = str(rec.get("level") or "").upper()
+            if level == "CAMPAIGN" or not ad_group_id:
+                entity = "Campaign Negative Product Targeting" if is_product_target else "Campaign Negative Keyword"
+            else:
+                entity = "Negative Product Targeting" if is_product_target else "Negative Keyword"
             operation = "Create"
             match_type = "negativeExact"
             state = "enabled"
@@ -119,11 +129,13 @@ def export_bulksheet(recommendations, output_path=None):
             state = "enabled"
             bid_val = round(float(rec_bid), 2) if rec_bid is not None and str(rec_bid).strip() != "" else ""
 
-        campaign_id = str(rec.get("campaignId") or rec.get("campaign_id") or "")
-        ad_group_id = str(rec.get("adGroupId") or rec.get("ad_group_id") or "")
-        target_id = str(rec.get("keywordId") or rec.get("targetId") or rec.get("target_id") or "")
-        campaign_name = str(rec.get("campaignName") or rec.get("campaign_name") or "")
-        ad_group_name = str(rec.get("adGroupName") or rec.get("ad_group_name") or "")
+        asin_match = keyword_text.strip()
+        if asin_match.lower().startswith("b0") and not asin_match.lower().startswith("asin="):
+            product_target_expr = f'asin="{asin_match.upper()}"'
+        else:
+            product_target_expr = keyword_text
+
+        is_neg_kw = entity in ("Negative Keyword", "Campaign Negative Keyword")
 
         if ad_type == "SB":
             values = {
@@ -131,16 +143,16 @@ def export_bulksheet(recommendations, output_path=None):
                 "Entity": entity,
                 "Operation": operation,
                 "Campaign ID": campaign_id,
-                "Ad Group ID": ad_group_id if entity != "Campaign" else "",
+                "Ad Group ID": ad_group_id if entity not in ("Campaign", "Campaign Negative Keyword") else "",
                 "Keyword ID": target_id if not is_product_target and entity == "Keyword" and operation == "Update" else "",
                 "Product Targeting ID": target_id if is_product_target and operation == "Update" else "",
                 "Campaign Name": campaign_name,
                 "State": state,
                 "Budget": daily_budget if entity == "Campaign" else "",
                 "Bid": bid_val if entity in ("Keyword", "Product Targeting") else "",
-                "Keyword Text": "" if is_product_target or entity != "Keyword" else keyword_text,
-                "Match Type": "" if is_product_target or entity != "Keyword" else match_type,
-                "Product Targeting Expression": keyword_text if is_product_target else "",
+                "Keyword Text": "" if is_product_target or (entity != "Keyword" and not is_neg_kw) else keyword_text,
+                "Match Type": "" if is_product_target or (entity != "Keyword" and not is_neg_kw) else match_type,
+                "Product Targeting Expression": product_target_expr if is_product_target else "",
             }
         elif ad_type == "SD":
             values = {
@@ -148,14 +160,14 @@ def export_bulksheet(recommendations, output_path=None):
                 "Entity": entity,
                 "Operation": operation,
                 "Campaign ID": campaign_id,
-                "Ad Group ID": ad_group_id if entity != "Campaign" else "",
-                "Targeting ID": target_id if entity != "Campaign" and operation == "Update" else "",
+                "Ad Group ID": ad_group_id if entity not in ("Campaign", "Campaign Negative Keyword") else "",
+                "Targeting ID": target_id if entity not in ("Campaign", "Campaign Negative Keyword") and operation == "Update" else "",
                 "Campaign Name": campaign_name,
-                "Ad Group Name": ad_group_name if entity != "Campaign" else "",
+                "Ad Group Name": ad_group_name if entity not in ("Campaign", "Campaign Negative Keyword") else "",
                 "State": state,
                 "Budget": daily_budget if entity == "Campaign" else "",
                 "Bid": bid_val if entity != "Campaign" else "",
-                "Targeting Expression": keyword_text if entity != "Campaign" else "",
+                "Targeting Expression": product_target_expr if entity != "Campaign" else "",
             }
         else:
             # Default to Sponsored Products
@@ -164,17 +176,17 @@ def export_bulksheet(recommendations, output_path=None):
                 "Entity": entity,
                 "Operation": operation,
                 "Campaign ID": campaign_id,
-                "Ad Group ID": ad_group_id if entity != "Campaign" else "",
+                "Ad Group ID": ad_group_id if entity not in ("Campaign", "Campaign Negative Keyword") else "",
                 "Keyword ID": target_id if not is_product_target and entity == "Keyword" and operation == "Update" else "",
                 "Product Targeting ID": target_id if is_product_target and operation == "Update" else "",
                 "Campaign Name": campaign_name,
-                "Ad Group Name": ad_group_name if entity != "Campaign" else "",
+                "Ad Group Name": ad_group_name if entity not in ("Campaign", "Campaign Negative Keyword") else "",
                 "State": state,
                 "Daily Budget": daily_budget if entity == "Campaign" else "",
                 "Bid": bid_val if entity in ("Keyword", "Product Targeting") else "",
-                "Keyword Text": "" if is_product_target or entity != "Keyword" else keyword_text,
-                "Match Type": "" if is_product_target or entity != "Keyword" else match_type,
-                "Product Targeting Expression": keyword_text if is_product_target else "",
+                "Keyword Text": "" if is_product_target or (entity != "Keyword" and not is_neg_kw) else keyword_text,
+                "Match Type": "" if is_product_target or (entity != "Keyword" and not is_neg_kw) else match_type,
+                "Product Targeting Expression": product_target_expr if is_product_target else "",
             }
 
         for header, value in values.items():

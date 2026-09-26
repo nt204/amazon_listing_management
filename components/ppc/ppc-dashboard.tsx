@@ -25,7 +25,9 @@ import {
   Sliders,
   Plus,
   CircleNotch,
+  Prohibit,
 } from "@phosphor-icons/react";
+import { PpcStOptimizationView } from "./ppc-st-optimization-view";
 import { PpcPagination } from "./ppc-pagination";
 import {
   extractSkuFromText,
@@ -71,7 +73,7 @@ import type {
 
 interface PpcDashboardProps {
   isEmbedded?: boolean;
-  initialTab?: "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "alerts" | "recommendations" | "settings";
+  initialTab?: "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_optimization" | "alerts" | "recommendations" | "settings";
   initialSubTab?: "phoi" | "rules" | "history";
 }
 
@@ -189,9 +191,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
   const [selectedAdGroupForDrilldown, setSelectedAdGroupForDrilldown] = useState<string | null>(null);
   const [expandedTargetKey, setExpandedTargetKey] = useState<string | null>(null);
 
-  // Navigation tab for data slicing (Hierarchy: Overview -> Campaigns -> Ad Groups -> Targets -> Search Terms | SKU parallel view | Settings)
+  // Navigation tab for data slicing (Hierarchy: Overview -> Campaigns -> Ad Groups -> Targets -> Search Terms -> ST Optimization | SKU parallel view | Settings)
   const [activeTab, setActiveTab] = useState<
-    "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "alerts" | "recommendations" | "settings"
+    "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_optimization" | "alerts" | "recommendations" | "settings"
   >(initialTab || "overview");
   const [settingsSubTab, setSettingsSubTab] = useState<"phoi" | "rules" | "history">(initialSubTab || "phoi");
 
@@ -237,9 +239,17 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
   // Filters & sorting for Search Terms
   const [searchTermQuery, setSearchTermQuery] = useState("");
   const [matchTypeFilter, setMatchTypeFilter] = useState("ALL");
+  const [searchTermCampaignFilter, setSearchTermCampaignFilter] = useState("ALL");
+  const [termViewMode, setTermViewMode] = useState<"aggregated" | "daily">("aggregated");
   const [termPerformanceFilter, setTermPerformanceFilter] = useState<
     "ALL" | "WITH_ORDERS" | "ZERO_ORDERS_BLEEDING" | "HIGH_ACOS"
   >("ALL");
+  const [termMinClicks, setTermMinClicks] = useState("");
+  const [termMaxClicks, setTermMaxClicks] = useState("");
+  const [termMinOrders, setTermMinOrders] = useState("");
+  const [termMaxOrders, setTermMaxOrders] = useState("");
+  const [termMinAcos, setTermMinAcos] = useState("");
+  const [termMaxAcos, setTermMaxAcos] = useState("");
   const [termSortField, setTermSortField] = useState<SortField>("spend");
   const [termSortDir, setTermSortDir] = useState<SortDirection>("desc");
   const [termPage, setTermPage] = useState(1);
@@ -726,9 +736,10 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       }
     }
 
-    if (activeTab !== "overview" && ["ad_groups", "targets", "skus", "search_terms"].includes(activeTab)) {
-      if (!loadedSectionsRef.current.has(activeTab)) {
-        void loadSection(activeTab).catch((error) => {
+    if (activeTab !== "overview" && ["ad_groups", "targets", "skus", "search_terms", "st_optimization"].includes(activeTab)) {
+      const sectionToLoad = activeTab === "st_optimization" ? "search_terms" : activeTab;
+      if (!loadedSectionsRef.current.has(sectionToLoad)) {
+        void loadSection(sectionToLoad).catch((error) => {
           notify(error instanceof Error ? error.message : "Không thể tải bảng dữ liệu PPC", "error");
         });
       }
@@ -870,9 +881,72 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     }
   };
 
+  // Aggregated Search Terms by Campaign + Search Term + Match Type (Tổng hợp cả kỳ)
+  const aggregatedSearchTerms = useMemo(() => {
+    if (!searchTerms || searchTerms.length === 0) return [];
+    const map = new Map<string, PpcSearchTermRow>();
+
+    for (const t of searchTerms) {
+      const camp = (t.campaignName || "").trim();
+      const term = (t.customerSearchTerm || "").trim();
+      const match = t.matchType || "Unknown";
+      const key = `${camp.toLowerCase()}|||${term.toLowerCase()}|||${match.toLowerCase()}`;
+
+      const existing = map.get(key);
+      if (!existing) {
+        map.set(key, { ...t });
+      } else {
+        existing.impressions = (existing.impressions || 0) + (t.impressions || 0);
+        existing.clicks = (existing.clicks || 0) + (t.clicks || 0);
+        existing.spend = (existing.spend || 0) + (t.spend || 0);
+        existing.sales = (existing.sales || 0) + (t.sales || 0);
+        existing.orders = (existing.orders || 0) + (t.orders || 0);
+        existing.units = (existing.units || 0) + (t.units || 0);
+      }
+    }
+
+    const list = Array.from(map.values());
+    for (const r of list) {
+      r.cpc = r.clicks > 0 ? Math.round((r.spend / r.clicks) * 100) / 100 : 0;
+      r.ctr = r.impressions > 0 ? Math.round((r.clicks / r.impressions) * 10000) / 10000 : 0;
+      r.cvr = r.clicks > 0 ? Math.round((r.orders / r.clicks) * 10000) / 10000 : 0;
+      r.acos = r.sales > 0 ? Math.round((r.spend / r.sales) * 1000) / 10 : (r.spend > 0 ? 999 : 0);
+      r.roas = r.spend > 0 ? Math.round((r.sales / r.spend) * 100) / 100 : 0;
+    }
+    return list;
+  }, [searchTerms]);
+
+  // Unique campaigns for Search Terms filter (rút ngắn theo từ khóa đang tìm trong ô search)
+  const searchTermCampaigns = useMemo(() => {
+    let source = aggregatedSearchTerms;
+    if (searchTermQuery.trim()) {
+      const tokens = searchTermQuery.toLowerCase().split(/\s+/).filter(Boolean);
+      source = source.filter((t) => {
+        const text = `${t.customerSearchTerm} ${t.campaignName} ${t.portfolioName || ""}`.toLowerCase();
+        return tokens.every((tok) => text.includes(tok));
+      });
+    }
+    return Array.from(new Set(source.map((t) => t.campaignName).filter(Boolean))).sort();
+  }, [aggregatedSearchTerms, searchTermQuery]);
+
+  // Tự động đưa về ALL nếu campaign đã chọn không còn trong danh sách campaign liên quan
+  useEffect(() => {
+    if (
+      searchTermCampaignFilter !== "ALL" &&
+      searchTermCampaigns.length > 0 &&
+      !searchTermCampaigns.includes(searchTermCampaignFilter)
+    ) {
+      setSearchTermCampaignFilter("ALL");
+    }
+  }, [searchTermCampaigns, searchTermCampaignFilter]);
+
   // Filtered & Sorted Search Terms
   const filteredSortedSearchTerms = useMemo(() => {
-    let list = [...searchTerms];
+    let list = [...aggregatedSearchTerms];
+
+    if (searchTermCampaignFilter !== "ALL") {
+      list = list.filter((t) => t.campaignName === searchTermCampaignFilter);
+    }
 
     if (matchTypeFilter !== "ALL") {
       list = list.filter((t) => t.matchType === matchTypeFilter);
@@ -884,6 +958,33 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       list = list.filter((t) => t.orders === 0 && t.clicks >= 9);
     } else if (termPerformanceFilter === "HIGH_ACOS") {
       list = list.filter((t) => t.orders > 0 && t.acos > 60);
+    }
+
+    const minClicks = termMinClicks.trim() !== "" ? parseFloat(termMinClicks) : null;
+    const maxClicks = termMaxClicks.trim() !== "" ? parseFloat(termMaxClicks) : null;
+    if (minClicks !== null && !isNaN(minClicks)) {
+      list = list.filter((t) => (t.clicks || 0) >= minClicks);
+    }
+    if (maxClicks !== null && !isNaN(maxClicks)) {
+      list = list.filter((t) => (t.clicks || 0) <= maxClicks);
+    }
+
+    const minOrders = termMinOrders.trim() !== "" ? parseFloat(termMinOrders) : null;
+    const maxOrders = termMaxOrders.trim() !== "" ? parseFloat(termMaxOrders) : null;
+    if (minOrders !== null && !isNaN(minOrders)) {
+      list = list.filter((t) => (t.orders || 0) >= minOrders);
+    }
+    if (maxOrders !== null && !isNaN(maxOrders)) {
+      list = list.filter((t) => (t.orders || 0) <= maxOrders);
+    }
+
+    const minAcos = termMinAcos.trim() !== "" ? parseFloat(termMinAcos) : null;
+    const maxAcos = termMaxAcos.trim() !== "" ? parseFloat(termMaxAcos) : null;
+    if (minAcos !== null && !isNaN(minAcos)) {
+      list = list.filter((t) => (t.acos || 0) >= minAcos);
+    }
+    if (maxAcos !== null && !isNaN(maxAcos)) {
+      list = list.filter((t) => (t.acos || 0) <= maxAcos);
     }
 
     if (searchTermQuery.trim()) {
@@ -901,7 +1002,34 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     });
 
     return list;
-  }, [searchTerms, matchTypeFilter, termPerformanceFilter, searchTermQuery, termSortField, termSortDir]);
+  }, [
+    aggregatedSearchTerms,
+    searchTermCampaignFilter,
+    matchTypeFilter,
+    termPerformanceFilter,
+    termMinClicks,
+    termMaxClicks,
+    termMinOrders,
+    termMaxOrders,
+    termMinAcos,
+    termMaxAcos,
+    searchTermQuery,
+    termSortField,
+    termSortDir,
+  ]);
+
+  const isSearchTermFiltered = Boolean(
+    searchTermQuery.trim() ||
+    searchTermCampaignFilter !== "ALL" ||
+    matchTypeFilter !== "ALL" ||
+    termPerformanceFilter !== "ALL" ||
+    termMinClicks.trim() !== "" ||
+    termMaxClicks.trim() !== "" ||
+    termMinOrders.trim() !== "" ||
+    termMaxOrders.trim() !== "" ||
+    termMinAcos.trim() !== "" ||
+    termMaxAcos.trim() !== ""
+  );
 
   // Paginated Search Terms
   const totalTermPages = Math.max(1, Math.ceil(filteredSortedSearchTerms.length / termPageSize));
@@ -909,6 +1037,32 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     const start = (termPage - 1) * termPageSize;
     return filteredSortedSearchTerms.slice(start, start + termPageSize);
   }, [filteredSortedSearchTerms, termPage, termPageSize]);
+
+  // ST Optimization bleeding candidates count (Clicks > 20 & Orders = 0 in source campaign)
+  const stOptimizationCandidateCount = useMemo(() => {
+    if (!searchTerms || searchTerms.length === 0) return 0;
+    const map = new Map<string, { clicks: number; orders: number }>();
+    for (const term of searchTerms) {
+      const rawTerm = (term.customerSearchTerm || "").trim().toLowerCase();
+      const camp = (term.campaignName || "").trim().toLowerCase();
+      if (!rawTerm || !camp) continue;
+      const key = `${camp}|||${rawTerm}`;
+      const existing = map.get(key);
+      if (!existing) {
+        map.set(key, { clicks: term.clicks || 0, orders: term.orders || 0 });
+      } else {
+        existing.clicks += term.clicks || 0;
+        existing.orders += term.orders || 0;
+      }
+    }
+    let count = 0;
+    for (const item of map.values()) {
+      if (item.orders === 0 && item.clicks > 20) {
+        count++;
+      }
+    }
+    return count;
+  }, [searchTerms]);
 
   // Targets count per campaign map (for instant 1-click drilldown)
   const targetsPerCampaign = useMemo(() => {
@@ -2134,7 +2288,24 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
             }`}
         >
           <MagnifyingGlass size={15} weight={activeTab === "search_terms" ? "bold" : "regular"} />
-          <span>4. Search Terms ({detailCounts?.searchTerms !== undefined ? detailCounts.searchTerms.toLocaleString("vi-VN") : (loading ? "..." : searchTerms.length.toLocaleString("vi-VN"))})</span>
+          <span>4. Search Terms ({loading ? "..." : (aggregatedSearchTerms.length > 0 ? aggregatedSearchTerms.length : (detailCounts?.searchTerms ?? searchTerms.length)).toLocaleString("vi-VN")})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab("st_optimization")}
+          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${activeTab === "st_optimization"
+            ? "bg-white text-rose-700 shadow-xs border border-rose-200"
+            : "text-slate-600 hover:text-slate-900"
+            }`}
+        >
+          <Prohibit size={15} weight={activeTab === "st_optimization" ? "bold" : "regular"} className={activeTab === "st_optimization" ? "text-rose-600" : "text-slate-400"} />
+          <span>5. ST Optimization ({stOptimizationCandidateCount > 0 ? stOptimizationCandidateCount.toLocaleString("vi-VN") : (loading ? "..." : "0")})</span>
+          {stOptimizationCandidateCount > 0 && (
+            <span className="px-1.5 py-0.2 rounded-full bg-rose-600 text-white text-[10px] font-black">
+              {stOptimizationCandidateCount}
+            </span>
+          )}
         </button>
 
         <button
@@ -2146,7 +2317,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
             }`}
         >
           <Tag size={15} weight={activeTab === "skus" ? "bold" : "regular"} />
-          <span>5. SKU ({detailCounts?.skus !== undefined ? detailCounts.skus.toLocaleString("vi-VN") : (loading ? "..." : activeSkuPerformance.length.toLocaleString("vi-VN"))})</span>
+          <span>6. SKU ({detailCounts?.skus !== undefined ? detailCounts.skus.toLocaleString("vi-VN") : (loading ? "..." : activeSkuPerformance.length.toLocaleString("vi-VN"))})</span>
         </button>
 
         <button
@@ -2157,7 +2328,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
             : "text-slate-600 hover:text-slate-900"
             }`}
         >
-          <span>6. Đề Xuất ({skuRecGroups.length > 0 ? `${skuRecGroups.length.toLocaleString("vi-VN")} SKU` : (detailCounts?.skus !== undefined ? `${detailCounts.skus.toLocaleString("vi-VN")} SKU` : (loadingRecs ? "..." : "0 SKU"))})</span>
+          <span>7. Đề Xuất ({skuRecGroups.length > 0 ? `${skuRecGroups.length.toLocaleString("vi-VN")} SKU` : (detailCounts?.skus !== undefined ? `${detailCounts.skus.toLocaleString("vi-VN")} SKU` : (loadingRecs ? "..." : "0 SKU"))})</span>
         </button>
 
         {/* Action Queue Quick Trigger */}
@@ -3235,9 +3406,10 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       {activeTab === "search_terms" && (
         <div className="space-y-3">
           {/* Filter Bar */}
-          <div className="flex flex-col lg:flex-row items-center justify-between gap-2.5 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
-            <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
-              <div className="relative flex-1 sm:w-64">
+          <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs space-y-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Keyword Search */}
+              <div className="relative flex-1 sm:min-w-[200px] max-w-xs">
                 <MagnifyingGlass size={14} className="absolute left-3 top-2.5 text-slate-400" />
                 <input
                   type="text"
@@ -3248,9 +3420,28 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                     setSelectedTerms(new Set());
                   }}
                   placeholder="Lọc từ khóa khách gõ, campaign..."
-                  className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs outline-none focus:bg-white focus:border-indigo-600"
+                  className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs outline-none focus:bg-white focus:border-indigo-600 transition"
                 />
               </div>
+
+              {/* Campaign Filter (tự động rút ngắn theo từ khóa đang tìm) */}
+              <select
+                value={searchTermCampaignFilter}
+                onChange={(e) => {
+                  setSearchTermCampaignFilter(e.target.value);
+                  setTermPage(1);
+                  setSelectedTerms(new Set());
+                }}
+                className="py-1.5 px-2.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 outline-none cursor-pointer max-w-[220px] truncate"
+                title="Lọc theo Campaign (danh sách tự động rút ngắn theo từ khóa đang tìm)"
+              >
+                <option value="ALL">Tất cả Campaign ({searchTermCampaigns.length})</option>
+                {searchTermCampaigns.map((camp) => (
+                  <option key={camp} value={camp}>
+                    {camp}
+                  </option>
+                ))}
+              </select>
 
               {/* Match Type Filter */}
               <select
@@ -3270,41 +3461,118 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                 <option value="Targeting">Targeting</option>
               </select>
 
-              {/* Performance Filter */}
-              <select
-                value={termPerformanceFilter}
-                onChange={(e) => {
-                  setTermPerformanceFilter(e.target.value as typeof termPerformanceFilter);
-                  setTermPage(1);
-                  setSelectedTerms(new Set());
-                }}
-                className="py-1.5 px-2.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 outline-none cursor-pointer"
-              >
-                <option value="ALL">Tất cả Hiệu Suất ({detailCounts?.searchTerms ?? searchTerms.length})</option>
-                <option value="WITH_ORDERS">Đã Ra Đơn (Orders &gt; 0)</option>
-                <option value="ZERO_ORDERS_BLEEDING">Cắn Tiền 0 Đơn (Clicks &ge; 9)</option>
-                <option value="HIGH_ACOS">ACOS Cao (&gt; 60%)</option>
-              </select>
-            </div>
+              {/* Range Filters: Clicks */}
+              <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs">
+                <span className="text-slate-600 font-bold shrink-0">Clicks:</span>
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="Từ"
+                  value={termMinClicks}
+                  onChange={(e) => {
+                    setTermMinClicks(e.target.value);
+                    setTermPage(1);
+                  }}
+                  className="w-12 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs text-center font-bold text-slate-800 outline-none focus:border-indigo-600"
+                />
+                <span className="text-slate-400 font-bold">-</span>
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="Đến"
+                  value={termMaxClicks}
+                  onChange={(e) => {
+                    setTermMaxClicks(e.target.value);
+                    setTermPage(1);
+                  }}
+                  className="w-12 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs text-center font-bold text-slate-800 outline-none focus:border-indigo-600"
+                />
+              </div>
 
-            {/* Action Buttons */}
-            <div className="flex items-center gap-2 w-full lg:w-auto justify-end">
-              <button
-                type="button"
-                onClick={handleCopySelected}
-                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 transition flex items-center gap-1.5 cursor-pointer"
-              >
-                <Copy size={13} />
-                <span>{selectedTerms.size > 0 ? `Copy (${selectedTerms.size})` : "Copy Tất Cả"}</span>
-              </button>
+              {/* Range Filters: Orders */}
+              <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs">
+                <span className="text-slate-600 font-bold shrink-0">Orders:</span>
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="Từ"
+                  value={termMinOrders}
+                  onChange={(e) => {
+                    setTermMinOrders(e.target.value);
+                    setTermPage(1);
+                  }}
+                  className="w-12 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs text-center font-bold text-slate-800 outline-none focus:border-indigo-600"
+                />
+                <span className="text-slate-400 font-bold">-</span>
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="Đến"
+                  value={termMaxOrders}
+                  onChange={(e) => {
+                    setTermMaxOrders(e.target.value);
+                    setTermPage(1);
+                  }}
+                  className="w-12 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs text-center font-bold text-slate-800 outline-none focus:border-indigo-600"
+                />
+              </div>
 
-              <button
-                type="button"
-                onClick={() => handleExportCsv("search_terms")}
-                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 transition flex items-center gap-1.5 cursor-pointer"
-              >
-                <Download size={13} /> Xuất CSV
-              </button>
+              {/* Range Filters: ACOS (%) */}
+              <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs">
+                <span className="text-slate-600 font-bold shrink-0">ACoS (%):</span>
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="Từ"
+                  value={termMinAcos}
+                  onChange={(e) => {
+                    setTermMinAcos(e.target.value);
+                    setTermPage(1);
+                  }}
+                  className="w-12 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs text-center font-bold text-slate-800 outline-none focus:border-indigo-600"
+                />
+                <span className="text-slate-400 font-bold">-</span>
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="Đến"
+                  value={termMaxAcos}
+                  onChange={(e) => {
+                    setTermMaxAcos(e.target.value);
+                    setTermPage(1);
+                  }}
+                  className="w-12 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs text-center font-bold text-slate-800 outline-none focus:border-indigo-600"
+                />
+              </div>
+
+              {/* Reset Filters */}
+              {isSearchTermFiltered && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchTermQuery("");
+                    setSearchTermCampaignFilter("ALL");
+                    setMatchTypeFilter("ALL");
+                    setTermPerformanceFilter("ALL");
+                    setTermMinClicks("");
+                    setTermMaxClicks("");
+                    setTermMinOrders("");
+                    setTermMaxOrders("");
+                    setTermMinAcos("");
+                    setTermMaxAcos("");
+                    setTermPage(1);
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                  title="Đặt lại tất cả bộ lọc"
+                >
+                  <X size={13} weight="bold" /> Đặt lại
+                </button>
+              )}
+
+              {/* Results count indicator */}
+              <div className="ml-auto text-xs text-slate-500 font-medium">
+                Khớp <span className="font-extrabold text-slate-900">{filteredSortedSearchTerms.length.toLocaleString("vi-VN")}</span> / {aggregatedSearchTerms.length.toLocaleString("vi-VN")} từ khóa
+              </div>
             </div>
           </div>
 
@@ -3480,6 +3748,17 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
             }}
           />
         </div>
+      )}
+
+      {activeTab === "st_optimization" && (
+        <PpcStOptimizationView
+          searchTerms={searchTerms}
+          selectedStore={selectedStore}
+          selectedSku={selectedSku}
+          selectedDays={selectedDays}
+          loading={loading || loadingSection === "search_terms"}
+          notify={notify}
+        />
       )}
 
 
