@@ -195,7 +195,27 @@ export async function POST(request: Request) {
       };
     });
 
-    // 5. Xuất file Excel chuẩn Amazon Bulksheet
+    // 5. Kiểm tra tính toàn vẹn: Campaign ID bắt buộc để Amazon Ads không báo lỗi Input Error
+    const missingCampId = recommendations.filter((r) => !r.campaignId);
+    if (missingCampId.length > 0) {
+      const campNames = [...new Set(missingCampId.map((r) => r.campaignName))].slice(0, 5).join(", ");
+      throw new ApiError(
+        `Không thể Auto Upload vì thiếu Campaign ID trên Amazon cho các chiến dịch: ${campNames}. Vui lòng đồng bộ dữ liệu PPC trước.`,
+        400,
+      );
+    }
+
+    // Với Sponsored Brands (SB), Amazon chỉ hỗ trợ phủ định ở cấp Ad Group
+    const missingSbAgId = recommendations.filter((r) => r.adType === "SB" && !r.adGroupId);
+    if (missingSbAgId.length > 0) {
+      const campNames = [...new Set(missingSbAgId.map((r) => r.campaignName))].slice(0, 5).join(", ");
+      throw new ApiError(
+        `Chiến dịch Sponsored Brands (SB) bắt buộc phải có Ad Group ID để phủ định từ khóa: ${campNames}.`,
+        400,
+      );
+    }
+
+    // 6. Xuất file Excel chuẩn Amazon Bulksheet
     const buffer = await exportBulksheetUpdateExcel(recommendations);
 
     const cleanStore = storeName

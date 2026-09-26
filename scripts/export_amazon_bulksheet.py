@@ -35,7 +35,7 @@ def export_bulksheet(recommendations, output_path=None):
     # Pre-map available worksheets, headers, and row pointers
     sheet_configs = {
         "SP": "Sponsored Products Campaigns",
-        "SB": "Sponsored Brands Campaigns",
+        "SB": "SB Multi Ad Group Campaigns" if "SB Multi Ad Group Campaigns" in wb.sheetnames else "Sponsored Brands Campaigns",
         "SD": "Sponsored Display Campaigns",
     }
     worksheets = {}
@@ -152,6 +152,7 @@ def export_bulksheet(recommendations, output_path=None):
                 "Keyword ID": target_id if not is_product_target and entity == "Keyword" and operation == "Update" else "",
                 "Product Targeting ID": target_id if is_product_target and operation == "Update" else "",
                 "Campaign Name": campaign_name,
+                "Ad Group Name": ad_group_name if entity not in ("Campaign", "Campaign Negative Keyword") else "",
                 "State": state,
                 "Budget": daily_budget if entity == "Campaign" else "",
                 "Bid": bid_val if entity in ("Keyword", "Product Targeting") else "",

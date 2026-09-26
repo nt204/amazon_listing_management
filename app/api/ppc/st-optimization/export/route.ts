@@ -144,6 +144,25 @@ export async function POST(request: Request) {
       };
     });
 
+    // Kiểm tra tính toàn vẹn: Campaign ID bắt buộc
+    const missingCampId = recommendations.filter((r) => !r.campaignId);
+    if (missingCampId.length > 0) {
+      const campNames = [...new Set(missingCampId.map((r) => r.campaignName))].slice(0, 5).join(", ");
+      throw new ApiError(
+        `Không thể xuất Bulksheet vì thiếu Campaign ID trên Amazon cho các chiến dịch: ${campNames}. Vui lòng đồng bộ dữ liệu PPC trước.`,
+        400,
+      );
+    }
+
+    const missingSbAgId = recommendations.filter((r) => r.adType === "SB" && !r.adGroupId);
+    if (missingSbAgId.length > 0) {
+      const campNames = [...new Set(missingSbAgId.map((r) => r.campaignName))].slice(0, 5).join(", ");
+      throw new ApiError(
+        `Chiến dịch Sponsored Brands (SB) bắt buộc phải có Ad Group ID: ${campNames}.`,
+        400,
+      );
+    }
+
     // 4. Xuất file Excel chuẩn Amazon Bulksheet
     const buffer = await exportBulksheetUpdateExcel(recommendations);
 
