@@ -145,6 +145,46 @@ function formatSyncTime(isoString: string | null): string {
   }
 }
 
+export function getTargetDisplayType(target: {
+  adType?: string;
+  matchType?: string;
+  campaignName?: string;
+  targetKeyword?: string;
+}) {
+  const camp = (target.campaignName || "").toLowerCase();
+  const kw = (target.targetKeyword || "").toLowerCase().trim();
+  const rawMatch = (target.matchType || "").trim();
+  const adType = (target.adType || "SP").toUpperCase();
+
+  const isAuto =
+    camp.includes("sp04") ||
+    camp.includes("auto") ||
+    ["close-match", "loose-match", "substitutes", "complements"].some((t) => kw.includes(t)) ||
+    kw.includes("auto targeting");
+
+  let match = rawMatch;
+  if (isAuto || !rawMatch || rawMatch.toLowerCase() === "unknown" || rawMatch.toLowerCase() === "targeting" || rawMatch === "-") {
+    if (isAuto || camp.includes("sp04")) {
+      match = "Auto";
+    }
+  }
+
+  const label = `${adType} · ${match || (isAuto ? "Auto" : "Unknown")}`;
+
+  let badgeColor = "rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-700";
+  if (match === "Auto" || (isAuto && match !== "Exact" && match !== "Phrase" && match !== "Broad")) {
+    badgeColor = "rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 border border-amber-200/80";
+  } else if (match?.toLowerCase() === "exact") {
+    badgeColor = "rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-800 border border-blue-200/80";
+  } else if (match?.toLowerCase() === "phrase") {
+    badgeColor = "rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-bold text-sky-800 border border-sky-200/80";
+  } else if (match?.toLowerCase() === "broad") {
+    badgeColor = "rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800 border border-emerald-200/80";
+  }
+
+  return { label, badgeColor, matchType: match || "Unknown" };
+}
+
 export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: PpcDashboardProps) {
   const mounted = useSyncExternalStore(subscribeToHydration, getClientSnapshot, getServerSnapshot);
 
@@ -1146,6 +1186,42 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     });
     return list;
   }, [targetPerformance, selectedCampaignForDrilldown, selectedAdGroupForDrilldown, targetQuery, targetSortField, targetSortDir]);
+
+  // Aggregated totals for currently filtered targets (instant, mathematically exact)
+  const filteredTargetTotals = useMemo(() => {
+    let impressions = 0;
+    let clicks = 0;
+    let spend = 0;
+    let sales = 0;
+    let orders = 0;
+
+    for (let i = 0; i < filteredSortedTargets.length; i++) {
+      const t = filteredSortedTargets[i];
+      impressions += t.impressions || 0;
+      clicks += t.clicks || 0;
+      spend += t.spend || 0;
+      sales += t.sales || 0;
+      orders += t.orders || 0;
+    }
+
+    const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+    const cpc = clicks > 0 ? spend / clicks : 0;
+    const cvr = clicks > 0 ? (orders / clicks) * 100 : 0;
+    const acos = sales > 0 ? (spend / sales) * 100 : spend > 0 ? 999 : 0;
+
+    return {
+      count: filteredSortedTargets.length,
+      impressions,
+      clicks,
+      spend,
+      sales,
+      orders,
+      ctr,
+      cpc,
+      cvr,
+      acos,
+    };
+  }, [filteredSortedTargets]);
 
   // Paginated Targets
   const totalTargetPages = Math.max(1, Math.ceil(filteredSortedTargets.length / targetPageSize));
@@ -2967,6 +3043,59 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
             </div>
           </div>
 
+          {/* Live Metrics Strip for Filtered Targets (Tone Xanh - Trắng) */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 p-2.5 rounded-xl bg-gradient-to-r from-blue-50/80 via-indigo-50/50 to-sky-50/60 border border-blue-100 shadow-2xs text-xs">
+            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Số Target</div>
+              <div className="text-base font-black text-slate-900 mt-0.5">{filteredTargetTotals.count.toLocaleString()}</div>
+              <div className="text-[10px] text-slate-500 font-medium">
+                {targetQuery ? "Đã lọc tìm kiếm" : "Tất cả target"}
+              </div>
+            </div>
+            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Lượt Hiển Thị (Impr)</div>
+              <div className="text-base font-black text-slate-900 mt-0.5">{filteredTargetTotals.impressions.toLocaleString()}</div>
+              <div className="text-[10px] text-slate-500 font-medium">
+                CTR {filteredTargetTotals.ctr.toFixed(2)}% · {filteredTargetTotals.clicks.toLocaleString()} clicks
+              </div>
+            </div>
+            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Tổng Chi Tiêu</div>
+              <div className="text-base font-black text-rose-600 mt-0.5">${filteredTargetTotals.spend.toFixed(2)}</div>
+              <div className="text-[10px] text-slate-500 font-medium">
+                CPC ${filteredTargetTotals.cpc.toFixed(2)}
+              </div>
+            </div>
+            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Doanh Số</div>
+              <div className="text-base font-black text-emerald-600 mt-0.5">${filteredTargetTotals.sales.toFixed(2)}</div>
+              <div className="text-[10px] text-slate-500 font-medium">{filteredTargetTotals.orders.toLocaleString()} đơn hàng</div>
+            </div>
+            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Đơn Hàng</div>
+              <div className="text-base font-black text-indigo-700 mt-0.5">{filteredTargetTotals.orders.toLocaleString()}</div>
+              <div className="text-[10px] text-slate-500 font-medium">
+                {filteredTargetTotals.clicks > 0
+                  ? `${filteredTargetTotals.cvr.toFixed(1)}% CVR`
+                  : "0% CVR"}
+              </div>
+            </div>
+            <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">ACOS Trung Bình</div>
+              <div
+                className={`text-base font-black mt-0.5 ${filteredTargetTotals.acos <= targetAcos
+                  ? "text-emerald-600"
+                  : filteredTargetTotals.acos <= 50
+                    ? "text-amber-600"
+                    : "text-rose-600"
+                  }`}
+              >
+                {filteredTargetTotals.sales > 0 ? `${filteredTargetTotals.acos.toFixed(1)}%` : filteredTargetTotals.spend > 0 ? "0 sales" : "0.0%"}
+              </div>
+              <div className="text-[10px] text-slate-500 font-medium">Mục tiêu ≤ {targetAcos}%</div>
+            </div>
+          </div>
+
           <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
             <table className="w-full min-w-[1300px] text-left text-xs text-slate-700">
               <thead className="border-b border-slate-200 bg-slate-50 text-[10px] font-extrabold uppercase text-slate-500">
@@ -3080,35 +3209,86 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                       )}
                     </td>
                   </tr>
-                ) : paginatedTargets.map((target) => {
-                  const targetKey = [
-                    target.storeId || target.storeName,
-                    target.adType,
-                    target.campaignId || target.campaignName,
-                    target.adGroupId || target.adGroupName,
-                    target.targetId || target.targetKeyword,
-                    target.matchType,
-                  ].join("\u0000");
-                  const isExpanded = expandedTargetKey === targetKey;
-                  const childTerms = isExpanded ? (() => {
-                    const res = getChildSearchTerms(target);
-                    return [...res.confirmed, ...res.inferred].sort(
-                      (a, b) => b.spend - a.spend || b.orders - a.orders || b.clicks - a.clicks,
-                    );
-                  })() : [];
+                ) : (
+                  <>
+                    {/* Sticky / Highlighted Top TOTAL Row */}
+                    <tr className="bg-slate-100 font-black border-b-2 border-slate-300 text-slate-900 sticky top-0 z-10 shadow-xs">
+                      <td className="px-3.5 py-2.5 font-black text-slate-900 min-w-[180px]">
+                        <div className="flex items-center gap-1.5">
+                          <span className="inline-block px-1.5 py-0.5 rounded bg-slate-900 text-white text-[10px] font-black uppercase tracking-wider">
+                            TOTAL
+                          </span>
+                          <span className="text-slate-600 text-[11px] font-bold">
+                            ({filteredTargetTotals.count.toLocaleString()} targets)
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2.5 font-bold text-slate-400 min-w-[260px]">—</td>
+                      <td className="px-3 py-2.5 whitespace-nowrap text-slate-400 font-bold">—</td>
+                      <td className="px-3 py-2.5 whitespace-nowrap text-slate-400 font-bold">—</td>
+                      <td className="px-3 py-2.5 text-right font-mono font-bold text-slate-400 whitespace-nowrap">—</td>
+                      <td className="px-3 py-2.5 text-right font-mono font-black text-slate-900 whitespace-nowrap">
+                        {filteredTargetTotals.impressions.toLocaleString()}
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-mono font-black text-slate-900 whitespace-nowrap">
+                        {filteredTargetTotals.clicks.toLocaleString()}
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-mono font-black text-slate-900 whitespace-nowrap">
+                        {filteredTargetTotals.ctr.toFixed(2)}%
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-mono font-black text-rose-600 whitespace-nowrap">
+                        ${filteredTargetTotals.spend.toFixed(2)}
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-600 whitespace-nowrap">
+                        ${filteredTargetTotals.sales.toFixed(2)}
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-mono font-black text-indigo-700 whitespace-nowrap">
+                        {filteredTargetTotals.orders.toLocaleString()}
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-mono font-black text-slate-800 whitespace-nowrap">
+                        ${filteredTargetTotals.cpc.toFixed(2)}
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-mono font-black text-slate-800 whitespace-nowrap">
+                        {filteredTargetTotals.cvr.toFixed(1)}%
+                      </td>
+                      <td className={`px-3 py-2.5 text-right font-mono font-black whitespace-nowrap ${filteredTargetTotals.acos <= targetAcos ? "text-emerald-700" : "text-rose-700"}`}>
+                        {filteredTargetTotals.sales > 0 ? `${filteredTargetTotals.acos.toFixed(1)}%` : filteredTargetTotals.spend > 0 ? "0 sales" : "0.0%"}
+                      </td>
+                      <td className="px-3.5 py-2.5 text-center whitespace-nowrap min-w-[125px] sticky right-0 z-10 bg-slate-100 border-l border-slate-300 font-bold text-slate-400">
+                        —
+                      </td>
+                    </tr>
 
-                  return (
-                    <Fragment key={targetKey}>
-                      <tr className={`group transition ${isExpanded ? "bg-indigo-50/40" : "hover:bg-slate-50/80"}`}>
-                        <td className="px-3.5 py-2.5 font-bold text-slate-900 min-w-[180px]">
-                          <div className="break-words leading-snug" title={target.targetKeyword}>{target.targetKeyword}</div>
-                        </td>
-                        <td className="px-3 py-2.5 font-semibold text-slate-700 min-w-[260px]">
-                          <div className="break-words leading-snug" title={target.campaignName}>{target.campaignName}</div>
-                        </td>
-                        <td className="px-3 py-2.5 whitespace-nowrap">
-                          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-700">{target.adType} · {target.matchType}</span>
-                        </td>
+                    {paginatedTargets.map((target) => {
+                      const badge = getTargetDisplayType(target);
+                      const targetKey = [
+                        target.storeId || target.storeName,
+                        target.adType,
+                        target.campaignId || target.campaignName,
+                        target.adGroupId || target.adGroupName,
+                        target.targetId || target.targetKeyword,
+                        target.matchType,
+                      ].join("\u0000");
+                      const isExpanded = expandedTargetKey === targetKey;
+                      const childTerms = isExpanded ? (() => {
+                        const res = getChildSearchTerms(target);
+                        return [...res.confirmed, ...res.inferred].sort(
+                          (a, b) => b.spend - a.spend || b.orders - a.orders || b.clicks - a.clicks,
+                        );
+                      })() : [];
+
+                      return (
+                        <Fragment key={targetKey}>
+                          <tr className={`group transition ${isExpanded ? "bg-indigo-50/40" : "hover:bg-slate-50/80"}`}>
+                            <td className="px-3.5 py-2.5 font-bold text-slate-900 min-w-[180px]">
+                              <div className="break-words leading-snug" title={target.targetKeyword}>{target.targetKeyword}</div>
+                            </td>
+                            <td className="px-3 py-2.5 font-semibold text-slate-700 min-w-[260px]">
+                              <div className="break-words leading-snug" title={target.campaignName}>{target.campaignName}</div>
+                            </td>
+                            <td className="px-3 py-2.5 whitespace-nowrap">
+                              <span className={badge.badgeColor}>{badge.label}</span>
+                            </td>
                         <td className="px-3 py-2.5 whitespace-nowrap text-[11px] font-bold text-slate-500">{target.state || "—"}</td>
                         <td className="px-3 py-2.5 text-right font-mono font-black text-slate-800 whitespace-nowrap">{target.currentBid ? `$${target.currentBid.toFixed(2)}` : "—"}</td>
                         <td className="px-3 py-2.5 text-right font-mono text-slate-700 whitespace-nowrap">{(target.impressions || 0).toLocaleString()}</td>
@@ -3212,7 +3392,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
                     </Fragment>
                   );
                 })}
-              </tbody>
+              </>
+            )}
+          </tbody>
             </table>
           </div>
 

@@ -466,11 +466,23 @@ export function groupPpcByTarget(rows: PpcSearchTermRow[]): PpcTargetPerformance
   >();
 
   for (const r of rows) {
+    const campName = (r.campaignName || "").toLowerCase();
+    const targetExpr = (r.targetKeyword || "").toLowerCase().trim();
+    let matchType = r.matchType;
+    const isAuto =
+      campName.includes("sp04") ||
+      campName.includes("auto") ||
+      ["close-match", "loose-match", "substitutes", "complements"].some((t) => targetExpr.includes(t)) ||
+      targetExpr.includes("auto targeting");
+    if (isAuto && (!matchType || matchType.toLowerCase() === "unknown" || matchType.toLowerCase() === "targeting" || (matchType as string) === "-")) {
+      matchType = "Auto" as MatchType;
+    }
+
     const key = [
       r.campaignName || "Default",
       r.adGroupName || "Default",
       r.targetKeyword || "Default",
-      r.matchType || "Unknown",
+      matchType || "Unknown",
     ].join("\u0000");
 
     const existing = map.get(key);
@@ -480,7 +492,7 @@ export function groupPpcByTarget(rows: PpcSearchTermRow[]): PpcTargetPerformance
         campaignName: r.campaignName || "Unnamed Campaign",
         adGroupName: r.adGroupName || "Unnamed Ad Group",
         targetKeyword: r.targetKeyword || "Unnamed Target",
-        matchType: r.matchType || "Unknown",
+        matchType: matchType || "Unknown",
         storeName: r.storeName || "Store",
         spend: r.spend,
         sales: r.sales,
@@ -825,6 +837,7 @@ export function groupPpcByMatchType(rows: Array<Pick<
  * Phân loại Target Type: Keyword, Auto, hoặc Product Targeting
  */
 export function classifyPpcTargetType(row: {
+  campaignName?: string;
   matchType?: string;
   targetExpression?: string;
   targetKeyword?: string;
@@ -833,9 +846,12 @@ export function classifyPpcTargetType(row: {
   const match = (row.matchType || "").toUpperCase();
   const expr = (row.targetExpression || "").toLowerCase();
   const kw = (row.targetKeyword || "").toLowerCase();
+  const camp = (row.campaignName || "").toLowerCase();
 
   // Auto targeting
   if (
+    camp.includes("sp04") ||
+    camp.includes("auto") ||
     match === "AUTO" ||
     expr === "close-match" ||
     expr === "loose-match" ||
@@ -1221,21 +1237,37 @@ export function adGroupPerformanceFromFacts(rows: PpcPerformanceRow[]): PpcAdGro
 }
 
 export function targetPerformanceFromFacts(rows: PpcPerformanceRow[]): PpcTargetPerformance[] {
-  return rows.filter((row) => row.grain === "TARGET" && !row.isNegative).map((row) => ({
-    storeId: row.storeId,
-    campaignId: row.campaignId,
-    adGroupId: row.adGroupId,
-    campaignName: row.campaignName || row.campaignId,
-    adGroupName: row.adGroupName || row.adGroupId,
-    targetId: row.targetId,
-    targetKeyword: row.targetExpression || row.targetId || "Unnamed Target",
-    matchType: row.matchType,
-    storeName: row.storeName || "Store",
-    adType: row.adType,
-    state: row.state,
-    currentBid: row.bid,
-    ...roundedPerformanceMetrics(row),
-  })).sort((a, b) => b.spend - a.spend);
+  return rows.filter((row) => row.grain === "TARGET" && !row.isNegative).map((row) => {
+    let matchType = row.matchType;
+    const campName = (row.campaignName || "").toLowerCase();
+    const targetExpr = (row.targetExpression || "").toLowerCase().trim();
+
+    const isAutoTarget =
+      campName.includes("sp04") ||
+      campName.includes("auto") ||
+      ["close-match", "loose-match", "substitutes", "complements"].some((t) => targetExpr.includes(t)) ||
+      targetExpr.includes("auto targeting");
+
+    if (isAutoTarget && (!matchType || matchType.toLowerCase() === "unknown" || matchType.toLowerCase() === "targeting" || (matchType as string) === "-")) {
+      matchType = "Auto" as MatchType;
+    }
+
+    return {
+      storeId: row.storeId,
+      campaignId: row.campaignId,
+      adGroupId: row.adGroupId,
+      campaignName: row.campaignName || row.campaignId,
+      adGroupName: row.adGroupName || row.adGroupId,
+      targetId: row.targetId,
+      targetKeyword: row.targetExpression || row.targetId || "Unnamed Target",
+      matchType,
+      storeName: row.storeName || "Store",
+      adType: row.adType,
+      state: row.state,
+      currentBid: row.bid,
+      ...roundedPerformanceMetrics(row),
+    };
+  }).sort((a, b) => b.spend - a.spend);
 }
 
 export function skuPerformanceFromFacts(
