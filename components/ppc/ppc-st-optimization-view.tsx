@@ -386,6 +386,7 @@ export function PpcStOptimizationView({
       window.URL.revokeObjectURL(url);
 
       notify(`Đã xuất thành công file Bulksheet: ${filename}`, "success");
+      fetchRegistry();
     } catch (err: any) {
       console.error(err);
       notify(err.message || "Lỗi khi xuất file Bulksheet Amazon.", "error");
@@ -469,6 +470,7 @@ export function PpcStOptimizationView({
       });
 
       notify(`Đã xếp hàng Auto Upload ${json.actionCount || modalCandidates.length} search term lên Mac mini!`, "success");
+      fetchRegistry();
     } catch (err: any) {
       console.error("Auto upload ST optimization error:", err);
       setAutoUploadError(err.message || "Lỗi khi xếp hàng upload lên AdsPower.");

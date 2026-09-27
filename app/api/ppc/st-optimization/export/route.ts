@@ -168,14 +168,42 @@ export async function POST(request: Request) {
 
     // 5. Đăng ký các từ khóa vào bảng ppc_negative_registry để quản lý và tránh phủ định trùng lặp
     try {
+      const requestedStoreId = String(body?.storeId || "").trim();
       let resolvedStoreId = "";
-      if (storeName && storeName !== "STORE") {
-        const storeRes = await sql<{ id: string }[]>`
-          SELECT id FROM ppc_stores
+      let finalStoreName = storeName;
+      if (requestedStoreId) {
+        const storeRes = await sql<{ id: string; name: string }[]>`
+          SELECT id, name FROM ppc_stores
+          WHERE id = ${requestedStoreId} AND team_id = ${actor.teamId}
+          LIMIT 1
+        `;
+        if (storeRes.length > 0) {
+          resolvedStoreId = storeRes[0].id;
+          finalStoreName = storeRes[0].name;
+        }
+      }
+      if (!resolvedStoreId && storeName && storeName !== "STORE" && storeName !== "ALL") {
+        const storeRes = await sql<{ id: string; name: string }[]>`
+          SELECT id, name FROM ppc_stores
           WHERE LOWER(name) = LOWER(${storeName}) AND team_id = ${actor.teamId}
           LIMIT 1
         `;
-        if (storeRes.length > 0) resolvedStoreId = storeRes[0].id;
+        if (storeRes.length > 0) {
+          resolvedStoreId = storeRes[0].id;
+          finalStoreName = storeRes[0].name;
+        }
+      }
+      if (!resolvedStoreId) {
+        const fallbackRows = await sql<{ id: string; name: string }[]>`
+          SELECT id, name FROM ppc_stores
+          WHERE team_id = ${actor.teamId}
+          ORDER BY created_at ASC
+          LIMIT 1
+        `;
+        if (fallbackRows.length > 0) {
+          resolvedStoreId = fallbackRows[0].id;
+          finalStoreName = fallbackRows[0].name;
+        }
       }
 
       if (resolvedStoreId) {
