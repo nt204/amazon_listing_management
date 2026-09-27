@@ -12,8 +12,33 @@ import datetime
 import warnings
 warnings.filterwarnings("ignore")
 import openpyxl
+import re
 
-TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "..", "templates", "ppc", "AdvertisingBulksheetTemplate-seller.xlsx")
+TEMPLATE_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "templates", "ppc", "AdvertisingBulksheetTemplate-seller.xlsx"
+)
+
+
+def is_product_targeting_term(term):
+    t = str(term or "").strip()
+    if not t:
+        return False
+    lower_t = t.lower()
+    if lower_t.startswith("asin=") or lower_t.startswith("category="):
+        return True
+    if re.fullmatch(r"[bB][0-9a-zA-Z]{9}", t):
+        return True
+    if lower_t.startswith("b0") and len(t) >= 10 and " " not in t:
+        return True
+    return False
+
+def format_product_expression(term):
+    t = str(term or "").strip()
+    lower_t = t.lower()
+    if lower_t.startswith("asin=") or lower_t.startswith("category="):
+        return t
+    asin = t.upper().replace('"', '').replace("'", "")
+    return f'asin="{asin}"'
 
 def export_sale_kw_bulksheet(data, output_path=None):
     if not os.path.exists(TEMPLATE_PATH):
@@ -39,7 +64,7 @@ def export_sale_kw_bulksheet(data, output_path=None):
             continue
 
         ad_group_name = str(camp.get("adGroupName") or target_camp_name).strip()
-        daily_budget = float(camp.get("dailyBudget") or 10.0)
+        daily_budget = float(camp.get("dailyBudget") or 5.0)
         default_bid = float(camp.get("defaultBid") or 1.0)
         bidding_strategy = str(camp.get("biddingStrategy") or "Dynamic bids - down only").strip()
         skus_raw = camp.get("sku") or camp.get("skus") or []
@@ -124,15 +149,10 @@ def export_sale_kw_bulksheet(data, output_path=None):
             except (ValueError, TypeError):
                 bid_val = round(default_bid, 2)
 
-            is_product = (
-                term.lower().startswith("b0") or
-                term.lower().startswith("asin=") or
-                term.lower().startswith("category=")
-            )
+            is_product = is_product_targeting_term(term)
 
             if is_product:
-                asin_clean = term.strip()
-                expr = asin_clean if asin_clean.lower().startswith("asin=") else f'asin="{asin_clean.upper()}"'
+                expr = format_product_expression(term)
                 target_row = {
                     "Product": "Sponsored Products",
                     "Entity": "Product Targeting",
@@ -176,15 +196,10 @@ def export_sale_kw_bulksheet(data, output_path=None):
                 if not term:
                     continue
 
-                is_product = (
-                    term.lower().startswith("b0") or
-                    term.lower().startswith("asin=") or
-                    term.lower().startswith("category=")
-                )
+                is_product = is_product_targeting_term(term)
 
                 if is_product:
-                    asin_clean = term.strip()
-                    expr = asin_clean if asin_clean.lower().startswith("asin=") else f'asin="{asin_clean.upper()}"'
+                    expr = format_product_expression(term)
                     neg_row = {
                         "Product": "Sponsored Products",
                         "Entity": "Negative Product Targeting" if source_ag_id else "Campaign Negative Product Targeting",

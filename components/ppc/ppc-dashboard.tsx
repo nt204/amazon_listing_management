@@ -27,6 +27,7 @@ import {
   CircleNotch,
   Prohibit,
   RocketLaunch,
+  Lightning,
 } from "@phosphor-icons/react";
 import { PpcStOptimizationView } from "./ppc-st-optimization-view";
 import { PpcSaleKwView } from "./ppc-sale-kw-view";
@@ -73,10 +74,13 @@ import type {
   PpcDailyTrendPoint,
 } from "@/lib/ppc/types";
 
+import type { RequestActor } from "@/lib/auth";
+
 interface PpcDashboardProps {
   isEmbedded?: boolean;
   initialTab?: "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "settings";
   initialSubTab?: "phoi" | "rules" | "history";
+  actor?: RequestActor;
 }
 
 interface PpcDetailCounts {
@@ -187,7 +191,7 @@ export function getTargetDisplayType(target: {
   return { label, badgeColor, matchType: match || "Unknown" };
 }
 
-export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: PpcDashboardProps) {
+export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, actor }: PpcDashboardProps) {
   const mounted = useSyncExternalStore(subscribeToHydration, getClientSnapshot, getServerSnapshot);
 
   const [stores, setStores] = useState<PpcStore[]>([]);
@@ -597,9 +601,13 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     return recommendations;
   }, [selectedStore, selectedDays]);
 
-  const loadActionQueueCount = useCallback(async () => {
+  const loadActionQueueCount = useCallback(async (targetStore?: string) => {
     try {
-      const res = await fetch("/api/ppc/actions/count", { cache: "no-store" });
+      const activeStore = targetStore !== undefined ? targetStore : selectedStore;
+      const query = activeStore && activeStore !== "ALL"
+        ? `?storeName=${encodeURIComponent(activeStore)}`
+        : "";
+      const res = await fetch(`/api/ppc/actions/count${query}`, { cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json();
       if (typeof data?.count === "number") {
@@ -608,11 +616,15 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     } catch (e) {
       console.error(e);
     }
-  }, []);
+  }, [selectedStore]);
 
-  const loadActionQueue = useCallback(async () => {
+  const loadActionQueue = useCallback(async (targetStore?: string) => {
     try {
-      const res = await fetch("/api/ppc/actions", { cache: "no-store" });
+      const activeStore = targetStore !== undefined ? targetStore : selectedStore;
+      const query = activeStore && activeStore !== "ALL"
+        ? `?storeName=${encodeURIComponent(activeStore)}`
+        : "";
+      const res = await fetch(`/api/ppc/actions${query}`, { cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json();
       if (data?.data) {
@@ -622,7 +634,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     } catch (e) {
       console.error(e);
     }
-  }, []);
+  }, [selectedStore]);
 
   const loadBulkHistory = useCallback(async (targetStore?: string) => {
     try {
@@ -734,18 +746,18 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
   };
 
   // Initial mount: only load the lightweight queue count. Recommendations are
-  // intentionally lazy because a cold computation is expensive.
+  // Mount & Store switch: load store-specific action queue count
   useEffect(() => {
-    void loadActionQueueCount();
-  }, [loadActionQueueCount]);
+    void loadActionQueueCount(selectedStore);
+  }, [selectedStore, loadActionQueueCount]);
 
-  // Lazy-load drawer data only when opened
+  // Lazy-load drawer data only when opened, filtered by active store
   useEffect(() => {
     if (isActionQueueOpen) {
-      void loadActionQueue();
-      void loadBulkHistory();
+      void loadActionQueue(selectedStore);
+      void loadBulkHistory(selectedStore);
     }
-  }, [isActionQueueOpen, loadActionQueue, loadBulkHistory]);
+  }, [isActionQueueOpen, selectedStore, loadActionQueue, loadBulkHistory]);
 
   // Coordinated effect: filter changes and tab switches without race conditions
   useEffect(() => {
@@ -1715,7 +1727,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     <div className={`w-full space-y-4 text-slate-800 ${!isEmbedded ? "max-w-7xl mx-auto p-6" : ""}`}>
       {/* Toast Notification */}
       {toast && (
-        <div className={`fixed bottom-6 right-6 z-50 text-white px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2.5 text-xs font-bold border animate-in fade-in ${toast.type === "error" ? "bg-rose-900 border-rose-700" : "bg-slate-900 border-slate-700"}`}>
+        <div className={`fixed bottom-20 right-6 z-50 text-white px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2.5 text-xs font-bold border animate-in fade-in ${toast.type === "error" ? "bg-rose-900 border-rose-700" : "bg-slate-900 border-slate-700"}`}>
           {toast.type === "error" ? <X size={16} weight="bold" className="text-rose-200 shrink-0" /> : <CheckCircle size={16} weight="fill" className="text-emerald-400 shrink-0" />}
           <span>{toast.message}</span>
         </div>
@@ -2344,114 +2356,116 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
 
       {/* DATA SLICING SUB-TABS (Bóc tách dữ liệu theo kiến trúc 5 tầng + SKU song song - ẨN KHI Ở TỔNG QUAN TẤT CẢ SHOP) */}
       {(selectedStore !== "ALL" || activeTab !== "overview") && (
-      <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-200/60 rounded-xl border border-slate-200/80 shadow-2xs">
-        <button
-          type="button"
-          onClick={() => setActiveTab("overview")}
-          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${activeTab === "overview"
-            ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
-            : "text-slate-600 hover:text-slate-900"
-            }`}
-        >
-          <ChartLineUp size={15} weight={activeTab === "overview" ? "bold" : "regular"} />
-          <span>1. Tổng Quan</span>
-        </button>
+      <div className="flex items-center justify-between gap-2 p-1 bg-slate-200/60 rounded-xl border border-slate-200/80 shadow-2xs overflow-x-auto">
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={() => setActiveTab("overview")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "overview"
+              ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
+              : "text-slate-600 hover:text-slate-900"
+              }`}
+          >
+            <ChartLineUp size={15} weight={activeTab === "overview" ? "bold" : "regular"} />
+            <span>1. Tổng Quan</span>
+          </button>
 
-        <button
-          type="button"
-          onClick={() => setActiveTab("campaigns")}
-          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${activeTab === "campaigns"
-            ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
-            : "text-slate-600 hover:text-slate-900"
-            }`}
-        >
-          <FolderSimple size={15} weight={activeTab === "campaigns" ? "bold" : "regular"} />
-          <span>2. Campaign ({detailCounts?.campaigns !== undefined ? detailCounts.campaigns.toLocaleString("vi-VN") : (loading ? "..." : campaignPerformance.length.toLocaleString("vi-VN"))})</span>
-        </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("campaigns")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "campaigns"
+              ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
+              : "text-slate-600 hover:text-slate-900"
+              }`}
+          >
+            <FolderSimple size={15} weight={activeTab === "campaigns" ? "bold" : "regular"} />
+            <span>2. Campaign ({detailCounts?.campaigns !== undefined ? detailCounts.campaigns.toLocaleString("vi-VN") : (loading ? "..." : campaignPerformance.length.toLocaleString("vi-VN"))})</span>
+          </button>
 
-        <button
-          type="button"
-          onClick={() => setActiveTab("targets")}
-          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${activeTab === "targets"
-            ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
-            : "text-slate-600 hover:text-slate-900"
-            }`}
-        >
-          <Crosshair size={15} weight={activeTab === "targets" ? "bold" : "regular"} />
-          <span>3. Target / Keyword ({detailCounts?.targets !== undefined ? detailCounts.targets.toLocaleString("vi-VN") : (loading ? "..." : targetPerformance.length.toLocaleString("vi-VN"))})</span>
-        </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("targets")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "targets"
+              ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
+              : "text-slate-600 hover:text-slate-900"
+              }`}
+          >
+            <Crosshair size={15} weight={activeTab === "targets" ? "bold" : "regular"} />
+            <span>3. Target / Keyword ({detailCounts?.targets !== undefined ? detailCounts.targets.toLocaleString("vi-VN") : (loading ? "..." : targetPerformance.length.toLocaleString("vi-VN"))})</span>
+          </button>
 
-        <button
-          type="button"
-          onClick={() => setActiveTab("search_terms")}
-          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${activeTab === "search_terms"
-            ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
-            : "text-slate-600 hover:text-slate-900"
-            }`}
-        >
-          <MagnifyingGlass size={15} weight={activeTab === "search_terms" ? "bold" : "regular"} />
-          <span>4. Search Terms ({detailCounts?.searchTerms !== undefined ? detailCounts.searchTerms.toLocaleString("vi-VN") : (loading ? "..." : (aggregatedSearchTerms.length > 0 ? aggregatedSearchTerms.length : searchTerms.length).toLocaleString("vi-VN"))})</span>
-        </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("search_terms")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "search_terms"
+              ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
+              : "text-slate-600 hover:text-slate-900"
+              }`}
+          >
+            <MagnifyingGlass size={15} weight={activeTab === "search_terms" ? "bold" : "regular"} />
+            <span>4. Search Terms ({detailCounts?.searchTerms !== undefined ? detailCounts.searchTerms.toLocaleString("vi-VN") : (loading ? "..." : (aggregatedSearchTerms.length > 0 ? aggregatedSearchTerms.length : searchTerms.length).toLocaleString("vi-VN"))})</span>
+          </button>
 
-        <button
-          type="button"
-          onClick={() => setActiveTab("st_optimization")}
-          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${activeTab === "st_optimization"
-            ? "bg-white text-rose-700 shadow-xs border border-rose-200"
-            : "text-slate-600 hover:text-slate-900"
-            }`}
-        >
-          <Prohibit size={15} weight={activeTab === "st_optimization" ? "bold" : "regular"} className={activeTab === "st_optimization" ? "text-rose-600" : "text-slate-400"} />
-          <span>5. ST Optimization ({stOptimizationCandidateCount > 0 ? stOptimizationCandidateCount.toLocaleString("vi-VN") : (loading ? "..." : "0")})</span>
-          {stOptimizationCandidateCount > 0 && (
-            <span className="px-1.5 py-0.2 rounded-full bg-rose-600 text-white text-[10px] font-black">
-              {stOptimizationCandidateCount}
-            </span>
-          )}
-        </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("st_optimization")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "st_optimization"
+              ? "bg-white text-rose-700 shadow-xs border border-rose-200"
+              : "text-slate-600 hover:text-slate-900"
+              }`}
+          >
+            <Prohibit size={15} weight={activeTab === "st_optimization" ? "bold" : "regular"} className={activeTab === "st_optimization" ? "text-rose-600" : "text-slate-400"} />
+            <span>5. ST Optimization ({stOptimizationCandidateCount > 0 ? stOptimizationCandidateCount.toLocaleString("vi-VN") : (loading ? "..." : "0")})</span>
+            {stOptimizationCandidateCount > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full bg-rose-600 text-white text-[10px] font-black">
+                {stOptimizationCandidateCount}
+              </span>
+            )}
+          </button>
 
-        <button
-          type="button"
-          onClick={() => setActiveTab("sale_kw")}
-          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${activeTab === "sale_kw"
-            ? "bg-white text-emerald-700 shadow-xs border border-emerald-200"
-            : "text-slate-600 hover:text-slate-900"
-            }`}
-        >
-          <RocketLaunch size={15} weight={activeTab === "sale_kw" ? "bold" : "regular"} className={activeTab === "sale_kw" ? "text-emerald-600" : "text-slate-400"} />
-          <span>6. Lên Camp Sale KW ({saleKwCandidateCount > 0 ? saleKwCandidateCount.toLocaleString("vi-VN") : (loading ? "..." : "0")})</span>
-          {saleKwCandidateCount > 0 && (
-            <span className="px-1.5 py-0.2 rounded-full bg-emerald-600 text-white text-[10px] font-black">
-              {saleKwCandidateCount}
-            </span>
-          )}
-        </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("sale_kw")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "sale_kw"
+              ? "bg-white text-emerald-700 shadow-xs border border-emerald-200"
+              : "text-slate-600 hover:text-slate-900"
+              }`}
+          >
+            <RocketLaunch size={15} weight={activeTab === "sale_kw" ? "bold" : "regular"} className={activeTab === "sale_kw" ? "text-emerald-600" : "text-slate-400"} />
+            <span>6. Lên Camp Sale KW ({saleKwCandidateCount > 0 ? saleKwCandidateCount.toLocaleString("vi-VN") : (loading ? "..." : "0")})</span>
+            {saleKwCandidateCount > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full bg-emerald-600 text-white text-[10px] font-black">
+                {saleKwCandidateCount}
+              </span>
+            )}
+          </button>
 
-        <button
-          type="button"
-          onClick={() => setActiveTab("skus")}
-          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${activeTab === "skus"
-            ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
-            : "text-slate-600 hover:text-slate-900"
-            }`}
-        >
-          <Tag size={15} weight={activeTab === "skus" ? "bold" : "regular"} />
-          <span>6. SKU ({detailCounts?.skus !== undefined ? detailCounts.skus.toLocaleString("vi-VN") : (loading ? "..." : activeSkuPerformance.length.toLocaleString("vi-VN"))})</span>
-        </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("skus")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "skus"
+              ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
+              : "text-slate-600 hover:text-slate-900"
+              }`}
+          >
+            <Tag size={15} weight={activeTab === "skus" ? "bold" : "regular"} />
+            <span>7. SKU ({detailCounts?.skus !== undefined ? detailCounts.skus.toLocaleString("vi-VN") : (loading ? "..." : activeSkuPerformance.length.toLocaleString("vi-VN"))})</span>
+          </button>
 
-        <button
-          type="button"
-          onClick={() => setActiveTab("recommendations")}
-          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${activeTab === "recommendations"
-            ? "bg-white text-emerald-700 shadow-xs border border-emerald-100"
-            : "text-slate-600 hover:text-slate-900"
-            }`}
-        >
-          <span>7. Đề Xuất ({skuRecGroups.length > 0 ? `${skuRecGroups.length.toLocaleString("vi-VN")} SKU` : (detailCounts?.skus !== undefined ? `${detailCounts.skus.toLocaleString("vi-VN")} SKU` : (loadingRecs ? "..." : "0 SKU"))})</span>
-        </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("recommendations")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "recommendations"
+              ? "bg-white text-emerald-700 shadow-xs border border-emerald-100"
+              : "text-slate-600 hover:text-slate-900"
+              }`}
+          >
+            <span>8. Đề Xuất ({skuRecGroups.length > 0 ? `${skuRecGroups.length.toLocaleString("vi-VN")} SKU` : (detailCounts?.skus !== undefined ? `${detailCounts.skus.toLocaleString("vi-VN")} SKU` : (loadingRecs ? "..." : "0 SKU"))})</span>
+          </button>
+        </div>
 
         {/* Action Queue Quick Trigger */}
-        <div className="ml-auto flex items-center gap-2">
+        <div className="flex items-center gap-2 pl-2 border-l border-slate-300/80 shrink-0">
           <button
             type="button"
             onClick={() => setIsActionQueueOpen(true)}
@@ -3938,6 +3952,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
           loading={loading || loadingSection === "search_terms"}
           notify={notify}
           onOpenActionQueue={() => setIsActionQueueOpen(true)}
+          actor={actor}
         />
       )}
 
@@ -4122,6 +4137,38 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
           setSettingsSubTab("phoi");
         }}
       />
+
+      {/* FLOATING ACTION QUEUE BUTTON (GÓC DƯỚI BÊN PHẢI - TRÔI THEO MÀN HÌNH - GỌN HƠN, MÀU XANH) */}
+      <div className="fixed bottom-6 right-6 z-40">
+        <button
+          type="button"
+          onClick={() => setIsActionQueueOpen(true)}
+          className="group flex items-center gap-2 px-3.5 py-2 rounded-full bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white shadow-lg shadow-emerald-950/20 border border-emerald-500/80 backdrop-blur-md transition-all duration-200 cursor-pointer hover:scale-105"
+          title={`Mở Action Queue${selectedStore && selectedStore !== "ALL" ? ` - Shop: ${selectedStore}` : ""}`}
+        >
+          <div className="relative flex items-center justify-center">
+            <Lightning size={16} weight="fill" className="text-white group-hover:rotate-12 transition-transform duration-200" />
+            {pendingActionCount > 0 && (
+              <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-emerald-300 animate-ping" />
+            )}
+          </div>
+          <span className="text-xs font-bold tracking-wide">Action Queue</span>
+          {selectedStore && selectedStore !== "ALL" && (
+            <span className="text-[10px] text-emerald-100/90 font-medium max-w-[100px] truncate border-l border-emerald-400/40 pl-2">
+              {selectedStore}
+            </span>
+          )}
+          <span
+            className={`px-1.5 py-0.2 min-w-[20px] text-center rounded-full text-[11px] font-black transition-all ${
+              pendingActionCount > 0
+                ? "bg-white text-emerald-700 shadow-xs"
+                : "bg-emerald-800/80 text-emerald-200 border border-emerald-600/50"
+            }`}
+          >
+            {pendingActionCount}
+          </span>
+        </button>
+      </div>
     </div>
   );
 }

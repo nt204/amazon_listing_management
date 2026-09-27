@@ -587,7 +587,7 @@ async function processJob(job: {
 }
 
 function getScheduleConfig() {
-  let scheduleTime = "12:00";
+  let scheduleTime = "05:00";
   let isForce = false;
   try {
     const envPath = path.join(__dirname, "config.env");

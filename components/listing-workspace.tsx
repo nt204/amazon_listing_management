@@ -434,7 +434,7 @@ export function ListingWorkspace({
               ) : ppcSection === "rules" ? (
                 <PpcRuleManagerStandalone />
               ) : (
-                <PpcDashboard isEmbedded={true} />
+                <PpcDashboard isEmbedded={true} actor={actor} />
               )}
             </div>
           ) : (

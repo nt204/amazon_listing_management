@@ -6,11 +6,14 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
-    authorize(request, "read");
+    const actor = authorize(request, "read");
     const { searchParams } = new URL(request.url);
-    const storeId = await resolveStoreId(searchParams.get("storeId"));
+    const storeTarget = searchParams.get("storeName") || searchParams.get("storeId");
+    const storeId = await resolveStoreId(storeTarget);
+    const currentUser = actor.displayName || actor.userId;
+    const userFilter = searchParams.get("allUsers") === "true" ? undefined : currentUser;
 
-    const count = await getActionQueueCount(storeId);
+    const count = await getActionQueueCount(storeId, userFilter);
     return Response.json({ success: true, count, data: count });
   } catch (error) {
     return routeErrorResponse(error, "Lỗi khi đếm Action Queue.", 500);

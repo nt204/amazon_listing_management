@@ -153,6 +153,7 @@ export interface PpcAutoUploadLog {
   resultSummary?: string | null;
   durationMs: number;
   createdAt: string;
+  createdBy?: string | null;
 }
 
 export interface BulkExportItem {
@@ -181,6 +182,7 @@ export interface BulkExport {
   };
   status: "SUCCESS" | "PARTIAL" | "FAILED";
   createdAt: string;
+  createdBy?: string | null;
   items?: BulkExportItem[];
 }
 

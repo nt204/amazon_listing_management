@@ -263,11 +263,11 @@ export async function POST(request: Request) {
     await sql`
       INSERT INTO ppc_auto_upload_logs (
         id, team_id, store_id, file_name, action_count, skus, status, stage,
-        file_status, progress_pct, action_ids, actions_payload, r2_key, sha256, updated_at
+        file_status, progress_pct, action_ids, actions_payload, r2_key, sha256, updated_at, created_by
       ) VALUES (
         ${jobId}, ${actor.teamId}, ${storeId}, ${fileName}, ${recommendations.length},
         ${sql.json(distinctCamps)}, 'PENDING', 'FILE_READY',
-        'SUCCESS', 25, ${sql.json([])}, ${sql.json(actionsPayload)}, ${r2Key}, ${sha256}, NOW()
+        'SUCCESS', 25, ${sql.json([])}, ${sql.json(actionsPayload)}, ${r2Key}, ${sha256}, NOW(), ${actor.displayName || actor.userId || null}
       )
     `;
 

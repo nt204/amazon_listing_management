@@ -35,7 +35,7 @@ def export_bulksheet(recommendations, output_path=None):
     # Pre-map available worksheets, headers, and row pointers
     sheet_configs = {
         "SP": "Sponsored Products Campaigns",
-        "SB": "SB Multi Ad Group Campaigns" if "SB Multi Ad Group Campaigns" in wb.sheetnames else "Sponsored Brands Campaigns",
+        "SB": "Sponsored Brands Campaigns" if "Sponsored Brands Campaigns" in wb.sheetnames else "SB Multi Ad Group Campaigns",
         "SD": "Sponsored Display Campaigns",
     }
     worksheets = {}

@@ -47,7 +47,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    authorize(request, "write");
+    const actor = authorize(request, "write");
     enforceRequestSize(request);
 
     const body = await request.json();
@@ -55,7 +55,7 @@ export async function POST(request: Request) {
     const storeId = await resolveStoreId(body?.storeId || searchParams.get("storeId"));
     const actionIds = Array.isArray(body?.actionIds) ? body.actionIds : undefined;
 
-    const result = await exportBulkFromQueue(storeId, actionIds);
+    const result = await exportBulkFromQueue(storeId, actionIds, actor.displayName || actor.userId);
 
     return new Response(new Uint8Array(result.buffer), {
       status: 200,

@@ -13,16 +13,19 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
-    authorize(request, "read");
+    const actor = authorize(request, "read");
     const { searchParams } = new URL(request.url);
-    const storeId = await resolveStoreId(searchParams.get("storeId"));
+    const storeTarget = searchParams.get("storeName") || searchParams.get("storeId");
+    const storeId = await resolveStoreId(storeTarget);
+    const currentUser = actor.displayName || actor.userId;
+    const userFilter = searchParams.get("allUsers") === "true" ? undefined : currentUser;
 
     if (searchParams.get("countOnly") === "true" || searchParams.get("count") === "1") {
-      const count = await getActionQueueCount(storeId);
+      const count = await getActionQueueCount(storeId, userFilter);
       return Response.json({ success: true, count, data: count });
     }
 
-    const queue = await getActionQueue(storeId);
+    const queue = await getActionQueue(storeId, userFilter);
     return Response.json({ success: true, data: queue });
   } catch (error) {
     return routeErrorResponse(error, "Lỗi khi lấy danh sách Action Queue.", 500);
@@ -31,7 +34,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    authorize(request, "write");
+    const actor = authorize(request, "write");
     enforceRequestSize(request);
 
     const body = await request.json();
@@ -43,7 +46,8 @@ export async function POST(request: Request) {
       throw new ApiError("Không có đề xuất nào được gửi để duyệt.", 400);
     }
 
-    const res = await approveRecommendationsToActionQueue(storeId, items);
+    const defaultApprovedBy = actor.displayName || actor.userId || "User";
+    const res = await approveRecommendationsToActionQueue(storeId, items, defaultApprovedBy);
     return Response.json({
       success: true,
       message: `Đã duyệt ${res.addedCount} hành động vào Action Queue (${res.supersededCount} hành động cũ được thay thế).`,

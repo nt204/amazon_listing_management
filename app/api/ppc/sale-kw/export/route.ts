@@ -1,12 +1,18 @@
 import { ApiError, authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import { exportSaleKwBulksheetExcel, type SaleKwCampaignPayload } from "@/lib/ppc/service";
+import {
+  isAsinProductTarget,
+  formatDDMMYY,
+  generateSaleKwCampaignTriad,
+  resolveSkuForSearchTerm,
+} from "@/lib/ppc/sku-extractor";
 
 export const runtime = "nodejs";
 
 export interface SaleKwItemInput {
   customerSearchTerm: string;
-  campaignName: string;
+  campaignName?: string;
   adGroupName?: string;
   campaignId?: string;
   adGroupId?: string;
@@ -49,7 +55,7 @@ export async function POST(request: Request) {
     const storeName = String(body?.storeName || "STORE").trim();
     const rawItems: SaleKwItemInput[] = Array.isArray(body?.items) ? body.items : [];
     const directCampaigns = Array.isArray(body?.campaigns) ? body.campaigns : null;
-    const defaultDailyBudget = Number(body?.dailyBudget) || 10.0;
+    const defaultDailyBudget = Number(body?.dailyBudget) || 5.0;
     const defaultBidVal = Number(body?.defaultBid) || 1.0;
     const globalNegateInSource = Boolean(body?.negateInSource);
 
@@ -73,105 +79,79 @@ export async function POST(request: Request) {
     if (directCampaigns && directCampaigns.length > 0) {
       campaignsPayload = directCampaigns;
     } else {
-      // Nhóm rawItems theo Campaign Name
-      const campaignMap = new Map<string, SaleKwItemInput[]>();
-      for (const item of rawItems) {
-        const camp = (item.campaignName || "").trim();
-        const term = (item.customerSearchTerm || "").trim();
-        if (!camp || !term) continue;
-        if (!campaignMap.has(camp)) {
-          campaignMap.set(camp, []);
-        }
-        campaignMap.get(camp)!.push(item);
+      // 1. Chỉ lấy Keyword thôi, ASIN bỏ qua hoàn toàn
+      const filteredItems = rawItems.filter((it) => !isAsinProductTarget(it.customerSearchTerm));
+      if (filteredItems.length === 0) {
+        throw new ApiError("Không có Search Term (từ khóa chữ) nào hợp lệ. Đã lọc bỏ ASIN.", 400);
       }
 
-      const campNames = Array.from(campaignMap.keys());
-      if (campNames.length === 0) {
-        throw new ApiError("Danh sách Search Term không hợp lệ.", 400);
+      // 2. Nhóm theo SKU
+      const skuMap = new Map<string, SaleKwItemInput[]>();
+      for (const item of filteredItems) {
+        const sku = resolveSkuForSearchTerm(item);
+        if (!skuMap.has(sku)) skuMap.set(sku, []);
+        skuMap.get(sku)!.push(item);
       }
 
-      // Tra cứu Amazon Campaign ID, Ad Group ID, SKU từ ppc_performance_facts
-      const facts = await sql<Array<{
-        campaign_name: string;
-        campaign_id: string;
-        ad_group_name: string;
-        ad_group_id: string;
-        sku: string;
-      }>>`
-        SELECT DISTINCT campaign_name, campaign_id, ad_group_name, ad_group_id, sku
-        FROM ppc_performance_facts
-        WHERE campaign_name = ANY(${campNames})
-      `;
+      const activeDateStr = String(body?.dateStr || "").trim() || formatDDMMYY();
+      const activeUser = String(body?.userName || "").trim() || (actor.displayName ? actor.displayName.split(/\s+/)[0] : "Loan");
+      const activeAdType = String(body?.adTypeCode || "").trim() || "SP03";
 
-      const campLookup = new Map<string, { campaignId: string; adGroupId: string; adGroupName: string; skus: Set<string> }>();
-      for (const f of facts) {
-        const cKey = (f.campaign_name || "").trim().toLowerCase();
-        if (!cKey) continue;
-        if (!campLookup.has(cKey)) {
-          campLookup.set(cKey, {
-            campaignId: f.campaign_id || "",
-            adGroupId: f.ad_group_id || "",
-            adGroupName: f.ad_group_name || f.campaign_name,
-            skus: new Set<string>(),
+      for (const [sku, items] of skuMap.entries()) {
+        const triad = generateSaleKwCampaignTriad({
+          sku,
+          adTypeCode: activeAdType,
+          userName: activeUser,
+          dateStr: activeDateStr,
+        });
+
+        const totalSkuSpend = items.reduce((s, it) => s + (it.spend || 0), 0);
+        const totalSkuClicks = items.reduce((s, it) => s + (it.clicks || 0), 0);
+        const skuAvgCpc = totalSkuClicks > 0 ? Math.round((totalSkuSpend / totalSkuClicks) * 100) / 100 : defaultBidVal;
+
+        const configs: Array<{ matchTypeLower: "exact" | "phrase" | "broad"; campName: string }> = [
+          { matchTypeLower: "exact", campName: triad.exact },
+          { matchTypeLower: "phrase", campName: triad.phrase },
+          { matchTypeLower: "broad", campName: triad.broad },
+        ];
+
+        for (const cfg of configs) {
+          const keywords = items.map((it) => {
+            const kwBid = it.bid && it.bid > 0
+              ? it.bid
+              : it.cpc && it.cpc > 0
+                ? Math.max(0.1, Math.round(it.cpc * 100) / 100)
+                : it.clicks > 0
+                  ? Math.max(0.1, Math.round(((it.spend || 0) / it.clicks) * 100) / 100)
+                  : defaultBidVal;
+
+            return {
+              customerSearchTerm: it.customerSearchTerm.trim(),
+              keyword: it.customerSearchTerm.trim(),
+              matchType: cfg.matchTypeLower,
+              bid: kwBid,
+              orders: it.orders || 0,
+              sales: it.sales || 0,
+              clicks: it.clicks || 0,
+              spend: it.spend || 0,
+            };
+          });
+
+          campaignsPayload.push({
+            sourceCampaignName: items[0]?.campaignName || sku,
+            sourceCampaignId: items[0]?.campaignId || "",
+            sourceAdGroupId: items[0]?.adGroupId || "",
+            sourceAdGroupName: items[0]?.adGroupName || items[0]?.campaignName || sku,
+            targetCampaignName: cfg.campName,
+            adGroupName: cfg.campName,
+            sku,
+            dailyBudget: defaultDailyBudget,
+            defaultBid: skuAvgCpc > 0 ? skuAvgCpc : defaultBidVal,
+            biddingStrategy: "Dynamic bids - down only",
+            negateInSource: globalNegateInSource,
+            keywords,
           });
         }
-        const entry = campLookup.get(cKey)!;
-        if (!entry.campaignId && f.campaign_id) entry.campaignId = f.campaign_id;
-        if (!entry.adGroupId && f.ad_group_id) {
-          entry.adGroupId = f.ad_group_id;
-          entry.adGroupName = f.ad_group_name;
-        }
-        if (f.sku && f.sku.trim()) entry.skus.add(f.sku.trim());
-      }
-
-      for (const [campName, items] of campaignMap.entries()) {
-        const cKey = campName.toLowerCase();
-        const lookup = campLookup.get(cKey);
-        const targetCampName = `${campName} (Sale KW)`;
-        const adGroupName = targetCampName;
-
-        // Xác định SKU
-        let sku = "";
-        const itemWithSku = items.find((it) => it.sku && it.sku.trim());
-        if (itemWithSku?.sku) {
-          sku = itemWithSku.sku.trim();
-        } else if (lookup && lookup.skus.size > 0) {
-          sku = Array.from(lookup.skus)[0];
-        }
-
-        const keywords = items.map((it) => {
-          const kwBid = it.bid && it.bid > 0
-            ? it.bid
-            : it.cpc && it.cpc > 0
-              ? Math.max(0.1, Math.round(it.cpc * 100) / 100)
-              : defaultBidVal;
-
-          return {
-            customerSearchTerm: it.customerSearchTerm.trim(),
-            keyword: it.customerSearchTerm.trim(),
-            matchType: it.matchType || "exact",
-            bid: kwBid,
-            orders: it.orders || 0,
-            sales: it.sales || 0,
-            clicks: it.clicks || 0,
-            spend: it.spend || 0,
-          };
-        });
-
-        campaignsPayload.push({
-          sourceCampaignName: campName,
-          sourceCampaignId: lookup?.campaignId || items[0]?.campaignId || "",
-          sourceAdGroupId: lookup?.adGroupId || items[0]?.adGroupId || "",
-          sourceAdGroupName: lookup?.adGroupName || items[0]?.adGroupName || campName,
-          targetCampaignName: targetCampName,
-          adGroupName,
-          sku,
-          dailyBudget: defaultDailyBudget,
-          defaultBid: defaultBidVal,
-          biddingStrategy: "Dynamic bids - down only",
-          negateInSource: globalNegateInSource,
-          keywords,
-        });
       }
     }
 

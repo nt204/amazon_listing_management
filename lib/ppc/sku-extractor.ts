@@ -213,3 +213,147 @@ export function formatPpcExportFilename(options: {
 
   return `${filename}.${ext}`;
 }
+
+/**
+ * Checks if a search term is an ASIN or product targeting expression.
+ * Returns true if the term is an ASIN or product target (which should be skipped for KW campaigns).
+ */
+export function isAsinProductTarget(term: string | null | undefined): boolean {
+  const t = (term || "").trim();
+  if (!t) return false;
+  const lower = t.toLowerCase();
+  if (lower.startsWith("asin=") || lower.startsWith("category=")) return true;
+  if (/^[bB][0-9a-zA-Z]{9}$/.test(t)) return true;
+  if (/^b0[a-z0-9]{8}$/i.test(t)) return true;
+  if (lower.startsWith("b0") && t.length >= 10 && !t.includes(" ")) return true;
+  return false;
+}
+
+/**
+ * Format date to 6-digit DDMMYY format (e.g. 100124 for 10/01/2024, or 270926 for 27/09/2026)
+ * Uses Asia/Ho_Chi_Minh timezone by default.
+ */
+export function formatDDMMYY(date: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+  }).formatToParts(date);
+  const day = parts.find((p) => p.type === "day")?.value || "01";
+  const month = parts.find((p) => p.type === "month")?.value || "01";
+  const year = parts.find((p) => p.type === "year")?.value || "26";
+  return `${day}${month}${year}`;
+}
+
+/**
+ * Extract PPC ad type code from campaign name (e.g. SP03, SP01, SP04, SB05, etc.)
+ * Defaults to "SP03" for Keyword campaigns.
+ */
+export function extractAdTypeCode(campaignName?: string | null): string {
+  if (!campaignName) return "SP03";
+  const m = campaignName.match(/\b(SP01|SP02|SP03|SP04|SB01|SB02|SB05|SD01|SD02)\b/i);
+  if (m) return m[1].toUpperCase();
+  return "SP03";
+}
+
+/**
+ * Build campaign name according to the rule:
+ * "{SKU} {dạng chạy} KW {tên người dùng} {match type} {ngày tháng năm} (sale kw)"
+ * Example:
+ * FL230622BXN SP03 KW Loan Broad 100124 (sale kw)
+ */
+export function buildSaleKwCampaignName(params: {
+  sku: string;
+  adTypeCode?: string;
+  userName?: string;
+  matchType: "Exact" | "Phrase" | "Broad";
+  dateStr?: string;
+}): string {
+  const cleanSku = (params.sku || "").trim().toUpperCase() || "SKU";
+  const adType = (params.adTypeCode || "SP03").trim().toUpperCase();
+  const user = (params.userName || "Loan").trim();
+  const dateStr = (params.dateStr || formatDDMMYY()).trim();
+  return `${cleanSku} ${adType} KW ${user} ${params.matchType} ${dateStr} (sale kw)`;
+}
+
+/**
+ * Generate 3 campaign names (Exact, Phrase, Broad) for a given SKU.
+ */
+export function generateSaleKwCampaignTriad(params: {
+  sku: string;
+  adTypeCode?: string;
+  userName?: string;
+  dateStr?: string;
+}): { exact: string; phrase: string; broad: string } {
+  return {
+    exact: buildSaleKwCampaignName({ ...params, matchType: "Exact" }),
+    phrase: buildSaleKwCampaignName({ ...params, matchType: "Phrase" }),
+    broad: buildSaleKwCampaignName({ ...params, matchType: "Broad" }),
+  };
+}
+
+/**
+ * Resolve SKU for a PPC search term row
+ */
+export function resolveSkuForSearchTerm(
+  term: { customerSearchTerm?: string; campaignName?: string; portfolioName?: string; adGroupName?: string; sku?: string },
+  selectedSku?: string
+): string {
+  if (selectedSku && selectedSku !== "ALL" && selectedSku !== "ALL_SKUS") {
+    return selectedSku.trim().toUpperCase();
+  }
+  const rawSku = (term as any).sku;
+  if (rawSku && String(rawSku).trim()) {
+    return String(rawSku).trim().toUpperCase();
+  }
+  const fromCamp = extractSkuFromText(term.campaignName);
+  if (fromCamp) return fromCamp;
+  const fromPort = extractSkuFromText(term.portfolioName);
+  if (fromPort) return fromPort;
+  const fromAg = extractSkuFromText(term.adGroupName);
+  if (fromAg) return fromAg;
+  const firstToken = (term.campaignName || "").trim().split(/\s+/)[0];
+  if (firstToken && firstToken.length >= 4 && /[A-Za-z]/.test(firstToken) && /\d/.test(firstToken)) {
+    return firstToken.toUpperCase();
+  }
+  return "UNKNOWN_SKU";
+}
+
+/**
+ * Extract date from file date, report date, or filename into 6-digit DDMMYY format
+ * E.g.
+ * - "2026-09-26" -> "260926"
+ * - "2024-01-10" -> "100124"
+ * - "LIMIMA_Search_Term_SP_30Days_20260926_(Y65DVF).xlsx" -> "260926"
+ * - "2026-09-26T22:39:14.572Z" -> "260926"
+ */
+export function extractFileDateDDMMYY(dateStrOrObj?: string | Date | null): string | null {
+  if (!dateStrOrObj) return null;
+  if (dateStrOrObj instanceof Date) {
+    return formatDDMMYY(dateStrOrObj);
+  }
+  const str = String(dateStrOrObj).trim();
+  // 1. Check for YYYY-MM-DD e.g. 2026-09-26 or 2026/09/26
+  const mYmd = str.match(/\b(20\d{2})[-/](0[1-9]|1[0-2])[-/](0[1-9]|[12]\d|3[01])\b/);
+  if (mYmd) {
+    const yy = mYmd[1].slice(-2);
+    const mm = mYmd[2];
+    const dd = mYmd[3];
+    return `${dd}${mm}${yy}`;
+  }
+  // 2. Check for 8-digit YYYYMMDD in string or filename e.g. 20260926
+  const m8 = str.match(/\b(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\b/);
+  if (m8) {
+    const yy = m8[1].slice(-2);
+    const mm = m8[2];
+    const dd = m8[3];
+    return `${dd}${mm}${yy}`;
+  }
+  // 3. Check for 6-digit DDMMYY already e.g. 100124
+  const m6 = str.match(/\b(0[1-9]|[12]\d|3[01])(0[1-9]|1[0-2])(\d{2})\b/);
+  if (m6) {
+    return m6[0];
+  }
+  return null;
+}

@@ -1416,6 +1416,7 @@ export async function approveRecommendationsToActionQueue(
     userFinalBid?: number;
     approvedBy?: string;
   }>,
+  defaultApprovedBy = "User",
 ): Promise<{ addedCount: number; supersededCount: number }> {
   if (!items || items.length === 0) {
     return { addedCount: 0, supersededCount: 0 };
@@ -1483,7 +1484,7 @@ export async function approveRecommendationsToActionQueue(
         final_value: finalValue,
         rule_version: rec.ruleProfile || "v1.0",
         status: "APPROVED",
-        approved_by: item.approvedBy || "User",
+        approved_by: item.approvedBy || defaultApprovedBy,
         approved_at: new Date(),
       };
     });
@@ -1528,18 +1529,19 @@ export async function approveRecommendationsToActionQueue(
   return { addedCount, supersededCount };
 }
 
-export async function getActionQueueCount(storeId: string): Promise<number> {
+export async function getActionQueueCount(storeId: string, approvedBy?: string): Promise<number> {
   const sql = await getDatabaseClient();
   const rows = await sql<{ count: number }[]>`
     SELECT COUNT(*)::int as count
     FROM ppc_actions
     WHERE store_id = ${storeId}
       AND status IN ('APPROVED', 'QUEUED')
+      ${approvedBy ? sql`AND (approved_by = ${approvedBy} OR approved_by = 'User')` : sql``}
   `;
   return Number(rows[0]?.count || 0);
 }
 
-export async function getActionQueue(storeId: string): Promise<PpcAction[]> {
+export async function getActionQueue(storeId: string, approvedBy?: string): Promise<PpcAction[]> {
   const sql = await getDatabaseClient();
   const rows = await sql<any[]>`
     SELECT 
@@ -1563,6 +1565,7 @@ export async function getActionQueue(storeId: string): Promise<PpcAction[]> {
     ) p ON UPPER(TRIM(a.sku)) = p.sku_code
     WHERE a.store_id = ${storeId}
       AND a.status IN ('APPROVED', 'QUEUED')
+      ${approvedBy ? sql`AND (a.approved_by = ${approvedBy} OR a.approved_by = 'User')` : sql``}
     ORDER BY a.created_at DESC
   `;
 
@@ -1617,6 +1620,7 @@ export async function removeActionFromQueue(storeId: string, actionId: string): 
 export async function exportBulkFromQueue(
   storeId: string,
   selectedActionIds?: string[],
+  createdBy?: string | null,
 ): Promise<{
   fileName: string;
   buffer: Buffer;
@@ -1777,11 +1781,11 @@ export async function exportBulkFromQueue(
   await sql.begin(async (tx: any) => {
     const bulkInsert = await tx`
       INSERT INTO bulk_exports (
-        store_id, file_name, action_count, summary, status
+        store_id, file_name, action_count, summary, status, created_by
       ) VALUES (
         ${storeId}, ${fileName}, ${actions.length},
         ${JSON.stringify({ updateBidCount, pauseCount, budgetCount, enableCount: 0 })},
-        'SUCCESS'
+        'SUCCESS', ${createdBy || null}
       )
       RETURNING id
     `;
@@ -1817,7 +1821,7 @@ export async function getBulkExportHistory(storeId?: string | null): Promise<Bul
   const sql = await getDatabaseClient();
   const rows = storeId && storeId !== "ALL"
     ? await sql<any[]>`
-        SELECT b.id, b.store_id, s.name as store_name, b.file_name, b.action_count, b.summary, b.status, b.created_at
+        SELECT b.id, b.store_id, s.name as store_name, b.file_name, b.action_count, b.summary, b.status, b.created_at, b.created_by
         FROM bulk_exports b
         LEFT JOIN ppc_stores s ON b.store_id = s.id
         WHERE b.store_id = ${storeId}
@@ -1825,7 +1829,7 @@ export async function getBulkExportHistory(storeId?: string | null): Promise<Bul
         LIMIT 50
       `
     : await sql<any[]>`
-        SELECT b.id, b.store_id, s.name as store_name, b.file_name, b.action_count, b.summary, b.status, b.created_at
+        SELECT b.id, b.store_id, s.name as store_name, b.file_name, b.action_count, b.summary, b.status, b.created_at, b.created_by
         FROM bulk_exports b
         LEFT JOIN ppc_stores s ON b.store_id = s.id
         ORDER BY b.created_at DESC
@@ -1841,6 +1845,7 @@ export async function getBulkExportHistory(storeId?: string | null): Promise<Bul
     summary: typeof r.summary === "string" ? JSON.parse(r.summary) : r.summary,
     status: r.status,
     createdAt: new Date(r.created_at).toISOString(),
+    createdBy: r.created_by || null,
   }));
 }
 
@@ -1977,7 +1982,7 @@ export async function getAutoUploadLogs(storeId?: string | null): Promise<PpcAut
     ? await sql<any[]>`
         SELECT l.id, l.store_id, s.name as store_name, l.file_name, l.adspower_profile_id, l.adspower_profile_name,
                l.action_count, l.skus, l.status, l.stage, l.file_status, l.file_error_message,
-               l.error_message, l.result_summary, l.duration_ms, l.created_at
+               l.error_message, l.result_summary, l.duration_ms, l.created_at, l.created_by
         FROM ppc_auto_upload_logs l
         LEFT JOIN ppc_stores s ON l.store_id = s.id
         WHERE l.store_id = ${storeId}
@@ -1987,7 +1992,7 @@ export async function getAutoUploadLogs(storeId?: string | null): Promise<PpcAut
     : await sql<any[]>`
         SELECT l.id, l.store_id, s.name as store_name, l.file_name, l.adspower_profile_id, l.adspower_profile_name,
                l.action_count, l.skus, l.status, l.stage, l.file_status, l.file_error_message,
-               l.error_message, l.result_summary, l.duration_ms, l.created_at
+               l.error_message, l.result_summary, l.duration_ms, l.created_at, l.created_by
         FROM ppc_auto_upload_logs l
         LEFT JOIN ppc_stores s ON l.store_id = s.id
         ORDER BY l.created_at DESC
@@ -2011,6 +2016,7 @@ export async function getAutoUploadLogs(storeId?: string | null): Promise<PpcAut
     resultSummary: r.result_summary,
     durationMs: Number(r.duration_ms || 0),
     createdAt: new Date(r.created_at).toISOString(),
+    createdBy: r.created_by || null,
   }));
 }
 
@@ -2145,7 +2151,7 @@ export async function executeAutoUploadZeroSpendActions(
   storeId: string,
   selectedActionIds?: string[],
   teamId = "default",
-  options: { allowAllSkus?: boolean } = {},
+  options: { allowAllSkus?: boolean; createdBy?: string } = {},
 ): Promise<{
   success: boolean;
   log: PpcAutoUploadLog;
@@ -2165,7 +2171,7 @@ export async function executeAutoUploadZeroSpendActions(
   const storeName = storeRows[0].name;
 
   // 1. Get all pending/approved actions in the queue
-  const queueActions = await getActionQueue(storeId);
+  const queueActions = await getActionQueue(storeId, options.createdBy);
   let candidateActions = queueActions;
   if (selectedActionIds && selectedActionIds.length > 0) {
     const idSet = new Set(selectedActionIds);
@@ -2194,11 +2200,11 @@ export async function executeAutoUploadZeroSpendActions(
   const initialLog = await sql<Array<{ id: string; created_at: Date | string }>>`
     INSERT INTO ppc_auto_upload_logs (
       id, team_id, store_id, file_name, action_count, skus, status, stage,
-      file_status, progress_pct, action_ids, updated_at
+      file_status, progress_pct, action_ids, updated_at, created_by
     ) VALUES (
       ${jobId}, ${teamId}, ${storeId}, NULL, ${actionsToUpload.length},
       ${sql.json(distinctSkus)}, 'RUNNING', 'GENERATING_FILE',
-      'PENDING', 0, ${sql.json(uploadActionIds)}, NOW()
+      'PENDING', 0, ${sql.json(uploadActionIds)}, NOW(), ${options.createdBy || null}
     )
     RETURNING id, created_at
   `;
@@ -2206,7 +2212,7 @@ export async function executeAutoUploadZeroSpendActions(
   // 3. Export Bulk file using the canonical Amazon template.
   let exportResult: Awaited<ReturnType<typeof exportBulkFromQueue>>;
   try {
-    exportResult = await exportBulkFromQueue(storeId, uploadActionIds);
+    exportResult = await exportBulkFromQueue(storeId, uploadActionIds, options.createdBy);
     await sql`
       UPDATE ppc_auto_upload_logs
       SET file_name = ${exportResult.fileName}, file_status = 'SUCCESS',
