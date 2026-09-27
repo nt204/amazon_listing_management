@@ -1,0 +1,326 @@
+import { ApiError, authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
+import { getDatabaseClient } from "@/lib/db";
+import { objectStorageDriver, putStoredObject, r2KeyPrefix } from "@/lib/object-storage";
+import { exportSaleKwBulksheetExcel, type SaleKwCampaignPayload } from "@/lib/ppc/service";
+import crypto from "node:crypto";
+
+export const runtime = "nodejs";
+
+export interface SaleKwItemInput {
+  customerSearchTerm: string;
+  campaignName: string;
+  adGroupName?: string;
+  campaignId?: string;
+  adGroupId?: string;
+  targetKeyword?: string;
+  matchType?: string;
+  clicks: number;
+  orders: number;
+  spend: number;
+  sales: number;
+  cpc?: number;
+  sku?: string;
+  bid?: number;
+  storeId?: string;
+  storeName?: string;
+}
+
+function exportTimestamp(date: Date): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const value = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value || "00";
+  return `${value("year")}${value("month")}${value("day")}_${value("hour")}${value("minute")}${value("second")}`;
+}
+
+export async function POST(request: Request) {
+  try {
+    const actor = authorize(request, "write");
+    enforceRequestSize(request);
+
+    const body = await request.json().catch(() => ({}));
+    const rawItems: SaleKwItemInput[] = Array.isArray(body?.items) ? body.items : [];
+    const directCampaigns = Array.isArray(body?.campaigns) ? body.campaigns : null;
+    const requestedStoreName = String(body?.storeName || "").trim();
+    const requestedStoreId = String(body?.storeId || "").trim();
+    const defaultDailyBudget = Number(body?.dailyBudget) || 10.0;
+    const defaultBidVal = Number(body?.defaultBid) || 1.0;
+    const globalNegateInSource = Boolean(body?.negateInSource);
+
+    if (rawItems.length === 0 && (!directCampaigns || directCampaigns.length === 0)) {
+      throw new ApiError("Không có Search Term nào được chọn để Auto Upload lên Camp Sale KW.", 400);
+    }
+
+    const sql = await getDatabaseClient();
+
+    // 1. Resolve store
+    let storeRow: { id: string; name: string } | null = null;
+    if (requestedStoreId) {
+      const rows = await sql<{ id: string; name: string }[]>`
+        SELECT id, name FROM ppc_stores
+        WHERE id = ${requestedStoreId} AND team_id = ${actor.teamId}
+        LIMIT 1
+      `;
+      if (rows.length > 0) storeRow = rows[0];
+    }
+
+    if (!storeRow && requestedStoreName) {
+      const rows = await sql<{ id: string; name: string }[]>`
+        SELECT id, name FROM ppc_stores
+        WHERE LOWER(name) = LOWER(${requestedStoreName}) AND team_id = ${actor.teamId}
+        LIMIT 1
+      `;
+      if (rows.length > 0) storeRow = rows[0];
+    }
+
+    if (!storeRow) {
+      const fallbackRows = await sql<{ id: string; name: string }[]>`
+        SELECT id, name FROM ppc_stores
+        WHERE team_id = ${actor.teamId}
+        ORDER BY created_at ASC
+        LIMIT 1
+      `;
+      if (fallbackRows.length > 0) storeRow = fallbackRows[0];
+    }
+
+    if (!storeRow) {
+      throw new ApiError("Không tìm thấy store hợp lệ để thực hiện Auto Upload.", 400);
+    }
+
+    const storeId = storeRow.id;
+    const storeName = storeRow.name;
+
+    // 2. Chuẩn bị payload danh sách campaigns
+    let campaignsPayload: SaleKwCampaignPayload[] = [];
+
+    if (directCampaigns && directCampaigns.length > 0) {
+      campaignsPayload = directCampaigns;
+    } else {
+      const campaignMap = new Map<string, SaleKwItemInput[]>();
+      for (const item of rawItems) {
+        const camp = (item.campaignName || "").trim();
+        const term = (item.customerSearchTerm || "").trim();
+        if (!camp || !term) continue;
+        if (!campaignMap.has(camp)) {
+          campaignMap.set(camp, []);
+        }
+        campaignMap.get(camp)!.push(item);
+      }
+
+      const campNames = Array.from(campaignMap.keys());
+      if (campNames.length === 0) {
+        throw new ApiError("Danh sách Search Term không hợp lệ.", 400);
+      }
+
+      // Tra cứu Amazon Campaign ID, Ad Group ID, SKU từ ppc_performance_facts
+      const facts = await sql<Array<{
+        campaign_name: string;
+        campaign_id: string;
+        ad_group_name: string;
+        ad_group_id: string;
+        sku: string;
+      }>>`
+        SELECT DISTINCT campaign_name, campaign_id, ad_group_name, ad_group_id, sku
+        FROM ppc_performance_facts
+        WHERE store_id = ${storeId}
+          AND campaign_name = ANY(${campNames})
+      `;
+
+      const campLookup = new Map<string, { campaignId: string; adGroupId: string; adGroupName: string; skus: Set<string> }>();
+      for (const f of facts) {
+        const cKey = (f.campaign_name || "").trim().toLowerCase();
+        if (!cKey) continue;
+        if (!campLookup.has(cKey)) {
+          campLookup.set(cKey, {
+            campaignId: f.campaign_id || "",
+            adGroupId: f.ad_group_id || "",
+            adGroupName: f.ad_group_name || f.campaign_name,
+            skus: new Set<string>(),
+          });
+        }
+        const entry = campLookup.get(cKey)!;
+        if (!entry.campaignId && f.campaign_id) entry.campaignId = f.campaign_id;
+        if (!entry.adGroupId && f.ad_group_id) {
+          entry.adGroupId = f.ad_group_id;
+          entry.adGroupName = f.ad_group_name;
+        }
+        if (f.sku && f.sku.trim()) entry.skus.add(f.sku.trim());
+      }
+
+      for (const [campName, items] of campaignMap.entries()) {
+        const cKey = campName.toLowerCase();
+        const lookup = campLookup.get(cKey);
+        const targetCampName = `${campName} (Sale KW)`;
+        const adGroupName = targetCampName;
+
+        let sku = "";
+        const itemWithSku = items.find((it) => it.sku && it.sku.trim());
+        if (itemWithSku?.sku) {
+          sku = itemWithSku.sku.trim();
+        } else if (lookup && lookup.skus.size > 0) {
+          sku = Array.from(lookup.skus)[0];
+        }
+
+        const keywords = items.map((it) => {
+          const kwBid = it.bid && it.bid > 0
+            ? it.bid
+            : it.cpc && it.cpc > 0
+              ? Math.max(0.1, Math.round(it.cpc * 100) / 100)
+              : defaultBidVal;
+
+          return {
+            customerSearchTerm: it.customerSearchTerm.trim(),
+            keyword: it.customerSearchTerm.trim(),
+            matchType: it.matchType || "exact",
+            bid: kwBid,
+            orders: it.orders || 0,
+            sales: it.sales || 0,
+            clicks: it.clicks || 0,
+            spend: it.spend || 0,
+          };
+        });
+
+        campaignsPayload.push({
+          sourceCampaignName: campName,
+          sourceCampaignId: lookup?.campaignId || items[0]?.campaignId || "",
+          sourceAdGroupId: lookup?.adGroupId || items[0]?.adGroupId || "",
+          sourceAdGroupName: lookup?.adGroupName || items[0]?.adGroupName || campName,
+          targetCampaignName: targetCampName,
+          adGroupName,
+          sku,
+          dailyBudget: defaultDailyBudget,
+          defaultBid: defaultBidVal,
+          biddingStrategy: "Dynamic bids - down only",
+          negateInSource: globalNegateInSource,
+          keywords,
+        });
+      }
+    }
+
+    const totalKeywords = campaignsPayload.reduce((sum, c) => sum + c.keywords.length, 0);
+
+    // 3. Xuất file Excel chuẩn Amazon Bulksheet
+    const buffer = await exportSaleKwBulksheetExcel(campaignsPayload);
+
+    const cleanStore = storeName
+      .replace(/[/\\?%*:|"<>]/g, "_")
+      .trim()
+      .replace(/\s+/g, "_");
+    const fileName = `Upload_${cleanStore}_Sale_KW_${campaignsPayload.length}Camps_${totalKeywords}Terms_${exportTimestamp(new Date())}.xlsx`;
+
+    const jobId = crypto.randomUUID();
+    const sha256 = crypto.createHash("sha256").update(buffer).digest("hex");
+    const safeStore = storeName.replace(/[^A-Za-z0-9._-]+/g, "-");
+    const r2Key = `${r2KeyPrefix()}/ppc-bulk-upload/${safeStore}/${jobId}/${fileName}`;
+
+    if (objectStorageDriver() !== "r2") {
+      throw new Error("Auto Upload remote yêu cầu OBJECT_STORAGE_DRIVER=r2.");
+    }
+
+    // 4. Upload file lên Cloudflare R2 để Mac mini worker tải về
+    await putStoredObject({
+      key: r2Key,
+      bytes: buffer,
+      contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      sha256,
+      metadata: { purpose: "amazon-ads-bulk-upload", store: safeStore, job: jobId },
+    });
+
+    const distinctCamps = Array.from(new Set(campaignsPayload.map((c) => c.targetCampaignName))).slice(0, 50);
+
+    const actionsPayload = campaignsPayload.flatMap((camp) =>
+      camp.keywords.map((kw, idx) => ({
+        id: `sale-kw-${jobId.slice(0, 8)}-${idx}`,
+        sku: camp.sku || "SALE_KW",
+        campaignName: camp.targetCampaignName,
+        sourceCampaignName: camp.sourceCampaignName,
+        adGroupName: camp.adGroupName || camp.targetCampaignName,
+        targetKeyword: kw.customerSearchTerm,
+        matchType: kw.matchType || "exact",
+        actionType: "CREATE_CAMPAIGN_KW",
+        bid: kw.bid,
+        dailyBudget: camp.dailyBudget,
+        orders: kw.orders,
+        sales: kw.sales,
+        status: "PENDING",
+      }))
+    );
+
+    // 5. Ghi nhận tác vụ vào ppc_auto_upload_logs ở trạng thái PENDING để Mac mini worker pick up
+    await sql`
+      INSERT INTO ppc_auto_upload_logs (
+        id, team_id, store_id, file_name, action_count, skus, status, stage,
+        file_status, progress_pct, action_ids, actions_payload, r2_key, sha256, updated_at
+      ) VALUES (
+        ${jobId}, ${actor.teamId}, ${storeId}, ${fileName}, ${totalKeywords},
+        ${sql.json(distinctCamps)}, 'PENDING', 'FILE_READY',
+        'SUCCESS', 25, ${sql.json([])}, ${sql.json(actionsPayload)}, ${r2Key}, ${sha256}, NOW()
+      )
+    `;
+
+    // 6. Đăng ký các từ khóa vào bảng ppc_sale_kw_registry
+    try {
+      for (const camp of campaignsPayload) {
+        for (const kw of camp.keywords) {
+          const isProd =
+            kw.customerSearchTerm.toLowerCase().startsWith("b0") ||
+            kw.customerSearchTerm.toLowerCase().startsWith("asin=") ||
+            kw.customerSearchTerm.toLowerCase().startsWith("category=");
+
+          await sql`
+            INSERT INTO ppc_sale_kw_registry (
+              team_id, store_id, store_name, source_campaign_id, source_campaign_name,
+              target_campaign_name, ad_group_name, keyword_text, match_type,
+              target_type, sku, bid, daily_budget, orders, sales, clicks, spend, cpc,
+              state, source, source_job_id, created_at, updated_at
+            ) VALUES (
+              ${actor.teamId}, ${storeId}, ${storeName},
+              ${camp.sourceCampaignId || null}, ${camp.sourceCampaignName},
+              ${camp.targetCampaignName}, ${camp.adGroupName || camp.targetCampaignName},
+              ${kw.customerSearchTerm}, ${kw.matchType || "exact"},
+              ${isProd ? "PRODUCT" : "KEYWORD"}, ${camp.sku || null},
+              ${kw.bid || camp.defaultBid || defaultBidVal},
+              ${camp.dailyBudget || defaultDailyBudget},
+              ${kw.orders || 0}, ${kw.sales || 0}, ${kw.clicks || 0}, ${kw.spend || 0},
+              ${(kw.clicks || 0) > 0 ? Math.round(((kw.spend || 0) / (kw.clicks || 1)) * 100) / 100 : 0},
+              'enabled', 'AUTO_UPLOAD', ${jobId}, NOW(), NOW()
+            )
+            ON CONFLICT (store_id, target_campaign_name, keyword_text, match_type) DO UPDATE SET
+              updated_at = NOW(),
+              source_job_id = EXCLUDED.source_job_id,
+              orders = EXCLUDED.orders,
+              sales = EXCLUDED.sales,
+              clicks = EXCLUDED.clicks,
+              spend = EXCLUDED.spend,
+              bid = EXCLUDED.bid
+          `;
+        }
+      }
+    } catch (registryErr) {
+      console.error("Lỗi khi ghi nhận vào ppc_sale_kw_registry từ auto-upload:", registryErr);
+    }
+
+    return Response.json(
+      {
+        success: true,
+        jobId,
+        fileName,
+        campaignCount: campaignsPayload.length,
+        actionCount: totalKeywords,
+        storeName,
+        message: `Đã tạo file Bulk và xếp hàng upload trên Mac mini (${campaignsPayload.length} Camp Sale KW mới, ${totalKeywords} Search Terms tiềm năng).`,
+      },
+      { status: 202 }
+    );
+  } catch (error) {
+    return routeErrorResponse(error, "Lỗi khi xếp hàng Auto Upload Sale KW.", 500);
+  }
+}

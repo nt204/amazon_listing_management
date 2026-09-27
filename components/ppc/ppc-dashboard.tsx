@@ -26,8 +26,10 @@ import {
   Plus,
   CircleNotch,
   Prohibit,
+  RocketLaunch,
 } from "@phosphor-icons/react";
 import { PpcStOptimizationView } from "./ppc-st-optimization-view";
+import { PpcSaleKwView } from "./ppc-sale-kw-view";
 import { PpcPagination } from "./ppc-pagination";
 import {
   extractSkuFromText,
@@ -73,7 +75,7 @@ import type {
 
 interface PpcDashboardProps {
   isEmbedded?: boolean;
-  initialTab?: "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_optimization" | "alerts" | "recommendations" | "settings";
+  initialTab?: "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "settings";
   initialSubTab?: "phoi" | "rules" | "history";
 }
 
@@ -231,9 +233,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
   const [selectedAdGroupForDrilldown, setSelectedAdGroupForDrilldown] = useState<string | null>(null);
   const [expandedTargetKey, setExpandedTargetKey] = useState<string | null>(null);
 
-  // Navigation tab for data slicing (Hierarchy: Overview -> Campaigns -> Ad Groups -> Targets -> Search Terms -> ST Optimization | SKU parallel view | Settings)
+  // Navigation tab for data slicing (Hierarchy: Overview -> Campaigns -> Ad Groups -> Targets -> Search Terms -> ST Optimization -> Sale KW | SKU parallel view | Settings)
   const [activeTab, setActiveTab] = useState<
-    "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_optimization" | "alerts" | "recommendations" | "settings"
+    "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "settings"
   >(initialTab || "overview");
   const [settingsSubTab, setSettingsSubTab] = useState<"phoi" | "rules" | "history">(initialSubTab || "phoi");
 
@@ -780,8 +782,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
       }
     }
 
-    if (activeTab !== "overview" && ["ad_groups", "targets", "skus", "search_terms", "st_optimization"].includes(activeTab)) {
-      const sectionToLoad = activeTab === "st_optimization" ? "search_terms" : activeTab;
+    if (activeTab !== "overview" && ["ad_groups", "targets", "skus", "search_terms", "st_optimization", "sale_kw"].includes(activeTab)) {
+      const sectionToLoad = (activeTab === "st_optimization" || activeTab === "sale_kw") ? "search_terms" : activeTab;
       if (!loadedSectionsRef.current.has(sectionToLoad)) {
         void loadSection(sectionToLoad).catch((error) => {
           notify(error instanceof Error ? error.message : "Không thể tải bảng dữ liệu PPC", "error");
@@ -1102,6 +1104,26 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
     let count = 0;
     for (const item of map.values()) {
       if (item.orders === 0 && item.clicks > 20) {
+        count++;
+      }
+    }
+    return count;
+  }, [searchTerms]);
+
+  // Sale KW candidate count (Orders > 2 in source campaign)
+  const saleKwCandidateCount = useMemo(() => {
+    if (!searchTerms || searchTerms.length === 0) return 0;
+    const map = new Map<string, number>();
+    for (const term of searchTerms) {
+      const rawTerm = (term.customerSearchTerm || "").trim().toLowerCase();
+      const camp = (term.campaignName || "").trim().toLowerCase();
+      if (!rawTerm || !camp) continue;
+      const key = `${camp}|||${rawTerm}`;
+      map.set(key, (map.get(key) || 0) + (term.orders || 0));
+    }
+    let count = 0;
+    for (const orders of map.values()) {
+      if (orders > 2) {
         count++;
       }
     }
@@ -2384,6 +2406,23 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
           {stOptimizationCandidateCount > 0 && (
             <span className="px-1.5 py-0.2 rounded-full bg-rose-600 text-white text-[10px] font-black">
               {stOptimizationCandidateCount}
+            </span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab("sale_kw")}
+          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${activeTab === "sale_kw"
+            ? "bg-white text-emerald-700 shadow-xs border border-emerald-200"
+            : "text-slate-600 hover:text-slate-900"
+            }`}
+        >
+          <RocketLaunch size={15} weight={activeTab === "sale_kw" ? "bold" : "regular"} className={activeTab === "sale_kw" ? "text-emerald-600" : "text-slate-400"} />
+          <span>6. Lên Camp Sale KW ({saleKwCandidateCount > 0 ? saleKwCandidateCount.toLocaleString("vi-VN") : (loading ? "..." : "0")})</span>
+          {saleKwCandidateCount > 0 && (
+            <span className="px-1.5 py-0.2 rounded-full bg-emerald-600 text-white text-[10px] font-black">
+              {saleKwCandidateCount}
             </span>
           )}
         </button>
@@ -3880,6 +3919,18 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab }: 
 
       {activeTab === "st_optimization" && (
         <PpcStOptimizationView
+          searchTerms={searchTerms}
+          selectedStore={selectedStore}
+          selectedSku={selectedSku}
+          selectedDays={selectedDays}
+          loading={loading || loadingSection === "search_terms"}
+          notify={notify}
+          onOpenActionQueue={() => setIsActionQueueOpen(true)}
+        />
+      )}
+
+      {activeTab === "sale_kw" && (
+        <PpcSaleKwView
           searchTerms={searchTerms}
           selectedStore={selectedStore}
           selectedSku={selectedSku}

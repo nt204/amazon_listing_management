@@ -1444,3 +1444,62 @@ export async function exportBulksheetUpdateExcel(recommendations: PpcRecommendat
   const buffer = await workbook.xlsx.writeBuffer();
   return Buffer.from(buffer);
 }
+
+export interface SaleKwCampaignPayload {
+  sourceCampaignName: string;
+  sourceCampaignId?: string;
+  sourceAdGroupId?: string;
+  sourceAdGroupName?: string;
+  targetCampaignName: string;
+  adGroupName?: string;
+  sku?: string;
+  skus?: string[];
+  dailyBudget?: number;
+  defaultBid?: number;
+  biddingStrategy?: string;
+  negateInSource?: boolean;
+  keywords: Array<{
+    customerSearchTerm: string;
+    keyword?: string;
+    matchType?: string;
+    bid?: number;
+    orders?: number;
+    sales?: number;
+    clicks?: number;
+    spend?: number;
+  }>;
+}
+
+export async function exportSaleKwBulksheetExcel(campaigns: SaleKwCampaignPayload[]): Promise<Buffer> {
+  const { spawn } = await import("node:child_process");
+  const path = (await import("node:path")).default;
+  const fs = (await import("node:fs")).default;
+
+  const pythonScript = path.join(process.cwd(), "scripts", "export_sale_kw_bulksheet.py");
+  const templatePath = path.join(process.cwd(), "templates", "ppc", "AdvertisingBulksheetTemplate-seller.xlsx");
+
+  if (!fs.existsSync(pythonScript) || !fs.existsSync(templatePath)) {
+    throw new Error("Không tìm thấy python script hoặc template AdvertisingBulksheetTemplate-seller.xlsx.");
+  }
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn("python3", [pythonScript], { stdio: ["pipe", "pipe", "pipe"] });
+    const chunks: Buffer[] = [];
+    const errChunks: Buffer[] = [];
+
+    proc.stdout.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    proc.stderr.on("data", (chunk) => errChunks.push(Buffer.from(chunk)));
+
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        const errText = Buffer.concat(errChunks).toString("utf-8");
+        return reject(new Error(`Lỗi khi tạo Bulksheet Sale KW: ${errText}`));
+      }
+      resolve(Buffer.concat(chunks));
+    });
+
+    proc.stdin.write(JSON.stringify({ campaigns }));
+    proc.stdin.end();
+  });
+}
+
