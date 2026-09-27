@@ -113,6 +113,56 @@ export function getActionTypeBadge(actionType: string) {
   };
 }
 
+export function getLogActionTypeMeta(fileName?: string, skus?: string[]) {
+  const lower = (fileName || "").toLowerCase();
+
+  if (lower.includes("sale_kw") || lower.includes("salekw")) {
+    return {
+      label: "Lên Camp Sale KW",
+      className: "bg-purple-50 border-purple-200 text-purple-700",
+    };
+  }
+
+  if (
+    lower.includes("negative") ||
+    lower.includes("st_neg") ||
+    lower.includes("st_optim") ||
+    lower.includes("stoptim")
+  ) {
+    return {
+      label: "ST Optim",
+      className: "bg-amber-50 border-amber-200 text-amber-700",
+    };
+  }
+
+  if (
+    lower.includes("bidupdate") ||
+    lower.includes("bid_update") ||
+    lower.includes("bid")
+  ) {
+    return {
+      label: "Tối ưu Bid",
+      className: "bg-sky-50 border-sky-200 text-sky-700",
+    };
+  }
+
+  if (
+    lower.includes("create_campaign") ||
+    lower.includes("camp_create") ||
+    lower.includes("createcamp")
+  ) {
+    return {
+      label: "Lên Camp",
+      className: "bg-emerald-50 border-emerald-200 text-emerald-700",
+    };
+  }
+
+  return {
+    label: "Tối ưu PPC",
+    className: "bg-blue-50 border-blue-200 text-blue-700",
+  };
+}
+
 export interface RunDetailItem {
   type: "BULK" | "AUTO";
   id: string;
@@ -1548,8 +1598,16 @@ export function PpcActionQueueDrawer({
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <Lightning size={14} className="shrink-0 text-amber-500" weight="fill" />
-                                {log.storeName && (
-                                  <span className="shrink-0 px-1.5 py-0.2 rounded bg-blue-50 border border-blue-200 text-blue-700 text-[10px] font-bold uppercase">
+                                {(() => {
+                                  const actionMeta = getLogActionTypeMeta(log.fileName, log.skus);
+                                  return (
+                                    <span className={`shrink-0 px-2 py-0.5 rounded border text-[10px] font-bold ${actionMeta.className}`}>
+                                      {actionMeta.label}
+                                    </span>
+                                  );
+                                })()}
+                                {(!storeName || storeName === "ALL") && log.storeName && (
+                                  <span className="shrink-0 px-1.5 py-0.2 rounded bg-slate-100 border border-slate-200 text-slate-600 text-[10px] font-semibold uppercase">
                                     {log.storeName}
                                   </span>
                                 )}
@@ -2110,6 +2168,14 @@ export function PpcActionQueueDrawer({
                   <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
                     {selectedRunDetail.type === "BULK" ? "Bulk Export" : "Auto Upload AdsPower"}
                   </span>
+                  {(() => {
+                    const actionMeta = getLogActionTypeMeta(selectedRunDetail.fileName, selectedRunDetail.skus);
+                    return (
+                      <span className={`px-2 py-0.5 rounded text-[11px] font-bold border ${actionMeta.className}`}>
+                        {actionMeta.label}
+                      </span>
+                    );
+                  })()}
                   {selectedRunDetail.durationMs && selectedRunDetail.durationMs > 0 ? (
                     <span className="text-xs text-slate-400">
                       • Thời lượng: {(selectedRunDetail.durationMs / 1000).toFixed(1)}s
