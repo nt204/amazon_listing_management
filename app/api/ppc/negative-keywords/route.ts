@@ -55,8 +55,17 @@ export async function GET(request: Request) {
       LIMIT 2000
     `;
 
-    // Fast lookup keys: `${campaign_name.toLowerCase()}|||${keyword_text.toLowerCase()}`
-    const lookupKeys = rows.map((r) => `${(r.campaign_name || "").trim().toLowerCase()}|||${(r.keyword_text || "").trim().toLowerCase()}`);
+    // Fast lookup keys: `${campaign_name.toLowerCase()}|||${keyword_text.toLowerCase()}` và kw
+    const lookupKeysSet = new Set<string>();
+    for (const r of rows) {
+      const kw = (r.keyword_text || "").trim().toLowerCase();
+      if (!kw) continue;
+      lookupKeysSet.add(kw);
+      if (r.campaign_name) {
+        lookupKeysSet.add(`${r.campaign_name.trim().toLowerCase()}|||${kw}`);
+      }
+    }
+    const lookupKeys = Array.from(lookupKeysSet);
 
     const totalNegatives = rows.length;
     const totalCampaigns = new Set(rows.map((r) => r.campaign_name)).size;

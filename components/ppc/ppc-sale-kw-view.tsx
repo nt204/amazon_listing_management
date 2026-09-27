@@ -156,7 +156,7 @@ export function PpcSaleKwView({
   });
   const [launchedLookupSet, setLaunchedLookupSet] = useState<Set<string>>(new Set());
   const [loadingRegistry, setLoadingRegistry] = useState<boolean>(false);
-  const [hideLaunched, setHideLaunched] = useState<boolean>(false);
+  const [hideLaunched, setHideLaunched] = useState<boolean>(true);
 
   // 1. Threshold controls: Mặc định Order > 2
   const [orderThreshold, setOrderThreshold] = useState<number>(2);
@@ -518,12 +518,12 @@ export function PpcSaleKwView({
     };
   }, [filteredCandidates, skuGroups]);
 
-  // Toggle selection for all terms
+  // Toggle selection for all terms (chỉ chọn những term chưa lên Camp)
   const handleSelectAll = (checked: boolean) => {
     if (!checked) {
       setSelectedKeys(new Set());
     } else {
-      setSelectedKeys(new Set(filteredCandidates.map((c) => c.key)));
+      setSelectedKeys(new Set(filteredCandidates.filter((c) => !c.isAlreadyLaunched).map((c) => c.key)));
     }
   };
 
@@ -533,8 +533,11 @@ export function PpcSaleKwView({
     if (!group) return;
     const next = new Set(selectedKeys);
     for (const it of group.items) {
-      if (checked) next.add(it.key);
-      else next.delete(it.key);
+      if (checked) {
+        if (!it.isAlreadyLaunched) next.add(it.key);
+      } else {
+        next.delete(it.key);
+      }
     }
     setSelectedKeys(next);
   };
@@ -563,12 +566,13 @@ export function PpcSaleKwView({
     setTimeout(() => setCopiedKey(null), 1500);
   };
 
-  // Selected items resolved
+  // Selected items resolved (chỉ lấy các term chưa lên Camp để không bao giờ tạo trùng)
   const targetItems = useMemo(() => {
+    let list = filteredCandidates;
     if (selectedKeys.size > 0) {
-      return filteredCandidates.filter((c) => selectedKeys.has(c.key));
+      list = filteredCandidates.filter((c) => selectedKeys.has(c.key));
     }
-    return filteredCandidates;
+    return list.filter((c) => !c.isAlreadyLaunched);
   }, [filteredCandidates, selectedKeys]);
 
   const targetSkuCount = useMemo(() => {
@@ -725,6 +729,19 @@ export function PpcSaleKwView({
       window.URL.revokeObjectURL(url);
 
       notify(`Đã xuất thành công file Bulksheet: ${filename}`, "success");
+      // Cập nhật ngay lập tức vào set đã lên Camp để chuyển sang Hub quản trị tức thì
+      setLaunchedLookupSet((prev) => {
+        const next = new Set(prev);
+        for (const it of targetItems) {
+          next.add(it.customerSearchTerm.trim().toLowerCase());
+          if (it.sku) {
+            next.add(`${it.sku.trim().toLowerCase()}|||${it.customerSearchTerm.trim().toLowerCase()}`);
+          }
+        }
+        return next;
+      });
+      setSelectedKeys(new Set());
+      setHideLaunched(true);
       fetchRegistry();
     } catch (err: any) {
       console.error(err);
@@ -814,6 +831,18 @@ export function PpcSaleKwView({
 
       setAutoUploadStep(2);
       notify("Đã xếp hàng Auto Upload thành công lên Mac mini!", "success");
+      setLaunchedLookupSet((prev) => {
+        const next = new Set(prev);
+        for (const it of targetItems) {
+          next.add(it.customerSearchTerm.trim().toLowerCase());
+          if (it.sku) {
+            next.add(`${it.sku.trim().toLowerCase()}|||${it.customerSearchTerm.trim().toLowerCase()}`);
+          }
+        }
+        return next;
+      });
+      setSelectedKeys(new Set());
+      setHideLaunched(true);
       fetchRegistry();
     } catch (err: any) {
       console.error("Auto upload error:", err);
@@ -1411,9 +1440,10 @@ export function PpcSaleKwView({
                                   <td className="py-2.5 px-4">
                                     <input
                                       type="checkbox"
-                                      checked={isChecked}
+                                      disabled={item.isAlreadyLaunched}
+                                      checked={isChecked && !item.isAlreadyLaunched}
                                       onChange={() => handleToggleKey(item.key)}
-                                      className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
+                                      className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                                     />
                                   </td>
                                   <td className="py-2.5 px-3 font-bold text-slate-900">

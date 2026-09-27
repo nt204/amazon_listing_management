@@ -62,11 +62,18 @@ export async function GET(request: Request) {
     `;
 
     // Fast lookup keys:
-    // 1) `${source_campaign_name.toLowerCase()}|||${keyword_text.toLowerCase()}`
-    // 2) `${target_campaign_name.toLowerCase()}|||${keyword_text.toLowerCase()}`
+    // 1) kw (keyword alone)
+    // 2) `${sku.toLowerCase()}|||${kw}`
+    // 3) `${source_campaign_name.toLowerCase()}|||${kw}`
+    // 4) `${target_campaign_name.toLowerCase()}|||${kw}`
     const lookupKeys = new Set<string>();
     for (const r of rows) {
       const kw = (r.keyword_text || "").trim().toLowerCase();
+      if (!kw) continue;
+      lookupKeys.add(kw);
+      if (r.sku) {
+        lookupKeys.add(`${r.sku.trim().toLowerCase()}|||${kw}`);
+      }
       if (r.source_campaign_name) {
         lookupKeys.add(`${r.source_campaign_name.trim().toLowerCase()}|||${kw}`);
       }
