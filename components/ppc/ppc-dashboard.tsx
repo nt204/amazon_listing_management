@@ -40,6 +40,7 @@ import {
 import { PpcSkuEconomicsTable } from "./ppc-sku-economics-table";
 import { PpcSkuRecommendationGroupView } from "./ppc-sku-recommendation-group";
 import { PpcActionQueueDrawer } from "./ppc-action-queue-drawer";
+import { PpcFloatingActionQueue } from "./ppc-floating-action-queue";
 import { PpcSettingsTab } from "./ppc-settings-tab";
 import { PpcFileManagerModal } from "./ppc-file-manager-modal";
 import { PpcNotificationPopover } from "./ppc-notification-popover";
@@ -4138,37 +4139,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
         }}
       />
 
-      {/* FLOATING ACTION QUEUE BUTTON (GÓC DƯỚI BÊN PHẢI - TRÔI THEO MÀN HÌNH - GỌN HƠN, MÀU XANH) */}
-      <div className="fixed bottom-6 right-6 z-40">
-        <button
-          type="button"
-          onClick={() => setIsActionQueueOpen(true)}
-          className="group flex items-center gap-2 px-3.5 py-2 rounded-full bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white shadow-lg shadow-emerald-950/20 border border-emerald-500/80 backdrop-blur-md transition-all duration-200 cursor-pointer hover:scale-105"
-          title={`Mở Action Queue${selectedStore && selectedStore !== "ALL" ? ` - Shop: ${selectedStore}` : ""}`}
-        >
-          <div className="relative flex items-center justify-center">
-            <Lightning size={16} weight="fill" className="text-white group-hover:rotate-12 transition-transform duration-200" />
-            {pendingActionCount > 0 && (
-              <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-emerald-300 animate-ping" />
-            )}
-          </div>
-          <span className="text-xs font-bold tracking-wide">Action Queue</span>
-          {selectedStore && selectedStore !== "ALL" && (
-            <span className="text-[10px] text-emerald-100/90 font-medium max-w-[100px] truncate border-l border-emerald-400/40 pl-2">
-              {selectedStore}
-            </span>
-          )}
-          <span
-            className={`px-1.5 py-0.2 min-w-[20px] text-center rounded-full text-[11px] font-black transition-all ${
-              pendingActionCount > 0
-                ? "bg-white text-emerald-700 shadow-xs"
-                : "bg-emerald-800/80 text-emerald-200 border border-emerald-600/50"
-            }`}
-          >
-            {pendingActionCount}
-          </span>
-        </button>
-      </div>
+      {/* FLOATING ACTION QUEUE BUTTON (DRAGGABLE, ELEVATED ABOVE PAGINATION) */}
+      <PpcFloatingActionQueue
+        onOpen={() => setIsActionQueueOpen(true)}
+        pendingActionCount={pendingActionCount}
+        selectedStore={selectedStore}
+      />
     </div>
   );
 }
