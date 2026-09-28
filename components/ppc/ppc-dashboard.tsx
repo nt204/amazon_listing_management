@@ -2517,22 +2517,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
             <span>8. Đề Xuất ({skuRecGroups.length > 0 ? `${skuRecGroups.length.toLocaleString("vi-VN")} SKU` : (detailCounts?.skus !== undefined ? `${detailCounts.skus.toLocaleString("vi-VN")} SKU` : (loadingRecs ? "..." : "0 SKU"))})</span>
           </button>
         </div>
-
-        {/* Action Queue Quick Trigger */}
-        <div className="flex items-center gap-2 pl-2 border-l border-slate-300/80 shrink-0">
-          <button
-            type="button"
-            onClick={() => setIsActionQueueOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 text-xs font-extrabold transition cursor-pointer shadow-2xs"
-            title="Mở Action Queue"
-          >
-            <Clock size={15} weight="bold" />
-            <span>Action Queue</span>
-            <span className="px-1.5 py-0.2 rounded-full bg-sky-600 text-white text-[10px] font-extrabold">
-              {pendingActionCount}
-            </span>
-          </button>
-        </div>
       </div>
       )}
 

@@ -28,7 +28,11 @@ import {
   Info,
   ClipboardText,
 } from "@phosphor-icons/react";
-import type { SkuRecommendationGroup, PpcAction } from "@/lib/ppc/sku-architecture-types";
+import {
+  SKU_PREFIX_ERROR_PRODUCT_TYPE,
+  type SkuRecommendationGroup,
+  type PpcAction,
+} from "@/lib/ppc/sku-architecture-types";
 import type { PpcRecommendation } from "@/lib/ppc/types";
 
 interface PpcSkuRecommendationGroupProps {
@@ -53,7 +57,8 @@ export type QuickFilterType =
   | "BLEEDING"
   | "PROFITABLE"
   | "ZERO_SPEND"
-  | "ZERO_SALES";
+  | "ZERO_SALES"
+  | "PREFIX_ERROR";
 
 export type SortField =
   | "sku"
@@ -175,6 +180,7 @@ export function PpcSkuRecommendationGroupView({
     let profitable = 0;
     let zeroSpend = 0;
     let zeroSales = 0;
+    let prefixError = 0;
 
     for (const g of groups) {
       if (g.increaseCount > 0) increase++;
@@ -184,6 +190,14 @@ export function PpcSkuRecommendationGroupView({
       if (g.sales > 0 && g.acos <= g.breakEvenAcos) profitable++;
       if (g.spend === 0) zeroSpend++;
       if (g.spend > 0 && g.sales === 0) zeroSales++;
+      if (
+        g.productType === SKU_PREFIX_ERROR_PRODUCT_TYPE ||
+        g.productType === "Lỗi Prefix" ||
+        !g.productType ||
+        g.productType === "Chưa xác định"
+      ) {
+        prefixError++;
+      }
     }
 
     return {
@@ -195,6 +209,7 @@ export function PpcSkuRecommendationGroupView({
       profitable,
       zeroSpend,
       zeroSales,
+      prefixError,
     };
   }, [groups]);
 
@@ -240,6 +255,13 @@ export function PpcSkuRecommendationGroupView({
           return g.spend === 0;
         case "ZERO_SALES":
           return g.spend > 0 && g.sales === 0;
+        case "PREFIX_ERROR":
+          return (
+            g.productType === SKU_PREFIX_ERROR_PRODUCT_TYPE ||
+            g.productType === "Lỗi Prefix" ||
+            !g.productType ||
+            g.productType === "Chưa xác định"
+          );
         case "ALL":
         default:
           return true;
@@ -808,6 +830,26 @@ export function PpcSkuRecommendationGroupView({
               {filterCounts.zeroSales}
             </span>
           </button>
+
+          {/* Prefix Error: Lỗi Prefix */}
+          <button
+            type="button"
+            onClick={() => setQuickFilter(quickFilter === "PREFIX_ERROR" ? "ALL" : "PREFIX_ERROR")}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${
+              quickFilter === "PREFIX_ERROR"
+                ? "bg-rose-100 text-rose-950 border-rose-400 ring-1 ring-rose-300 shadow-2xs font-extrabold"
+                : "bg-rose-50/70 text-rose-800 hover:bg-rose-100/80 border-rose-200/80"
+            }`}
+            title="Các SKU chưa nhận diện được phôi (Lỗi Prefix) cần cấu hình tiền tố SKU"
+          >
+            <WarningCircle size={12} weight="bold" className="text-rose-600" />
+            <span>Lỗi Prefix</span>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+              quickFilter === "PREFIX_ERROR" ? "bg-rose-200 text-rose-950" : "bg-white text-rose-950 shadow-2xs border border-rose-200/60"
+            }`}>
+              {filterCounts.prefixError}
+            </span>
+          </button>
         </div>
       </div>
 
@@ -857,8 +899,12 @@ export function PpcSkuRecommendationGroupView({
                     </td>
                     <td className="py-3 px-3 text-slate-500 font-mono">{group.asin || "—"}</td>
                     <td className="py-3 px-3">
-                      <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                        {group.productType}
+                      <span className={`px-2 py-0.5 rounded text-[11px] font-bold border ${
+                        group.productType === SKU_PREFIX_ERROR_PRODUCT_TYPE || group.productType === "Lỗi Prefix" || !group.productType || group.productType === "Chưa xác định"
+                          ? "bg-rose-100 text-rose-800 border-rose-300 font-extrabold"
+                          : "bg-slate-100 text-slate-700 border-slate-200"
+                      }`}>
+                        {group.productType || "Chưa xác định"}
                       </span>
                     </td>
                     <td className="py-3 px-3 text-right text-slate-900 font-bold font-mono">
