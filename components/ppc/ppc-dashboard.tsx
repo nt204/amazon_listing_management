@@ -224,14 +224,17 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
   const [targetTypeBreakdown, setTargetTypeBreakdown] = useState<PpcTargetTypeBreakdown[]>([]);
   const [keywordMatchTypeBreakdown, setKeywordMatchTypeBreakdown] = useState<PpcKeywordMatchTypeBreakdown[]>([]);
   const [matchTypeBreakdown, setMatchTypeBreakdown] = useState<PpcMatchTypeBreakdown[]>([]);
+  const [overviewSearchTerms, setOverviewSearchTerms] = useState<PpcSearchTermRow[]>([]);
   const [searchTerms, setSearchTerms] = useState<PpcSearchTermRow[]>([]);
+  const [searchTermsReady, setSearchTermsReady] = useState(false);
   const [alerts, setAlerts] = useState<PpcAlert[]>([]);
   const [targetAcos, setTargetAcos] = useState(30);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [detailCounts, setDetailCounts] = useState<PpcDetailCounts | null>(null);
   const [loadingSection, setLoadingSection] = useState<string | null>(null);
   const loadedSectionsRef = useRef(new Set<string>());
-  const detailRequestIdRef = useRef(0);
+  const sectionRequestIdRef = useRef(0);
+  const sectionRequestsRef = useRef(new Map<string, { controller: AbortController; id: number }>());
 
   // Drill-down hierarchy state: Campaign -> Ad Group -> Target/Keyword -> Search Terms
   const [selectedCampaignForDrilldown, setSelectedCampaignForDrilldown] = useState<string | null>(null);
@@ -388,7 +391,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
   }, [showUploadModal]);
 
   const loadData = useCallback(async (refresh = false) => {
-    detailRequestIdRef.current += 1;
     metricsRequestRef.current?.controller.abort();
     const controller = new AbortController();
     const requestId = ++metricsRequestIdRef.current;
@@ -431,7 +433,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
         setTargetTypeBreakdown(data.targetTypeBreakdown || []);
         setKeywordMatchTypeBreakdown(data.keywordMatchTypeBreakdown || []);
         setMatchTypeBreakdown(data.matchTypeBreakdown || []);
-        setSearchTerms(data.searchTerms || []);
+        setOverviewSearchTerms(data.searchTerms || []);
         setAlerts(data.alerts || []);
         setAvailableSkus(data.availableSkus || []);
         setTargetAcos(data.targetAcos || 30);
@@ -459,17 +461,21 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
     }
   }, [selectedStore, selectedSku, selectedDays, isCustomDate, customStartDate, customEndDate]);
 
-  const loadSection = useCallback(async (section: string) => {
-    if (loadedSectionsRef.current.has(section)) return;
-    const requestId = ++detailRequestIdRef.current;
+  const loadSection = useCallback(async (section: string, options: { force?: boolean } = {}) => {
+    if (!options.force && loadedSectionsRef.current.has(section)) return;
+    sectionRequestsRef.current.get(section)?.controller.abort();
+    const controller = new AbortController();
+    const requestId = ++sectionRequestIdRef.current;
+    sectionRequestsRef.current.set(section, { controller, id: requestId });
     setLoadingSection(section);
+    if (section === "search_terms") setSearchTermsReady(false);
     try {
       const dateParams = isCustomDate && customStartDate && customEndDate
         ? `&startDate=${encodeURIComponent(customStartDate)}&endDate=${encodeURIComponent(customEndDate)}`
         : "";
       const res = await fetch(
         `/api/ppc/metrics?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}&section=${encodeURIComponent(section)}${dateParams}`,
-        { cache: "no-store" },
+        { cache: "no-store", signal: controller.signal },
       );
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
@@ -477,7 +483,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
         throw new Error(msg);
       }
       const data = await res.json();
-      if (requestId !== detailRequestIdRef.current) return;
+      if (sectionRequestsRef.current.get(section)?.id !== requestId) return;
       loadedSectionsRef.current.add(section);
       startTransition(() => {
         if (data.stores && data.stores.length > 0) setStores(data.stores);
@@ -485,15 +491,45 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
         if (section === "ad_groups") setAdGroupPerformance(data.adGroups || []);
         if (section === "targets") setTargetPerformance(data.targets || []);
         if (section === "skus") setSkuPerformance(data.skuPerformance || []);
-        if (section === "search_terms") setSearchTerms(data.searchTerms || []);
+        if (section === "search_terms") {
+          setSearchTerms(data.searchTerms || []);
+          setSearchTermsReady(true);
+        }
         setDetailCounts((current) => data.detailCounts ? { ...current, ...data.detailCounts } : current);
       });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      throw error;
     } finally {
-      if (detailRequestIdRef.current === requestId) {
-        setLoadingSection(null);
+      if (sectionRequestsRef.current.get(section)?.id === requestId) {
+        sectionRequestsRef.current.delete(section);
+        setLoadingSection((current) => current === section ? null : current);
       }
     }
   }, [selectedStore, selectedSku, selectedDays, isCustomDate, customStartDate, customEndDate]);
+
+  const refreshData = useCallback(async () => {
+    for (const request of sectionRequestsRef.current.values()) {
+      request.controller.abort();
+    }
+    sectionRequestsRef.current.clear();
+    loadedSectionsRef.current.clear();
+    setLoadingSection(null);
+    setSearchTerms([]);
+    setSearchTermsReady(false);
+
+    // Refresh overview first so cache invalidation completes before detail data is requested.
+    await loadData(true);
+
+    const detailSection = activeTab === "st_optimization" || activeTab === "sale_kw"
+      ? "search_terms"
+      : ["ad_groups", "targets", "skus", "search_terms"].includes(activeTab)
+        ? activeTab
+        : null;
+    if (detailSection) {
+      await loadSection(detailSection, { force: true });
+    }
+  }, [activeTab, loadData, loadSection]);
 
   useEffect(() => {
     if (activeTab !== "campaigns") return;
@@ -779,8 +815,15 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
         start: customStartDate,
         end: customEndDate,
       };
+      for (const request of sectionRequestsRef.current.values()) {
+        request.controller.abort();
+      }
+      sectionRequestsRef.current.clear();
       loadedSectionsRef.current.clear();
       lastLoadedRecKeyRef.current = "";
+      setLoadingSection(null);
+      setSearchTerms([]);
+      setSearchTermsReady(false);
       setSelectedCampaignForDrilldown(null);
       setSelectedAdGroupForDrilldown(null);
     }
@@ -829,6 +872,16 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
     actionQueue.length,
   ]);
 
+  useEffect(() => {
+    return () => {
+      metricsRequestRef.current?.controller.abort();
+      for (const request of sectionRequestsRef.current.values()) {
+        request.controller.abort();
+      }
+      sectionRequestsRef.current.clear();
+    };
+  }, []);
+
   const handleSyncR2 = async () => {
     setSyncingR2(true);
     try {
@@ -843,14 +896,14 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
 
       if (data.job?.status === "COMPLETED" && !data.accepted) {
         notify(data.message || "Đã đồng bộ báo cáo mới nhất từ Cloudflare R2!", "success");
-        await loadData(true);
+        await refreshData();
         return;
       }
 
       const jobId = data.job?.id;
       if (!jobId) {
         notify(data.message || "Đã gửi yêu cầu đồng bộ R2!", "success");
-        await loadData(true);
+        await refreshData();
         return;
       }
 
@@ -871,7 +924,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
 
         if (job.status === "COMPLETED") {
           notify(`Đồng bộ R2 hoàn tất thành công cho batch ${job.batch_id}!`, "success");
-          await loadData(true);
+          await refreshData();
           return;
         }
 
@@ -903,7 +956,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
         data.message || `Đã tự động tải và nạp báo cáo mới cho shop ${targetStore}!`,
         data.success ? "success" : "error",
       );
-      await loadData(true);
+      await refreshData();
     } catch (err) {
       notify(err instanceof Error ? err.message : "Tự động tải AdsPower thất bại", "error");
     } finally {
@@ -932,7 +985,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
       notify(data.message || "Nạp báo cáo PPC thành công!");
       setShowUploadModal(false);
       setUploadFile(null);
-      await loadData(true);
+      await refreshData();
     } catch (err) {
       notify(err instanceof Error ? err.message : "Lỗi nạp file", "error");
     } finally {
@@ -1841,7 +1894,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
               <span>Template</span>
             </a>
 
-            <PpcNotificationPopover onRefreshParent={() => void loadData(true)} />
+            <PpcNotificationPopover onRefreshParent={() => void refreshData()} />
           </div>
         </div>
 
@@ -1981,7 +2034,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
         </div>
       </div>
 
-      {!loading && searchTerms.length === 0 && (!dataHealth || dataHealth.performanceRows === 0) && (
+      {!loading && overviewSearchTerms.length === 0 && (!dataHealth || dataHealth.performanceRows === 0) && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
           <strong>Chưa có dữ liệu PPC trong {selectedDays} ngày gần nhất.</strong>{" "}
           Hãy nạp Bulk SP/SB và Search Term SP/SB hoặc đồng bộ từ R2. Hệ thống không tự chèn dữ liệu mẫu.
@@ -2000,7 +2053,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
           summary={summary}
           dailyTrends={dailyTrends}
           adTypeBreakdown={adTypeBreakdown}
-          searchTerms={searchTerms}
+          searchTerms={overviewSearchTerms}
           selectedDays={selectedDays}
           onDaysChange={(days) => {
             setIsCustomDate(false);
@@ -2020,15 +2073,15 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
             setSelectedStore(storeName);
             setSelectedSku("ALL");
           }}
-          onRefreshStores={() => void loadData(true)}
+          onRefreshStores={() => void refreshData()}
           currency="$"
         />
       )}
 
       {/* EXECUTIVE KPI CARDS (KHI XEM 1 SHOP HOẶC KHI CHUYỂN CÁC TAB KHÁC) */}
-      {(selectedStore !== "ALL" || activeTab !== "overview") && summary && ((dataHealth?.campaignRows || 0) > 0 || searchTerms.length > 0) && (
+      {(selectedStore !== "ALL" || activeTab !== "overview") && summary && ((dataHealth?.campaignRows || 0) > 0 || overviewSearchTerms.length > 0) && (
         <div className="space-y-3">
-          {(dataHealth?.campaignRows || 0) === 0 && searchTerms.length > 0 && (
+          {(dataHealth?.campaignRows || 0) === 0 && overviewSearchTerms.length > 0 && (
             <div className="flex items-center gap-2 rounded-xl bg-sky-50 border border-sky-200 px-4 py-2.5 text-xs text-sky-900 font-medium">
               <span className="flex h-2 w-2 rounded-full bg-sky-500 animate-pulse" />
               <span>
@@ -2313,7 +2366,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
       )}
 
       {/* 2 BIỂU ĐỒ CỐT LÕI PPC DASHBOARD THEO SPEC KỸ THUẬT (KHI XEM 1 SHOP HOẶC CHUYỂN TAB) */}
-      {(selectedStore !== "ALL" || activeTab !== "overview") && mounted && summary && ((dataHealth?.campaignRows || 0) > 0 || searchTerms.length > 0) && (
+      {(selectedStore !== "ALL" || activeTab !== "overview") && mounted && summary && ((dataHealth?.campaignRows || 0) > 0 || overviewSearchTerms.length > 0) && (
         <div className="space-y-4">
           {/* BIỂU ĐỒ 1: Spend vs Revenue / ROAS theo thời gian */}
           {dailyTrends.length > 0 ? <PpcTimeSeriesChart
@@ -2404,7 +2457,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
               }`}
           >
             <MagnifyingGlass size={15} weight={activeTab === "search_terms" ? "bold" : "regular"} />
-            <span>4. Search Terms ({detailCounts?.searchTerms !== undefined ? detailCounts.searchTerms.toLocaleString("vi-VN") : (loading ? "..." : (aggregatedSearchTerms.length > 0 ? aggregatedSearchTerms.length : searchTerms.length).toLocaleString("vi-VN"))})</span>
+            <span>4. Search Terms ({detailCounts?.searchTerms !== undefined ? detailCounts.searchTerms.toLocaleString("vi-VN") : (!searchTermsReady ? "..." : (aggregatedSearchTerms.length > 0 ? aggregatedSearchTerms.length : searchTerms.length).toLocaleString("vi-VN"))})</span>
           </button>
 
           <button
@@ -2416,7 +2469,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
               }`}
           >
             <Prohibit size={15} weight={activeTab === "st_optimization" ? "bold" : "regular"} className={activeTab === "st_optimization" ? "text-rose-600" : "text-slate-400"} />
-            <span>5. ST Optimization ({stOptimizationCandidateCount > 0 ? stOptimizationCandidateCount.toLocaleString("vi-VN") : (loading ? "..." : "0")})</span>
+            <span>5. ST Optimization ({stOptimizationCandidateCount > 0 ? stOptimizationCandidateCount.toLocaleString("vi-VN") : (!searchTermsReady ? "..." : "0")})</span>
             {stOptimizationCandidateCount > 0 && (
               <span className="px-1.5 py-0.2 rounded-full bg-rose-600 text-white text-[10px] font-black">
                 {stOptimizationCandidateCount}
@@ -2433,7 +2486,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
               }`}
           >
             <RocketLaunch size={15} weight={activeTab === "sale_kw" ? "bold" : "regular"} className={activeTab === "sale_kw" ? "text-emerald-600" : "text-slate-400"} />
-            <span>6. Lên Camp Sale KW ({saleKwCandidateCount > 0 ? saleKwCandidateCount.toLocaleString("vi-VN") : (loading ? "..." : "0")})</span>
+            <span>6. Lên Camp Sale KW ({saleKwCandidateCount > 0 ? saleKwCandidateCount.toLocaleString("vi-VN") : (!searchTermsReady ? "..." : "0")})</span>
             {saleKwCandidateCount > 0 && (
               <span className="px-1.5 py-0.2 rounded-full bg-emerald-600 text-white text-[10px] font-black">
                 {saleKwCandidateCount}
@@ -2521,7 +2574,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-medium">
-                    {searchTerms
+                    {overviewSearchTerms
                       .filter((t) => t.orders >= 2 && t.acos <= targetAcos)
                       .slice(0, 5)
                       .map((t, idx) => (
@@ -2571,7 +2624,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-medium">
-                    {searchTerms
+                    {overviewSearchTerms
                       .filter((t) => t.clicks >= 9 && t.orders === 0)
                       .slice(0, 5)
                       .map((t, idx) => (
@@ -3844,7 +3897,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
-                {loadingSection === "search_terms" ? (
+                {!searchTermsReady || loadingSection === "search_terms" ? (
                   <tr>
                     <td colSpan={13} className="p-12 text-center text-xs text-slate-500">
                       <div className="flex flex-col items-center justify-center gap-2">
@@ -3938,7 +3991,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
           selectedStore={selectedStore}
           selectedSku={selectedSku}
           selectedDays={selectedDays}
-          loading={loading || loadingSection === "search_terms"}
+          loading={!searchTermsReady || loadingSection === "search_terms"}
           notify={notify}
           onOpenActionQueue={() => setIsActionQueueOpen(true)}
         />
@@ -3950,7 +4003,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
           selectedStore={selectedStore}
           selectedSku={selectedSku}
           selectedDays={selectedDays}
-          loading={loading || loadingSection === "search_terms"}
+          loading={!searchTermsReady || loadingSection === "search_terms"}
           notify={notify}
           onOpenActionQueue={() => setIsActionQueueOpen(true)}
           actor={actor}
@@ -4106,7 +4159,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
       <PpcFileManagerModal
         isOpen={showFileManagerModal}
         onClose={() => setShowFileManagerModal(false)}
-        onDataChanged={() => void loadData(true)}
+        onDataChanged={() => void refreshData()}
       />
 
       {/* ADD STORE MODAL */}
@@ -4115,7 +4168,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
         onClose={() => setShowAddStoreModal(false)}
         onStoreCreated={(newStore) => {
           notify(`Đã tạo store "${newStore.name}" (${newStore.marketplace}) thành công!`, "success");
-          void loadData(true);
           setSelectedStore(newStore.name);
           setSelectedSku("ALL");
         }}
@@ -4126,12 +4178,10 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
         isOpen={showStoreManagerModal}
         onClose={() => setShowStoreManagerModal(false)}
         onStoreSelected={(name) => {
-          void loadData(true);
           setSelectedStore(name);
           setSelectedSku("ALL");
         }}
         onNavigateToCostMaster={(name) => {
-          void loadData(true);
           setSelectedStore(name);
           setSelectedSku("ALL");
           setActiveTab("settings");

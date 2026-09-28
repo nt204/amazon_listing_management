@@ -82,11 +82,37 @@ export async function GET(request: Request) {
       }
     }
 
-    const totalKeywords = rows.length;
-    const totalCampaigns = new Set(rows.map((r) => r.target_campaign_name)).size;
-    const totalOrders = rows.reduce((sum, r) => sum + Number(r.orders || 0), 0);
-    const totalSales = rows.reduce((sum, r) => sum + Number(r.sales || 0), 0);
-    const totalSpend = rows.reduce((sum, r) => sum + Number(r.spend || 0), 0);
+    // Tính summary trên toàn bộ Registry, không phụ thuộc LIMIT của danh sách hiển thị.
+    const totals = await sql<Array<{
+      total_keywords: number;
+      total_campaigns: number;
+      total_orders: number;
+      total_sales: number;
+      total_spend: number;
+    }>>`
+      SELECT
+        COUNT(*)::int AS total_keywords,
+        COUNT(DISTINCT r.target_campaign_name)::int AS total_campaigns,
+        COALESCE(SUM(r.orders), 0)::float8 AS total_orders,
+        COALESCE(SUM(r.sales), 0)::float8 AS total_sales,
+        COALESCE(SUM(r.spend), 0)::float8 AS total_spend
+      FROM ppc_sale_kw_registry r
+      LEFT JOIN ppc_stores s ON s.id = r.store_id
+      WHERE r.team_id = ${actor.teamId}
+        ${storeId && storeId !== "ALL" ? sql`AND r.store_id = ${storeId}` : sql``}
+        ${!storeId && storeName && storeName !== "ALL" ? sql`AND LOWER(s.name) = LOWER(${storeName})` : sql``}
+        ${search ? sql`AND (
+          LOWER(r.keyword_text) LIKE ${"%" + search + "%"} OR
+          LOWER(r.source_campaign_name) LIKE ${"%" + search + "%"} OR
+          LOWER(r.target_campaign_name) LIKE ${"%" + search + "%"} OR
+          LOWER(COALESCE(r.sku, '')) LIKE ${"%" + search + "%"}
+        )` : sql``}
+    `;
+    const totalKeywords = Number(totals[0]?.total_keywords || 0);
+    const totalCampaigns = Number(totals[0]?.total_campaigns || 0);
+    const totalOrders = Number(totals[0]?.total_orders || 0);
+    const totalSales = Number(totals[0]?.total_sales || 0);
+    const totalSpend = Number(totals[0]?.total_spend || 0);
 
     return Response.json({
       success: true,
@@ -104,6 +130,66 @@ export async function GET(request: Request) {
     });
   } catch (error) {
     return routeErrorResponse(error, "Lỗi khi lấy danh sách Sale KW Registry.", 500);
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const actor = authorize(request, "read");
+    enforceRequestSize(request, 5_000_000);
+    const body = await request.json().catch(() => ({}));
+    const storeId = String(body?.storeId || "").trim();
+    const storeName = String(body?.storeName || "").trim();
+    const rawCandidates = Array.isArray(body?.candidates) ? body.candidates : [];
+
+    if (rawCandidates.length > 20_000) {
+      throw new ApiError("Danh sách kiểm tra Sale KW vượt quá 20.000 từ khóa.", 400);
+    }
+
+    const candidates: Array<{ sku: string; keyword: string }> = rawCandidates
+      .map((candidate: unknown) => {
+        const item = candidate && typeof candidate === "object"
+          ? candidate as { sku?: unknown; keyword?: unknown }
+          : {};
+        return {
+          sku: String(item.sku || "").trim().toLowerCase().slice(0, 200),
+          keyword: String(item.keyword || "").trim().toLowerCase().slice(0, 500),
+        };
+      })
+      .filter((candidate: { sku: string; keyword: string }) => Boolean(candidate.keyword));
+
+    if (candidates.length === 0) {
+      return Response.json({ success: true, lookupKeys: [] });
+    }
+
+    const keywords: string[] = Array.from(new Set(candidates.map((candidate) => candidate.keyword)));
+    const sql = await getDatabaseClient();
+    const matches = await sql<Array<{ sku: string; keyword_text: string }>>`
+      SELECT DISTINCT
+        LOWER(TRIM(COALESCE(r.sku, ''))) AS sku,
+        LOWER(TRIM(r.keyword_text)) AS keyword_text
+      FROM ppc_sale_kw_registry r
+      LEFT JOIN ppc_stores s ON s.id = r.store_id
+      WHERE r.team_id = ${actor.teamId}
+        ${storeId && storeId !== "ALL" ? sql`AND r.store_id = ${storeId}` : sql``}
+        ${!storeId && storeName && storeName !== "ALL" ? sql`AND LOWER(s.name) = LOWER(${storeName})` : sql``}
+        AND LOWER(TRIM(r.keyword_text)) = ANY(${keywords})
+    `;
+
+    const lookupKeys = new Set<string>();
+    for (const match of matches) {
+      const keyword = String(match.keyword_text || "").trim().toLowerCase();
+      const sku = String(match.sku || "").trim().toLowerCase();
+      if (!keyword) continue;
+      // Ưu tiên khóa SKU + keyword để một từ khóa đã chạy cho SKU A
+      // không vô tình chặn SKU B. Chỉ fallback theo keyword với dữ liệu cũ thiếu SKU.
+      if (sku) lookupKeys.add(`${sku}|||${keyword}`);
+      else lookupKeys.add(keyword);
+    }
+
+    return Response.json({ success: true, lookupKeys: Array.from(lookupKeys) });
+  } catch (error) {
+    return routeErrorResponse(error, "Lỗi khi kiểm tra từ khóa Sale KW đã tạo.", 500);
   }
 }
 

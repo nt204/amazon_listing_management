@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import {
   RocketLaunch,
   FileXls,
@@ -105,6 +105,14 @@ export interface SaleKwRegistryItem {
   updated_at: string;
 }
 
+type SaleKwMatchType = "exact" | "phrase" | "broad";
+
+const SALE_KW_MATCH_TYPES: SaleKwMatchType[] = ["exact", "phrase", "broad"];
+
+function matchTypeSelectionKey(sku: string, matchType: SaleKwMatchType): string {
+  return `${sku.trim().toLowerCase()}|||${matchType}`;
+}
+
 export function getCampaignArchitectureType(name: string): "SP04 (Auto)" | "SP03 (Keyword)" | "SB05 (Video)" | "SB01 (Brands)" | "SP02 (PAT)" | "Khác" {
   const upper = (name || "").toUpperCase();
   if (upper.includes("SP04") || upper.includes("AUTO")) return "SP04 (Auto)";
@@ -156,6 +164,13 @@ export function PpcSaleKwView({
   });
   const [launchedLookupSet, setLaunchedLookupSet] = useState<Set<string>>(new Set());
   const [loadingRegistry, setLoadingRegistry] = useState<boolean>(false);
+  const [loadingRegistryLookup, setLoadingRegistryLookup] = useState<boolean>(false);
+  const [registryLookupReady, setRegistryLookupReady] = useState<boolean>(false);
+  const [registryLookupError, setRegistryLookupError] = useState<string | null>(null);
+  const [registryLookupRetry, setRegistryLookupRetry] = useState(0);
+  const registryListRequestRef = useRef<{ controller: AbortController; id: number } | null>(null);
+  const registryLookupRequestRef = useRef<{ controller: AbortController; id: number } | null>(null);
+  const registryRequestIdRef = useRef(0);
   const [hideLaunched, setHideLaunched] = useState<boolean>(true);
 
   // 1. Threshold controls: Mặc định Order > 2
@@ -262,6 +277,8 @@ export function PpcSaleKwView({
   const [skuFilter, setSkuFilter] = useState<string>("ALL");
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [collapsedSkus, setCollapsedSkus] = useState<Set<string>>(new Set());
+  // Mặc định cả 3 match type đều được chọn. Chỉ lưu các lựa chọn người dùng đã bỏ tích.
+  const [disabledMatchTypes, setDisabledMatchTypes] = useState<Set<string>>(new Set());
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
@@ -298,16 +315,24 @@ export function PpcSaleKwView({
   } | null>(null);
 
   // Fetch registry
-  const fetchRegistry = async () => {
+  const fetchRegistry = useCallback(async () => {
+    registryListRequestRef.current?.controller.abort();
+    const controller = new AbortController();
+    const requestId = ++registryRequestIdRef.current;
+    registryListRequestRef.current = { controller, id: requestId };
     try {
       setLoadingRegistry(true);
       const params = new URLSearchParams();
       if (selectedStore && selectedStore !== "ALL") {
         params.set("storeName", selectedStore);
       }
-      const res = await fetch(`/api/ppc/sale-kw/registry?${params.toString()}`);
-      if (!res.ok) return;
+      const res = await fetch(`/api/ppc/sale-kw/registry?${params.toString()}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(`Không thể tải Registry Sale KW (HTTP ${res.status})`);
       const json = await res.json();
+      if (registryListRequestRef.current?.id !== requestId) return;
       if (json.success && json.data) {
         setRegistryItems(json.data.items || []);
         setRegistrySummary(
@@ -319,23 +344,30 @@ export function PpcSaleKwView({
             totalSpend: 0,
           }
         );
-        setLaunchedLookupSet(new Set(json.data.lookupKeys || []));
       }
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       console.error("Lỗi khi tải Sale KW Registry:", err);
     } finally {
-      setLoadingRegistry(false);
+      if (registryListRequestRef.current?.id === requestId) {
+        registryListRequestRef.current = null;
+        setLoadingRegistry(false);
+      }
     }
-  };
+  }, [selectedStore]);
 
   useEffect(() => {
-    fetchRegistry();
-  }, [selectedStore]);
+    void fetchRegistry();
+    return () => registryListRequestRef.current?.controller.abort();
+  }, [fetchRegistry]);
 
   // Aggregate search terms by (SKU, customerSearchTerm)
   // Bỏ qua ASIN ("chỉ lấy keyword thôi, asin bỏ qua")
   // Bid = CPC trung bình ("bid sẽ là lấy cpc trung bình của search term đó")
-  const allCandidates = useMemo(() => {
+  const candidateBase = useMemo(() => {
+    // Không gộp dữ liệu giữa nhiều store: cùng SKU/keyword ở các store khác nhau
+    // có thể có CPC và lịch sử lên campaign hoàn toàn khác nhau.
+    if (selectedStore === "ALL") return [];
     if (!searchTerms || searchTerms.length === 0) return [];
 
     const map = new Map<string, SaleKwCandidate>();
@@ -400,13 +432,81 @@ export function PpcSaleKwView({
       c.cpc = clicksNum > 0 ? Math.round((spendNum / clicksNum) * 100) / 100 : 0;
       c.acos = salesNum > 0 ? Math.round((spendNum / salesNum) * 10000) / 100 : 0;
       c.bid = bidMode === "cpc" && c.cpc > 0 ? Math.max(0.1, c.cpc) : defaultBid;
-      c.isAlreadyLaunched =
-        launchedLookupSet.has(c.key) ||
-        launchedLookupSet.has(c.customerSearchTerm.toLowerCase());
     }
 
     return candidates;
-  }, [searchTerms, selectedSku, orderThreshold, orderOperator, defaultBid, bidMode, launchedLookupSet]);
+  }, [searchTerms, selectedSku, orderThreshold, orderOperator, defaultBid, bidMode, selectedStore]);
+
+  const allCandidates = useMemo(() => {
+    return candidateBase.map((candidate) => ({
+      ...candidate,
+      isAlreadyLaunched:
+        launchedLookupSet.has(candidate.key) ||
+        launchedLookupSet.has(candidate.customerSearchTerm.toLowerCase()),
+    }));
+  }, [candidateBase, launchedLookupSet]);
+
+  useEffect(() => {
+    registryLookupRequestRef.current?.controller.abort();
+    setLaunchedLookupSet(new Set());
+    setRegistryLookupError(null);
+
+    if (loading) {
+      setRegistryLookupReady(false);
+      setLoadingRegistryLookup(false);
+      return;
+    }
+    if (candidateBase.length === 0) {
+      setRegistryLookupReady(true);
+      setLoadingRegistryLookup(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const requestId = ++registryRequestIdRef.current;
+    registryLookupRequestRef.current = { controller, id: requestId };
+    setRegistryLookupReady(false);
+    setLoadingRegistryLookup(true);
+
+    const loadLookup = async () => {
+      try {
+        const res = await fetch("/api/ppc/sale-kw/registry", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+          signal: controller.signal,
+          body: JSON.stringify({
+            storeName: selectedStore,
+            candidates: candidateBase.map((candidate) => ({
+              sku: candidate.sku,
+              keyword: candidate.customerSearchTerm,
+            })),
+          }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || !json.success) {
+          throw new Error(json.error || json.message || `Không thể kiểm tra Registry (HTTP ${res.status})`);
+        }
+        if (registryLookupRequestRef.current?.id !== requestId) return;
+        setLaunchedLookupSet(new Set(json.lookupKeys || []));
+        setRegistryLookupReady(true);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (registryLookupRequestRef.current?.id !== requestId) return;
+        console.error("Lỗi khi kiểm tra Sale KW Registry:", error);
+        setRegistryLookupError(error instanceof Error ? error.message : "Không thể kiểm tra Registry Sale KW.");
+        setRegistryLookupReady(false);
+      } finally {
+        if (registryLookupRequestRef.current?.id === requestId) {
+          registryLookupRequestRef.current = null;
+          setLoadingRegistryLookup(false);
+        }
+      }
+    };
+
+    void loadLookup();
+    return () => controller.abort();
+  }, [candidateBase, loading, registryLookupRetry, selectedStore]);
 
   // Candidates count that are already launched
   const alreadyLaunchedCount = useMemo(() => {
@@ -498,7 +598,14 @@ export function PpcSaleKwView({
   const stats = useMemo(() => {
     const totalTerms = filteredCandidates.length;
     const totalSkus = skuGroups.length;
-    const totalCamps = totalSkus * 3; // Tách 3 camp riêng (Exact, Phrase, Broad) cho mỗi SKU
+    const totalCamps = skuGroups.reduce(
+      (sum, group) =>
+        sum +
+        SALE_KW_MATCH_TYPES.filter(
+          (matchType) => !disabledMatchTypes.has(matchTypeSelectionKey(group.sku, matchType))
+        ).length,
+      0
+    );
     const totalOrders = filteredCandidates.reduce((s, c) => s + (Number(c.orders) || 0), 0);
     const totalSales = filteredCandidates.reduce((s, c) => s + (Number(c.sales) || 0), 0);
     const totalSpend = filteredCandidates.reduce((s, c) => s + (Number(c.spend) || 0), 0);
@@ -516,7 +623,7 @@ export function PpcSaleKwView({
       avgAcos,
       avgCpc,
     };
-  }, [filteredCandidates, skuGroups]);
+  }, [filteredCandidates, skuGroups, disabledMatchTypes]);
 
   // Toggle selection for all terms (chỉ chọn những term chưa lên Camp)
   const handleSelectAll = (checked: boolean) => {
@@ -560,6 +667,20 @@ export function PpcSaleKwView({
     });
   };
 
+  const isMatchTypeEnabled = (sku: string, matchType: SaleKwMatchType) => {
+    return !disabledMatchTypes.has(matchTypeSelectionKey(sku, matchType));
+  };
+
+  const handleToggleMatchType = (sku: string, matchType: SaleKwMatchType) => {
+    const selectionKey = matchTypeSelectionKey(sku, matchType);
+    setDisabledMatchTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(selectionKey)) next.delete(selectionKey);
+      else next.add(selectionKey);
+      return next;
+    });
+  };
+
   const copyToClipboard = (text: string, key: string) => {
     navigator.clipboard.writeText(text);
     setCopiedKey(key);
@@ -575,18 +696,38 @@ export function PpcSaleKwView({
     return list.filter((c) => !c.isAlreadyLaunched);
   }, [filteredCandidates, selectedKeys]);
 
-  const targetSkuCount = useMemo(() => {
-    return new Set(targetItems.map((c) => c.sku)).size;
-  }, [targetItems]);
+  const enabledTargetSkus = useMemo(() => {
+    const skus = new Set(targetItems.map((c) => c.sku));
+    return new Set(
+      Array.from(skus).filter((sku) =>
+        SALE_KW_MATCH_TYPES.some(
+          (matchType) => !disabledMatchTypes.has(matchTypeSelectionKey(sku, matchType))
+        )
+      )
+    );
+  }, [targetItems, disabledMatchTypes]);
+
+  const launchableTargetItems = useMemo(() => {
+    return targetItems.filter((item) => enabledTargetSkus.has(item.sku));
+  }, [targetItems, enabledTargetSkus]);
+
+  const targetSkuCount = enabledTargetSkus.size;
 
   const targetCampaignCount = useMemo(() => {
-    return targetSkuCount * 3;
-  }, [targetSkuCount]);
+    return Array.from(enabledTargetSkus).reduce(
+      (sum, sku) =>
+        sum +
+        SALE_KW_MATCH_TYPES.filter(
+          (matchType) => !disabledMatchTypes.has(matchTypeSelectionKey(sku, matchType))
+        ).length,
+      0
+    );
+  }, [enabledTargetSkus, disabledMatchTypes]);
 
-  // Build the 3 Campaigns payload per SKU for Bulksheet Export / Auto Upload
+  // Build Campaign payload theo các match type được chọn cho từng SKU
   const buildTriadCampaignsPayload = () => {
     const skuMap = new Map<string, SaleKwCandidate[]>();
-    for (const it of targetItems) {
+    for (const it of launchableTargetItems) {
       if (!skuMap.has(it.sku)) {
         skuMap.set(it.sku, []);
       }
@@ -621,6 +762,8 @@ export function PpcSaleKwView({
       ];
 
       for (const cfg of configs) {
+        if (!isMatchTypeEnabled(sku, cfg.matchTypeLower)) continue;
+
         const keywords = items.map((it) => {
           const kwBid = it.bid && it.bid > 0
             ? it.bid
@@ -662,8 +805,12 @@ export function PpcSaleKwView({
 
   // Handle Manual Export Bulksheet
   const handleExportBulksheet = async () => {
-    if (targetItems.length === 0) {
-      notify("Không có Search Term nào thỏa mãn để xuất file.", "error");
+    if (!registryLookupReady) {
+      notify("Đang kiểm tra các từ khóa đã lên Campaign. Vui lòng chờ hoàn tất.", "error");
+      return;
+    }
+    if (launchableTargetItems.length === 0 || targetCampaignCount === 0) {
+      notify("Hãy chọn ít nhất một match type để xuất file.", "error");
       return;
     }
 
@@ -671,7 +818,7 @@ export function PpcSaleKwView({
     try {
       const activeStoreName = selectedStore !== "ALL"
         ? selectedStore
-        : targetItems.find((c) => c.storeName)?.storeName || targetItems[0]?.storeName || "STORE";
+        : launchableTargetItems.find((c) => c.storeName)?.storeName || launchableTargetItems[0]?.storeName || "STORE";
 
       const triadCampaigns = buildTriadCampaignsPayload();
 
@@ -684,7 +831,7 @@ export function PpcSaleKwView({
         dateStr: customDate,
         adTypeCode,
         campaigns: triadCampaigns,
-        items: targetItems.map((c) => ({
+        items: launchableTargetItems.map((c) => ({
           customerSearchTerm: c.customerSearchTerm,
           sku: c.sku,
           campaignName: c.sourceCampaignNames?.[0] || c.sku,
@@ -713,7 +860,7 @@ export function PpcSaleKwView({
 
       const blob = await res.blob();
       const contentDisposition = res.headers.get("Content-Disposition") || "";
-      let filename = `Upload_${activeStoreName}_Sale_KW_${triadCampaigns.length}Camps_${targetItems.length}Terms.xlsx`;
+      let filename = `Upload_${activeStoreName}_Sale_KW_${triadCampaigns.length}Camps_${launchableTargetItems.length}Terms.xlsx`;
       const match = contentDisposition.match(/filename\*?=['"]?(?:UTF-8'')?([^'";\n]+)['"]?/i);
       if (match?.[1]) {
         filename = decodeURIComponent(match[1]);
@@ -732,11 +879,11 @@ export function PpcSaleKwView({
       // Cập nhật ngay lập tức vào set đã lên Camp để chuyển sang Hub quản trị tức thì
       setLaunchedLookupSet((prev) => {
         const next = new Set(prev);
-        for (const it of targetItems) {
-          next.add(it.customerSearchTerm.trim().toLowerCase());
+        for (const it of launchableTargetItems) {
+          const keyword = it.customerSearchTerm.trim().toLowerCase();
           if (it.sku) {
-            next.add(`${it.sku.trim().toLowerCase()}|||${it.customerSearchTerm.trim().toLowerCase()}`);
-          }
+            next.add(`${it.sku.trim().toLowerCase()}|||${keyword}`);
+          } else next.add(keyword);
         }
         return next;
       });
@@ -753,8 +900,12 @@ export function PpcSaleKwView({
 
   // Open Auto Upload Modal
   const handleOpenAutoUploadModal = () => {
-    if (targetItems.length === 0) {
-      notify("Không có Search Term nào thỏa mãn để Auto Upload.", "error");
+    if (!registryLookupReady) {
+      notify("Đang kiểm tra các từ khóa đã lên Campaign. Vui lòng chờ hoàn tất.", "error");
+      return;
+    }
+    if (launchableTargetItems.length === 0 || targetCampaignCount === 0) {
+      notify("Hãy chọn ít nhất một match type để Auto Upload.", "error");
       return;
     }
     setAutoUploadError(null);
@@ -765,8 +916,12 @@ export function PpcSaleKwView({
 
   // Execute Auto Upload
   const handleExecuteAutoUpload = async () => {
-    if (targetItems.length === 0) {
-      notify("Không có Search Term nào thỏa mãn để Auto Upload.", "error");
+    if (!registryLookupReady) {
+      notify("Chưa thể xác nhận trạng thái các từ khóa đã lên Campaign.", "error");
+      return;
+    }
+    if (launchableTargetItems.length === 0 || targetCampaignCount === 0) {
+      notify("Hãy chọn ít nhất một match type để Auto Upload.", "error");
       return;
     }
 
@@ -777,8 +932,8 @@ export function PpcSaleKwView({
     try {
       const activeStoreName = selectedStore !== "ALL"
         ? selectedStore
-        : targetItems.find((c) => c.storeName)?.storeName || targetItems[0]?.storeName || "";
-      const activeStoreId = targetItems.find((c) => c.storeId)?.storeId || targetItems[0]?.storeId;
+        : launchableTargetItems.find((c) => c.storeName)?.storeName || launchableTargetItems[0]?.storeName || "";
+      const activeStoreId = launchableTargetItems.find((c) => c.storeId)?.storeId || launchableTargetItems[0]?.storeId;
 
       const triadCampaigns = buildTriadCampaignsPayload();
 
@@ -792,7 +947,7 @@ export function PpcSaleKwView({
         dateStr: customDate,
         adTypeCode,
         campaigns: triadCampaigns,
-        items: targetItems.map((c) => ({
+        items: launchableTargetItems.map((c) => ({
           customerSearchTerm: c.customerSearchTerm,
           sku: c.sku,
           campaignName: c.sourceCampaignNames?.[0] || c.sku,
@@ -825,7 +980,7 @@ export function PpcSaleKwView({
         jobId: json.jobId,
         fileName: json.fileName,
         campaignCount: json.campaignCount || triadCampaigns.length,
-        actionCount: json.actionCount || targetItems.length,
+        actionCount: json.actionCount || launchableTargetItems.length,
         message: json.message || "Đã xếp hàng tác vụ Bulk Upload lên Mac mini.",
       });
 
@@ -833,11 +988,11 @@ export function PpcSaleKwView({
       notify("Đã xếp hàng Auto Upload thành công lên Mac mini!", "success");
       setLaunchedLookupSet((prev) => {
         const next = new Set(prev);
-        for (const it of targetItems) {
-          next.add(it.customerSearchTerm.trim().toLowerCase());
+        for (const it of launchableTargetItems) {
+          const keyword = it.customerSearchTerm.trim().toLowerCase();
           if (it.sku) {
-            next.add(`${it.sku.trim().toLowerCase()}|||${it.customerSearchTerm.trim().toLowerCase()}`);
-          }
+            next.add(`${it.sku.trim().toLowerCase()}|||${keyword}`);
+          } else next.add(keyword);
         }
         return next;
       });
@@ -860,27 +1015,31 @@ export function PpcSaleKwView({
     let timer: NodeJS.Timeout;
     const pollStatus = async () => {
       try {
-        const res = await fetch(`/api/ppc/auto-upload/status?jobId=${autoUploadSuccessResult.jobId}`);
+        const res = await fetch(`/api/ppc/auto-upload?id=${encodeURIComponent(autoUploadSuccessResult.jobId)}`);
         if (!res.ok) return;
         const json = await res.json();
-        if (json.success && json.job) {
+        const l = json.data?.log;
+        if (json.success && l) {
           setLiveUploadStatus({
-            status: json.job.status,
-            stage: json.job.stage,
-            progressPct: json.job.progress_pct,
-            amazonUploadId: json.job.amazon_upload_id,
-            resultSummary: json.job.result_summary,
-            errorMessage: json.job.error_message,
+            status: l.status,
+            stage: l.stage,
+            progressPct: l.progressPct ?? l.progress_pct,
+            amazonUploadId: l.amazonUploadId ?? l.amazon_upload_id,
+            resultSummary: l.resultSummary ?? l.result_summary,
+            errorMessage: l.errorMessage ?? l.error_message,
           });
 
-          if (["SUCCESS", "PARTIAL_SUCCESS", "FAILED", "RESULT_TIMEOUT"].includes(json.job.status)) {
+          if (["SUCCESS", "PARTIAL_SUCCESS", "FAILED", "RESULT_TIMEOUT"].includes(l.status)) {
+            if (l.status === "SUCCESS" || l.status === "PARTIAL_SUCCESS") {
+              fetchRegistry();
+            }
             return;
           }
         }
       } catch (err) {
         console.error("Lỗi polling trạng thái bulk upload:", err);
       }
-      timer = setTimeout(pollStatus, 4000);
+      timer = setTimeout(pollStatus, 3000);
     };
 
     pollStatus();
@@ -903,7 +1062,8 @@ export function PpcSaleKwView({
       }
       notify(json.message || "Đã xóa thành công!", "success");
       setSelectedRegIds(new Set());
-      fetchRegistry();
+      void fetchRegistry();
+      setRegistryLookupRetry((value) => value + 1);
     } catch (err: any) {
       notify(err.message || "Lỗi khi xóa.", "error");
     } finally {
@@ -932,225 +1092,165 @@ export function PpcSaleKwView({
     return filteredRegItems.slice(start, start + regPageSize);
   }, [filteredRegItems, regPage, regPageSize]);
 
+  const handleCopySelectedOrAll = async () => {
+    const targetItems = selectedKeys.size > 0
+      ? launchableTargetItems.filter((i) => selectedKeys.has(i.key))
+      : launchableTargetItems;
+
+    if (targetItems.length === 0) {
+      notify("Không có Search Term nào để copy", "error");
+      return;
+    }
+
+    const textToCopy = Array.from(new Set(targetItems.map((i) => i.customerSearchTerm))).join("\n");
+    try {
+      await navigator.clipboard.writeText(textToCopy);
+      notify(`Đã copy ${targetItems.length} search term vào clipboard`, "success");
+    } catch {
+      notify("Không thể copy danh sách từ khóa", "error");
+    }
+  };
+
+  const candidateDataPending = loading || loadingRegistryLookup || (!registryLookupReady && !registryLookupError);
+  const candidateActionsDisabled =
+    selectedStore === "ALL" || loading || loadingRegistryLookup || !registryLookupReady;
+
   return (
     <div className="space-y-4">
+      {/* 1. Sub-tab Navigation Header (đồng bộ bố cục ST Optimization) */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setSubTab("candidates")}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer ${
+              subTab === "candidates"
+                ? "bg-emerald-600 text-white shadow-xs"
+                : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            <RocketLaunch size={15} weight="bold" />
+            <span>Lên Camp Sale KW</span>
+            <span
+              className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                subTab === "candidates" ? "bg-emerald-700 text-white" : "bg-slate-100 text-slate-700"
+              }`}
+            >
+              {allCandidates.filter((c) => !c.isAlreadyLaunched).length}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSubTab("registry")}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer ${
+              subTab === "registry"
+                ? "bg-slate-900 text-white shadow-xs"
+                : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            <ShieldCheck size={15} weight="bold" />
+            <span>Quản trị Camp Sale KW (Registry)</span>
+            <span
+              className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                subTab === "registry" ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-700"
+              }`}
+            >
+              {registrySummary.totalKeywords}
+            </span>
+          </button>
+        </div>
+
+        {subTab === "candidates" && (
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-2 cursor-pointer bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition shadow-2xs">
+              <input
+                type="checkbox"
+                checked={hideLaunched}
+                onChange={(e) => setHideLaunched(e.target.checked)}
+                className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 h-4 w-4 cursor-pointer"
+              />
+              <span>Ẩn ST đã lên Camp</span>
+              {alreadyLaunchedCount > 0 && (
+                <span className="bg-emerald-100 text-emerald-800 text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+                  {alreadyLaunchedCount} đã lên
+                </span>
+              )}
+            </label>
+
+            <label className="flex items-center gap-2 cursor-pointer bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition shadow-2xs">
+              <input
+                type="checkbox"
+                checked={negateInSource}
+                onChange={(e) => setNegateInSource(e.target.checked)}
+                className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 h-4 w-4 cursor-pointer"
+              />
+              <span title="Phủ định Negative Exact trong Campaign cũ để tránh cạnh tranh">
+                Phủ định Exact ở Camp cũ
+              </span>
+            </label>
+          </div>
+        )}
+      </div>
+
       {subTab === "candidates" ? (
         <>
-          {/* 1. Stat Overview Cards */}
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-3.5">
-            <div className="p-3.5 rounded-xl border border-slate-200 bg-white shadow-xs">
-              <div className="flex items-center justify-between text-slate-500 mb-1">
-                <span className="text-xs font-semibold">ST Tiềm năng</span>
-                <Target size={16} className="text-emerald-600" />
-              </div>
-              <div className="text-2xl font-black text-slate-900">{stats.totalTerms.toLocaleString()}</div>
-              <div className="text-[11px] text-slate-500 mt-0.5">Orders {orderOperator} {orderThreshold}</div>
-            </div>
-
-            <div className="p-3.5 rounded-xl border border-slate-200 bg-white shadow-xs">
-              <div className="flex items-center justify-between text-slate-500 mb-1">
-                <span className="text-xs font-semibold">SKU đủ chuẩn</span>
-                <Tag size={16} className="text-indigo-600" />
-              </div>
-              <div className="text-2xl font-black text-slate-900">{stats.totalSkus.toLocaleString()}</div>
-              <div className="text-[11px] text-indigo-600 font-medium mt-0.5">Sản phẩm có đơn</div>
-            </div>
-
-            <div className="p-3.5 rounded-xl border border-slate-200 bg-white shadow-xs">
-              <div className="flex items-center justify-between text-slate-500 mb-1">
-                <span className="text-xs font-semibold">Số Camp sẽ lên</span>
-                <RocketLaunch size={16} className="text-purple-600" />
-              </div>
-              <div className="text-2xl font-black text-purple-700">{stats.totalCamps.toLocaleString()}</div>
-              <div className="text-[11px] text-purple-600 font-medium mt-0.5">3 Camp / SKU (3 Match)</div>
-            </div>
-
-            <div className="p-3.5 rounded-xl border border-slate-200 bg-white shadow-xs">
-              <div className="flex items-center justify-between text-slate-500 mb-1">
-                <span className="text-xs font-semibold">Tổng Orders</span>
-                <ShoppingBag size={16} className="text-amber-600" />
-              </div>
-              <div className="text-2xl font-black text-emerald-600">{stats.totalOrders.toLocaleString()}</div>
-              <div className="text-[11px] text-slate-500 mt-0.5">Lịch sử tạo đơn</div>
-            </div>
-
-            <div className="p-3.5 rounded-xl border border-slate-200 bg-white shadow-xs">
-              <div className="flex items-center justify-between text-slate-500 mb-1">
-                <span className="text-xs font-semibold">Doanh thu ST</span>
-                <CurrencyDollar size={16} className="text-emerald-600" />
-              </div>
-              <div className="text-2xl font-black text-slate-900">
-                ${stats.totalSales.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </div>
-              <div className="text-[11px] text-slate-500 mt-0.5">ACOS TB: {stats.avgAcos.toFixed(1)}%</div>
-            </div>
-
-            <div className="p-3.5 rounded-xl border border-slate-200 bg-white shadow-xs col-span-2 md:col-span-1">
-              <div className="flex items-center justify-between text-slate-500 mb-1">
-                <span className="text-xs font-semibold">CPC Trung Bình</span>
-                <TrendUp size={16} className="text-blue-600" />
-              </div>
-              <div className="text-2xl font-black text-slate-900">${stats.avgCpc.toFixed(2)}</div>
-              <div className="text-[11px] text-slate-500 mt-0.5">Gợi ý Bid khởi tạo</div>
-            </div>
-          </div>
-
-          {/* 2. Filter Toolbar & Campaign Config Settings */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs space-y-3.5">
-            <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
-              {/* Order Threshold & Operator */}
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                  <Funnel size={14} className="text-slate-500" /> Lọc Orders:
-                </span>
-                <div className="flex items-center rounded-lg border border-slate-300 bg-slate-50 p-0.5 text-xs font-medium">
-                  <button
-                    onClick={() => setOrderOperator(">")}
-                    className={`px-2 py-1 rounded cursor-pointer font-bold ${
-                      orderOperator === ">" ? "bg-white text-slate-900 shadow-xs" : "text-slate-500 hover:text-slate-900"
-                    }`}
-                  >
-                    &gt;
-                  </button>
-                  <button
-                    onClick={() => setOrderOperator(">=")}
-                    className={`px-2 py-1 rounded cursor-pointer font-bold ${
-                      orderOperator === ">=" ? "bg-white text-slate-900 shadow-xs" : "text-slate-500 hover:text-slate-900"
-                    }`}
-                  >
-                    &ge;
-                  </button>
-                </div>
-                <input
-                  type="number"
-                  min="1"
-                  max="1000"
-                  value={orderThreshold}
-                  onChange={(e) => setOrderThreshold(Math.max(1, Number(e.target.value) || 1))}
-                  className="w-14 px-2 py-1 text-xs font-bold text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-                  title="Ngưỡng đơn hàng tối thiểu (mặc định > 2)"
-                />
-
-                {/* Hide already launched toggle */}
-                <label className="flex items-center gap-1.5 text-xs text-slate-600 ml-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={hideLaunched}
-                    onChange={(e) => setHideLaunched(e.target.checked)}
-                    className="w-3.5 h-3.5 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500"
-                  />
-                  <span>Ẩn ST đã lên Camp</span>
-                  {alreadyLaunchedCount > 0 && (
-                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-700 font-bold">
-                      {alreadyLaunchedCount}
-                    </span>
-                  )}
-                </label>
-              </div>
-
-              {/* Campaign Naming Parameters & Budget */}
-              <div className="flex flex-wrap items-center gap-3 bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-xs">
-                {/* Tên người dùng */}
-                <div className="flex items-center gap-1.5">
-                  <span className="font-semibold text-slate-700" title="Tên người dùng gắn vào tên chiến dịch (tự động lưu theo tài khoản)">Người dùng:</span>
-                  <input
-                    type="text"
-                    value={userName}
-                    onChange={(e) => handleUserNameChange(e.target.value)}
-                    placeholder="Loan"
-                    className="w-20 px-2 py-1 font-bold text-slate-900 bg-white border border-slate-300 rounded focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-
-                {/* Dạng chạy */}
-                <div className="flex items-center gap-1.5">
-                  <span className="font-semibold text-slate-700" title="Dạng chạy (ví dụ SP03)">Dạng chạy:</span>
+          {/* 2. Rule & Filter Control Bar (đồng bộ bố cục ST Optimization) */}
+          <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs space-y-2.5">
+            {/* Top Toolbar Row: Filters Left, Actions Right */}
+            <div className="flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3">
+              {/* Left: Filter Controls */}
+              <div className="flex flex-wrap items-center gap-2.5">
+                {/* Lọc Orders (giống ST Optim Clicks) */}
+                <div className="flex items-center rounded-lg border border-emerald-300 bg-emerald-50/80 px-2 py-1 shadow-2xs">
+                  <label className="text-[11px] font-extrabold text-emerald-900 mr-1.5 flex items-center gap-1">
+                    <Funnel size={13} weight="bold" />
+                    <span>Orders:</span>
+                  </label>
                   <select
-                    value={adTypeCode}
-                    onChange={(e) => setAdTypeCode(e.target.value)}
-                    className="px-2 py-1 font-bold text-slate-900 bg-white border border-slate-300 rounded focus:outline-none focus:border-emerald-500"
+                    value={orderOperator}
+                    onChange={(e) => setOrderOperator(e.target.value as ">" | ">=")}
+                    className="bg-white border border-emerald-200 text-emerald-900 font-black text-xs rounded px-1.5 py-0.5 outline-none cursor-pointer mr-1"
+                    title="Toán tử so sánh"
                   >
-                    <option value="SP03">SP03 (Keyword)</option>
-                    <option value="SP01">SP01</option>
-                    <option value="SP02">SP02 (PAT)</option>
-                    <option value="SP04">SP04 (Auto)</option>
-                    <option value="SB05">SB05 (Video)</option>
-                    <option value="SB01">SB01 (Brands)</option>
+                    <option value="&gt;">&gt;</option>
+                    <option value="&gt;=">&ge;</option>
                   </select>
-                </div>
-
-                {/* Ngày tháng năm DDMMYY */}
-                <div className="flex items-center gap-1.5">
-                  <span className="font-semibold text-slate-700" title="Ngày tháng năm định dạng DDMMYY (tự động lấy theo ngày của file báo cáo)">Ngày (DDMMYY):</span>
                   <input
-                    type="text"
-                    maxLength={6}
-                    value={customDate}
-                    onChange={(e) => setCustomDate(e.target.value)}
-                    className="w-20 px-2 py-1 font-mono font-bold text-slate-900 bg-white border border-slate-300 rounded focus:outline-none focus:border-emerald-500 text-center"
-                    placeholder="100124"
+                    type="number"
+                    min={1}
+                    max={1000}
+                    value={orderThreshold}
+                    onChange={(e) => setOrderThreshold(Math.max(1, Number(e.target.value) || 1))}
+                    className="w-14 px-1.5 py-0.5 text-center font-black text-emerald-800 bg-white border border-emerald-300 rounded font-mono text-xs outline-none focus:ring-1 focus:ring-emerald-500"
+                    title="Ngưỡng đơn hàng tối thiểu"
                   />
                 </div>
 
-                {/* Ngân sách ngày */}
-                <div className="flex items-center gap-1.5">
-                  <span className="font-semibold text-slate-700">Ngân sách/camp:</span>
-                  <div className="flex items-center">
-                    <span className="text-slate-400 mr-1">$</span>
-                    <input
-                      type="number"
-                      step="1"
-                      min="1"
-                      value={dailyBudget}
-                      onChange={(e) => setDailyBudget(Math.max(1, Number(e.target.value) || 5))}
-                      className="w-14 px-1.5 py-1 font-bold text-slate-900 bg-white border border-slate-300 rounded focus:outline-none focus:border-emerald-500"
-                    />
+                {/* Quick SKU Filter */}
+                {candidateSkus.length > 1 && (
+                  <div className="relative">
+                    <select
+                      value={skuFilter}
+                      onChange={(e) => {
+                        setSkuFilter(e.target.value);
+                        setPage(1);
+                      }}
+                      className="py-1.5 pl-2.5 pr-7 rounded-lg border border-slate-200 bg-slate-50 text-xs font-bold text-slate-700 outline-none cursor-pointer max-w-[240px] truncate"
+                    >
+                      <option value="ALL">Tất cả SKU ({candidateSkus.length})</option>
+                      {candidateSkus.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                </div>
+                )}
 
-                {/* Bid mode */}
-                <div className="flex items-center gap-1.5">
-                  <span className="font-semibold text-slate-700">Bid:</span>
-                  <select
-                    value={bidMode}
-                    onChange={(e) => setBidMode(e.target.value as any)}
-                    className="px-2 py-1 font-medium text-slate-800 bg-white border border-slate-300 rounded focus:outline-none focus:border-emerald-500"
-                  >
-                    <option value="cpc">CPC TB từng term</option>
-                    <option value="fixed">Cố định ${defaultBid.toFixed(2)}</option>
-                  </select>
-                  {bidMode === "fixed" && (
-                    <input
-                      type="number"
-                      step="0.05"
-                      min="0.1"
-                      value={defaultBid}
-                      onChange={(e) => setDefaultBid(Math.max(0.1, Number(e.target.value) || 1.0))}
-                      className="w-14 px-1.5 py-1 font-bold text-slate-900 bg-white border border-slate-300 rounded focus:outline-none focus:border-emerald-500"
-                    />
-                  )}
-                </div>
-
-                {/* Phủ định Camp cũ */}
-                <label className="flex items-center gap-1.5 text-slate-700 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={negateInSource}
-                    onChange={(e) => setNegateInSource(e.target.checked)}
-                    className="w-3.5 h-3.5 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500"
-                  />
-                  <span title="Phủ định Negative Exact trong Campaign cũ để tránh cạnh tranh">
-                    Phủ định Exact ở Camp cũ
-                  </span>
-                </label>
-              </div>
-            </div>
-
-            {/* Search and Action Toolbar */}
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 border-t border-slate-100">
-              <div className="flex flex-1 items-center gap-2.5 w-full">
-                <div className="relative flex-1 max-w-md">
-                  <MagnifyingGlass size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                {/* Search Input */}
+                <div className="relative min-w-[220px] flex-1 sm:flex-initial">
+                  <MagnifyingGlass size={13} className="absolute left-2.5 top-2.5 text-slate-400" />
                   <input
                     type="text"
                     value={searchQuery}
@@ -1158,88 +1258,256 @@ export function PpcSaleKwView({
                       setSearchQuery(e.target.value);
                       setPage(1);
                     }}
-                    placeholder="Tìm kiếm theo Search Term, SKU..."
-                    className="w-full pl-9 pr-8 py-1.5 text-xs text-slate-800 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:bg-white focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                    placeholder="Lọc từ khóa, SKU..."
+                    className="w-full pl-8 pr-7 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs outline-none focus:bg-white focus:border-emerald-500"
                   />
                   {searchQuery && (
                     <button
                       onClick={() => setSearchQuery("")}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                      className="absolute right-2 top-2 text-slate-400 hover:text-slate-600"
                     >
-                      <X size={14} />
+                      <X size={12} />
                     </button>
                   )}
                 </div>
-
-                {/* SKU Filter Dropdown */}
-                {candidateSkus.length > 1 && (
-                  <select
-                    value={skuFilter}
-                    onChange={(e) => {
-                      setSkuFilter(e.target.value);
-                      setPage(1);
-                    }}
-                    className="max-w-xs px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:border-emerald-500"
-                  >
-                    <option value="ALL">Tất cả SKU ({candidateSkus.length})</option>
-                    {candidateSkus.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    ))}
-                  </select>
-                )}
               </div>
 
-              {/* Action Buttons: Export Bulksheet & Auto Upload */}
-              <div className="flex items-center gap-2 self-end sm:self-auto">
+              {/* Right: Action Buttons (giống ST Optim) */}
+              <div className="flex items-center gap-2 justify-end">
                 <button
-                  onClick={() => setSubTab("registry")}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 border border-slate-900 transition cursor-pointer shadow-xs"
-                  title="Mở trang Quản trị các Search Term & Campaign đã nạp Sale KW"
+                  type="button"
+                  onClick={handleCopySelectedOrAll}
+                  disabled={candidateActionsDisabled}
+                  className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 transition flex items-center gap-1.5 cursor-pointer shadow-2xs disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="Copy danh sách Search Term"
                 >
-                  <ShieldCheck size={16} weight="bold" className="text-emerald-400" />
-                  <span>Quản trị Camp Sale KW</span>
-                  {registrySummary.totalKeywords > 0 && (
-                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-800 text-emerald-300 font-black border border-slate-700">
-                      {registrySummary.totalKeywords}
-                    </span>
-                  )}
+                  <Copy size={13} />
+                  <span>{selectedKeys.size > 0 ? `Copy (${selectedKeys.size})` : "Copy Tất Cả"}</span>
                 </button>
 
                 <button
+                  type="button"
                   onClick={handleExportBulksheet}
-                  disabled={isExporting || targetItems.length === 0}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 transition cursor-pointer disabled:opacity-50"
-                  title="Tải file Excel Bulksheet (tự động tách 3 camp: Exact, Phrase, Broad cho mỗi SKU)"
+                  disabled={candidateActionsDisabled || isExporting || launchableTargetItems.length === 0 || targetCampaignCount === 0}
+                  className="px-3.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="Xuất file Excel Bulksheet theo các match type đã chọn"
                 >
-                  {isExporting ? <CircleNotch size={14} className="animate-spin" /> : <FileXls size={15} className="text-emerald-700" />}
-                  Xuất Bulksheet (.xlsx)
+                  {isExporting ? (
+                    <>
+                      <CircleNotch size={14} className="animate-spin text-emerald-600" />
+                      <span>Đang xuất...</span>
+                    </>
+                  ) : (
+                    <>
+                      <FileXls size={15} weight="bold" className="text-emerald-600" />
+                      <span>Xuất Bulksheet ({targetCampaignCount})</span>
+                    </>
+                  )}
                 </button>
 
                 <button
+                  type="button"
                   onClick={handleOpenAutoUploadModal}
-                  disabled={targetItems.length === 0}
-                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 shadow-xs transition cursor-pointer disabled:opacity-50"
-                  title="Xếp hàng tự động nạp qua AdsPower / Mac mini lên Amazon"
+                  disabled={candidateActionsDisabled || launchableTargetItems.length === 0 || targetCampaignCount === 0}
+                  className="px-4 py-1.5 rounded-lg bg-linear-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-black transition flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="Xếp hàng tự động nạp qua AdsPower lên Amazon"
                 >
-                  <CloudArrowUp size={16} weight="bold" />
-                  Auto Upload (Mac mini)
-                  {targetItems.length > 0 && (
-                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-800 text-emerald-200">
-                      {targetCampaignCount} camps
-                    </span>
-                  )}
+                  <Lightning size={15} weight="fill" className="text-amber-300 animate-pulse" />
+                  <span>Auto Upload ({targetCampaignCount} camps)</span>
                 </button>
+              </div>
+            </div>
+
+            {/* Campaign Config Parameters (Row 2 inside Card) */}
+            <div className="flex flex-wrap items-center gap-3 pt-2.5 border-t border-slate-100 text-xs text-slate-600">
+              <div className="flex items-center gap-1.5">
+                <span className="font-semibold text-slate-600" title="Tên người dùng gắn vào tên chiến dịch">Người dùng:</span>
+                <input
+                  type="text"
+                  value={userName}
+                  onChange={(e) => handleUserNameChange(e.target.value)}
+                  placeholder="Loan"
+                  className="w-20 px-2 py-0.5 font-bold text-slate-900 bg-slate-50 border border-slate-200 rounded focus:bg-white focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <span className="font-semibold text-slate-600" title="Dạng chạy (ví dụ SP03)">Dạng chạy:</span>
+                <select
+                  value={adTypeCode}
+                  onChange={(e) => setAdTypeCode(e.target.value)}
+                  className="px-2 py-0.5 font-bold text-slate-900 bg-slate-50 border border-slate-200 rounded focus:bg-white focus:outline-none focus:border-emerald-500 cursor-pointer"
+                >
+                  <option value="SP03">SP03 (Keyword)</option>
+                  <option value="SP01">SP01</option>
+                  <option value="SP02">SP02 (PAT)</option>
+                  <option value="SP04">SP04 (Auto)</option>
+                  <option value="SB05">SB05 (Video)</option>
+                  <option value="SB01">SB01 (Brands)</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <span className="font-semibold text-slate-600" title="Ngày tháng năm định dạng DDMMYY">Ngày (DDMMYY):</span>
+                <input
+                  type="text"
+                  maxLength={6}
+                  value={customDate}
+                  onChange={(e) => setCustomDate(e.target.value)}
+                  className="w-20 px-2 py-0.5 font-mono font-bold text-slate-900 bg-slate-50 border border-slate-200 rounded focus:bg-white focus:outline-none focus:border-emerald-500 text-center"
+                  placeholder="100124"
+                />
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <span className="font-semibold text-slate-600">Ngân sách/camp:</span>
+                <div className="flex items-center">
+                  <span className="text-slate-400 mr-1">$</span>
+                  <input
+                    type="number"
+                    step="1"
+                    min="1"
+                    value={dailyBudget}
+                    onChange={(e) => setDailyBudget(Math.max(1, Number(e.target.value) || 5))}
+                    className="w-14 px-1.5 py-0.5 font-bold text-slate-900 bg-slate-50 border border-slate-200 rounded focus:bg-white focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <span className="font-semibold text-slate-600">Bid:</span>
+                <select
+                  value={bidMode}
+                  onChange={(e) => setBidMode(e.target.value as any)}
+                  className="px-2 py-0.5 font-medium text-slate-800 bg-slate-50 border border-slate-200 rounded focus:bg-white focus:outline-none focus:border-emerald-500 cursor-pointer"
+                >
+                  <option value="cpc">CPC TB từng term</option>
+                  <option value="fixed">Cố định ${defaultBid.toFixed(2)}</option>
+                </select>
+                {bidMode === "fixed" && (
+                  <input
+                    type="number"
+                    step="0.05"
+                    min="0.1"
+                    value={defaultBid}
+                    onChange={(e) => setDefaultBid(Math.max(0.1, Number(e.target.value) || 1.0))}
+                    className="w-14 px-1.5 py-0.5 font-bold text-slate-900 bg-slate-50 border border-slate-200 rounded focus:bg-white focus:outline-none focus:border-emerald-500"
+                  />
+                )}
               </div>
             </div>
           </div>
 
+          {/* 3. Summary Metric Cards (bố cục dưới toolbar giống ST Optimization) */}
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+            <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-2xs">
+              <span className="text-[11px] font-bold text-slate-400 block uppercase">ST Tiềm năng</span>
+              <div className="flex items-baseline gap-1.5 mt-1">
+                <span className="text-xl font-black text-slate-900 font-mono">
+                  {stats.totalTerms.toLocaleString()}
+                </span>
+                <span className="text-xs text-slate-500 font-semibold">từ</span>
+              </div>
+              <span className="text-[10px] text-slate-400 block mt-0.5">
+                Orders {orderOperator} {orderThreshold}
+              </span>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-2xs">
+              <span className="text-[11px] font-bold text-slate-400 block uppercase">SKU đủ chuẩn</span>
+              <div className="flex items-baseline gap-1.5 mt-1">
+                <span className="text-xl font-black text-indigo-600 font-mono">
+                  {stats.totalSkus.toLocaleString()}
+                </span>
+                <span className="text-xs text-slate-500 font-semibold">SKU</span>
+              </div>
+              <span className="text-[10px] text-indigo-600 font-semibold block mt-0.5">
+                Sản phẩm có đơn
+              </span>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-2xs">
+              <span className="text-[11px] font-bold text-slate-400 block uppercase">Số Camp sẽ lên</span>
+              <div className="flex items-baseline gap-1.5 mt-1">
+                <span className="text-xl font-black text-purple-700 font-mono">
+                  {stats.totalCamps.toLocaleString()}
+                </span>
+                <span className="text-xs text-slate-500 font-semibold">camp</span>
+              </div>
+              <span className="text-[10px] text-purple-600 font-semibold block mt-0.5">
+                Theo match type đã chọn
+              </span>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-2xs">
+              <span className="text-[11px] font-bold text-slate-400 block uppercase">Tổng Orders</span>
+              <div className="flex items-baseline gap-1.5 mt-1">
+                <span className="text-xl font-black text-emerald-600 font-mono">
+                  {stats.totalOrders.toLocaleString()}
+                </span>
+                <span className="text-xs text-slate-500 font-semibold">đơn</span>
+              </div>
+              <span className="text-[10px] text-slate-400 block mt-0.5">
+                Lịch sử tạo đơn
+              </span>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-2xs">
+              <span className="text-[11px] font-bold text-slate-400 block uppercase">Doanh thu ST</span>
+              <div className="flex items-baseline gap-1.5 mt-1">
+                <span className="text-xl font-black text-slate-900 font-mono">
+                  ${stats.totalSales.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+              <span className="text-[10px] text-emerald-600 font-bold block mt-0.5">
+                ACOS TB: {stats.avgAcos.toFixed(1)}%
+              </span>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-2xs">
+              <span className="text-[11px] font-bold text-slate-400 block uppercase">CPC Trung Bình</span>
+              <div className="flex items-baseline gap-1.5 mt-1">
+                <span className="text-xl font-black text-blue-600 font-mono">
+                  ${stats.avgCpc.toFixed(2)}
+                </span>
+              </div>
+              <span className="text-[10px] text-slate-400 block mt-0.5">
+                Gợi ý Bid khởi tạo
+              </span>
+            </div>
+          </div>
+
           {/* 3. SKU Groups List */}
-          {loading ? (
+          {selectedStore === "ALL" ? (
+            <div className="p-8 text-center bg-amber-50 rounded-2xl border border-amber-200 space-y-2">
+              <WarningCircle size={32} className="mx-auto text-amber-600" />
+              <h3 className="text-sm font-bold text-amber-950">Hãy chọn một Store cụ thể</h3>
+              <p className="text-xs text-amber-800 max-w-lg mx-auto">
+                Sale KW cần tính CPC, kiểm tra lịch sử và tạo Campaign riêng theo từng Store để tránh gộp sai dữ liệu.
+              </p>
+            </div>
+          ) : registryLookupError ? (
+            <div className="p-8 text-center bg-rose-50 rounded-2xl border border-rose-200 space-y-3">
+              <WarningCircle size={32} className="mx-auto text-rose-600" />
+              <div>
+                <h3 className="text-sm font-bold text-rose-900">Chưa thể kiểm tra từ khóa đã lên Campaign</h3>
+                <p className="mt-1 text-xs text-rose-700">{registryLookupError}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRegistryLookupRetry((value) => value + 1)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-100"
+              >
+                <ArrowsClockwise size={14} weight="bold" />
+                Thử tải lại
+              </button>
+            </div>
+          ) : candidateDataPending ? (
             <div className="p-12 text-center text-slate-500 bg-white rounded-2xl border border-slate-200">
               <CircleNotch size={32} className="animate-spin mx-auto text-emerald-600 mb-2" />
-              <p className="text-sm font-semibold">Đang tải và tính toán Search Terms...</p>
+              <p className="text-sm font-semibold">
+                {loading ? "Đang tải và tính toán Search Terms..." : "Đang kiểm tra lịch sử Campaign Sale KW..."}
+              </p>
             </div>
           ) : skuGroups.length === 0 ? (
             <div className="p-12 text-center text-slate-500 bg-white rounded-2xl border border-slate-200 space-y-2">
@@ -1265,7 +1533,7 @@ export function PpcSaleKwView({
                     <strong className="text-slate-900">{filteredCandidates.length}</strong> từ khóa trong{" "}
                     <strong className="text-slate-900">{skuGroups.length}</strong> SKU{" "}
                     <span className="text-slate-400 text-[11px]">
-                      (nếu chọn hết cả {skuGroups.length} SKU sẽ tạo {skuGroups.length * 3} chiến dịch)
+                      (nếu chọn hết sẽ tạo {stats.totalCamps} chiến dịch theo match type đã chọn)
                     </span>
                   </span>
                 </label>
@@ -1276,7 +1544,7 @@ export function PpcSaleKwView({
                       <strong className="text-purple-700 font-black text-sm">{targetCampaignCount} chiến dịch</strong>
                     </span>
                     <span className="text-[11px] text-emerald-700 font-medium">
-                      (mỗi chiến dịch chứa đủ {selectedKeys.size} từ khóa)
+                      (tính theo từng SKU và match type đã chọn)
                     </span>
                   </div>
                 ) : (
@@ -1292,8 +1560,9 @@ export function PpcSaleKwView({
                 const isGroupFullySelected = group.items.every((it) => selectedKeys.has(it.key));
                 const isGroupPartiallySelected =
                   !isGroupFullySelected && group.items.some((it) => selectedKeys.has(it.key));
-                const selectedInGroupCount = group.items.filter((it) => selectedKeys.has(it.key)).length;
-                const activeKwCount = selectedKeys.size > 0 ? selectedInGroupCount : group.items.length;
+                const exactEnabled = isMatchTypeEnabled(group.sku, "exact");
+                const phraseEnabled = isMatchTypeEnabled(group.sku, "phrase");
+                const broadEnabled = isMatchTypeEnabled(group.sku, "broad");
 
                 return (
                   <div
@@ -1331,18 +1600,24 @@ export function PpcSaleKwView({
 
                           {/* Triad Campaigns Preview: Tách 3 camp Exact, Phrase, Broad */}
                           <div className="space-y-1.5 pt-1">
-                            <div className="text-[11px] font-bold text-slate-600 uppercase tracking-wide flex items-center gap-1.5">
-                              <RocketLaunch size={13} className="text-emerald-600" />
-                              <span>Sẽ tạo đúng 3 Campaign riêng cho SKU này (mỗi chiến dịch chứa đủ {activeKwCount} từ khóa):</span>
-                            </div>
-
                             {/* Exact Camp */}
-                            <div className="flex items-center justify-between gap-2 bg-blue-50/70 border border-blue-200/80 rounded-lg px-2.5 py-1.5 text-xs">
+                            <div className={`flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
+                              exactEnabled
+                                ? "bg-blue-50/70 border-blue-200/80"
+                                : "bg-slate-50 border-slate-200 text-slate-400"
+                            }`}>
                               <div className="flex items-center gap-2 min-w-0">
-                                <span className="px-2 py-0.5 rounded text-[10px] font-black bg-blue-600 text-white uppercase shrink-0">
+                                <input
+                                  type="checkbox"
+                                  checked={exactEnabled}
+                                  onChange={() => handleToggleMatchType(group.sku, "exact")}
+                                  className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer shrink-0"
+                                  aria-label={`Tạo Campaign Exact cho SKU ${group.sku}`}
+                                />
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-black text-white uppercase shrink-0 ${exactEnabled ? "bg-blue-600" : "bg-slate-400"}`}>
                                   Exact
                                 </span>
-                                <span className="font-extrabold text-blue-950 truncate font-mono text-[11px]">
+                                <span className={`font-extrabold truncate font-mono text-[11px] ${exactEnabled ? "text-blue-950" : "text-slate-400"}`}>
                                   {group.campaignNames.exact}
                                 </span>
                               </div>
@@ -1356,12 +1631,23 @@ export function PpcSaleKwView({
                             </div>
 
                             {/* Phrase Camp */}
-                            <div className="flex items-center justify-between gap-2 bg-sky-50/70 border border-sky-200/80 rounded-lg px-2.5 py-1.5 text-xs">
+                            <div className={`flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
+                              phraseEnabled
+                                ? "bg-sky-50/70 border-sky-200/80"
+                                : "bg-slate-50 border-slate-200 text-slate-400"
+                            }`}>
                               <div className="flex items-center gap-2 min-w-0">
-                                <span className="px-2 py-0.5 rounded text-[10px] font-black bg-sky-600 text-white uppercase shrink-0">
+                                <input
+                                  type="checkbox"
+                                  checked={phraseEnabled}
+                                  onChange={() => handleToggleMatchType(group.sku, "phrase")}
+                                  className="w-4 h-4 text-sky-600 rounded border-slate-300 focus:ring-sky-500 cursor-pointer shrink-0"
+                                  aria-label={`Tạo Campaign Phrase cho SKU ${group.sku}`}
+                                />
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-black text-white uppercase shrink-0 ${phraseEnabled ? "bg-sky-600" : "bg-slate-400"}`}>
                                   Phrase
                                 </span>
-                                <span className="font-extrabold text-sky-950 truncate font-mono text-[11px]">
+                                <span className={`font-extrabold truncate font-mono text-[11px] ${phraseEnabled ? "text-sky-950" : "text-slate-400"}`}>
                                   {group.campaignNames.phrase}
                                 </span>
                               </div>
@@ -1375,12 +1661,23 @@ export function PpcSaleKwView({
                             </div>
 
                             {/* Broad Camp */}
-                            <div className="flex items-center justify-between gap-2 bg-emerald-50/70 border border-emerald-200/80 rounded-lg px-2.5 py-1.5 text-xs">
+                            <div className={`flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
+                              broadEnabled
+                                ? "bg-emerald-50/70 border-emerald-200/80"
+                                : "bg-slate-50 border-slate-200 text-slate-400"
+                            }`}>
                               <div className="flex items-center gap-2 min-w-0">
-                                <span className="px-2 py-0.5 rounded text-[10px] font-black bg-emerald-600 text-white uppercase shrink-0">
+                                <input
+                                  type="checkbox"
+                                  checked={broadEnabled}
+                                  onChange={() => handleToggleMatchType(group.sku, "broad")}
+                                  className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer shrink-0"
+                                  aria-label={`Tạo Campaign Broad cho SKU ${group.sku}`}
+                                />
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-black text-white uppercase shrink-0 ${broadEnabled ? "bg-emerald-600" : "bg-slate-400"}`}>
                                   Broad
                                 </span>
-                                <span className="font-extrabold text-emerald-950 truncate font-mono text-[11px]">
+                                <span className={`font-extrabold truncate font-mono text-[11px] ${broadEnabled ? "text-emerald-950" : "text-slate-400"}`}>
                                   {group.campaignNames.broad}
                                 </span>
                               </div>
@@ -1415,8 +1712,8 @@ export function PpcSaleKwView({
                           <thead className="bg-slate-100/50 text-slate-600 font-semibold border-b border-slate-200">
                             <tr>
                               <th className="py-2.5 px-4 w-10"></th>
-                              <th className="py-2.5 px-3 font-bold">Search Term (Từ khóa)</th>
-                              <th className="py-2.5 px-3">Camp nguồn</th>
+                              <th className="py-2.5 px-3 font-bold">Search Term</th>
+                              <th className="py-2.5 px-3">Nguồn</th>
                               <th className="py-2.5 px-3 text-right">Orders</th>
                               <th className="py-2.5 px-3 text-right">Sales</th>
                               <th className="py-2.5 px-3 text-right">Clicks</th>
@@ -1478,7 +1775,7 @@ export function PpcSaleKwView({
                                     ${item.spend.toFixed(2)}
                                   </td>
                                   <td className="py-2.5 px-3 text-center">
-                                    <span className="font-extrabold text-slate-900 bg-emerald-50 border border-emerald-300 text-emerald-950 px-2 py-0.5 rounded font-mono" title="Bid sẽ nạp cho 3 campaign = CPC trung bình của term">
+                                    <span className="font-extrabold text-slate-900 bg-emerald-50 border border-emerald-300 text-emerald-950 px-2 py-0.5 rounded font-mono" title="Bid sẽ nạp cho các campaign đã chọn = CPC trung bình của term">
                                       ${item.bid.toFixed(2)}
                                     </span>
                                   </td>
@@ -1796,14 +2093,14 @@ export function PpcSaleKwView({
                 <div className="bg-emerald-50/60 rounded-2xl p-4 border border-emerald-100/80 space-y-2 text-xs">
                   <div className="flex justify-between font-bold text-slate-800">
                     <span>Số Search Term sẽ lên Camp:</span>
-                    <span className="text-emerald-700 font-extrabold text-sm">{targetItems.length}</span>
+                    <span className="text-emerald-700 font-extrabold text-sm">{launchableTargetItems.length}</span>
                   </div>
                   <div className="flex justify-between text-slate-600">
                     <span>Số SKU được chọn:</span>
                     <span className="font-bold text-slate-900">{targetSkuCount} SKU</span>
                   </div>
                   <div className="flex justify-between text-slate-600">
-                    <span>Số Campaign mới sẽ tạo (Tách 3 match):</span>
+                    <span>Số Campaign mới theo match type đã chọn:</span>
                     <span className="font-extrabold text-purple-700">{targetCampaignCount} campaigns</span>
                   </div>
                   <div className="flex justify-between text-slate-600">

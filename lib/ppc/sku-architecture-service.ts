@@ -2039,7 +2039,8 @@ export async function getAutoUploadDetails(logId: string): Promise<{
   const logRows = await sql<any[]>`
     SELECT id, store_id, file_name, adspower_profile_id, adspower_profile_name,
            action_count, action_ids, actions_payload, skus, status, stage, file_status, file_error_message,
-           error_message, result_summary, duration_ms, created_at
+           error_message, result_summary, duration_ms, created_at,
+           amazon_upload_id, progress_pct
     FROM ppc_auto_upload_logs
     WHERE id = ${logId}
     LIMIT 1
@@ -2128,6 +2129,8 @@ export async function getAutoUploadDetails(logId: string): Promise<{
       durationMs: Number(r.duration_ms || 0),
       createdAt: new Date(r.created_at).toISOString(),
       actionIds,
+      amazonUploadId: r.amazon_upload_id || null,
+      progressPct: r.progress_pct != null ? Number(r.progress_pct) : 0,
     },
     actions,
   };

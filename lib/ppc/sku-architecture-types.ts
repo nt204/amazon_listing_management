@@ -154,6 +154,8 @@ export interface PpcAutoUploadLog {
   durationMs: number;
   createdAt: string;
   createdBy?: string | null;
+  amazonUploadId?: string | null;
+  progressPct?: number | null;
 }
 
 export interface BulkExportItem {
