@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback, Fragment } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef, Fragment } from "react";
 import {
   X,
   Clock,
@@ -267,6 +267,22 @@ export function PpcActionQueueDrawer({
 
   // Cancelling Task State
   const [isCancellingTaskId, setIsCancellingTaskId] = useState<string | null>(null);
+
+  // Reset modal states when store changes to eliminate cross-store leakage
+  const previousStoreRef = useRef(storeName);
+  useEffect(() => {
+    if (previousStoreRef.current !== storeName) {
+      previousStoreRef.current = storeName;
+      setIsAutoUploadModalOpen(false);
+      setIsExportWizardOpen(false);
+      setSelectedIds(new Set());
+      setAutoUploadError(null);
+      setAutoUploadSuccess(null);
+      setAutoUploadStep(0);
+      setReuploadTarget(null);
+      setSelectedRunDetail(null);
+    }
+  }, [storeName]);
 
   // Keyboard shortcut: ESC to close modal or drawer
   useEffect(() => {
@@ -885,6 +901,16 @@ export function PpcActionQueueDrawer({
     setAutoUploadSuccess(null);
     setAutoUploadStep(0);
     setConfirmAllSkusRisk(false);
+
+    // Kiểm tra an toàn Store trước khi mở modal
+    if (!storeName || storeName === "ALL") {
+      const distinctStores = Array.from(new Set(actions.map((a) => a.storeId).filter(Boolean)));
+      if (distinctStores.length > 1) {
+        alert("Hàng đợi đang chứa các hành động thuộc nhiều Store khác nhau. Để đảm bảo không tải nhầm tài khoản Amazon Ads, vui lòng chọn 1 Store cụ thể từ danh sách Store ở góc trên màn hình trước khi Auto Upload.");
+        return;
+      }
+    }
+
     // If filtering by SKU, pre-select that SKU in modal
     if (selectedSkuFilter !== "ALL") {
       setSkuModalTarget(selectedSkuFilter);
@@ -906,11 +932,24 @@ export function PpcActionQueueDrawer({
       setAutoUploadStep(2); // 2. Tạo file & kết nối AdsPower
 
       const actionIds = modalUploadCandidates.map((a) => a.id);
+      const distinctCandidateStores = Array.from(new Set(modalUploadCandidates.map((a) => a.storeId).filter(Boolean)));
+      if (distinctCandidateStores.length > 1) {
+        throw new Error("Các hành động được chọn thuộc nhiều Store khác nhau. Vui lòng chọn 1 Store cụ thể trên thanh công cụ để lọc và Auto Upload chính xác.");
+      }
+
+      const targetStoreId = (storeId && storeId !== "ALL")
+        ? storeId
+        : (distinctCandidateStores[0] || undefined);
+
+      if (!targetStoreId) {
+        throw new Error("Không thể xác định Store để Auto Upload. Vui lòng chọn 1 Store cụ thể trên thanh công cụ.");
+      }
+
       const res = await fetch("/api/ppc/auto-upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          storeId: storeId || undefined,
+          storeId: targetStoreId,
           actionIds,
           allowAllSkus: true,
         }),
@@ -1905,7 +1944,7 @@ export function PpcActionQueueDrawer({
                 <span>Store / Profile AdsPower:</span>
                 <div className="flex items-center gap-1 font-bold text-slate-800">
                   <Browser size={14} className="text-sky-600" />
-                  <span>{storeName || "HSOSTORE"}</span>
+                  <span>{storeName && storeName !== "ALL" ? storeName : "Theo từng Store trong hàng đợi"}</span>
                 </div>
               </div>
 
@@ -2060,7 +2099,7 @@ export function PpcActionQueueDrawer({
             <div className="flex items-start justify-between border-b border-slate-100 pb-4">
               <div>
                 <h3 className="text-base font-black text-slate-900">EXPORT AMAZON BULK</h3>
-                <p className="text-xs text-slate-500 mt-0.5">Shop: {storeName || "Warmstorey US"}</p>
+                <p className="text-xs text-slate-500 mt-0.5">Shop: {storeName && storeName !== "ALL" ? storeName : "Tất cả Store"}</p>
               </div>
               <button
                 onClick={() => setIsExportWizardOpen(false)}

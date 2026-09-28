@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import {
   Prohibit,
   FileXls,
@@ -54,6 +54,7 @@ interface PpcStOptimizationViewProps {
   loading: boolean;
   notify: (message: string, type?: "success" | "error") => void;
   onOpenActionQueue?: () => void;
+  stores?: Array<{ id: string; name: string }>;
 }
 
 export function PpcStOptimizationView({
@@ -64,6 +65,7 @@ export function PpcStOptimizationView({
   loading,
   notify,
   onOpenActionQueue,
+  stores,
 }: PpcStOptimizationViewProps) {
   // 0. Sub-tab state (Tab 1: Candidates, Tab 2: Negative Hub)
   const [subTab, setSubTab] = useState<"candidates" | "registry">("candidates");
@@ -93,6 +95,18 @@ export function PpcStOptimizationView({
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  const previousStoreRef = useRef(selectedStore);
+  useEffect(() => {
+    if (previousStoreRef.current !== selectedStore) {
+      previousStoreRef.current = selectedStore;
+      setSelectedKeys(new Set());
+      setAutoUploadSuccessResult(null);
+      setAutoUploadError(null);
+      setIsAutoUploadModalOpen(false);
+      setAutoUploadStep(0);
+    }
+  }, [selectedStore]);
 
   // Fetch registry
   const fetchRegistry = async () => {
@@ -415,10 +429,24 @@ export function PpcStOptimizationView({
   }, [filteredCandidates, selectedKeys]);
 
   const handleOpenAutoUploadModal = () => {
+    if (selectedStore === "ALL") {
+      notify("Không thể Auto Upload khi đang chọn 'Tất cả Store'. Vui lòng chọn 1 Store cụ thể trên thanh điều hướng để đảm bảo phủ định từ khóa chính xác trên tài khoản Amazon Seller.", "error");
+      return;
+    }
     if (modalCandidates.length === 0) {
       notify("Không có Search Term nào thỏa mãn để Auto Upload.", "error");
       return;
     }
+
+    const conflictingItem = modalCandidates.find((c) => {
+      if (c.storeName && c.storeName !== "ALL" && c.storeName.toLowerCase() !== selectedStore.toLowerCase()) return true;
+      return false;
+    });
+    if (conflictingItem) {
+      notify(`Dữ liệu chứa từ khóa thuộc Store "${conflictingItem.storeName}", không khớp với Store "${selectedStore}". Vui lòng làm mới trang để đảm bảo dữ liệu đồng bộ.`, "error");
+      return;
+    }
+
     setAutoUploadError(null);
     setAutoUploadSuccessResult(null);
     setAutoUploadStep(0);
@@ -426,6 +454,10 @@ export function PpcStOptimizationView({
   };
 
   const handleExecuteAutoUpload = async () => {
+    if (selectedStore === "ALL") {
+      notify("Không thể Auto Upload khi đang chọn 'Tất cả Store'. Vui lòng chọn 1 Store cụ thể.", "error");
+      return;
+    }
     if (modalCandidates.length === 0) {
       notify("Không có Search Term nào thỏa mãn để Auto Upload.", "error");
       return;
@@ -436,10 +468,9 @@ export function PpcStOptimizationView({
     setAutoUploadStep(1);
 
     try {
-      const activeStoreName = selectedStore !== "ALL"
-        ? selectedStore
-        : (modalCandidates.find((c) => c.storeName)?.storeName || modalCandidates[0]?.storeName || "");
-      const activeStoreId = modalCandidates.find((c) => c.storeId)?.storeId || modalCandidates[0]?.storeId;
+      const storeObj = stores?.find((s) => s.name.toLowerCase() === selectedStore.toLowerCase());
+      const activeStoreName = storeObj?.name || selectedStore;
+      const activeStoreId = storeObj?.id || modalCandidates.find((c) => c.storeId)?.storeId || modalCandidates[0]?.storeId;
 
       const payload = {
         storeName: activeStoreName,
@@ -741,9 +772,9 @@ export function PpcStOptimizationView({
           <button
             type="button"
             onClick={handleOpenAutoUploadModal}
-            disabled={filteredCandidates.length === 0}
+            disabled={filteredCandidates.length === 0 || selectedStore === "ALL"}
             className="px-4 py-1.5 rounded-lg bg-linear-to-r from-rose-600 to-red-600 hover:from-rose-700 hover:to-red-700 text-white text-xs font-black transition flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Tự động xếp hàng upload phủ định lên Amazon Ads thông qua AdsPower trên Mac mini"
+            title={selectedStore === "ALL" ? "Vui lòng chọn 1 Store cụ thể trên thanh công cụ để thực hiện Auto Upload" : "Tự động xếp hàng upload phủ định lên Amazon Ads thông qua AdsPower trên Mac mini"}
           >
             <Lightning size={15} weight="fill" className="text-amber-300 animate-pulse" />
             <span>

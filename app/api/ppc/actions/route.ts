@@ -16,7 +16,8 @@ export async function GET(request: Request) {
     const actor = authorize(request, "read");
     const { searchParams } = new URL(request.url);
     const storeTarget = searchParams.get("storeName") || searchParams.get("storeId");
-    const storeId = await resolveStoreId(storeTarget);
+    const isAllStores = !storeTarget || storeTarget === "ALL";
+    const storeId = isAllStores ? "ALL" : await resolveStoreId(storeTarget);
     const currentUser = actor.displayName || actor.userId;
     const userFilter = searchParams.get("allUsers") === "true" ? undefined : currentUser;
 
@@ -39,12 +40,24 @@ export async function POST(request: Request) {
 
     const body = await request.json();
     const { searchParams } = new URL(request.url);
-    const storeId = await resolveStoreId(body?.storeId || searchParams.get("storeId"));
-
     const items = Array.isArray(body?.items) ? body.items : [];
     if (items.length === 0) {
       throw new ApiError("Không có đề xuất nào được gửi để duyệt.", 400);
     }
+
+    const rawTarget =
+      body?.storeId ||
+      body?.storeName ||
+      searchParams.get("storeId") ||
+      searchParams.get("storeName");
+    const fallbackStore =
+      items[0]?.recommendation?.storeId || items[0]?.recommendation?.storeName;
+    const storeTarget = rawTarget !== undefined && rawTarget !== null && rawTarget !== ""
+      ? rawTarget
+      : fallbackStore || "ALL";
+    const storeId = (!storeTarget || storeTarget === "ALL")
+      ? "ALL"
+      : await resolveStoreId(storeTarget);
 
     const defaultApprovedBy = actor.displayName || actor.userId || "User";
     const res = await approveRecommendationsToActionQueue(storeId, items, defaultApprovedBy);
@@ -62,7 +75,9 @@ export async function DELETE(request: Request) {
   try {
     authorize(request, "write");
     const { searchParams } = new URL(request.url);
-    const storeId = await resolveStoreId(searchParams.get("storeId"));
+    const storeTarget = searchParams.get("storeId") || searchParams.get("storeName");
+    const isAllStores = !storeTarget || storeTarget === "ALL";
+    const storeId = isAllStores ? "ALL" : await resolveStoreId(storeTarget);
 
     let bodyActionIds: string[] | undefined;
     try {

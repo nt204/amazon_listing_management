@@ -132,6 +132,7 @@ interface PpcSaleKwViewProps {
   notify: (message: string, type?: "success" | "error") => void;
   onOpenActionQueue?: () => void;
   actor?: RequestActor;
+  stores?: Array<{ id: string; name: string }>;
 }
 
 export function PpcSaleKwView({
@@ -143,6 +144,7 @@ export function PpcSaleKwView({
   notify,
   onOpenActionQueue,
   actor,
+  stores,
 }: PpcSaleKwViewProps) {
   // 0. Sub-tab state
   const [subTab, setSubTab] = useState<"candidates" | "registry">("candidates");
@@ -281,6 +283,18 @@ export function PpcSaleKwView({
   const [disabledMatchTypes, setDisabledMatchTypes] = useState<Set<string>>(new Set());
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  const previousStoreRef = useRef(selectedStore);
+  useEffect(() => {
+    if (previousStoreRef.current !== selectedStore) {
+      previousStoreRef.current = selectedStore;
+      setSelectedKeys(new Set());
+      setAutoUploadSuccessResult(null);
+      setAutoUploadError(null);
+      setIsAutoUploadModalOpen(false);
+      setAutoUploadStep(0);
+    }
+  }, [selectedStore]);
 
   // Pagination for Candidates
   const [page, setPage] = useState<number>(1);
@@ -816,8 +830,9 @@ export function PpcSaleKwView({
 
     setIsExporting(true);
     try {
+      const storeObj = stores?.find((s) => s.name.toLowerCase() === selectedStore.toLowerCase());
       const activeStoreName = selectedStore !== "ALL"
-        ? selectedStore
+        ? (storeObj?.name || selectedStore)
         : launchableTargetItems.find((c) => c.storeName)?.storeName || launchableTargetItems[0]?.storeName || "STORE";
 
       const triadCampaigns = buildTriadCampaignsPayload();
@@ -900,6 +915,10 @@ export function PpcSaleKwView({
 
   // Open Auto Upload Modal
   const handleOpenAutoUploadModal = () => {
+    if (selectedStore === "ALL") {
+      notify("Không thể Auto Upload khi đang chọn 'Tất cả Store'. Vui lòng chọn 1 Store cụ thể trên thanh điều hướng để đảm bảo upload chính xác vào đúng tài khoản Amazon Seller.", "error");
+      return;
+    }
     if (!registryLookupReady) {
       notify("Đang kiểm tra các từ khóa đã lên Campaign. Vui lòng chờ hoàn tất.", "error");
       return;
@@ -908,6 +927,16 @@ export function PpcSaleKwView({
       notify("Hãy chọn ít nhất một match type để Auto Upload.", "error");
       return;
     }
+
+    const conflictingItem = launchableTargetItems.find((c) => {
+      if (c.storeName && c.storeName !== "ALL" && c.storeName.toLowerCase() !== selectedStore.toLowerCase()) return true;
+      return false;
+    });
+    if (conflictingItem) {
+      notify(`Dữ liệu chứa từ khóa thuộc Store "${conflictingItem.storeName}", không khớp với Store "${selectedStore}". Vui lòng làm mới trang để đảm bảo dữ liệu đồng bộ.`, "error");
+      return;
+    }
+
     setAutoUploadError(null);
     setAutoUploadSuccessResult(null);
     setAutoUploadStep(0);
@@ -916,6 +945,10 @@ export function PpcSaleKwView({
 
   // Execute Auto Upload
   const handleExecuteAutoUpload = async () => {
+    if (selectedStore === "ALL") {
+      notify("Không thể Auto Upload khi đang chọn 'Tất cả Store'. Vui lòng chọn 1 Store cụ thể.", "error");
+      return;
+    }
     if (!registryLookupReady) {
       notify("Chưa thể xác nhận trạng thái các từ khóa đã lên Campaign.", "error");
       return;
@@ -930,10 +963,9 @@ export function PpcSaleKwView({
     setAutoUploadStep(1);
 
     try {
-      const activeStoreName = selectedStore !== "ALL"
-        ? selectedStore
-        : launchableTargetItems.find((c) => c.storeName)?.storeName || launchableTargetItems[0]?.storeName || "";
-      const activeStoreId = launchableTargetItems.find((c) => c.storeId)?.storeId || launchableTargetItems[0]?.storeId;
+      const storeObj = stores?.find((s) => s.name.toLowerCase() === selectedStore.toLowerCase());
+      const activeStoreName = storeObj?.name || selectedStore;
+      const activeStoreId = storeObj?.id || launchableTargetItems.find((c) => c.storeId)?.storeId || launchableTargetItems[0]?.storeId;
 
       const triadCampaigns = buildTriadCampaignsPayload();
 
@@ -1308,9 +1340,9 @@ export function PpcSaleKwView({
                 <button
                   type="button"
                   onClick={handleOpenAutoUploadModal}
-                  disabled={candidateActionsDisabled || launchableTargetItems.length === 0 || targetCampaignCount === 0}
+                  disabled={candidateActionsDisabled || launchableTargetItems.length === 0 || targetCampaignCount === 0 || selectedStore === "ALL"}
                   className="px-4 py-1.5 rounded-lg bg-linear-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-black transition flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-40 disabled:cursor-not-allowed"
-                  title="Xếp hàng tự động nạp qua AdsPower lên Amazon"
+                  title={selectedStore === "ALL" ? "Vui lòng chọn 1 Store cụ thể trên thanh công cụ để thực hiện Auto Upload" : "Xếp hàng tự động nạp qua AdsPower lên Amazon"}
                 >
                   <Lightning size={15} weight="fill" className="text-amber-300 animate-pulse" />
                   <span>Auto Upload ({targetCampaignCount} camps)</span>

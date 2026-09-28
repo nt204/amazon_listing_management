@@ -1,5 +1,6 @@
 // app/api/ppc/auto-upload/route.ts
-import { authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
+import { ApiError, authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
+import { getDatabaseClient } from "@/lib/db";
 import {
   cancelAutoUploadJob,
   executeAutoUploadZeroSpendActions,
@@ -60,11 +61,77 @@ export async function POST(request: Request) {
 
     const body = await request.json().catch(() => ({}));
     const { searchParams } = new URL(request.url);
-    const storeId = await resolveStoreId(body?.storeId || searchParams.get("storeId"));
+    const storeTarget = (body?.storeId || body?.storeName || searchParams.get("storeId") || searchParams.get("storeName") || "").trim();
     const actionIds = Array.isArray(body?.actionIds) ? body.actionIds : undefined;
     const allowAllSkus = body?.allowAllSkus === true || (Array.isArray(actionIds) && actionIds.length > 0);
+    const sql = await getDatabaseClient();
 
-    const result = await executeAutoUploadZeroSpendActions(storeId, actionIds, actor.teamId, {
+    let finalStoreId: string;
+
+    if (actionIds && actionIds.length > 0) {
+      // 1. Xác thực store thực tế của các actions trong DB
+      const actionStoreRows = await sql<{ store_id: string; store_name: string }[]>`
+        SELECT DISTINCT a.store_id, s.name as store_name
+        FROM ppc_actions a
+        JOIN ppc_stores s ON s.id = a.store_id
+        WHERE a.id = ANY(${actionIds})
+      `;
+
+      if (actionStoreRows.length === 0) {
+        throw new ApiError("Không tìm thấy hành động nào trong danh sách được chọn.", 400);
+      }
+
+      if (actionStoreRows.length > 1) {
+        const storeNames = actionStoreRows.map((r) => `"${r.store_name}"`).join(", ");
+        throw new ApiError(
+          `Cảnh báo an toàn: Các hành động được chọn thuộc nhiều Store khác nhau (${storeNames}). Để tránh nhầm lẫn tài khoản Amazon Ads, vui lòng lọc riêng từng Store trước khi Auto Upload.`,
+          400
+        );
+      }
+
+      const verifiedStore = actionStoreRows[0];
+
+      // Nếu client có truyền storeTarget (và không phải ALL), đối chiếu kiểm tra bất đồng bộ
+      if (storeTarget && storeTarget !== "ALL") {
+        const targetStoreRows = await sql<{ id: string; name: string }[]>`
+          SELECT id, name FROM ppc_stores
+          WHERE (id::text = ${storeTarget} OR LOWER(name) = LOWER(${storeTarget}))
+            AND team_id = ${actor.teamId}
+          LIMIT 1
+        `;
+        if (targetStoreRows.length > 0 && targetStoreRows[0].id !== verifiedStore.store_id) {
+          throw new ApiError(
+            `Bất đồng bộ Store: Bạn đang chọn Store "${targetStoreRows[0].name}" nhưng các hành động cần upload lại thuộc Store "${verifiedStore.store_name}". Hệ thống đã chặn tác vụ để bảo vệ tài khoản Amazon Ads!`,
+            400
+          );
+        }
+      }
+
+      finalStoreId = verifiedStore.store_id;
+    } else {
+      // Auto upload toàn bộ queue mà không chọn actionIds cụ thể: BẮT BUỘC phải chỉ định 1 store cụ thể
+      if (!storeTarget || storeTarget === "ALL") {
+        throw new ApiError(
+          "Không thể Auto Upload khi đang chọn 'Tất cả Store'. Vui lòng chọn một Store cụ thể trên thanh công cụ để bảo đảm không upload nhầm tài khoản Amazon Ads.",
+          400
+        );
+      }
+
+      const storeRows = await sql<{ id: string; name: string }[]>`
+        SELECT id, name FROM ppc_stores
+        WHERE (id::text = ${storeTarget} OR LOWER(name) = LOWER(${storeTarget}))
+          AND team_id = ${actor.teamId}
+        LIMIT 1
+      `;
+
+      if (!storeRows.length) {
+        throw new ApiError(`Không tìm thấy Store "${storeTarget}" trong hệ thống.`, 404);
+      }
+
+      finalStoreId = storeRows[0].id;
+    }
+
+    const result = await executeAutoUploadZeroSpendActions(finalStoreId, actionIds, actor.teamId, {
       allowAllSkus,
       createdBy: actor.displayName || actor.userId,
     });

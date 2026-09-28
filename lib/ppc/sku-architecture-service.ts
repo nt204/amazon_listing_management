@@ -1425,6 +1425,8 @@ export async function approveRecommendationsToActionQueue(
   const sql = await getDatabaseClient();
   let addedCount = 0;
   let supersededCount = 0;
+  const isUuid = (val?: string | null) =>
+    Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val));
 
   await sql.begin(async (tx: any) => {
     const campaignIds = Array.from(
@@ -1433,10 +1435,9 @@ export async function approveRecommendationsToActionQueue(
 
     const existingRows = campaignIds.length > 0
       ? await tx<any[]>`
-          SELECT id, campaign_id, target_id, target_keyword, match_type, action_type, status
+          SELECT id, store_id, campaign_id, target_id, target_keyword, match_type, action_type, status
           FROM ppc_actions
-          WHERE store_id = ${storeId}
-            AND status IN ('PENDING', 'APPROVED', 'QUEUED')
+          WHERE status IN ('PENDING', 'APPROVED', 'QUEUED')
             AND campaign_id = ANY(${campaignIds})
         `
       : [];
@@ -1450,9 +1451,15 @@ export async function approveRecommendationsToActionQueue(
       const targetId = rec.keywordId || "";
       const actionType: ActionType = rec.recType === "PAUSE_TARGET" ? "PAUSE_TARGET" : "UPDATE_BID";
       const finalValue = item.userFinalBid ?? rec.recommendedBid ?? rec.currentBid ?? 0;
+      const targetStoreId = (isUuid(rec.storeId) && rec.storeId !== "ALL")
+        ? rec.storeId
+        : (isUuid(storeId) && storeId !== "ALL")
+        ? storeId
+        : rec.storeId || storeId;
 
       // Find matching existing actions to supersede
       const matches = existingRows.filter((ex: any) => {
+        if (ex.store_id !== targetStoreId) return false;
         if (ex.campaign_id !== campaignId) return false;
         return (targetId && ex.target_id === targetId) ||
           (ex.target_keyword === rec.keyword && ex.match_type === (rec.matchType || "Exact"));
@@ -1466,7 +1473,7 @@ export async function approveRecommendationsToActionQueue(
       }
 
       return {
-        store_id: storeId,
+        store_id: targetStoreId,
         recommendation_id: rec.id,
         sku,
         campaign_id: campaignId,
@@ -1492,7 +1499,7 @@ export async function approveRecommendationsToActionQueue(
     // Deduplicate within the same batch: later recommendation for the same target supersedes earlier
     const uniqueMap = new Map<string, (typeof rowsToInsert)[0]>();
     for (const row of rowsToInsert) {
-      const targetKey = `${row.campaign_id}\0${row.target_id || ""}\0${row.target_keyword}\0${row.match_type}`;
+      const targetKey = `${row.store_id}\0${row.campaign_id}\0${row.target_id || ""}\0${row.target_keyword}\0${row.match_type}`;
       uniqueMap.set(targetKey, row);
     }
     const finalRowsToInsert = Array.from(uniqueMap.values());
@@ -1529,42 +1536,37 @@ export async function approveRecommendationsToActionQueue(
   return { addedCount, supersededCount };
 }
 
-export async function getActionQueueCount(storeId: string, approvedBy?: string): Promise<number> {
+export async function getActionQueueCount(storeId?: string | null, approvedBy?: string): Promise<number> {
   const sql = await getDatabaseClient();
+  const isAll = !storeId || storeId === "ALL";
   const rows = await sql<{ count: number }[]>`
     SELECT COUNT(*)::int as count
     FROM ppc_actions
-    WHERE store_id = ${storeId}
-      AND status IN ('APPROVED', 'QUEUED')
+    WHERE status IN ('APPROVED', 'QUEUED')
+      ${isAll ? sql`` : sql`AND store_id = ${storeId}`}
       ${approvedBy ? sql`AND (approved_by = ${approvedBy} OR approved_by = 'User')` : sql``}
   `;
   return Number(rows[0]?.count || 0);
 }
 
-export async function getActionQueue(storeId: string, approvedBy?: string): Promise<PpcAction[]> {
+export async function getActionQueue(storeId?: string | null, approvedBy?: string): Promise<PpcAction[]> {
   const sql = await getDatabaseClient();
+  const isAll = !storeId || storeId === "ALL";
   const rows = await sql<any[]>`
     SELECT 
       a.*,
       COALESCE(p.total_spend, 0) as sku_spend
     FROM ppc_actions a
     LEFT JOIN (
-      SELECT UPPER(TRIM(sku)) as sku_code, SUM(spend) as total_spend
+      SELECT store_id, UPPER(TRIM(sku)) as sku_code, SUM(spend) as total_spend
       FROM ppc_performance_facts
-      WHERE store_id = ${storeId} 
-        AND grain = 'PRODUCT' 
+      WHERE grain = 'PRODUCT' 
         AND sku IS NOT NULL
-        AND (snapshot_date, report_start_date, report_end_date) = (
-          SELECT snapshot_date, report_start_date, report_end_date
-          FROM ppc_performance_facts 
-          WHERE store_id = ${storeId} AND grain = 'PRODUCT'
-          ORDER BY snapshot_date DESC, (report_end_date - report_start_date) DESC
-          LIMIT 1
-        )
-      GROUP BY UPPER(TRIM(sku))
-    ) p ON UPPER(TRIM(a.sku)) = p.sku_code
-    WHERE a.store_id = ${storeId}
-      AND a.status IN ('APPROVED', 'QUEUED')
+        ${isAll ? sql`` : sql`AND store_id = ${storeId}`}
+      GROUP BY store_id, UPPER(TRIM(sku))
+    ) p ON a.store_id = p.store_id AND UPPER(TRIM(a.sku)) = p.sku_code
+    WHERE a.status IN ('APPROVED', 'QUEUED')
+      ${isAll ? sql`` : sql`AND a.store_id = ${storeId}`}
       ${approvedBy ? sql`AND (a.approved_by = ${approvedBy} OR a.approved_by = 'User')` : sql``}
     ORDER BY a.created_at DESC
   `;
@@ -1598,13 +1600,15 @@ export async function getActionQueue(storeId: string, approvedBy?: string): Prom
   }));
 }
 
-export async function removeActionsFromQueue(storeId: string, actionIds: string[]): Promise<number> {
+export async function removeActionsFromQueue(storeId?: string | null, actionIds: string[] = []): Promise<number> {
   if (!actionIds || actionIds.length === 0) return 0;
   const sql = await getDatabaseClient();
+  const isAll = !storeId || storeId === "ALL";
   const res = await sql`
     UPDATE ppc_actions
     SET status = 'IGNORED', updated_at = NOW()
-    WHERE store_id = ${storeId} AND id = ANY(${actionIds})
+    WHERE id = ANY(${actionIds})
+      ${isAll ? sql`` : sql`AND store_id = ${storeId}`}
   `;
   return res.count;
 }

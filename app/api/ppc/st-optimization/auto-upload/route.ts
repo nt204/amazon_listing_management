@@ -55,18 +55,9 @@ export async function POST(request: Request) {
 
     const sql = await getDatabaseClient();
 
-    // 1. Resolve store
+    // 1. Resolve store: prioritize explicit requestedStoreName if valid and not ALL
     let storeRow: { id: string; name: string } | null = null;
-    if (requestedStoreId) {
-      const rows = await sql<{ id: string; name: string }[]>`
-        SELECT id, name FROM ppc_stores
-        WHERE id = ${requestedStoreId} AND team_id = ${actor.teamId}
-        LIMIT 1
-      `;
-      if (rows.length > 0) storeRow = rows[0];
-    }
-
-    if (!storeRow && requestedStoreName) {
+    if (requestedStoreName && requestedStoreName !== "ALL") {
       const rows = await sql<{ id: string; name: string }[]>`
         SELECT id, name FROM ppc_stores
         WHERE LOWER(name) = LOWER(${requestedStoreName}) AND team_id = ${actor.teamId}
@@ -75,22 +66,65 @@ export async function POST(request: Request) {
       if (rows.length > 0) storeRow = rows[0];
     }
 
-    if (!storeRow) {
-      const fallbackRows = await sql<{ id: string; name: string }[]>`
+    if (!storeRow && requestedStoreId && requestedStoreId !== "ALL") {
+      const rows = await sql<{ id: string; name: string }[]>`
         SELECT id, name FROM ppc_stores
-        WHERE team_id = ${actor.teamId}
-        ORDER BY created_at ASC
+        WHERE id = ${requestedStoreId} AND team_id = ${actor.teamId}
         LIMIT 1
       `;
-      if (fallbackRows.length > 0) storeRow = fallbackRows[0];
+      if (rows.length > 0) storeRow = rows[0];
     }
 
     if (!storeRow) {
-      throw new ApiError("Không tìm thấy store hợp lệ để thực hiện Auto Upload.", 400);
+      const itemStoreNames = Array.from(new Set(rawItems.map((i) => i.storeName).filter(Boolean)));
+      const itemStoreIds = Array.from(new Set(rawItems.map((i) => i.storeId).filter(Boolean)));
+      if (itemStoreNames.length > 1 || itemStoreIds.length > 1) {
+        throw new ApiError(
+          `Các từ khóa được chọn thuộc nhiều Store khác nhau (${itemStoreNames.join(", ")}). Để tránh nhầm lẫn tài khoản Amazon Ads, vui lòng lọc từng Store trước khi Auto Upload phủ định.`,
+          400
+        );
+      }
+      const targetStoreName = itemStoreNames[0];
+      const targetStoreId = itemStoreIds[0];
+      if (itemStoreNames.length === 1 && targetStoreName) {
+        const rows = await sql<{ id: string; name: string }[]>`
+          SELECT id, name FROM ppc_stores
+          WHERE LOWER(name) = LOWER(${targetStoreName}) AND team_id = ${actor.teamId}
+          LIMIT 1
+        `;
+        if (rows.length > 0) storeRow = rows[0];
+      } else if (itemStoreIds.length === 1 && targetStoreId) {
+        const rows = await sql<{ id: string; name: string }[]>`
+          SELECT id, name FROM ppc_stores
+          WHERE id = ${targetStoreId} AND team_id = ${actor.teamId}
+          LIMIT 1
+        `;
+        if (rows.length > 0) storeRow = rows[0];
+      }
+    }
+
+    if (!storeRow) {
+      throw new ApiError(
+        "Không thể Auto Upload khi chưa xác định Store cụ thể (đang ở chế độ Tất cả Store hoặc thiếu thông tin Store). Vui lòng chọn 1 Store cụ thể trên thanh công cụ để bảo vệ tài khoản.",
+        400
+      );
     }
 
     const storeId = storeRow.id;
     const storeName = storeRow.name;
+
+    // Cross-validate that all items actually belong to this resolved store
+    const conflictingItem = rawItems.find((item) => {
+      if (item.storeId && item.storeId !== storeId && item.storeId !== "ALL") return true;
+      if (item.storeName && item.storeName.toLowerCase() !== storeName.toLowerCase() && item.storeName !== "ALL") return true;
+      return false;
+    });
+    if (conflictingItem) {
+      throw new ApiError(
+        `Phát hiện từ khóa "${conflictingItem.customerSearchTerm}" thuộc Store "${conflictingItem.storeName || conflictingItem.storeId}", không khớp với Store đích "${storeName}". Hệ thống đã chặn Auto Upload để tránh upload nhầm tài khoản!`,
+        400
+      );
+    }
 
     // 2. Deduplicate by (campaignName, customerSearchTerm)
     const dedupMap = new Map<string, StCandidateInput>();

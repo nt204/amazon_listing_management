@@ -351,6 +351,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
   const [skuSortDir, setSkuSortDir] = useState<SortDirection>("desc");
 
   const [loading, setLoading] = useState(true);
+  const [isStoreSwitching, setIsStoreSwitching] = useState(false);
+  const isStoreSwitchingRef = useRef(false);
   const [syncingR2, setSyncingR2] = useState(false);
   const [syncingAdsPower, setSyncingAdsPower] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -364,14 +366,14 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
   const [dateRangeEnd, setDateRangeEnd] = useState<string | null>(null);
   const [dailyTrends, setDailyTrends] = useState<PpcDailyTrendPoint[]>([]);
   const [uploading, setUploading] = useState(false);
-  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
   const [summary7D, setSummary7D] = useState<PpcSummaryMetrics | null>(null);
   const [adTypeBreakdown7D, setAdTypeBreakdown7D] = useState<PpcAdTypeBreakdown[]>([]);
   const metricsRequestRef = useRef<{ controller: AbortController; id: number } | null>(null);
   const metricsRequestIdRef = useRef(0);
 
   // Notification helper
-  const notify = (message: string, type: "success" | "error" = "success") => {
+  const notify = (message: string, type: "success" | "error" | "info" = "success") => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
   };
@@ -421,13 +423,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
         setSummary7D(data.summary7D || null);
         setAdTypeBreakdown7D(data.adTypeBreakdown7D || []);
         setVelocity(data.velocity || null);
-        if (data.skuPerformance && data.skuPerformance.length > 0) setSkuPerformance(data.skuPerformance);
-        if (data.campaignPerformance && data.campaignPerformance.length > 0) {
-          setCampaignPerformance(data.campaignPerformance);
-          setOverviewCampaigns(data.campaignPerformance);
-        }
-        if (data.adGroups && data.adGroups.length > 0) setAdGroupPerformance(data.adGroups);
-        if (data.targets && data.targets.length > 0) setTargetPerformance(data.targets);
+        setSkuPerformance(data.skuPerformance || []);
+        setCampaignPerformance(data.campaignPerformance || []);
+        setOverviewCampaigns(data.campaignPerformance || []);
+        setAdGroupPerformance(data.adGroups || []);
+        setTargetPerformance(data.targets || []);
         setAdTypeBreakdown(data.adTypeBreakdown || []);
         setDataHealth(data.dataHealth || null);
         setTargetTypeBreakdown(data.targetTypeBreakdown || []);
@@ -449,6 +449,13 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
         setTargetPage(1);
         setSkuPage(1);
       });
+      if (isStoreSwitchingRef.current) {
+        isStoreSwitchingRef.current = false;
+        notify(
+          `Đã tải xong dữ liệu cho ${selectedStore === "ALL" ? "Tất cả Store" : `Store ${selectedStore}`}`,
+          "success"
+        );
+      }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       console.error(err);
@@ -457,6 +464,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
       if (metricsRequestRef.current?.id === requestId) {
         metricsRequestRef.current = null;
         setLoading(false);
+        setIsStoreSwitching(false);
       }
     }
   }, [selectedStore, selectedSku, selectedDays, isCustomDate, customStartDate, customEndDate]);
@@ -641,10 +649,14 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
   const loadActionQueueCount = useCallback(async (targetStore?: string) => {
     try {
       const activeStore = targetStore !== undefined ? targetStore : selectedStore;
-      const query = activeStore && activeStore !== "ALL"
-        ? `?storeName=${encodeURIComponent(activeStore)}`
-        : "";
-      const res = await fetch(`/api/ppc/actions/count${query}`, { cache: "no-store" });
+      const params = new URLSearchParams();
+      if (activeStore && activeStore !== "ALL") {
+        params.set("storeName", activeStore);
+      } else {
+        params.set("storeName", "ALL");
+      }
+      params.set("allUsers", "true");
+      const res = await fetch(`/api/ppc/actions/count?${params.toString()}`, { cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json();
       if (typeof data?.count === "number") {
@@ -658,10 +670,14 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
   const loadActionQueue = useCallback(async (targetStore?: string) => {
     try {
       const activeStore = targetStore !== undefined ? targetStore : selectedStore;
-      const query = activeStore && activeStore !== "ALL"
-        ? `?storeName=${encodeURIComponent(activeStore)}`
-        : "";
-      const res = await fetch(`/api/ppc/actions${query}`, { cache: "no-store" });
+      const params = new URLSearchParams();
+      if (activeStore && activeStore !== "ALL") {
+        params.set("storeName", activeStore);
+      } else {
+        params.set("storeName", "ALL");
+      }
+      params.set("allUsers", "true");
+      const res = await fetch(`/api/ppc/actions?${params.toString()}`, { cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json();
       if (data?.data) {
@@ -701,37 +717,49 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
   };
 
   const handleApproveToQueue = async (items: Array<{ recommendation: PpcRecommendation; userFinalBid?: number }>) => {
+    const storeObj = stores.find((s) => s.name.toLowerCase() === selectedStore.toLowerCase());
     const res = await fetch("/api/ppc/actions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items }),
+      body: JSON.stringify({
+        items,
+        storeName: selectedStore,
+        storeId: storeObj?.id,
+      }),
     });
-    if (!res.ok) throw new Error("Không thể duyệt hành động vào Action Queue.");
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Không thể duyệt hành động vào Action Queue.");
+    }
     const data = await res.json();
-    void loadActionQueue();
+    void loadActionQueue(selectedStore);
+    void loadActionQueueCount(selectedStore);
     void loadGroupedRecommendations(true);
     notify(data.message || "Đã duyệt đề xuất vào Action Queue!", "success");
   };
 
   const handleRemoveAction = async (actionId: string) => {
-    const res = await fetch(`/api/ppc/actions?actionId=${encodeURIComponent(actionId)}`, {
+    const targetStore = selectedStore === "ALL" ? "ALL" : (stores.find((s) => s.name.toLowerCase() === selectedStore.toLowerCase())?.id || "");
+    const res = await fetch(`/api/ppc/actions?actionId=${encodeURIComponent(actionId)}&storeId=${encodeURIComponent(targetStore)}`, {
       method: "DELETE",
     });
     if (!res.ok) throw new Error("Không thể xóa hành động.");
-    void loadActionQueue();
+    void loadActionQueue(selectedStore);
+    void loadActionQueueCount(selectedStore);
     notify("Đã xóa hành động khỏi Action Queue.", "success");
   };
 
   const handleRemoveActions = async (actionIds: string[]) => {
     if (!actionIds || actionIds.length === 0) return;
-    const targetStore = stores.find((s) => s.name === selectedStore)?.id || stores[0]?.id;
-    const res = await fetch(`/api/ppc/actions?storeId=${encodeURIComponent(targetStore || "")}`, {
+    const targetStore = selectedStore === "ALL" ? "ALL" : (stores.find((s) => s.name.toLowerCase() === selectedStore.toLowerCase())?.id || "");
+    const res = await fetch(`/api/ppc/actions?storeId=${encodeURIComponent(targetStore)}`, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ actionIds }),
     });
     if (!res.ok) throw new Error("Không thể xóa các hành động đã chọn.");
-    void loadActionQueue();
+    void loadActionQueue(selectedStore);
+    void loadActionQueueCount(selectedStore);
     notify(`Đã xóa ${actionIds.length} hành động khỏi Action Queue.`, "success");
   };
 
@@ -807,6 +835,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
       currentFiltersRef.current.end !== customEndDate;
 
     if (filtersChanged) {
+      const storeChanged = currentFiltersRef.current.store !== selectedStore;
       currentFiltersRef.current = {
         store: selectedStore,
         sku: selectedSku,
@@ -826,6 +855,32 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
       setSearchTermsReady(false);
       setSelectedCampaignForDrilldown(null);
       setSelectedAdGroupForDrilldown(null);
+      setSkuRecGroups([]);
+      setSkuRecAllRecs([]);
+      if (storeChanged) {
+        isStoreSwitchingRef.current = true;
+        setIsStoreSwitching(true);
+        setLoading(true);
+        notify(
+          `Đang chuyển sang ${selectedStore === "ALL" ? "Tất cả Store" : `Store ${selectedStore}`}...`,
+          "info"
+        );
+        setSummary(null);
+        setSummary7D(null);
+        setDataHealth(null);
+        setCampaignPerformance([]);
+        setAdGroupPerformance([]);
+        setTargetPerformance([]);
+        setSkuPerformance([]);
+        setDailyTrends([]);
+        setOverviewSearchTerms([]);
+        setOverviewCampaigns([]);
+        setDetailCounts(null);
+        setActionQueue([]);
+        setActionQueueCount(0);
+        void loadActionQueue(selectedStore);
+        void loadActionQueueCount(selectedStore);
+      }
     }
 
     if (filtersChanged || !loadedSectionsRef.current.has("overview")) {
@@ -850,9 +905,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
       }
     } else if (activeTab === "recommendations") {
       void loadGroupedRecommendations();
-      if (actionQueue.length === 0) {
-        void loadActionQueue();
-      }
+      void loadActionQueue(selectedStore);
+      void loadActionQueueCount(selectedStore);
     } else if (skuRecGroups.length === 0 && !loadingRecs && detailCounts?.skus) {
       const preloadTimer = window.setTimeout(() => {
         void loadGroupedRecommendations();
@@ -1781,9 +1835,28 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
     <div className={`w-full space-y-4 text-slate-800 ${!isEmbedded ? "max-w-7xl mx-auto p-6" : ""}`}>
       {/* Toast Notification */}
       {toast && (
-        <div className={`fixed bottom-20 right-6 z-50 text-white px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2.5 text-xs font-bold border animate-in fade-in ${toast.type === "error" ? "bg-rose-900 border-rose-700" : "bg-slate-900 border-slate-700"}`}>
-          {toast.type === "error" ? <X size={16} weight="bold" className="text-rose-200 shrink-0" /> : <CheckCircle size={16} weight="fill" className="text-emerald-400 shrink-0" />}
+        <div className={`fixed bottom-20 right-6 z-50 text-white px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2.5 text-xs font-bold border animate-in fade-in ${
+          toast.type === "error"
+            ? "bg-rose-900 border-rose-700"
+            : toast.type === "info"
+            ? "bg-indigo-950 border-indigo-700 text-indigo-100"
+            : "bg-slate-900 border-slate-700"
+        }`}>
+          {toast.type === "error" ? (
+            <X size={16} weight="bold" className="text-rose-200 shrink-0" />
+          ) : toast.type === "info" ? (
+            <CircleNotch size={16} className="animate-spin text-indigo-400 shrink-0" />
+          ) : (
+            <CheckCircle size={16} weight="fill" className="text-emerald-400 shrink-0" />
+          )}
           <span>{toast.message}</span>
+        </div>
+      )}
+
+      {/* Top Animated Progress Bar when loading */}
+      {(loading || isStoreSwitching || loadingSection !== null || loadingRecs) && (
+        <div className="fixed top-0 left-0 right-0 h-1 z-50 overflow-hidden bg-indigo-100 shadow-xs">
+          <div className="h-full bg-gradient-to-r from-indigo-500 via-sky-400 to-indigo-600 animate-[pulse_1s_ease-in-out_infinite] w-full" />
         </div>
       )}
 
@@ -1925,6 +1998,14 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                 ))}
               </select>
             </div>
+
+            {/* Store Loading Badge */}
+            {(loading || isStoreSwitching || loadingSection !== null) && (
+              <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-2.5 py-1 text-xs font-bold animate-pulse shadow-2xs">
+                <CircleNotch size={13} className="animate-spin text-amber-600 shrink-0" />
+                <span>Đang tải dữ liệu {selectedStore === "ALL" ? "tất cả store" : selectedStore}...</span>
+              </div>
+            )}
 
             {/* Nút Quản Lý Store */}
             <button
@@ -2922,7 +3003,17 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium">
-                {filteredSortedCampaigns.length === 0 ? (
+                {(loading || isStoreSwitching || loadingSection === "campaigns" || loadingCampaignPage) ? (
+                  <tr>
+                    <td colSpan={14} className="py-16 text-center text-slate-500">
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <CircleNotch size={26} className="animate-spin text-indigo-600" />
+                        <span className="font-bold text-sm text-slate-800">Đang tải danh sách Campaign cho {selectedStore === "ALL" ? "tất cả store" : selectedStore}...</span>
+                        <span className="text-xs text-slate-400">Vui lòng đợi giây lát trong khi hệ thống đồng bộ dữ liệu</span>
+                      </div>
+                    </td>
+                  </tr>
+                ) : filteredSortedCampaigns.length === 0 ? (
                   <tr>
                     <td colSpan={14} className="py-12 text-center text-slate-400">
                       <div className="flex flex-col items-center justify-center gap-1.5">
@@ -3208,12 +3299,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {loadingSection === "targets" ? (
+                {(loading || isStoreSwitching || loadingSection === "targets") ? (
                   <tr>
                     <td colSpan={14} className="p-12 text-center text-xs text-slate-500">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <CircleNotch size={24} className="animate-spin text-indigo-600" />
-                        <span className="font-bold text-slate-700">Đang tải danh sách Target / Keyword...</span>
+                        <span className="font-bold text-slate-700">Đang tải danh sách Target / Keyword cho {selectedStore === "ALL" ? "tất cả store" : selectedStore}...</span>
                         <span className="text-[11px] text-slate-400">Đang tải dữ liệu từ máy chủ, vui lòng đợi trong giây lát</span>
                       </div>
                     </td>
@@ -3541,12 +3632,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium">
-                {loadingSection === "skus" ? (
+                {(loading || isStoreSwitching || loadingSection === "skus" || loadingSkuEcon) ? (
                   <tr>
                     <td colSpan={10} className="p-12 text-center text-xs text-slate-500">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <CircleNotch size={24} className="animate-spin text-indigo-600" />
-                        <span className="font-bold text-slate-700">Đang tải danh sách SKU...</span>
+                        <span className="font-bold text-slate-700">Đang tải danh sách SKU cho {selectedStore === "ALL" ? "tất cả store" : selectedStore}...</span>
                       </div>
                     </td>
                   </tr>
@@ -3881,12 +3972,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
-                {!searchTermsReady || loadingSection === "search_terms" ? (
+                {(!searchTermsReady || loadingSection === "search_terms" || loading || isStoreSwitching) ? (
                   <tr>
                     <td colSpan={13} className="p-12 text-center text-xs text-slate-500">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <CircleNotch size={24} className="animate-spin text-indigo-600" />
-                        <span className="font-bold text-slate-700">Đang tải dữ liệu Search Terms...</span>
+                        <span className="font-bold text-slate-700">Đang tải dữ liệu Search Terms cho {selectedStore === "ALL" ? "tất cả store" : selectedStore}...</span>
                       </div>
                     </td>
                   </tr>
@@ -3978,6 +4069,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
           loading={!searchTermsReady || loadingSection === "search_terms"}
           notify={notify}
           onOpenActionQueue={() => setIsActionQueueOpen(true)}
+          stores={stores}
         />
       )}
 
@@ -3991,6 +4083,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
           notify={notify}
           onOpenActionQueue={() => setIsActionQueueOpen(true)}
           actor={actor}
+          stores={stores}
         />
       )}
 
@@ -4013,6 +4106,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
             onOpenActionQueue={() => setIsActionQueueOpen(true)}
             pendingQueueCount={pendingActionCount}
             actionQueue={actionQueue}
+            selectedStore={selectedStore}
+            isStoreSwitching={isStoreSwitching}
           />
         </div>
       )}
@@ -4136,7 +4231,10 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
             ? "ALL"
             : (stores.find((s) => s.name.toLowerCase() === selectedStore.toLowerCase())?.id || "")
         }
-        onRefreshActionQueue={() => void loadActionQueue()}
+        onRefreshActionQueue={() => {
+          void loadActionQueue(selectedStore);
+          void loadActionQueueCount(selectedStore);
+        }}
       />
 
       {/* FILE MANAGER MODAL (SERVER & R2 PURGE) */}

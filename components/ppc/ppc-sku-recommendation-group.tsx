@@ -27,6 +27,7 @@ import {
   Check,
   Info,
   ClipboardText,
+  CircleNotch,
 } from "@phosphor-icons/react";
 import {
   SKU_PREFIX_ERROR_PRODUCT_TYPE,
@@ -47,6 +48,8 @@ interface PpcSkuRecommendationGroupProps {
   onOpenActionQueue: () => void;
   pendingQueueCount: number;
   actionQueue?: PpcAction[];
+  selectedStore?: string;
+  isStoreSwitching?: boolean;
 }
 
 export type QuickFilterType =
@@ -85,6 +88,8 @@ export function PpcSkuRecommendationGroupView({
   onOpenActionQueue,
   pendingQueueCount,
   actionQueue,
+  selectedStore,
+  isStoreSwitching = false,
 }: PpcSkuRecommendationGroupProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedPhôi, setSelectedPhôi] = useState("ALL");
@@ -104,6 +109,22 @@ export function PpcSkuRecommendationGroupView({
   const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set());
   const [ruleExplanationModal, setRuleExplanationModal] = useState<PpcRecommendation | null>(null);
   const previousRecommendationWindowRef = useRef(recommendationWindowDays);
+  const previousStoreRef = useRef(selectedStore);
+
+  // When store changes, reset all open modals, selections and filters to prevent cross-store leakage
+  useEffect(() => {
+    if (previousStoreRef.current !== selectedStore) {
+      previousStoreRef.current = selectedStore;
+      setSelectedSkuGroup(null);
+      setSelectedRecIds(new Set());
+      setUserFinalBids({});
+      setRecentlyApprovedIds(new Set());
+      setRuleExplanationModal(null);
+      setSearchTerm("");
+      setSelectedPhôi("ALL");
+      setQuickFilter("ALL");
+    }
+  }, [selectedStore]);
 
   // Keep an open SKU detail modal attached to the newly loaded attribution
   // window instead of retaining the old group object in local state.
@@ -420,7 +441,7 @@ export function PpcSkuRecommendationGroupView({
 
   // Approve selected into Action Queue
   const handleApproveSelected = async () => {
-    if (selectedRecIds.size === 0) return;
+    if (selectedRecIds.size === 0 || isStoreSwitching) return;
     try {
       setIsApproving(true);
       const approvedIds = Array.from(selectedRecIds);
@@ -430,6 +451,17 @@ export function PpcSkuRecommendationGroupView({
           recommendation: r,
           userFinalBid: userFinalBids[r.id] ?? r.recommendedBid ?? r.currentBid ?? 0,
         }));
+
+      if (selectedStore && selectedStore !== "ALL") {
+        const mismatched = itemsToApprove.find((it) => {
+          const sName = it.recommendation.storeName;
+          return sName && sName !== "ALL" && sName.toLowerCase() !== selectedStore.toLowerCase();
+        });
+        if (mismatched) {
+          alert(`Đề xuất này thuộc Store "${mismatched.recommendation.storeName}", không khớp với Store "${selectedStore}" hiện tại. Đã chặn duyệt để tránh nhầm Store!`);
+          return;
+        }
+      }
 
       await onApproveToQueue(itemsToApprove);
       setRecentlyApprovedIds((prev) => new Set([...prev, ...approvedIds]));
@@ -443,7 +475,16 @@ export function PpcSkuRecommendationGroupView({
 
   // Approve single
   const handleApproveSingle = async (rec: PpcRecommendation) => {
+    if (isStoreSwitching) return;
     try {
+      if (selectedStore && selectedStore !== "ALL") {
+        const sName = rec.storeName;
+        if (sName && sName !== "ALL" && sName.toLowerCase() !== selectedStore.toLowerCase()) {
+          alert(`Đề xuất này thuộc Store "${rec.storeName}", không khớp với Store "${selectedStore}" hiện tại. Đã chặn duyệt để tránh nhầm Store!`);
+          return;
+        }
+      }
+
       setIsApproving(true);
       await onApproveToQueue([
         {
@@ -580,6 +621,13 @@ export function PpcSkuRecommendationGroupView({
               )}
             </div>
 
+            {isLoading && (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-bold animate-pulse shadow-2xs">
+                <CircleNotch size={14} className="animate-spin text-indigo-600 shrink-0" />
+                <span>Đang phân tích đề xuất {selectedStore === "ALL" ? "tất cả store" : selectedStore}...</span>
+              </div>
+            )}
+
             {/* Dynamic Phôi Dropdown */}
             <div className="flex items-center gap-1.5 text-xs text-slate-600 font-semibold bg-white px-2.5 py-1.5 rounded-lg border border-slate-200 shadow-2xs">
               <Tag size={14} className="text-slate-400" />
@@ -636,11 +684,10 @@ export function PpcSkuRecommendationGroupView({
                       onClick={() => onRecommendationWindowChange(days)}
                       disabled={isLoading || isSelected}
                       aria-pressed={isSelected}
-                      className={`min-w-9 rounded px-2 py-1 text-[11px] font-black transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1 ${
-                        isSelected
+                      className={`min-w-9 rounded px-2 py-1 text-[11px] font-black transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1 ${isSelected
                           ? `bg-indigo-600 text-white shadow-2xs ${isLoading ? "cursor-wait" : "cursor-default"}`
                           : "text-slate-600 hover:bg-indigo-50 hover:text-indigo-700 active:scale-[0.98]"
-                      } disabled:opacity-100`}
+                        } disabled:opacity-100`}
                       title={`Dùng dữ liệu ${days} ngày để tính đề xuất chỉnh bid`}
                     >
                       {isLoading && isSelected && !isLoaded ? "…" : `${days}D`}
@@ -680,16 +727,14 @@ export function PpcSkuRecommendationGroupView({
           <button
             type="button"
             onClick={() => setQuickFilter("ALL")}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${
-              quickFilter === "ALL"
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${quickFilter === "ALL"
                 ? "bg-indigo-50 text-indigo-700 border-indigo-300 ring-1 ring-indigo-200 shadow-2xs font-extrabold"
                 : "bg-slate-100/90 text-slate-700 hover:bg-slate-200/80 border-slate-200"
-            }`}
+              }`}
           >
             <span>Tất cả</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
-              quickFilter === "ALL" ? "bg-indigo-100 text-indigo-800" : "bg-white text-slate-700 shadow-2xs border border-slate-200/60"
-            }`}>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${quickFilter === "ALL" ? "bg-indigo-100 text-indigo-800" : "bg-white text-slate-700 shadow-2xs border border-slate-200/60"
+              }`}>
               {filterCounts.all}
             </span>
           </button>
@@ -698,17 +743,15 @@ export function PpcSkuRecommendationGroupView({
           <button
             type="button"
             onClick={() => setQuickFilter(quickFilter === "INCREASE" ? "ALL" : "INCREASE")}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${
-              quickFilter === "INCREASE"
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${quickFilter === "INCREASE"
                 ? "bg-emerald-100 text-emerald-900 border-emerald-400 ring-1 ring-emerald-300 shadow-2xs font-extrabold"
                 : "bg-emerald-50/70 text-emerald-800 hover:bg-emerald-100/80 border-emerald-200/80"
-            }`}
+              }`}
           >
             <ArrowUpRight size={12} weight="bold" className="text-emerald-600" />
             <span>Tăng Bid</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
-              quickFilter === "INCREASE" ? "bg-emerald-200 text-emerald-950" : "bg-white text-emerald-900 shadow-2xs border border-emerald-200/60"
-            }`}>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${quickFilter === "INCREASE" ? "bg-emerald-200 text-emerald-950" : "bg-white text-emerald-900 shadow-2xs border border-emerald-200/60"
+              }`}>
               {filterCounts.increase}
             </span>
           </button>
@@ -717,17 +760,15 @@ export function PpcSkuRecommendationGroupView({
           <button
             type="button"
             onClick={() => setQuickFilter(quickFilter === "DECREASE" ? "ALL" : "DECREASE")}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${
-              quickFilter === "DECREASE"
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${quickFilter === "DECREASE"
                 ? "bg-rose-100 text-rose-900 border-rose-400 ring-1 ring-rose-300 shadow-2xs font-extrabold"
                 : "bg-rose-50/70 text-rose-800 hover:bg-rose-100/80 border-rose-200/80"
-            }`}
+              }`}
           >
             <ArrowDownRight size={12} weight="bold" className="text-rose-600" />
             <span>Giảm Bid</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
-              quickFilter === "DECREASE" ? "bg-rose-200 text-rose-950" : "bg-white text-rose-900 shadow-2xs border border-rose-200/60"
-            }`}>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${quickFilter === "DECREASE" ? "bg-rose-200 text-rose-950" : "bg-white text-rose-900 shadow-2xs border border-rose-200/60"
+              }`}>
               {filterCounts.decrease}
             </span>
           </button>
@@ -736,17 +777,15 @@ export function PpcSkuRecommendationGroupView({
           <button
             type="button"
             onClick={() => setQuickFilter(quickFilter === "PAUSE" ? "ALL" : "PAUSE")}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${
-              quickFilter === "PAUSE"
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${quickFilter === "PAUSE"
                 ? "bg-amber-100 text-amber-950 border-amber-400 ring-1 ring-amber-300 shadow-2xs font-extrabold"
                 : "bg-amber-50/70 text-amber-900 hover:bg-amber-100/80 border-amber-200/80"
-            }`}
+              }`}
           >
             <Pause size={12} weight="bold" className="text-amber-600" />
             <span>Pause</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
-              quickFilter === "PAUSE" ? "bg-amber-200 text-amber-950" : "bg-white text-amber-950 shadow-2xs border border-amber-200/60"
-            }`}>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${quickFilter === "PAUSE" ? "bg-amber-200 text-amber-950" : "bg-white text-amber-950 shadow-2xs border border-amber-200/60"
+              }`}>
               {filterCounts.pause}
             </span>
           </button>
@@ -755,18 +794,16 @@ export function PpcSkuRecommendationGroupView({
           <button
             type="button"
             onClick={() => setQuickFilter(quickFilter === "BLEEDING" ? "ALL" : "BLEEDING")}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${
-              quickFilter === "BLEEDING"
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${quickFilter === "BLEEDING"
                 ? "bg-red-100 text-red-950 border-red-400 ring-1 ring-red-300 shadow-2xs font-extrabold"
                 : "bg-red-50/70 text-red-800 hover:bg-red-100/80 border-red-200/80"
-            }`}
+              }`}
             title="Các SKU có ACoS vượt ngưỡng hòa vốn (đang chạy lỗ)"
           >
             <WarningCircle size={12} weight="bold" className="text-red-600" />
             <span>Lỗ (ACoS cao)</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
-              quickFilter === "BLEEDING" ? "bg-red-200 text-red-950" : "bg-white text-red-950 shadow-2xs border border-red-200/60"
-            }`}>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${quickFilter === "BLEEDING" ? "bg-red-200 text-red-950" : "bg-white text-red-950 shadow-2xs border border-red-200/60"
+              }`}>
               {filterCounts.bleeding}
             </span>
           </button>
@@ -775,18 +812,16 @@ export function PpcSkuRecommendationGroupView({
           <button
             type="button"
             onClick={() => setQuickFilter(quickFilter === "PROFITABLE" ? "ALL" : "PROFITABLE")}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${
-              quickFilter === "PROFITABLE"
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${quickFilter === "PROFITABLE"
                 ? "bg-teal-100 text-teal-950 border-teal-400 ring-1 ring-teal-300 shadow-2xs font-extrabold"
                 : "bg-teal-50/70 text-teal-800 hover:bg-teal-100/80 border-teal-200/80"
-            }`}
+              }`}
             title="Các SKU có ACoS thấp hơn hoặc bằng mức hòa vốn (đang có lãi)"
           >
             <CheckCircle size={12} weight="bold" className="text-teal-600" />
             <span>ACoS Tốt</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
-              quickFilter === "PROFITABLE" ? "bg-teal-200 text-teal-950" : "bg-white text-teal-950 shadow-2xs border border-teal-200/60"
-            }`}>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${quickFilter === "PROFITABLE" ? "bg-teal-200 text-teal-950" : "bg-white text-teal-950 shadow-2xs border border-teal-200/60"
+              }`}>
               {filterCounts.profitable}
             </span>
           </button>
@@ -795,18 +830,16 @@ export function PpcSkuRecommendationGroupView({
           <button
             type="button"
             onClick={() => setQuickFilter(quickFilter === "ZERO_SPEND" ? "ALL" : "ZERO_SPEND")}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${
-              quickFilter === "ZERO_SPEND"
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${quickFilter === "ZERO_SPEND"
                 ? "bg-sky-100 text-sky-950 border-sky-400 ring-1 ring-sky-300 shadow-2xs font-extrabold"
                 : "bg-sky-50/70 text-sky-800 hover:bg-sky-100/80 border-sky-200/80"
-            }`}
+              }`}
             title="Các SKU chưa phát sinh chi phí quảng cáo (Spend = $0)"
           >
             <Clock size={12} weight="bold" className="text-sky-600" />
             <span>Chưa cắn tiền</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
-              quickFilter === "ZERO_SPEND" ? "bg-sky-200 text-sky-950" : "bg-white text-sky-950 shadow-2xs border border-sky-200/60"
-            }`}>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${quickFilter === "ZERO_SPEND" ? "bg-sky-200 text-sky-950" : "bg-white text-sky-950 shadow-2xs border border-sky-200/60"
+              }`}>
               {filterCounts.zeroSpend}
             </span>
           </button>
@@ -815,18 +848,16 @@ export function PpcSkuRecommendationGroupView({
           <button
             type="button"
             onClick={() => setQuickFilter(quickFilter === "ZERO_SALES" ? "ALL" : "ZERO_SALES")}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${
-              quickFilter === "ZERO_SALES"
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${quickFilter === "ZERO_SALES"
                 ? "bg-purple-100 text-purple-950 border-purple-400 ring-1 ring-purple-300 shadow-2xs font-extrabold"
                 : "bg-purple-50/70 text-purple-800 hover:bg-purple-100/80 border-purple-200/80"
-            }`}
+              }`}
             title="Các SKU đã tiêu tiền nhưng chưa ra đơn hàng nào"
           >
             <Fire size={12} weight="bold" className="text-purple-600" />
             <span>Chưa ra đơn</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
-              quickFilter === "ZERO_SALES" ? "bg-purple-200 text-purple-950" : "bg-white text-purple-950 shadow-2xs border border-purple-200/60"
-            }`}>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${quickFilter === "ZERO_SALES" ? "bg-purple-200 text-purple-950" : "bg-white text-purple-950 shadow-2xs border border-purple-200/60"
+              }`}>
               {filterCounts.zeroSales}
             </span>
           </button>
@@ -835,18 +866,16 @@ export function PpcSkuRecommendationGroupView({
           <button
             type="button"
             onClick={() => setQuickFilter(quickFilter === "PREFIX_ERROR" ? "ALL" : "PREFIX_ERROR")}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${
-              quickFilter === "PREFIX_ERROR"
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${quickFilter === "PREFIX_ERROR"
                 ? "bg-rose-100 text-rose-950 border-rose-400 ring-1 ring-rose-300 shadow-2xs font-extrabold"
                 : "bg-rose-50/70 text-rose-800 hover:bg-rose-100/80 border-rose-200/80"
-            }`}
+              }`}
             title="Các SKU chưa nhận diện được phôi (Lỗi Prefix) cần cấu hình tiền tố SKU"
           >
             <WarningCircle size={12} weight="bold" className="text-rose-600" />
             <span>Lỗi Prefix</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
-              quickFilter === "PREFIX_ERROR" ? "bg-rose-200 text-rose-950" : "bg-white text-rose-950 shadow-2xs border border-rose-200/60"
-            }`}>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${quickFilter === "PREFIX_ERROR" ? "bg-rose-200 text-rose-950" : "bg-white text-rose-950 shadow-2xs border border-rose-200/60"
+              }`}>
               {filterCounts.prefixError}
             </span>
           </button>
@@ -873,7 +902,21 @@ export function PpcSkuRecommendationGroupView({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 text-slate-700">
-            {filteredGroups.length === 0 ? (
+            {isLoading ? (
+              <tr>
+                <td colSpan={12} className="py-16 text-center text-slate-500">
+                  <div className="flex flex-col items-center justify-center gap-2.5">
+                    <CircleNotch size={30} className="animate-spin text-indigo-600" />
+                    <span className="font-bold text-sm text-slate-800">
+                      Đang phân tích &amp; nạp đề xuất tối ưu cho {selectedStore === "ALL" ? "tất cả store" : selectedStore || "Store"}...
+                    </span>
+                    <span className="text-xs text-slate-400">
+                      Đang đối chiếu dữ liệu ACoS, trần bid và SKU Architecture
+                    </span>
+                  </div>
+                </td>
+              </tr>
+            ) : filteredGroups.length === 0 ? (
               <tr>
                 <td colSpan={12} className="py-12 text-center text-slate-400 font-medium">
                   Không tìm thấy SKU nào phù hợp với bộ lọc hiện tại.
@@ -899,11 +942,10 @@ export function PpcSkuRecommendationGroupView({
                     </td>
                     <td className="py-3 px-3 text-slate-500 font-mono">{group.asin || "—"}</td>
                     <td className="py-3 px-3">
-                      <span className={`px-2 py-0.5 rounded text-[11px] font-bold border ${
-                        group.productType === SKU_PREFIX_ERROR_PRODUCT_TYPE || group.productType === "Lỗi Prefix" || !group.productType || group.productType === "Chưa xác định"
+                      <span className={`px-2 py-0.5 rounded text-[11px] font-bold border ${group.productType === SKU_PREFIX_ERROR_PRODUCT_TYPE || group.productType === "Lỗi Prefix" || !group.productType || group.productType === "Chưa xác định"
                           ? "bg-rose-100 text-rose-800 border-rose-300 font-extrabold"
                           : "bg-slate-100 text-slate-700 border-slate-200"
-                      }`}>
+                        }`}>
                         {group.productType || "Chưa xác định"}
                       </span>
                     </td>
@@ -919,8 +961,8 @@ export function PpcSkuRecommendationGroupView({
                           isBleeding
                             ? "text-rose-600"
                             : isGoodAcos
-                            ? "text-emerald-700"
-                            : "text-slate-800"
+                              ? "text-emerald-700"
+                              : "text-slate-800"
                         }
                       >
                         {group.acos.toFixed(1)}%
@@ -978,8 +1020,17 @@ export function PpcSkuRecommendationGroupView({
                     {selectedSkuGroup.productType}
                   </span>
                 </div>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  ASIN: {selectedSkuGroup.asin} • {loadingSkuDetails ? "Đang tải chi tiết..." : `Tổng cộng ${currentSkuRecs.length} đề xuất tối ưu hóa`}
+                <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1.5">
+                  <span>ASIN: {selectedSkuGroup.asin}</span>
+                  <span>•</span>
+                  {loadingSkuDetails ? (
+                    <span className="inline-flex items-center gap-1 text-indigo-600 font-semibold animate-pulse">
+                      <CircleNotch size={12} className="animate-spin" />
+                      Đang tải và tính toán chi tiết đề xuất...
+                    </span>
+                  ) : (
+                    <span>Tổng cộng {currentSkuRecs.length} đề xuất tối ưu hóa</span>
+                  )}
                 </p>
               </div>
               <button
@@ -1092,9 +1143,16 @@ export function PpcSkuRecommendationGroupView({
                       <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">
                         Block C — Đề Xuất
                       </h3>
-                      <span className="px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                        {currentSkuRecs.length} targets · {groupedByCampaign.length} campaigns
-                      </span>
+                      {loadingSkuDetails ? (
+                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-indigo-50 text-indigo-700 border border-indigo-200 inline-flex items-center gap-1.5 animate-pulse">
+                          <CircleNotch size={12} className="animate-spin text-indigo-600" />
+                          Đang tải chi tiết...
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                          {currentSkuRecs.length} targets · {groupedByCampaign.length} campaigns
+                        </span>
+                      )}
                     </div>
 
                     {/* Modal search */}
@@ -1113,33 +1171,29 @@ export function PpcSkuRecommendationGroupView({
                     <div className="flex items-center gap-1 bg-white p-0.5 rounded-lg border border-slate-200 text-xs">
                       <button
                         onClick={() => setModalActionFilter("ALL")}
-                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
-                          modalActionFilter === "ALL" ? "bg-indigo-50 text-indigo-700" : "text-slate-600 hover:text-slate-900"
-                        }`}
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${modalActionFilter === "ALL" ? "bg-indigo-50 text-indigo-700" : "text-slate-600 hover:text-slate-900"
+                          }`}
                       >
                         Tất cả
                       </button>
                       <button
                         onClick={() => setModalActionFilter("BID_INCREASE")}
-                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
-                          modalActionFilter === "BID_INCREASE" ? "bg-emerald-50 text-emerald-700" : "text-slate-600 hover:text-emerald-600"
-                        }`}
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${modalActionFilter === "BID_INCREASE" ? "bg-emerald-50 text-emerald-700" : "text-slate-600 hover:text-emerald-600"
+                          }`}
                       >
                         ↑ Tăng
                       </button>
                       <button
                         onClick={() => setModalActionFilter("BID_DECREASE")}
-                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
-                          modalActionFilter === "BID_DECREASE" ? "bg-rose-50 text-rose-700" : "text-slate-600 hover:text-rose-600"
-                        }`}
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${modalActionFilter === "BID_DECREASE" ? "bg-rose-50 text-rose-700" : "text-slate-600 hover:text-rose-600"
+                          }`}
                       >
                         ↓ Giảm
                       </button>
                       <button
                         onClick={() => setModalActionFilter("PAUSE_TARGET")}
-                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
-                          modalActionFilter === "PAUSE_TARGET" ? "bg-amber-50 text-amber-800" : "text-slate-600 hover:text-amber-700"
-                        }`}
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${modalActionFilter === "PAUSE_TARGET" ? "bg-amber-50 text-amber-800" : "text-slate-600 hover:text-amber-700"
+                          }`}
                       >
                         ⏸ Pause
                       </button>
@@ -1156,7 +1210,8 @@ export function PpcSkuRecommendationGroupView({
                     <button
                       type="button"
                       onClick={handleExpandAllCampaigns}
-                      className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition shadow-2xs cursor-pointer flex items-center gap-1.5"
+                      disabled={loadingSkuDetails || groupedByCampaign.length === 0}
+                      className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition shadow-2xs cursor-pointer flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       {expandedCampaigns.size === groupedByCampaign.length && groupedByCampaign.length > 0 ? (
                         <>
@@ -1174,7 +1229,8 @@ export function PpcSkuRecommendationGroupView({
                     <button
                       type="button"
                       onClick={handleToggleSelectAll}
-                      className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition shadow-2xs cursor-pointer flex items-center gap-1.5"
+                      disabled={loadingSkuDetails || currentSkuRecs.length === 0}
+                      className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition shadow-2xs cursor-pointer flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       {selectedRecIds.size === currentSkuRecs.length && currentSkuRecs.length > 0 ? (
                         <>
@@ -1201,20 +1257,36 @@ export function PpcSkuRecommendationGroupView({
                     ) : (
                       <button
                         onClick={handleApproveSelected}
-                        disabled={selectedRecIds.size === 0 || isApproving}
+                        disabled={selectedRecIds.size === 0 || isApproving || isStoreSwitching}
                         className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition shadow-2xs disabled:opacity-40 cursor-pointer"
                       >
                         <CheckCircle size={14} weight="bold" />
-                        <span>{isApproving ? "Đang xử lý..." : `Duyệt ${selectedRecIds.size} mục đã chọn`}</span>
+                        <span>{isApproving ? "Đang xử lý..." : isStoreSwitching ? "Đang đổi Store..." : `Duyệt ${selectedRecIds.size} mục đã chọn`}</span>
                       </button>
                     )}
                   </div>
                 </div>
 
                 {/* Grouped Campaign Cards */}
-                {groupedByCampaign.length === 0 ? (
+                {loadingSkuDetails ? (
+                  <div className="py-16 text-center space-y-3 bg-slate-50/70 rounded-2xl border border-dashed border-indigo-200 animate-in fade-in duration-150">
+                    <div className="inline-flex p-3 rounded-2xl bg-indigo-50 text-indigo-600 animate-spin">
+                      <CircleNotch size={28} weight="bold" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-slate-800">
+                        Đang tải và tính toán chi tiết đề xuất cho SKU {selectedSkuGroup.sku}...
+                      </p>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Hệ thống đang đối chiếu dữ liệu chiến dịch và áp dụng công thức tối ưu hóa theo quy chuẩn...
+                      </p>
+                    </div>
+                  </div>
+                ) : groupedByCampaign.length === 0 ? (
                   <div className="py-12 text-center text-slate-400 bg-slate-50/50 rounded-xl border border-slate-200">
-                    Không có đề xuất nào cho SKU này theo bộ lọc hiện tại.
+                    {modalSearch || modalActionFilter !== "ALL"
+                      ? "Không tìm thấy đề xuất nào phù hợp với bộ lọc tìm kiếm hiện tại."
+                      : "Không có đề xuất nào cho SKU này trong kỳ dữ liệu đã chọn."}
                   </div>
                 ) : (
                   <div className="space-y-3.5 max-h-[52vh] overflow-y-auto pr-1">
@@ -1226,20 +1298,18 @@ export function PpcSkuRecommendationGroupView({
                       return (
                         <div
                           key={cg.campaignName}
-                          className={`rounded-xl border transition shadow-2xs overflow-hidden ${
-                            isExpanded
+                          className={`rounded-xl border transition shadow-2xs overflow-hidden ${isExpanded
                               ? "border-indigo-200 ring-1 ring-indigo-200/50 bg-white"
                               : "border-slate-200 hover:border-indigo-300 bg-white"
-                          }`}
+                            }`}
                         >
                           {/* Campaign Header Bar — Click anywhere to expand/collapse */}
                           <div
                             onClick={() => toggleCampaignExpanded(cg.campaignName)}
-                            className={`flex flex-wrap items-center justify-between gap-2.5 px-4 py-3 border-b cursor-pointer select-none transition ${
-                              isExpanded
+                            className={`flex flex-wrap items-center justify-between gap-2.5 px-4 py-3 border-b cursor-pointer select-none transition ${isExpanded
                                 ? "bg-indigo-50/50 border-indigo-100"
                                 : "bg-slate-50/90 hover:bg-indigo-50/30 border-slate-200"
-                            }`}
+                              }`}
                           >
                             <div className="flex items-center gap-2.5 flex-1 min-w-[280px]">
                               {/* Checkbox wrapper with stopPropagation */}
@@ -1265,9 +1335,8 @@ export function PpcSkuRecommendationGroupView({
                               <CaretRight
                                 size={15}
                                 weight="bold"
-                                className={`text-slate-400 transition-transform duration-200 ${
-                                  isExpanded ? "rotate-90 text-indigo-600" : "text-slate-400"
-                                }`}
+                                className={`text-slate-400 transition-transform duration-200 ${isExpanded ? "rotate-90 text-indigo-600" : "text-slate-400"
+                                  }`}
                               />
 
                               <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800 border border-indigo-200/80">
@@ -1337,9 +1406,8 @@ export function PpcSkuRecommendationGroupView({
                                     return (
                                       <tr
                                         key={rec.id}
-                                        className={`hover:bg-indigo-50/20 transition ${
-                                          isSelected ? "bg-indigo-50/40" : ""
-                                        }`}
+                                        className={`hover:bg-indigo-50/20 transition ${isSelected ? "bg-indigo-50/40" : ""
+                                          }`}
                                       >
                                         <td className="py-2.5 px-3">
                                           <button
@@ -1399,9 +1467,8 @@ export function PpcSkuRecommendationGroupView({
                                           {rec.ruleProfile || "v1.0"}
                                         </td>
                                         <td
-                                          className={`sticky right-0 z-[5] border-l border-slate-100 py-2.5 px-3 text-center shadow-[-6px_0_10px_-8px_rgba(15,23,42,0.3)] ${
-                                            isSelected ? "bg-indigo-50" : "bg-white"
-                                          }`}
+                                          className={`sticky right-0 z-[5] border-l border-slate-100 py-2.5 px-3 text-center shadow-[-6px_0_10px_-8px_rgba(15,23,42,0.3)] ${isSelected ? "bg-indigo-50" : "bg-white"
+                                            }`}
                                         >
                                           {isApproved ? (
                                             <button
@@ -1415,10 +1482,10 @@ export function PpcSkuRecommendationGroupView({
                                           ) : (
                                             <button
                                               onClick={() => handleApproveSingle(rec)}
-                                              disabled={isApproving}
-                                              className="whitespace-nowrap px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold text-[11px] border border-indigo-200 transition cursor-pointer"
+                                              disabled={isApproving || isStoreSwitching}
+                                              className="whitespace-nowrap px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold text-[11px] border border-indigo-200 transition cursor-pointer disabled:opacity-40"
                                             >
-                                              Duyệt
+                                              {isStoreSwitching ? "Chờ..." : "Duyệt"}
                                             </button>
                                           )}
                                         </td>
@@ -1648,13 +1715,13 @@ function getRuleExplanation(
   const calculationBase = isAvgCpcBase
     ? exactCpc
     : isCurrentBidBase
-    ? (rec.currentBid || 0)
-    : (rec.recType === "BID_INCREASE" ? (rec.currentBid || 0) : exactCpc);
+      ? (rec.currentBid || 0)
+      : (rec.recType === "BID_INCREASE" ? (rec.currentBid || 0) : exactCpc);
   const baseLabel = isAvgCpcBase
     ? "Avg CPC"
     : isCurrentBidBase
-    ? "Current Bid"
-    : (rec.recType === "BID_INCREASE" ? "Current Bid" : "Avg CPC");
+      ? "Current Bid"
+      : (rec.recType === "BID_INCREASE" ? "Current Bid" : "Avg CPC");
 
   // 2. Lấy % điều chỉnh từ rule text (ví dụ: -> -15% Avg CPC)
   const rulePercentMatch = rec.reason?.match(/->\s*([+-]?\d+(?:\.\d+)?)%/i);
