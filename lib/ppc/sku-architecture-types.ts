@@ -285,6 +285,19 @@ export const SKU_TO_PRODUCT_TYPE_RULE_SET = {
     { prefix: "POL", product_type: "Poster" },
     { prefix: "PLL", product_type: "Pillow" },
     { prefix: "PC", product_type: "Poncho" },
+
+    { prefix: "ORN", product_type: "Ornament" },
+    { prefix: "OR", product_type: "Ornament" },
+
+    { prefix: "BTM", product_type: "Bullet Tumbler" },
+    { prefix: "BLT", product_type: "Bullet Tumbler" },
+    { prefix: "BUL", product_type: "Bullet Tumbler" },
+
+    { prefix: "TUM", product_type: "Tumbler 20Oz" },
+    { prefix: "TB20", product_type: "Tumbler 20Oz" },
+
+    { prefix: "HD", product_type: "Hoodie" },
+    { prefix: "HOD", product_type: "Hoodie" },
   ],
   matching_strategy: {
     priority: ["exception_map", "longest_prefix_match"],

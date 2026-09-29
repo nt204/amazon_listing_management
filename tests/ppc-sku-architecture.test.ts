@@ -103,6 +103,14 @@ test("SKU to Product Type Mapping Engine (Exception Map & Longest Prefix Match)"
   assert.equal(detectProductTypeFromSku("PLL100"), "Pillow");
   assert.equal(detectProductTypeFromSku("PC100"), "Poncho");
 
+  // 9. Ornament, Bullet Tumbler, Tumbler 20Oz, Hoodie
+  assert.equal(detectProductTypeFromSku("ORN100"), "Ornament");
+  assert.equal(detectProductTypeFromSku("BTM100"), "Bullet Tumbler");
+  assert.equal(detectProductTypeFromSku("BLT100"), "Bullet Tumbler");
+  assert.equal(detectProductTypeFromSku("TUM100"), "Tumbler 20Oz");
+  assert.equal(detectProductTypeFromSku("TB20100"), "Tumbler 20Oz");
+  assert.equal(detectProductTypeFromSku("HD100"), "Hoodie");
+
   // 9. Không có exception/prefix thì phải báo lỗi, không đoán theo campaign.
   assert.equal(detectProductTypeFromSku("CUSTOM_ITEM", "SP03_ORNAMENT_AUTO"), SKU_PREFIX_ERROR_PRODUCT_TYPE);
   assert.equal(detectProductTypeFromSku("CUSTOM_ITEM", "SP03_TUMBLER_EXACT"), SKU_PREFIX_ERROR_PRODUCT_TYPE);

@@ -350,9 +350,13 @@ export async function exportCostMasterToExcel(storeIdOrName?: string | null): Pr
   rowsToExport.forEach((m, idx) => {
     const profitBeforeAds = m.defaultPrice > 0 ? (m.defaultPrice - m.defaultAmazonFee - m.baseCost) : 0;
     const maxBid = profitBeforeAds > 0 ? Number((0.10 * profitBeforeAds).toFixed(2)) : 0.05;
-    const prefixes = (m.skuPrefixes && m.skuPrefixes.length > 0)
+    let prefixes = (m.skuPrefixes && m.skuPrefixes.length > 0)
       ? m.skuPrefixes.join(", ")
       : getSkuPrefixesForProductType(m.productType).map((p) => p.replace(/\*$/, "")).join(", ");
+    if (!prefixes) {
+      const auto = m.productType.replace(/[^a-zA-Z0-9]/g, "").slice(0, 4).toUpperCase();
+      if (auto) prefixes = auto;
+    }
 
     const row = sheet.addRow({
       productType: m.productType,
@@ -561,7 +565,13 @@ function parseExcelNumericValue(val: unknown): number {
       return parseExcelNumericValue(obj.text);
     }
   }
-  const clean = String(val).replace(/[$€₫,\s]/g, "").trim();
+  let clean = String(val).replace(/[$€₫\s]/g, "").trim();
+  // Hỗ trợ định dạng số thập phân kiểu Việt Nam (ví dụ "2,50" -> "2.50")
+  if (clean.includes(",") && !clean.includes(".")) {
+    clean = clean.replace(",", ".");
+  } else {
+    clean = clean.replace(/,/g, "");
+  }
   const n = parseFloat(clean);
   return isNaN(n) ? 0 : n;
 }
@@ -683,14 +693,19 @@ export async function importCostMasterFromExcel(
     const notes = colMap.notes ? String(row.getCell(colMap.notes).value || "").trim() : "";
     const prefixRaw = colMap.skuPrefixes ? String(row.getCell(colMap.skuPrefixes).value || "").trim() : "";
 
-    // Cột SKU Prefixes là bắt buộc: nếu người dùng bỏ trống cột này thì báo lỗi rõ ràng
-    if (!prefixRaw) {
-      throw new Error(`Dòng ${r} (${productTypeRaw}): Cột '[BẮT BUỘC] SKU Prefixes' chưa có dữ liệu. Vui lòng điền tiền tố SKU (ví dụ: ORN, GL-ORN hoặc BDL, BQL...) để hệ thống nhận diện sản phẩm.`);
+    let prefixes: string[] = [];
+    if (prefixRaw) {
+      prefixes = normalizeSkuPrefixes(prefixRaw);
     }
-
-    const prefixes = normalizeSkuPrefixes(prefixRaw);
-    if (!prefixes || prefixes.length === 0) {
-      throw new Error(`Dòng ${r} (${productTypeRaw}): Tiền tố SKU không hợp lệ.`);
+    // Nếu ô SKU Prefixes để trống, tự động lấy tiền tố chuẩn hoặc tự sinh từ tên phôi để tránh làm hỏng cả file import
+    if (prefixes.length === 0) {
+      const defaultPrefixes = getSkuPrefixesForProductType(productTypeRaw);
+      if (defaultPrefixes.length > 0) {
+        prefixes = defaultPrefixes.map((p) => p.replace(/\*$/, ""));
+      } else {
+        const auto = productTypeRaw.replace(/[^a-zA-Z0-9]/g, "").slice(0, 4).toUpperCase();
+        if (auto) prefixes = [auto];
+      }
     }
 
     const saved = await saveCostMasterNewVersion({
