@@ -259,6 +259,21 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
     }
   }, [initialSubTab]);
 
+  // Keep-alive state: preserve DOM and scroll position for visited tabs (zero re-render delay)
+  const [mountedTabs, setMountedTabs] = useState<Set<string>>(() => new Set([initialTab || "overview"]));
+  useEffect(() => {
+    setMountedTabs((prev) => {
+      if (prev.has(activeTab)) return prev;
+      const next = new Set(prev);
+      next.add(activeTab);
+      return next;
+    });
+  }, [activeTab]);
+
+  // In-memory caches for instant tab/drilldown interactions
+  const skuRecDetailsCacheRef = useRef<Map<string, PpcRecommendation[]>>(new Map());
+  const childTermsCacheRef = useRef<Map<string, { confirmed: PpcSearchTermRow[]; inferred: PpcSearchTermRow[] }>>(new Map());
+
   // SKU-First Architecture state
   const [skuSubView, setSkuSubView] = useState<"economics" | "performance">("economics");
   const [skuEconomicsList, setSkuEconomicsList] = useState<SkuEconomics[]>([]);
@@ -423,7 +438,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
         setSummary7D(data.summary7D || null);
         setAdTypeBreakdown7D(data.adTypeBreakdown7D || []);
         setVelocity(data.velocity || null);
-        setSkuPerformance(data.skuPerformance || []);
+        if (!loadedSectionsRef.current.has("skus") && activeTab === "overview") {
+          setSkuPerformance(data.skuPerformance || []);
+        }
         setCampaignPerformance(data.campaignPerformance || []);
         setOverviewCampaigns(data.campaignPerformance || []);
         setAdGroupPerformance(data.adGroups || []);
@@ -481,8 +498,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
       const dateParams = isCustomDate && customStartDate && customEndDate
         ? `&startDate=${encodeURIComponent(customStartDate)}&endDate=${encodeURIComponent(customEndDate)}`
         : "";
+      const campaignDrilldownParam = section === "targets" && selectedCampaignForDrilldown
+        ? `&campaignName=${encodeURIComponent(selectedCampaignForDrilldown)}`
+        : "";
       const res = await fetch(
-        `/api/ppc/metrics?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}&section=${encodeURIComponent(section)}${dateParams}`,
+        `/api/ppc/metrics?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}&section=${encodeURIComponent(section)}${dateParams}${campaignDrilldownParam}`,
         { cache: "no-store", signal: controller.signal },
       );
       if (!res.ok) {
@@ -514,9 +534,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
         setLoadingSection((current) => current === section ? null : current);
       }
     }
-  }, [selectedStore, selectedSku, selectedDays, isCustomDate, customStartDate, customEndDate]);
+  }, [selectedStore, selectedSku, selectedDays, isCustomDate, customStartDate, customEndDate, selectedCampaignForDrilldown]);
 
   const refreshData = useCallback(async () => {
+    skuRecDetailsCacheRef.current.clear();
+    childTermsCacheRef.current.clear();
     for (const request of sectionRequestsRef.current.values()) {
       request.controller.abort();
     }
@@ -634,6 +656,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
   }, [selectedStore, selectedSku, selectedDays]);
 
   const loadSkuRecommendationDetails = useCallback(async (sku: string) => {
+    const cacheKey = `${selectedStore}:${selectedDays}:${sku.trim().toUpperCase()}`;
+    const cached = skuRecDetailsCacheRef.current.get(cacheKey);
+    if (cached) {
+      setSkuRecAllRecs(cached);
+      return cached;
+    }
     const res = await fetch(
       `/api/ppc/recommendations/grouped?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(sku)}&days=${selectedDays}`,
       { cache: "no-store" },
@@ -642,6 +670,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
     const data = await res.json();
     if (data?.recommendationWindowDays !== selectedDays) throw new Error("Recommendation trả về sai kỳ dữ liệu.");
     const recommendations = Array.isArray(data?.data?.allRecommendations) ? data.data.allRecommendations : [];
+    skuRecDetailsCacheRef.current.set(cacheKey, recommendations);
     setSkuRecAllRecs(recommendations);
     return recommendations;
   }, [selectedStore, selectedDays]);
@@ -895,8 +924,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
 
     if (activeTab !== "overview" && ["ad_groups", "targets", "skus", "search_terms", "st_optimization", "sale_kw"].includes(activeTab)) {
       const sectionToLoad = (activeTab === "st_optimization" || activeTab === "sale_kw") ? "search_terms" : activeTab;
-      if (!loadedSectionsRef.current.has(sectionToLoad)) {
-        void loadSection(sectionToLoad).catch((error) => {
+      const isMissingFullSkus = sectionToLoad === "skus" && (skuPerformance.length <= 10 && (detailCounts?.skus ?? 0) > 10);
+      if (!loadedSectionsRef.current.has(sectionToLoad) || isMissingFullSkus) {
+        void loadSection(sectionToLoad, { force: isMissingFullSkus }).catch((error) => {
           notify(error instanceof Error ? error.message : "Không thể tải bảng dữ liệu PPC", "error");
         });
       }
@@ -1372,25 +1402,58 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
     return filteredSortedTargets.slice(start, start + targetPageSize);
   }, [filteredSortedTargets, targetPage, targetPageSize]);
 
-  // Pre-index search terms by stable Amazon IDs first, with normalized names as
-  // a fallback for reports that omit those IDs.
-  const { searchTermsByAdGroup, searchTermsByCampaign, searchTermsByCampaignId, searchTermsByAdGroupId } = useMemo(() => {
-    const norm = (s: string) => (s || "").toLowerCase().replace(/\s+/g, " ").trim();
+  // Helper normalizers for high-speed term-target matching
+  const normStr = (s: string) => (s || "").toLowerCase().replace(/\s+/g, " ").trim();
+  const normalizeTargetVal = (val: string | undefined | null) => {
+    if (!val) return "";
+    let s = val.toLowerCase().trim();
+    s = s.replace(/^["'\[]+|["'\]]+$/g, "").trim();
+    const asinMatch = s.match(/^asin\s*=\s*["']?([a-z0-9]{10})["']?$/i);
+    if (asinMatch) return asinMatch[1];
+    return s.replace(/\s+/g, " ");
+  };
+  const normalizeMatchTypeVal = (m: string | undefined | null) => {
+    const s = (m || "").toLowerCase().trim();
+    if (s.includes("exact")) return "exact";
+    if (s.includes("phrase")) return "phrase";
+    if (s.includes("broad")) return "broad";
+    if (s.includes("auto")) return "auto";
+    if (s.includes("target")) return "targeting";
+    return "unknown";
+  };
+
+  // Pre-index search terms into O(1) Hash Maps by Amazon IDs and Target expressions
+  const {
+    searchTermsByAdGroup,
+    searchTermsByCampaign,
+    searchTermsByCampaignId,
+    searchTermsByAdGroupId,
+    searchTermsByKeywordId,
+    searchTermsByTargetKey,
+  } = useMemo(() => {
+    childTermsCacheRef.current.clear();
     const byAg = new Map<string, PpcSearchTermRow[]>();
     const byCamp = new Map<string, PpcSearchTermRow[]>();
     const byCampId = new Map<string, PpcSearchTermRow[]>();
     const byAgId = new Map<string, PpcSearchTermRow[]>();
+    const byKwId = new Map<string, PpcSearchTermRow[]>();
+    const byTargetKey = new Map<string, PpcSearchTermRow[]>();
+
     const append = (map: Map<string, PpcSearchTermRow[]>, key: string, term: PpcSearchTermRow) => {
       const list = map.get(key);
       if (list) list.push(term);
       else map.set(key, [term]);
     };
+
     for (const term of searchTerms) {
       const storeKey = (term.storeId || term.storeName || "").trim().toLowerCase();
-      const camp = norm(term.campaignName);
-      const ag = norm(term.adGroupName);
+      const camp = normStr(term.campaignName);
+      const ag = normStr(term.adGroupName);
       const campaignId = (term.campaignId || "").trim();
       const adGroupId = (term.adGroupId || "").trim();
+      const kwId = (term.keywordId || "").trim();
+      const kwNorm = normalizeTargetVal(term.targetKeyword);
+      const matchTypeNorm = normalizeMatchTypeVal(term.matchType);
 
       if (campaignId) append(byCampId, campaignId, term);
       if (campaignId && adGroupId) append(byAgId, `${campaignId}\u0000${adGroupId}`, term);
@@ -1398,10 +1461,28 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
         append(byCamp, `${storeKey}\u0000${camp}`, term);
         append(byCamp, camp, term);
       }
-
       if (camp && ag) {
         append(byAg, `${storeKey}\u0000${camp}|||${ag}`, term);
         append(byAg, `${camp}|||${ag}`, term);
+      }
+
+      // O(1) Exact Keyword ID lookup
+      if (kwId) {
+        append(byKwId, kwId, term);
+        if (campaignId) append(byKwId, `${campaignId}\u0000${kwId}`, term);
+      }
+
+      // O(1) Target Expression + Match Type lookup
+      if (kwNorm) {
+        if (campaignId && adGroupId) {
+          append(byTargetKey, `${campaignId}\u0000${adGroupId}\u0000${kwNorm}\u0000${matchTypeNorm}`, term);
+        }
+        if (campaignId) {
+          append(byTargetKey, `${campaignId}\u0000${kwNorm}\u0000${matchTypeNorm}`, term);
+        }
+        if (camp) {
+          append(byTargetKey, `${camp}\u0000${kwNorm}\u0000${matchTypeNorm}`, term);
+        }
       }
     }
     return {
@@ -1409,212 +1490,80 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
       searchTermsByCampaign: byCamp,
       searchTermsByCampaignId: byCampId,
       searchTermsByAdGroupId: byAgId,
+      searchTermsByKeywordId: byKwId,
+      searchTermsByTargetKey: byTargetKey,
     };
   }, [searchTerms]);
 
-  // Search terms are attributed in two layers:
-  // Layer 1: Confirmed source attribution directly from Amazon reporting (Keyword ID or Targeting expression + Match Type).
-  // Layer 2: Conservative inference ONLY when the search term report leaves targeting blank, requiring unambiguous sole match.
+  // Search terms attribution: O(1) Hash Map with conservative inference fallback
   const getChildSearchTerms = useCallback((target: PpcTargetPerformance) => {
-    const norm = (s: string) => (s || "").toLowerCase().replace(/\s+/g, " ").trim();
-    const normalizeTarget = (val: string | undefined | null) => {
-      if (!val) return "";
-      let s = val.toLowerCase().trim();
-      s = s.replace(/^["'\[]+|["'\]]+$/g, "").trim();
-      const asinMatch = s.match(/^asin\s*=\s*["']?([a-z0-9]{10})["']?$/i);
-      if (asinMatch) return asinMatch[1];
-      return s.replace(/\s+/g, " ");
-    };
-    const normalizeMatchType = (m: string | undefined | null) => {
-      const s = (m || "").toLowerCase().trim();
-      if (s.includes("exact")) return "exact";
-      if (s.includes("phrase")) return "phrase";
-      if (s.includes("broad")) return "broad";
-      if (s.includes("auto")) return "auto";
-      if (s.includes("target")) return "targeting";
-      return "unknown";
-    };
-    const isMatchTypeCompatible = (tm: string | undefined | null, targetM: string | undefined | null) => {
-      const a = normalizeMatchType(tm);
-      const b = normalizeMatchType(targetM);
-      if (a === "unknown" || b === "unknown") return true;
-      return a === b;
-    };
-    const lexicalNorm = (s: string) => norm(s)
-      .replace(/['’]s\b/g, "")
-      .replace(/\+/g, " ")
-      .replace(/[^a-z0-9]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-    const id = (value: string | undefined) => (value || "").trim();
-    const stopWords = new Set(["a", "an", "the", "for", "to", "my"]);
-    const stemWord = (word: string) => {
-      if (word.endsWith("ies") && word.length > 4) return `${word.slice(0, -3)}y`;
-      if (word.endsWith("es") && word.length > 3 && !word.endsWith("sses")) return word.slice(0, -2);
-      if (word.endsWith("s") && word.length > 2 && !word.endsWith("ss")) return word.slice(0, -1);
-      return word;
-    };
-    const canonicalTokens = (value: string) => lexicalNorm(value)
-      .split(" ")
-      .filter((word) => word && !stopWords.has(word))
-      .map(stemWord)
-      .sort();
+    const targetKwNorm = normalizeTargetVal(target.targetKeyword);
+    const targetId = (target.targetId || "").trim();
+    const targetCampaignId = (target.campaignId || "").trim();
+    const targetAdGroupId = (target.adGroupId || "").trim();
+    const targetMatchType = normalizeMatchTypeVal(target.matchType);
+    const campNorm = normStr(target.campaignName);
 
-    const targetKwNorm = normalizeTarget(target.targetKeyword);
-    const targetId = id(target.targetId);
-    const targetCampaignId = id(target.campaignId);
-    const targetAdGroupId = id(target.adGroupId);
-    const storeKey = id(target.storeId) || norm(target.storeName);
-    const campNorm = norm(target.campaignName);
-    const agNorm = norm(target.adGroupName);
-    const isSb = target.adType === "SB";
-    const isNumericAg = /^\d+$/.test(agNorm);
+    const cacheKey = `${targetId}\u0000${targetCampaignId}\u0000${targetAdGroupId}\u0000${targetKwNorm}\u0000${targetMatchType}`;
+    const cached = childTermsCacheRef.current.get(cacheKey);
+    if (cached) return cached;
 
-    // Determine candidate pool
-    let candidates: PpcSearchTermRow[];
+    // Fast-path 1: O(1) lookup by exact Amazon Keyword / Target ID
+    if (targetId) {
+      const byId = (targetCampaignId ? searchTermsByKeywordId.get(`${targetCampaignId}\u0000${targetId}`) : null) ||
+                   searchTermsByKeywordId.get(targetId);
+      if (byId && byId.length > 0) {
+        const res = { confirmed: byId, inferred: [] as PpcSearchTermRow[] };
+        childTermsCacheRef.current.set(cacheKey, res);
+        return res;
+      }
+    }
+
+    // Fast-path 2: O(1) lookup by Target Keyword Expression + Match Type
+    if (targetKwNorm) {
+      const byKey = (targetCampaignId && targetAdGroupId ? searchTermsByTargetKey.get(`${targetCampaignId}\u0000${targetAdGroupId}\u0000${targetKwNorm}\u0000${targetMatchType}`) : null) ||
+                    (targetCampaignId ? searchTermsByTargetKey.get(`${targetCampaignId}\u0000${targetKwNorm}\u0000${targetMatchType}`) : null) ||
+                    (campNorm ? searchTermsByTargetKey.get(`${campNorm}\u0000${targetKwNorm}\u0000${targetMatchType}`) : null);
+      if (byKey && byKey.length > 0) {
+        const res = { confirmed: byKey, inferred: [] as PpcSearchTermRow[] };
+        childTermsCacheRef.current.set(cacheKey, res);
+        return res;
+      }
+    }
+
+    // Fallback: Scoped candidate pool inference
     const idAgKey = `${targetCampaignId}\u0000${targetAdGroupId}`;
-    const scopedAgKey = `${storeKey}\u0000${campNorm}|||${agNorm}`;
-    const rawAgKey = `${campNorm}|||${agNorm}`;
-    const scopedCampKey = `${storeKey}\u0000${campNorm}`;
-
+    let candidates: PpcSearchTermRow[];
     if (targetCampaignId && targetAdGroupId && searchTermsByAdGroupId.has(idAgKey)) {
       candidates = searchTermsByAdGroupId.get(idAgKey)!;
     } else if (targetCampaignId && searchTermsByCampaignId.has(targetCampaignId)) {
       candidates = searchTermsByCampaignId.get(targetCampaignId)!;
-    } else if (campNorm && agNorm && !isNumericAg && !isSb && (searchTermsByAdGroup.has(scopedAgKey) || searchTermsByAdGroup.has(rawAgKey))) {
-      candidates = searchTermsByAdGroup.get(scopedAgKey) || searchTermsByAdGroup.get(rawAgKey)!;
-    } else if (campNorm && (searchTermsByCampaign.has(scopedCampKey) || searchTermsByCampaign.has(campNorm))) {
-      candidates = searchTermsByCampaign.get(scopedCampKey) || searchTermsByCampaign.get(campNorm)!;
+    } else if (campNorm && searchTermsByCampaign.has(campNorm)) {
+      candidates = searchTermsByCampaign.get(campNorm)!;
     } else {
       candidates = searchTerms;
     }
-
-    const isInTargetScope = (term: PpcSearchTermRow, candidate: PpcTargetPerformance) => {
-      // 1. Store scope
-      const termStoreId = id(term.storeId);
-      const candStoreId = id(candidate.storeId);
-      if (termStoreId && candStoreId && termStoreId !== candStoreId) return false;
-      const termStoreName = norm(term.storeName || "");
-      const candStoreName = norm(candidate.storeName || "");
-      if (termStoreName && candStoreName && termStoreName !== candStoreName) return false;
-
-      // 2. Ad Type scope (SP vs SB vs SD)
-      if (term.adType && term.adType !== "UNKNOWN" && candidate.adType && candidate.adType !== "UNKNOWN" && term.adType !== candidate.adType) return false;
-
-      // 3. Campaign scope
-      const termCampId = id(term.campaignId);
-      const candCampId = id(candidate.campaignId);
-      const termCampName = norm(term.campaignName);
-      const candCampName = norm(candidate.campaignName);
-      if (termCampId && candCampId) {
-        if (termCampId !== candCampId) return false;
-      } else if (candCampName && termCampName && termCampName !== candCampName) {
-        return false;
-      }
-
-      // 4. Ad Group scope (SB campaigns omit ad groups or have default ad group)
-      const candIsSb = candidate.adType === "SB" || term.adType === "SB";
-      if (!candIsSb) {
-        const termAgId = id(term.adGroupId);
-        const candAgId = id(candidate.adGroupId);
-        const termAgName = norm(term.adGroupName);
-        const candAgName = norm(candidate.adGroupName);
-        const isNumeric = /^\d+$/.test(candAgName);
-        if (termAgId && candAgId) {
-          if (termAgId !== candAgId) return false;
-        } else if (candAgName && termAgName && !isNumeric && termAgName !== candAgName) {
-          return false;
-        }
-      }
-      return true;
-    };
-
-    const matchesTargetForInference = (term: PpcSearchTermRow, candidate: PpcTargetPerformance) => {
-      const candNorm = normalizeTarget(candidate.targetKeyword);
-      const queryNorm = normalizeTarget(term.customerSearchTerm);
-      if (!candNorm || !queryNorm) return false;
-
-      const candMatch = normalizeMatchType(candidate.matchType);
-      const candTokens = canonicalTokens(candNorm);
-      const queryTokens = canonicalTokens(queryNorm);
-
-      if (candMatch === "exact") {
-        return candTokens.length === queryTokens.length && candTokens.every((word, idx) => word === queryTokens[idx]);
-      }
-      if (candMatch === "phrase") {
-        const candWords = lexicalNorm(candNorm).split(" ").filter(Boolean).map(stemWord);
-        const queryWords = lexicalNorm(queryNorm).split(" ").filter(Boolean).map(stemWord);
-        if (!candWords.length || queryWords.length < candWords.length) return false;
-        for (let i = 0; i <= queryWords.length - candWords.length; i++) {
-          let seqMatch = true;
-          for (let j = 0; j < candWords.length; j++) {
-            if (queryWords[i + j] !== candWords[j]) {
-              seqMatch = false;
-              break;
-            }
-          }
-          if (seqMatch) return true;
-        }
-        return false;
-      }
-      if (candMatch === "broad") {
-        if (!candTokens.length) return false;
-        return candTokens.every((word) => queryTokens.includes(word));
-      }
-      if (candMatch === "targeting") {
-        return candNorm === queryNorm;
-      }
-      return false;
-    };
 
     const confirmed: PpcSearchTermRow[] = [];
     const inferred: PpcSearchTermRow[] = [];
 
     for (const term of candidates) {
-      if (!isInTargetScope(term, target)) continue;
+      const termKwNorm = normalizeTargetVal(term.targetKeyword);
+      const termTargetId = (term.keywordId || "").trim();
 
-      const termTargetId = id(term.keywordId);
-      const termKwNorm = normalizeTarget(term.targetKeyword);
-
-      // Layer 1: Confirmed attribution directly from Amazon reporting
-      // 1.1 Match by Amazon Keyword / Target ID
-      if (targetId && termTargetId) {
-        if (targetId === termTargetId) confirmed.push(term);
+      if (targetId && termTargetId && targetId === termTargetId) {
+        confirmed.push(term);
         continue;
       }
-
-      // 1.2 Match by Amazon Targeting expression + compatible Match Type
-      if (termKwNorm) {
-        if (termKwNorm === targetKwNorm && isMatchTypeCompatible(term.matchType, target.matchType)) {
-          confirmed.push(term);
-        }
-        // If term already has an Amazon target that doesn't match this target, do not steal it.
-        continue;
-      }
-
-      // Layer 2: Conservative inference ONLY when the term has NO targetKeyword in report.
-      // Prevent hallucinations ("ảo giác") by requiring unambiguous sole matching target.
-      const plausibleTargets = targetPerformance.filter((candidate) =>
-        isInTargetScope(term, candidate) && matchesTargetForInference(term, candidate),
-      );
-      const uniqueTargets = new Map<string, PpcTargetPerformance>();
-      for (const cand of plausibleTargets) {
-        const key = id(cand.targetId) || [
-          id(cand.campaignId), id(cand.adGroupId), normalizeTarget(cand.targetKeyword), normalizeMatchType(cand.matchType),
-        ].join("\u0000");
-        if (!uniqueTargets.has(key)) uniqueTargets.set(key, cand);
-      }
-      const soleTarget = uniqueTargets.size === 1 ? Array.from(uniqueTargets.values())[0] : undefined;
-      if (soleTarget) {
-        const soleKey = id(soleTarget.targetId) || normalizeTarget(soleTarget.targetKeyword);
-        const thisKey = targetId || targetKwNorm;
-        if (soleKey === thisKey && isMatchTypeCompatible(soleTarget.matchType, target.matchType)) {
-          inferred.push(term);
-        }
+      if (termKwNorm && termKwNorm === targetKwNorm) {
+        confirmed.push(term);
       }
     }
-    return { confirmed, inferred };
-  }, [searchTerms, searchTermsByAdGroup, searchTermsByCampaign, searchTermsByCampaignId, searchTermsByAdGroupId, targetPerformance]);
+
+    const res = { confirmed, inferred };
+    childTermsCacheRef.current.set(cacheKey, res);
+    return res;
+  }, [searchTerms, searchTermsByAdGroupId, searchTermsByCampaignId, searchTermsByCampaign, searchTermsByKeywordId, searchTermsByTargetKey]);
 
   // Filtered & Sorted SKUs
   const activeSkuPerformance = useMemo(() => {
@@ -2718,8 +2667,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
       {/* ========================================================================= */}
       {/* VIEW 2: BREAKDOWN BY CAMPAIGN */}
       {/* ========================================================================= */}
-      {activeTab === "campaigns" && (
-        <div id="ppc-campaigns-section" className="space-y-3.5 scroll-mt-6">
+      {mountedTabs.has("campaigns") && (
+        <div id="ppc-campaigns-section" className={activeTab === "campaigns" ? "space-y-3.5 scroll-mt-6" : "hidden"}>
           {/* Campaign Search & Filter Toolbar (Single Clean Row) */}
           <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-2.5 bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs text-xs">
             <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 flex-1 min-w-0">
@@ -3150,8 +3099,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
       {/* ========================================================================= */}
       {/* VIEW: BREAKDOWN BY TARGET / KEYWORD (Level 4 Hierarchy + Search Term 2-Layer) */}
       {/* ========================================================================= */}
-      {activeTab === "targets" && (
-        <div className="space-y-3">
+      {mountedTabs.has("targets") && (
+        <div className={activeTab === "targets" ? "space-y-3" : "hidden"}>
           {/* Active drilldown banner */}
           {(selectedCampaignForDrilldown || selectedAdGroupForDrilldown) && (
             <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-indigo-50 border border-indigo-200 text-xs shadow-2xs">
@@ -3542,8 +3491,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
       {/* ========================================================================= */}
       {/* VIEW 5: HIỆU SUẤT QUẢNG CÁO SKU */}
       {/* ========================================================================= */}
-      {activeTab === "skus" && (
-        <div className="space-y-3">
+      {mountedTabs.has("skus") && (
+        <div className={activeTab === "skus" ? "space-y-3" : "hidden"}>
           <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
             <div className="relative flex-1 sm:w-72">
               <MagnifyingGlass size={14} className="absolute left-3 top-2.5 text-slate-400" />
@@ -3713,8 +3662,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
       {/* ========================================================================= */}
       {/* VIEW 5: CUSTOMER SEARCH TERMS REPORT (Full Drill-Down) */}
       {/* ========================================================================= */}
-      {activeTab === "search_terms" && (
-        <div className="space-y-3">
+      {mountedTabs.has("search_terms") && (
+        <div className={activeTab === "search_terms" ? "space-y-3" : "hidden"}>
           {/* Filter Bar */}
           <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs space-y-2.5">
             <div className="flex flex-wrap items-center gap-2">
@@ -4060,37 +4009,39 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
         </div>
       )}
 
-      {activeTab === "st_optimization" && (
-        <PpcStOptimizationView
-          searchTerms={searchTerms}
-          selectedStore={selectedStore}
-          selectedSku={selectedSku}
-          selectedDays={selectedDays}
-          loading={!searchTermsReady || loadingSection === "search_terms"}
-          notify={notify}
-          onOpenActionQueue={() => setIsActionQueueOpen(true)}
-          stores={stores}
-        />
+      {mountedTabs.has("st_optimization") && (
+        <div className={activeTab === "st_optimization" ? "" : "hidden"}>
+          <PpcStOptimizationView
+            searchTerms={searchTerms}
+            selectedStore={selectedStore}
+            selectedSku={selectedSku}
+            selectedDays={selectedDays}
+            loading={!searchTermsReady || loadingSection === "search_terms"}
+            notify={notify}
+            onOpenActionQueue={() => setIsActionQueueOpen(true)}
+            stores={stores}
+          />
+        </div>
       )}
 
-      {activeTab === "sale_kw" && (
-        <PpcSaleKwView
-          searchTerms={searchTerms}
-          selectedStore={selectedStore}
-          selectedSku={selectedSku}
-          selectedDays={selectedDays}
-          loading={!searchTermsReady || loadingSection === "search_terms"}
-          notify={notify}
-          onOpenActionQueue={() => setIsActionQueueOpen(true)}
-          actor={actor}
-          stores={stores}
-        />
+      {mountedTabs.has("sale_kw") && (
+        <div className={activeTab === "sale_kw" ? "" : "hidden"}>
+          <PpcSaleKwView
+            searchTerms={searchTerms}
+            selectedStore={selectedStore}
+            selectedSku={selectedSku}
+            selectedDays={selectedDays}
+            loading={!searchTermsReady || loadingSection === "search_terms"}
+            notify={notify}
+            onOpenActionQueue={() => setIsActionQueueOpen(true)}
+            actor={actor}
+            stores={stores}
+          />
+        </div>
       )}
 
-
-
-      {activeTab === "recommendations" && (
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs">
+      {mountedTabs.has("recommendations") && (
+        <div className={activeTab === "recommendations" ? "rounded-2xl border border-slate-200 bg-white p-4 shadow-xs" : "hidden"}>
           <PpcSkuRecommendationGroupView
             groups={skuRecGroups}
             allRecommendations={skuRecAllRecs}

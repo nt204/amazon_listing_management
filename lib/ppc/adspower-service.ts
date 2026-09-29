@@ -2029,27 +2029,45 @@ export async function uploadBulkFileToAmazonAds(options: {
     console.log(`[AdsPower Upload] Đang nạp file ${fileName} vào input file chooser...`);
     await fileInput.setInputFiles(options.filePath);
 
-    // 3. Chờ nút xác nhận 'Upload' trong modal sáng lên và bấm
-    const uploadConfirmBtnSelector = "button[data-takt-id='adz_bulkSheets_unifiedUploadModal_upload_button'], button:has-text('Upload'):not([data-takt-id*='home'])";
+    const uploadLocator = bulkPage
+      .locator("button[data-takt-id='adz_bulkSheets_unifiedUploadModal_upload_button'], section.bulk-sheet__upload-modal-dropzone ~ div button:has-text('Upload')")
+      .first();
 
-    // Chờ tối đa 25s để Amazon Ads xác thực file xong và kích hoạt nút Upload
-    console.log("[AdsPower Upload] Đang chờ Amazon Ads xác thực file Bulk...");
-    const uploadConfirmBtn = await bulkPage.waitForSelector(
-      `${uploadConfirmBtnSelector}:not([disabled]):not([aria-disabled='true'])`,
-      { timeout: 25000 }
-    ).catch(async () => {
-      return await bulkPage.$(uploadConfirmBtnSelector);
+    console.log("[AdsPower Upload] Đang chờ Amazon Ads xác thực file Bulk và kích hoạt nút Upload...");
+
+    // Chờ nút Upload hiển thị trong modal
+    await uploadLocator.waitFor({ state: "visible", timeout: 30_000 });
+
+    // Chờ Amazon Ads validate file xong (nút enabled):
+    const deadline = Date.now() + 30_000;
+    let isUploadEnabled = false;
+    while (Date.now() < deadline) {
+      const isDisabled = await uploadLocator.isDisabled().catch(() => true);
+      const ariaDisabled = await uploadLocator.getAttribute("aria-disabled").catch(() => null);
+      if (!isDisabled && ariaDisabled !== "true") {
+        isUploadEnabled = true;
+        break;
+      }
+      await bulkPage.waitForTimeout(500);
+    }
+
+    if (!isUploadEnabled) {
+      throw new Error("Amazon Ads không kích hoạt nút Upload sau khi nạp file. File có thể không đúng định dạng hoặc hệ thống Amazon quá tải.");
+    }
+
+    console.log("[AdsPower Upload] Nút Upload đã sáng đèn! Bấm xác nhận Upload...");
+    await uploadLocator.click({ timeout: 10_000 }).catch(async () => {
+      await uploadLocator.click({ force: true, timeout: 5000 }).catch(async () => {
+        await bulkPage.evaluate(() => {
+          const btn = document.querySelector("button[data-takt-id='adz_bulkSheets_unifiedUploadModal_upload_button']") as HTMLButtonElement | null;
+          if (btn) btn.click();
+        });
+      });
     });
 
-    if (uploadConfirmBtn) {
-      console.log("[AdsPower Upload] Bấm nút xác nhận Upload trong modal...");
-      await uploadConfirmBtn.click();
-      console.log("[AdsPower Upload] Chờ hệ thống Amazon tiếp nhận file...");
-      await bulkPage.waitForSelector("div[role='alert'], .ag-row", { timeout: 5000 }).catch(() => { });
-      await bulkPage.waitForTimeout(2000);
-    } else {
-      console.warn("[AdsPower Upload] Không thấy nút xác nhận Upload riêng, file có thể đã tự động tiếp nhận.");
-    }
+    console.log("[AdsPower Upload] Đã click nút Upload thành công! Chờ Amazon tiếp nhận file...");
+    await uploadLocator.waitFor({ state: "hidden", timeout: 15_000 }).catch(() => {});
+    await bulkPage.waitForTimeout(3000);
 
     console.log(`[AdsPower Upload] Đã upload thành công file ${fileName} lên Amazon Ads Bulk Operations!`);
   } finally {

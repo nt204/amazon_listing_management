@@ -145,7 +145,17 @@ export async function parseBulkFile(
 
 export async function getPpcAnalyticsData(
   scope: DataScope,
-  filters: { storeName?: string; sku?: string; days?: number; startDate?: string; endDate?: string } = {},
+  filters: {
+    storeName?: string;
+    sku?: string;
+    days?: number;
+    startDate?: string;
+    endDate?: string;
+    campaignId?: string;
+    campaignName?: string;
+    adGroupId?: string;
+    projection?: "full" | "lightweight";
+  } = {},
   options: { grains?: PpcPerformanceGrain[]; includeRecommendations?: boolean; section?: string } = {},
 ) {
   const storeName = filters.storeName && filters.storeName !== "ALL"
@@ -155,6 +165,9 @@ export async function getPpcAnalyticsData(
   const days = filters.days || 30;
   const startDate = filters.startDate;
   const endDate = filters.endDate;
+  const campaignId = filters.campaignId;
+  const campaignName = filters.campaignName;
+  const adGroupId = filters.adGroupId;
   const section = options.section?.toLowerCase();
   const isDetailSection = section && section !== "overview";
 
@@ -528,8 +541,9 @@ export async function getPpcAnalyticsData(
   }
 
   const requestedGrains = new Set<PpcPerformanceGrain>(effectiveGrains);
+  const targetLimit = (campaignId || campaignName) ? 5_000 : 25_000;
   const performanceQuery = (grain: PpcPerformanceGrain, limit: number) => requestedGrains.has(grain)
-    ? listPpcPerformance(scope, { storeName, sku, days }, { grain, limit })
+    ? listPpcPerformance(scope, { storeName, sku, days, campaignId, campaignName, adGroupId }, { grain, limit })
     : Promise.resolve([] as PpcPerformanceRow[]);
 
   // Only query search terms if overview or search_terms section
@@ -538,10 +552,16 @@ export async function getPpcAnalyticsData(
 
   const [stores, storeRows, campaignRowsRaw, adGroupRows, targetRowsRaw, productRows, placementRows, syncLogs] = await Promise.all([
     listPpcStores(scope),
-    shouldFetchSearchTerms ? listPpcSearchTerms(scope, { storeName, sku, days, startDate, endDate }) : Promise.resolve([] as PpcSearchTermRow[]),
+    shouldFetchSearchTerms
+      ? listPpcSearchTerms(
+          scope,
+          { storeName, sku, days, startDate, endDate },
+          { projection: filters.projection || (isDetailSection && section === "search_terms" ? "lightweight" : "full") },
+        )
+      : Promise.resolve([] as PpcSearchTermRow[]),
     performanceQuery("CAMPAIGN", 15_000),
     performanceQuery("AD_GROUP", 10_000),
-    performanceQuery("TARGET", 25_000),
+    performanceQuery("TARGET", targetLimit),
     performanceQuery("PRODUCT", 10_000),
     performanceQuery("PLACEMENT", 5_000),
     shouldFetchSyncLogs

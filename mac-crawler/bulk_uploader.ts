@@ -133,68 +133,41 @@ async function findUploadedFileResult(page: import("playwright-core").Page, file
   try {
     const evalResult = await page.evaluate((targetFileName) => {
       const baseName = targetFileName.replace(/\.xlsx$/i, "").toLowerCase();
-      const shortPrefix = baseName.slice(0, Math.min(25, baseName.length)).toLowerCase();
+      const shortPrefix = baseName.slice(0, Math.min(30, baseName.length)).toLowerCase();
       const targetLower = targetFileName.toLowerCase();
 
-      // 1. Quét toàn bộ DOM để gom nhóm theo row-index (Amazon Ads dùng AG-Grid với các cột pinned/center tách rời)
+      // 1. Quét tất cả các hàng dữ liệu trong bảng Bulk Operations
       const allRowEls = Array.from(
-        document.querySelectorAll("div.ag-row[row-index], tr[row-index], tr[role='row'], [role='row'][row-index], table tbody tr"),
+        document.querySelectorAll("div.ag-row, tr[role='row'], div[role='row'], tr")
       );
 
-      const rowMap = new Map<string, { texts: string[]; hrefs: string[]; hasTarget: boolean }>();
-
       for (const r of allRowEls) {
-        const idx = r.getAttribute("row-index") || r.getAttribute("aria-rowindex") || r.getAttribute("data-row-index") || "0";
-        if (!rowMap.has(idx)) {
-          rowMap.set(idx, { texts: [], hrefs: [], hasTarget: false });
-        }
-        const entry = rowMap.get(idx)!;
         const text = ((r as HTMLElement).innerText || "").replace(/\s+/g, " ").trim();
-        if (text) {
-          entry.texts.push(text);
-          const lower = text.toLowerCase();
-          if (lower.includes(targetLower) || lower.includes(baseName) || (shortPrefix.length > 8 && lower.includes(shortPrefix))) {
-            entry.hasTarget = true;
-          }
-        }
-        const links = Array.from(r.querySelectorAll("a[href]")).map((a) => (a as HTMLAnchorElement).href);
-        entry.hrefs.push(...links);
-      }
+        if (!text) continue;
+        const lower = text.toLowerCase();
 
-      // 2. Tìm dòng khớp với tên file
-      for (const [idx, entry] of rowMap.entries()) {
-        if (entry.hasTarget) {
-          return {
-            fullText: entry.texts.join(" "),
-            hrefs: entry.hrefs,
-            matchedIndex: idx,
-          };
+        // Bỏ qua các dòng Download lịch sử tải báo cáo (Download Sponsored Ads Bulk File)
+        if (lower.includes("download sponsored ads") || (lower.includes("download") && !lower.includes("upload") && !lower.includes("preview"))) {
+          continue;
+        }
+
+        // Khớp theo tên file đầy đủ, baseName, hoặc tiền tố 30 ký tự (phòng trường hợp UI Amazon cắt ngắn)
+        const matchesFile = lower.includes(targetLower) || lower.includes(baseName) || (shortPrefix.length > 10 && lower.includes(shortPrefix));
+
+        if (matchesFile) {
+          const links = Array.from(r.querySelectorAll("a[href]")).map((a) => (a as HTMLAnchorElement).href);
+          return { fullText: text, hrefs: links, source: "table-row" };
         }
       }
 
-      // 3. Fallback: Kiểm tra dòng đầu tiên (dòng mới nhất vừa nạp lên)
-      const firstEntry = rowMap.get("0") || Array.from(rowMap.values())[0];
-      if (firstEntry && firstEntry.texts.length > 0) {
-        const combined = firstEntry.texts.join(" ");
-        if (combined.toLowerCase().includes("upload") || /[0-9a-f]{8}-[0-9a-f-]{27,}/i.test(combined)) {
-          return {
-            fullText: combined,
-            hrefs: firstEntry.hrefs,
-            matchedIndex: "first",
-          };
-        }
-      }
-
-      // 4. Fallback: Kiểm tra alert/banner/toast trên màn hình
-      const alertEls = Array.from(document.querySelectorAll("[role='alert'], [data-testid*='alert'], [class*='alert'], [class*='banner'], [class*='notification'], [role='dialog']"));
-      for (const a of alertEls) {
-        const alertText = ((a as HTMLElement).innerText || "").replace(/\s+/g, " ").trim();
-        if (alertText && alertText.length > 10) {
-          return {
-            fullText: alertText,
-            hrefs: [],
-            matchedIndex: "alert",
-          };
+      // 2. Fallback: Kiểm tra toast / banner thông báo của Amazon
+      const alerts = Array.from(document.querySelectorAll("[role='alert'], [class*='toast' i], [class*='notification' i], [class*='banner' i]"));
+      for (const a of alerts) {
+        const text = ((a as HTMLElement).innerText || "").replace(/\s+/g, " ").trim();
+        if (!text) continue;
+        const lower = text.toLowerCase();
+        if (lower.includes("upload") && (lower.includes("processing") || lower.includes("success") || lower.includes("uploaded") || lower.includes("error"))) {
+          return { fullText: text, hrefs: [], source: "alert" };
         }
       }
 
@@ -219,7 +192,7 @@ async function waitForAmazonResult(
   page: import("playwright-core").Page,
   fileName: string,
 ): Promise<AmazonBulkResult> {
-  const waitDuration = Math.min(BULK_RESULT_TIMEOUT_MS, 45_000);
+  const waitDuration = Math.min(BULK_RESULT_TIMEOUT_MS, 90_000);
   const deadline = Date.now() + waitDuration;
   let lastSummary = "Amazon đã nhận file; đang xử lý ngầm trong hàng đợi tài khoản.";
   let capturedUploadId: string | null = null;
@@ -252,13 +225,22 @@ async function waitForAmazonResult(
     }
   }
 
-  // Quá deadline nhưng Amazon đã tiếp nhận file: báo SUCCESS để không bắt user chờ
+  // Nếu bắt được uploadId nhưng chưa có kết quả cuối cùng: Amazon đang xử lý ngầm
+  if (capturedUploadId) {
+    return {
+      status: "SUCCESS",
+      amazonUploadId: capturedUploadId,
+      summary: `Amazon đã tiếp nhận file thành công (Upload ID: ${capturedUploadId}). Amazon đang xử lý ngầm trong tài khoản.`,
+    };
+  }
+
+  // Quá deadline mà bảng Amazon Ads không hề xuất hiện dòng file này:
+  // TUYỆT ĐỐI KHÔNG BÁO SUCCESS ẢO để tránh hiển thị sai lệch cho người dùng!
+  console.error(`[Bulk Uploader] ❌ Quá thời gian chờ (${Math.round(waitDuration / 1000)}s) nhưng không tìm thấy file ${fileName} trên bảng Amazon Ads.`);
   return {
-    status: "SUCCESS",
-    amazonUploadId: capturedUploadId,
-    summary: capturedUploadId
-      ? `Amazon đã tiếp nhận file thành công (Upload ID: ${capturedUploadId}). Amazon đang xử lý ngầm trong tài khoản.`
-      : lastSummary,
+    status: "FAILED",
+    amazonUploadId: null,
+    summary: `Quá thời gian chờ (${Math.round(waitDuration / 1000)}s) nhưng không tìm thấy tác vụ upload file ${fileName} trên bảng Amazon Ads. Vui lòng kiểm tra lại.`,
   };
 }
 
@@ -286,12 +268,46 @@ async function uploadThroughAdsPower(filePath: string, store: StoreTarget, fileN
     }
     if (!input) throw new Error("Không tìm thấy input chọn file Bulk.");
     await input.setInputFiles(filePath);
-    const confirm = await page.waitForSelector(
-      "button[data-takt-id='adz_bulkSheets_unifiedUploadModal_upload_button']:not([disabled]), button:has-text('Upload'):not([disabled]):not([data-takt-id*='home'])",
-      { timeout: 30_000 },
-    ).catch(() => null);
-    if (!confirm) throw new Error("Amazon không bật nút xác nhận Upload; file có thể không hợp lệ.");
-    await confirm.click();
+    const uploadLocator = page
+      .locator("button[data-takt-id='adz_bulkSheets_unifiedUploadModal_upload_button'], section.bulk-sheet__upload-modal-dropzone ~ div button:has-text('Upload')")
+      .first();
+
+    console.log("[Bulk Uploader] Đang chờ Amazon Ads xác thực file Bulk và kích hoạt nút Upload...");
+
+    // Chờ nút Upload hiển thị trong modal
+    await uploadLocator.waitFor({ state: "visible", timeout: 30_000 });
+
+    // Chờ Amazon Ads validate file xong (nút enabled):
+    const deadline = Date.now() + 30_000;
+    let isUploadEnabled = false;
+    while (Date.now() < deadline) {
+      const isDisabled = await uploadLocator.isDisabled().catch(() => true);
+      const ariaDisabled = await uploadLocator.getAttribute("aria-disabled").catch(() => null);
+      if (!isDisabled && ariaDisabled !== "true") {
+        isUploadEnabled = true;
+        break;
+      }
+      await page.waitForTimeout(500);
+    }
+
+    if (!isUploadEnabled) {
+      throw new Error("Amazon không bật nút xác nhận Upload sau khi nạp file; file có thể không hợp lệ hoặc Amazon phản hồi chậm.");
+    }
+
+    console.log("[Bulk Uploader] Nút Upload đã sáng đèn! Bấm xác nhận Upload...");
+    await uploadLocator.click({ timeout: 10_000 }).catch(async () => {
+      await uploadLocator.click({ force: true, timeout: 5000 }).catch(async () => {
+        await page.evaluate(() => {
+          const btn = document.querySelector("button[data-takt-id='adz_bulkSheets_unifiedUploadModal_upload_button']") as HTMLButtonElement | null;
+          if (btn) btn.click();
+        });
+      });
+    });
+
+    console.log("[Bulk Uploader] Đã click nút Upload thành công! Chờ Amazon tiếp nhận file...");
+    // Chờ modal đóng lại xác nhận lệnh upload đã gửi đi
+    await uploadLocator.waitFor({ state: "hidden", timeout: 15_000 }).catch(() => {});
+    await page.waitForTimeout(3000);
 
     const failure = await page.waitForSelector("[role='alert']", { timeout: 8_000 }).catch(() => null);
     const alertText = failure ? await failure.innerText().catch(() => "") : "";

@@ -32,6 +32,7 @@ import {
 } from "./common-rule-parser";
 import { objectStorageDriver, putStoredObject, r2KeyPrefix } from "@/lib/object-storage";
 import { invalidateGroupedRecommendationsCache } from "./recommendation-cache";
+import { getCachedOrFetch, invalidateCachePattern } from "@/lib/redis";
 
 export async function resolveStoreId(storeIdOrName?: string | null): Promise<string> {
   const sql = await getDatabaseClient();
@@ -231,6 +232,7 @@ export async function saveCostMasterNewVersion(data: {
       updatedAt: new Date(r.updated_at).toISOString(),
     };
     invalidateGroupedRecommendationsCache(storeId);
+    invalidateCachePattern(`sku_economics:${storeId}:*`).catch(() => {});
     return result;
   });
 }
@@ -722,9 +724,11 @@ export async function importCostMasterFromExcel(
    ========================================================================= */
 
 export async function getSkuEconomicsList(storeId: string, days = 30): Promise<SkuEconomics[]> {
-  const sql = await getDatabaseClient();
+  const redisKey = `sku_economics:${storeId}:${days}`;
+  return getCachedOrFetch(redisKey, 3600, async () => {
+    const sql = await getDatabaseClient();
 
-  const masters = await getCostMasters(storeId);
+    const masters = await getCostMasters(storeId);
   const masterMap = new Map(masters.map((m) => [m.productType, m]));
 
   const defaultMaster: ProductCostMaster = masterMap.get("Ornament") || masterMap.get("Glass Ornament") || {
@@ -936,7 +940,8 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
     });
   }
 
-  return result;
+    return result;
+  });
 }
 
 export async function upsertSkuEconomics(

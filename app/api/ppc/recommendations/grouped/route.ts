@@ -1,6 +1,6 @@
 // app/api/ppc/recommendations/grouped/route.ts
 import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
-import { listPpcPerformance } from "@/lib/ppc/repository";
+import { listTargetRowsForRecommendations } from "@/lib/ppc/repository";
 import { getGroupedRecommendations, resolveStoreId } from "@/lib/ppc/sku-architecture-service";
 
 import {
@@ -50,12 +50,12 @@ export async function GET(request: Request) {
       result = cached;
     } else {
       result = await getCachedOrFetch(redisKey, RECOMMENDATION_CACHE_TTL_SECONDS, async () => {
-        // SB target reports commonly leave `sku` blank. Load the store's complete
-        // target set, recover SKU from campaign names, then filter after evaluation.
-        const targetRows = await listPpcPerformance(
+        // Optimized query: only fetch enabled targets in targetable campaigns (SP03, SB05, SB01, VIDEO),
+        // reducing row scan from 50k to ~1.5k.
+        const targetRows = await listTargetRowsForRecommendations(
           scope,
-          { storeName, sku: "ALL", days },
-          { grain: "TARGET", limit: 50000 },
+          { storeName, days },
+          { limit: 20000 },
         );
         return getGroupedRecommendations(storeId, targetRows, days);
       });

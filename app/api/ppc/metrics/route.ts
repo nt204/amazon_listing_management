@@ -72,7 +72,28 @@ function projectMetrics(data: MetricsData, section: MetricsSection) {
     adGroups: section === "ad_groups" ? data.adGroups : [],
     targets: section === "targets" ? data.targets : [],
     skuPerformance: section === "skus" ? data.skuPerformance : [],
-    searchTerms: section === "search_terms" ? data.searchTerms : [],
+    searchTerms: section === "search_terms" ? data.searchTerms.map((t) => ({
+      id: t.id,
+      storeId: t.storeId,
+      storeName: t.storeName,
+      campaignId: t.campaignId,
+      campaignName: t.campaignName,
+      adGroupId: t.adGroupId,
+      adGroupName: t.adGroupName,
+      keywordId: t.keywordId,
+      targetKeyword: t.targetKeyword,
+      customerSearchTerm: t.customerSearchTerm,
+      matchType: t.matchType,
+      adType: t.adType,
+      impressions: t.impressions,
+      clicks: t.clicks,
+      spend: t.spend,
+      sales: t.sales,
+      orders: t.orders,
+      cpc: t.cpc,
+      acos: t.acos,
+      roas: t.roas,
+    })) : [],
     detailCounts,
   };
 }
@@ -106,6 +127,8 @@ export async function GET(request: Request) {
       throw new ApiError("Bộ lọc PPC không hợp lệ.", 400);
     }
 
+    const campaignId = searchParams.get("campaignId")?.trim() || undefined;
+    const campaignName = searchParams.get("campaignName")?.trim() || undefined;
     const startDateParam = searchParams.get("startDate")?.trim() || "";
     const endDateParam = searchParams.get("endDate")?.trim() || "";
     const startDate = /^\d{4}-\d{2}-\d{2}$/.test(startDateParam) ? startDateParam : undefined;
@@ -117,8 +140,9 @@ export async function GET(request: Request) {
     }
 
     const snapshotId = await getActiveSnapshotId(scope, storeName, days);
-    const redisKey = `ppc:metrics:${scope.teamId}:${storeName}:${snapshotId}:${sku}:${days}:${startDate || "none"}:${endDate || "none"}:${section}`;
-    const cacheKey = `${scope.teamId}\u0000${storeName}\u0000${snapshotId}\u0000${sku}\u0000${days}\u0000${startDate || ""}\u0000${endDate || ""}\u0000${section}`;
+    const campScope = campaignId || campaignName || "all_camps";
+    const redisKey = `ppc:metrics:${scope.teamId}:${storeName}:${snapshotId}:${sku}:${days}:${campScope}:${startDate || "none"}:${endDate || "none"}:${section}`;
+    const cacheKey = `${scope.teamId}\u0000${storeName}\u0000${snapshotId}\u0000${sku}\u0000${days}\u0000${campScope}\u0000${startDate || ""}\u0000${endDate || ""}\u0000${section}`;
 
     // 1. Kiểm tra L1 In-Memory Cache
     const memCached = refresh ? undefined : metricsCache.get(cacheKey);
@@ -137,7 +161,7 @@ export async function GET(request: Request) {
         if (!pending) {
           pending = getPpcAnalyticsData(
             scope,
-            { storeName, sku, days, startDate, endDate },
+            { storeName, sku, days, startDate, endDate, campaignId, campaignName, projection: "lightweight" },
             { grains: SECTION_GRAINS[section], includeRecommendations: false, section },
           ).then((result) => projectMetrics(result, section));
           metricsInFlight.set(cacheKey, pending);
@@ -156,7 +180,7 @@ export async function GET(request: Request) {
             if (!pending) {
               pending = getPpcAnalyticsData(
                 scope,
-                { storeName, sku, days, startDate, endDate },
+                { storeName, sku, days, startDate, endDate, campaignId, campaignName, projection: "lightweight" },
                 { grains: SECTION_GRAINS[section], includeRecommendations: false, section },
               ).then((result) => projectMetrics(result, section));
               metricsInFlight.set(cacheKey, pending);
