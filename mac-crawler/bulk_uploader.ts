@@ -133,7 +133,8 @@ async function findUploadedFileResult(page: import("playwright-core").Page, file
   try {
     const evalResult = await page.evaluate((targetFileName) => {
       const baseName = targetFileName.replace(/\.xlsx$/i, "").toLowerCase();
-      const shortPrefix = baseName.slice(0, Math.min(30, baseName.length)).toLowerCase();
+      const p30 = baseName.slice(0, Math.min(30, baseName.length)).toLowerCase();
+      const p20 = baseName.slice(0, Math.min(20, baseName.length)).toLowerCase();
       const targetLower = targetFileName.toLowerCase();
 
       // 1. Quét tất cả các hàng dữ liệu trong bảng Bulk Operations
@@ -151,8 +152,10 @@ async function findUploadedFileResult(page: import("playwright-core").Page, file
           continue;
         }
 
-        // Khớp theo tên file đầy đủ, baseName, hoặc tiền tố 30 ký tự (phòng trường hợp UI Amazon cắt ngắn)
-        const matchesFile = lower.includes(targetLower) || lower.includes(baseName) || (shortPrefix.length > 10 && lower.includes(shortPrefix));
+        // Khớp theo tên file đầy đủ, baseName, hoặc tiền tố 20-30 ký tự (phòng trường hợp UI Amazon cắt ngắn)
+        const matchesFile = lower.includes(targetLower) || lower.includes(baseName) 
+          || (p30.length > 10 && lower.includes(p30))
+          || (p20.length > 8 && lower.includes(p20));
 
         if (matchesFile) {
           const links = Array.from(r.querySelectorAll("a[href]")).map((a) => (a as HTMLAnchorElement).href);
@@ -261,35 +264,41 @@ async function uploadThroughAdsPower(filePath: string, store: StoreTarget, fileN
 
     if (!hasInputInitially) {
       const openButtonLocator = page.locator(
-        "button[data-takt-id='Bulksheet_home_upload_campaigns_button'], button:has-text('Upload campaigns')",
+        "button[data-takt-id='Bulksheet_home_upload_campaigns_button']:visible, button:has-text('Upload campaigns'):visible",
       ).first();
 
-      console.log("[Bulk Uploader] Đang chờ nút 'Upload campaigns' sẵn sàng trên trang Amazon Ads...");
-      await openButtonLocator.waitFor({ state: "visible", timeout: 30_000 });
+      let modalOpened = false;
+      let lastOpenError: unknown = null;
 
-      // Chờ React Ads hydrate xong và nút sẵn sàng trước khi click:
-      const openDeadline = Date.now() + 20_000;
-      while (Date.now() < openDeadline) {
-        const hasInput = await fileInputLocator.count().then((c) => c > 0).catch(() => false);
-        if (hasInput) break;
-        const isDisabled = await openButtonLocator.isDisabled().catch(() => true);
-        const ariaDisabled = await openButtonLocator.getAttribute("aria-disabled").catch(() => null);
-        if (!isDisabled && ariaDisabled !== "true") {
+      // Amazon Ads có thể thay node của nút trong lúc React hydrate. Locator được
+      // resolve lại ở mỗi lần thử nên không giữ ElementHandle đã detach khỏi DOM.
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          if (await fileInputLocator.count()) {
+            modalOpened = true;
+            break;
+          }
+
+          console.log(`[Bulk Uploader] Chờ và click Upload campaigns (lần ${attempt}/3)...`);
+          await openButtonLocator.waitFor({ state: "visible", timeout: attempt === 1 ? 30_000 : 10_000 });
+          await openButtonLocator.click({ timeout: 15_000 });
+          await fileInputLocator.waitFor({ state: "attached", timeout: 15_000 });
+          modalOpened = true;
           break;
+        } catch (error) {
+          lastOpenError = error;
+          if (await fileInputLocator.count()) {
+            modalOpened = true;
+            break;
+          }
+          if (attempt < 3) await page.waitForTimeout(1_000);
         }
-        await page.waitForTimeout(500);
       }
 
-      console.log("[Bulk Uploader] Click mở modal Upload campaigns...");
-      await openButtonLocator.click({ timeout: 10_000 }).catch(async () => {
-        await openButtonLocator.click({ force: true, timeout: 5000 }).catch(async () => {
-          await page.evaluate(() => {
-            const btn = document.querySelector("button[data-takt-id='Bulksheet_home_upload_campaigns_button']")
-              || Array.from(document.querySelectorAll("button")).find((b) => /upload campaigns/i.test(b.textContent || ""));
-            if (btn) (btn as HTMLButtonElement).click();
-          });
-        });
-      });
+      if (!modalOpened) {
+        const detail = lastOpenError instanceof Error ? lastOpenError.message : String(lastOpenError);
+        throw new Error(`Không mở được cửa sổ Upload campaigns sau 3 lần thử. ${detail}`);
+      }
     }
 
     console.log("[Bulk Uploader] Chờ input file và nạp file Bulk...");
@@ -305,7 +314,7 @@ async function uploadThroughAdsPower(filePath: string, store: StoreTarget, fileN
     await uploadLocator.waitFor({ state: "visible", timeout: 30_000 });
 
     // Chờ Amazon Ads validate file xong (nút enabled):
-    const deadline = Date.now() + 30_000;
+    const deadline = Date.now() + 60_000;
     let isUploadEnabled = false;
     while (Date.now() < deadline) {
       const isDisabled = await uploadLocator.isDisabled().catch(() => true);
@@ -325,8 +334,10 @@ async function uploadThroughAdsPower(filePath: string, store: StoreTarget, fileN
     await uploadLocator.click({ timeout: 10_000 }).catch(async () => {
       await uploadLocator.click({ force: true, timeout: 5000 }).catch(async () => {
         await page.evaluate(() => {
-          const btn = document.querySelector("button[data-takt-id='adz_bulkSheets_unifiedUploadModal_upload_button']") as HTMLButtonElement | null;
-          if (btn) btn.click();
+          const btn = document.querySelector("button[data-takt-id='adz_bulkSheets_unifiedUploadModal_upload_button']") 
+            || Array.from(document.querySelectorAll("section.bulk-sheet__upload-modal-dropzone ~ div button, [role='dialog'] button"))
+                .find((b) => b.textContent?.trim().toLowerCase() === "upload");
+          if (btn) (btn as HTMLButtonElement).click();
         });
       });
     });
