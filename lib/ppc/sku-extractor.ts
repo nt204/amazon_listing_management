@@ -246,6 +246,71 @@ export function formatDDMMYY(date: Date = new Date()): string {
   return `${day}${month}${year}`;
 }
 
+/** Format a Sale KW launch date as YYYYMMDD in Vietnam time. */
+export function formatYYYYMMDD(date: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).formatToParts(date);
+  const day = parts.find((p) => p.type === "day")?.value || "01";
+  const month = parts.find((p) => p.type === "month")?.value || "01";
+  const year = parts.find((p) => p.type === "year")?.value || "2026";
+  return `${year}${month}${day}`;
+}
+
+export function normalizeSaleKwDate(dateStr?: string | null, fallbackDate = new Date()): string {
+  const value = String(dateStr || "").trim();
+  const isValidDate = (year: number, month: number, day: number) => {
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+  };
+
+  const longDate = value.match(/^(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$/);
+  if (longDate && isValidDate(Number(longDate[1]), Number(longDate[2]), Number(longDate[3]))) return value;
+
+  const shortDate = value.match(/^(0[1-9]|[12]\d|3[01])(0[1-9]|1[0-2])(\d{2})$/);
+  if (shortDate && isValidDate(2000 + Number(shortDate[3]), Number(shortDate[2]), Number(shortDate[1]))) {
+    return `20${shortDate[3]}${shortDate[2]}${shortDate[1]}`;
+  }
+
+  return formatYYYYMMDD(fallbackDate);
+}
+
+export type SaleKwRunTypeCode = "SP03" | "SB05" | "SP04" | "SB01";
+
+const SALE_KW_RUN_TYPE_LABELS: Record<SaleKwRunTypeCode, string> = {
+  SP03: "SP03 KW",
+  SB05: "SB05 Video",
+  SP04: "SP04 Auto",
+  SB01: "SB01",
+};
+
+export function formatSaleKwRunType(adTypeCode?: string | null): string {
+  const raw = String(adTypeCode || "SP03").trim().toUpperCase();
+  if (raw.includes("SB05") || raw.includes("VIDEO")) return "SB05 Video";
+  if (raw.includes("SP04") || raw.includes("AUTO")) return "SP04 Auto";
+  if (raw.includes("SB01")) return "SB01";
+  if (raw.includes("SP03") || raw.includes("KW")) return "SP03 KW";
+  const code = raw as SaleKwRunTypeCode;
+  return SALE_KW_RUN_TYPE_LABELS[code] || SALE_KW_RUN_TYPE_LABELS.SP03;
+}
+
+export function sanitizeSaleKwUserName(userName?: string | null): string {
+  const ascii = String(userName || "")
+    .replace(/Đ/g, "D")
+    .replace(/đ/g, "d")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9._ -]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 32)
+    .trim();
+  return ascii || "Loan";
+}
+
 /**
  * Extract PPC ad type code from campaign name (e.g. SP03, SP01, SP04, SB05, etc.)
  * Defaults to "SP03" for Keyword campaigns.
@@ -259,9 +324,9 @@ export function extractAdTypeCode(campaignName?: string | null): string {
 
 /**
  * Build campaign name according to the rule:
- * "{SKU} {dạng chạy} KW {tên người dùng} {match type} {ngày tháng năm} (sale kw)"
+ * "{SKU} {dạng chạy} {match type} FBA {tên người dùng} {YYYYMMDD} (sale kw)"
  * Example:
- * FL230622BXN SP03 KW Loan Broad 100124 (sale kw)
+ * BTV260203MR SP03 KW Phrase FBA Truong 20260430 (sale kw)
  */
 export function buildSaleKwCampaignName(params: {
   sku: string;
@@ -271,10 +336,10 @@ export function buildSaleKwCampaignName(params: {
   dateStr?: string;
 }): string {
   const cleanSku = (params.sku || "").trim().toUpperCase() || "SKU";
-  const adType = (params.adTypeCode || "SP03").trim().toUpperCase();
-  const user = (params.userName || "Loan").trim();
-  const dateStr = (params.dateStr || formatDDMMYY()).trim();
-  return `${cleanSku} ${adType} KW ${user} ${params.matchType} ${dateStr} (sale kw)`;
+  const runType = formatSaleKwRunType(params.adTypeCode);
+  const user = sanitizeSaleKwUserName(params.userName);
+  const dateStr = normalizeSaleKwDate(params.dateStr);
+  return `${cleanSku} ${runType} ${params.matchType} FBA ${user} ${dateStr} (sale kw)`;
 }
 
 /**
