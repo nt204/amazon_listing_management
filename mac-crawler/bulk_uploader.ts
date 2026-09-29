@@ -256,18 +256,45 @@ async function uploadThroughAdsPower(filePath: string, store: StoreTarget, fileN
     if (!currentUrl.includes("advertising.amazon.com") || /signin|login/i.test(currentUrl)) {
       throw new Error(`Profile ${store.store_name} chưa đăng nhập Amazon Ads (${currentUrl}).`);
     }
-    let input = await page.$("input[type='file']");
-    if (!input) {
-      const openButton = await page.waitForSelector(
+    const fileInputLocator = page.locator("input[type='file']").first();
+    const hasInputInitially = await fileInputLocator.count().then((c) => c > 0).catch(() => false);
+
+    if (!hasInputInitially) {
+      const openButtonLocator = page.locator(
         "button[data-takt-id='Bulksheet_home_upload_campaigns_button'], button:has-text('Upload campaigns')",
-        { timeout: 30_000 },
-      ).catch(() => null);
-      if (!openButton) throw new Error("Không tìm thấy nút Upload campaigns trên Amazon Ads.");
-      await openButton.click();
-      input = await page.waitForSelector("input[type='file']", { state: "attached", timeout: 15_000 }).catch(() => null);
+      ).first();
+
+      console.log("[Bulk Uploader] Đang chờ nút 'Upload campaigns' sẵn sàng trên trang Amazon Ads...");
+      await openButtonLocator.waitFor({ state: "visible", timeout: 30_000 });
+
+      // Chờ React Ads hydrate xong và nút sẵn sàng trước khi click:
+      const openDeadline = Date.now() + 20_000;
+      while (Date.now() < openDeadline) {
+        const hasInput = await fileInputLocator.count().then((c) => c > 0).catch(() => false);
+        if (hasInput) break;
+        const isDisabled = await openButtonLocator.isDisabled().catch(() => true);
+        const ariaDisabled = await openButtonLocator.getAttribute("aria-disabled").catch(() => null);
+        if (!isDisabled && ariaDisabled !== "true") {
+          break;
+        }
+        await page.waitForTimeout(500);
+      }
+
+      console.log("[Bulk Uploader] Click mở modal Upload campaigns...");
+      await openButtonLocator.click({ timeout: 10_000 }).catch(async () => {
+        await openButtonLocator.click({ force: true, timeout: 5000 }).catch(async () => {
+          await page.evaluate(() => {
+            const btn = document.querySelector("button[data-takt-id='Bulksheet_home_upload_campaigns_button']")
+              || Array.from(document.querySelectorAll("button")).find((b) => /upload campaigns/i.test(b.textContent || ""));
+            if (btn) (btn as HTMLButtonElement).click();
+          });
+        });
+      });
     }
-    if (!input) throw new Error("Không tìm thấy input chọn file Bulk.");
-    await input.setInputFiles(filePath);
+
+    console.log("[Bulk Uploader] Chờ input file và nạp file Bulk...");
+    await fileInputLocator.waitFor({ state: "attached", timeout: 20_000 });
+    await fileInputLocator.setInputFiles(filePath);
     const uploadLocator = page
       .locator("button[data-takt-id='adz_bulkSheets_unifiedUploadModal_upload_button'], section.bulk-sheet__upload-modal-dropzone ~ div button:has-text('Upload')")
       .first();
@@ -309,8 +336,9 @@ async function uploadThroughAdsPower(filePath: string, store: StoreTarget, fileN
     await uploadLocator.waitFor({ state: "hidden", timeout: 15_000 }).catch(() => {});
     await page.waitForTimeout(3000);
 
-    const failure = await page.waitForSelector("[role='alert']", { timeout: 8_000 }).catch(() => null);
-    const alertText = failure ? await failure.innerText().catch(() => "") : "";
+    const failureLocator = page.locator("[role='alert']").first();
+    const hasAlert = await failureLocator.waitFor({ state: "visible", timeout: 8_000 }).then(() => true).catch(() => false);
+    const alertText = hasAlert ? (await failureLocator.innerText().catch(() => "")) : "";
     if (/error|failed|invalid|không hợp lệ/i.test(alertText)) {
       throw new Error(`Amazon từ chối file Bulk: ${alertText.slice(0, 500)}`);
     }
