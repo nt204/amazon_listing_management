@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { Lightning, DotsSixVertical } from "@phosphor-icons/react";
+import { Lightning } from "@phosphor-icons/react";
 
 interface PpcFloatingActionQueueProps {
   onOpen: () => void;
@@ -38,6 +38,8 @@ export function PpcFloatingActionQueue({
 
   // Load saved position
   useEffect(() => {
+    let animationFrame: number | undefined;
+
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
@@ -45,18 +47,26 @@ export function PpcFloatingActionQueue({
         if (typeof parsed.right === "number" && typeof parsed.bottom === "number") {
           const maxRight = Math.max(12, window.innerWidth - 200);
           const maxBottom = Math.max(12, window.innerHeight - 60);
-          setPosition({
-            right: Math.min(Math.max(12, parsed.right), maxRight),
-            bottom: Math.min(Math.max(12, parsed.bottom), maxBottom),
+          animationFrame = window.requestAnimationFrame(() => {
+            setPosition({
+              right: Math.min(Math.max(12, parsed.right), maxRight),
+              bottom: Math.min(Math.max(12, parsed.bottom), maxBottom),
+            });
           });
         }
       }
     } catch {
       // Ignore storage errors
     }
+
+    return () => {
+      if (animationFrame !== undefined) {
+        window.cancelAnimationFrame(animationFrame);
+      }
+    };
   }, []);
 
-  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+  const handlePointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
     // Only left click
     if (e.button !== 0) return;
 
@@ -119,6 +129,9 @@ export function PpcFloatingActionQueue({
     window.addEventListener("pointerup", onPointerUp);
   };
 
+  const storeLabel =
+    selectedStore && selectedStore !== "ALL" ? selectedStore : "LIMIMA";
+
   return (
     <div
       style={{
@@ -130,46 +143,42 @@ export function PpcFloatingActionQueue({
       }}
       className="select-none"
     >
-      <div
+      <button
+        type="button"
         onPointerDown={handlePointerDown}
-        className={`group flex items-center gap-1.5 pl-2 pr-3.5 py-2 rounded-full bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white shadow-xl shadow-emerald-950/25 border border-emerald-500/80 backdrop-blur-md transition-shadow duration-200 cursor-grab active:cursor-grabbing hover:scale-[1.02] ${
+        onClick={(event) => {
+          // Keyboard-triggered clicks do not emit a pointer sequence.
+          if (event.detail === 0) onOpen();
+        }}
+        className={`group flex h-12 items-center gap-2 overflow-hidden rounded-full border border-emerald-500/80 bg-emerald-600 px-3 text-white shadow-xl shadow-emerald-950/25 transition-[background-color,box-shadow,transform] duration-200 hover:bg-emerald-700 focus-visible:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2 active:scale-[0.98] active:bg-emerald-800 cursor-grab active:cursor-grabbing motion-reduce:transition-none ${
           isDragging ? "opacity-90 ring-2 ring-emerald-300 ring-offset-2" : ""
         }`}
+        aria-label={`Mở Action Queue cho shop ${storeLabel}. ${pendingActionCount} task đang chờ.`}
         title={`Mở Action Queue${selectedStore && selectedStore !== "ALL" ? ` - Shop: ${selectedStore}` : ""} (Kéo thả để di chuyển vị trí)`}
       >
-        {/* Drag Handle Grip */}
-        <span
-          className="text-emerald-300/80 hover:text-white transition-colors cursor-grab active:cursor-grabbing"
-          title="Kéo thả vị trí"
-        >
-          <DotsSixVertical size={16} weight="bold" />
-        </span>
-
         {/* Lightning Icon */}
-        <div className="relative flex items-center justify-center">
+        <span className="relative flex shrink-0 items-center justify-center">
           <Lightning
-            size={16}
+            size={19}
             weight="fill"
             className="text-white group-hover:rotate-12 transition-transform duration-200"
           />
-          {pendingActionCount > 0 && (
-            <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-emerald-300 animate-ping" />
-          )}
-        </div>
+        </span>
 
-        {/* Text */}
-        <span className="text-xs font-bold tracking-wide">Action Queue</span>
+        {/* Revealed action label */}
+        <span className="flex max-w-0 -translate-x-2 items-center gap-2 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity,transform] duration-300 ease-out group-hover:max-w-32 group-hover:translate-x-0 group-hover:opacity-100 group-focus-visible:max-w-32 group-focus-visible:translate-x-0 group-focus-visible:opacity-100 motion-reduce:transition-none">
+          <span className="text-sm font-bold tracking-wide">Action Queue</span>
+          <span aria-hidden="true" className="h-5 w-px shrink-0 bg-emerald-300/50" />
+        </span>
 
         {/* Store Name */}
-        {selectedStore && selectedStore !== "ALL" && (
-          <span className="text-[10px] text-emerald-100/90 font-medium max-w-[100px] truncate border-l border-emerald-400/40 pl-2">
-            {selectedStore}
-          </span>
-        )}
+        <span className="max-w-[100px] truncate whitespace-nowrap text-sm font-semibold tracking-wide text-emerald-50">
+          {storeLabel}
+        </span>
 
         {/* Badge Count */}
         <span
-          className={`px-1.5 py-0.2 min-w-[20px] text-center rounded-full text-[11px] font-black transition-all ${
+          className={`flex h-7 min-w-7 shrink-0 items-center justify-center rounded-full px-1.5 text-xs font-black transition-colors ${
             pendingActionCount > 0
               ? "bg-white text-emerald-700 shadow-xs"
               : "bg-emerald-800/80 text-emerald-200 border border-emerald-600/50"
@@ -177,7 +186,7 @@ export function PpcFloatingActionQueue({
         >
           {pendingActionCount}
         </span>
-      </div>
+      </button>
     </div>
   );
 }

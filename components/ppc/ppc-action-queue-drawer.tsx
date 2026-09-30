@@ -31,6 +31,7 @@ import {
   MagnifyingGlass,
 } from "@phosphor-icons/react";
 import type { BulkExport, PpcAction, PpcAutoUploadLog } from "@/lib/ppc/sku-architecture-types";
+import { PpcCopyButton } from "./ppc-copy-button";
 
 export function formatCompactFileName(fileName: string, skus?: string[]) {
   const match = fileName.match(/(\d{4}-\d{2}-\d{2})T(\d{2})[-:](\d{2})/);
@@ -1684,8 +1685,11 @@ export function PpcActionQueueDrawer({
                                 </span>
                                 {log.durationMs > 0 && <span>• {(log.durationMs / 1000).toFixed(1)}s</span>}
                                 {log.skus && log.skus.length > 0 && (
-                                  <span className="text-indigo-600 truncate max-w-[200px]" title={log.skus.join(", ")}>
-                                    • SKUs: {log.skus.join(", ")}
+                                  <span className="inline-flex items-center gap-1 min-w-0 text-indigo-600">
+                                    <span className="truncate max-w-[200px]" title={log.skus.join(", ")}>
+                                      • SKUs: {log.skus.join(", ")}
+                                    </span>
+                                    <PpcCopyButton value={log.skus.join(", ")} label="SKU" size={11} />
                                   </span>
                                 )}
                                 <span className="text-slate-300">•</span>
@@ -2338,15 +2342,24 @@ export function PpcActionQueueDrawer({
                           return (
                             <tr key={act.id || idx} className="hover:bg-slate-50/80 transition">
                               <td className="py-2.5 px-3 font-bold text-slate-900 font-mono text-xs whitespace-nowrap">
-                                {act.sku || "—"}
+                                <div className="flex items-center gap-1">
+                                  <span>{act.sku || "—"}</span>
+                                  <PpcCopyButton value={act.sku} label="SKU" />
+                                </div>
                               </td>
                               <td className="py-2.5 px-3 text-slate-600 max-w-[220px]">
-                                <div className="truncate font-medium text-slate-800" title={act.campaignName}>
-                                  {act.campaignName || "—"}
+                                <div className="flex items-center gap-1">
+                                  <span className="truncate font-medium text-slate-800" title={act.campaignName}>
+                                    {act.campaignName || "—"}
+                                  </span>
+                                  <PpcCopyButton value={act.campaignName} label="campaign" />
                                 </div>
                                 {act.adGroupName && (
-                                  <div className="truncate text-[10px] text-slate-400 mt-0.5" title={act.adGroupName}>
-                                    Nhóm: {act.adGroupName}
+                                  <div className="flex items-center gap-1 mt-0.5">
+                                    <span className="truncate text-[10px] text-slate-400" title={act.adGroupName}>
+                                      Nhóm: {act.adGroupName}
+                                    </span>
+                                    <PpcCopyButton value={act.adGroupName} label="ad group" />
                                   </div>
                                 )}
                               </td>

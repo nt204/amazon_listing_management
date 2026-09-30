@@ -33,11 +33,12 @@ import type { PpcSearchTermRow, MatchType, PpcAdType } from "@/lib/ppc/types";
 import type { RequestActor } from "@/lib/auth";
 import {
   isAsinProductTarget,
-  formatDDMMYY,
+  formatYYYYMMDD,
   extractFileDateDDMMYY,
   extractAdTypeCode,
   buildSaleKwCampaignName,
   generateSaleKwCampaignTriad,
+  normalizeSaleKwDate,
   resolveSkuForSearchTerm,
 } from "@/lib/ppc/sku-extractor";
 import { PpcPagination } from "./ppc-pagination";
@@ -185,7 +186,7 @@ export function PpcSaleKwView({
     return `ppc_sale_kw_username_${id.trim().replace(/[^a-zA-Z0-9_-]/g, "_")}`;
   }, [actor?.userId, actor?.displayName]);
 
-  // 2. Campaign Naming & Triad Parameters (SKU + Dạng chạy + "KW" + Tên người dùng + Match Type + Ngày tháng năm + "(sale kw)")
+  // 2. Campaign Naming: SKU + dạng chạy + match type + FBA + người dùng + YYYYMMDD + (sale kw)
   const [userName, setUserName] = useState<string>(() => {
     if (typeof window !== "undefined") {
       try {
@@ -242,21 +243,21 @@ export function PpcSaleKwView({
     }
   };
 
-  // Tự động trích xuất ngày tạo file / ngày báo cáo từ danh sách searchTerms (định dạng DDMMYY 6 chữ số)
+  // Tự động trích xuất ngày tạo file / ngày báo cáo theo định dạng YYYYMMDD.
   const fileReportDate = useMemo(() => {
     if (!searchTerms || searchTerms.length === 0) return null;
     for (const t of searchTerms) {
       const raw = t.reportEndDate || t.reportDate || t.reportStartDate;
       if (raw) {
         const parsed = extractFileDateDDMMYY(raw);
-        if (parsed) return parsed;
+        if (parsed) return normalizeSaleKwDate(parsed);
       }
     }
     return null;
   }, [searchTerms]);
 
   const [customDate, setCustomDate] = useState<string>(() => {
-    return formatDDMMYY(new Date());
+    return formatYYYYMMDD(new Date());
   });
 
   // Khi có file / nạp dữ liệu searchTerms mới -> Tự động điền ngày tạo file đó
@@ -568,7 +569,7 @@ export function PpcSaleKwView({
           sku: c.sku,
           adTypeCode,
           userName: userName.trim() || "Loan",
-          dateStr: customDate.trim() || formatDDMMYY(),
+          dateStr: customDate.trim() || formatYYYYMMDD(),
         });
 
         map.set(c.sku, {
@@ -748,7 +749,7 @@ export function PpcSaleKwView({
       skuMap.get(it.sku)!.push(it);
     }
 
-    const activeDateStr = customDate.trim() || formatDDMMYY();
+    const activeDateStr = customDate.trim() || formatYYYYMMDD();
     const activeUser = userName.trim() || "Loan";
     const campaigns: any[] = [];
 
@@ -1103,6 +1104,36 @@ export function PpcSaleKwView({
     }
   };
 
+  const handleCopySelectedTargetCampaigns = async () => {
+    const selectedItems = registryItems.filter((it) => selectedRegIds.has(it.id));
+    const names = Array.from(new Set(selectedItems.map((it) => it.target_campaign_name).filter(Boolean)));
+    if (names.length === 0) {
+      notify("Không có Target Campaign nào để copy", "error");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(names.join("\n"));
+      notify(`Đã copy ${names.length} Target Campaign (Mới) vào clipboard`, "success");
+    } catch {
+      notify("Không thể copy vào clipboard", "error");
+    }
+  };
+
+  const handleCopySelectedSourceCampaigns = async () => {
+    const selectedItems = registryItems.filter((it) => selectedRegIds.has(it.id));
+    const names = Array.from(new Set(selectedItems.map((it) => it.source_campaign_name).filter(Boolean)));
+    if (names.length === 0) {
+      notify("Không có Source Campaign nào để copy", "error");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(names.join("\n"));
+      notify(`Đã copy ${names.length} Source Campaign (Cũ) vào clipboard`, "success");
+    } catch {
+      notify("Không thể copy vào clipboard", "error");
+    }
+  };
+
   // Filtered Registry Items
   const filteredRegItems = useMemo(() => {
     let list = [...registryItems];
@@ -1356,6 +1387,7 @@ export function PpcSaleKwView({
                 <span className="font-semibold text-slate-600" title="Tên người dùng gắn vào tên chiến dịch">Người dùng:</span>
                 <input
                   type="text"
+                  maxLength={32}
                   value={userName}
                   onChange={(e) => handleUserNameChange(e.target.value)}
                   placeholder="Loan"
@@ -1370,24 +1402,22 @@ export function PpcSaleKwView({
                   onChange={(e) => setAdTypeCode(e.target.value)}
                   className="px-2 py-0.5 font-bold text-slate-900 bg-slate-50 border border-slate-200 rounded focus:bg-white focus:outline-none focus:border-emerald-500 cursor-pointer"
                 >
-                  <option value="SP03">SP03 (Keyword)</option>
-                  <option value="SP01">SP01</option>
-                  <option value="SP02">SP02 (PAT)</option>
-                  <option value="SP04">SP04 (Auto)</option>
-                  <option value="SB05">SB05 (Video)</option>
-                  <option value="SB01">SB01 (Brands)</option>
+                  <option value="SP03">SP03 KW</option>
+                  <option value="SB05">SB05 Video</option>
+                  <option value="SP04">SP04 Auto</option>
+                  <option value="SB01">SB01</option>
                 </select>
               </div>
 
               <div className="flex items-center gap-1.5">
-                <span className="font-semibold text-slate-600" title="Ngày tháng năm định dạng DDMMYY">Ngày (DDMMYY):</span>
+                <span className="font-semibold text-slate-600" title="Ngày tháng năm định dạng YYYYMMDD">Ngày (YYYYMMDD):</span>
                 <input
                   type="text"
-                  maxLength={6}
+                  maxLength={8}
                   value={customDate}
                   onChange={(e) => setCustomDate(e.target.value)}
                   className="w-20 px-2 py-0.5 font-mono font-bold text-slate-900 bg-slate-50 border border-slate-200 rounded focus:bg-white focus:outline-none focus:border-emerald-500 text-center"
-                  placeholder="100124"
+                  placeholder="20260430"
                 />
               </div>
 
@@ -1752,7 +1782,6 @@ export function PpcSaleKwView({
                               <th className="py-2.5 px-3 text-right">Spend</th>
                               <th className="py-2.5 px-3 text-center">CPC TB (Bid nạp)</th>
                               <th className="py-2.5 px-3 text-right">ACOS</th>
-                              <th className="py-2.5 px-3 text-center">Trạng thái</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
@@ -1791,8 +1820,30 @@ export function PpcSaleKwView({
                                       </button>
                                     </div>
                                   </td>
-                                  <td className="py-2.5 px-3 text-slate-600 max-w-xs truncate" title={item.sourceCampaignNames.join(", ")}>
-                                    {item.sourceCampaignNames.join(", ")}
+                                  <td className="py-2.5 px-3 text-slate-600 max-w-xs" title={item.sourceCampaignNames.join(", ")}>
+                                    <div className="flex min-w-0 items-center gap-1.5">
+                                      <span className="truncate">
+                                        {item.sourceCampaignNames.join(", ")}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          copyToClipboard(
+                                            item.sourceCampaignNames.join("\n"),
+                                            `${item.key}_source_campaigns`,
+                                          )
+                                        }
+                                        className="shrink-0 rounded p-0.5 text-slate-400 transition hover:bg-slate-100 hover:text-indigo-600 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-indigo-500"
+                                        title="Copy Campaign nguồn"
+                                        aria-label={`Copy Campaign nguồn của ${item.customerSearchTerm}`}
+                                      >
+                                        {copiedKey === `${item.key}_source_campaigns` ? (
+                                          <Check size={12} weight="bold" className="text-emerald-600" />
+                                        ) : (
+                                          <Copy size={12} />
+                                        )}
+                                      </button>
+                                    </div>
                                   </td>
                                   <td className="py-2.5 px-3 text-right font-extrabold text-emerald-600">
                                     <span className="px-2 py-0.5 bg-emerald-100/70 text-emerald-900 rounded font-black">
@@ -1823,17 +1874,6 @@ export function PpcSaleKwView({
                                     >
                                       {item.acos.toFixed(1)}%
                                     </span>
-                                  </td>
-                                  <td className="py-2.5 px-3 text-center">
-                                    {item.isAlreadyLaunched ? (
-                                      <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 inline-flex items-center gap-1">
-                                        <Check size={11} weight="bold" /> Đã lên Camp
-                                      </span>
-                                    ) : (
-                                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
-                                        Sẵn sàng
-                                      </span>
-                                    )}
                                   </td>
                                 </tr>
                               );
@@ -1931,16 +1971,34 @@ export function PpcSaleKwView({
               )}
             </div>
 
-            <div className="flex items-center gap-2 self-end sm:self-auto">
+            <div className="flex items-center gap-2 self-end sm:self-auto flex-wrap">
               {selectedRegIds.size > 0 && (
-                <button
-                  onClick={handleDeleteRegistrySelected}
-                  disabled={isDeletingReg}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition cursor-pointer"
-                >
-                  <Trash size={14} />
-                  Xóa {selectedRegIds.size} mục đã chọn
-                </button>
+                <>
+                  <button
+                    onClick={handleCopySelectedTargetCampaigns}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition cursor-pointer"
+                    title="Copy danh sách Campaign đích (Mới) đã chọn"
+                  >
+                    <Copy size={14} />
+                    Copy Camp Mới ({selectedRegIds.size})
+                  </button>
+                  <button
+                    onClick={handleCopySelectedSourceCampaigns}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 transition cursor-pointer"
+                    title="Copy danh sách Campaign nguồn (Cũ) đã chọn"
+                  >
+                    <Copy size={14} />
+                    Copy Camp Cũ ({selectedRegIds.size})
+                  </button>
+                  <button
+                    onClick={handleDeleteRegistrySelected}
+                    disabled={isDeletingReg}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition cursor-pointer"
+                  >
+                    <Trash size={14} />
+                    Xóa {selectedRegIds.size} mục đã chọn
+                  </button>
+                </>
               )}
               <button
                 onClick={fetchRegistry}
@@ -2023,8 +2081,35 @@ export function PpcSaleKwView({
                         <td className="py-3 px-3 font-bold text-slate-900">
                           {item.keyword_text}
                         </td>
-                        <td className="py-3 px-3 font-bold text-emerald-800 max-w-xs truncate" title={item.target_campaign_name}>
-                          {item.target_campaign_name}
+                        <td className="py-3 px-3">
+                          <div className="flex items-center gap-1.5 max-w-xs group">
+                            <span
+                              className="font-bold text-emerald-800 truncate"
+                              title={item.target_campaign_name}
+                            >
+                              {item.target_campaign_name}
+                            </span>
+                            {item.target_campaign_name && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  copyToClipboard(
+                                    item.target_campaign_name,
+                                    `reg_target_${item.id}`
+                                  )
+                                }
+                                className="shrink-0 p-1 text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 rounded transition"
+                                title="Copy Target Campaign (Mới)"
+                                aria-label="Copy Target Campaign (Mới)"
+                              >
+                                {copiedKey === `reg_target_${item.id}` ? (
+                                  <Check size={13} weight="bold" className="text-emerald-600" />
+                                ) : (
+                                  <Copy size={13} />
+                                )}
+                              </button>
+                            )}
+                          </div>
                         </td>
                         <td className="py-3 px-3 text-center">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
@@ -2037,8 +2122,35 @@ export function PpcSaleKwView({
                             {item.match_type}
                           </span>
                         </td>
-                        <td className="py-3 px-3 text-slate-600 max-w-xs truncate" title={item.source_campaign_name}>
-                          {item.source_campaign_name}
+                        <td className="py-3 px-3">
+                          <div className="flex items-center gap-1.5 max-w-xs group">
+                            <span
+                              className="text-slate-600 truncate"
+                              title={item.source_campaign_name}
+                            >
+                              {item.source_campaign_name || "-"}
+                            </span>
+                            {item.source_campaign_name && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  copyToClipboard(
+                                    item.source_campaign_name,
+                                    `reg_source_${item.id}`
+                                  )
+                                }
+                                className="shrink-0 p-1 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded transition"
+                                title="Copy Source Campaign (Cũ)"
+                                aria-label="Copy Source Campaign (Cũ)"
+                              >
+                                {copiedKey === `reg_source_${item.id}` ? (
+                                  <Check size={13} weight="bold" className="text-emerald-600" />
+                                ) : (
+                                  <Copy size={13} />
+                                )}
+                              </button>
+                            )}
+                          </div>
                         </td>
                         <td className="py-3 px-3 font-semibold text-indigo-700">
                           {item.sku || "-"}

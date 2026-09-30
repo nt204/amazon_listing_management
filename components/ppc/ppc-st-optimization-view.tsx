@@ -23,6 +23,8 @@ import {
 import type { PpcSearchTermRow, MatchType, PpcAdType } from "@/lib/ppc/types";
 import { PpcPagination } from "./ppc-pagination";
 import { PpcNegativeHubView, type NegativeRegistryItem } from "./ppc-negative-hub-view";
+import { PpcCopyButton } from "./ppc-copy-button";
+import { extractSkuFromText } from "@/lib/ppc/sku-extractor";
 
 export interface StOptimizationCandidate {
   key: string;
@@ -915,6 +917,8 @@ export function PpcStOptimizationView({
               paginatedCandidates.map((c) => {
                 const isSelected = selectedKeys.has(c.key);
                 const isCopied = copiedKey === c.key;
+                const campaignSku = extractSkuFromText(c.campaignName)
+                  || extractSkuFromText(c.adGroupName);
                 const isProduct =
                   c.customerSearchTerm.toLowerCase().startsWith("b0") ||
                   c.customerSearchTerm.toLowerCase().startsWith("asin=");
@@ -979,10 +983,30 @@ export function PpcStOptimizationView({
 
                     {/* Source Campaign */}
                     <td className="py-2.5 px-3">
-                      <div className="font-semibold text-slate-900 truncate max-w-[320px]" title={c.campaignName}>
-                        {c.campaignName}
+                      <div className="flex items-center gap-1 group/campaign max-w-[320px]">
+                        <span className="font-semibold text-slate-900 truncate" title={c.campaignName}>
+                          {c.campaignName}
+                        </span>
+                        <PpcCopyButton value={c.campaignName} label="campaign" />
                       </div>
-                      <span className="text-[10px] text-slate-400 font-mono">{c.adType}</span>
+                      {c.adGroupName && c.adGroupName !== c.campaignName && (
+                        <div className="flex items-center gap-1 max-w-[320px] mt-0.5">
+                          <span className="truncate text-[10px] text-slate-400" title={c.adGroupName}>
+                            Nhóm: {c.adGroupName}
+                          </span>
+                          <PpcCopyButton value={c.adGroupName} label="ad group" />
+                        </div>
+                      )}
+                      <div className="flex items-center gap-1 text-[10px] text-slate-400 font-mono">
+                        <span>{c.adType}</span>
+                        {campaignSku && (
+                          <>
+                            <span>•</span>
+                            <span className="truncate text-indigo-600" title={campaignSku}>SKU: {campaignSku}</span>
+                            <PpcCopyButton value={campaignSku} label="SKU" />
+                          </>
+                        )}
+                      </div>
                     </td>
 
                     {/* Clicks */}

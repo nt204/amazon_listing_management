@@ -55,6 +55,7 @@ import type {
   PpcAction,
 } from "@/lib/ppc/sku-architecture-types";
 import { PpcMultiStoreView } from "./ppc-multi-store-view";
+import { PpcCopyButton } from "./ppc-copy-button";
 import type {
   PpcAlert,
   PpcAdTypeBreakdown,
@@ -210,7 +211,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
     if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return Math.max(selectedDays, 1);
     return Math.round((end - start) / 86_400_000) + 1;
   }, [customEndDate, customStartDate, isCustomDate, selectedDays]);
-  const [availableSkus, setAvailableSkus] = useState<string[]>([]);
 
   const [summary, setSummary] = useState<PpcSummaryMetrics | null>(null);
   const [velocity, setVelocity] = useState<PpcVelocityComparison | null>(null);
@@ -452,7 +452,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
         setMatchTypeBreakdown(data.matchTypeBreakdown || []);
         setOverviewSearchTerms(data.searchTerms || []);
         setAlerts(data.alerts || []);
-        setAvailableSkus(data.availableSkus || []);
         setTargetAcos(data.targetAcos || 30);
         setDateRangeStart(data.dateRangeStart || null);
         setDateRangeEnd(data.dateRangeEnd || null);
@@ -1966,26 +1965,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
               <Gear size={13} weight="bold" className="text-slate-500" />
               <span className="hidden sm:inline">Quản Lý Store</span>
             </button>
-
-            {/* SKU Filter (Chỉ hiển thị khi đã chọn 1 shop cụ thể) */}
-            {selectedStore !== "ALL" && availableSkus.length > 0 && (
-              <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1">
-                <Tag size={15} className="text-emerald-600" weight="duotone" />
-                <span className="text-slate-500 font-semibold text-[11px]">SKU:</span>
-                <select
-                  value={selectedSku}
-                  onChange={(e) => setSelectedSku(e.target.value)}
-                  className="bg-transparent text-slate-900 font-bold outline-none cursor-pointer text-xs max-w-[180px] truncate"
-                >
-                  <option value="ALL">All SKUs ({availableSkus.length})</option>
-                  {availableSkus.map((sku) => (
-                    <option key={sku} value={sku}>
-                      {sku}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
 
             <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1">
               <span className="text-slate-500 font-semibold text-[11px]">Date:</span>
@@ -3939,6 +3918,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                 ) : (
                   paginatedSearchTerms.map((t, idx) => {
                     const isSelected = selectedTerms.has(searchTermKey(t));
+                    const rowSku = extractSkuFromText(t.campaignName)
+                      || extractSkuFromText(t.adGroupName);
                     let rowBg = isSelected ? "bg-indigo-50/50" : "";
                     if (t.orders >= 2 && t.acos <= targetAcos) rowBg = isSelected ? "bg-emerald-100/50" : "bg-emerald-50/30";
                     else if (t.clicks >= 9 && t.orders === 0) rowBg = isSelected ? "bg-rose-100/50" : "bg-rose-50/30";
@@ -3962,8 +3943,23 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                             {t.matchType}
                           </span>
                         </td>
-                        <td className="py-2.5 px-3 text-slate-600 font-sans min-w-[240px] break-words leading-snug">
-                          {t.campaignName}
+                        <td className="py-2.5 px-3 text-slate-600 font-sans min-w-[240px] leading-snug">
+                          <div className="flex items-center gap-1 max-w-[320px]">
+                            <span className="truncate" title={t.campaignName}>{t.campaignName}</span>
+                            <PpcCopyButton value={t.campaignName} label="campaign" />
+                          </div>
+                          {t.adGroupName && t.adGroupName !== t.campaignName && (
+                            <div className="flex items-center gap-1 max-w-[320px] mt-0.5 text-[10px] text-slate-400">
+                              <span className="truncate" title={t.adGroupName}>Nhóm: {t.adGroupName}</span>
+                              <PpcCopyButton value={t.adGroupName} label="ad group" />
+                            </div>
+                          )}
+                          {rowSku && (
+                            <div className="flex items-center gap-1 mt-0.5 text-[10px] text-indigo-600 font-mono">
+                              <span>SKU: {rowSku}</span>
+                              <PpcCopyButton value={rowSku} label="SKU" />
+                            </div>
+                          )}
                         </td>
                         <td className="py-2.5 px-3 text-right font-bold text-slate-700">{(t.impressions || 0).toLocaleString()}</td>
                         <td className="py-2.5 px-3 text-right font-bold text-slate-800">{t.clicks}</td>
@@ -4223,11 +4219,13 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
       />
 
       {/* FLOATING ACTION QUEUE BUTTON (DRAGGABLE, ELEVATED ABOVE PAGINATION) */}
-      <PpcFloatingActionQueue
-        onOpen={() => setIsActionQueueOpen(true)}
-        pendingActionCount={pendingActionCount}
-        selectedStore={selectedStore}
-      />
+      {selectedStore !== "ALL" && (
+        <PpcFloatingActionQueue
+          onOpen={() => setIsActionQueueOpen(true)}
+          pendingActionCount={pendingActionCount}
+          selectedStore={selectedStore}
+        />
+      )}
     </div>
   );
 }

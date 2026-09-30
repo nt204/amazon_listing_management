@@ -1171,8 +1171,9 @@ export function calculateSearchTermFallbackSummary(
 export function campaignPerformanceFromFacts(
   rows: PpcPerformanceRow[],
   targetAcos = 30,
+  options: { preserveOrder?: boolean } = {},
 ): PpcCampaignPerformance[] {
-  return rows.filter((row) => row.grain === "CAMPAIGN").map((row) => {
+  const campaigns = rows.filter((row) => row.grain === "CAMPAIGN").map((row) => {
     const metrics = roundedPerformanceMetrics(row);
     const targetingType: PpcCampaignPerformance["targetingType"] =
       (row.targetingType || "").toLowerCase().includes("auto") || (row.campaignName || "").toLowerCase().includes("auto")
@@ -1199,7 +1200,11 @@ export function campaignPerformanceFromFacts(
       ...metrics,
       statusBadge,
     };
-  }).sort((a, b) => b.spend - a.spend);
+  });
+
+  return options.preserveOrder
+    ? campaigns
+    : campaigns.sort((a, b) => b.spend - a.spend);
 }
 
 export function adGroupPerformanceFromFacts(rows: PpcPerformanceRow[]): PpcAdGroupPerformance[] {

@@ -15,6 +15,8 @@ import {
   Square,
 } from "@phosphor-icons/react";
 import { PpcPagination } from "./ppc-pagination";
+import { PpcCopyButton } from "./ppc-copy-button";
+import { extractSkuFromText } from "@/lib/ppc/sku-extractor";
 
 export interface NegativeRegistryItem {
   id: string;
@@ -398,6 +400,8 @@ export function PpcNegativeHubView({
                   const isASIN =
                     item.keyword_text.toLowerCase().startsWith("b0") ||
                     item.keyword_text.toLowerCase().startsWith("asin=");
+                  const campaignSku = extractSkuFromText(item.campaign_name)
+                    || extractSkuFromText(item.ad_group_name || "");
 
                   return (
                     <tr
@@ -472,19 +476,31 @@ export function PpcNegativeHubView({
 
                       {/* Campaign & Ad Group */}
                       <td className="py-2.5 px-3">
-                        <span
-                          className="font-semibold text-slate-800 block truncate max-w-[260px]"
-                          title={item.campaign_name}
-                        >
-                          {item.campaign_name}
-                        </span>
-                        {item.ad_group_name && item.ad_group_name !== item.campaign_name && (
+                        <div className="flex items-center gap-1 max-w-[260px]">
                           <span
-                            className="text-[10px] text-slate-400 block truncate max-w-[260px]"
-                            title={item.ad_group_name}
+                            className="font-semibold text-slate-800 truncate"
+                            title={item.campaign_name}
                           >
-                            {item.ad_group_name}
+                            {item.campaign_name}
                           </span>
+                          <PpcCopyButton value={item.campaign_name} label="campaign" />
+                        </div>
+                        {item.ad_group_name && item.ad_group_name !== item.campaign_name && (
+                          <div className="flex items-center gap-1 max-w-[260px] mt-0.5">
+                            <span
+                              className="text-[10px] text-slate-400 truncate"
+                              title={item.ad_group_name}
+                            >
+                              Nhóm: {item.ad_group_name}
+                            </span>
+                            <PpcCopyButton value={item.ad_group_name} label="ad group" />
+                          </div>
+                        )}
+                        {campaignSku && (
+                          <div className="flex items-center gap-1 mt-0.5 text-[10px] text-indigo-600 font-mono">
+                            <span>SKU: {campaignSku}</span>
+                            <PpcCopyButton value={campaignSku} label="SKU" />
+                          </div>
                         )}
                       </td>
 

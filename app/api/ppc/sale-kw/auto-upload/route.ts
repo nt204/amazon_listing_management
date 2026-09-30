@@ -4,8 +4,8 @@ import { objectStorageDriver, putStoredObject, r2KeyPrefix } from "@/lib/object-
 import { exportSaleKwBulksheetExcel, type SaleKwCampaignPayload } from "@/lib/ppc/service";
 import {
   isAsinProductTarget,
-  formatDDMMYY,
   generateSaleKwCampaignTriad,
+  normalizeSaleKwDate,
   resolveSkuForSearchTerm,
 } from "@/lib/ppc/sku-extractor";
 import crypto from "node:crypto";
@@ -60,6 +60,9 @@ export async function POST(request: Request) {
     const defaultDailyBudget = Number(body?.dailyBudget) || 5.0;
     const defaultBidVal = Number(body?.defaultBid) || 1.0;
     const globalNegateInSource = Boolean(body?.negateInSource);
+    const activeDateStr = normalizeSaleKwDate(String(body?.dateStr || "").trim());
+    const activeUser = String(body?.userName || "").trim() || (actor.displayName ? actor.displayName.split(/\s+/)[0] : "Loan");
+    const activeAdType = String(body?.adTypeCode || "").trim() || "SP03";
 
     if (rawItems.length === 0 && (!directCampaigns || directCampaigns.length === 0)) {
       throw new ApiError("Không có Search Term nào được chọn để Auto Upload lên Camp Sale KW.", 400);
@@ -157,10 +160,6 @@ export async function POST(request: Request) {
         if (!skuMap.has(sku)) skuMap.set(sku, []);
         skuMap.get(sku)!.push(item);
       }
-
-      const activeDateStr = String(body?.dateStr || "").trim() || formatDDMMYY();
-      const activeUser = String(body?.userName || "").trim() || (actor.displayName ? actor.displayName.split(/\s+/)[0] : "Loan");
-      const activeAdType = String(body?.adTypeCode || "").trim() || "SP03";
 
       for (const [sku, items] of skuMap.entries()) {
         const triad = generateSaleKwCampaignTriad({

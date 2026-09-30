@@ -247,6 +247,47 @@ async function waitForAmazonResult(
   };
 }
 
+function entityIdFromUrl(url: string) {
+  try {
+    return new URL(url).searchParams.get("entityId") || "";
+  } catch {
+    return url.match(/[?&]entityId=([A-Z0-9]+)/i)?.[1] || "";
+  }
+}
+
+async function resolveAmazonAdsEntityId(
+  context: import("playwright-core").BrowserContext,
+  page: import("playwright-core").Page,
+) {
+  for (const candidate of context.pages()) {
+    const entityId = entityIdFromUrl(candidate.url());
+    if (entityId) return entityId;
+  }
+
+  await page.goto("https://advertising.amazon.com/reports", {
+    waitUntil: "domcontentloaded",
+    timeout: 30_000,
+  });
+  await page.waitForTimeout(2_000);
+  return entityIdFromUrl(page.url());
+}
+
+async function readDisabledButtonReason(
+  button: import("playwright-core").Locator,
+) {
+  const trigger = button.locator("xpath=ancestor::*[@aria-describedby][1]");
+  await trigger.hover({ timeout: 3_000 }).catch(() => {});
+  await button.page().waitForTimeout(300);
+  return button.evaluate((element) => {
+    const describedElement = element.closest("[aria-describedby]")
+      || element.parentElement?.closest("[aria-describedby]");
+    const descriptionId = describedElement?.getAttribute("aria-describedby");
+    return descriptionId
+      ? (document.getElementById(descriptionId)?.textContent || "").replace(/\s+/g, " ").trim()
+      : "";
+  }).catch(() => "");
+}
+
 async function uploadThroughAdsPower(filePath: string, store: StoreTarget, fileName: string): Promise<AmazonBulkResult> {
   const endpoint = await startAdsPowerProfile(store.profile_id);
   const browser = await chromium.connectOverCDP(endpoint);
@@ -254,7 +295,15 @@ async function uploadThroughAdsPower(filePath: string, store: StoreTarget, fileN
   if (!context) throw new Error("Không tìm thấy browser context của AdsPower.");
   const page = await context.newPage();
   try {
-    await page.goto("https://advertising.amazon.com/bulk-operations", { waitUntil: "domcontentloaded" });
+    const entityId = await resolveAmazonAdsEntityId(context, page);
+    if (!entityId) {
+      throw new Error(`Không xác định được entityId Amazon Ads của profile ${store.store_name}.`);
+    }
+    console.log(`[Bulk Uploader] ${store.store_name} sử dụng entityId ${entityId}.`);
+    await page.goto(
+      `https://advertising.amazon.com/bulk-operations?entityId=${encodeURIComponent(entityId)}`,
+      { waitUntil: "domcontentloaded" },
+    );
     const currentUrl = page.url();
     if (!currentUrl.includes("advertising.amazon.com") || /signin|login/i.test(currentUrl)) {
       throw new Error(`Profile ${store.store_name} chưa đăng nhập Amazon Ads (${currentUrl}).`);
@@ -281,12 +330,23 @@ async function uploadThroughAdsPower(filePath: string, store: StoreTarget, fileN
 
           console.log(`[Bulk Uploader] Chờ và click Upload campaigns (lần ${attempt}/3)...`);
           await openButtonLocator.waitFor({ state: "visible", timeout: attempt === 1 ? 30_000 : 10_000 });
+          const disabled = await openButtonLocator.isDisabled().catch(() => false);
+          if (disabled) {
+            const reason = await readDisabledButtonReason(openButtonLocator);
+            if (/admin access|import is currently unavailable/i.test(reason)) {
+              throw new Error(
+                `Amazon Ads đang khóa Upload campaigns cho ${store.store_name}: ${reason} `
+                + "Hãy cấp quyền Admin cho tài khoản đang đăng nhập trong AdsPower.",
+              );
+            }
+          }
           await openButtonLocator.click({ timeout: 15_000 });
           await fileInputLocator.waitFor({ state: "attached", timeout: 15_000 });
           modalOpened = true;
           break;
         } catch (error) {
           lastOpenError = error;
+          if (error instanceof Error && /admin access|cấp quyền Admin/i.test(error.message)) throw error;
           if (await fileInputLocator.count()) {
             modalOpened = true;
             break;
@@ -331,16 +391,26 @@ async function uploadThroughAdsPower(filePath: string, store: StoreTarget, fileN
     }
 
     console.log("[Bulk Uploader] Nút Upload đã sáng đèn! Bấm xác nhận Upload...");
-    await uploadLocator.click({ timeout: 10_000 }).catch(async () => {
-      await uploadLocator.click({ force: true, timeout: 5000 }).catch(async () => {
-        await page.evaluate(() => {
-          const btn = document.querySelector("button[data-takt-id='adz_bulkSheets_unifiedUploadModal_upload_button']") 
-            || Array.from(document.querySelectorAll("section.bulk-sheet__upload-modal-dropzone ~ div button, [role='dialog'] button"))
-                .find((b) => b.textContent?.trim().toLowerCase() === "upload");
-          if (btn) (btn as HTMLButtonElement).click();
-        });
-      });
-    });
+    let uploadSubmitted = false;
+    let lastUploadClickError: unknown = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await uploadLocator.click({ timeout: 15_000 });
+        uploadSubmitted = true;
+        break;
+      } catch (error) {
+        lastUploadClickError = error;
+        if (attempt < 3) {
+          console.warn(`[Bulk Uploader] Nút xác nhận Upload thay đổi DOM; thử lại lần ${attempt + 1}/3...`);
+          await page.waitForTimeout(1_000);
+        }
+      }
+    }
+
+    if (!uploadSubmitted) {
+      const detail = lastUploadClickError instanceof Error ? lastUploadClickError.message : String(lastUploadClickError);
+      throw new Error(`Không thể bấm nút xác nhận Upload sau 3 lần thử. ${detail}`);
+    }
 
     console.log("[Bulk Uploader] Đã click nút Upload thành công! Chờ Amazon tiếp nhận file...");
     // Chờ modal đóng lại xác nhận lệnh upload đã gửi đi

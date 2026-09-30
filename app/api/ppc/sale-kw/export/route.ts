@@ -3,8 +3,8 @@ import { getDatabaseClient } from "@/lib/db";
 import { exportSaleKwBulksheetExcel, type SaleKwCampaignPayload } from "@/lib/ppc/service";
 import {
   isAsinProductTarget,
-  formatDDMMYY,
   generateSaleKwCampaignTriad,
+  normalizeSaleKwDate,
   resolveSkuForSearchTerm,
 } from "@/lib/ppc/sku-extractor";
 
@@ -58,6 +58,9 @@ export async function POST(request: Request) {
     const defaultDailyBudget = Number(body?.dailyBudget) || 5.0;
     const defaultBidVal = Number(body?.defaultBid) || 1.0;
     const globalNegateInSource = Boolean(body?.negateInSource);
+    const activeDateStr = normalizeSaleKwDate(String(body?.dateStr || "").trim());
+    const activeUser = String(body?.userName || "").trim() || (actor.displayName ? actor.displayName.split(/\s+/)[0] : "Loan");
+    const activeAdType = String(body?.adTypeCode || "").trim() || "SP03";
 
     if (rawItems.length === 0 && (!directCampaigns || directCampaigns.length === 0)) {
       throw new ApiError("Không có Search Term nào được chọn để lên Camp Sale KW.", 400);
@@ -122,10 +125,6 @@ export async function POST(request: Request) {
         skuMap.get(sku)!.push(item);
       }
 
-      const activeDateStr = String(body?.dateStr || "").trim() || formatDDMMYY();
-      const activeUser = String(body?.userName || "").trim() || (actor.displayName ? actor.displayName.split(/\s+/)[0] : "Loan");
-      const activeAdType = String(body?.adTypeCode || "").trim() || "SP03";
-
       for (const [sku, items] of skuMap.entries()) {
         const triad = generateSaleKwCampaignTriad({
           sku,
@@ -184,8 +183,6 @@ export async function POST(request: Request) {
       }
     }
 
-    const totalKeywords = campaignsPayload.reduce((sum, c) => sum + c.keywords.length, 0);
-
     // Xuất file Excel chuẩn Amazon Bulksheet
     const buffer = await exportSaleKwBulksheetExcel(campaignsPayload);
 
@@ -236,6 +233,7 @@ export async function POST(request: Request) {
       .replace(/[/\\?%*:|"<>]/g, "_")
       .trim()
       .replace(/\s+/g, "_");
+    const totalKeywords = campaignsPayload.reduce((sum, campaign) => sum + campaign.keywords.length, 0);
     const fileName = `Upload_${cleanStore}_Sale_KW_${campaignsPayload.length}Camps_${totalKeywords}Terms_${exportTimestamp(new Date())}.xlsx`;
 
     const asciiFileName = fileName

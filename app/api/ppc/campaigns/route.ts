@@ -34,7 +34,10 @@ export async function GET(request: Request) {
     const cacheKey = `ppc:campaign-page:${scope.teamId}:${snapshotId}:${Buffer.from(JSON.stringify(filters)).toString("base64url")}`;
     const data = await getCachedOrFetch(cacheKey, 60, async () => {
       const result = await listPpcCampaignPage(scope, filters);
-      return { ...result, campaigns: campaignPerformanceFromFacts(result.rows, filters.targetAcos) };
+      return {
+        ...result,
+        campaigns: campaignPerformanceFromFacts(result.rows, filters.targetAcos, { preserveOrder: true }),
+      };
     });
     const body = JSON.stringify(data);
     return new Response(body, { headers: {
