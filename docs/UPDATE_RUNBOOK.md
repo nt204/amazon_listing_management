@@ -14,6 +14,7 @@ npm run db:migrate
 npm run build
 pm2 restart amazon-listing --update-env
 pm2 restart ppc-ingestion-worker --update-env
+pm2 restart ppc-outcome-worker --update-env
 pm2 save
 ```
 
@@ -29,6 +30,7 @@ Kiểm tra sau cập nhật:
 pm2 status
 pm2 logs amazon-listing --lines 50 --nostream
 pm2 logs ppc-ingestion-worker --lines 50 --nostream
+pm2 logs ppc-outcome-worker --lines 50 --nostream
 ```
 
 Blank Bulk template phải nằm trên Server tại:
