@@ -33,6 +33,7 @@ import {
 import { objectStorageDriver, putStoredObject, r2KeyPrefix } from "@/lib/object-storage";
 import { invalidateGroupedRecommendationsCache } from "./recommendation-cache";
 import { getCachedOrFetch, invalidateCachePattern } from "@/lib/redis";
+import { saveActionContextsBestEffort, type ActionContextInput } from "./action-memory";
 
 export async function resolveStoreId(storeIdOrName?: string | null): Promise<string> {
   const sql = await getDatabaseClient();
@@ -1445,6 +1446,7 @@ export async function approveRecommendationsToActionQueue(
   const sql = await getDatabaseClient();
   let addedCount = 0;
   let supersededCount = 0;
+  const actionContexts: ActionContextInput[] = [];
   const isUuid = (val?: string | null) =>
     Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val));
 
@@ -1539,7 +1541,7 @@ export async function approveRecommendationsToActionQueue(
       const chunkSize = 500;
       for (let i = 0; i < finalRowsToInsert.length; i += chunkSize) {
         const chunk = finalRowsToInsert.slice(i, i + chunkSize);
-        await tx`
+        const inserted = await tx<{ id: string; recommendation_id: string | null; final_value: string | number | null; approved_by: string | null }[]>`
           INSERT INTO ppc_actions ${tx(
           chunk,
           "store_id", "recommendation_id", "sku", "campaign_id", "campaign_name",
@@ -1547,11 +1549,29 @@ export async function approveRecommendationsToActionQueue(
           "match_type", "entity_type", "action_type", "old_value", "system_suggested_value",
           "final_value", "rule_version", "status", "approved_by", "approved_at"
         )}
+          RETURNING id, recommendation_id, final_value, approved_by
         `;
+        const recommendationsById = new Map(
+          items.map((item) => [item.recommendation.id, item.recommendation] as const),
+        );
+        for (const row of inserted) {
+          const recommendation = row.recommendation_id
+            ? recommendationsById.get(row.recommendation_id)
+            : undefined;
+          if (!recommendation) continue;
+          actionContexts.push({
+            actionId: row.id,
+            recommendation,
+            finalValue: Number(row.final_value || 0),
+            approvedBy: row.approved_by || defaultApprovedBy,
+          });
+        }
       }
       addedCount = finalRowsToInsert.length;
     }
   });
+
+  await saveActionContextsBestEffort(actionContexts);
 
   return { addedCount, supersededCount };
 }
