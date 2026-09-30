@@ -5,8 +5,8 @@ import type { PpcRecommendation } from "./types";
 
 export const PPC_ACTION_CONTEXT_SCHEMA_VERSION = "v1";
 
-type JsonValue = null | string | number | boolean | JsonValue[] | JsonObject;
-type JsonObject = { [key: string]: JsonValue | undefined };
+export type JsonValue = null | string | number | boolean | JsonValue[] | JsonObject;
+export type JsonObject = { [key: string]: JsonValue | undefined };
 
 export interface ActionContextInput {
   actionId: string;
@@ -29,6 +29,32 @@ export interface ActionOutcomeInput {
   outcomeLabel?: "POSITIVE" | "NEUTRAL" | "NEGATIVE" | null;
   evaluatorVersion?: string;
   evaluatedAt?: string | null;
+}
+
+interface SourceReportRow {
+  store_id: string;
+  target_id: string;
+  report_start_date: string;
+  report_end_date: string;
+  report_granularity: string;
+  days: number;
+  snapshot_date: string;
+}
+
+interface EconomicsSnapshotRow {
+  store_id: string;
+  sku: string;
+  selling_price: string | number;
+  base_cost: string | number;
+  amazon_fee: string | number;
+  tax_rate: string | number;
+  profit_before_ads: string | number;
+  break_even_acos: string | number;
+  cr: string | number;
+  cr_source: string;
+  max_bid: string | number;
+  cost_source: string;
+  updated_at: Date | string;
 }
 
 function finiteOrNull(value: number | undefined): number | null {
@@ -104,18 +130,92 @@ export async function saveActionContextsBestEffort(inputs: ActionContextInput[])
 
   try {
     const sql = await getDatabaseClient();
+    const targetIds = Array.from(new Set(
+      inputs.map((input) => input.recommendation.keywordId || "").filter(Boolean),
+    ));
+    const skus = Array.from(new Set(
+      inputs.map((input) => (input.recommendation.sku || "").trim().toUpperCase()).filter(Boolean),
+    ));
+    const sourceRows = targetIds.length > 0
+      ? await sql<SourceReportRow[]>`
+          SELECT DISTINCT ON (store_id, target_id)
+            store_id, target_id, report_start_date::text, report_end_date::text,
+            report_granularity,
+            (report_end_date - report_start_date + 1)::int AS days,
+            snapshot_date::text
+          FROM ppc_performance_facts
+          WHERE grain = 'TARGET' AND target_id = ANY(${targetIds})
+          ORDER BY store_id, target_id, snapshot_date DESC, report_end_date DESC,
+                   (report_end_date - report_start_date) DESC
+        `
+      : [];
+    const economicsRows = skus.length > 0
+      ? await sql<EconomicsSnapshotRow[]>`
+          SELECT store_id, UPPER(TRIM(sku)) AS sku, selling_price, base_cost,
+                 amazon_fee, tax_rate, profit_before_ads, break_even_acos,
+                 cr, cr_source, max_bid, cost_source, updated_at
+          FROM sku_economics
+          WHERE UPPER(TRIM(sku)) = ANY(${skus})
+        `
+      : [];
+    const sourceByTarget = new Map(
+      sourceRows.map((row) => [`${row.store_id}\0${row.target_id}`, row] as const),
+    );
+    const economicsBySku = new Map(
+      economicsRows.map((row) => [`${row.store_id}\0${row.sku}`, row] as const),
+    );
     const rows = inputs.map((input) => ({
-      action_id: input.actionId,
-      schema_version: PPC_ACTION_CONTEXT_SCHEMA_VERSION,
-      decision_source: "RULE_ENGINE",
-      data_as_of: safeTimestamp(input.recommendation.createdAt),
-      context: JSON.stringify(buildActionDecisionContext(input)),
-    }));
+      input,
+      source: sourceByTarget.get(
+        `${input.recommendation.storeId}\0${input.recommendation.keywordId || ""}`,
+      ),
+      economics: economicsBySku.get(
+        `${input.recommendation.storeId}\0${(input.recommendation.sku || "").trim().toUpperCase()}`,
+      ),
+    })).map(({ input, source, economics }) => {
+      const context = buildActionDecisionContext(input);
+      if (source) {
+        context.source_report = {
+          report_start_date: source.report_start_date,
+          report_end_date: source.report_end_date,
+          report_granularity: source.report_granularity,
+          days: Number(source.days),
+          snapshot_date: source.snapshot_date,
+        };
+      }
+      if (economics) {
+        context.economics = {
+          selling_price: Number(economics.selling_price),
+          base_cost: Number(economics.base_cost),
+          amazon_fee: Number(economics.amazon_fee),
+          tax_rate: Number(economics.tax_rate),
+          profit_before_ads: Number(economics.profit_before_ads),
+          break_even_acos: Number(economics.break_even_acos),
+          conversion_rate: Number(economics.cr),
+          conversion_rate_source: economics.cr_source,
+          max_bid: Number(economics.max_bid),
+          cost_source: economics.cost_source,
+          data_as_of: economics.updated_at instanceof Date
+            ? economics.updated_at.toISOString()
+            : String(economics.updated_at || ""),
+        };
+      }
+      return {
+        action_id: input.actionId,
+        schema_version: PPC_ACTION_CONTEXT_SCHEMA_VERSION,
+        decision_source: "RULE_ENGINE",
+        data_as_of: safeTimestamp(input.recommendation.createdAt),
+        report_start_date: source?.report_start_date || null,
+        report_end_date: source?.report_end_date || null,
+        context: JSON.stringify(context),
+      };
+    });
 
     await sql`
       INSERT INTO ppc_action_contexts ${sql(
         rows,
-        "action_id", "schema_version", "decision_source", "data_as_of", "context"
+        "action_id", "schema_version", "decision_source", "data_as_of",
+        "report_start_date", "report_end_date", "context"
       )}
       ON CONFLICT (action_id) DO NOTHING
     `;
