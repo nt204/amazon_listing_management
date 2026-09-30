@@ -90,8 +90,7 @@ function dateHasPassed(date: string, today: string): boolean {
   return date < today;
 }
 
-function metricsFromContext(context: JsonRecord): Metrics | null {
-  const raw = nestedRecord(context.metrics);
+function metricsFromRecord(raw: JsonRecord): Metrics | null {
   const clicks = numberOrNull(raw.clicks);
   const spend = numberOrNull(raw.spend);
   const sales = numberOrNull(raw.sales);
@@ -122,61 +121,13 @@ function metricPayload(metrics: Metrics, days: number): JsonObject {
   };
 }
 
-export function classifyOutcome(
-  baseline: Metrics,
-  baselineDays: number,
-  observed: Metrics,
-  observedDays: number,
-  breakEvenAcos: number | null,
-): "POSITIVE" | "NEUTRAL" | "NEGATIVE" | null {
-  if (breakEvenAcos == null || breakEvenAcos <= 0) return null;
-  const before = (baseline.sales / baselineDays) * (breakEvenAcos / 100) - baseline.spend / baselineDays;
-  const after = (observed.sales / observedDays) * (breakEvenAcos / 100) - observed.spend / observedDays;
-  const delta = percentageChange(before, after);
-  if (delta == null) return null;
-  const orderDelta = percentageChange(baseline.orders / baselineDays, observed.orders / observedDays);
-  if (delta > 5 && (orderDelta == null || orderDelta > -30)) return "POSITIVE";
-  if (delta < -5 || (orderDelta != null && orderDelta < -30)) return "NEGATIVE";
-  return "NEUTRAL";
-}
-
 async function readObservedMetrics(row: PendingOutcomeRow): Promise<{
   metrics: Metrics | null;
   source: string | null;
   completeDays: number;
 }> {
   const sql = await getDatabaseClient();
-  const daily = await sql<RawMetricRow[]>`
-    WITH latest_daily AS (
-      SELECT DISTINCT ON (report_start_date, identity_key)
-        report_start_date, identity_key, impressions, clicks, spend, sales, orders, units
-      FROM ppc_performance_facts
-      WHERE store_id = ${row.store_id}
-        AND grain = 'TARGET'
-        AND report_granularity = 'DAILY'
-        AND target_id = ${row.target_id}
-        AND report_start_date = report_end_date
-        AND report_start_date BETWEEN ${row.observation_start} AND ${row.observation_end}
-      ORDER BY report_start_date, identity_key, snapshot_date DESC, updated_at DESC
-    )
-    SELECT COUNT(DISTINCT report_start_date)::int AS complete_days,
-           COALESCE(SUM(impressions), 0)::float8 AS impressions,
-           COALESCE(SUM(clicks), 0)::float8 AS clicks,
-           COALESCE(SUM(spend), 0)::float8 AS spend,
-           COALESCE(SUM(sales), 0)::float8 AS sales,
-           COALESCE(SUM(orders), 0)::float8 AS orders,
-           COALESCE(SUM(units), 0)::float8 AS units
-    FROM latest_daily
-  `;
-  if (Number(daily[0]?.complete_days || 0) >= row.window_days) {
-    return {
-      metrics: calculateMetrics(daily[0]),
-      source: "DAILY_TARGET",
-      completeDays: Number(daily[0].complete_days),
-    };
-  }
-
-  const exactRange = await sql<RawMetricRow[]>`
+  const rollingRange = await sql<RawMetricRow[]>`
     SELECT impressions::float8, clicks::float8, spend::float8, sales::float8,
            orders::float8, units::float8
     FROM ppc_performance_facts
@@ -184,14 +135,19 @@ async function readObservedMetrics(row: PendingOutcomeRow): Promise<{
       AND grain = 'TARGET'
       AND report_granularity = 'RANGE'
       AND target_id = ${row.target_id}
-      AND report_start_date = ${row.observation_start}
-      AND report_end_date = ${row.observation_end}
-    ORDER BY snapshot_date DESC, updated_at DESC
+      AND (report_end_date - report_start_date) = ${row.window_days}
+      AND report_start_date BETWEEN (${row.observation_start}::date - 1) AND (${row.observation_start}::date + 1)
+      AND report_end_date >= ${row.observation_end}
+    ORDER BY report_end_date ASC, snapshot_date DESC, updated_at DESC
     LIMIT 1
   `;
-  return exactRange[0]
-    ? { metrics: calculateMetrics(exactRange[0]), source: "EXACT_RANGE_TARGET", completeDays: row.window_days }
-    : { metrics: null, source: null, completeDays: Number(daily[0]?.complete_days || 0) };
+  return rollingRange[0]
+    ? {
+        metrics: calculateMetrics(rollingRange[0]),
+        source: `BULK_${row.window_days}D_TARGET`,
+        completeDays: row.window_days,
+      }
+    : { metrics: null, source: null, completeDays: 0 };
 }
 
 function calculateMetrics(row: Record<string, unknown>): Metrics {
@@ -294,10 +250,10 @@ export async function evaluatePendingActionOutcomes(options: {
     }
 
     const context = jsonRecord(row.context);
-    const baseline = metricsFromContext(context);
+    const baselineWindow = nestedRecord(nestedRecord(context.baseline_windows)[String(row.window_days)]);
+    const baseline = metricsFromRecord(nestedRecord(baselineWindow.metrics));
     const observedResult = await readObservedMetrics(row);
-    const sourceReport = nestedRecord(context.source_report);
-    const baselineDays = numberOrNull(sourceReport.days);
+    const baselineDays = numberOrNull(baselineWindow.window_days);
     if (!baseline || !baselineDays || baselineDays <= 0 || !observedResult.metrics) {
       await upsertActionOutcome({
         ...base,
@@ -305,7 +261,7 @@ export async function evaluatePendingActionOutcomes(options: {
         baseline: baseline ? metricPayload(baseline, baselineDays || 1) : {},
         observed: observedResult.metrics ? metricPayload(observedResult.metrics, row.window_days) : {},
         evidenceQuality: {
-          reason: !baseline ? "MISSING_BASELINE" : !baselineDays ? "UNKNOWN_BASELINE_WINDOW" : "MISSING_EXACT_OBSERVATION_WINDOW",
+          reason: !baseline ? "MISSING_MATCHING_BASELINE_WINDOW" : !baselineDays ? "UNKNOWN_BASELINE_WINDOW" : "MISSING_MATCHING_BULK_WINDOW",
           complete_days: observedResult.completeDays,
           required_days: row.window_days,
           source: observedResult.source,
@@ -316,8 +272,6 @@ export async function evaluatePendingActionOutcomes(options: {
       continue;
     }
 
-    const economics = nestedRecord(context.economics);
-    const breakEvenAcos = numberOrNull(economics.break_even_acos);
     const observed = observedResult.metrics;
     const comparison = {
       spend_per_day_pct: percentageChange(baseline.spend / baselineDays, observed.spend / row.window_days),
@@ -337,9 +291,10 @@ export async function evaluatePendingActionOutcomes(options: {
         required_days: row.window_days,
         attribution_mature: true,
         overlapping_action: false,
-        label_available: breakEvenAcos != null,
+        label_available: false,
+        label_reason: "OUTCOME_CLASSIFICATION_POLICY_NOT_CONFIGURED",
       },
-      outcomeLabel: classifyOutcome(baseline, baselineDays, observed, row.window_days, breakEvenAcos),
+      outcomeLabel: null,
       evaluatedAt: new Date().toISOString(),
     });
     summary.mature += 1;

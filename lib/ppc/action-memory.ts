@@ -37,8 +37,14 @@ interface SourceReportRow {
   report_start_date: string;
   report_end_date: string;
   report_granularity: string;
-  days: number;
+  window_days: number;
   snapshot_date: string;
+  impressions: string | number;
+  clicks: string | number;
+  spend: string | number;
+  sales: string | number;
+  orders: string | number;
+  units: string | number;
 }
 
 interface EconomicsSnapshotRow {
@@ -138,15 +144,17 @@ export async function saveActionContextsBestEffort(inputs: ActionContextInput[])
     ));
     const sourceRows = targetIds.length > 0
       ? await sql<SourceReportRow[]>`
-          SELECT DISTINCT ON (store_id, target_id)
+          SELECT DISTINCT ON (store_id, target_id, report_end_date - report_start_date)
             store_id, target_id, report_start_date::text, report_end_date::text,
             report_granularity,
-            (report_end_date - report_start_date + 1)::int AS days,
-            snapshot_date::text
+            (report_end_date - report_start_date)::int AS window_days,
+            snapshot_date::text, impressions, clicks, spend, sales, orders, units
           FROM ppc_performance_facts
-          WHERE grain = 'TARGET' AND target_id = ANY(${targetIds})
-          ORDER BY store_id, target_id, snapshot_date DESC, report_end_date DESC,
-                   (report_end_date - report_start_date) DESC
+          WHERE grain = 'TARGET'
+            AND target_id = ANY(${targetIds})
+            AND (report_end_date - report_start_date) IN (7, 30)
+          ORDER BY store_id, target_id, (report_end_date - report_start_date),
+                   snapshot_date DESC, report_end_date DESC
         `
       : [];
     const economicsRows = skus.length > 0
@@ -158,28 +166,68 @@ export async function saveActionContextsBestEffort(inputs: ActionContextInput[])
           WHERE UPPER(TRIM(sku)) = ANY(${skus})
         `
       : [];
-    const sourceByTarget = new Map(
-      sourceRows.map((row) => [`${row.store_id}\0${row.target_id}`, row] as const),
+    const sourceByTargetWindow = new Map(
+      sourceRows.map((row) => [
+        `${row.store_id}\0${row.target_id}\0${row.window_days}`,
+        row,
+      ] as const),
     );
     const economicsBySku = new Map(
       economicsRows.map((row) => [`${row.store_id}\0${row.sku}`, row] as const),
     );
     const rows = inputs.map((input) => ({
       input,
-      source: sourceByTarget.get(
-        `${input.recommendation.storeId}\0${input.recommendation.keywordId || ""}`,
-      ),
+      sources: [7, 30].flatMap((windowDays) => {
+        const source = sourceByTargetWindow.get(
+          `${input.recommendation.storeId}\0${input.recommendation.keywordId || ""}\0${windowDays}`,
+        );
+        return source ? [source] : [];
+      }),
       economics: economicsBySku.get(
         `${input.recommendation.storeId}\0${(input.recommendation.sku || "").trim().toUpperCase()}`,
       ),
-    })).map(({ input, source, economics }) => {
+    })).map(({ input, sources, economics }) => {
       const context = buildActionDecisionContext(input);
+      const baselineWindows: JsonObject = {};
+      for (const source of sources) {
+        const clicks = Number(source.clicks || 0);
+        const spend = Number(source.spend || 0);
+        const sales = Number(source.sales || 0);
+        const orders = Number(source.orders || 0);
+        baselineWindows[String(source.window_days)] = {
+          report_start_date: source.report_start_date,
+          report_end_date: source.report_end_date,
+          report_granularity: source.report_granularity,
+          window_days: source.window_days,
+          snapshot_date: source.snapshot_date,
+          metrics: {
+            impressions: Number(source.impressions || 0),
+            clicks,
+            spend,
+            sales,
+            orders,
+            units: Number(source.units || 0),
+            avg_cpc: clicks > 0 ? spend / clicks : null,
+            acos: sales > 0 ? (spend / sales) * 100 : null,
+            roas: spend > 0 ? sales / spend : null,
+            cvr: clicks > 0 ? (orders / clicks) * 100 : null,
+          },
+        };
+      }
+      if (sources.length > 0) context.baseline_windows = baselineWindows;
+
+      const recommendationSpend = Number(input.recommendation.spend || 0);
+      const source = sources.reduce<SourceReportRow | undefined>((closest, candidate) => {
+        if (!closest) return candidate;
+        return Math.abs(Number(candidate.spend) - recommendationSpend) <
+          Math.abs(Number(closest.spend) - recommendationSpend) ? candidate : closest;
+      }, undefined);
       if (source) {
         context.source_report = {
           report_start_date: source.report_start_date,
           report_end_date: source.report_end_date,
           report_granularity: source.report_granularity,
-          days: Number(source.days),
+          window_days: source.window_days,
           snapshot_date: source.snapshot_date,
         };
       }
