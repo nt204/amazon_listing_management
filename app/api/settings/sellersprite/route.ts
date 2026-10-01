@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSellerSpriteConfig, saveSellerSpriteCookies } from "@/lib/sellersprite";
+import { getSellerSpriteConfig, saveSellerSpriteCookies, saveSellerSpriteToken } from "@/lib/sellersprite";
 import { authorize, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
 
 export const runtime = "nodejs";
@@ -22,11 +22,21 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     authorize(request, "write");
-    const body = (await readJsonBody(request)) as { cookies?: string };
+    const body = (await readJsonBody(request)) as { cookies?: string; token?: string };
+
+    if (body?.token && typeof body.token === "string" && body.token.trim().length > 10) {
+      const res = await saveSellerSpriteToken(body.token);
+      return NextResponse.json({
+        success: true,
+        status: "configured",
+        updatedAt: res.updatedAt,
+        message: "Lưu Token SellerSprite thành công!",
+      });
+    }
 
     if (!body?.cookies || typeof body.cookies !== "string") {
       return NextResponse.json(
-        { error: "Vui lòng cung cấp chuỗi Cookie Sellersprite hợp lệ." },
+        { error: "Vui lòng cung cấp Extension Token hoặc chuỗi Cookie hợp lệ." },
         { status: 400 },
       );
     }
@@ -39,6 +49,6 @@ export async function POST(request: Request) {
       message: "Lưu Cookie SellerSprite thành công!",
     });
   } catch (error) {
-    return routeErrorResponse(error, error instanceof Error ? error.message : "Lỗi khi lưu Cookie SellerSprite.", 400);
+    return routeErrorResponse(error, error instanceof Error ? error.message : "Lỗi khi lưu cấu hình SellerSprite.", 400);
   }
 }

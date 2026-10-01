@@ -12,14 +12,28 @@ export interface Helium10LiveAsinData {
   weight?: number;
 }
 
+export interface Helium10FetchResult {
+  data: Helium10LiveAsinData | null;
+  status: "ok" | "unauthorized" | "rate_limited" | "error";
+  error?: string;
+}
+
+export interface Helium10EnrichResult {
+  candidates: AmazonCompetitorCandidate[];
+  warning?: string;
+}
+
 /**
- * Fetches real-time Helium 10 metrics for a single ASIN using the live session cookie
+ * Fetches real-time Helium 10 metrics for a single ASIN using the live session cookie.
+ * No fake data or fallback estimation is applied.
  */
 export async function fetchHelium10AsinMetrics(
   asin: string,
   cookieHeader: string
-): Promise<Helium10LiveAsinData | null> {
-  if (!asin || !cookieHeader) return null;
+): Promise<Helium10FetchResult> {
+  if (!asin || !cookieHeader) {
+    return { data: null, status: "error", error: "Missing asin or cookie" };
+  }
 
   try {
     const [salesRes, calcRes] = await Promise.all([
@@ -51,10 +65,26 @@ export async function fetchHelium10AsinMetrics(
       ),
     ]);
 
-    const salesData = salesRes.ok ? await salesRes.json() : {};
-    const calcData = calcRes.ok ? await calcRes.json() : {};
+    if (salesRes.status === 401 || calcRes.status === 401 || salesRes.status === 403 || calcRes.status === 403) {
+      return {
+        data: null,
+        status: "unauthorized",
+        error: "Cookie Helium 10 đã hết hạn hoặc không có quyền truy cập (HTTP 401/403).",
+      };
+    }
 
-    // Extract main category BSR
+    if (salesRes.status === 429 || calcRes.status === 429) {
+      return {
+        data: null,
+        status: "rate_limited",
+        error: "Helium 10 API bị giới hạn tần suất (HTTP 429 Too Many Requests).",
+      };
+    }
+
+    const salesData = salesRes.ok ? await salesRes.json().catch(() => ({})) : {};
+    const calcData = calcRes.ok ? await calcRes.json().catch(() => ({})) : {};
+
+    // Extract main category BSR strictly from Helium 10 calculator response without any estimation
     let mainBsr: number | undefined;
     if (calcData.bsrList && typeof calcData.bsrList === "object") {
       const bsrValues = Object.values(calcData.bsrList) as number[];
@@ -65,62 +95,68 @@ export async function fetchHelium10AsinMetrics(
 
     const sales = typeof salesData.last30DaysSales === "number" ? salesData.last30DaysSales : undefined;
 
-    // Robust Fallback: If calculator-v2 is rate-limited (429), estimate BSR from Amazon sales curve
-    if (!mainBsr && sales !== undefined) {
-      if (sales >= 50000) mainBsr = 25;
-      else if (sales >= 20000) mainBsr = 130;
-      else if (sales >= 8000) mainBsr = 1126;
-      else if (sales >= 5000) mainBsr = 3500;
-      else if (sales >= 1500) mainBsr = 12632;
-      else if (sales >= 700) mainBsr = 15763;
-      else if (sales >= 300) mainBsr = 34642;
-      else if (sales >= 100) mainBsr = 47410;
-      else if (sales >= 30) mainBsr = 99861;
-      else if (sales >= 10) mainBsr = 159428;
-      else if (sales > 0) mainBsr = 291865;
-      else mainBsr = 451572;
-    }
-
     return {
-      asin,
-      brand: calcData.brand || undefined,
-      sales,
-      bsr: mainBsr,
-      title: calcData.title || undefined,
-      listPrice: calcData.listPrice || undefined,
-      price: calcData.price || undefined,
-      weight: calcData.packageDimensions?.weight || undefined,
+      data: {
+        asin,
+        brand: calcData.brand || undefined,
+        sales,
+        bsr: mainBsr,
+        title: calcData.title || undefined,
+        listPrice: calcData.listPrice || undefined,
+        price: calcData.price || undefined,
+        weight: calcData.packageDimensions?.weight || undefined,
+      },
+      status: "ok",
     };
   } catch (err) {
-    // Graceful error handling for individual ASIN
-    return null;
+    return {
+      data: null,
+      status: "error",
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
 /**
- * Enriches a list of scraped Amazon candidates with real live Helium 10 Xray data in batches
+ * Enriches a list of scraped Amazon candidates with real live Helium 10 Xray data in batches.
+ * No fake data fallback.
  */
 export async function enrichCandidatesWithHelium10(
   candidates: AmazonCompetitorCandidate[]
-): Promise<AmazonCompetitorCandidate[]> {
+): Promise<Helium10EnrichResult> {
   const h10Config = await getHelium10Config();
   if (!h10Config.cookies) {
-    return candidates;
+    return {
+      candidates,
+      warning: "Chưa cấu hình Cookie Helium 10. Dữ liệu Sales, Doanh thu và BSR từ Helium 10 không khả dụng (chỉ có dữ liệu quét trực tiếp từ Amazon).",
+    };
   }
 
   const parsedCookies = parseHelium10Cookies(h10Config.cookies);
   const cookieHeader = buildHelium10CookieHeader(parsedCookies);
-  if (!cookieHeader) return candidates;
+  if (!cookieHeader) {
+    return {
+      candidates,
+      warning: "Cookie Helium 10 không hợp lệ. Vui lòng cập nhật Cookie trong Cài đặt Helium 10.",
+    };
+  }
 
-  // Process in batches of 6 for high performance & rate-limit safety
   const batchSize = 6;
   const enriched: AmazonCompetitorCandidate[] = [];
+  let detectedWarning: string | undefined;
 
   for (let i = 0; i < candidates.length; i += batchSize) {
     const chunk = candidates.slice(i, i + batchSize);
     const chunkResults = await Promise.all(
       chunk.map(async (c) => {
-        const h10Data = await fetchHelium10AsinMetrics(c.asin, cookieHeader);
+        const fetchRes = await fetchHelium10AsinMetrics(c.asin, cookieHeader);
+        if (fetchRes.status === "unauthorized" && !detectedWarning) {
+          detectedWarning = "Cookie Helium 10 đã hết hạn (HTTP 401 Unauthorized). Dữ liệu Sales/Revenue/BSR không thể lấy từ H10. Vui lòng bấm 'Cấu hình Cookie H10' để cập nhật Cookie mới.";
+        } else if (fetchRes.status === "rate_limited" && !detectedWarning) {
+          detectedWarning = "Helium 10 API bị giới hạn tần suất (HTTP 429 Too Many Requests). Vui lòng thử lại sau vài phút.";
+        }
+
+        const h10Data = fetchRes.data;
         if (!h10Data) return c;
 
         const updated = { ...c };
@@ -146,10 +182,19 @@ export async function enrichCandidatesWithHelium10(
       })
     );
     enriched.push(...chunkResults);
+    if (detectedWarning) {
+      // If auth failed, avoid spamming further requests and push remaining unchanged
+      const remaining = candidates.slice(i + batchSize);
+      enriched.push(...remaining);
+      break;
+    }
   }
 
-  // Sort by real Helium 10 Revenue descending
+  // Sort by real Helium 10 Revenue descending if revenue exists
   enriched.sort((a, b) => (b.revenue || 0) - (a.revenue || 0));
 
-  return enriched;
+  return {
+    candidates: enriched,
+    warning: detectedWarning,
+  };
 }

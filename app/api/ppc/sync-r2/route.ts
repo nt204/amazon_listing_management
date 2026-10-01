@@ -1,6 +1,13 @@
 import { ApiError, authorize, dataScope, enforceRateLimit, routeErrorResponse } from "@/lib/api-guard";
-import { enqueueCrawlerPpcIngestion, enqueuePpcIngestion, getPpcIngestion } from "@/lib/ppc/ingestion-jobs";
-import { findLatestR2Markers, verifyExactR2BatchMarkers } from "@/lib/ppc/service";
+import {
+  claimPpcIngestion,
+  completePpcIngestion,
+  enqueueCrawlerPpcIngestion,
+  enqueuePpcIngestion,
+  failPpcIngestion,
+  getPpcIngestion,
+} from "@/lib/ppc/ingestion-jobs";
+import { findLatestR2Markers, syncPpcReportsFromR2, verifyExactR2BatchMarkers } from "@/lib/ppc/service";
 import type postgres from "postgres";
 
 export const runtime = "nodejs";
@@ -95,6 +102,38 @@ export async function POST(request: Request) {
     } else {
       job = await enqueuePpcIngestion(dataScope(actor), { batchId, batchDate, storeNames }, { force });
     }
+
+    // Tự động kích hoạt nạp dữ liệu ngầm nếu chưa có worker nhận (đặc biệt khi chạy local)
+    if (job.status !== "COMPLETED") {
+      void (async () => {
+        // Đợi 1.5 giây để nhường worker độc lập (nếu có) claim trước
+        await new Promise((r) => setTimeout(r, 1500));
+        const workerId = `web-auto-${process.pid}-${Date.now()}`;
+        try {
+          const claimed = await claimPpcIngestion(workerId);
+          if (!claimed) return; // Đã có worker claim thành công
+          const token = claimed.lease_token!;
+          console.log(`[Auto Ingestion] Bắt đầu tự động nạp batch ${claimed.batch_id} từ Cloudflare R2...`);
+          const result = await syncPpcReportsFromR2(
+            { teamId: claimed.team_id, actorId: claimed.actor_id },
+            { batchId: claimed.batch_id, batchDate: claimed.batch_date, storeNames: claimed.store_names },
+          );
+          if (result.failed > 0) {
+            throw new Error(`${result.failed} file ingest lỗi: ${JSON.stringify(result.failures)}`);
+          }
+          await completePpcIngestion(claimed.id, token, result);
+          console.log(`[Auto Ingestion] ✅ Nạp thành công batch ${claimed.batch_id}: ${result.filesProcessed} files.`);
+          try {
+            const { cleanupDuplicateR2Batches } = await import("@/lib/ppc/file-manager");
+            await cleanupDuplicateR2Batches();
+          } catch {}
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error("[Auto Ingestion] Lỗi khi tự nạp R2:", message);
+        }
+      })();
+    }
+
     return Response.json(
       {
         success: true,
@@ -111,3 +150,4 @@ export async function POST(request: Request) {
     return routeErrorResponse(error, "Lỗi khi quét Cloudflare R2.", 500);
   }
 }
+

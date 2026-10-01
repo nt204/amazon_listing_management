@@ -54,19 +54,23 @@ export function SellerSpriteSettingsModal({
     setErrorMsg(null);
     setSuccessMsg(null);
 
+    const val = cookieInput.trim();
+    const isToken = !val.includes("=") && !val.includes("{") && !val.includes("[") && val.length > 15;
+    const payload = isToken ? { token: val } : { cookies: val };
+
     try {
       const res = await fetch("/api/settings/sellersprite", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cookies: cookieInput }),
+        body: JSON.stringify(payload),
       });
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || "Lỗi khi lưu Cookie.");
+        throw new Error(data.error || "Lỗi khi lưu cấu hình.");
       }
 
-      setSuccessMsg("Lưu Cookie SellerSprite thành công!");
+      setSuccessMsg(data.message || "Lưu cấu hình SellerSprite thành công!");
       setStatus("configured");
       setUpdatedAt(new Date().toISOString());
       setCookieInput("");

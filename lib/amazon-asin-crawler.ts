@@ -19,9 +19,9 @@ function detectSellerCountry(title: string, brand: string): string {
   const lower = (title + " " + brand).toLowerCase();
   const vnKeywords = ["pinkrain", "limima", "vivulla", "vprintes", "tamunbee", "frooblequirk", "atz global", "thihadu", "huggib", "9basic", "hyturtle", "shqiueos"];
   if (vnKeywords.some((k) => lower.includes(k))) return "VN";
-  if (lower.includes("made in usa") || lower.includes("pavilion") || lower.includes("coldest") || lower.includes("brümate") || lower.includes("stanley")) return "US";
+  if (lower.includes("made in usa")) return "US";
   if (lower.includes("doearte") || lower.includes("athand") || lower.includes("tumbtu") || lower.includes("domicare") || lower.includes("tmacker")) return "CN";
-  return "US";
+  return "";
 }
 
 /**
@@ -167,7 +167,7 @@ export async function scrapeAmazonSearchPage(query: string, marketplace: string 
 
       const brand = extractBrandFromTitle(item.title);
       const priceNum = parsePriceNumber(item.price);
-      const ratingNum = parseRatingNumber(item.rating) || 4.6;
+      const ratingNum = parseRatingNumber(item.rating);
       const reviewCount = parseReviewCount(item.reviews);
       const sellerCountry = detectSellerCountry(item.title, brand);
 
@@ -175,12 +175,12 @@ export async function scrapeAmazonSearchPage(query: string, marketplace: string 
         asin: item.asin,
         title: item.title,
         brand,
-        price: priceNum ? `$${priceNum.toFixed(2)}` : (item.price || "$19.99"),
-        priceNum: priceNum || 19.99,
+        price: priceNum ? `$${priceNum.toFixed(2)}` : (item.price || ""),
+        priceNum: priceNum,
         sellerCountry,
         fulfillment: "FBA",
         rating: ratingNum,
-        ratingText: `${ratingNum.toFixed(1)} out of 5 stars`,
+        ratingText: ratingNum ? `${ratingNum.toFixed(1)} out of 5 stars` : "",
         reviewCount,
         img: item.img,
         isSponsored: item.isSponsored,
@@ -209,29 +209,13 @@ export async function crawlAndClassifyCompetitors(
   query: string,
   marketplace: string = "US"
 ): Promise<AmazonCompetitorSearchResult> {
-  const q = query.toLowerCase().trim();
-
-  // If query is bullet tumbler, serve the authentic 81-row Helium 10 dataset
-  if (q.includes("bullet tumbler") || q === "bullet") {
-    try {
-      const fs = await import("node:fs");
-      const csvPath = "/Users/macbook/.gemini/antigravity-ide/brain/788a03c6-3cfc-4023-9d86-591c7c33da63/.user_uploaded/media_1787301994746.csv";
-      if (fs.existsSync(csvPath)) {
-        const rawCSV = fs.readFileSync(csvPath, "utf-8");
-        const { parseHelium10XrayCSV } = await import("./amazon-asin-types");
-        const result = parseHelium10XrayCSV(rawCSV, query);
-        result.source = "helium10_xray_csv";
-        return result;
-      }
-    } catch (e) {
-      console.error("Failed to load local H10 CSV:", e);
-    }
-  }
-
   const rawCandidates = await scrapeAmazonSearchPage(query, marketplace);
   // Enrich with live Helium 10 API (Sales, Revenue, BSR, Brand)
-  const h10EnrichedCandidates = await enrichCandidatesWithHelium10(rawCandidates);
+  const { candidates: h10EnrichedCandidates, warning } = await enrichCandidatesWithHelium10(rawCandidates);
   const result = classifyAndFilterCompetitors(h10EnrichedCandidates, query);
-  result.source = "helium10_xray_csv";
+  result.source = "amazon_live_crawl";
+  if (warning) {
+    result.warnings = [...(result.warnings || []), warning];
+  }
   return result;
 }

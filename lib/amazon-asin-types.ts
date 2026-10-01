@@ -2,6 +2,8 @@ export interface AmazonCompetitorCandidate {
   asin: string;
   title: string;
   brand: string;
+  category?: string;
+  bsrCategory?: string;
   price: string;
   priceNum: number | null;
   revenue?: number | null;
@@ -23,19 +25,29 @@ export interface AmazonCompetitorCandidate {
   isSponsored: boolean;
   isBestSeller: boolean;
   isAmazonChoice: boolean;
-  categoryGroup: "top_organic" | "best_seller" | "direct_competitor" | "outlier_cross_niche" | "excluded";
+  categoryGroup: "top_organic" | "sponsored" | "best_seller" | "direct_competitor" | "outlier_cross_niche" | "excluded";
   exclusionReason?: string;
   isRecommended: boolean;
+  profit?: number | null;
+  variations?: number | null;
+  aiScore?: number | null;
+  aiReason?: string | null;
+  finalScore?: number | null;
+  relevanceScore?: number | null;
+  revenueScore?: number | null;
+  salesScore?: number | null;
+  bsrScore?: number | null;
 }
 
 export interface AmazonCompetitorSearchResult {
   query: string;
   marketplace: string;
-  source?: "amazon_live_crawl" | "helium10_xray_csv";
+  source?: "amazon_live_crawl" | "helium10_xray_csv" | "sellersprite_live";
   searchVolume?: number;
   totalFound: number;
   totalRecommended: number;
   candidates: AmazonCompetitorCandidate[];
+  allCandidates?: AmazonCompetitorCandidate[];
   recommendedAsins: string[];
   stats: {
     avgPrice: number;
@@ -44,8 +56,22 @@ export interface AmazonCompetitorSearchResult {
     avgRevenue?: number;
     totalRevenue?: number;
     avgBsr?: number;
+    totalUnits?: number;
     topBrands: string[];
   };
+  discoveryStats?: {
+    raw: number;
+    organicOnly: number;
+    afterAiFilter: number;
+    afterHardFilter: number;
+    selected: number;
+  };
+  rejected?: Array<{
+    asin: string;
+    reasonCode: string;
+    relevanceScore?: number;
+  }>;
+  warnings?: string[];
 }
 
 /**
@@ -83,7 +109,7 @@ function parseCSVRows(text: string): string[][] {
 }
 
 const MONOPOLY_BRANDS = [
-  "yeti", "stanley", "hydro flask", "contigo", "starbucks", "thermos", 
+  "yeti", "stanley", "hydro flask", "contigo", "starbucks", "thermos",
   "disney", "nike", "apple", "under armour", "champion", "tervis", "brümate", "coldest"
 ];
 
@@ -125,17 +151,17 @@ export function classifyAndFilterCompetitors(
   const validPrices = candidates.map((c) => c.priceNum).filter((p): p is number => p !== null && p > 0);
   const avgPrice = validPrices.length > 0
     ? Number((validPrices.reduce((a, b) => a + b, 0) / validPrices.length).toFixed(2))
-    : 16.5;
+    : 0;
 
   const validReviews = candidates.map((c) => c.reviewCount).filter((r) => r > 0);
   const avgReviews = validReviews.length > 0
     ? Math.round(validReviews.reduce((a, b) => a + b, 0) / validReviews.length)
-    : 350;
+    : 0;
 
   const validRatings = candidates.map((c) => c.rating).filter((r): r is number => r !== null && r > 0);
   const avgRating = validRatings.length > 0
     ? Number((validRatings.reduce((a, b) => a + b, 0) / validRatings.length).toFixed(1))
-    : 4.7;
+    : 0;
 
   let topOrganicCount = 0;
   let bestSellerCount = 0;
@@ -347,7 +373,7 @@ export function parseHelium10XrayCSV(csvText: string, query: string = "Helium 10
       asin,
       title,
       brand,
-      price: priceNum ? `$${priceNum.toFixed(2)}` : priceStr || "$19.99",
+      price: priceNum ? `$${priceNum.toFixed(2)}` : (priceStr || ""),
       priceNum,
       revenue,
       monthlySales,
@@ -361,8 +387,8 @@ export function parseHelium10XrayCSV(csvText: string, query: string = "Helium 10
       sellerCountry,
       fulfillment,
       reviewVelocity,
-      rating: ratingNum || 4.7,
-      ratingText: `${ratingNum || 4.7} out of 5 stars`,
+      rating: ratingNum,
+      ratingText: ratingNum ? `${ratingNum} out of 5 stars` : "",
       reviewCount,
       img,
       isSponsored,

@@ -29,6 +29,7 @@ import {
   type AmazonCompetitorCandidate,
   parseHelium10XrayCSV,
 } from "@/lib/amazon-asin-types";
+import { decodeHtml } from "@/lib/competitor-discovery/domain/normalize";
 
 interface AmazonCompetitorAsinSelectorProps {
   initialQuery?: string;
@@ -37,7 +38,7 @@ interface AmazonCompetitorAsinSelectorProps {
 }
 
 export function AmazonCompetitorAsinSelector({
-  initialQuery = "bullet tumbler",
+  initialQuery = "",
   seedSuggestions = [],
   onSelectAsinsForReverse,
 }: AmazonCompetitorAsinSelectorProps) {
@@ -285,47 +286,63 @@ export function AmazonCompetitorAsinSelector({
         </div>
       </div>
 
-      {/* Helium 10 Top Metric Cards (Matching Screenshot) */}
+      {/* Helium 10 Top Metric Cards */}
       {result && (
         <div className="space-y-3 animate-in fade-in duration-200">
+          {result.warnings && result.warnings.length > 0 && (
+            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start gap-2.5 shadow-2xs">
+              <WarningCircle size={18} weight="fill" className="shrink-0 text-amber-600 mt-0.5" />
+              <div className="space-y-1">
+                <span className="font-extrabold">Thông báo đồng bộ Helium 10:</span>
+                {result.warnings.map((w, idx) => (
+                  <p key={idx} className="font-medium text-amber-800">{w}</p>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 sm:grid-cols-6 gap-2.5">
             <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-2xs">
               <span className="text-[10.5px] font-bold text-slate-400 uppercase">Search Volume</span>
-              <div className="text-lg font-extrabold text-slate-900 mt-0.5">521</div>
+              <div className="text-lg font-extrabold text-slate-900 mt-0.5">
+                {typeof result.searchVolume === "number" && result.searchVolume > 0
+                  ? result.searchVolume.toLocaleString()
+                  : "—"}
+              </div>
             </div>
 
             <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-2xs">
               <span className="text-[10.5px] font-bold text-slate-400 uppercase">Total Revenue (30D)</span>
               <div className="text-lg font-extrabold text-emerald-700 mt-0.5">
-                ${(result.stats.totalRevenue || 0).toLocaleString()}
+                {result.stats.totalRevenue ? `$${result.stats.totalRevenue.toLocaleString()}` : "—"}
               </div>
             </div>
 
             <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-2xs">
               <span className="text-[10.5px] font-bold text-slate-400 uppercase">Average Revenue (30D)</span>
               <div className="text-lg font-extrabold text-slate-900 mt-0.5">
-                ${(result.stats.avgRevenue || 0).toLocaleString()}
+                {result.stats.avgRevenue ? `$${result.stats.avgRevenue.toLocaleString()}` : "—"}
               </div>
             </div>
 
             <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-2xs">
               <span className="text-[10.5px] font-bold text-slate-400 uppercase">Average Price</span>
               <div className="text-lg font-extrabold text-slate-900 mt-0.5">
-                ${Math.round(result.stats.avgPrice || 0)}
+                {result.stats.avgPrice ? `$${result.stats.avgPrice.toFixed(2)}` : "—"}
               </div>
             </div>
 
             <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-2xs">
               <span className="text-[10.5px] font-bold text-slate-400 uppercase">Average BSR</span>
               <div className="text-lg font-extrabold text-slate-900 mt-0.5">
-                #{result.stats.avgBsr ? result.stats.avgBsr.toLocaleString() : "0"}
+                {result.stats.avgBsr ? `#${result.stats.avgBsr.toLocaleString()}` : "—"}
               </div>
             </div>
 
             <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-2xs">
               <span className="text-[10.5px] font-bold text-slate-400 uppercase">Average Reviews</span>
               <div className="text-lg font-extrabold text-slate-900 mt-0.5">
-                {(result.stats.avgReviews || 0).toLocaleString()}
+                {result.stats.avgReviews ? result.stats.avgReviews.toLocaleString() : "—"}
               </div>
             </div>
           </div>
@@ -457,8 +474,8 @@ export function AmazonCompetitorAsinSelector({
                       </td>
 
                       <td className="p-3">
-                        <p className="font-semibold text-slate-900 line-clamp-2 text-xs" title={item.title}>
-                          {item.title}
+                        <p className="font-semibold text-slate-900 line-clamp-2 text-xs" title={decodeHtml(item.title)}>
+                          {decodeHtml(item.title)}
                         </p>
                         <div className="flex items-center gap-2 mt-1">
                           <span className="font-mono font-bold text-[11px] text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">
@@ -476,8 +493,8 @@ export function AmazonCompetitorAsinSelector({
                       </td>
 
                       <td className="p-3">
-                        <span className="font-bold text-blue-700 hover:underline block truncate" title={item.brand}>
-                          {item.brand}
+                        <span className="font-bold text-blue-700 hover:underline block truncate" title={decodeHtml(item.brand)}>
+                          {decodeHtml(item.brand)}
                         </span>
                         <div className="mt-0.5">{getCountryFlag(item.sellerCountry)}</div>
                       </td>
