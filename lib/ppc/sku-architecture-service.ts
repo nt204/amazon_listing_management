@@ -1234,9 +1234,7 @@ export function evaluateRowWithRuleEngine(
     ? rule.limits.maxBidFactor
     : (format === "SB01" || format === "SB05" ? 0.8 : 1.0);
   const calculatedMaxBid = Math.round(skuMaxBid * maxBidFactor * 100) / 100;
-  const effectiveMaxBid = Math.max(rule.limits.minBid, calculatedMaxBid);
-  // Khi trần kinh tế thấp hơn sàn rule, ưu tiên trần để không bid vượt khả năng sinh lời.
-  const effectiveMinBid = Math.min(rule.limits.minBid, effectiveMaxBid);
+  const effectiveMaxBid = calculatedMaxBid;
 
   const tiers = hasOrders ? rule.hasOrder : rule.noOrder;
   const metric = hasOrders ? actualAcos : row.clicks;
@@ -1263,7 +1261,7 @@ export function evaluateRowWithRuleEngine(
     recType = "PAUSE_TARGET";
     actionState = "PAUSED";
     priority = "P0";
-    targetBid = rule.limits.minBid;
+    targetBid = 0;
   }
   const metricReason = hasOrders
     ? (matched.action === "BID_DECREASE" && actualAcos > beAcos
@@ -1282,7 +1280,9 @@ export function evaluateRowWithRuleEngine(
   }
 
   const exceededEffectiveMax = targetBid > effectiveMaxBid;
-  const clampedBid = Math.round(Math.min(effectiveMaxBid, Math.max(effectiveMinBid, targetBid)) * 100) / 100;
+  // Không ép bid tính toán quay về min bid của rule. Min bid được giữ trong
+  // cấu hình cũ để tương thích schema, nhưng không còn là sàn thực thi.
+  const clampedBid = Math.round(Math.min(effectiveMaxBid, Math.max(0, targetBid)) * 100) / 100;
   if (recType !== "PAUSE_TARGET" && clampedBid === currentBid) {
     return null;
   }
@@ -1317,7 +1317,7 @@ export function evaluateRowWithRuleEngine(
     priority,
     currentBid,
     recommendedBid: clampedBid,
-    reason: `${reason} (Sàn rule: $${rule.limits.minBid.toFixed(2)}; trần campaign: $${effectiveMaxBid.toFixed(2)}; trần SKU: $${skuMaxBid.toFixed(2)}; bid cuối: $${clampedBid.toFixed(2)}.)`,
+    reason: `${reason} (Không ép sàn; trần campaign: $${effectiveMaxBid.toFixed(2)}; trần SKU: $${skuMaxBid.toFixed(2)}; bid cuối: $${clampedBid.toFixed(2)}.)`,
     estimatedSavings: Math.max(0, estimatedSavings),
     status: "PENDING",
     productType: econ.productType,

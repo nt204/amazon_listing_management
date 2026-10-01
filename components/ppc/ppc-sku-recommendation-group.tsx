@@ -1701,7 +1701,7 @@ function getRuleExplanation(
     ? `${rec.orders} đơn, ACoS ${actualAcos?.toFixed(1) ?? "N/A"}% so với mức hòa vốn ${beAcos.toFixed(1)}%.`
     : `${rec.clicks || 0} clicks, chưa có đơn và đã chi $${(rec.spend || 0).toFixed(2)}.`;
   const ruleCondition = (rec.reason || fallbackCondition)
-    .replace(/\s*\(Sàn rule:[^)]+\)\s*$/i, "")
+    .replace(/\s*\((?:Sàn rule:[^)]*|Không ép sàn;[^)]*)\)\s*$/i, "")
     .trim();
 
   // 1. Nhận diện chính xác Base tính toán theo nội dung luật trong reason
@@ -1742,8 +1742,6 @@ function getRuleExplanation(
     ? `Không tính bid mới: target được chuyển sang PAUSE để dừng phát sinh chi phí.`
     : `$${calculationBase.toFixed(2)} ${baseLabel} × ${ruleMultiplier.toFixed(3)} (${ruleChangePercent >= 0 ? "+" : ""}${ruleChangePercent.toFixed(1)}%) = ${calculationResult}`;
 
-  const minBidMatch = rec.reason?.match(/Sàn rule:\s*\$([0-9.]+)/i);
-  const minBid = Number(minBidMatch?.[1] || 0.10);
   const maxBidMatch = rec.reason?.match(/trần campaign:\s*\$([0-9.]+)/i);
   const maxBid = Number(maxBidMatch?.[1] || maxBidLimit || 0);
 
@@ -1752,7 +1750,7 @@ function getRuleExplanation(
     ruleCondition,
     formula,
     resultBid: isPause ? "PAUSE" : `$${(rec.recommendedBid || 0).toFixed(2)}`,
-    minBid: isPause ? "—" : `$${minBid.toFixed(2)}`,
+    minBid: isPause ? "—" : "Không ép sàn",
     maxBid: isPause || maxBid <= 0 ? "—" : `$${maxBid.toFixed(2)}`,
   };
 }

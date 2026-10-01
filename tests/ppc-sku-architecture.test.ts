@@ -262,6 +262,15 @@ test("evaluateRowWithRuleEngine evaluates common rules for SP01, SP03, SP04, SB0
   assert.equal(sp03StrongDec?.recType, "BID_DECREASE");
   assert.equal(sp03StrongDec?.recommendedBid, 0.94); // 55 / 50 = 1.1 cpc * 0.85 = 0.935 -> 0.94
 
+  const belowConfiguredMin = evaluateRowWithRuleEngine(
+    makeRow({ sales: 10, spend: 10, clicks: 50, orders: 1, bid: 0.3 }),
+    ruleMap,
+    econMap,
+  );
+  assert.equal(belowConfiguredMin?.recType, "BID_DECREASE");
+  assert.equal(belowConfiguredMin?.recommendedBid, 0.17, "Bid tính ra thấp hơn min bid phải được giữ nguyên, không kéo về sàn");
+  assert.doesNotMatch(belowConfiguredMin?.reason || "", /Sàn rule/);
+
   // 6. SP03 No Order: 0 clicks -> +5% current_bid
   const sp03ZeroClick = evaluateRowWithRuleEngine(
     makeRow({ sales: 0, spend: 0, clicks: 0, orders: 0, bid: 1.0 }),
