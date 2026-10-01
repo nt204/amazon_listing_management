@@ -371,6 +371,45 @@ export function suggestProductTypeFromText(
 }
 
 /**
+ * Phân biệt các Product Type dùng chung prefix bằng giá bán thực tế.
+ * Chỉ nhận diện khi giá gần một mức chuẩn và khoảng cách với lựa chọn thứ hai
+ * đủ lớn; các trường hợp giảm giá sâu hoặc nằm giữa hai mức vẫn để người dùng chọn.
+ */
+export function suggestProductTypeFromPrice(
+  observedUnitPrice: number,
+  candidates: string[],
+  defaultPrices: Map<string, number>,
+): { productType: string | null; reason: string | null } {
+  if (!Number.isFinite(observedUnitPrice) || observedUnitPrice <= 0) {
+    return { productType: null, reason: null };
+  }
+
+  const ranked = candidates
+    .map((productType) => ({
+      productType,
+      defaultPrice: Number(defaultPrices.get(productType) || 0),
+    }))
+    .filter((item) => Number.isFinite(item.defaultPrice) && item.defaultPrice > 0)
+    .map((item) => ({
+      ...item,
+      distance: Math.abs(observedUnitPrice - item.defaultPrice),
+    }))
+    .sort((a, b) => a.distance - b.distance);
+
+  const closest = ranked[0];
+  const runnerUp = ranked[1];
+  const maxDistance = Math.max(0.75, observedUnitPrice * 0.05);
+  if (!closest || !runnerUp || closest.distance > maxDistance || runnerUp.distance - closest.distance < 0.10) {
+    return { productType: null, reason: null };
+  }
+
+  return {
+    productType: closest.productType,
+    reason: `Khớp giá bán thực tế $${observedUnitPrice.toFixed(2)} gần giá chuẩn $${closest.defaultPrice.toFixed(2)}`,
+  };
+}
+
+/**
  * Danh sách ký hiệu đầu SKU của một loại phôi, ưu tiên customPrefixes nếu có, ngược lại lấy từ bộ quy tắc chuẩn.
  */
 export function getSkuPrefixesForProductType(productType: string, customPrefixes?: string[] | null): string[] {

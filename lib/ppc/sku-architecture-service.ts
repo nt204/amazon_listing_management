@@ -9,6 +9,7 @@ import {
   detectSkuProductTypeMatch,
   getSkuPrefixesForProductType,
   normalizeSkuPrefixes,
+  suggestProductTypeFromPrice,
   suggestProductTypeFromText,
   SKU_PREFIX_ERROR_PRODUCT_TYPE,
   type ActionType,
@@ -748,6 +749,7 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
 
     const masters = await getCostMasters(storeId);
   const masterMap = new Map(masters.map((m) => [m.productType, m]));
+  const defaultPriceMap = new Map(masters.map((m) => [m.productType, m.defaultPrice]));
 
   const defaultMaster: ProductCostMaster = masterMap.get("Ornament") || masterMap.get("Glass Ornament") || {
     id: "default-ornament",
@@ -831,17 +833,30 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
     const actualCr = clicks > 0 ? orders / clicks : 0;
     const actualAcos = sales > 0 ? (spend / sales) * 100 : 0;
 
+    // Giá bán thực tế trên mỗi unit là tín hiệu an toàn nhất để phân biệt các
+    // Product Type cùng dùng một prefix (ví dụ GO có Circle và Heart).
+    const dynamicPrice = orders > 0 && sales > 0
+      ? (units > 0 ? sales / units : sales / orders)
+      : 0;
+
     const match = detectSkuProductTypeMatch(sku, p.sample_campaign, storePrefixRules);
     const detected = match.productType;
     const hasSavedMapping = ["OVERRIDE", "MAPPING_OVERRIDE"].includes(existing?.cost_source) && existing?.product_type;
+    const priceSuggestion = !hasSavedMapping && match.status === "AMBIGUOUS"
+      ? suggestProductTypeFromPrice(dynamicPrice, match.candidateProductTypes, defaultPriceMap)
+      : { productType: null, reason: null };
     const productType = hasSavedMapping
       ? existing.product_type
-      : detected;
+      : (priceSuggestion.productType || detected);
     const mappingStatus = hasSavedMapping
       ? "RESOLVED" as const
-      : match.status;
-    const suggestion = mappingStatus === "AMBIGUOUS"
-      ? suggestProductTypeFromText(sku, p.sample_campaign, match.candidateProductTypes)
+      : priceSuggestion.productType
+        ? "RESOLVED" as const
+        : match.status;
+    const suggestion = priceSuggestion.productType
+      ? priceSuggestion
+      : mappingStatus === "AMBIGUOUS"
+        ? suggestProductTypeFromText(sku, p.sample_campaign, match.candidateProductTypes)
       : { productType: null, reason: null };
     const hasPrefixError = productType === SKU_PREFIX_ERROR_PRODUCT_TYPE;
 
@@ -862,11 +877,6 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
     if (master === defaultMaster && productType === "Ornament" && masterMap.has("Glass Ornament")) {
       master = masterMap.get("Glass Ornament")!;
     }
-
-    // Nếu SKU có đơn hàng: Tính giá bán thực tế trung bình từ doanh thu và số lượng bán
-    const dynamicPrice = orders > 0 && sales > 0
-      ? (units > 0 ? sales / units : sales / orders)
-      : 0;
 
     let sellingPrice = hasPrefixError
       ? 0

@@ -11,6 +11,7 @@ import {
   SKU_PREFIX_ERROR_PRODUCT_TYPE,
   SKU_TO_PRODUCT_TYPE_RULE_SET,
   suggestProductTypeFromText,
+  suggestProductTypeFromPrice,
 } from "../lib/ppc/sku-architecture-types";
 import { extractCampaignDate } from "../lib/ppc/sku-extractor";
 
@@ -146,6 +147,35 @@ test("duplicate store prefixes are flagged instead of silently choosing the firs
   assert.deepEqual(
     suggestProductTypeFromText("GO-100", "SP03 ornament", ["Circle Glass Ornament", "Heart Glass Ornament"]),
     { productType: null, reason: null },
+  );
+});
+
+test("ambiguous GO product types can be distinguished by observed selling price", () => {
+  const prices = new Map([
+    ["Circle Glass Ornament", 15.99],
+    ["Heart Glass Ornament", 16.99],
+  ]);
+
+  assert.deepEqual(
+    suggestProductTypeFromPrice(15.99, ["Circle Glass Ornament", "Heart Glass Ornament"], prices),
+    {
+      productType: "Circle Glass Ornament",
+      reason: "Khớp giá bán thực tế $15.99 gần giá chuẩn $15.99",
+    },
+  );
+  assert.equal(
+    suggestProductTypeFromPrice(16.84, ["Circle Glass Ornament", "Heart Glass Ornament"], prices).productType,
+    "Heart Glass Ornament",
+  );
+  assert.equal(
+    suggestProductTypeFromPrice(16.49, ["Circle Glass Ornament", "Heart Glass Ornament"], prices).productType,
+    null,
+    "Giá nằm chính giữa hai loại không được tự gán",
+  );
+  assert.equal(
+    suggestProductTypeFromPrice(13.99, ["Circle Glass Ornament", "Heart Glass Ornament"], prices).productType,
+    null,
+    "Giá giảm quá xa mức chuẩn không được tự gán",
   );
 });
 
