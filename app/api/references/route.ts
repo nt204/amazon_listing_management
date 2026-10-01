@@ -13,7 +13,7 @@ const requestSchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const actor = authorize(request, "write");
+    const actor = await authorize(request, "write", "listing");
     enforceRequestSize(request, 16_000);
     await enforceRateLimit(actor, "reference-research", Number(process.env.REFERENCE_RATE_LIMIT_PER_MINUTE || 20));
     const { value, marketplace } = requestSchema.parse(await request.json());

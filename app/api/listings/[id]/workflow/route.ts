@@ -8,7 +8,7 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 export async function POST(request: Request, { params }: RouteContext) {
   try {
-    const scope = dataScope(authorize(request, "write"));
+    const scope = dataScope(await authorize(request, "write", "listing"));
     enforceRequestSize(request, 10_000);
     const { id } = await params;
     const stored = await getListing(scope, id);

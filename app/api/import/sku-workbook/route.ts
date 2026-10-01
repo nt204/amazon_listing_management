@@ -6,7 +6,7 @@ export const maxDuration = 120;
 
 export async function GET(request: Request) {
   try {
-    authorize(request, "read");
+    await authorize(request, "read");
     const workbook = await createSkuInputSample();
     return new Response(workbook, {
       headers: {
@@ -22,7 +22,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    authorize(request, "write");
+    await authorize(request, "write");
     enforceRequestSize(request, 12_000_000);
     const formData = await request.formData();
     const workbook = formData.get("workbook");

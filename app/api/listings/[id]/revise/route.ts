@@ -23,7 +23,7 @@ export async function POST(request: Request, { params }: RouteContext) {
   let requestKey = "";
   let claimed = false;
   try {
-    const actor = authorize(request, "write");
+    const actor = await authorize(request, "write", "listing");
     scope = dataScope(actor);
     enforceRequestSize(request, 16_000);
     await enforceRateLimit(actor, "ai-revision");

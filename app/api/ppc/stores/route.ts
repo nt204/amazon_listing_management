@@ -18,7 +18,7 @@ const VALID_MARKETPLACES = new Set([
 
 export async function GET(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "read"));
+    const scope = dataScope(await authorize(request, "read", "ppc"));
     const stores = await listPpcStores(scope);
     return Response.json({ success: true, data: stores });
   } catch (error) {
@@ -28,7 +28,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "write"));
+    const scope = dataScope(await authorize(request, "write", "ppc"));
     enforceRequestSize(request, 100_000);
 
     const body = await request.json();
@@ -88,7 +88,7 @@ export async function POST(request: Request) {
 
 export async function PUT(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "write"));
+    const scope = dataScope(await authorize(request, "write", "ppc"));
     enforceRequestSize(request, 100_000);
 
     const body = await request.json();
@@ -131,7 +131,7 @@ export async function PUT(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "write"));
+    const scope = dataScope(await authorize(request, "write", "ppc"));
     const { searchParams } = new URL(request.url);
     let id = searchParams.get("id")?.trim();
 

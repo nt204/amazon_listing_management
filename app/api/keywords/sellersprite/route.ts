@@ -7,7 +7,7 @@ export const maxDuration = 60;
 
 export async function POST(request: Request) {
   try {
-    authorize(request, "write");
+    await authorize(request, "write", "sellersprite");
     const body = (await readJsonBody(request)) as {
       asin?: string;
       keyword?: string;

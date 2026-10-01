@@ -31,7 +31,7 @@ export async function POST(request: Request) {
   let requestKey = "";
   let claimed = false;
   try {
-    const actor = authorize(request, "write");
+    const actor = await authorize(request, "write", "listing");
     scope = dataScope(actor);
     await enforceRateLimit(actor, "ai-generation");
     requestKey = idempotencyKey(request);

@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
-    authorize(request, "read");
+    await authorize(request, "read", "ppc");
     const { searchParams } = new URL(request.url);
     const detailId = searchParams.get("id");
     const downloadId = searchParams.get("downloadId");
@@ -48,7 +48,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const actor = authorize(request, "write");
+    const actor = await authorize(request, "write", "ppc");
     enforceRequestSize(request);
 
     const body = await request.json().catch(() => ({}));

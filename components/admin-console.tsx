@@ -8,14 +8,18 @@ import {
   EyeIcon,
   FilePdfIcon,
   HardDrivesIcon,
+  PencilSimpleIcon,
+  PlusIcon,
   ProhibitIcon,
   ShieldCheckIcon,
+  SlidersHorizontalIcon,
   TrashIcon,
   UserCheckIcon,
   UserMinusIcon,
   UsersThreeIcon,
   WarningCircleIcon,
   XCircleIcon,
+  XIcon,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AccountMenu } from "@/components/account-menu";
@@ -37,6 +41,13 @@ const statusStyles: Record<AppUserStatus, string> = {
   rejected: "border-red-200 bg-red-50 text-red-700",
   disabled: "border-slate-300 bg-slate-100 text-slate-700",
 };
+
+const availableFeatures = [
+  { id: "listing", label: "Listing Desk", desc: "Tạo và duyệt Listing Amazon" },
+  { id: "mockups", label: "Mockup Design", desc: "Tạo ảnh Mockup AI Gemini/ChatGPT" },
+  { id: "sellersprite", label: "Đào Keyword", desc: "Đào từ khóa và phân tích đối thủ" },
+  { id: "ppc", label: "PPC Analytics", desc: "Chiến dịch PPC, Phôi, Rules" },
+];
 
 function formatBytes(bytes: number) {
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -70,6 +81,19 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
   const [actionKey, setActionKey] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+
+  // Modal Thêm Email
+  const [showAddUserModal, setShowAddUserModal] = useState(false);
+  const [newEmail, setNewEmail] = useState("");
+  const [newName, setNewName] = useState("");
+  const [newRole, setNewRole] = useState<"editor" | "reviewer" | "admin">("editor");
+  const [newFeatures, setNewFeatures] = useState<string[]>(["listing", "mockups", "sellersprite", "ppc"]);
+  const [addingUser, setAddingUser] = useState(false);
+
+  // Modal Phân Quyền Features
+  const [editingFeaturesUser, setEditingFeaturesUser] = useState<AppUserSummary | null>(null);
+  const [editFeatures, setEditFeatures] = useState<string[]>([]);
+  const [savingFeatures, setSavingFeatures] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -174,12 +198,120 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
       });
       const body = await response.json() as { user?: AppUserSummary; error?: string };
       if (!response.ok || !body.user) throw new Error(body.error || "Không thể cập nhật tài khoản.");
-      setUsers((current) => current.map((item) => item.userId === body.user!.userId ? body.user! : item));
+      setUsers((current) => current.map((item) => (item.userId === body.user!.userId ? body.user! : item)));
       setNotice(`Đã ${labels[action]} tài khoản ${user.username}.`);
     } catch (updateError) {
       setError(updateError instanceof Error ? updateError.message : "Không thể cập nhật tài khoản.");
     } finally {
       setActionKey("");
+    }
+  };
+
+  const handleRoleChange = async (user: AppUserSummary, role: "editor" | "reviewer" | "admin") => {
+    if (user.role === role) return;
+    setActionKey(`${user.userId}:role`);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: user.userId, role }),
+      });
+      const body = await response.json() as { user?: AppUserSummary; error?: string };
+      if (!response.ok || !body.user) throw new Error(body.error || "Không thể đổi vai trò.");
+      setUsers((current) => current.map((item) => (item.userId === body.user!.userId ? body.user! : item)));
+      setNotice(`Đã chuyển vai trò tài khoản ${user.username} thành ${role.toUpperCase()}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Lỗi đổi vai trò.");
+    } finally {
+      setActionKey("");
+    }
+  };
+
+  const handleDeleteUser = async (user: AppUserSummary) => {
+    if (!window.confirm(`Xác nhận XÓA HẲN tài khoản email ${user.username} khỏi hệ thống?`)) return;
+    setActionKey(`${user.userId}:delete`);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/admin/users", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: user.userId }),
+      });
+      const body = await response.json() as { success?: boolean; error?: string };
+      if (!response.ok || !body.success) throw new Error(body.error || "Không thể xóa tài khoản.");
+      setUsers((current) => current.filter((item) => item.userId !== user.userId));
+      setNotice(`Đã xóa tài khoản ${user.username}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Lỗi khi xóa tài khoản.");
+    } finally {
+      setActionKey("");
+    }
+  };
+
+  const handleAddUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newEmail.trim()) return;
+    setAddingUser(true);
+    setError("");
+    setNotice("");
+    try {
+      const res = await fetch("/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: newEmail.trim().toLowerCase(),
+          displayName: newName.trim(),
+          role: newRole,
+          allowedFeatures: newFeatures,
+        }),
+      });
+      const data = await res.json() as { user?: AppUserSummary; error?: string };
+      if (!res.ok || !data.user) throw new Error(data.error || "Không thể thêm tài khoản.");
+      setUsers((prev) => [data.user!, ...prev.filter((u) => u.userId !== data.user!.userId)]);
+      setNotice(`Đã cấp quyền trước cho email ${data.user.username}!`);
+      setShowAddUserModal(false);
+      setNewEmail("");
+      setNewName("");
+      setNewRole("editor");
+      setNewFeatures(["listing", "mockups", "sellersprite", "ppc"]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Lỗi thêm tài khoản.");
+    } finally {
+      setAddingUser(false);
+    }
+  };
+
+  const openEditFeatures = (user: AppUserSummary) => {
+    setEditingFeaturesUser(user);
+    setEditFeatures(user.allowedFeatures ?? ["listing", "mockups", "sellersprite", "ppc"]);
+  };
+
+  const handleSaveFeatures = async () => {
+    if (!editingFeaturesUser) return;
+    setSavingFeatures(true);
+    setError("");
+    setNotice("");
+    try {
+      const res = await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: editingFeaturesUser.userId,
+          allowedFeatures: editFeatures,
+        }),
+      });
+      const data = await res.json() as { user?: AppUserSummary; error?: string };
+      if (!res.ok || !data.user) throw new Error(data.error || "Không thể lưu quyền chức năng.");
+      setUsers((prev) => prev.map((u) => (u.userId === data.user!.userId ? data.user! : u)));
+      setNotice(`Đã cập nhật quyền chức năng cho ${data.user.username}.`);
+      setEditingFeaturesUser(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Lỗi lưu quyền chức năng.");
+    } finally {
+      setSavingFeatures(false);
     }
   };
 
@@ -204,7 +336,7 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
       });
       const body = await response.json() as { stats?: ImageStorageStats; freedBytes?: number; error?: string };
       if (!response.ok || !body.stats) throw new Error(body.error || "Không thể dọn ảnh trong DB.");
-      setStorage((current) => current ? { ...current, stats: body.stats! } : current);
+      setStorage((current) => (current ? { ...current, stats: body.stats! } : current));
       setNotice(`Đã giải phóng ${formatBytes(body.freedBytes || 0)} trong PostgreSQL. Ảnh trên R2 vẫn còn nguyên.`);
     } catch (cleanupError) {
       setError(cleanupError instanceof Error ? cleanupError.message : "Không thể dọn ảnh trong DB.");
@@ -227,7 +359,7 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
             </Link>
             <div className="min-w-0">
               <h1 className="truncate text-sm font-extrabold text-slate-900">Quản trị NCE HUB</h1>
-              <p className="truncate text-[10px] font-semibold text-slate-500">Tài khoản và lưu trữ ảnh</p>
+              <p className="truncate text-[10px] font-semibold text-slate-500">Phân quyền Email Cloudflare & Lưu trữ</p>
             </div>
           </div>
           <AccountMenu actor={actor} pendingUserCount={pendingCount} />
@@ -248,6 +380,7 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
           </div>
         ) : null}
 
+        {/* BẢNG TÀI KHOẢN VÀ PHÂN QUYỀN CHỨC NĂNG */}
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-4 sm:px-5">
             <div className="flex items-center gap-3">
@@ -255,18 +388,36 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
                 <UsersThreeIcon size={19} weight="fill" />
               </div>
               <div>
-                <h2 className="text-sm font-extrabold text-slate-900">Tài khoản</h2>
-                <p className="mt-0.5 text-[11px] font-medium text-slate-500">{pendingCount} tài khoản đang chờ duyệt</p>
+                <h2 className="text-sm font-extrabold text-slate-900">Quản lý Tài khoản & Phân quyền chức năng</h2>
+                <p className="mt-0.5 text-[11px] font-medium text-slate-500">
+                  {users.length} tài khoản • {pendingCount} tài khoản đang chờ duyệt • Bảo vệ qua Cloudflare Access
+                </p>
               </div>
             </div>
-            <button type="button" onClick={() => void load()} disabled={loading} className="rounded-lg border border-slate-200 px-3 py-1.5 text-[11px] font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60">
-              {loading ? "Đang tải..." : "Làm mới"}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowAddUserModal(true)}
+                className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-indigo-700 shadow-2xs transition cursor-pointer"
+              >
+                <PlusIcon size={14} weight="bold" /> Thêm Email
+              </button>
+              <button
+                type="button"
+                onClick={() => void load()}
+                disabled={loading}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-[11px] font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60 cursor-pointer"
+              >
+                {loading ? "Đang tải..." : "Làm mới"}
+              </button>
+            </div>
           </div>
 
           {loading && users.length === 0 ? (
             <div className="grid gap-3 p-4 sm:p-5">
-              {[0, 1, 2].map((item) => <div key={item} className="h-20 animate-pulse rounded-xl bg-slate-100" />)}
+              {[0, 1, 2].map((item) => (
+                <div key={item} className="h-20 animate-pulse rounded-xl bg-slate-100" />
+              ))}
             </div>
           ) : users.length === 0 ? (
             <div className="px-5 py-12 text-center">
@@ -278,33 +429,117 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
               {users.map((user) => {
                 const isSelf = user.userId === actor.userId;
                 return (
-                  <article key={user.userId} className="grid gap-3 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:px-5">
+                  <article key={user.userId} className="grid gap-3 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:px-5 hover:bg-slate-50/50 transition">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="truncate text-xs font-extrabold text-slate-900">{user.displayName}</p>
-                        <span className={`rounded-md border px-2 py-0.5 text-[10px] font-bold ${statusStyles[user.status]}`}>{statusLabels[user.status]}</span>
-                        {isSelf ? <span className="text-[10px] font-bold text-blue-700">Tài khoản hiện tại</span> : null}
+                        <p className="truncate text-xs font-black text-slate-900">{user.displayName || user.username}</p>
+                        <span className={`rounded-md border px-2 py-0.5 text-[10px] font-bold ${statusStyles[user.status]}`}>
+                          {statusLabels[user.status]}
+                        </span>
+                        {isSelf ? <span className="rounded-md bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 text-[10px] font-extrabold">Bạn (Admin)</span> : null}
                       </div>
-                      <p className="mt-1 text-[11px] font-semibold text-slate-500">@{user.username} | {user.role}</p>
-                      <p className="mt-1 text-[10px] text-slate-400">Đăng ký: {formatDate(user.createdAt)} | Đăng nhập gần nhất: {formatDate(user.lastLoginAt)}</p>
+
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
+                        <span className="font-semibold text-slate-700">{user.username}</span>
+                        <span className="text-slate-300">•</span>
+                        {/* Dropdown đổi role */}
+                        {isSelf ? (
+                          <span className="font-bold text-indigo-700 uppercase tracking-wide text-[10px]">
+                            {user.role}
+                          </span>
+                        ) : (
+                          <select
+                            value={user.role}
+                            onChange={(e) => void handleRoleChange(user, e.target.value as "editor" | "reviewer" | "admin")}
+                            disabled={Boolean(actionKey)}
+                            className="rounded border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-bold text-slate-700 hover:border-slate-300 focus:outline-hidden cursor-pointer"
+                          >
+                            <option value="editor">Editor (Thành viên)</option>
+                            <option value="reviewer">Reviewer (Kiểm duyệt)</option>
+                            <option value="admin">Admin (Quản trị)</option>
+                          </select>
+                        )}
+                      </div>
+
+                      {/* Danh sách các chức năng được cấp */}
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        <span className="text-[10px] font-bold text-slate-400">Chức năng:</span>
+                        {(user.allowedFeatures || ["listing", "mockups", "sellersprite", "ppc"]).map((feat) => {
+                          const item = availableFeatures.find((f) => f.id === feat);
+                          return (
+                            <span
+                              key={feat}
+                              className="rounded-md border border-slate-200 bg-slate-100/80 px-1.5 py-0.5 text-[9px] font-semibold text-slate-600"
+                            >
+                              {item ? item.label : feat}
+                            </span>
+                          );
+                        })}
+                        <button
+                          type="button"
+                          onClick={() => openEditFeatures(user)}
+                          className="flex items-center gap-1 rounded border border-indigo-200 bg-indigo-50/50 px-1.5 py-0.5 text-[9px] font-bold text-indigo-700 hover:bg-indigo-100/70 transition cursor-pointer"
+                          title="Sửa quyền chức năng"
+                        >
+                          <PencilSimpleIcon size={10} /> Phân quyền
+                        </button>
+                      </div>
+
+                      <p className="mt-1.5 text-[10px] text-slate-400">
+                        Tạo lúc: {formatDate(user.createdAt)} | Đăng nhập gần nhất: {formatDate(user.lastLoginAt)}
+                      </p>
                     </div>
+
+                    {/* Actions buttons */}
                     <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                       {user.status === "pending" ? (
                         <>
-                          <button type="button" disabled={Boolean(actionKey)} onClick={() => void updateUser(user, "approve")} className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-[11px] font-extrabold text-white hover:bg-emerald-700 disabled:opacity-60">
-                            <UserCheckIcon size={15} /> Duyệt
+                          <button
+                            type="button"
+                            disabled={Boolean(actionKey)}
+                            onClick={() => void updateUser(user, "approve")}
+                            className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-extrabold text-white hover:bg-emerald-700 disabled:opacity-60 cursor-pointer"
+                          >
+                            <UserCheckIcon size={14} /> Duyệt
                           </button>
-                          <button type="button" disabled={Boolean(actionKey)} onClick={() => void updateUser(user, "reject")} className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-2 text-[11px] font-extrabold text-red-700 hover:bg-red-50 disabled:opacity-60">
-                            <XCircleIcon size={15} /> Từ chối
+                          <button
+                            type="button"
+                            disabled={Boolean(actionKey)}
+                            onClick={() => void updateUser(user, "reject")}
+                            className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-[11px] font-extrabold text-red-700 hover:bg-red-50 disabled:opacity-60 cursor-pointer"
+                          >
+                            <XCircleIcon size={14} /> Từ chối
                           </button>
                         </>
                       ) : user.status === "approved" && !isSelf ? (
-                        <button type="button" disabled={Boolean(actionKey)} onClick={() => void updateUser(user, "disable")} className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-[11px] font-extrabold text-slate-700 hover:bg-slate-100 disabled:opacity-60">
-                          <UserMinusIcon size={15} /> Khóa
+                        <button
+                          type="button"
+                          disabled={Boolean(actionKey)}
+                          onClick={() => void updateUser(user, "disable")}
+                          className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-60 cursor-pointer"
+                        >
+                          <UserMinusIcon size={14} /> Khóa
                         </button>
-                      ) : (user.status === "disabled" || user.status === "rejected") ? (
-                        <button type="button" disabled={Boolean(actionKey)} onClick={() => void updateUser(user, "restore")} className="flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-2 text-[11px] font-extrabold text-blue-700 hover:bg-blue-50 disabled:opacity-60">
-                          <ShieldCheckIcon size={15} /> Mở lại
+                      ) : (user.status === "disabled" || user.status === "rejected") && !isSelf ? (
+                        <button
+                          type="button"
+                          disabled={Boolean(actionKey)}
+                          onClick={() => void updateUser(user, "restore")}
+                          className="flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-blue-700 hover:bg-blue-50 disabled:opacity-60 cursor-pointer"
+                        >
+                          <ShieldCheckIcon size={14} /> Mở lại
+                        </button>
+                      ) : null}
+
+                      {!isSelf ? (
+                        <button
+                          type="button"
+                          disabled={Boolean(actionKey)}
+                          onClick={() => void handleDeleteUser(user)}
+                          className="flex items-center gap-1 rounded-lg border border-slate-200 p-1.5 text-slate-400 hover:border-red-300 hover:bg-red-50 hover:text-red-600 transition disabled:opacity-60 cursor-pointer"
+                          title="Xóa tài khoản khỏi hệ thống"
+                        >
+                          <TrashIcon size={14} />
                         </button>
                       ) : null}
                     </div>
@@ -315,6 +550,178 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
           )}
         </section>
 
+        {/* MODAL THÊM EMAIL MỚI */}
+        {showAddUserModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
+            <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl animate-in fade-in zoom-in-95 duration-150">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h3 className="text-sm font-black text-slate-900">Cấp quyền trước cho Email</h3>
+                <button
+                  type="button"
+                  onClick={() => setShowAddUserModal(false)}
+                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 cursor-pointer"
+                >
+                  <XIcon size={16} />
+                </button>
+              </div>
+
+              <form onSubmit={handleAddUser} className="mt-4 space-y-4">
+                <div>
+                  <label className="block text-[11px] font-extrabold text-slate-700">Email Cloudflare (Gmail / Work email) *</label>
+                  <input
+                    type="email"
+                    required
+                    placeholder="vidu@gmail.com"
+                    value={newEmail}
+                    onChange={(e) => setNewEmail(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:border-indigo-500 focus:outline-hidden"
+                  />
+                  <p className="mt-1 text-[10px] text-slate-400">Email này sẽ được cấp quyền đăng nhập thẳng mà không cần duyệt.</p>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-extrabold text-slate-700">Tên hiển thị (Tùy chọn)</label>
+                  <input
+                    type="text"
+                    placeholder="Ví dụ: Nguyễn Văn A"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:border-indigo-500 focus:outline-hidden"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-extrabold text-slate-700">Vai trò hệ thống</label>
+                  <select
+                    value={newRole}
+                    onChange={(e) => setNewRole(e.target.value as "editor" | "reviewer" | "admin")}
+                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold focus:border-indigo-500 focus:outline-hidden"
+                  >
+                    <option value="editor">Editor (Thành viên - thao tác dữ liệu thông thường)</option>
+                    <option value="reviewer">Reviewer (Kiểm duyệt - xem và xuất báo cáo)</option>
+                    <option value="admin">Admin (Toàn quyền quản trị tài khoản và lưu trữ)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-extrabold text-slate-700 mb-2">Các chức năng được phép dùng</label>
+                  <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/50 p-3">
+                    {availableFeatures.map((feat) => {
+                      const checked = newFeatures.includes(feat.id);
+                      return (
+                        <label key={feat.id} className="flex items-start gap-2.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setNewFeatures((prev) => [...prev, feat.id]);
+                              } else {
+                                setNewFeatures((prev) => prev.filter((id) => id !== feat.id));
+                              }
+                            }}
+                            className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                          <div>
+                            <span className="block text-xs font-bold text-slate-800">{feat.label}</span>
+                            <span className="block text-[10px] text-slate-500">{feat.desc}</span>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddUserModal(false)}
+                    className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={addingUser}
+                    className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60 cursor-pointer"
+                  >
+                    {addingUser ? "Đang lưu..." : "Cấp quyền Email"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL PHÂN QUYỀN CHỨC NĂNG */}
+        {editingFeaturesUser && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
+            <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl animate-in fade-in zoom-in-95 duration-150">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div>
+                  <h3 className="text-sm font-black text-slate-900">Phân quyền chức năng</h3>
+                  <p className="text-[11px] font-semibold text-slate-500">{editingFeaturesUser.username}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditingFeaturesUser(null)}
+                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 cursor-pointer"
+                >
+                  <XIcon size={16} />
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                <p className="text-xs text-slate-600">Chọn các phân hệ được phép truy cập cho tài khoản này:</p>
+                <div className="space-y-2.5 rounded-xl border border-slate-200 bg-slate-50/50 p-3.5">
+                  {availableFeatures.map((feat) => {
+                    const checked = editFeatures.includes(feat.id);
+                    return (
+                      <label key={feat.id} className="flex items-start gap-2.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setEditFeatures((prev) => [...prev, feat.id]);
+                            } else {
+                              setEditFeatures((prev) => prev.filter((id) => id !== feat.id));
+                            }
+                          }}
+                          className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <div>
+                          <span className="block text-xs font-bold text-slate-800">{feat.label}</span>
+                          <span className="block text-[10px] text-slate-500">{feat.desc}</span>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-5">
+                <button
+                  type="button"
+                  onClick={() => setEditingFeaturesUser(null)}
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                >
+                  Đóng
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveFeatures}
+                  disabled={savingFeatures}
+                  className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60 cursor-pointer"
+                >
+                  {savingFeatures ? "Đang lưu..." : "Lưu quyền"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* LƯU TRỮ ẢNH R2 */}
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 px-4 py-4 sm:px-5">
             <div className="flex items-center gap-3">
@@ -359,146 +766,80 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
                   onClick={() => void cleanupDatabaseImages()}
                   className="shrink-0 rounded-lg bg-red-700 px-4 py-2.5 text-[11px] font-extrabold text-white hover:bg-red-800 disabled:bg-slate-300 cursor-pointer"
                 >
-                  {actionKey === "storage:cleanup" ? "Đang dọn..." : "Xóa bản sao ảnh trong DB"}
+                  {actionKey === "storage:cleanup" ? "Đang dọn..." : `Dọn ${formatBytes(eligibleBytes)} ảnh trong PostgreSQL`}
                 </button>
               </div>
             </div>
-          ) : (
-            <div className="h-44 animate-pulse bg-slate-50" />
-          )}
+          ) : null}
         </section>
 
-        {/* Section: Tài liệu Hướng dẫn sử dụng PDF */}
+        {/* TÀI LIỆU HƯỚNG DẪN */}
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-4 sm:px-5">
             <div className="flex items-center gap-3">
-              <div className="grid h-9 w-9 place-items-center rounded-xl bg-indigo-50 text-indigo-700">
-                <FilePdfIcon size={20} weight="fill" />
+              <div className="grid h-9 w-9 place-items-center rounded-xl bg-purple-50 text-purple-700">
+                <FilePdfIcon size={19} weight="fill" />
               </div>
               <div>
-                <h2 className="text-sm font-extrabold text-slate-900">Tài liệu Hướng dẫn sử dụng (PDF)</h2>
-                <p className="mt-0.5 text-[11px] font-medium text-slate-500">Tải lên file PDF hướng dẫn cho toàn bộ nhân viên và người dùng xem</p>
+                <h2 className="text-sm font-extrabold text-slate-900">Tài liệu hướng dẫn</h2>
+                <p className="mt-0.5 text-[11px] font-medium text-slate-500">Tải lên file PDF hướng dẫn cho các thành viên trong team</p>
               </div>
             </div>
             <button
               type="button"
-              onClick={() => setShowUploadGuideModal((prev) => !prev)}
-              className="rounded-xl bg-indigo-600 px-3.5 py-1.5 text-[11px] font-bold text-white shadow-xs hover:bg-indigo-700 transition cursor-pointer"
+              onClick={() => setShowUploadGuideModal(true)}
+              className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-purple-700 shadow-2xs transition cursor-pointer"
             >
-              + Tải lên file PDF
+              <PlusIcon size={14} weight="bold" /> Tải lên tài liệu
             </button>
           </div>
 
-          {/* Modal / Form Tải lên PDF */}
-          {showUploadGuideModal && (
-            <form onSubmit={handleUploadGuide} className="border-b border-slate-200 bg-slate-50/80 p-4 sm:p-5 space-y-3">
-              <h3 className="text-xs font-extrabold text-slate-800">Thêm tài liệu hướng dẫn mới</h3>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">Tiêu đề tài liệu *</label>
-                  <input
-                    type="text"
-                    required
-                    value={guideTitle}
-                    onChange={(e) => setGuideTitle(e.target.value)}
-                    placeholder="Ví dụ: Hướng dẫn tạo Listing & Đào Keyword"
-                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none focus:border-indigo-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">Chọn file PDF *</label>
-                  <input
-                    type="file"
-                    required
-                    accept=".pdf"
-                    onChange={(e) => setGuideFile(e.target.files?.[0] || null)}
-                    className="w-full text-xs text-slate-600 file:mr-3 file:rounded-xl file:border-0 file:bg-indigo-100 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-indigo-700 hover:file:bg-indigo-200 cursor-pointer"
-                  />
-                </div>
+          <div className="p-4 sm:p-5">
+            {guides.length === 0 ? (
+              <div className="py-8 text-center text-slate-400">
+                <FilePdfIcon size={32} className="mx-auto text-slate-300 mb-2" />
+                <p className="text-xs font-semibold">Chưa có tài liệu hướng dẫn nào</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">Bấm &quot;Tải lên tài liệu&quot; để thêm file hướng dẫn cho team</p>
               </div>
-              <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">Mô tả ngắn</label>
-                <input
-                  type="text"
-                  value={guideDesc}
-                  onChange={(e) => setGuideDesc(e.target.value)}
-                  placeholder="Ví dụ: Quy trình từng bước xuất Excel và đồng bộ Trello..."
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none focus:border-indigo-500"
-                />
-              </div>
-              <div className="flex items-center justify-end gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={() => setShowUploadGuideModal(false)}
-                  className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer"
-                >
-                  Hủy
-                </button>
-                <button
-                  type="submit"
-                  disabled={uploadingGuide}
-                  className="rounded-xl bg-indigo-600 px-4 py-1.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-60 cursor-pointer shadow-xs"
-                >
-                  {uploadingGuide ? "Đang tải lên..." : "Lưu tài liệu"}
-                </button>
-              </div>
-            </form>
-          )}
-
-          {/* Danh sách PDF Guides */}
-          {guides.length === 0 ? (
-            <div className="px-5 py-10 text-center">
-              <FilePdfIcon className="mx-auto text-slate-300" size={36} />
-              <p className="mt-2 text-xs font-bold text-slate-700">Chưa có tài liệu hướng dẫn nào được tải lên.</p>
-              <p className="mt-1 text-[11px] text-slate-500">Bấm nút &quot;+ Tải lên file PDF&quot; ở trên để đưa tài liệu hướng dẫn cho nhân viên.</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-slate-100">
-              {guides.map((guide) => (
-                <article key={guide.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-5 hover:bg-slate-50/50 transition">
-                  <div className="flex items-start gap-3 min-w-0 flex-1">
-                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-rose-50 text-rose-600 border border-rose-100 mt-0.5">
-                      <FilePdfIcon size={22} weight="fill" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <h3 className="truncate text-xs font-black text-slate-900">{guide.title}</h3>
-                        <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600 font-mono">
-                          {formatBytes(guide.byteSize)}
-                        </span>
+            ) : (
+              <div className="divide-y divide-slate-100">
+                {guides.map((guide) => (
+                  <div key={guide.id} className="flex items-center justify-between py-3">
+                    <div className="flex items-center gap-3">
+                      <div className="grid h-8 w-8 place-items-center rounded-lg bg-red-50 text-red-600 border border-red-100">
+                        <FilePdfIcon size={18} />
                       </div>
-                      {guide.description && (
-                        <p className="mt-0.5 text-[11px] text-slate-600 line-clamp-1">{guide.description}</p>
-                      )}
-                      <p className="mt-0.5 text-[10px] text-slate-400 font-mono">
-                        File: {guide.filename} • {formatDate(guide.createdAt)}
-                      </p>
+                      <div>
+                        <a
+                          href={`/api/guides/${guide.id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs font-extrabold text-slate-900 hover:text-indigo-600 hover:underline flex items-center gap-1"
+                        >
+                          {guide.title}
+                          <EyeIcon size={13} className="text-slate-400" />
+                        </a>
+                        {guide.description && (
+                          <p className="text-[11px] text-slate-500 mt-0.5">{guide.description}</p>
+                        )}
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                          {formatBytes(guide.byteSize)} • {formatDate(guide.createdAt)}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 shrink-0">
-                    <a
-                      href={`/api/guides/${guide.id}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition shadow-2xs"
-                    >
-                      <EyeIcon size={14} weight="bold" />
-                      Xem file PDF
-                    </a>
                     <button
                       type="button"
                       onClick={() => void handleDeleteGuide(guide)}
-                      className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-100 transition cursor-pointer"
-                      title="Xóa tài liệu này"
+                      className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 transition cursor-pointer"
+                      title="Xóa tài liệu"
                     >
-                      <TrashIcon size={14} weight="bold" />
+                      <TrashIcon size={15} />
                     </button>
                   </div>
-                </article>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            )}
+          </div>
         </section>
       </div>
     </main>

@@ -1,8 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { EyeIcon, EyeSlashIcon, GearSixIcon, KeyIcon, SignOutIcon, UserCircleIcon } from "@phosphor-icons/react";
+import {
+  ArrowClockwiseIcon,
+  GearSixIcon,
+  ShieldCheckIcon,
+  SignOutIcon,
+  UserCircleIcon,
+} from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import type { RequestActor } from "@/lib/auth";
 
@@ -17,18 +22,8 @@ export function AccountMenu({
   actor: RequestActor;
   pendingUserCount?: number;
 }) {
-  const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
   const [loadedPendingUserCount, setLoadedPendingUserCount] = useState(0);
-  const [loggingOut, setLoggingOut] = useState(false);
-  const [showPasswordForm, setShowPasswordForm] = useState(false);
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
-  const [showNewPassword, setShowNewPassword] = useState(false);
-  const [passwordError, setPasswordError] = useState("");
-  const [passwordNotice, setPasswordNotice] = useState("");
-  const [savingPassword, setSavingPassword] = useState(false);
 
   useEffect(() => {
     if (actor.role !== "admin" || pendingUserCount !== undefined) return;
@@ -65,37 +60,20 @@ export function AccountMenu({
   const effectivePendingUserCount = pendingUserCount ?? loadedPendingUserCount;
   const hasPendingUsers = actor.role === "admin" && effectivePendingUserCount > 0;
 
-  const logout = async () => {
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const handleReload = () => {
+    window.location.reload();
+  };
+
+  const handleLogout = async () => {
     setLoggingOut(true);
     try {
       await fetch("/api/auth/session", { method: "DELETE" });
-      router.push("/");
-      router.refresh();
-    } finally {
-      setLoggingOut(false);
+    } catch {
+      // ignore
     }
-  };
-
-  const changePassword = async () => {
-    setSavingPassword(true);
-    setPasswordError("");
-    setPasswordNotice("");
-    try {
-      const response = await fetch("/api/auth/password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ currentPassword, newPassword }),
-      });
-      const body = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(body.error || "Không thể đổi mật khẩu.");
-      setCurrentPassword("");
-      setNewPassword("");
-      setPasswordNotice("Đã đổi mật khẩu thành công.");
-    } catch (error) {
-      setPasswordError(error instanceof Error ? error.message : "Không thể đổi mật khẩu.");
-    } finally {
-      setSavingPassword(false);
-    }
+    window.location.href = "/cdn-cgi/access/logout";
   };
 
   return (
@@ -126,10 +104,7 @@ export function AccountMenu({
         <>
           <div
             className="fixed inset-0 z-40 cursor-default"
-            onClick={() => {
-              setIsOpen(false);
-              setShowPasswordForm(false);
-            }}
+            onClick={() => setIsOpen(false)}
           />
           <div className="absolute right-0 top-[calc(100%+8px)] z-[100] w-64 overflow-hidden rounded-2xl border border-slate-200 bg-white p-1.5 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
             <div className="border-b border-slate-100 px-3 py-2.5">
@@ -137,7 +112,15 @@ export function AccountMenu({
                 <UserCircleIcon className="text-indigo-600" size={24} weight="duotone" />
                 <div className="min-w-0">
                   <p className="truncate text-xs font-black text-slate-900">{actor.displayName}</p>
-                  <p className="mt-0.5 inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.2 text-[9px] font-extrabold uppercase tracking-wide text-indigo-700">{actor.role}</p>
+                  <p className="truncate text-[10px] text-slate-500">{actor.email || actor.userId}</p>
+                  <div className="mt-1 flex items-center gap-1.5">
+                    <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.2 text-[9px] font-extrabold uppercase tracking-wide text-indigo-700">
+                      {actor.role}
+                    </span>
+                    <span className="inline-flex items-center gap-0.5 rounded-full bg-sky-50 border border-sky-100 px-1.5 py-0.2 text-[8px] font-bold text-sky-700">
+                      <ShieldCheckIcon size={10} weight="fill" /> Cloudflare
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -148,79 +131,23 @@ export function AccountMenu({
                   onClick={() => setIsOpen(false)}
                   className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:text-indigo-900 transition"
                 >
-                  <GearSixIcon size={16} className="text-indigo-600" /> Quản trị
+                  <GearSixIcon size={16} className="text-indigo-600" /> Quản trị NCE HUB
                 </Link>
               ) : null}
+
               <button
                 type="button"
-                onClick={() => {
-                  setShowPasswordForm((current) => !current);
-                  setPasswordError("");
-                  setPasswordNotice("");
-                }}
-                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:text-indigo-900 transition"
+                onClick={handleReload}
+                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:text-indigo-900 transition cursor-pointer"
               >
-                <KeyIcon size={16} className="text-indigo-600" /> Đổi mật khẩu
+                <ArrowClockwiseIcon size={16} className="text-slate-500" /> Làm mới quyền
               </button>
-              {showPasswordForm ? (
-                <div className="mx-1 my-1.5 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
-                  <label className="block text-[10px] font-extrabold text-slate-600" htmlFor="account-current-password">Mật khẩu hiện tại</label>
-                  <div className="relative mt-1">
-                    <input
-                      id="account-current-password"
-                      type={showCurrentPassword ? "text" : "password"}
-                      autoComplete="current-password"
-                      value={currentPassword}
-                      onChange={(event) => setCurrentPassword(event.target.value)}
-                      className="field-control pr-8"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowCurrentPassword((prev) => !prev)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-0.5 rounded transition cursor-pointer"
-                      tabIndex={-1}
-                      title={showCurrentPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
-                    >
-                      {showCurrentPassword ? <EyeSlashIcon size={15} /> : <EyeIcon size={15} />}
-                    </button>
-                  </div>
-                  <label className="mt-2 block text-[10px] font-extrabold text-slate-600" htmlFor="account-new-password">Mật khẩu mới</label>
-                  <div className="relative mt-1">
-                    <input
-                      id="account-new-password"
-                      type={showNewPassword ? "text" : "password"}
-                      autoComplete="new-password"
-                      value={newPassword}
-                      onChange={(event) => setNewPassword(event.target.value)}
-                      className="field-control pr-8"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowNewPassword((prev) => !prev)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-0.5 rounded transition cursor-pointer"
-                      tabIndex={-1}
-                      title={showNewPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
-                    >
-                      {showNewPassword ? <EyeSlashIcon size={15} /> : <EyeIcon size={15} />}
-                    </button>
-                  </div>
-                  {passwordError ? <p className="mt-2 text-[10px] font-semibold leading-4 text-rose-600" role="alert">{passwordError}</p> : null}
-                  {passwordNotice ? <p className="mt-2 text-[10px] font-semibold leading-4 text-emerald-700" role="status">{passwordNotice}</p> : null}
-                  <button
-                    type="button"
-                    disabled={savingPassword || currentPassword.length < 10 || newPassword.length < 10}
-                    onClick={() => void changePassword()}
-                    className="mt-2.5 w-full rounded-xl bg-indigo-600 px-3 py-2 text-xs font-extrabold text-white shadow-xs hover:bg-indigo-700 disabled:bg-slate-300 transition"
-                  >
-                    {savingPassword ? "Đang lưu..." : "Lưu mật khẩu mới"}
-                  </button>
-                </div>
-              ) : null}
+
               <button
                 type="button"
                 disabled={loggingOut}
-                onClick={() => void logout()}
-                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 transition disabled:opacity-60"
+                onClick={() => void handleLogout()}
+                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 transition disabled:opacity-60 cursor-pointer"
               >
                 <SignOutIcon size={16} /> {loggingOut ? "Đang đăng xuất..." : "Đăng xuất"}
               </button>

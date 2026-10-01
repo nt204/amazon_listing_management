@@ -9,7 +9,7 @@ const shopSchema = z.object({
 
 export async function GET(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "read"));
+    const scope = dataScope(await authorize(request, "read", "listing"));
     return Response.json({ shops: await listAmazonShops(scope) });
   } catch (error) {
     return routeErrorResponse(error, "Không thể tải danh sách shop Amazon.", 500);
@@ -18,7 +18,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "manage_templates"));
+    const scope = dataScope(await authorize(request, "manage_templates", "listing"));
     const payload = shopSchema.parse(await readJsonBody(request, 20_000));
     const shop = await saveAmazonShop(scope, {
       name: payload.name,
@@ -32,7 +32,7 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "manage_templates"));
+    const scope = dataScope(await authorize(request, "manage_templates", "listing"));
     const id = new URL(request.url).searchParams.get("id") || "";
     if (!z.uuid().safeParse(id).success) throw new ApiError("Shop Amazon không hợp lệ.", 400);
     const success = await deleteAmazonShop(scope, id);

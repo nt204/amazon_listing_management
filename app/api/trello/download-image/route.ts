@@ -27,7 +27,7 @@ function downloadFilename(name: string | undefined, mimeType: string) {
 
 export async function POST(request: Request) {
   try {
-    authorize(request, "read");
+    await authorize(request, "read");
     const input = requestSchema.parse(await request.json());
     const url = assertTrelloAttachmentUrl(input.url);
     const { apiKey, token } = getTrelloServerCredentials();

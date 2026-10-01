@@ -145,7 +145,7 @@ async function sharedPresetCatalog(scope: DataScope) {
 
 export async function GET(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "read"));
+    const scope = dataScope(await authorize(request, "read"));
     return Response.json(
       { presets: await sharedPresetCatalog(scope) },
       { headers: { "Cache-Control": "no-store" } },
@@ -157,7 +157,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "write"));
+    const scope = dataScope(await authorize(request, "write"));
     const body = saveBodySchema.parse(await readJsonBody(request, 2_000_000));
     const presets = (body.presets || (body.preset ? [body.preset] : [])).map(
       normalizedPreset,
@@ -184,7 +184,7 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "write"));
+    const scope = dataScope(await authorize(request, "write"));
     const id = new URL(request.url).searchParams.get("id")?.trim() || "";
     if (!/^[A-Za-z0-9_-]{1,160}$/.test(id)) {
       throw new ApiError("ID phôi mockup không hợp lệ.", 400);

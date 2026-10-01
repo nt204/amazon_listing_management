@@ -27,7 +27,7 @@ function parseWeights(value: unknown): CandidateScoreWeights {
 
 export async function GET(request: Request) {
   try {
-    const actor = authorize(request, "read");
+    const actor = await authorize(request, "read");
     const saved = await getAppSetting<CandidateScoreWeights>(settingKey(actor.teamId, actor.userId));
     return Response.json({ weights: saved || competitorConfig.weights });
   } catch (error) {
@@ -37,7 +37,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const actor = authorize(request, "write");
+    const actor = await authorize(request, "write");
     const body = await request.json();
     const weights = parseWeights(body?.weights);
     await setAppSetting(

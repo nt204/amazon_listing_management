@@ -393,7 +393,11 @@ export function PpcSkuEconomicsTable({
                   <span className="text-[10px] text-slate-500">
                     Nguồn Cost:{" "}
                     <strong className="text-slate-800">
-                      {selectedSku.costSource === "OVERRIDE" ? "Tự định nghĩa (Override)" : "Kế thừa từ Phôi (Inherited)"}
+                      {selectedSku.costSource === "OVERRIDE"
+                        ? "Tự định nghĩa (Override)"
+                        : selectedSku.costSource === "MAPPING_OVERRIDE"
+                          ? "Đã map SKU · Chi phí kế thừa từ Phôi"
+                          : "Kế thừa từ Phôi (Inherited)"}
                     </strong>
                   </span>
                 </div>

@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "read"));
+    const scope = dataScope(await authorize(request, "read", "listing"));
     const [listings, metrics] = await Promise.all([listListings(scope, 100), getWorkflowMetrics(scope)]);
     return NextResponse.json({ listings, metrics });
   } catch (error) {

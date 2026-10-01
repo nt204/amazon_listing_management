@@ -142,7 +142,7 @@ export async function POST(request: Request) {
         403,
       );
     }
-    const scope = dataScope(workerActor || authorize(request, "write"));
+    const scope = dataScope(workerActor || await authorize(request, "write", "mockups"));
     const input = generateMockupsSchema.parse(await request.json());
     const postResponseTasks: PostResponseTask[] = [];
     after(async () => {

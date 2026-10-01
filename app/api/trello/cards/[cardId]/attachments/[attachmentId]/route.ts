@@ -26,7 +26,7 @@ export async function DELETE(
   context: { params: Promise<{ cardId: string; attachmentId: string }> },
 ) {
   try {
-    const scope = dataScope(authorize(request, "write"));
+    const scope = dataScope(await authorize(request, "write"));
     const { cardId, attachmentId } = paramsSchema.parse(await context.params);
     const config = await getUserTrelloServerConfig(scope);
     const card = await fetchTrelloCardDetail(cardId, config.apiKey, config.token);

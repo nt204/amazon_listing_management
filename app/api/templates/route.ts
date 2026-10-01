@@ -18,7 +18,7 @@ import { z } from "zod";
 
 export async function DELETE(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "manage_templates"));
+    const scope = dataScope(await authorize(request, "manage_templates", "listing"));
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
     if (!id) return Response.json({ error: "Thiếu ID template" }, { status: 400 });
@@ -46,7 +46,7 @@ const templateFieldValuesSchema = z.record(
 
 export async function GET(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "read"));
+    const scope = dataScope(await authorize(request, "read", "listing"));
     return Response.json({ templates: await listListingTemplates(scope) });
   } catch (error) {
     return routeErrorResponse(error, "Không thể tải danh sách template.", 500);
@@ -55,7 +55,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "manage_templates"));
+    const scope = dataScope(await authorize(request, "manage_templates", "listing"));
     enforceRequestSize(request, 15_000_000);
     const formData = await request.formData();
     const template = formData.get("template");
@@ -255,7 +255,7 @@ const moveTemplateSchema = z.object({
 
 export async function PATCH(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "manage_templates"));
+    const scope = dataScope(await authorize(request, "manage_templates", "listing"));
     const payload = moveTemplateSchema.parse(await request.json());
     const success = await moveListingTemplateToShop(scope, payload.id, payload.shop_id);
     if (!success) throw new ApiError("Template hoặc shop không còn tồn tại.", 404);

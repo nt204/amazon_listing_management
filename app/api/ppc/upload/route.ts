@@ -1,18 +1,16 @@
 import { ApiError, authorize, dataScope, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
-import { ingestPpcFilePath, PpcInputError } from "@/lib/ppc/service";
+import { ingestPpcFilePath, MAX_PPC_REPORT_BYTES, PpcInputError } from "@/lib/ppc/service";
 import { MultipartUploadError, streamMultipartFileUpload } from "@/lib/multipart-file-upload";
 
 export const runtime = "nodejs";
 
-const MAX_REPORT_BYTES = 150_000_000;
-
 export async function POST(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "write"));
-    enforceRequestSize(request, MAX_REPORT_BYTES + 5_000_000);
+    const scope = dataScope(await authorize(request, "write", "ppc"));
+    enforceRequestSize(request, MAX_PPC_REPORT_BYTES + 5_000_000);
     const upload = await streamMultipartFileUpload(request, {
       fieldName: "file",
-      maxFileBytes: MAX_REPORT_BYTES,
+      maxFileBytes: MAX_PPC_REPORT_BYTES,
     });
     const { file } = upload;
     const storeName = String(upload.fields.storeName || "").trim();
@@ -32,8 +30,11 @@ export async function POST(request: Request) {
     if (reportEndDate && !/^20\d{2}-[01]\d-[0-3]\d$/.test(reportEndDate)) {
       throw new ApiError("Ngày kết thúc báo cáo không hợp lệ.", 400);
     }
-    if (file.bytes === 0 || file.bytes > MAX_REPORT_BYTES) {
-      throw new ApiError("Báo cáo phải có dung lượng từ 1 byte đến 150 MB.", file.bytes > MAX_REPORT_BYTES ? 413 : 400);
+    if (file.bytes === 0 || file.bytes > MAX_PPC_REPORT_BYTES) {
+      throw new ApiError(
+        `Báo cáo phải có dung lượng từ 1 byte đến ${Math.round(MAX_PPC_REPORT_BYTES / 1_000_000)} MB.`,
+        file.bytes > MAX_PPC_REPORT_BYTES ? 413 : 400,
+      );
     }
 
     const result = await ingestPpcFilePath(scope, file.path, file.name, storeName, {

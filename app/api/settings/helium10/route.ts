@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
-    authorize(request, "read");
+    await authorize(request, "read");
     const config = await getHelium10PlaywrightConfig();
     return NextResponse.json({
       status: config.status,
@@ -21,7 +21,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    authorize(request, "write");
+    await authorize(request, "write");
     const body = (await readJsonBody(request)) as { cookies?: string };
 
     if (!body?.cookies || typeof body.cookies !== "string") {

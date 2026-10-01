@@ -1,6 +1,6 @@
 import { ApiError, authorize, dataScope, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
-import { listPpcStores } from "@/lib/ppc/repository";
+import { createPpcStore, listPpcStores } from "@/lib/ppc/repository";
 import crypto from "node:crypto";
 import type postgres from "postgres";
 
@@ -28,7 +28,7 @@ function publicJob(row: Record<string, unknown>) {
 // GET: Polling job cho máy Mac HOẶC Lấy danh sách job cho giao diện Web
 export async function GET(request: Request) {
   try {
-    const actor = authorize(request, "read");
+    const actor = await authorize(request, "read", "ppc");
     const { searchParams } = new URL(request.url);
     const action = searchParams.get("action") || "list";
     const workerId = searchParams.get("workerId") || "mac-mini";
@@ -128,7 +128,7 @@ export async function GET(request: Request) {
 // POST: Tạo job crawl mới HOẶC Điều khiển job (cancel, resume)
 export async function POST(request: Request) {
   try {
-    const actor = authorize(request, "write");
+    const actor = await authorize(request, "write", "ppc");
     enforceRequestSize(request, 30_000);
     const { searchParams } = new URL(request.url);
     const action = searchParams.get("action");
@@ -229,9 +229,20 @@ export async function POST(request: Request) {
 
     // 3. Tạo Job Crawl Mới
     const storeName = String(body?.storeName || "ALL").trim();
-    const stores = await listPpcStores(dataScope(actor));
+    let stores = await listPpcStores(dataScope(actor));
     if (storeName !== "ALL" && !stores.some((store) => store.name.toLowerCase() === storeName.toLowerCase())) {
-      throw new ApiError(`Store "${storeName}" không tồn tại trong hệ thống.`, 400);
+      if (/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(storeName)) {
+        await createPpcStore(dataScope(actor), {
+          name: storeName,
+          marketplace: "US",
+          targetAcos: 30.0,
+          dailyBudget: 0.0,
+          status: "ACTIVE",
+        });
+        stores = await listPpcStores(dataScope(actor));
+      } else {
+        throw new ApiError(`Store "${storeName}" không tồn tại trong hệ thống.`, 400);
+      }
     }
     const requestedStoreNames: string[] = Array.isArray(body?.storeNames)
       ? [...new Set<string>(body.storeNames.map((value: unknown) => String(value).trim()).filter(Boolean))]
@@ -392,7 +403,7 @@ export async function POST(request: Request) {
 // PATCH: Máy Mac cập nhật Lease / Heartbeat / Tiến độ / Trạng thái 6 task
 export async function PATCH(request: Request) {
   try {
-    const actor = authorize(request, "write");
+    const actor = await authorize(request, "write", "ppc");
     const body = await request.json();
     const {
       jobId,

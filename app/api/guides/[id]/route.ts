@@ -10,7 +10,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    authorize(request, "read");
+    await authorize(request, "read");
     const { id } = await params;
     const guide = await getSystemGuideById(id);
     if (!guide) {
@@ -51,7 +51,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const actor = authorize(request, "write");
+    const actor = await authorize(request, "write");
     if (actor.role !== "admin") {
       throw new ApiError("Chỉ có Quản trị viên mới được quyền xóa tài liệu hướng dẫn.", 403);
     }

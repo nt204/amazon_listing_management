@@ -22,7 +22,7 @@ const promptPreviewSchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    authorize(request, "read");
+    await authorize(request, "read", "mockups");
     const input = promptPreviewSchema.parse(await readJsonBody(request, 50_000));
     return NextResponse.json({
       prompt: buildMockupConcept(input.promptKey, input.dimensions),

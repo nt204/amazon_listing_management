@@ -19,7 +19,7 @@ function contentDisposition(filename: string) {
 
 export async function GET(request: Request, { params }: DownloadRouteContext) {
   try {
-    const scope = dataScope(authorize(request, "read"));
+    const scope = dataScope(await authorize(request, "read", "listing"));
     const { id } = await params;
     const template = await getListingTemplate(scope, id);
     if (!template) throw new ApiError("Template không còn tồn tại.", 404);

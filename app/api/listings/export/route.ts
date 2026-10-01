@@ -13,7 +13,7 @@ const requestSchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "export"));
+    const scope = dataScope(await authorize(request, "export", "listing"));
     enforceRequestSize(request, 100_000);
     const { ids } = requestSchema.parse(await request.json());
     const loaded = await Promise.all(ids.map((id) => getListing(scope, id)));

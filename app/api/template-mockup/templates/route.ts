@@ -34,7 +34,7 @@ export async function GET(request: Request) {
   try {
     let customTemplates: ProductTemplateSpec[] = [];
     try {
-      const scope = dataScope(authorize(request, "read"));
+      const scope = dataScope(await authorize(request, "read", "mockups"));
       const records = await listCustomMockupTemplates(scope.teamId);
       customTemplates = records.map((rec) => ({
         id: rec.id,
@@ -64,7 +64,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "write"));
+    const scope = dataScope(await authorize(request, "write", "mockups"));
     const body = saveTemplateSchema.parse(await readJsonBody(request, 15_000_000));
 
     const saved = await saveCustomMockupTemplate({
@@ -103,7 +103,7 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "write"));
+    const scope = dataScope(await authorize(request, "write", "mockups"));
     const id = new URL(request.url).searchParams.get("id")?.trim() || "";
     if (!id) {
       throw new ApiError("ID template không hợp lệ.", 400);

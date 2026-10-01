@@ -39,7 +39,7 @@ function exportTimestamp(date: Date): string {
 
 export async function POST(request: Request) {
   try {
-    const actor = authorize(request, "export");
+    const actor = await authorize(request, "export", "ppc");
     enforceRequestSize(request);
     const sql = await getDatabaseClient();
 

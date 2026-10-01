@@ -108,7 +108,7 @@ function cacheMetrics(key: string, data: MetricsResponse): void {
 
 export async function GET(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "read"));
+    const scope = dataScope(await authorize(request, "read", "ppc"));
     const { searchParams } = new URL(request.url);
     const storeName = searchParams.get("storeName") || "ALL";
     const sku = searchParams.get("sku") || "ALL";

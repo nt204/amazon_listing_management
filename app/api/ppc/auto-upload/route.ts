@@ -13,7 +13,7 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
-    authorize(request, "read");
+    await authorize(request, "read", "ppc");
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
     if (id) {
@@ -35,7 +35,7 @@ export async function GET(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    authorize(request, "write");
+    await authorize(request, "write", "ppc");
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
     if (!id) {
@@ -56,7 +56,7 @@ export async function DELETE(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const actor = authorize(request, "write");
+    const actor = await authorize(request, "write", "ppc");
     enforceRequestSize(request);
 
     const body = await request.json().catch(() => ({}));

@@ -10,5 +10,23 @@
     "profile_id": "k1hcixym",
     "enabled": true,
     "description": "Store LIMIMA"
+  },
+  {
+    "store_name": "FASTPEACE",
+    "profile_id": "k1hikk9q",
+    "enabled": true,
+    "description": "Store FASTPEACE"
+  },
+  {
+    "store_name": "BOZSPACER",
+    "profile_id": "k1hiklg6",
+    "enabled": true,
+    "description": "Store BOZSPACER"
+  },
+  {
+    "store_name": "MALFIRST",
+    "profile_id": "k1hiklwi",
+    "enabled": true,
+    "description": "Store MALFIRST"
   }
 ]

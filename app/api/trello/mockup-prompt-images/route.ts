@@ -18,7 +18,7 @@ const MAX_REFERENCE_IMAGE_BYTES = 10_000_000;
 
 export async function POST(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "write"));
+    const scope = dataScope(await authorize(request, "write", "mockups"));
     enforceRequestSize(request, MAX_REFERENCE_IMAGE_BYTES + 1_000_000);
     const form = await request.formData();
     const image = form.get("image");

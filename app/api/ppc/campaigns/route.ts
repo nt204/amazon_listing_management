@@ -10,7 +10,7 @@ const allowedSorts = new Set<PpcCampaignPageFilters["sortField"]>(["date", "spen
 export async function GET(request: Request) {
   const started = performance.now();
   try {
-    const scope = dataScope(authorize(request, "read"));
+    const scope = dataScope(await authorize(request, "read", "ppc"));
     const p = new URL(request.url).searchParams;
     const isExport = p.get("export") === "1";
     const page = Math.max(1, Number(p.get("page") || 1));

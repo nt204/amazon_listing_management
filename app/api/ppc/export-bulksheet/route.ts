@@ -75,7 +75,7 @@ function contentDisposition(fileName: string): string {
 
 export async function POST(request: Request) {
   try {
-    authorize(request, "export");
+    await authorize(request, "export", "ppc");
     enforceRequestSize(request);
 
     const body = await request.json();

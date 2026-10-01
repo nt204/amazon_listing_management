@@ -18,7 +18,7 @@ export const maxDuration = 150;
 
 export async function GET(request: Request) {
   try {
-    const actor = authorize(request, "read");
+    const actor = await authorize(request, "read");
     const scope = dataScope(actor);
     const { searchParams } = new URL(request.url);
 

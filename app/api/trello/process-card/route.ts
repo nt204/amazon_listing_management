@@ -112,7 +112,7 @@ async function processCardRequest(
     }
   };
 
-  const actor = authorize(request, "write");
+  const actor = await authorize(request, "write");
   const scope = dataScope(actor);
   const body = await request.json();
   const { cardId, brandProfileId, marketplace, productType, shopId, templateId } = processCardSchema.parse(body);

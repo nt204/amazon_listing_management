@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
-    const actor = authorize(request, "read");
+    const actor = await authorize(request, "read", "ppc");
     const { searchParams } = new URL(request.url);
     const storeTarget = searchParams.get("storeName") || searchParams.get("storeId");
     const isAllStores = !storeTarget || storeTarget === "ALL";

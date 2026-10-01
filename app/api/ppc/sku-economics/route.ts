@@ -1,12 +1,23 @@
 // app/api/ppc/sku-economics/route.ts
 import { ApiError, authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
-import { getSkuEconomicsList, upsertSkuEconomics, resolveStoreId } from "@/lib/ppc/sku-architecture-service";
+import { z } from "zod";
+import { getSkuEconomicsList, saveSkuProductTypeMappings, upsertSkuEconomics, resolveStoreId } from "@/lib/ppc/sku-architecture-service";
+
+const mappingSchema = z.object({
+  storeId: z.string().trim().min(1).optional(),
+  storeName: z.string().trim().min(1).optional(),
+  mappings: z.array(z.object({
+    sku: z.string().trim().min(1).max(256),
+    productType: z.string().trim().min(1).max(160),
+    asin: z.string().trim().max(32).optional(),
+  }).strict()).min(1).max(200),
+}).strict();
 
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
-    authorize(request, "read");
+    await authorize(request, "read", "ppc");
     const { searchParams } = new URL(request.url);
     const storeId = await resolveStoreId(searchParams.get("storeId"));
     const days = Number(searchParams.get("days") || 30);
@@ -20,12 +31,20 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    authorize(request, "write");
+    await authorize(request, "write", "ppc");
     enforceRequestSize(request);
 
     const body = await request.json();
     const { searchParams } = new URL(request.url);
-    const storeId = await resolveStoreId(body?.storeId || searchParams.get("storeId"));
+
+    if (Array.isArray(body?.mappings)) {
+      const input = mappingSchema.parse(body);
+      const mappingStoreId = await resolveStoreId(input.storeId || input.storeName || searchParams.get("storeId"));
+      const updated = await saveSkuProductTypeMappings(mappingStoreId, input.mappings);
+      return Response.json({ success: true, data: updated, updatedCount: updated.length });
+    }
+
+    const storeId = await resolveStoreId(body?.storeId || body?.storeName || searchParams.get("storeId"));
 
     if (!body?.sku) {
       throw new ApiError("Thiếu mã SKU cần cập nhật.", 400);

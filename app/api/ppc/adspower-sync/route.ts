@@ -7,7 +7,7 @@ export const maxDuration = 300;
 
 export async function POST(request: Request) {
   try {
-    const actor = authorize(request, "write");
+    const actor = await authorize(request, "write", "ppc");
     await enforceRateLimit(actor, "ppc-adspower-sync", 5, 60);
     
     let storeName = "HSOSTORE";

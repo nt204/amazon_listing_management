@@ -20,7 +20,7 @@ function contentDisposition(disposition: "inline" | "attachment", name: string) 
 
 export async function GET(request: Request, { params }: RouteContext) {
   try {
-    const scope = dataScope(authorize(request, "read"));
+    const scope = dataScope(await authorize(request, "read", "listing"));
     const { id, imageIndex: rawImageIndex } = await params;
     const imageIndex = Number(rawImageIndex);
     if (!Number.isInteger(imageIndex) || imageIndex < 0) {

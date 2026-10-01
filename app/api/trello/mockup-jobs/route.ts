@@ -120,7 +120,7 @@ function streamMockupJob(
 
 export async function GET(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "read"));
+    const scope = dataScope(await authorize(request, "read", "mockups"));
     const url = new URL(request.url);
     const activeOnly = url.searchParams.get("status") === "active";
     const limit = Number(url.searchParams.get("limit") || 30);
@@ -134,7 +134,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const actor = authorize(request, "write");
+    const actor = await authorize(request, "write", "mockups");
     const scope = dataScope(actor);
     await enforceRateLimit(
       actor,

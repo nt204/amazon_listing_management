@@ -67,7 +67,10 @@ import type {
   PpcTargetTypeBreakdown,
 } from "./types";
 
-const MAX_R2_FILE_BYTES = 150_000_000;
+const configuredPpcReportBytes = Number(process.env.PPC_MAX_REPORT_BYTES || process.env.PPC_MAX_R2_FILE_BYTES || 2_000_000_000);
+export const MAX_PPC_REPORT_BYTES = Number.isFinite(configuredPpcReportBytes) && configuredPpcReportBytes >= 1_000_000
+  ? configuredPpcReportBytes
+  : 2_000_000_000;
 const DEFAULT_TARGET_ACOS = 30;
 
 export class PpcInputError extends Error { }
@@ -1207,8 +1210,8 @@ export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarg
       const sizeMb = ((object.Size || 0) / (1024 * 1024)).toFixed(1);
       console.log(`[R2 Sync] [${fileIdx}/${selectedFiles.length}] Đang tải & phân tích ${baseName} (${sizeMb} MB)...`);
       try {
-        if ((object.Size || 0) > MAX_R2_FILE_BYTES) {
-          throw new Error(`File vượt quá giới hạn ${Math.round(MAX_R2_FILE_BYTES / 1_000_000)} MB.`);
+        if ((object.Size || 0) > MAX_PPC_REPORT_BYTES) {
+          throw new Error(`File vượt quá giới hạn ${Math.round(MAX_PPC_REPORT_BYTES / 1_000_000)} MB.`);
         }
         const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: fileName }));
         if (!response.Body) throw new Error("R2 trả về file rỗng.");
@@ -1522,4 +1525,3 @@ export async function exportSaleKwBulksheetExcel(campaigns: SaleKwCampaignPayloa
     proc.stdin.end();
   });
 }
-

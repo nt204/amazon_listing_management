@@ -3,7 +3,7 @@ import { deleteBrandProfile, listBrandProfiles, saveBrandProfile } from "@/lib/d
 
 export async function DELETE(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "manage_brands"));
+    const scope = dataScope(await authorize(request, "manage_brands", "listing"));
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
     if (!id) return NextResponse.json({ error: "Thiếu ID thương hiệu" }, { status: 400 });
@@ -20,7 +20,7 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "read"));
+    const scope = dataScope(await authorize(request, "read", "listing"));
     return NextResponse.json({ brands: await listBrandProfiles(scope) });
   } catch (error) {
     return routeErrorResponse(error, "Could not load brand profiles.", 500);
@@ -29,7 +29,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "manage_brands"));
+    const scope = dataScope(await authorize(request, "manage_brands", "listing"));
     const { name, guidelines } = brandProfileSchema.parse(await request.json());
     return NextResponse.json(
       { brand: await saveBrandProfile(scope, name, guidelines) },

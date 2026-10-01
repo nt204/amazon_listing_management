@@ -1,6 +1,6 @@
 import "server-only";
 
-import { AuthError, authenticateRequest, type Permission, type RequestActor } from "@/lib/auth";
+import { AuthError, authenticateRequest, type Permission, type RequestActor, type SystemFeature } from "@/lib/auth";
 import { consumeRateLimit, type DataScope } from "@/lib/db";
 import { logEvent } from "@/lib/logger";
 
@@ -18,8 +18,8 @@ export function dataScope(actor: RequestActor): DataScope {
   return { teamId: actor.teamId, actorId: actor.userId };
 }
 
-export function authorize(request: Request, permission: Permission) {
-  return authenticateRequest(request, permission);
+export async function authorize(request: Request, permission: Permission, feature?: SystemFeature) {
+  return authenticateRequest(request, permission, feature);
 }
 
 export function enforceRequestSize(request: Request, maxBytes = Number(process.env.MAX_REQUEST_BYTES || 75_000_000)) {

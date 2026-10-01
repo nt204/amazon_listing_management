@@ -13,7 +13,7 @@ const cleanupSchema = z.object({
 
 export async function GET(request: Request) {
   try {
-    const actor = authorize(request, "read");
+    const actor = await authorize(request, "read");
     if (actor.role !== "admin") throw new ApiError("Bạn không có quyền quản trị lưu trữ.", 403);
     return Response.json({
       driver: objectStorageDriver(),
@@ -26,7 +26,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const actor = authorize(request, "manage_storage");
+    const actor = await authorize(request, "manage_storage");
     cleanupSchema.parse(await readJsonBody(request, 4_000));
     if (objectStorageDriver() !== "r2") {
       throw new ApiError("Chỉ được xóa byte ảnh trong DB khi R2 đang là object storage chính.", 409);

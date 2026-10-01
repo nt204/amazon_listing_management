@@ -126,6 +126,7 @@ export function ListingWorkspace({
   }, []);
 
   useEffect(() => {
+    void fetch("/api/auth/session");
     const timer = window.setTimeout(() => void refreshBrands(), 0);
     return () => window.clearTimeout(timer);
   }, [refreshBrands]);
@@ -149,167 +150,178 @@ export function ListingWorkspace({
 
           {/* Navigation Menu List */}
           <nav className="space-y-1.5">
-            <button
-              type="button"
-              onClick={() => selectView("listing")}
-              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
-                sidebarTab === "trello" && viewMode === "trello"
-                  ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
-                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-              }`}
-            >
-              <KanbanIcon
-                size={17}
-                className={sidebarTab === "trello" && viewMode === "trello" ? "text-indigo-600" : "text-slate-400"}
-                weight="duotone"
-              />
-              <span>Listing</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => selectView("mockups")}
-              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
-                sidebarTab === "mockups" && viewMode === "trello"
-                  ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
-                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-              }`}
-            >
-              <ImageSquareIcon
-                size={17}
-                className={sidebarTab === "mockups" && viewMode === "trello" ? "text-indigo-600" : "text-slate-400"}
-                weight="duotone"
-              />
-              <span>Mockup design</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => selectView("sellersprite")}
-              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
-                viewMode === "sellersprite"
-                  ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
-                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-              }`}
-            >
-              <LightningIcon
-                size={17}
-                className={viewMode === "sellersprite" ? "text-indigo-600" : "text-slate-400"}
-                weight="duotone"
-              />
-              <span>Đào Keyword</span>
-            </button>
-
-            {/* Amazon PPC Analytics Group */}
-            <div className="space-y-1">
+            {/* Listing Tab */}
+            {(actor?.allowedFeatures?.includes("listing") ?? true) && (
               <button
                 type="button"
-                onClick={() => {
-                  selectView("ppc");
-                  setPpcSection("dashboard");
-                }}
-                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
-                  viewMode === "ppc"
+                onClick={() => selectView("listing")}
+                className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
+                  sidebarTab === "trello" && viewMode === "trello"
                     ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                     : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                 }`}
               >
-                <div className="flex items-center gap-2.5">
-                  <ChartLineUpIcon
-                    size={17}
-                    weight={viewMode === "ppc" ? "fill" : "duotone"}
-                    className={viewMode === "ppc" ? "text-indigo-600" : "text-emerald-600"}
-                  />
-                  <span>PPC Analytics</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span
-                    className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded border transition-colors ${
-                      viewMode === "ppc"
-                        ? "bg-indigo-100/70 text-indigo-700 border-indigo-200"
-                        : "bg-emerald-50 text-emerald-700 border-emerald-200"
-                    }`}
-                  >
-                    MỚI
-                  </span>
-                  <CaretDownIcon
-                    size={12}
-                    weight="bold"
-                    className={`transition-transform duration-200 ${
-                      viewMode === "ppc" ? "rotate-0 text-indigo-600" : "-rotate-90 text-slate-400"
-                    }`}
-                  />
-                </div>
+                <KanbanIcon
+                  size={17}
+                  className={sidebarTab === "trello" && viewMode === "trello" ? "text-indigo-600" : "text-slate-400"}
+                  weight="duotone"
+                />
+                <span>Listing</span>
               </button>
+            )}
 
-              {/* Sub-items under PPC Analytics */}
-              {viewMode === "ppc" && (
-                <div className="ml-3 pl-2.5 border-l-2 border-indigo-100 space-y-0.5 pt-0.5 animate-in fade-in slide-in-from-top-1 duration-150">
-                  {/* Mục to: PPC Dashboard */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      selectView("ppc");
-                      setPpcSection("dashboard");
-                    }}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs transition-all cursor-pointer ${
-                      ppcSection === "dashboard"
-                        ? "bg-indigo-100/70 text-indigo-900 font-black shadow-2xs"
-                        : "text-slate-600 font-bold hover:bg-slate-100 hover:text-slate-900"
-                    }`}
-                  >
+            {/* Mockups Tab */}
+            {(actor?.allowedFeatures?.includes("mockups") ?? true) && (
+              <button
+                type="button"
+                onClick={() => selectView("mockups")}
+                className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
+                  sidebarTab === "mockups" && viewMode === "trello"
+                    ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
+                    : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                }`}
+              >
+                <ImageSquareIcon
+                  size={17}
+                  className={sidebarTab === "mockups" && viewMode === "trello" ? "text-indigo-600" : "text-slate-400"}
+                  weight="duotone"
+                />
+                <span>Mockup design</span>
+              </button>
+            )}
+
+            {/* SellerSprite Tab */}
+            {(actor?.allowedFeatures?.includes("sellersprite") ?? true) && (
+              <button
+                type="button"
+                onClick={() => selectView("sellersprite")}
+                className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
+                  viewMode === "sellersprite"
+                    ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
+                    : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                }`}
+              >
+                <LightningIcon
+                  size={17}
+                  className={viewMode === "sellersprite" ? "text-indigo-600" : "text-slate-400"}
+                  weight="duotone"
+                />
+                <span>Đào Keyword</span>
+              </button>
+            )}
+
+            {/* Amazon PPC Analytics Group */}
+            {(actor?.allowedFeatures?.includes("ppc") ?? true) && (
+              <div className="space-y-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    selectView("ppc");
+                    setPpcSection("dashboard");
+                  }}
+                  className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
+                    viewMode === "ppc"
+                      ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
+                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <ChartLineUpIcon
+                      size={17}
+                      weight={viewMode === "ppc" ? "fill" : "duotone"}
+                      className={viewMode === "ppc" ? "text-indigo-600" : "text-emerald-600"}
+                    />
+                    <span>PPC Analytics</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
                     <span
-                      className={`h-2 w-2 rounded-full transition-colors ${
-                        ppcSection === "dashboard" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                      className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded border transition-colors ${
+                        viewMode === "ppc"
+                          ? "bg-indigo-100/70 text-indigo-700 border-indigo-200"
+                          : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                      }`}
+                    >
+                      MỚI
+                    </span>
+                    <CaretDownIcon
+                      size={12}
+                      weight="bold"
+                      className={`transition-transform duration-200 ${
+                        viewMode === "ppc" ? "rotate-0 text-indigo-600" : "-rotate-90 text-slate-400"
                       }`}
                     />
-                    <span>PPC Dashboard</span>
-                  </button>
+                  </div>
+                </button>
 
-                  {/* Mục con 1: Quản lý Phôi */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      selectView("ppc");
-                      setPpcSection("phoi");
-                    }}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
-                      ppcSection === "phoi"
-                        ? "bg-indigo-100/70 text-indigo-900 font-black shadow-2xs"
-                        : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
-                    }`}
-                  >
-                    <span
-                      className={`h-1.5 w-1.5 rounded-full ml-0.5 transition-colors ${
-                        ppcSection === "phoi" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                {/* Sub-items under PPC Analytics */}
+                {viewMode === "ppc" && (
+                  <div className="ml-3 pl-2.5 border-l-2 border-indigo-100 space-y-0.5 pt-0.5 animate-in fade-in slide-in-from-top-1 duration-150">
+                    {/* Mục to: PPC Dashboard */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        selectView("ppc");
+                        setPpcSection("dashboard");
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs transition-all cursor-pointer ${
+                        ppcSection === "dashboard"
+                          ? "bg-indigo-100/70 text-indigo-900 font-black shadow-2xs"
+                          : "text-slate-600 font-bold hover:bg-slate-100 hover:text-slate-900"
                       }`}
-                    />
-                    <span>Quản lý Phôi</span>
-                  </button>
+                    >
+                      <span
+                        className={`h-2 w-2 rounded-full transition-colors ${
+                          ppcSection === "dashboard" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                        }`}
+                      />
+                      <span>PPC Dashboard</span>
+                    </button>
 
-                  {/* Mục con 2: Quản lý Rule */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      selectView("ppc");
-                      setPpcSection("rules");
-                    }}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
-                      ppcSection === "rules"
-                        ? "bg-indigo-100/70 text-indigo-900 font-black shadow-2xs"
-                        : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
-                    }`}
-                  >
-                    <span
-                      className={`h-1.5 w-1.5 rounded-full ml-0.5 transition-colors ${
-                        ppcSection === "rules" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                    {/* Mục con 1: Quản lý Phôi */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        selectView("ppc");
+                        setPpcSection("phoi");
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
+                        ppcSection === "phoi"
+                          ? "bg-indigo-100/70 text-indigo-900 font-black shadow-2xs"
+                          : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
                       }`}
-                    />
-                    <span>Quản lý Rule</span>
-                  </button>
-                </div>
-              )}
-            </div>
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full ml-0.5 transition-colors ${
+                          ppcSection === "phoi" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                        }`}
+                      />
+                      <span>Quản lý Phôi</span>
+                    </button>
+
+                    {/* Mục con 2: Quản lý Rule */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        selectView("ppc");
+                        setPpcSection("rules");
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
+                        ppcSection === "rules"
+                          ? "bg-indigo-100/70 text-indigo-900 font-black shadow-2xs"
+                          : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
+                      }`}
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full ml-0.5 transition-colors ${
+                          ppcSection === "rules" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                        }`}
+                      />
+                      <span>Quản lý Rule</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </nav>
         </div>
 
@@ -347,7 +359,7 @@ export function ListingWorkspace({
             <span className="flex h-2.5 w-2.5 rounded-full bg-indigo-600 ring-4 ring-indigo-100" />
             <h2 className="text-xs font-black uppercase tracking-wider text-slate-800">
               {viewMode === "sellersprite"
-                ? "SellerSprite Keyword Mining"
+                ? "Đào Keyword"
                 : viewMode === "ppc"
                 ? ppcSection === "phoi"
                   ? "Amazon PPC - Quản Lý Phôi (Cost Master)"

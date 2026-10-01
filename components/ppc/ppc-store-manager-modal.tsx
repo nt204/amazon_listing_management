@@ -223,11 +223,10 @@ export function PpcStoreManagerModal({
                         </td>
                         <td className="p-3">
                           <span
-                            className={`inline-block px-2 py-0.5 rounded text-[10px] font-black uppercase ${
-                              store.status === "ACTIVE"
+                            className={`inline-block px-2 py-0.5 rounded text-[10px] font-black uppercase ${store.status === "ACTIVE"
                                 ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
                                 : "bg-amber-50 text-amber-700 border border-amber-200"
-                            }`}
+                              }`}
                           >
                             {store.status === "ACTIVE" ? "Hoạt Động" : "Tạm Dừng"}
                           </span>
@@ -265,11 +264,10 @@ export function PpcStoreManagerModal({
                               type="button"
                               onClick={() => void handleDeleteStore(store)}
                               disabled={isDefault || isDeleting}
-                              className={`p-1.5 rounded-lg transition ${
-                                isDefault
+                              className={`p-1.5 rounded-lg transition ${isDefault
                                   ? "text-slate-300 cursor-not-allowed"
                                   : "text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer"
-                              }`}
+                                }`}
                               title={isDefault ? "Không thể xóa store mặc định" : "Xóa store này"}
                             >
                               <Trash size={15} />

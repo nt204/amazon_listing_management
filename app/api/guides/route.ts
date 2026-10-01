@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
   try {
-    authorize(request, "read");
+    await authorize(request, "read");
     const guides = await listSystemGuides();
     return Response.json({ guides }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
@@ -17,7 +17,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const actor = authorize(request, "write");
+    const actor = await authorize(request, "write");
     if (actor.role !== "admin") {
       throw new ApiError("Chỉ có Quản trị viên mới được quyền tải lên tài liệu hướng dẫn.", 403);
     }

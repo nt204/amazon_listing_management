@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "read"));
+    const scope = dataScope(await authorize(request, "read", "ppc"));
     const { searchParams } = new URL(request.url);
     const limit = Math.min(100, Math.max(1, Number(searchParams.get("limit") || 50)));
     const logs = await listPpcSyncLogs(scope, limit);
@@ -29,7 +29,7 @@ export async function GET(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "write"));
+    const scope = dataScope(await authorize(request, "write", "ppc"));
     await clearPpcSyncLogs(scope);
     return Response.json({
       success: true,

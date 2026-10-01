@@ -38,6 +38,7 @@ import {
   formatPpcExportFilename,
 } from "@/lib/ppc/sku-extractor";
 import { PpcSkuEconomicsTable } from "./ppc-sku-economics-table";
+import { PpcSkuMappingPanel } from "./ppc-sku-mapping-panel";
 import { PpcSkuRecommendationGroupView } from "./ppc-sku-recommendation-group";
 import { PpcActionQueueDrawer } from "./ppc-action-queue-drawer";
 import { PpcFloatingActionQueue } from "./ppc-floating-action-queue";
@@ -598,9 +599,13 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
     campaignSortField, campaignSortDir, campaignPage, campaignPageSize]);
 
   const loadSkuEconomics = useCallback(async () => {
+    if (!selectedStore || selectedStore === "ALL") {
+      setSkuEconomicsList([]);
+      return;
+    }
     try {
       setLoadingSkuEcon(true);
-      const res = await fetch(`/api/ppc/sku-economics?days=${selectedDays}`, { cache: "no-store" });
+      const res = await fetch(`/api/ppc/sku-economics?days=${selectedDays}&storeId=${encodeURIComponent(selectedStore)}`, { cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json();
       if (data?.data) {
@@ -611,7 +616,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
     } finally {
       setLoadingSkuEcon(false);
     }
-  }, [selectedDays]);
+  }, [selectedDays, selectedStore]);
 
   const loadGroupedRecommendations = useCallback(async (force = false) => {
     const currentKey = `${selectedStore}:${selectedSku}:${selectedDays}`;
@@ -737,11 +742,26 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
     const res = await fetch("/api/ppc/sku-economics", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sku, ...updates }),
+      body: JSON.stringify({ storeName: selectedStore, sku, ...updates }),
     });
     if (!res.ok) throw new Error("Không thể cập nhật thông số SKU.");
     void loadSkuEconomics();
     notify(`Đã cập nhật thông số kinh tế cho SKU ${sku}`, "success");
+  };
+
+  const handleSaveSkuMappings = async (
+    mappings: Array<{ sku: string; productType: string; asin?: string }>,
+  ) => {
+    const res = await fetch("/api/ppc/sku-economics", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ storeName: selectedStore, mappings }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || "Không thể lưu mapping SKU.");
+    await loadSkuEconomics();
+    void loadGroupedRecommendations(true);
+    notify(`Đã lưu mapping cho ${body.updatedCount || mappings.length} SKU.`, "success");
   };
 
   const handleApproveToQueue = async (items: Array<{ recommendation: PpcRecommendation; userFinalBid?: number }>) => {
@@ -1510,7 +1530,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
     // Fast-path 1: O(1) lookup by exact Amazon Keyword / Target ID
     if (targetId) {
       const byId = (targetCampaignId ? searchTermsByKeywordId.get(`${targetCampaignId}\u0000${targetId}`) : null) ||
-                   searchTermsByKeywordId.get(targetId);
+        searchTermsByKeywordId.get(targetId);
       if (byId && byId.length > 0) {
         const res = { confirmed: byId, inferred: [] as PpcSearchTermRow[] };
         childTermsCacheRef.current.set(cacheKey, res);
@@ -1521,8 +1541,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
     // Fast-path 2: O(1) lookup by Target Keyword Expression + Match Type
     if (targetKwNorm) {
       const byKey = (targetCampaignId && targetAdGroupId ? searchTermsByTargetKey.get(`${targetCampaignId}\u0000${targetAdGroupId}\u0000${targetKwNorm}\u0000${targetMatchType}`) : null) ||
-                    (targetCampaignId ? searchTermsByTargetKey.get(`${targetCampaignId}\u0000${targetKwNorm}\u0000${targetMatchType}`) : null) ||
-                    (campNorm ? searchTermsByTargetKey.get(`${campNorm}\u0000${targetKwNorm}\u0000${targetMatchType}`) : null);
+        (targetCampaignId ? searchTermsByTargetKey.get(`${targetCampaignId}\u0000${targetKwNorm}\u0000${targetMatchType}`) : null) ||
+        (campNorm ? searchTermsByTargetKey.get(`${campNorm}\u0000${targetKwNorm}\u0000${targetMatchType}`) : null);
       if (byKey && byKey.length > 0) {
         const res = { confirmed: byKey, inferred: [] as PpcSearchTermRow[] };
         childTermsCacheRef.current.set(cacheKey, res);
@@ -1783,13 +1803,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
     <div className={`w-full space-y-4 text-slate-800 ${!isEmbedded ? "max-w-7xl mx-auto p-6" : ""}`}>
       {/* Toast Notification */}
       {toast && (
-        <div className={`fixed bottom-20 right-6 z-50 text-white px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2.5 text-xs font-bold border animate-in fade-in ${
-          toast.type === "error"
+        <div className={`fixed bottom-20 right-6 z-50 text-white px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2.5 text-xs font-bold border animate-in fade-in ${toast.type === "error"
             ? "bg-rose-900 border-rose-700"
             : toast.type === "info"
-            ? "bg-indigo-950 border-indigo-700 text-indigo-100"
-            : "bg-slate-900 border-slate-700"
-        }`}>
+              ? "bg-indigo-950 border-indigo-700 text-indigo-100"
+              : "bg-slate-900 border-slate-700"
+          }`}>
           {toast.type === "error" ? (
             <X size={16} weight="bold" className="text-rose-200 shrink-0" />
           ) : toast.type === "info" ? (
@@ -2419,114 +2438,114 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
 
       {/* DATA SLICING SUB-TABS (Bóc tách dữ liệu theo kiến trúc 5 tầng + SKU song song - ẨN KHI Ở TỔNG QUAN TẤT CẢ SHOP) */}
       {(selectedStore !== "ALL" || activeTab !== "overview") && (
-      <div className="flex items-center justify-between gap-2 p-1 bg-slate-200/60 rounded-xl border border-slate-200/80 shadow-2xs overflow-x-auto">
-        <div className="flex items-center gap-1 shrink-0">
-          <button
-            type="button"
-            onClick={() => setActiveTab("overview")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "overview"
-              ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
-              : "text-slate-600 hover:text-slate-900"
-              }`}
-          >
-            <ChartLineUp size={15} weight={activeTab === "overview" ? "bold" : "regular"} />
-            <span>1. Tổng Quan</span>
-          </button>
+        <div className="flex items-center justify-between gap-2 p-1 bg-slate-200/60 rounded-xl border border-slate-200/80 shadow-2xs overflow-x-auto">
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => setActiveTab("overview")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "overview"
+                ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
+                : "text-slate-600 hover:text-slate-900"
+                }`}
+            >
+              <ChartLineUp size={15} weight={activeTab === "overview" ? "bold" : "regular"} />
+              <span>1. Tổng Quan</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setActiveTab("campaigns")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "campaigns"
-              ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
-              : "text-slate-600 hover:text-slate-900"
-              }`}
-          >
-            <FolderSimple size={15} weight={activeTab === "campaigns" ? "bold" : "regular"} />
-            <span>2. Campaign ({detailCounts?.campaigns !== undefined ? detailCounts.campaigns.toLocaleString("vi-VN") : (loading ? "..." : campaignPerformance.length.toLocaleString("vi-VN"))})</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("campaigns")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "campaigns"
+                ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
+                : "text-slate-600 hover:text-slate-900"
+                }`}
+            >
+              <FolderSimple size={15} weight={activeTab === "campaigns" ? "bold" : "regular"} />
+              <span>2. Campaign ({detailCounts?.campaigns !== undefined ? detailCounts.campaigns.toLocaleString("vi-VN") : (loading ? "..." : campaignPerformance.length.toLocaleString("vi-VN"))})</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setActiveTab("targets")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "targets"
-              ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
-              : "text-slate-600 hover:text-slate-900"
-              }`}
-          >
-            <Crosshair size={15} weight={activeTab === "targets" ? "bold" : "regular"} />
-            <span>3. Target / Keyword ({detailCounts?.targets !== undefined ? detailCounts.targets.toLocaleString("vi-VN") : (loading ? "..." : targetPerformance.length.toLocaleString("vi-VN"))})</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("targets")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "targets"
+                ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
+                : "text-slate-600 hover:text-slate-900"
+                }`}
+            >
+              <Crosshair size={15} weight={activeTab === "targets" ? "bold" : "regular"} />
+              <span>3. Target / Keyword ({detailCounts?.targets !== undefined ? detailCounts.targets.toLocaleString("vi-VN") : (loading ? "..." : targetPerformance.length.toLocaleString("vi-VN"))})</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setActiveTab("search_terms")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "search_terms"
-              ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
-              : "text-slate-600 hover:text-slate-900"
-              }`}
-          >
-            <MagnifyingGlass size={15} weight={activeTab === "search_terms" ? "bold" : "regular"} />
-            <span>4. Search Terms ({detailCounts?.searchTerms !== undefined ? detailCounts.searchTerms.toLocaleString("vi-VN") : (!searchTermsReady ? "..." : (aggregatedSearchTerms.length > 0 ? aggregatedSearchTerms.length : searchTerms.length).toLocaleString("vi-VN"))})</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("search_terms")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "search_terms"
+                ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
+                : "text-slate-600 hover:text-slate-900"
+                }`}
+            >
+              <MagnifyingGlass size={15} weight={activeTab === "search_terms" ? "bold" : "regular"} />
+              <span>4. Search Terms ({detailCounts?.searchTerms !== undefined ? detailCounts.searchTerms.toLocaleString("vi-VN") : (!searchTermsReady ? "..." : (aggregatedSearchTerms.length > 0 ? aggregatedSearchTerms.length : searchTerms.length).toLocaleString("vi-VN"))})</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setActiveTab("st_optimization")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "st_optimization"
-              ? "bg-white text-rose-700 shadow-xs border border-rose-200"
-              : "text-slate-600 hover:text-slate-900"
-              }`}
-          >
-            <Prohibit size={15} weight={activeTab === "st_optimization" ? "bold" : "regular"} className={activeTab === "st_optimization" ? "text-rose-600" : "text-slate-400"} />
-            <span>5. ST Optimization ({stOptimizationCandidateCount > 0 ? stOptimizationCandidateCount.toLocaleString("vi-VN") : (!searchTermsReady ? "..." : "0")})</span>
-            {stOptimizationCandidateCount > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full bg-rose-600 text-white text-[10px] font-black">
-                {stOptimizationCandidateCount}
-              </span>
-            )}
-          </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("st_optimization")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "st_optimization"
+                ? "bg-white text-rose-700 shadow-xs border border-rose-200"
+                : "text-slate-600 hover:text-slate-900"
+                }`}
+            >
+              <Prohibit size={15} weight={activeTab === "st_optimization" ? "bold" : "regular"} className={activeTab === "st_optimization" ? "text-rose-600" : "text-slate-400"} />
+              <span>5. ST Optimization ({stOptimizationCandidateCount > 0 ? stOptimizationCandidateCount.toLocaleString("vi-VN") : (!searchTermsReady ? "..." : "0")})</span>
+              {stOptimizationCandidateCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-rose-600 text-white text-[10px] font-black">
+                  {stOptimizationCandidateCount}
+                </span>
+              )}
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setActiveTab("sale_kw")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "sale_kw"
-              ? "bg-white text-emerald-700 shadow-xs border border-emerald-200"
-              : "text-slate-600 hover:text-slate-900"
-              }`}
-          >
-            <RocketLaunch size={15} weight={activeTab === "sale_kw" ? "bold" : "regular"} className={activeTab === "sale_kw" ? "text-emerald-600" : "text-slate-400"} />
-            <span>6. Lên Camp Sale KW ({saleKwCandidateCount > 0 ? saleKwCandidateCount.toLocaleString("vi-VN") : (!searchTermsReady ? "..." : "0")})</span>
-            {saleKwCandidateCount > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full bg-emerald-600 text-white text-[10px] font-black">
-                {saleKwCandidateCount}
-              </span>
-            )}
-          </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("sale_kw")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "sale_kw"
+                ? "bg-white text-emerald-700 shadow-xs border border-emerald-200"
+                : "text-slate-600 hover:text-slate-900"
+                }`}
+            >
+              <RocketLaunch size={15} weight={activeTab === "sale_kw" ? "bold" : "regular"} className={activeTab === "sale_kw" ? "text-emerald-600" : "text-slate-400"} />
+              <span>6. Lên Camp Sale KW ({saleKwCandidateCount > 0 ? saleKwCandidateCount.toLocaleString("vi-VN") : (!searchTermsReady ? "..." : "0")})</span>
+              {saleKwCandidateCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-emerald-600 text-white text-[10px] font-black">
+                  {saleKwCandidateCount}
+                </span>
+              )}
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setActiveTab("skus")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "skus"
-              ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
-              : "text-slate-600 hover:text-slate-900"
-              }`}
-          >
-            <Tag size={15} weight={activeTab === "skus" ? "bold" : "regular"} />
-            <span>7. SKU ({detailCounts?.skus !== undefined ? detailCounts.skus.toLocaleString("vi-VN") : (loading ? "..." : activeSkuPerformance.length.toLocaleString("vi-VN"))})</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("skus")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "skus"
+                ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
+                : "text-slate-600 hover:text-slate-900"
+                }`}
+            >
+              <Tag size={15} weight={activeTab === "skus" ? "bold" : "regular"} />
+              <span>7. SKU ({detailCounts?.skus !== undefined ? detailCounts.skus.toLocaleString("vi-VN") : (loading ? "..." : activeSkuPerformance.length.toLocaleString("vi-VN"))})</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setActiveTab("recommendations")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "recommendations"
-              ? "bg-white text-emerald-700 shadow-xs border border-emerald-100"
-              : "text-slate-600 hover:text-slate-900"
-              }`}
-          >
-            <span>8. Đề Xuất ({skuRecGroups.length > 0 ? `${skuRecGroups.length.toLocaleString("vi-VN")} SKU` : (detailCounts?.skus !== undefined ? `${detailCounts.skus.toLocaleString("vi-VN")} SKU` : (loadingRecs ? "..." : "0 SKU"))})</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("recommendations")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "recommendations"
+                ? "bg-white text-emerald-700 shadow-xs border border-emerald-100"
+                : "text-slate-600 hover:text-slate-900"
+                }`}
+            >
+              <span>8. Đề Xuất ({skuRecGroups.length > 0 ? `${skuRecGroups.length.toLocaleString("vi-VN")} SKU` : (detailCounts?.skus !== undefined ? `${detailCounts.skus.toLocaleString("vi-VN")} SKU` : (loadingRecs ? "..." : "0 SKU"))})</span>
+            </button>
+          </div>
         </div>
-      </div>
       )}
 
       {/* ========================================================================= */}
@@ -3356,9 +3375,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                             <td className={`px-3 py-2.5 text-right font-mono font-black whitespace-nowrap ${target.acos <= targetAcos ? "text-emerald-700" : "text-rose-700"}`}>
                               {target.acos > 500 ? "0 sales" : `${target.acos.toFixed(1)}%`}
                             </td>
-                            <td className={`px-2 py-2 text-center whitespace-nowrap w-[60px] min-w-[60px] sticky right-0 z-10 border-l border-slate-200 shadow-[-4px_0_8px_rgba(0,0,0,0.04)] transition ${
-                              isExpanded ? "bg-indigo-50" : "bg-white group-hover:bg-slate-50"
-                            }`}>
+                            <td className={`px-2 py-2 text-center whitespace-nowrap w-[60px] min-w-[60px] sticky right-0 z-10 border-l border-slate-200 shadow-[-4px_0_8px_rgba(0,0,0,0.04)] transition ${isExpanded ? "bg-indigo-50" : "bg-white group-hover:bg-slate-50"
+                              }`}>
                               <button
                                 type="button"
                                 onClick={() => setExpandedTargetKey(isExpanded ? null : targetKey)}
@@ -3377,76 +3395,76 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                           {isExpanded && (
                             <tr className="bg-slate-50/70 border-b border-slate-200">
                               <td colSpan={14} className="p-3">
-                            {childTerms.length === 0 ? (
-                              <div className="p-3 text-center text-xs text-slate-400 bg-white rounded-lg border border-slate-200">
-                                Không có customer search term nào phát sinh click trong kỳ báo cáo.
-                              </div>
-                            ) : (
-                              <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-2xs">
-                                <table className="w-full text-left text-xs text-slate-700">
-                                  <thead className="bg-slate-50 text-[10px] uppercase font-bold text-slate-500 border-b border-slate-200">
-                                    <tr>
-                                      <th className="py-2 px-3.5">Customer Search Term</th>
-                                      <th className="py-2 px-2.5 text-right">Impression</th>
-                                      <th className="py-2 px-2.5 text-right">Clicks</th>
-                                      <th className="py-2 px-2.5 text-right">Spend ($)</th>
-                                      <th className="py-2 px-2.5 text-right">Sales ($)</th>
-                                      <th className="py-2 px-2.5 text-right">Orders</th>
-                                      <th className="py-2 px-2.5 text-right">CVR</th>
-                                      <th className="py-2 px-2.5 text-right">ACOS</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-slate-100 font-medium">
-                                    {childTerms.map((term, tIdx) => (
-                                      <tr key={`${searchTermKey(term)}-${tIdx}`} className="hover:bg-slate-50/80 transition">
-                                        <td className="py-2 px-3.5 font-bold text-slate-900">
-                                          <div className="flex items-center gap-1.5 flex-wrap">
-                                            <span>{term.customerSearchTerm}</span>
-                                            {term.matchType && term.matchType !== "Unknown" && (
-                                              <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold text-slate-600">
-                                                {term.matchType}
+                                {childTerms.length === 0 ? (
+                                  <div className="p-3 text-center text-xs text-slate-400 bg-white rounded-lg border border-slate-200">
+                                    Không có customer search term nào phát sinh click trong kỳ báo cáo.
+                                  </div>
+                                ) : (
+                                  <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-2xs">
+                                    <table className="w-full text-left text-xs text-slate-700">
+                                      <thead className="bg-slate-50 text-[10px] uppercase font-bold text-slate-500 border-b border-slate-200">
+                                        <tr>
+                                          <th className="py-2 px-3.5">Customer Search Term</th>
+                                          <th className="py-2 px-2.5 text-right">Impression</th>
+                                          <th className="py-2 px-2.5 text-right">Clicks</th>
+                                          <th className="py-2 px-2.5 text-right">Spend ($)</th>
+                                          <th className="py-2 px-2.5 text-right">Sales ($)</th>
+                                          <th className="py-2 px-2.5 text-right">Orders</th>
+                                          <th className="py-2 px-2.5 text-right">CVR</th>
+                                          <th className="py-2 px-2.5 text-right">ACOS</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-slate-100 font-medium">
+                                        {childTerms.map((term, tIdx) => (
+                                          <tr key={`${searchTermKey(term)}-${tIdx}`} className="hover:bg-slate-50/80 transition">
+                                            <td className="py-2 px-3.5 font-bold text-slate-900">
+                                              <div className="flex items-center gap-1.5 flex-wrap">
+                                                <span>{term.customerSearchTerm}</span>
+                                                {term.matchType && term.matchType !== "Unknown" && (
+                                                  <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold text-slate-600">
+                                                    {term.matchType}
+                                                  </span>
+                                                )}
+                                                {!term.targetKeyword && (
+                                                  <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 border border-amber-200" title="Từ khóa suy luận do báo cáo gốc của Amazon thiếu cột Targeting">
+                                                    Suy luận
+                                                  </span>
+                                                )}
+                                              </div>
+                                            </td>
+                                            <td className="py-2 px-2.5 text-right font-mono text-slate-600">{(term.impressions || 0).toLocaleString()}</td>
+                                            <td className="py-2 px-2.5 text-right font-mono text-slate-600">{term.clicks}</td>
+                                            <td className="py-2 px-2.5 text-right font-mono text-slate-900">${term.spend.toFixed(2)}</td>
+                                            <td className="py-2 px-2.5 text-right font-mono font-bold text-emerald-600">${term.sales.toFixed(2)}</td>
+                                            <td className="py-2 px-2.5 text-right font-mono font-bold text-slate-900">{term.orders}</td>
+                                            <td className="py-2 px-2.5 text-right font-mono text-slate-600">{(term.cvr * 100).toFixed(1)}%</td>
+                                            <td className="py-2 px-2.5 text-right font-mono">
+                                              <span
+                                                className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${term.orders === 0
+                                                  ? "text-rose-600 bg-rose-50"
+                                                  : term.acos <= targetAcos
+                                                    ? "text-emerald-700 bg-emerald-50"
+                                                    : "text-amber-700 bg-amber-50"
+                                                  }`}
+                                              >
+                                                {term.orders === 0 ? "0 sales" : `${term.acos.toFixed(1)}%`}
                                               </span>
-                                            )}
-                                            {!term.targetKeyword && (
-                                              <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 border border-amber-200" title="Từ khóa suy luận do báo cáo gốc của Amazon thiếu cột Targeting">
-                                                Suy luận
-                                              </span>
-                                            )}
-                                          </div>
-                                        </td>
-                                        <td className="py-2 px-2.5 text-right font-mono text-slate-600">{(term.impressions || 0).toLocaleString()}</td>
-                                        <td className="py-2 px-2.5 text-right font-mono text-slate-600">{term.clicks}</td>
-                                        <td className="py-2 px-2.5 text-right font-mono text-slate-900">${term.spend.toFixed(2)}</td>
-                                        <td className="py-2 px-2.5 text-right font-mono font-bold text-emerald-600">${term.sales.toFixed(2)}</td>
-                                        <td className="py-2 px-2.5 text-right font-mono font-bold text-slate-900">{term.orders}</td>
-                                        <td className="py-2 px-2.5 text-right font-mono text-slate-600">{(term.cvr * 100).toFixed(1)}%</td>
-                                        <td className="py-2 px-2.5 text-right font-mono">
-                                          <span
-                                            className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${term.orders === 0
-                                              ? "text-rose-600 bg-rose-50"
-                                              : term.acos <= targetAcos
-                                                ? "text-emerald-700 bg-emerald-50"
-                                                : "text-amber-700 bg-amber-50"
-                                              }`}
-                                          >
-                                            {term.orders === 0 ? "0 sales" : `${term.acos.toFixed(1)}%`}
-                                          </span>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </>
-            )}
-          </tbody>
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                  </>
+                )}
+              </tbody>
             </table>
           </div>
 
@@ -3472,6 +3490,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
       {/* ========================================================================= */}
       {mountedTabs.has("skus") && (
         <div className={activeTab === "skus" ? "space-y-3" : "hidden"}>
+          {selectedStore !== "ALL" && (
+            <PpcSkuMappingPanel skuList={skuEconomicsList} onSave={handleSaveSkuMappings} />
+          )}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
             <div className="relative flex-1 sm:w-72">
               <MagnifyingGlass size={14} className="absolute left-3 top-2.5 text-slate-400" />
@@ -3577,45 +3598,45 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                   </tr>
                 ) : (
                   paginatedSkus.map((s, i) => (
-                  <tr key={i} className="hover:bg-slate-50/80 transition">
-                    <td className="py-2.5 px-3.5 font-bold text-slate-900 flex items-center gap-2">
-                      <Tag size={14} className="text-indigo-600 shrink-0" />
-                      <span className="truncate max-w-[280px]" title={s.sku}>{s.sku}</span>
-                    </td>
-                    <td className="py-2.5 px-2.5 text-slate-600">{s.storeName}</td>
-                    <td className="py-2.5 px-3 text-right font-medium text-slate-700">
-                      {s.impressions ? s.impressions.toLocaleString() : "0"}
-                    </td>
-                    <td className={`py-2.5 px-3 text-right font-bold ${s.clicks === 0 ? "text-slate-400" : "text-slate-900"}`}>
-                      {s.clicks}
-                    </td>
-                    <td className="py-2.5 px-2 text-right text-slate-500 font-medium">
-                      {s.impressions > 0 ? `${(s.ctr || 0).toFixed(2)}%` : "-"}
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-bold text-slate-900">${s.spend.toFixed(2)}</td>
-                    <td className="py-2.5 px-3 text-right font-black text-emerald-600">${s.sales.toFixed(2)}</td>
-                    <td className="py-2.5 px-3 text-right font-black text-slate-900">{s.orders}</td>
-                    <td className="py-2.5 px-3 text-right text-slate-700">{s.clicks > 0 ? `${s.cvr.toFixed(1)}%` : "-"}</td>
-                    <td className="py-2.5 px-3 text-right">
-                      <span
-                        className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${s.spend === 0
-                          ? "bg-slate-50 text-slate-400"
-                          : s.acos <= Math.min(20, targetAcos)
-                            ? "bg-emerald-50 text-emerald-700"
-                            : s.acos <= targetAcos
-                              ? "bg-teal-50 text-teal-700"
-                              : s.acos <= 50
-                                ? "bg-amber-50 text-amber-700"
-                                : "bg-rose-50 text-rose-700"
-                          }`}
-                      >
-                        {s.spend === 0 ? "-" : s.acos > 500 ? "0 sales" : `${s.acos.toFixed(1)}%`}
-                      </span>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
+                    <tr key={i} className="hover:bg-slate-50/80 transition">
+                      <td className="py-2.5 px-3.5 font-bold text-slate-900 flex items-center gap-2">
+                        <Tag size={14} className="text-indigo-600 shrink-0" />
+                        <span className="truncate max-w-[280px]" title={s.sku}>{s.sku}</span>
+                      </td>
+                      <td className="py-2.5 px-2.5 text-slate-600">{s.storeName}</td>
+                      <td className="py-2.5 px-3 text-right font-medium text-slate-700">
+                        {s.impressions ? s.impressions.toLocaleString() : "0"}
+                      </td>
+                      <td className={`py-2.5 px-3 text-right font-bold ${s.clicks === 0 ? "text-slate-400" : "text-slate-900"}`}>
+                        {s.clicks}
+                      </td>
+                      <td className="py-2.5 px-2 text-right text-slate-500 font-medium">
+                        {s.impressions > 0 ? `${(s.ctr || 0).toFixed(2)}%` : "-"}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-bold text-slate-900">${s.spend.toFixed(2)}</td>
+                      <td className="py-2.5 px-3 text-right font-black text-emerald-600">${s.sales.toFixed(2)}</td>
+                      <td className="py-2.5 px-3 text-right font-black text-slate-900">{s.orders}</td>
+                      <td className="py-2.5 px-3 text-right text-slate-700">{s.clicks > 0 ? `${s.cvr.toFixed(1)}%` : "-"}</td>
+                      <td className="py-2.5 px-3 text-right">
+                        <span
+                          className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${s.spend === 0
+                            ? "bg-slate-50 text-slate-400"
+                            : s.acos <= Math.min(20, targetAcos)
+                              ? "bg-emerald-50 text-emerald-700"
+                              : s.acos <= targetAcos
+                                ? "bg-teal-50 text-teal-700"
+                                : s.acos <= 50
+                                  ? "bg-amber-50 text-amber-700"
+                                  : "bg-rose-50 text-rose-700"
+                            }`}
+                        >
+                          {s.spend === 0 ? "-" : s.acos > 500 ? "0 sales" : `${s.acos.toFixed(1)}%`}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
             </table>
           </div>
 

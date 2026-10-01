@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "read"));
+    const scope = dataScope(await authorize(request, "read", "ppc"));
     const { searchParams } = new URL(request.url);
     const storeName = searchParams.get("storeName") || "ALL";
     const days = Math.min(Math.max(Number(searchParams.get("days") || 7), 1), 30);

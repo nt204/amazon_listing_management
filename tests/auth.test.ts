@@ -9,7 +9,7 @@ import {
   verifySessionToken,
 } from "../lib/auth";
 
-test("team tokens create signed sessions and enforce role permissions", () => {
+test("team tokens create signed sessions and enforce role permissions", async () => {
   const previous = {
     mode: process.env.LISTING_DESK_AUTH_MODE,
     teams: process.env.LISTING_DESK_TEAMS_JSON,
@@ -44,12 +44,12 @@ test("team tokens create signed sessions and enforce role permissions", () => {
       "manage_templates",
     ] as const) {
       assert.equal(
-        authenticateRequest(bearerRequest, permission).userId,
+        (await authenticateRequest(bearerRequest, permission)).userId,
         "editor-a",
       );
     }
     for (const permission of ["manage_users", "manage_storage"] as const) {
-      assert.throws(
+      await assert.rejects(
         () => authenticateRequest(bearerRequest, permission),
         (error) => error instanceof AuthError && error.status === 403,
       );

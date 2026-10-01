@@ -6,9 +6,11 @@ import {
   calculateProfitBeforeAds,
   detectCampaignRuleType,
   detectProductTypeFromSku,
+  detectSkuProductTypeMatch,
   getSkuPrefixesForProductType,
   SKU_PREFIX_ERROR_PRODUCT_TYPE,
   SKU_TO_PRODUCT_TYPE_RULE_SET,
+  suggestProductTypeFromText,
 } from "../lib/ppc/sku-architecture-types";
 import { extractCampaignDate } from "../lib/ppc/sku-extractor";
 
@@ -115,6 +117,36 @@ test("SKU to Product Type Mapping Engine (Exception Map & Longest Prefix Match)"
   assert.equal(detectProductTypeFromSku("CUSTOM_ITEM", "SP03_ORNAMENT_AUTO"), SKU_PREFIX_ERROR_PRODUCT_TYPE);
   assert.equal(detectProductTypeFromSku("CUSTOM_ITEM", "SP03_TUMBLER_EXACT"), SKU_PREFIX_ERROR_PRODUCT_TYPE);
   assert.equal(detectProductTypeFromSku(""), SKU_PREFIX_ERROR_PRODUCT_TYPE);
+});
+
+test("duplicate store prefixes are flagged instead of silently choosing the first product type", () => {
+  const rules = [
+    { prefix: "G", productType: "11 Oz Glass" },
+    { prefix: "GO", productType: "Circle Glass Ornament" },
+    { prefix: "GO", productType: "Heart Glass Ornament" },
+    { prefix: "GF", productType: "Garden Flag" },
+  ];
+
+  assert.deepEqual(detectSkuProductTypeMatch("GF-100", undefined, rules), {
+    productType: "Garden Flag",
+    status: "RESOLVED",
+    matchedPrefix: "GF",
+    candidateProductTypes: ["Garden Flag"],
+  });
+  assert.deepEqual(detectSkuProductTypeMatch("GO-HEART-100", undefined, rules), {
+    productType: SKU_PREFIX_ERROR_PRODUCT_TYPE,
+    status: "AMBIGUOUS",
+    matchedPrefix: "GO",
+    candidateProductTypes: ["Circle Glass Ornament", "Heart Glass Ornament"],
+  });
+  assert.deepEqual(
+    suggestProductTypeFromText("GO-HEART-100", "Heart memorial ornament", ["Circle Glass Ornament", "Heart Glass Ornament"]),
+    { productType: "Heart Glass Ornament", reason: "Khớp từ khóa: heart" },
+  );
+  assert.deepEqual(
+    suggestProductTypeFromText("GO-100", "SP03 ornament", ["Circle Glass Ornament", "Heart Glass Ornament"]),
+    { productType: null, reason: null },
+  );
 });
 
 test("Campaign Type Classification Helpers", () => {

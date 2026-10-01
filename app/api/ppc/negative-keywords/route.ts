@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
-    const actor = authorize(request, "read");
+    const actor = await authorize(request, "read", "ppc");
     const { searchParams } = new URL(request.url);
     const storeId = searchParams.get("storeId")?.trim() || "";
     const storeName = searchParams.get("storeName")?.trim() || "";
@@ -90,7 +90,7 @@ export async function GET(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    const actor = authorize(request, "write");
+    const actor = await authorize(request, "write", "ppc");
     const { searchParams } = new URL(request.url);
 
     // Support single id or ids from query or body

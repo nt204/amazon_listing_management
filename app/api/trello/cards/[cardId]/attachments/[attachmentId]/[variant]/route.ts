@@ -24,7 +24,7 @@ type RouteContext = {
 
 export async function GET(request: Request, context: RouteContext) {
   try {
-    const scope = dataScope(authorize(request, "read"));
+    const scope = dataScope(await authorize(request, "read"));
     const { cardId, attachmentId, variant } = paramsSchema.parse(
       await context.params,
     );

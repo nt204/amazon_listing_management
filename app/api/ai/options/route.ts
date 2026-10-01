@@ -12,7 +12,7 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
-    const actor = authorize(request, "read");
+    const actor = await authorize(request, "read");
     const registry = getRuleRegistry();
     const ruleProfile = actor.ruleProfile || registry.default_profile;
     const profile = getRuleProfile({ configuration: { rule_profile: ruleProfile } });

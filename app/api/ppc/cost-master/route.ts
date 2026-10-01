@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
-    authorize(request, "read");
+    await authorize(request, "read", "ppc");
     const { searchParams } = new URL(request.url);
     const storeId = searchParams.get("storeId") || searchParams.get("store") || undefined;
 
@@ -42,7 +42,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    authorize(request, "write");
+    await authorize(request, "write", "ppc");
     enforceRequestSize(request);
 
     const body = await request.json();
@@ -87,7 +87,7 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    authorize(request, "write");
+    await authorize(request, "write", "ppc");
     const { searchParams } = new URL(request.url);
     let id = searchParams.get("id")?.trim();
     const storeId = searchParams.get("storeId") || searchParams.get("store") || undefined;

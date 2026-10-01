@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
-    authorize(request, "write");
+    await authorize(request, "write", "ppc");
     enforceRequestSize(request, 15_000_000);
 
     const formData = await request.formData();

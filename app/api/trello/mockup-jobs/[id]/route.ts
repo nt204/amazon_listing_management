@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request, context: RouteContext<"/api/trello/mockup-jobs/[id]">) {
   try {
-    const scope = dataScope(authorize(request, "read"));
+    const scope = dataScope(await authorize(request, "read", "mockups"));
     const { id } = await context.params;
     const job = await getMockupJob(scope, id);
     if (!job) throw new ApiError("Không tìm thấy tác vụ mockup.", 404);
@@ -23,7 +23,7 @@ export async function GET(request: Request, context: RouteContext<"/api/trello/m
 
 export async function DELETE(request: Request, context: RouteContext<"/api/trello/mockup-jobs/[id]">) {
   try {
-    const scope = dataScope(authorize(request, "write"));
+    const scope = dataScope(await authorize(request, "write", "mockups"));
     const { id } = await context.params;
     const existing = await getMockupJob(scope, id);
     if (!existing) throw new ApiError("Không tìm thấy tác vụ mockup.", 404);

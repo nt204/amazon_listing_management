@@ -22,7 +22,7 @@ export interface ProductCostMaster {
 }
 
 export type CrSource = "ACTUAL_30D" | "CALCULATED" | "INHERITED" | "OVERRIDE" | "ASSUMED";
-export type CostSource = "INHERITED" | "OVERRIDE";
+export type CostSource = "INHERITED" | "MAPPING_OVERRIDE" | "OVERRIDE";
 export type PpcStatus = "Healthy" | "Review" | "Bleeding" | "Zero Clicks";
 export const SKU_PREFIX_ERROR_PRODUCT_TYPE = "Lỗi Prefix";
 
@@ -42,6 +42,11 @@ export interface SkuEconomics {
   crSource: CrSource;
   maxBid: number;
   costSource: CostSource;
+  mappingStatus?: "RESOLVED" | "AMBIGUOUS" | "UNMAPPED";
+  matchedPrefix?: string | null;
+  candidateProductTypes?: string[];
+  suggestedProductType?: string | null;
+  suggestionReason?: string | null;
   ppcStatus?: PpcStatus;
   // Performance aggregations
   spend?: number;
@@ -327,6 +332,44 @@ export interface SkuPrefixRule {
   productType: string;
 }
 
+export interface SkuProductTypeMatch {
+  productType: string;
+  status: "RESOLVED" | "AMBIGUOUS" | "UNMAPPED";
+  matchedPrefix: string | null;
+  candidateProductTypes: string[];
+}
+
+export function suggestProductTypeFromText(
+  sku: string,
+  campaignName: string | undefined,
+  candidates: string[],
+): { productType: string | null; reason: string | null } {
+  const haystack = `${sku} ${campaignName || ""}`
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ");
+  const ignored = new Set(["glass", "ornament", "ceramic", "product", "item"]);
+  const scored = candidates.map((productType) => {
+    const tokens = productType
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((token) => token.length >= 3 && !ignored.has(token));
+    const matched = tokens.filter((token) => new RegExp(`(?:^| )${token}(?: |$)`).test(haystack));
+    return { productType, score: matched.length, matched };
+  }).sort((a, b) => b.score - a.score);
+
+  if (!scored[0] || scored[0].score === 0 || scored[0].score === scored[1]?.score) {
+    return { productType: null, reason: null };
+  }
+  return {
+    productType: scored[0].productType,
+    reason: `Khớp từ khóa: ${scored[0].matched.join(", ")}`,
+  };
+}
+
 /**
  * Danh sách ký hiệu đầu SKU của một loại phôi, ưu tiên customPrefixes nếu có, ngược lại lấy từ bộ quy tắc chuẩn.
  */
@@ -353,26 +396,61 @@ export function detectProductTypeFromSku(
   campaignName?: string,
   customRules?: SkuPrefixRule[]
 ): string {
+  return detectSkuProductTypeMatch(sku, campaignName, customRules).productType;
+}
+
+/**
+ * Trả về đầy đủ trạng thái mapping. Nếu nhiều Product Type dùng cùng prefix
+ * dài nhất, tuyệt đối không chọn ngẫu nhiên bản ghi đầu tiên.
+ */
+export function detectSkuProductTypeMatch(
+  sku: string,
+  campaignName?: string,
+  customRules?: SkuPrefixRule[],
+): SkuProductTypeMatch {
   let s = sku || "";
   if (SKU_TO_PRODUCT_TYPE_RULE_SET.normalization.trim_whitespace) s = s.trim();
   if (SKU_TO_PRODUCT_TYPE_RULE_SET.normalization.uppercase) s = s.toUpperCase();
-  if (!s) return SKU_PREFIX_ERROR_PRODUCT_TYPE;
+  if (!s) return {
+    productType: SKU_PREFIX_ERROR_PRODUCT_TYPE,
+    status: "UNMAPPED",
+    matchedPrefix: null,
+    candidateProductTypes: [],
+  };
 
   // 1. Exception map
   if (SKU_TO_PRODUCT_TYPE_RULE_SET.exception_map[s]) {
     const raw = SKU_TO_PRODUCT_TYPE_RULE_SET.exception_map[s];
-    return SKU_TO_PRODUCT_TYPE_RULE_SET.taxonomy[raw] || raw;
+    const productType = SKU_TO_PRODUCT_TYPE_RULE_SET.taxonomy[raw] || raw;
+    return { productType, status: "RESOLVED", matchedPrefix: s, candidateProductTypes: [productType] };
   }
 
   // 2. Custom store-level prefix rules (ưu tiên cao hơn global)
   if (customRules && customRules.length > 0) {
-    const sortedCustom = [...customRules].sort((a, b) => b.prefix.length - a.prefix.length);
-    for (const rule of sortedCustom) {
-      const cleanPrefix = rule.prefix.replace(/[\*\+]+$/g, "").toUpperCase();
-      if (cleanPrefix && s.startsWith(cleanPrefix)) {
-        const raw = rule.productType;
-        return SKU_TO_PRODUCT_TYPE_RULE_SET.taxonomy[raw] || raw;
+    const matches = customRules
+      .map((rule) => ({
+        prefix: rule.prefix.replace(/[\*\+]+$/g, "").trim().toUpperCase(),
+        productType: SKU_TO_PRODUCT_TYPE_RULE_SET.taxonomy[rule.productType] || rule.productType,
+      }))
+      .filter((rule) => rule.prefix && s.startsWith(rule.prefix));
+    const longestLength = Math.max(0, ...matches.map((rule) => rule.prefix.length));
+    const longest = matches.filter((rule) => rule.prefix.length === longestLength);
+    if (longest.length > 0) {
+      const candidates = Array.from(new Set(longest.map((rule) => rule.productType)));
+      if (candidates.length > 1) {
+        return {
+          productType: SKU_PREFIX_ERROR_PRODUCT_TYPE,
+          status: "AMBIGUOUS",
+          matchedPrefix: longest[0].prefix,
+          candidateProductTypes: candidates,
+        };
       }
+      return {
+        productType: candidates[0],
+        status: "RESOLVED",
+        matchedPrefix: longest[0].prefix,
+        candidateProductTypes: candidates,
+      };
     }
   }
 
@@ -380,13 +458,24 @@ export function detectProductTypeFromSku(
   for (const rule of SORTED_PREFIX_RULES) {
     if (s.startsWith(rule.prefix)) {
       const raw = rule.product_type;
-      return SKU_TO_PRODUCT_TYPE_RULE_SET.taxonomy[raw] || raw;
+      const productType = SKU_TO_PRODUCT_TYPE_RULE_SET.taxonomy[raw] || raw;
+      return {
+        productType,
+        status: "RESOLVED",
+        matchedPrefix: rule.prefix,
+        candidateProductTypes: [productType],
+      };
     }
   }
 
   // Không đoán theo campaign: thiếu prefix phải được hiển thị rõ để sửa mapping.
   void campaignName;
-  return SKU_PREFIX_ERROR_PRODUCT_TYPE;
+  return {
+    productType: SKU_PREFIX_ERROR_PRODUCT_TYPE,
+    status: "UNMAPPED",
+    matchedPrefix: null,
+    candidateProductTypes: [],
+  };
 }
 
 /**

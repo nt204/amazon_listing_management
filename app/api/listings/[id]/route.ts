@@ -11,7 +11,7 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 export async function GET(request: Request, { params }: RouteContext) {
   try {
-    const scope = dataScope(authorize(request, "read"));
+    const scope = dataScope(await authorize(request, "read", "listing"));
     const { id } = await params;
     const listing = await getListing(scope, id);
     if (!listing) return NextResponse.json({ error: "Listing not found." }, { status: 404 });
@@ -24,7 +24,7 @@ export async function GET(request: Request, { params }: RouteContext) {
 
 export async function PUT(request: Request, { params }: RouteContext) {
   try {
-    const scope = dataScope(authorize(request, "write"));
+    const scope = dataScope(await authorize(request, "write", "listing"));
     enforceRequestSize(request, 100_000);
     const { id } = await params;
     const stored = await getListing(scope, id);

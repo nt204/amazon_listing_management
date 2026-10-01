@@ -49,7 +49,7 @@ function exportTimestamp(date: Date): string {
 
 export async function POST(request: Request) {
   try {
-    const actor = authorize(request, "write");
+    const actor = await authorize(request, "write", "ppc");
     enforceRequestSize(request);
 
     const body = await request.json().catch(() => ({}));

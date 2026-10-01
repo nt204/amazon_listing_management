@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "read"));
+    const scope = dataScope(await authorize(request, "read", "ppc"));
     const url = new URL(request.url);
     const storeFilter = url.searchParams.get("storeName")?.trim().toUpperCase();
     const dateFilter = url.searchParams.get("date")?.trim();
@@ -44,7 +44,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "write"));
+    const scope = dataScope(await authorize(request, "write", "ppc"));
     const body = await request.json().catch(() => ({}));
     const action = body.action || "organize";
 
@@ -82,7 +82,7 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "write"));
+    const scope = dataScope(await authorize(request, "write", "ppc"));
     const body = await request.json().catch(() => ({}));
     const items = Array.isArray(body.items) ? body.items : [];
     const purgeDb = Boolean(body.purgeDb);

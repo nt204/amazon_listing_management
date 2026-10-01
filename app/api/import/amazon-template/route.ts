@@ -24,7 +24,7 @@ const exportSchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "write"));
+    const scope = dataScope(await authorize(request, "write"));
     const payload = exportSchema.parse(await readJsonBody(request, 3_000_000));
     const template = await getListingTemplate(scope, payload.template_id);
     if (!template) throw new ApiError("Template đã chọn không còn tồn tại.", 404);

@@ -177,6 +177,9 @@ export async function closeDatabaseConnection() {
 
 export type AppUserStatus = "pending" | "approved" | "rejected" | "disabled";
 
+export const ALL_SYSTEM_FEATURES = ["listing", "mockups", "sellersprite", "ppc"] as const;
+export type SystemFeature = (typeof ALL_SYSTEM_FEATURES)[number];
+
 export interface AppUserSummary {
   teamId: string;
   userId: string;
@@ -184,6 +187,7 @@ export interface AppUserSummary {
   displayName: string;
   role: "editor" | "reviewer" | "admin";
   status: AppUserStatus;
+  allowedFeatures: string[];
   approvedBy: string | null;
   approvedAt: string | null;
   lastLoginAt: string | null;
@@ -196,9 +200,10 @@ interface AppUserRow {
   user_id: string;
   username: string;
   display_name: string;
-  password_hash: string;
+  password_hash: string | null;
   role: "editor" | "reviewer" | "admin";
   status: AppUserStatus;
+  allowed_features?: string[] | null;
   approved_by: string | null;
   approved_at: string | null;
   last_login_at: string | null;
@@ -207,6 +212,7 @@ interface AppUserRow {
 }
 
 function toAppUserSummary(row: AppUserRow): AppUserSummary {
+  const defaultFeatures = ["listing", "mockups", "sellersprite", "ppc"];
   return {
     teamId: row.team_id,
     userId: row.user_id,
@@ -214,6 +220,9 @@ function toAppUserSummary(row: AppUserRow): AppUserSummary {
     displayName: row.display_name,
     role: row.role,
     status: row.status,
+    // NULL is a legacy row and receives the historical defaults. An empty
+    // array intentionally means that the account has no enabled features.
+    allowedFeatures: Array.isArray(row.allowed_features) ? row.allowed_features : defaultFeatures,
     approvedBy: row.approved_by,
     approvedAt: row.approved_at,
     lastLoginAt: row.last_login_at,
@@ -259,7 +268,7 @@ export async function getUserAccountForLogin(teamId: string, username: string) {
   const sql = getDatabase();
   const rows = await sql<AppUserRow[]>`
     SELECT team_id, user_id, username, display_name, password_hash, role,
-      status, approved_by, approved_at::text, last_login_at::text,
+      status, allowed_features, approved_by, approved_at::text, last_login_at::text,
       created_at::text, updated_at::text
     FROM app_users
     WHERE team_id = ${teamId} AND LOWER(username) = LOWER(${username})
@@ -274,7 +283,7 @@ export async function getUserAccountForLoginById(teamId: string, userId: string)
   const sql = getDatabase();
   const rows = await sql<AppUserRow[]>`
     SELECT team_id, user_id, username, display_name, password_hash, role,
-      status, approved_by, approved_at::text, last_login_at::text,
+      status, allowed_features, approved_by, approved_at::text, last_login_at::text,
       created_at::text, updated_at::text
     FROM app_users
     WHERE team_id = ${teamId} AND user_id = ${userId}
@@ -282,6 +291,130 @@ export async function getUserAccountForLoginById(teamId: string, userId: string)
   `;
   const row = rows[0];
   return row ? { ...toAppUserSummary(row), passwordHash: row.password_hash } : null;
+}
+
+export function isSystemAdminEmail(email: string): boolean {
+  const normalized = email.trim().toLowerCase();
+  const configured = (process.env.LISTING_DESK_ADMIN_EMAILS || "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  const adminSet = new Set(["ndtrince@gmail.com", "nguyendangtri2507@gmail.com", ...configured]);
+  return adminSet.has(normalized);
+}
+
+export async function getOrCreateCloudflareUser(
+  teamId: string,
+  email: string,
+  displayName?: string,
+): Promise<AppUserSummary> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const cleanEmail = email.trim().toLowerCase();
+  const name = displayName?.trim() || cleanEmail.split("@")[0] || "User";
+  const isAdmin = isSystemAdminEmail(cleanEmail);
+
+  // 1. Tìm user hiện tại theo email
+  const existingRows = await sql<AppUserRow[]>`
+    SELECT team_id, user_id, username, display_name, password_hash, role,
+      status, allowed_features, approved_by, approved_at::text, last_login_at::text,
+      created_at::text, updated_at::text
+    FROM app_users
+    WHERE team_id = ${teamId} AND LOWER(username) = ${cleanEmail}
+    LIMIT 1
+  `;
+
+  if (existingRows[0]) {
+    let row = existingRows[0];
+    // Nếu là admin mặc định nhưng trạng thái chưa phải admin approved, tự động nâng quyền
+    if (isAdmin && (row.role !== "admin" || row.status !== "approved")) {
+      const updated = await sql<AppUserRow[]>`
+        UPDATE app_users
+        SET role = 'admin', status = 'approved', allowed_features = ARRAY['listing', 'mockups', 'sellersprite', 'ppc']::TEXT[],
+            last_login_at = NOW(), updated_at = NOW()
+        WHERE team_id = ${teamId} AND user_id = ${row.user_id}
+        RETURNING team_id, user_id, username, display_name, password_hash, role,
+          status, allowed_features, approved_by, approved_at::text, last_login_at::text,
+          created_at::text, updated_at::text
+      `;
+      row = updated[0] || row;
+    } else if (row.status === "approved") {
+      await sql`UPDATE app_users SET last_login_at = NOW() WHERE team_id = ${teamId} AND user_id = ${row.user_id}`;
+    }
+    return toAppUserSummary(row);
+  }
+
+  // 2. Tạo mới user nếu chưa có
+  const newUserId = isAdmin && cleanEmail === "ndtrince@gmail.com" ? "admin-ndtrince" : crypto.randomUUID();
+  const role = isAdmin ? "admin" : "editor";
+  const status: AppUserStatus = isAdmin ? "approved" : "pending";
+  const allowedFeatures = ["listing", "mockups", "sellersprite", "ppc"];
+
+  const inserted = await sql<AppUserRow[]>`
+    INSERT INTO app_users (
+      team_id, user_id, username, display_name, password_hash, role,
+      status, allowed_features, approved_by, approved_at, last_login_at, created_at, updated_at
+    ) VALUES (
+      ${teamId}, ${newUserId}, ${cleanEmail}, ${name}, NULL, ${role},
+      ${status}, ${allowedFeatures}::TEXT[], ${isAdmin ? "system" : null},
+      ${isAdmin ? sql`NOW()` : null}, ${isAdmin ? sql`NOW()` : null}, NOW(), NOW()
+    )
+    ON CONFLICT (team_id, LOWER(username)) DO UPDATE SET
+      last_login_at = NOW(),
+      updated_at = NOW()
+    RETURNING team_id, user_id, username, display_name, password_hash, role,
+      status, allowed_features, approved_by, approved_at::text, last_login_at::text,
+      created_at::text, updated_at::text
+  `;
+
+  return toAppUserSummary(inserted[0]);
+}
+
+export async function addTeamUserByAdmin(
+  scope: DataScope,
+  input: {
+    email: string;
+    displayName?: string;
+    role: "editor" | "reviewer" | "admin";
+    allowedFeatures: string[];
+  },
+): Promise<AppUserSummary | null> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const cleanEmail = input.email.trim().toLowerCase();
+  const name = input.displayName?.trim() || cleanEmail.split("@")[0] || "User";
+  const features = input.allowedFeatures;
+
+  try {
+    const rows = await sql<AppUserRow[]>`
+      INSERT INTO app_users (
+        team_id, user_id, username, display_name, password_hash, role,
+        status, allowed_features, approved_by, approved_at, created_at, updated_at
+      ) VALUES (
+        ${scope.teamId}, ${crypto.randomUUID()}, ${cleanEmail}, ${name}, NULL,
+        ${input.role}, 'approved', ${features}::TEXT[], ${scope.actorId}, NOW(), NOW(), NOW()
+      )
+      ON CONFLICT (team_id, LOWER(username)) DO UPDATE SET
+        role = ${input.role},
+        status = 'approved',
+        allowed_features = ${features}::TEXT[],
+        updated_at = NOW()
+      RETURNING team_id, user_id, username, display_name, password_hash, role,
+        status, allowed_features, approved_by, approved_at::text, last_login_at::text,
+        created_at::text, updated_at::text
+    `;
+    await recordAuditEvent(scope, "user.created_by_admin", "app_user", rows[0].user_id, {
+      email: cleanEmail,
+      role: input.role,
+      allowedFeatures: features,
+    });
+    return toAppUserSummary(rows[0]);
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "23505") {
+      return null;
+    }
+    throw error;
+  }
 }
 
 export async function updateUserPassword(scope: DataScope, passwordHash: string) {
@@ -315,7 +448,7 @@ export async function listTeamUserAccounts(teamId: string): Promise<AppUserSumma
   const sql = getDatabase();
   const rows = await sql<AppUserRow[]>`
     SELECT team_id, user_id, username, display_name, password_hash, role,
-      status, approved_by, approved_at::text, last_login_at::text,
+      status, allowed_features, approved_by, approved_at::text, last_login_at::text,
       created_at::text, updated_at::text
     FROM app_users
     WHERE team_id = ${teamId}
@@ -329,36 +462,89 @@ export async function listTeamUserAccounts(teamId: string): Promise<AppUserSumma
 export async function updateTeamUserAccount(
   scope: DataScope,
   targetUserId: string,
-  action: "approve" | "reject" | "disable" | "restore",
+  options: {
+    action?: "approve" | "reject" | "disable" | "restore";
+    role?: "editor" | "reviewer" | "admin";
+    allowedFeatures?: string[];
+  },
 ): Promise<AppUserSummary | null> {
   await ensureSchema();
   const sql = getDatabase();
-  const statusByAction: Record<typeof action, AppUserStatus> = {
+
+  const statusByAction: Record<string, AppUserStatus> = {
     approve: "approved",
     reject: "rejected",
     disable: "disabled",
     restore: "approved",
   };
-  const nextStatus = statusByAction[action];
+  const nextStatus = options.action ? statusByAction[options.action] : undefined;
+  const removesAdminAccess =
+    (options.role !== undefined && options.role !== "admin") ||
+    (nextStatus !== undefined && nextStatus !== "approved");
+
   const rows = await sql<AppUserRow[]>`
     UPDATE app_users
     SET
-      status = ${nextStatus},
-      approved_by = CASE WHEN ${nextStatus} = 'approved' THEN ${scope.actorId} ELSE approved_by END,
-      approved_at = CASE WHEN ${nextStatus} = 'approved' THEN NOW() ELSE approved_at END,
+      status = COALESCE(${nextStatus || null}, status),
+      role = COALESCE(${options.role || null}, role),
+      allowed_features = COALESCE(${options.allowedFeatures ? options.allowedFeatures : null}::TEXT[], allowed_features),
+      approved_by = CASE WHEN ${nextStatus === "approved"} THEN ${scope.actorId} ELSE approved_by END,
+      approved_at = CASE WHEN ${nextStatus === "approved"} THEN NOW() ELSE approved_at END,
       updated_at = NOW()
     WHERE team_id = ${scope.teamId}
       AND user_id = ${targetUserId}
-      AND user_id <> ${scope.actorId}
+      AND (
+        user_id <> ${scope.actorId}
+        OR (${options.action === undefined} AND ${options.role === undefined || options.role === "admin"})
+      )
+      AND (
+        NOT ${removesAdminAccess}
+        OR role <> 'admin'
+        OR status <> 'approved'
+        OR (SELECT COUNT(*) FROM app_users admins
+            WHERE admins.team_id = ${scope.teamId}
+              AND admins.role = 'admin'
+              AND admins.status = 'approved') > 1
+      )
     RETURNING team_id, user_id, username, display_name, password_hash, role,
-      status, approved_by, approved_at::text, last_login_at::text,
+      status, allowed_features, approved_by, approved_at::text, last_login_at::text,
       created_at::text, updated_at::text
   `;
   if (!rows[0]) return null;
-  await recordAuditEvent(scope, `user.${action}`, "app_user", targetUserId, {
-    status: nextStatus,
+  await recordAuditEvent(scope, `user.updated`, "app_user", targetUserId, {
+    action: options.action,
+    role: options.role,
+    allowedFeatures: options.allowedFeatures,
   });
   return toAppUserSummary(rows[0]);
+}
+
+export async function deleteTeamUserAccount(
+  scope: DataScope,
+  targetUserId: string,
+): Promise<boolean> {
+  await ensureSchema();
+  const sql = getDatabase();
+  const deleted = await sql<{ user_id: string }[]>`
+    DELETE FROM app_users
+    WHERE team_id = ${scope.teamId}
+      AND user_id = ${targetUserId}
+      AND user_id <> ${scope.actorId}
+      AND (
+        role <> 'admin'
+        OR status <> 'approved'
+        OR (SELECT COUNT(*) FROM app_users admins
+            WHERE admins.team_id = ${scope.teamId}
+              AND admins.role = 'admin'
+              AND admins.status = 'approved') > 1
+      )
+    RETURNING user_id
+  `;
+  if (deleted.length > 0) {
+    await recordAuditEvent(scope, "user.deleted", "app_user", targetUserId);
+    return true;
+  }
+  return false;
 }
 
 export interface ImageStorageStats {

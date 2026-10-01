@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "manage_storage"));
+    const scope = dataScope(await authorize(request, "manage_storage", "ppc"));
     if (process.env.NODE_ENV === "production") {
       throw new ApiError("Không được phép nạp dữ liệu mẫu trong production.", 403);
     }
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
 // GET để tải về file Excel mẫu đúng định dạng Amazon Ads của Bozspacer
 export async function GET(request: Request) {
   try {
-    authorize(request, "read");
+    await authorize(request, "read", "ppc");
     const { searchParams } = new URL(request.url);
     const storeName = (searchParams.get("storeName") || "Bozspacer").trim();
     if (!storeName || storeName.length > 80) throw new ApiError("Tên store không hợp lệ.", 400);

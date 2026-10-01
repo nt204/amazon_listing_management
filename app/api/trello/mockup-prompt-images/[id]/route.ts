@@ -22,7 +22,7 @@ export async function GET(
   context: { params: Promise<{ id: string }> },
 ) {
   try {
-    const scope = dataScope(authorize(request, "read"));
+    const scope = dataScope(await authorize(request, "read", "mockups"));
     const { id } = await context.params;
     validImageId(id);
     const image = await getMockupPromptReferenceImage(scope, id);
@@ -47,7 +47,7 @@ export async function DELETE(
   context: { params: Promise<{ id: string }> },
 ) {
   try {
-    const scope = dataScope(authorize(request, "write"));
+    const scope = dataScope(await authorize(request, "write", "mockups"));
     const { id } = await context.params;
     validImageId(id);
     const deleted = await deleteMockupPromptReferenceImages(scope, [id]);

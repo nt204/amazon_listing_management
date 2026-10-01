@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
-    authorize(request, "read");
+    await authorize(request, "read", "ppc");
     if (new URL(request.url).searchParams.get("download") === "1") {
       const ruleSet = await getAmazonPpcCommonRuleSet();
       return new Response(`${JSON.stringify(ruleSet, null, 2)}\n`, {
@@ -29,7 +29,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    authorize(request, "write");
+    await authorize(request, "write", "ppc");
     enforceRequestSize(request, 2_000_000);
     const contentType = request.headers.get("content-type") || "";
     let input: unknown;

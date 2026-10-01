@@ -15,7 +15,7 @@ export const maxDuration = 120;
 
 export async function POST(request: Request) {
   try {
-    const actor = authorize(request, "write");
+    const actor = await authorize(request, "write");
     enforceRequestSize(request, 32_000);
     await enforceRateLimit(
       actor,

@@ -187,11 +187,10 @@ export function PpcMultiStoreView({
               <button
                 type="button"
                 onClick={() => setViewMode("table")}
-                className={`p-1.5 rounded flex items-center gap-1 text-xs font-bold transition cursor-pointer ${
-                  viewMode === "table"
+                className={`p-1.5 rounded flex items-center gap-1 text-xs font-bold transition cursor-pointer ${viewMode === "table"
                     ? "bg-white text-indigo-700 shadow-2xs"
                     : "text-slate-500 hover:text-slate-800"
-                }`}
+                  }`}
                 title="Dạng bảng"
               >
                 <TableIcon size={14} weight="bold" />
@@ -200,11 +199,10 @@ export function PpcMultiStoreView({
               <button
                 type="button"
                 onClick={() => setViewMode("cards")}
-                className={`p-1.5 rounded flex items-center gap-1 text-xs font-bold transition cursor-pointer ${
-                  viewMode === "cards"
+                className={`p-1.5 rounded flex items-center gap-1 text-xs font-bold transition cursor-pointer ${viewMode === "cards"
                     ? "bg-white text-indigo-700 shadow-2xs"
                     : "text-slate-500 hover:text-slate-800"
-                }`}
+                  }`}
                 title="Dạng thẻ"
               >
                 <SquaresFour size={14} weight="bold" />
@@ -257,9 +255,8 @@ export function PpcMultiStoreView({
                     <tr
                       key={store.id}
                       onClick={() => onSelectStore(store.name)}
-                      className={`group transition-all cursor-pointer ${
-                        isEven ? "bg-white" : "bg-slate-100/60"
-                      } hover:bg-indigo-50/70`}
+                      className={`group transition-all cursor-pointer ${isEven ? "bg-white" : "bg-slate-100/60"
+                        } hover:bg-indigo-50/70`}
                     >
                       {/* Cột Store */}
                       <td className="py-3.5 px-5">
@@ -358,13 +355,12 @@ export function PpcMultiStoreView({
                           <span className="text-slate-300 font-mono text-sm font-semibold">—</span>
                         ) : (
                           <span
-                            className={`inline-block px-2.5 py-1 rounded-md text-xs font-bold font-mono shadow-2xs ${
-                              isGood
+                            className={`inline-block px-2.5 py-1 rounded-md text-xs font-bold font-mono shadow-2xs ${isGood
                                 ? "bg-emerald-500 text-white"
                                 : isBleeding
-                                ? "bg-rose-500 text-white"
-                                : "bg-amber-500 text-white"
-                            }`}
+                                  ? "bg-rose-500 text-white"
+                                  : "bg-amber-500 text-white"
+                              }`}
                           >
                             {store.acos.toFixed(1)}%
                           </span>
@@ -426,15 +422,14 @@ export function PpcMultiStoreView({
                       </div>
 
                       <span
-                        className={`text-[10px] font-bold px-2 py-0.5 rounded font-mono ${
-                          store.sales === 0
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded font-mono ${store.sales === 0
                             ? "bg-slate-100 text-slate-400"
                             : isGoodAcos
-                            ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                            : isHighAcos
-                            ? "bg-rose-50 text-rose-700 border border-rose-200"
-                            : "bg-amber-50 text-amber-700 border border-amber-200"
-                        }`}
+                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                              : isHighAcos
+                                ? "bg-rose-50 text-rose-700 border border-rose-200"
+                                : "bg-amber-50 text-amber-700 border border-amber-200"
+                          }`}
                       >
                         {store.sales > 0 ? `${store.acos.toFixed(1)}%` : "—"}
                       </span>

@@ -47,7 +47,7 @@ const moveCardSchema = z.object({
 
 export async function GET(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "read"));
+    const scope = dataScope(await authorize(request, "read"));
     const { searchParams } = new URL(request.url);
     const action = searchParams.get("action");
     const settings = await getUserTrelloSettings(scope);
@@ -119,7 +119,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const scope = dataScope(authorize(request, "write"));
+    const scope = dataScope(await authorize(request, "write"));
     const body = await request.json();
     const { apiKey, token } = getTrelloServerCredentials();
 

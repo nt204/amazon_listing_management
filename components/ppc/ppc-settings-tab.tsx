@@ -209,11 +209,10 @@ export function PpcSettingsTab({
         <div className="flex items-center gap-2">
           <button
             onClick={() => setSubTab("phoi")}
-            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs transition cursor-pointer ${
-              subTab === "phoi"
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs transition cursor-pointer ${subTab === "phoi"
                 ? "bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200/80 font-black shadow-2xs"
                 : "text-slate-600 font-bold hover:text-slate-900 hover:bg-slate-100"
-            }`}
+              }`}
           >
             <Tag size={15} weight={subTab === "phoi" ? "bold" : "regular"} className={subTab === "phoi" ? "text-indigo-600" : "text-slate-400"} />
             <span>1. Quản lý Phôi (Cost Master)</span>
@@ -221,11 +220,10 @@ export function PpcSettingsTab({
 
           <button
             onClick={() => setSubTab("rules")}
-            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs transition cursor-pointer ${
-              subTab === "rules"
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs transition cursor-pointer ${subTab === "rules"
                 ? "bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200/80 font-black shadow-2xs"
                 : "text-slate-600 font-bold hover:text-slate-900 hover:bg-slate-100"
-            }`}
+              }`}
           >
             <Sliders size={15} weight={subTab === "rules" ? "bold" : "regular"} className={subTab === "rules" ? "text-indigo-600" : "text-slate-400"} />
             <span>2. Rule PPC (SB01 / SB05 / SP03)</span>
@@ -380,11 +378,10 @@ export function PpcSettingsTab({
                 <button
                   key={type}
                   onClick={() => setSelectedRuleType(type)}
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${
-                    selectedRuleType === type
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${selectedRuleType === type
                       ? "bg-indigo-600 text-white shadow-xs"
                       : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
-                  }`}
+                    }`}
                 >
                   [{type}]
                 </button>
@@ -422,13 +419,12 @@ export function PpcSettingsTab({
                           </td>
                           <td className="py-2.5 px-3">
                             <span
-                              className={`font-black ${
-                                tier.action === "BID_INCREASE"
+                              className={`font-black ${tier.action === "BID_INCREASE"
                                   ? "text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded"
                                   : tier.action === "BID_DECREASE"
-                                  ? "text-rose-600 bg-rose-50 px-2 py-0.5 rounded"
-                                  : "text-slate-600 bg-slate-100 px-2 py-0.5 rounded"
-                              }`}
+                                    ? "text-rose-600 bg-rose-50 px-2 py-0.5 rounded"
+                                    : "text-slate-600 bg-slate-100 px-2 py-0.5 rounded"
+                                }`}
                             >
                               {tier.action}
                             </span>
@@ -468,15 +464,14 @@ export function PpcSettingsTab({
                           </td>
                           <td className="py-2.5 px-3">
                             <span
-                              className={`font-black ${
-                                tier.action === "BID_INCREASE"
+                              className={`font-black ${tier.action === "BID_INCREASE"
                                   ? "text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded"
                                   : tier.action === "PAUSE_TARGET"
-                                  ? "text-amber-700 bg-amber-50 px-2 py-0.5 rounded"
-                                  : tier.action === "BID_DECREASE"
-                                  ? "text-rose-600 bg-rose-50 px-2 py-0.5 rounded"
-                                  : "text-slate-600 bg-slate-100 px-2 py-0.5 rounded"
-                              }`}
+                                    ? "text-amber-700 bg-amber-50 px-2 py-0.5 rounded"
+                                    : tier.action === "BID_DECREASE"
+                                      ? "text-rose-600 bg-rose-50 px-2 py-0.5 rounded"
+                                      : "text-slate-600 bg-slate-100 px-2 py-0.5 rounded"
+                                }`}
                             >
                               {tier.action}
                             </span>
@@ -1103,7 +1098,7 @@ export function PpcCostMasterStandalone() {
           <div>
             <div className="flex items-center gap-2.5 flex-wrap">
               <h2 className="text-base font-black text-slate-900 tracking-tight">QUẢN LÝ PHÔI (COST MASTER)</h2>
-              
+
               {/* Store Selector Dropdown */}
               <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-slate-100 hover:bg-slate-200/70 border border-slate-300 text-slate-800 text-xs font-bold transition shadow-2xs">
                 <Storefront size={15} weight="duotone" className="text-indigo-600 shrink-0" />
@@ -1177,11 +1172,10 @@ export function PpcCostMasterStandalone() {
           <button
             type="button"
             onClick={() => setIsFastEntryOpen((prev) => !prev)}
-            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition shadow-2xs cursor-pointer ${
-              isFastEntryOpen
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition shadow-2xs cursor-pointer ${isFastEntryOpen
                 ? "bg-indigo-50 text-indigo-700 border border-indigo-200"
                 : "bg-indigo-600 hover:bg-indigo-700 text-white"
-            }`}
+              }`}
           >
             <Lightning size={15} weight="fill" className={isFastEntryOpen ? "text-indigo-600" : "text-amber-300"} />
             <span>{isFastEntryOpen ? "Đóng Nhập Nhanh" : "+ Điền Phôi Nhanh"}</span>
@@ -1886,11 +1880,10 @@ export function PpcRuleManagerStandalone() {
           <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
             <button
               onClick={() => setActiveTab("rules")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition cursor-pointer ${
-                activeTab === "rules"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition cursor-pointer ${activeTab === "rules"
                   ? "bg-white text-indigo-700 font-extrabold shadow-2xs"
                   : "text-slate-600 font-bold hover:text-slate-900"
-              }`}
+                }`}
             >
               <Sliders size={14} weight={activeTab === "rules" ? "bold" : "regular"} />
               <span>Rule PPC</span>
@@ -1926,11 +1919,10 @@ export function PpcRuleManagerStandalone() {
                 <button
                   key={type}
                   onClick={() => setSelectedRuleType(type)}
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${
-                    selectedRuleType === type
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${selectedRuleType === type
                       ? "bg-indigo-600 text-white shadow-xs"
                       : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
-                  }`}
+                    }`}
                 >
                   [{type}]
                 </button>
@@ -1969,13 +1961,12 @@ export function PpcRuleManagerStandalone() {
                             </td>
                             <td className="py-2.5 px-3">
                               <span
-                                className={`font-black ${
-                                  tier.action === "BID_INCREASE"
+                                className={`font-black ${tier.action === "BID_INCREASE"
                                     ? "text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded"
                                     : tier.action === "BID_DECREASE"
-                                    ? "text-rose-600 bg-rose-50 px-2 py-0.5 rounded"
-                                    : "text-slate-600 bg-slate-100 px-2 py-0.5 rounded"
-                                }`}
+                                      ? "text-rose-600 bg-rose-50 px-2 py-0.5 rounded"
+                                      : "text-slate-600 bg-slate-100 px-2 py-0.5 rounded"
+                                  }`}
                               >
                                 {tier.action}
                               </span>
@@ -2015,13 +2006,12 @@ export function PpcRuleManagerStandalone() {
                             </td>
                             <td className="py-2.5 px-3">
                               <span
-                                className={`font-black ${
-                                  tier.action === "BID_INCREASE"
+                                className={`font-black ${tier.action === "BID_INCREASE"
                                     ? "text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded"
                                     : tier.action === "PAUSE_TARGET"
-                                    ? "text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200"
-                                    : "text-rose-600 bg-rose-50 px-2 py-0.5 rounded"
-                                }`}
+                                      ? "text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200"
+                                      : "text-rose-600 bg-rose-50 px-2 py-0.5 rounded"
+                                  }`}
                               >
                                 {tier.action}
                               </span>

@@ -29,7 +29,7 @@ export async function POST(request: Request) {
   let requestKey = "";
   let claimed = false;
   try {
-    const actor = authorize(request, "write");
+    const actor = await authorize(request, "write", "listing");
     scope = dataScope(actor);
     await enforceRateLimit(actor, "ai-batch", Number(process.env.AI_BATCH_RATE_LIMIT_PER_MINUTE || 3));
     requestKey = idempotencyKey(request);

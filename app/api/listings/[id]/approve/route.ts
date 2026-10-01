@@ -8,7 +8,7 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 export async function POST(request: Request, { params }: RouteContext) {
   try {
-    const scope = dataScope(authorize(request, "approve"));
+    const scope = dataScope(await authorize(request, "approve", "listing"));
     const { id } = await params;
     const stored = await getListing(scope, id);
     if (!stored) return NextResponse.json({ error: "Listing not found." }, { status: 404 });

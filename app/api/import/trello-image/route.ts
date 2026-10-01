@@ -52,7 +52,7 @@ function safeFilename(url: URL, contentType: string) {
 
 export async function GET(request: Request) {
   try {
-    authorize(request, "read");
+    await authorize(request, "read");
     const requested = new URL(request.url).searchParams.get("url") || "";
     let current = validateTrelloUrl(requested);
     let response: Response | undefined;

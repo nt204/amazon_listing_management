@@ -14,7 +14,7 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
-    const actor = authorize(request, "read");
+    const actor = await authorize(request, "read", "ppc");
     const id = new URL(request.url).searchParams.get("jobId")?.trim();
     if (!id) throw new ApiError("Thiếu ingestion jobId.", 400);
     const job = await getPpcIngestion(dataScope(actor), id);
@@ -27,7 +27,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const actor = authorize(request, "write");
+    const actor = await authorize(request, "write", "ppc");
     await enforceRateLimit(actor, "ppc-r2-sync", 10, 60);
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     let batchId = String(body.batchId || "").trim();

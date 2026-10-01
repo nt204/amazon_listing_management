@@ -10,7 +10,7 @@ function leaseSeconds() {
 
 export async function GET(request: Request) {
   try {
-    const actor = authorize(request, "write");
+    const actor = await authorize(request, "write", "ppc");
     const workerId = new URL(request.url).searchParams.get("workerId")?.trim() || "mac-mini";
     const sql = await getDatabaseClient();
     const seconds = leaseSeconds();
@@ -49,7 +49,7 @@ export async function GET(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    const actor = authorize(request, "write");
+    const actor = await authorize(request, "write", "ppc");
     enforceRequestSize(request, 30_000);
     const body = await request.json().catch(() => ({}));
     const jobId = String(body?.jobId || "");

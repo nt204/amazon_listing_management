@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
-    authorize(request, "read");
+    await authorize(request, "read", "sellersprite");
     const config = await getSellerSpriteConfig();
     return NextResponse.json({
       status: config.status,
@@ -21,7 +21,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    authorize(request, "write");
+    await authorize(request, "write", "sellersprite");
     const body = (await readJsonBody(request)) as { cookies?: string; token?: string };
 
     if (body?.token && typeof body.token === "string" && body.token.trim().length > 10) {

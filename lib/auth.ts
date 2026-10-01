@@ -1,4 +1,9 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import {
+  getUserAccountForLogin,
+  getUserAccountForLoginById,
+  type AppUserSummary,
+} from "@/lib/db";
 
 export type TeamRole = "editor" | "reviewer" | "admin";
 export type Permission =
@@ -10,6 +15,7 @@ export type Permission =
   | "manage_templates"
   | "manage_users"
   | "manage_storage";
+export type SystemFeature = "listing" | "mockups" | "sellersprite" | "ppc";
 
 export interface RequestActor {
   teamId: string;
@@ -17,6 +23,8 @@ export interface RequestActor {
   displayName: string;
   role: TeamRole;
   ruleProfile: string;
+  allowedFeatures?: string[];
+  email?: string;
 }
 
 interface TeamCredential {
@@ -135,6 +143,8 @@ export function verifySessionToken(token: string | undefined): RequestActor | nu
       displayName: decoded.displayName,
       role: decoded.role,
       ruleProfile: decoded.ruleProfile || "",
+      allowedFeatures: decoded.allowedFeatures || ["listing", "mockups", "sellersprite", "ppc"],
+      ...(decoded.email ? { email: decoded.email } : {}),
     };
   } catch {
     return null;
@@ -150,6 +160,7 @@ export function authenticateTeamToken(token: string) {
     displayName: match.display_name || match.user_id,
     role: match.role,
     ruleProfile: match.rule_profile || "",
+    allowedFeatures: ["listing", "mockups", "sellersprite", "ppc"],
   } satisfies RequestActor;
 }
 
@@ -158,14 +169,26 @@ function cookieValue(header: string | null, name: string) {
     .find((part) => part.startsWith(`${name}=`))?.slice(name.length + 1);
 }
 
-function developmentActor(): RequestActor {
+export function developmentActor(): RequestActor {
   return {
     teamId: "default",
-    userId: "local-development",
-    displayName: "Local development",
+    userId: "admin-ndtrince",
+    displayName: "Admin (ndtrince)",
     role: "admin",
     ruleProfile: process.env.LISTING_RULE_PROFILE || "",
+    allowedFeatures: ["listing", "mockups", "sellersprite", "ppc"],
+    email: "ndtrince@gmail.com",
   };
+}
+
+export function isSystemAdminEmail(email: string): boolean {
+  const normalized = email.trim().toLowerCase();
+  const configured = (process.env.LISTING_DESK_ADMIN_EMAILS || "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  const adminSet = new Set(["ndtrince@gmail.com", "nguyendangtri2507@gmail.com", ...configured]);
+  return adminSet.has(normalized);
 }
 
 export function actorFromCookieHeader(cookieHeader: string | null) {
@@ -173,7 +196,33 @@ export function actorFromCookieHeader(cookieHeader: string | null) {
   return verifySessionToken(cookieValue(cookieHeader, cookieName));
 }
 
-export function authenticateRequest(request: Request, permission: Permission): RequestActor {
+function actorFromUser(user: AppUserSummary): RequestActor {
+  return {
+    teamId: user.teamId,
+    userId: user.userId,
+    displayName: user.displayName || user.username,
+    role: user.role,
+    ruleProfile: "",
+    allowedFeatures: user.allowedFeatures,
+    email: user.username,
+  };
+}
+
+export async function revalidateSessionActor(actor: RequestActor): Promise<RequestActor | null> {
+  const user = await getUserAccountForLoginById(actor.teamId, actor.userId);
+  return user?.status === "approved" ? actorFromUser(user) : null;
+}
+
+/**
+ * Authenticate every request against the current database record.
+ * The signed cookie proves the original login, while this lookup makes account
+ * disabling, role changes, and feature changes effective immediately.
+ */
+export async function authenticateRequest(
+  request: Request,
+  permission: Permission,
+  feature?: SystemFeature,
+): Promise<RequestActor> {
   let actor: RequestActor | null;
   let bearer = "";
   if (!isAuthenticationRequired()) {
@@ -181,12 +230,40 @@ export function authenticateRequest(request: Request, permission: Permission): R
   } else {
     const authorization = request.headers.get("authorization") || "";
     bearer = authorization.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() || "";
-    actor = bearer
-      ? authenticateTeamToken(bearer)
-      : actorFromCookieHeader(request.headers.get("cookie"));
+    actor = bearer ? authenticateTeamToken(bearer) : null;
+
+    if (!bearer) {
+      const cfEmail = (
+        request.headers.get("cf-access-authenticated-user-email") ||
+        request.headers.get("Cf-Access-Authenticated-User-Email")
+      )?.trim().toLowerCase();
+
+      if (cfEmail) {
+        const user = await getUserAccountForLogin("default", cfEmail);
+        actor = user?.status === "approved" ? actorFromUser(user) : null;
+        if (!actor) throw new AuthError("Account is not approved or has been disabled.", 403);
+      } else {
+        const sessionActor = actorFromCookieHeader(request.headers.get("cookie"));
+        if (sessionActor) {
+          actor = await revalidateSessionActor(sessionActor);
+        }
+      }
+    }
   }
+
+  // Local development remains convenient, but production must never fall back
+  // to an implicit administrator.
+  if (!actor) {
+    if (process.env.NODE_ENV !== "production") {
+      actor = developmentActor();
+    }
+  }
+
   if (!actor) throw new AuthError("Authentication required.", 401);
   if (!rolePermissions[actor.role].has(permission)) throw new AuthError("Insufficient permission.", 403);
+  if (feature && !(actor.allowedFeatures || []).includes(feature)) {
+    throw new AuthError("This feature is not enabled for your account.", 403);
+  }
   if (isAuthenticationRequired() && !bearer && permission !== "read") {
     const origin = request.headers.get("origin");
     const requestHost = request.headers.get("x-forwarded-host") || request.headers.get("host");

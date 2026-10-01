@@ -17,7 +17,7 @@ const RECOMMENDATION_CACHE_TTL_SECONDS = 10 * 60;
 export async function GET(request: Request) {
   const started = performance.now();
   try {
-    const scope = dataScope(authorize(request, "read"));
+    const scope = dataScope(await authorize(request, "read", "ppc"));
     const { searchParams } = new URL(request.url);
     const storeName = searchParams.get("storeName") || "ALL";
     const sku = searchParams.get("sku") || "ALL";

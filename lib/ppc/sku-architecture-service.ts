@@ -6,9 +6,10 @@ import {
   calculateBreakEvenAcos,
   calculateMaxBid,
   calculateProfitBeforeAds,
-  detectProductTypeFromSku,
+  detectSkuProductTypeMatch,
   getSkuPrefixesForProductType,
   normalizeSkuPrefixes,
+  suggestProductTypeFromText,
   SKU_PREFIX_ERROR_PRODUCT_TYPE,
   type ActionType,
   type BulkExport,
@@ -209,7 +210,8 @@ export async function saveCostMasterNewVersion(data: {
             ELSE ${beAcos}::numeric END,
           max_bid = cr * (selling_price - ${data.defaultAmazonFee}::numeric - ${data.baseCost}::numeric - (selling_price * ${data.taxRate}::numeric)),
           updated_at = NOW()
-      WHERE store_id = ${storeId} AND product_type = ${data.productType} AND cost_source = 'INHERITED'
+      WHERE store_id = ${storeId} AND product_type = ${data.productType}
+        AND cost_source IN ('INHERITED', 'MAPPING_OVERRIDE')
     `;
 
     const r = inserted[0];
@@ -777,7 +779,7 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
     SELECT
       NULLIF(TRIM(sku), '') as sku,
       MAX(NULLIF(TRIM(asin), '')) as asin,
-      MAX(campaign_name) as sample_campaign,
+      STRING_AGG(DISTINCT NULLIF(TRIM(campaign_name), ''), ' ') as sample_campaign,
       SUM(spend) as total_spend,
       SUM(sales) as total_sales,
       SUM(orders) as total_orders,
@@ -829,10 +831,18 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
     const actualCr = clicks > 0 ? orders / clicks : 0;
     const actualAcos = sales > 0 ? (spend / sales) * 100 : 0;
 
-    const detected = detectProductTypeFromSku(sku, p.sample_campaign, storePrefixRules);
-    const productType = existing?.cost_source === "OVERRIDE" && existing?.product_type
+    const match = detectSkuProductTypeMatch(sku, p.sample_campaign, storePrefixRules);
+    const detected = match.productType;
+    const hasSavedMapping = ["OVERRIDE", "MAPPING_OVERRIDE"].includes(existing?.cost_source) && existing?.product_type;
+    const productType = hasSavedMapping
       ? existing.product_type
       : detected;
+    const mappingStatus = hasSavedMapping
+      ? "RESOLVED" as const
+      : match.status;
+    const suggestion = mappingStatus === "AMBIGUOUS"
+      ? suggestProductTypeFromText(sku, p.sample_campaign, match.candidateProductTypes)
+      : { productType: null, reason: null };
     const hasPrefixError = productType === SKU_PREFIX_ERROR_PRODUCT_TYPE;
 
     let master: ProductCostMaster = hasPrefixError
@@ -907,7 +917,7 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
     const maxBid = hasPrefixError ? 0 : calculateMaxBid(cr, profitBeforeAds);
 
     // Đồng bộ vào sku_economics nếu có đơn hàng và giá bán được tính tự động
-    if (existing && existing.cost_source === "INHERITED" && orders > 0 && dynamicPrice > 0) {
+    if (existing && ["INHERITED", "MAPPING_OVERRIDE"].includes(existing.cost_source) && orders > 0 && dynamicPrice > 0) {
       void sql`
         UPDATE sku_economics
         SET selling_price = ${sellingPrice},
@@ -915,7 +925,8 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
             break_even_acos = ${breakEvenAcos},
             max_bid = ${maxBid},
             updated_at = NOW()
-        WHERE store_id = ${storeId} AND sku = ${sku} AND cost_source = 'INHERITED'
+        WHERE store_id = ${storeId} AND sku = ${sku}
+          AND cost_source IN ('INHERITED', 'MAPPING_OVERRIDE')
       `.catch(() => { });
     }
 
@@ -946,6 +957,11 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
       crSource,
       maxBid,
       costSource,
+      mappingStatus,
+      matchedPrefix: match.matchedPrefix,
+      candidateProductTypes: match.candidateProductTypes,
+      suggestedProductType: suggestion.productType,
+      suggestionReason: suggestion.reason,
       ppcStatus,
       spend,
       sales,
@@ -977,22 +993,34 @@ export async function upsertSkuEconomics(
 ): Promise<SkuEconomics> {
   const sql = await getDatabaseClient();
   const normalizedSku = sku.toUpperCase().trim();
+  const existingRows = await sql<any[]>`
+    SELECT * FROM sku_economics WHERE store_id = ${storeId} AND sku = ${normalizedSku} LIMIT 1
+  `;
+  const existing = existingRows[0];
 
-  const pType = data.productType || "Ornament";
+  const pType = data.productType || existing?.product_type || "Ornament";
   const masters = await getCostMasters(storeId);
   const master = masters.find((m) => m.productType === pType) || {
     baseCost: 2.0,
     defaultAmazonFee: 6.32,
     taxRate: 0.03,
+    defaultPrice: 15.99,
   };
 
-  const sellingPrice = data.sellingPrice ?? 15.99;
-  const baseCost = data.baseCost ?? master.baseCost;
-  const amazonFee = data.amazonFee ?? master.defaultAmazonFee;
-  const taxRate = data.taxRate ?? master.taxRate;
-  const cr = data.cr ?? 0.10;
-  const crSource = data.crSource ?? "OVERRIDE";
-  const costSource = data.costSource ?? "OVERRIDE";
+  const costSource = data.costSource ?? existing?.cost_source ?? "OVERRIDE";
+  const inheritMasterCosts = costSource === "MAPPING_OVERRIDE";
+  const sellingPrice = data.sellingPrice
+    ?? (inheritMasterCosts ? undefined : Number(existing?.selling_price || 0) || undefined)
+    ?? master.defaultPrice
+    ?? 15.99;
+  const baseCost = data.baseCost
+    ?? (inheritMasterCosts ? master.baseCost : Number(existing?.base_cost ?? master.baseCost));
+  const amazonFee = data.amazonFee
+    ?? (inheritMasterCosts ? master.defaultAmazonFee : Number(existing?.amazon_fee ?? master.defaultAmazonFee));
+  const taxRate = data.taxRate
+    ?? (inheritMasterCosts ? master.taxRate : Number(existing?.tax_rate ?? master.taxRate));
+  const cr = data.cr ?? Number(existing?.cr || 0.10);
+  const crSource = data.crSource ?? existing?.cr_source ?? "OVERRIDE";
 
   const profitBeforeAds = calculateProfitBeforeAds(sellingPrice, amazonFee, baseCost, taxRate);
   const breakEvenAcos = calculateBreakEvenAcos(profitBeforeAds, sellingPrice);
@@ -1010,7 +1038,7 @@ export async function upsertSkuEconomics(
       ${maxBid}, ${costSource}, NOW()
     )
     ON CONFLICT (store_id, sku) DO UPDATE
-    SET asin = COALESCE(EXCLUDED.asin, sku_economics.asin),
+    SET asin = COALESCE(NULLIF(EXCLUDED.asin, ''), sku_economics.asin),
         product_type = EXCLUDED.product_type,
         selling_price = EXCLUDED.selling_price,
         base_cost = EXCLUDED.base_cost,
@@ -1046,7 +1074,39 @@ export async function upsertSkuEconomics(
   };
 
   invalidateGroupedRecommendationsCache(storeId);
+  await invalidateCachePattern(`sku_economics:${storeId}:*`).catch(() => {});
   return result;
+}
+
+export async function saveSkuProductTypeMappings(
+  storeId: string,
+  items: Array<{ sku: string; productType: string; asin?: string }>,
+): Promise<SkuEconomics[]> {
+  const masters = await getCostMasters(storeId);
+  const allowedTypes = new Set(masters.map((master) => master.productType));
+  const normalized = Array.from(new Map(items.map((item) => [
+    item.sku.trim().toUpperCase(),
+    { ...item, sku: item.sku.trim().toUpperCase(), productType: item.productType.trim() },
+  ])).values()).filter((item) => item.sku);
+
+  for (const item of normalized) {
+    if (!allowedTypes.has(item.productType)) {
+      throw new Error(`Product Type không hợp lệ cho store này: ${item.productType}`);
+    }
+  }
+
+  const saved: SkuEconomics[] = [];
+  for (const item of normalized) {
+    saved.push(await upsertSkuEconomics(storeId, item.sku, {
+      asin: item.asin,
+      productType: item.productType,
+      costSource: "MAPPING_OVERRIDE",
+      crSource: "ASSUMED",
+    }));
+  }
+  await invalidateCachePattern(`sku_economics:${storeId}:*`).catch(() => {});
+  invalidateGroupedRecommendationsCache(storeId);
+  return saved;
 }
 
 /* =========================================================================
