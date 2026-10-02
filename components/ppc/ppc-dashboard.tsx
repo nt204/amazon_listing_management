@@ -32,6 +32,8 @@ import {
 import { PpcStOptimizationView } from "./ppc-st-optimization-view";
 import { PpcSaleKwView } from "./ppc-sale-kw-view";
 import { PpcPagination } from "./ppc-pagination";
+import { PpcBulkSelectionBanner } from "./ppc-bulk-selection-banner";
+import { useBulkSelection } from "@/hooks/use-bulk-selection";
 import {
   extractSkuFromText,
   extractCampaignDate,
@@ -83,6 +85,7 @@ interface PpcDashboardProps {
   isEmbedded?: boolean;
   initialTab?: "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "settings";
   initialSubTab?: "phoi" | "rules" | "history";
+  initialStore?: string;
   actor?: RequestActor;
 }
 
@@ -194,12 +197,23 @@ export function getTargetDisplayType(target: {
   return { label, badgeColor, matchType: match || "Unknown" };
 }
 
-export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, actor }: PpcDashboardProps) {
+export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, initialStore, actor }: PpcDashboardProps) {
   const mounted = useSyncExternalStore(subscribeToHydration, getClientSnapshot, getServerSnapshot);
 
   const [stores, setStores] = useState<PpcStore[]>([]);
   const [storeSummaries, setStoreSummaries] = useState<PpcStoreSummary[]>([]);
-  const [selectedStore, setSelectedStore] = useState<string>("ALL");
+  const [selectedStore, setSelectedStore] = useState<string>(() => {
+    if (initialStore) return initialStore;
+    if (typeof window !== "undefined") {
+      try {
+        const urlParam = new URLSearchParams(window.location.search).get("store");
+        if (urlParam) return urlParam;
+        const saved = localStorage.getItem("nce_ppc_last_store");
+        if (saved) return saved;
+      } catch {}
+    }
+    return "ALL";
+  });
   const [selectedSku, setSelectedSku] = useState<string>("ALL");
   const [selectedDays, setSelectedDays] = useState(30);
   const [customStartDate, setCustomStartDate] = useState<string>("");
@@ -239,14 +253,39 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
 
   // Drill-down hierarchy state: Campaign -> Ad Group -> Target/Keyword -> Search Terms
   const [selectedCampaignForDrilldown, setSelectedCampaignForDrilldown] = useState<string | null>(null);
+  const [selectedCampaignIdForDrilldown, setSelectedCampaignIdForDrilldown] = useState<string | null>(null);
   const [selectedAdGroupForDrilldown, setSelectedAdGroupForDrilldown] = useState<string | null>(null);
   const [expandedTargetKey, setExpandedTargetKey] = useState<string | null>(null);
+  const lastLoadedTargetsParamsRef = useRef<string>("");
 
   // Navigation tab for data slicing (Hierarchy: Overview -> Campaigns -> Ad Groups -> Targets -> Search Terms -> ST Optimization -> Sale KW | SKU parallel view | Settings)
   const [activeTab, setActiveTab] = useState<
     "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "settings"
-  >(initialTab || "overview");
-  const [settingsSubTab, setSettingsSubTab] = useState<"phoi" | "rules" | "history">(initialSubTab || "phoi");
+  >(() => {
+    if (initialTab) return initialTab;
+    if (typeof window !== "undefined") {
+      try {
+        const urlParam = new URLSearchParams(window.location.search).get("tab") as any;
+        const validTabs = ["overview", "campaigns", "ad_groups", "targets", "skus", "match_types", "search_terms", "st_optimization", "sale_kw", "alerts", "recommendations", "settings"];
+        if (urlParam && validTabs.includes(urlParam)) return urlParam;
+        const saved = localStorage.getItem("nce_ppc_last_tab") as any;
+        if (saved && validTabs.includes(saved)) return saved;
+      } catch {}
+    }
+    return "overview";
+  });
+  const [settingsSubTab, setSettingsSubTab] = useState<"phoi" | "rules" | "history">(() => {
+    if (initialSubTab) return initialSubTab;
+    if (typeof window !== "undefined") {
+      try {
+        const urlParam = new URLSearchParams(window.location.search).get("subTab") as any;
+        if (urlParam && ["phoi", "rules", "history"].includes(urlParam)) return urlParam;
+        const saved = localStorage.getItem("nce_ppc_last_subtab") as any;
+        if (saved && ["phoi", "rules", "history"].includes(saved)) return saved;
+      } catch {}
+    }
+    return "phoi";
+  });
 
   useEffect(() => {
     if (initialTab) {
@@ -259,6 +298,64 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
       setSettingsSubTab(initialSubTab);
     }
   }, [initialSubTab]);
+
+  useEffect(() => {
+    if (initialStore) {
+      setSelectedStore(initialStore);
+    }
+  }, [initialStore]);
+
+  // Synchronize tab, store, subTab to localStorage and URL searchParams
+  useEffect(() => {
+    try {
+      localStorage.setItem("nce_ppc_last_tab", activeTab);
+      localStorage.setItem("nce_ppc_last_store", selectedStore);
+      localStorage.setItem("nce_ppc_last_subtab", settingsSubTab);
+
+      const url = new URL(window.location.href);
+      let changed = false;
+
+      if (activeTab === "overview") {
+        if (url.searchParams.has("tab")) {
+          url.searchParams.delete("tab");
+          changed = true;
+        }
+      } else {
+        if (url.searchParams.get("tab") !== activeTab) {
+          url.searchParams.set("tab", activeTab);
+          changed = true;
+        }
+      }
+
+      if (selectedStore === "ALL") {
+        if (url.searchParams.has("store")) {
+          url.searchParams.delete("store");
+          changed = true;
+        }
+      } else {
+        if (url.searchParams.get("store") !== selectedStore) {
+          url.searchParams.set("store", selectedStore);
+          changed = true;
+        }
+      }
+
+      if (activeTab === "settings") {
+        if (url.searchParams.get("subTab") !== settingsSubTab) {
+          url.searchParams.set("subTab", settingsSubTab);
+          changed = true;
+        }
+      } else {
+        if (url.searchParams.has("subTab")) {
+          url.searchParams.delete("subTab");
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+      }
+    } catch {}
+  }, [activeTab, selectedStore, settingsSubTab]);
 
   // Keep-alive state: preserve DOM and scroll position for visited tabs (zero re-render delay)
   const [mountedTabs, setMountedTabs] = useState<Set<string>>(() => new Set([initialTab || "overview"]));
@@ -356,10 +453,30 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
   const [adGroupSortField, setAdGroupSortField] = useState<SortField>("spend");
   const [adGroupSortDir, setAdGroupSortDir] = useState<SortDirection>("desc");
 
-  // Target search & sort
+  // Target search & sort (Server-paginated 50 rows/page)
   const [targetQuery, setTargetQuery] = useState("");
   const [targetSortField, setTargetSortField] = useState<SortField>("spend");
   const [targetSortDir, setTargetSortDir] = useState<SortDirection>("desc");
+  const [serverTargets, setServerTargets] = useState<PpcTargetPerformance[]>([]);
+  const [serverTargetTotal, setServerTargetTotal] = useState(0);
+  const [serverTargetTotalPages, setServerTargetTotalPages] = useState(1);
+  const [serverTargetSummary, setServerTargetSummary] = useState({
+    count: 0,
+    impressions: 0,
+    clicks: 0,
+    spend: 0,
+    sales: 0,
+    orders: 0,
+    ctr: 0,
+    cpc: 0,
+    cvr: 0,
+    acos: 0,
+  });
+  const [loadingTargetsServer, setLoadingTargetsServer] = useState(false);
+  const [expandedChildTerms, setExpandedChildTerms] = useState<
+    Record<string, { loading: boolean; terms: PpcSearchTermRow[]; error?: string }>
+  >({});
+  const [targetRefreshKey, setTargetRefreshKey] = useState(0);
 
   // SKU search & sort
   const [skuQuery, setSkuQuery] = useState("");
@@ -553,11 +670,14 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
 
     const detailSection = activeTab === "st_optimization" || activeTab === "sale_kw"
       ? "search_terms"
-      : ["ad_groups", "targets", "skus", "search_terms"].includes(activeTab)
+      : ["ad_groups", "skus", "search_terms"].includes(activeTab)
         ? activeTab
         : null;
     if (detailSection) {
       await loadSection(detailSection, { force: true });
+    }
+    if (activeTab === "targets") {
+      setTargetRefreshKey((k) => k + 1);
     }
   }, [activeTab, loadData, loadSection]);
 
@@ -597,6 +717,131 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
   }, [activeTab, selectedStore, selectedSku, selectedDays, campaignQuery, campaignStatusFilter,
     campaignFormatFilter, campaignSpendFilter, campaignGroupFilter, targetAcos,
     campaignSortField, campaignSortDir, campaignPage, campaignPageSize]);
+
+  // Server-side paginated fetch for Targets (50 rows/page, 300ms debounce, SQL summary aggregation)
+  useEffect(() => {
+    if (activeTab !== "targets") return;
+
+    const currentParamsKey = `${selectedStore}:${selectedSku}:${selectedDays}:${targetPage}:${targetPageSize}:${targetQuery}:${targetSortField}:${targetSortDir}:${selectedCampaignIdForDrilldown || ""}:${selectedCampaignForDrilldown || ""}:${selectedAdGroupForDrilldown || ""}`;
+
+    // If targets are already loaded with the exact same parameters, keep current view instantly without reloading spinner
+    if (lastLoadedTargetsParamsRef.current === currentParamsKey && serverTargets.length > 0) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setLoadingTargetsServer(true);
+      try {
+        const params = new URLSearchParams({
+          storeName: selectedStore,
+          sku: selectedSku,
+          days: String(selectedDays),
+          page: String(targetPage),
+          pageSize: String(targetPageSize),
+          search: targetQuery,
+          sortBy: targetSortField,
+          sortDir: targetSortDir,
+          // Prioritize exact campaignId lookup (1.6ms index) - only pass campaignName if id is missing
+          ...(selectedCampaignIdForDrilldown
+            ? { campaignId: selectedCampaignIdForDrilldown }
+            : (selectedCampaignForDrilldown ? { campaignName: selectedCampaignForDrilldown } : {})),
+          ...(selectedAdGroupForDrilldown ? { adGroupName: selectedAdGroupForDrilldown } : {}),
+        });
+        const res = await fetch(`/api/ppc/targets?${params}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error(`Không thể tải Target / Keyword (HTTP ${res.status})`);
+        const json = await res.json();
+        if (json.success && json.data) {
+          lastLoadedTargetsParamsRef.current = currentParamsKey;
+          setServerTargets(json.data.items || []);
+          const exactTargetTotal = Number(json.data.total || 0);
+          setServerTargetTotal(exactTargetTotal);
+          // The paginated endpoint counts the complete filtered SQL result.
+          // Keep the tab badge in sync with it instead of the legacy 20k payload cap.
+          setDetailCounts((current) => current
+            ? { ...current, targets: exactTargetTotal }
+            : current);
+          setServerTargetTotalPages(Math.max(1, Number(json.data.totalPages || 1)));
+          if (json.data.summary) {
+            setServerTargetSummary(json.data.summary);
+          }
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        notify(error instanceof Error ? error.message : "Không thể tải Target / Keyword", "error");
+      } finally {
+        if (!controller.signal.aborted) setLoadingTargetsServer(false);
+      }
+    }, targetQuery ? 300 : 0);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [
+    activeTab,
+    selectedStore,
+    selectedSku,
+    selectedDays,
+    targetPage,
+    targetPageSize,
+    targetQuery,
+    targetSortField,
+    targetSortDir,
+    selectedCampaignIdForDrilldown,
+    selectedCampaignForDrilldown,
+    selectedAdGroupForDrilldown,
+    targetRefreshKey,
+  ]);
+
+  // On-demand child search terms loader for expanded Target row
+  const handleToggleExpandTarget = useCallback(async (target: PpcTargetPerformance, targetKey: string) => {
+    if (expandedTargetKey === targetKey) {
+      setExpandedTargetKey(null);
+      return;
+    }
+    setExpandedTargetKey(targetKey);
+
+    // If already loaded in cache, do not re-fetch
+    if (expandedChildTerms[targetKey]?.terms && !expandedChildTerms[targetKey]?.loading) {
+      return;
+    }
+
+    setExpandedChildTerms((prev) => ({
+      ...prev,
+      [targetKey]: { loading: true, terms: [] },
+    }));
+
+    try {
+      const params = new URLSearchParams({
+        storeName: target.storeName || selectedStore || "ALL",
+        targetId: target.targetId || "",
+        targetKeyword: target.targetKeyword || "",
+        campaignName: target.campaignName || "",
+        adGroupName: target.adGroupName || "",
+        limit: "100",
+      });
+      const res = await fetch(`/api/ppc/targets/search-terms?${params}`);
+      if (!res.ok) throw new Error("Không thể tải search terms con");
+      const json = await res.json();
+      const terms: PpcSearchTermRow[] = json.data || [];
+      setExpandedChildTerms((prev) => ({
+        ...prev,
+        [targetKey]: { loading: false, terms },
+      }));
+    } catch (err) {
+      setExpandedChildTerms((prev) => ({
+        ...prev,
+        [targetKey]: {
+          loading: false,
+          terms: [],
+          error: err instanceof Error ? err.message : "Lỗi khi tải search terms",
+        },
+      }));
+    }
+  }, [expandedTargetKey, expandedChildTerms, selectedStore]);
 
   const loadSkuEconomics = useCallback(async () => {
     if (!selectedStore || selectedStore === "ALL") {
@@ -797,25 +1042,30 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
     notify("Đã xóa hành động khỏi Action Queue.", "success");
   };
 
-  const handleRemoveActions = async (actionIds: string[]) => {
-    if (!actionIds || actionIds.length === 0) return;
+  const handleRemoveActions = async (actionIdsOrPayload: string[] | any) => {
+    const isPayload = actionIdsOrPayload && typeof actionIdsOrPayload === "object" && !Array.isArray(actionIdsOrPayload);
+    if (!isPayload && (!actionIdsOrPayload || actionIdsOrPayload.length === 0)) return;
     const targetStore = selectedStore === "ALL" ? "ALL" : (stores.find((s) => s.name.toLowerCase() === selectedStore.toLowerCase())?.id || "");
+    const body = isPayload ? actionIdsOrPayload : { actionIds: actionIdsOrPayload };
     const res = await fetch(`/api/ppc/actions?storeId=${encodeURIComponent(targetStore)}`, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ actionIds }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error("Không thể xóa các hành động đã chọn.");
+    const json = await res.json().catch(() => ({}));
     void loadActionQueue(selectedStore);
     void loadActionQueueCount(selectedStore);
-    notify(`Đã xóa ${actionIds.length} hành động khỏi Action Queue.`, "success");
+    notify(json.message || `Đã xóa hành động khỏi Action Queue.`, "success");
   };
 
-  const handleExportBulk = async (selectedActionIds?: string[]) => {
+  const handleExportBulk = async (selectedActionIdsOrPayload?: string[] | any) => {
+    const isPayload = selectedActionIdsOrPayload && typeof selectedActionIdsOrPayload === "object" && !Array.isArray(selectedActionIdsOrPayload);
+    const body = isPayload ? selectedActionIdsOrPayload : { actionIds: selectedActionIdsOrPayload };
     const res = await fetch("/api/ppc/bulk-export", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ actionIds: selectedActionIds }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -902,6 +1152,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
       setSearchTerms([]);
       setSearchTermsReady(false);
       setSelectedCampaignForDrilldown(null);
+      setSelectedCampaignIdForDrilldown(null);
       setSelectedAdGroupForDrilldown(null);
       setSkuRecGroups([]);
       setSkuRecAllRecs([]);
@@ -941,7 +1192,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
       }
     }
 
-    if (activeTab !== "overview" && ["ad_groups", "targets", "skus", "search_terms", "st_optimization", "sale_kw"].includes(activeTab)) {
+    if (activeTab !== "overview" && ["ad_groups", "skus", "search_terms", "st_optimization", "sale_kw"].includes(activeTab)) {
       const sectionToLoad = (activeTab === "st_optimization" || activeTab === "sale_kw") ? "search_terms" : activeTab;
       const isMissingFullSkus = sectionToLoad === "skus" && (skuPerformance.length <= 10 && (detailCounts?.skus ?? 0) > 10);
       if (!loadedSectionsRef.current.has(sectionToLoad) || isMissingFullSkus) {
@@ -1354,72 +1605,41 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
     return filteredSortedAdGroups.slice(start, start + adGroupPageSize);
   }, [filteredSortedAdGroups, adGroupPage, adGroupPageSize]);
 
-  // Filtered & Sorted Targets / Keywords (Level 4 in hierarchy)
-  const filteredSortedTargets = useMemo(() => {
-    let list = [...targetPerformance];
-    if (selectedCampaignForDrilldown) {
-      list = list.filter((t) => t.campaignName === selectedCampaignForDrilldown);
-    }
-    if (selectedAdGroupForDrilldown) {
-      list = list.filter((t) => t.adGroupName === selectedAdGroupForDrilldown);
-    }
-    if (targetQuery.trim()) {
-      const tokens = targetQuery.toLowerCase().split(/\s+/).filter(Boolean);
-      list = list.filter((t) => {
-        const text = `${t.targetKeyword || ""} ${t.campaignName || ""} ${t.adGroupName || ""}`.toLowerCase();
-        return tokens.every((tok) => text.includes(tok));
-      });
-    }
-    list.sort((a, b) => {
-      const valA = a[targetSortField] ?? 0;
-      const valB = b[targetSortField] ?? 0;
-      return targetSortDir === "asc" ? valA - valB : valB - valA;
-    });
-    return list;
-  }, [targetPerformance, selectedCampaignForDrilldown, selectedAdGroupForDrilldown, targetQuery, targetSortField, targetSortDir]);
+  // Server-paginated Targets / Keywords (50 rows/page, SQL-aggregated metrics, zero memory bloat)
+  const paginatedTargets = serverTargets;
+  const filteredSortedTargets = serverTargets;
+  const filteredTargetTotals = serverTargetSummary;
+  const totalTargetPages = serverTargetTotalPages;
 
-  // Aggregated totals for currently filtered targets (instant, mathematically exact)
-  const filteredTargetTotals = useMemo(() => {
-    let impressions = 0;
-    let clicks = 0;
-    let spend = 0;
-    let sales = 0;
-    let orders = 0;
+  // Unique row key helper for Targets
+  const targetRowKey = useCallback((target: PpcTargetPerformance) => {
+    return [
+      target.storeId || target.storeName,
+      target.adType,
+      target.campaignId || target.campaignName,
+      target.adGroupId || target.adGroupName,
+      target.targetId || target.targetKeyword,
+      target.matchType,
+    ].join("\u0000");
+  }, []);
 
-    for (let i = 0; i < filteredSortedTargets.length; i++) {
-      const t = filteredSortedTargets[i];
-      impressions += t.impressions || 0;
-      clicks += t.clicks || 0;
-      spend += t.spend || 0;
-      sales += t.sales || 0;
-      orders += t.orders || 0;
-    }
+  const targetCurrentPageItems = useMemo(
+    () => serverTargets.map((t) => ({ id: targetRowKey(t) })),
+    [serverTargets, targetRowKey]
+  );
 
-    const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
-    const cpc = clicks > 0 ? spend / clicks : 0;
-    const cvr = clicks > 0 ? (orders / clicks) * 100 : 0;
-    const acos = sales > 0 ? (spend / sales) * 100 : spend > 0 ? 999 : 0;
-
-    return {
-      count: filteredSortedTargets.length,
-      impressions,
-      clicks,
-      spend,
-      sales,
-      orders,
-      ctr,
-      cpc,
-      cvr,
-      acos,
-    };
-  }, [filteredSortedTargets]);
-
-  // Paginated Targets
-  const totalTargetPages = Math.max(1, Math.ceil(filteredSortedTargets.length / targetPageSize));
-  const paginatedTargets = useMemo(() => {
-    const start = (targetPage - 1) * targetPageSize;
-    return filteredSortedTargets.slice(start, start + targetPageSize);
-  }, [filteredSortedTargets, targetPage, targetPageSize]);
+  const targetBulkSelection = useBulkSelection({
+    currentPageItems: targetCurrentPageItems,
+    totalFilteredCount: serverTargetTotal,
+    currentFilters: {
+      storeName: selectedStore,
+      sku: selectedSku,
+      days: selectedDays,
+      search: targetQuery,
+      campaignName: selectedCampaignForDrilldown,
+      adGroupName: selectedAdGroupForDrilldown,
+    },
+  });
 
   // Helper normalizers for high-speed term-target matching
   const normStr = (s: string) => (s || "").toLowerCase().replace(/\s+/g, " ").trim();
@@ -2473,7 +2693,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                 }`}
             >
               <Crosshair size={15} weight={activeTab === "targets" ? "bold" : "regular"} />
-              <span>3. Target / Keyword ({detailCounts?.targets !== undefined ? detailCounts.targets.toLocaleString("vi-VN") : (loading ? "..." : targetPerformance.length.toLocaleString("vi-VN"))})</span>
+              <span>3. Target / Keyword ({activeTab === "targets"
+                ? (loadingTargetsServer ? "..." : serverTargetTotal.toLocaleString("vi-VN"))
+                : detailCounts?.targets !== undefined
+                  ? detailCounts.targets.toLocaleString("vi-VN")
+                  : (loading ? "..." : targetPerformance.length.toLocaleString("vi-VN"))})</span>
             </button>
 
             <button
@@ -2989,13 +3213,14 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                             type="button"
                             onClick={() => {
                               setSelectedCampaignForDrilldown(c.campaignName);
+                              setSelectedCampaignIdForDrilldown(c.campaignId || null);
                               setSelectedAdGroupForDrilldown(null);
                               setTargetQuery("");
                               setTargetPage(1);
                               setActiveTab("targets");
                             }}
                             className="text-left font-bold text-slate-900 hover:text-indigo-600 hover:underline cursor-pointer transition leading-snug break-words block"
-                            title="Nhấn để xem các Target / Keyword của Campaign này"
+                            title="Nhấn vào tên Campaign để xem các Target / Keyword của Campaign này"
                           >
                             {c.campaignName}
                           </button>
@@ -3129,61 +3354,157 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                   type="button"
                   onClick={() => {
                     setSelectedCampaignForDrilldown(null);
+                    setSelectedCampaignIdForDrilldown(null);
                     setSelectedAdGroupForDrilldown(null);
+                    setTargetPage(1);
                   }}
                   className="px-2.5 py-1.5 text-slate-500 hover:text-slate-900 text-xs font-semibold cursor-pointer underline"
                 >
-                  ✕ Xem tất cả Targets ({detailCounts?.targets ?? targetPerformance.length})
+                  ✕ Xem tất cả Targets ({detailCounts?.targets ?? serverTargetTotal})
                 </button>
               </div>
             </div>
           )}
 
           <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
-            <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
-              Target / Keyword Performance
-            </h3>
+            <div className="flex items-center gap-2">
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
+                Target / Keyword Performance
+              </h3>
+              <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                {serverTargetTotal > 0 ? `${serverTargetTotal.toLocaleString("vi-VN")} mục` : "0 mục"}
+              </span>
+            </div>
 
-            <div className="relative w-full sm:w-80">
-              <MagnifyingGlass size={14} className="absolute left-3 top-2.5 text-slate-400" />
-              <input
-                type="text"
-                value={targetQuery}
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+              {/* Dropdown chọn nhanh chiến dịch để chỉ tìm kiếm trong chiến dịch đó */}
+              <select
+                value={selectedCampaignForDrilldown || "ALL"}
                 onChange={(e) => {
-                  setTargetQuery(e.target.value);
+                  const val = e.target.value;
+                  if (val === "ALL") {
+                    setSelectedCampaignForDrilldown(null);
+                    setSelectedCampaignIdForDrilldown(null);
+                  } else {
+                    const found = campaignPerformance.find((c) => c.campaignName === val);
+                    setSelectedCampaignForDrilldown(val);
+                    setSelectedCampaignIdForDrilldown(found?.campaignId || null);
+                  }
                   setTargetPage(1);
                 }}
-                placeholder="Tìm theo keyword, tên campaign hoặc SKU..."
-                className="w-full pl-8 pr-7 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs outline-none focus:bg-white focus:border-indigo-600 transition"
-              />
-              {targetQuery && (
+                className="max-w-[240px] px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-medium text-slate-700 outline-none focus:bg-white focus:border-indigo-600 transition truncate"
+                title="Lọc nhanh target theo chiến dịch để tìm kiếm tức thì"
+              >
+                <option value="ALL">Tất cả chiến dịch ({campaignPerformance.length})</option>
+                {campaignPerformance.map((c) => (
+                  <option key={c.campaignId || c.campaignName} value={c.campaignName}>
+                    {c.campaignName}
+                  </option>
+                ))}
+              </select>
+
+              <div className="relative flex-1 sm:w-72">
+                <MagnifyingGlass size={14} className="absolute left-3 top-2.5 text-slate-400" />
+                <input
+                  type="text"
+                  value={targetQuery}
+                  onChange={(e) => {
+                    setTargetQuery(e.target.value);
+                    setTargetPage(1);
+                  }}
+                  placeholder={selectedCampaignForDrilldown ? "Tìm target trong chiến dịch này..." : "Tìm keyword, campaign hoặc SKU..."}
+                  className="w-full pl-8 pr-7 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs outline-none focus:bg-white focus:border-indigo-600 transition"
+                />
+                {targetQuery && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTargetQuery("");
+                      setTargetPage(1);
+                    }}
+                    className="absolute right-2 top-2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                    title="Xóa tìm kiếm"
+                  >
+                    <X size={13} weight="bold" />
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Bulk Selection Notification Banner (Gmail/Enterprise Standard) */}
+          <PpcBulkSelectionBanner
+            mode={targetBulkSelection.mode}
+            isPageAllSelected={targetBulkSelection.isPageAllSelected}
+            currentPageCount={serverTargets.length}
+            totalFilteredCount={serverTargetTotal}
+            totalSelectedCount={targetBulkSelection.totalSelectedCount}
+            onSelectAllFiltered={targetBulkSelection.selectAllFiltered}
+            onClearSelection={targetBulkSelection.clearSelection}
+            itemName="targets"
+          />
+
+          {/* Bulk Action Controls Bar when items are selected */}
+          {targetBulkSelection.totalSelectedCount > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-indigo-50/90 rounded-xl border border-indigo-200 shadow-2xs animate-in fade-in slide-in-from-top-1">
+              <div className="flex items-center gap-2 text-xs font-bold text-indigo-950">
+                <span>Đã chọn:</span>
+                <span className="px-2 py-0.5 rounded bg-indigo-600 text-white font-mono font-black text-xs shadow-2xs">
+                  {targetBulkSelection.totalSelectedCount.toLocaleString("vi-VN")}
+                </span>
+                <span>targets</span>
+                {targetBulkSelection.mode === "ALL_FILTERED" && (
+                  <span className="text-[11px] font-semibold text-amber-700 bg-amber-100/80 px-2 py-0.5 rounded-md border border-amber-200">
+                    Toàn bộ kết quả lọc
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => {
-                    setTargetQuery("");
-                    setTargetPage(1);
+                    notify(`Đã chọn ${targetBulkSelection.totalSelectedCount.toLocaleString("vi-VN")} targets`, "info");
                   }}
-                  className="absolute right-2 top-2 text-slate-400 hover:text-slate-700 cursor-pointer"
-                  title="Xóa tìm kiếm"
+                  className="px-3 py-1.5 rounded-lg bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-100 font-bold text-xs flex items-center gap-1.5 shadow-2xs transition cursor-pointer"
                 >
-                  <X size={13} weight="bold" />
+                  <Download size={13} weight="bold" />
+                  Xuất đã chọn
                 </button>
-              )}
+                <button
+                  type="button"
+                  onClick={targetBulkSelection.clearSelection}
+                  className="px-2.5 py-1.5 text-slate-500 hover:text-slate-800 text-xs font-semibold underline cursor-pointer"
+                >
+                  Bỏ chọn tất cả
+                </button>
+              </div>
             </div>
-          </div>
+          )}
 
           <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
             <table className="w-full min-w-[1050px] text-left text-xs text-slate-700">
               <thead className="border-b border-slate-200 bg-slate-50 text-[10px] font-extrabold uppercase text-slate-500">
                 <tr>
-                  <th className="px-3.5 py-3 text-left">Target / Keyword</th>
+                  <th className="px-3 py-3 text-center w-10">
+                    <input
+                      type="checkbox"
+                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                      checked={targetBulkSelection.isPageAllSelected}
+                      ref={(el) => {
+                        if (el) el.indeterminate = targetBulkSelection.isPageIndeterminate;
+                      }}
+                      onChange={targetBulkSelection.toggleSelectPage}
+                      title="Chọn tất cả trên trang này"
+                    />
+                  </th>
+                  <th className="px-3 py-3 text-left">Target / Keyword</th>
                   <th className="px-3 py-3 text-left">Campaign</th>
                   <th className="px-3 py-3 text-left">Type</th>
                   <th className="px-3 py-3 text-right">Bid</th>
                   <th
                     className="px-3 py-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() =>
-                      handleSort("impressions", targetSortField, targetSortDir, setTargetSortField, setTargetSortDir)
+                      handleSort("impressions", targetSortField, targetSortDir, setTargetSortField, setTargetSortDir, () => setTargetPage(1))
                     }
                     title="Nhấn để sắp xếp theo lượt hiển thị (Impressions)"
                   >
@@ -3192,7 +3513,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                   <th
                     className="px-3 py-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() =>
-                      handleSort("clicks", targetSortField, targetSortDir, setTargetSortField, setTargetSortDir)
+                      handleSort("clicks", targetSortField, targetSortDir, setTargetSortField, setTargetSortDir, () => setTargetPage(1))
                     }
                   >
                     Clicks {targetSortField === "clicks" && (targetSortDir === "asc" ? "↑" : "↓")}
@@ -3200,7 +3521,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                   <th
                     className="px-3 py-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() =>
-                      handleSort("ctr", targetSortField, targetSortDir, setTargetSortField, setTargetSortDir)
+                      handleSort("ctr", targetSortField, targetSortDir, setTargetSortField, setTargetSortDir, () => setTargetPage(1))
                     }
                     title="Tỷ lệ click trên lượt hiển thị (CTR = Clicks / Impressions)"
                   >
@@ -3209,7 +3530,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                   <th
                     className="px-3 py-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() =>
-                      handleSort("spend", targetSortField, targetSortDir, setTargetSortField, setTargetSortDir)
+                      handleSort("spend", targetSortField, targetSortDir, setTargetSortField, setTargetSortDir, () => setTargetPage(1))
                     }
                   >
                     Spend ($) {targetSortField === "spend" && (targetSortDir === "asc" ? "↑" : "↓")}
@@ -3217,7 +3538,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                   <th
                     className="px-3 py-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() =>
-                      handleSort("sales", targetSortField, targetSortDir, setTargetSortField, setTargetSortDir)
+                      handleSort("sales", targetSortField, targetSortDir, setTargetSortField, setTargetSortDir, () => setTargetPage(1))
                     }
                   >
                     Sales ($) {targetSortField === "sales" && (targetSortDir === "asc" ? "↑" : "↓")}
@@ -3225,7 +3546,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                   <th
                     className="px-3 py-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() =>
-                      handleSort("orders", targetSortField, targetSortDir, setTargetSortField, setTargetSortDir)
+                      handleSort("orders", targetSortField, targetSortDir, setTargetSortField, setTargetSortDir, () => setTargetPage(1))
                     }
                   >
                     Orders {targetSortField === "orders" && (targetSortDir === "asc" ? "↑" : "↓")}
@@ -3235,7 +3556,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                   <th
                     className="px-3 py-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() =>
-                      handleSort("acos", targetSortField, targetSortDir, setTargetSortField, setTargetSortDir)
+                      handleSort("acos", targetSortField, targetSortDir, setTargetSortField, setTargetSortDir, () => setTargetPage(1))
                     }
                   >
                     ACOS (%) {targetSortField === "acos" && (targetSortDir === "asc" ? "↑" : "↓")}
@@ -3246,9 +3567,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {(loading || isStoreSwitching || loadingSection === "targets") ? (
+                {(loading || isStoreSwitching || loadingTargetsServer || loadingSection === "targets") ? (
                   <tr>
-                    <td colSpan={14} className="p-12 text-center text-xs text-slate-500">
+                    <td colSpan={15} className="p-12 text-center text-xs text-slate-500">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <CircleNotch size={24} className="animate-spin text-indigo-600" />
                         <span className="font-bold text-slate-700">Đang tải danh sách Target / Keyword cho {selectedStore === "ALL" ? "tất cả store" : selectedStore}...</span>
@@ -3258,7 +3579,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                   </tr>
                 ) : filteredSortedTargets.length === 0 ? (
                   <tr>
-                    <td colSpan={14} className="p-8 text-center text-xs text-slate-400">
+                    <td colSpan={15} className="p-8 text-center text-xs text-slate-400">
                       {targetQuery ? (
                         <div className="flex flex-col items-center gap-1.5">
                           <span className="font-semibold text-slate-600">
@@ -3286,15 +3607,16 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                   </tr>
                 ) : (
                   <>
-                    {/* Sticky / Highlighted Top TOTAL Row */}
+                    {/* Sticky / Highlighted Top TOTAL Row (SQL-aggregated across entire filtered database scope) */}
                     <tr className="bg-slate-100 font-black border-b-2 border-slate-300 text-slate-900 sticky top-0 z-10 shadow-xs">
+                      <td className="px-3 py-2.5 text-center text-slate-400 font-bold">—</td>
                       <td className="px-3.5 py-2.5 font-black text-slate-900 min-w-[180px]">
                         <div className="flex items-center gap-1.5">
                           <span className="inline-block px-1.5 py-0.5 rounded bg-slate-900 text-white text-[10px] font-black uppercase tracking-wider">
                             TOTAL
                           </span>
                           <span className="text-slate-600 text-[11px] font-bold">
-                            ({filteredTargetTotals.count.toLocaleString()} targets)
+                            ({serverTargetSummary.count.toLocaleString()} targets)
                           </span>
                         </div>
                       </td>
@@ -3302,31 +3624,31 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                       <td className="px-3 py-2.5 whitespace-nowrap text-slate-400 font-bold">—</td>
                       <td className="px-3 py-2.5 text-right font-mono font-bold text-slate-400 whitespace-nowrap">—</td>
                       <td className="px-3 py-2.5 text-right font-mono font-black text-slate-900 whitespace-nowrap">
-                        {filteredTargetTotals.impressions.toLocaleString()}
+                        {serverTargetSummary.impressions.toLocaleString()}
                       </td>
                       <td className="px-3 py-2.5 text-right font-mono font-black text-slate-900 whitespace-nowrap">
-                        {filteredTargetTotals.clicks.toLocaleString()}
+                        {serverTargetSummary.clicks.toLocaleString()}
                       </td>
                       <td className="px-3 py-2.5 text-right font-mono font-black text-slate-900 whitespace-nowrap">
-                        {filteredTargetTotals.ctr.toFixed(2)}%
+                        {serverTargetSummary.ctr.toFixed(2)}%
                       </td>
                       <td className="px-3 py-2.5 text-right font-mono font-black text-rose-600 whitespace-nowrap">
-                        ${filteredTargetTotals.spend.toFixed(2)}
+                        ${serverTargetSummary.spend.toFixed(2)}
                       </td>
                       <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-600 whitespace-nowrap">
-                        ${filteredTargetTotals.sales.toFixed(2)}
+                        ${serverTargetSummary.sales.toFixed(2)}
                       </td>
                       <td className="px-3 py-2.5 text-right font-mono font-black text-indigo-700 whitespace-nowrap">
-                        {filteredTargetTotals.orders.toLocaleString()}
+                        {serverTargetSummary.orders.toLocaleString()}
                       </td>
                       <td className="px-3 py-2.5 text-right font-mono font-black text-slate-800 whitespace-nowrap">
-                        ${filteredTargetTotals.cpc.toFixed(2)}
+                        ${serverTargetSummary.cpc.toFixed(2)}
                       </td>
                       <td className="px-3 py-2.5 text-right font-mono font-black text-slate-800 whitespace-nowrap">
-                        {filteredTargetTotals.cvr.toFixed(1)}%
+                        {serverTargetSummary.cvr.toFixed(1)}%
                       </td>
-                      <td className={`px-3 py-2.5 text-right font-mono font-black whitespace-nowrap ${filteredTargetTotals.acos <= targetAcos ? "text-emerald-700" : "text-rose-700"}`}>
-                        {filteredTargetTotals.sales > 0 ? `${filteredTargetTotals.acos.toFixed(1)}%` : filteredTargetTotals.spend > 0 ? "0 sales" : "0.0%"}
+                      <td className={`px-3 py-2.5 text-right font-mono font-black whitespace-nowrap ${serverTargetSummary.acos <= targetAcos ? "text-emerald-700" : "text-rose-700"}`}>
+                        {serverTargetSummary.sales > 0 ? `${serverTargetSummary.acos.toFixed(1)}%` : serverTargetSummary.spend > 0 ? "0 sales" : "0.0%"}
                       </td>
                       <td className="px-2 py-2.5 text-center whitespace-nowrap w-[60px] min-w-[60px] sticky right-0 z-10 bg-slate-100 border-l border-slate-300 font-bold text-slate-400">
                         —
@@ -3335,26 +3657,24 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
 
                     {paginatedTargets.map((target) => {
                       const badge = getTargetDisplayType(target);
-                      const targetKey = [
-                        target.storeId || target.storeName,
-                        target.adType,
-                        target.campaignId || target.campaignName,
-                        target.adGroupId || target.adGroupName,
-                        target.targetId || target.targetKeyword,
-                        target.matchType,
-                      ].join("\u0000");
+                      const targetKey = targetRowKey(target);
                       const isExpanded = expandedTargetKey === targetKey;
-                      const childTerms = isExpanded ? (() => {
-                        const res = getChildSearchTerms(target);
-                        return [...res.confirmed, ...res.inferred].sort(
-                          (a, b) => b.spend - a.spend || b.orders - a.orders || b.clicks - a.clicks,
-                        );
-                      })() : [];
+                      const childData = expandedChildTerms[targetKey];
+                      const childTerms = childData?.terms || [];
+                      const isSelected = targetBulkSelection.isSelected(targetKey);
 
                       return (
                         <Fragment key={targetKey}>
-                          <tr className={`group transition ${isExpanded ? "bg-indigo-50/40" : "hover:bg-slate-50/80"}`}>
-                            <td className="px-3.5 py-2.5 font-bold text-slate-900 min-w-[180px]">
+                          <tr className={`group transition ${isSelected ? "bg-indigo-50/70" : isExpanded ? "bg-indigo-50/40" : "hover:bg-slate-50/80"}`}>
+                            <td className="px-3 py-2.5 text-center">
+                              <input
+                                type="checkbox"
+                                className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                checked={isSelected}
+                                onChange={() => targetBulkSelection.toggleItem(targetKey)}
+                              />
+                            </td>
+                            <td className="px-3 py-2.5 font-bold text-slate-900 min-w-[180px]">
                               <div className="break-words leading-snug" title={target.targetKeyword}>{target.targetKeyword}</div>
                             </td>
                             <td className="px-3 py-2.5 font-semibold text-slate-700 min-w-[260px]">
@@ -3375,11 +3695,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                             <td className={`px-3 py-2.5 text-right font-mono font-black whitespace-nowrap ${target.acos <= targetAcos ? "text-emerald-700" : "text-rose-700"}`}>
                               {target.acos > 500 ? "0 sales" : `${target.acos.toFixed(1)}%`}
                             </td>
-                            <td className={`px-2 py-2 text-center whitespace-nowrap w-[60px] min-w-[60px] sticky right-0 z-10 border-l border-slate-200 shadow-[-4px_0_8px_rgba(0,0,0,0.04)] transition ${isExpanded ? "bg-indigo-50" : "bg-white group-hover:bg-slate-50"
+                            <td className={`px-2 py-2 text-center whitespace-nowrap w-[60px] min-w-[60px] sticky right-0 z-10 border-l border-slate-200 shadow-[-4px_0_8px_rgba(0,0,0,0.04)] transition ${isExpanded ? "bg-indigo-50" : isSelected ? "bg-indigo-50/70" : "bg-white group-hover:bg-slate-50"
                               }`}>
                               <button
                                 type="button"
-                                onClick={() => setExpandedTargetKey(isExpanded ? null : targetKey)}
+                                onClick={() => handleToggleExpandTarget(target, targetKey)}
                                 className={`inline-flex items-center justify-center px-2.5 py-1 rounded-md text-[11px] font-extrabold transition cursor-pointer border shrink-0 ${isExpanded
                                   ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
                                   : "bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border-indigo-200"
@@ -3391,11 +3711,20 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                             </td>
                           </tr>
 
-                          {/* Inline Expandable Layer 2: Search Term Breakdown (Clean & Minimalist) */}
+                          {/* Inline Expandable Layer 2: On-demand Child Search Term Breakdown */}
                           {isExpanded && (
                             <tr className="bg-slate-50/70 border-b border-slate-200">
-                              <td colSpan={14} className="p-3">
-                                {childTerms.length === 0 ? (
+                              <td colSpan={15} className="p-3">
+                                {childData?.loading ? (
+                                  <div className="flex items-center justify-center gap-2 p-6 bg-white rounded-lg border border-slate-200 text-xs text-slate-600">
+                                    <CircleNotch size={18} className="animate-spin text-indigo-600" />
+                                    <span className="font-bold">Đang tải customer search terms từ máy chủ...</span>
+                                  </div>
+                                ) : childData?.error ? (
+                                  <div className="p-3 text-center text-xs text-rose-600 bg-rose-50 rounded-lg border border-rose-200">
+                                    {childData.error}
+                                  </div>
+                                ) : childTerms.length === 0 ? (
                                   <div className="p-3 text-center text-xs text-slate-400 bg-white rounded-lg border border-slate-200">
                                     Không có customer search term nào phát sinh click trong kỳ báo cáo.
                                   </div>
@@ -3416,7 +3745,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                                       </thead>
                                       <tbody className="divide-y divide-slate-100 font-medium">
                                         {childTerms.map((term, tIdx) => (
-                                          <tr key={`${searchTermKey(term)}-${tIdx}`} className="hover:bg-slate-50/80 transition">
+                                          <tr key={`${term.id || term.customerSearchTerm}-${tIdx}`} className="hover:bg-slate-50/80 transition">
                                             <td className="py-2 px-3.5 font-bold text-slate-900">
                                               <div className="flex items-center gap-1.5 flex-wrap">
                                                 <span>{term.customerSearchTerm}</span>
@@ -3426,7 +3755,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
                                                   </span>
                                                 )}
                                                 {!term.targetKeyword && (
-                                                  <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 border border-amber-200" title="Từ khóa suy luận do báo cáo gốc của Amazon thiếu cột Targeting">
+                                                  <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 border border-amber-200" title="Từ khóa suy luận">
                                                     Suy luận
                                                   </span>
                                                 )}
@@ -3473,7 +3802,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, ac
             currentPage={targetPage}
             totalPages={totalTargetPages}
             pageSize={targetPageSize}
-            totalItems={filteredSortedTargets.length}
+            totalItems={serverTargetTotal}
             pageSizeOptions={[15, 25, 50, 100]}
             itemName="targets"
             onPageChange={setTargetPage}
