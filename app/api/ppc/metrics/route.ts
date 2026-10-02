@@ -40,14 +40,14 @@ function overviewSearchTerms(rows: PpcSearchTermRow[], targetAcos: number): PpcS
 }
 
 function projectMetrics(data: MetricsData, section: MetricsSection) {
-  const exactSearchTermsCount = (data as any).dataHealth?.searchTermRows || (data as any).searchTermSummary?.totalTerms || (data as any).detailCounts?.searchTerms || data.searchTerms.length;
+  const exactSearchTermsCount = (data as any).dataHealth?.searchTermRows || (data as any).searchTermSummary?.totalTerms || ((data as any).detailCounts?.searchTerms && (data as any).detailCounts.searchTerms > 20000 ? (data as any).detailCounts.searchTerms : 0) || (data as any).dataHealth?.totalRecords || 0;
   const detailCounts = (data as any).detailCounts
-    ? { ...(data as any).detailCounts, searchTerms: exactSearchTermsCount }
+    ? { ...(data as any).detailCounts, ...(exactSearchTermsCount > 0 ? { searchTerms: exactSearchTermsCount } : {}) }
     : (section === "overview"
       ? {
         campaigns: data.campaignPerformance.length,
         targets: data.targets.length,
-        searchTerms: exactSearchTermsCount,
+        searchTerms: exactSearchTermsCount > 0 ? exactSearchTermsCount : data.searchTerms.length,
         skus: data.skuPerformance.length,
       }
       : {
@@ -55,7 +55,7 @@ function projectMetrics(data: MetricsData, section: MetricsSection) {
         ...(section === "ad_groups" ? { adGroups: data.adGroups.length } : {}),
         ...(section === "targets" ? { targets: data.targets.length } : {}),
         ...(section === "skus" ? { skus: data.skuPerformance.length } : {}),
-        ...(section === "search_terms" ? { searchTerms: exactSearchTermsCount } : {}),
+        ...(section === "search_terms" && exactSearchTermsCount > 0 ? { searchTerms: exactSearchTermsCount } : {}),
       });
   if (section === "overview") {
     return {

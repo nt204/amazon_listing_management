@@ -803,6 +803,40 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
   const [serverSearchTermSummary, setServerSearchTermSummary] = useState<any>(null);
   const [loadingSearchTermsServer, setLoadingSearchTermsServer] = useState<boolean>(false);
   const lastLoadedSearchTermsParamsRef = useRef<string>("");
+  const [stOptimizationServerCount, setStOptimizationServerCount] = useState<number | null>(null);
+  const [saleKwServerCount, setSaleKwServerCount] = useState<number | null>(null);
+
+  // Pre-fetch accurate server badge counts for ST Optimization and Sale KW tabs
+  useEffect(() => {
+    let active = true;
+    const fetchBadgeCounts = async () => {
+      try {
+        const storeParam = selectedStore && selectedStore !== "ALL" ? `&storeName=${encodeURIComponent(selectedStore)}` : "";
+        const [optRes, saleRes] = await Promise.all([
+          fetch(`/api/ppc/search-terms/optimization?days=${selectedDays}${storeParam}&pageSize=1`),
+          fetch(`/api/ppc/search-terms/sale-keywords?days=${selectedDays}${storeParam}&pageSize=1`),
+        ]);
+        if (optRes.ok) {
+          const optJson = await optRes.json();
+          if (active && optJson.success && optJson.data) {
+            setStOptimizationServerCount(optJson.data.total ?? optJson.data.summary?.candidateCount ?? 0);
+          }
+        }
+        if (saleRes.ok) {
+          const saleJson = await saleRes.json();
+          if (active && saleJson.success && saleJson.data) {
+            setSaleKwServerCount(saleJson.data.total ?? 0);
+          }
+        }
+      } catch {
+        // silent fallback to local calculation
+      }
+    };
+    fetchBadgeCounts();
+    return () => {
+      active = false;
+    };
+  }, [selectedStore, selectedDays]);
 
   useEffect(() => {
     if (activeTab !== "search_terms") return;
@@ -1264,8 +1298,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
       }
     }
 
-    if (activeTab !== "overview" && ["ad_groups", "skus", "search_terms", "st_optimization", "sale_kw"].includes(activeTab)) {
-      const sectionToLoad = (activeTab === "st_optimization" || activeTab === "sale_kw") ? "search_terms" : activeTab;
+    if (activeTab !== "overview" && ["ad_groups", "skus"].includes(activeTab)) {
+      const sectionToLoad = activeTab;
       const isMissingFullSkus = sectionToLoad === "skus" && (skuPerformance.length <= 10 && (detailCounts?.skus ?? 0) > 10);
       if (!loadedSectionsRef.current.has(sectionToLoad) || isMissingFullSkus) {
         void loadSection(sectionToLoad, { force: isMissingFullSkus }).catch((error) => {
@@ -2781,7 +2815,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                 }`}
             >
               <MagnifyingGlass size={15} weight={activeTab === "search_terms" ? "bold" : "regular"} />
-              <span>4. Search Terms ({detailCounts?.searchTerms !== undefined ? detailCounts.searchTerms.toLocaleString("vi-VN") : (!searchTermsReady ? "..." : (aggregatedSearchTerms.length > 0 ? aggregatedSearchTerms.length : searchTerms.length).toLocaleString("vi-VN"))})</span>
+              <span>4. Search Terms ({serverSearchTermTotal !== null && serverSearchTermTotal > 0
+                ? serverSearchTermTotal.toLocaleString("vi-VN")
+                : (detailCounts?.searchTerms !== undefined && detailCounts.searchTerms > 20000
+                  ? detailCounts.searchTerms.toLocaleString("vi-VN")
+                  : (dataHealth?.searchTermRows ? dataHealth.searchTermRows.toLocaleString("vi-VN") : (detailCounts?.searchTerms !== undefined ? detailCounts.searchTerms.toLocaleString("vi-VN") : "...")))
+              })</span>
             </button>
 
             <button
@@ -2793,10 +2832,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                 }`}
             >
               <Prohibit size={15} weight={activeTab === "st_optimization" ? "bold" : "regular"} className={activeTab === "st_optimization" ? "text-rose-600" : "text-slate-400"} />
-              <span>5. ST Optimization ({stOptimizationCandidateCount > 0 ? stOptimizationCandidateCount.toLocaleString("vi-VN") : (!searchTermsReady ? "..." : "0")})</span>
-              {stOptimizationCandidateCount > 0 && (
+              <span>5. ST Optimization ({stOptimizationServerCount !== null
+                ? stOptimizationServerCount.toLocaleString("vi-VN")
+                : (stOptimizationCandidateCount > 0 ? stOptimizationCandidateCount.toLocaleString("vi-VN") : (!searchTermsReady ? "..." : "0"))})</span>
+              {(stOptimizationServerCount !== null ? stOptimizationServerCount : stOptimizationCandidateCount) > 0 && (
                 <span className="px-1.5 py-0.2 rounded-full bg-rose-600 text-white text-[10px] font-black">
-                  {stOptimizationCandidateCount}
+                  {stOptimizationServerCount !== null ? stOptimizationServerCount : stOptimizationCandidateCount}
                 </span>
               )}
             </button>
@@ -2810,10 +2851,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                 }`}
             >
               <RocketLaunch size={15} weight={activeTab === "sale_kw" ? "bold" : "regular"} className={activeTab === "sale_kw" ? "text-emerald-600" : "text-slate-400"} />
-              <span>6. Lên Camp Sale KW ({saleKwCandidateCount > 0 ? saleKwCandidateCount.toLocaleString("vi-VN") : (!searchTermsReady ? "..." : "0")})</span>
-              {saleKwCandidateCount > 0 && (
+              <span>6. Lên Camp Sale KW ({saleKwServerCount !== null
+                ? saleKwServerCount.toLocaleString("vi-VN")
+                : (saleKwCandidateCount > 0 ? saleKwCandidateCount.toLocaleString("vi-VN") : (!searchTermsReady ? "..." : "0"))})</span>
+              {(saleKwServerCount !== null ? saleKwServerCount : saleKwCandidateCount) > 0 && (
                 <span className="px-1.5 py-0.2 rounded-full bg-emerald-600 text-white text-[10px] font-black">
-                  {saleKwCandidateCount}
+                  {saleKwServerCount !== null ? saleKwServerCount : saleKwCandidateCount}
                 </span>
               )}
             </button>
@@ -4434,10 +4477,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
             selectedStore={selectedStore}
             selectedSku={selectedSku}
             selectedDays={selectedDays}
-            loading={!searchTermsReady || loadingSection === "search_terms"}
+            loading={loading}
             notify={notify}
             onOpenActionQueue={() => setIsActionQueueOpen(true)}
             stores={stores}
+            onCandidateCountChange={(cnt) => setStOptimizationServerCount(cnt)}
           />
         </div>
       )}
@@ -4449,11 +4493,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
             selectedStore={selectedStore}
             selectedSku={selectedSku}
             selectedDays={selectedDays}
-            loading={!searchTermsReady || loadingSection === "search_terms"}
+            loading={loading}
             notify={notify}
             onOpenActionQueue={() => setIsActionQueueOpen(true)}
             actor={actor}
             stores={stores}
+            onCandidateCountChange={(cnt) => setSaleKwServerCount(cnt)}
           />
         </div>
       )}

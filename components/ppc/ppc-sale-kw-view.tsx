@@ -134,6 +134,7 @@ interface PpcSaleKwViewProps {
   onOpenActionQueue?: () => void;
   actor?: RequestActor;
   stores?: Array<{ id: string; name: string }>;
+  onCandidateCountChange?: (count: number) => void;
 }
 
 export function PpcSaleKwView({
@@ -146,6 +147,7 @@ export function PpcSaleKwView({
   onOpenActionQueue,
   actor,
   stores,
+  onCandidateCountChange,
 }: PpcSaleKwViewProps) {
   // 0. Sub-tab state
   const [subTab, setSubTab] = useState<"candidates" | "registry">("candidates");
@@ -576,6 +578,7 @@ export function PpcSaleKwView({
           setServerTotal(json.data.total || 0);
           setServerSummary(json.data.summary || null);
           setRegistryLookupReady(true);
+          onCandidateCountChange?.(json.data.total ?? items.length);
         }
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;

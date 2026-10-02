@@ -57,6 +57,7 @@ interface PpcStOptimizationViewProps {
   notify: (message: string, type?: "success" | "error") => void;
   onOpenActionQueue?: () => void;
   stores?: Array<{ id: string; name: string }>;
+  onCandidateCountChange?: (count: number) => void;
 }
 
 export function PpcStOptimizationView({
@@ -68,6 +69,7 @@ export function PpcStOptimizationView({
   notify,
   onOpenActionQueue,
   stores,
+  onCandidateCountChange,
 }: PpcStOptimizationViewProps) {
   // 0. Sub-tab state (Tab 1: Candidates, Tab 2: Negative Hub)
   const [subTab, setSubTab] = useState<"candidates" | "registry">("candidates");
@@ -313,6 +315,7 @@ export function PpcStOptimizationView({
           setServerTotal(json.data.total || 0);
           setServerTotalPages(json.data.totalPages || 1);
           setServerSummary(json.data.summary || null);
+          onCandidateCountChange?.(json.data.total ?? json.data.summary?.candidateCount ?? 0);
         }
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
