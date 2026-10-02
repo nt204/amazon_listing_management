@@ -12,7 +12,7 @@ import {
   ChartLineUpIcon,
   CaretDownIcon,
 } from "@phosphor-icons/react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { AccountMenu } from "@/components/account-menu";
 import type { RequestActor } from "@/lib/auth";
@@ -63,6 +63,11 @@ export function ListingWorkspace({
   actor,
   initialView = "listing",
 }: ListingWorkspaceProps) {
+  const allowedFeatureSet = useMemo(
+    () => new Set<WorkspaceView>((actor?.allowedFeatures as WorkspaceView[] | undefined) ?? ["listing", "mockups", "sellersprite", "ppc"]),
+    [actor?.allowedFeatures],
+  );
+  const hasTrelloAccess = allowedFeatureSet.has("listing") || allowedFeatureSet.has("mockups");
   const [brands, setBrands] = useState<BrandProfile[]>(initialBrands);
   const [activeView, setActiveView] = useState<WorkspaceView>(initialView);
   const [ppcSection, setPpcSection] = useState<"dashboard" | "phoi" | "rules">("dashboard");
@@ -81,15 +86,61 @@ export function ListingWorkspace({
   }, []);
 
   const selectView = useCallback((view: WorkspaceView) => {
+    if (!allowedFeatureSet.has(view)) return;
     setActiveView(view);
+    try {
+      localStorage.setItem("nce_last_active_view", view);
+    } catch {}
     const url = new URL(window.location.href);
     if (view === "listing") {
       url.searchParams.delete("view");
+      url.searchParams.delete("section");
     } else {
       url.searchParams.set("view", view);
     }
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
-  }, []);
+  }, [allowedFeatureSet]);
+
+  const selectPpcSection = useCallback((section: "dashboard" | "phoi" | "rules") => {
+    if (!allowedFeatureSet.has("ppc")) return;
+    setActiveView("ppc");
+    setPpcSection(section);
+    try {
+      localStorage.setItem("nce_last_active_view", "ppc");
+      localStorage.setItem("nce_last_ppc_section", section);
+    } catch {}
+    const url = new URL(window.location.href);
+    url.searchParams.set("view", "ppc");
+    if (section === "dashboard") {
+      url.searchParams.delete("section");
+    } else {
+      url.searchParams.set("section", section);
+    }
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [allowedFeatureSet]);
+
+  // Restore position on initial mount if not specified in SSR initialView
+  useEffect(() => {
+    try {
+      const url = new URL(window.location.href);
+      const urlView = url.searchParams.get("view") as WorkspaceView | null;
+      const urlSection = url.searchParams.get("section") as ("dashboard" | "phoi" | "rules") | null;
+      const savedView = localStorage.getItem("nce_last_active_view") as WorkspaceView | null;
+      const savedSection = localStorage.getItem("nce_last_ppc_section") as ("dashboard" | "phoi" | "rules") | null;
+
+      const effectiveView = urlView || savedView;
+      const validViews: WorkspaceView[] = ["listing", "mockups", "sellersprite", "ppc"];
+      if (effectiveView && validViews.includes(effectiveView) && allowedFeatureSet.has(effectiveView)) {
+        setActiveView(effectiveView);
+        if (effectiveView === "ppc") {
+          const effectiveSection = urlSection || savedSection;
+          if (effectiveSection && ["dashboard", "phoi", "rules"].includes(effectiveSection)) {
+            setPpcSection(effectiveSection);
+          }
+        }
+      }
+    } catch {}
+  }, [allowedFeatureSet]);
 
   const handleOpenGuides = async () => {
     setLoadingGuides(true);
@@ -127,9 +178,11 @@ export function ListingWorkspace({
 
   useEffect(() => {
     void fetch("/api/auth/session");
-    const timer = window.setTimeout(() => void refreshBrands(), 0);
+    const timer = hasTrelloAccess
+      ? window.setTimeout(() => void refreshBrands(), 0)
+      : undefined;
     return () => window.clearTimeout(timer);
-  }, [refreshBrands]);
+  }, [hasTrelloAccess, refreshBrands]);
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-slate-50 text-slate-800 font-sans">
@@ -215,10 +268,7 @@ export function ListingWorkspace({
               <div className="space-y-1">
                 <button
                   type="button"
-                  onClick={() => {
-                    selectView("ppc");
-                    setPpcSection("dashboard");
-                  }}
+                  onClick={() => selectPpcSection("dashboard")}
                   className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
                     viewMode === "ppc"
                       ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
@@ -259,10 +309,7 @@ export function ListingWorkspace({
                     {/* Mục to: PPC Dashboard */}
                     <button
                       type="button"
-                      onClick={() => {
-                        selectView("ppc");
-                        setPpcSection("dashboard");
-                      }}
+                      onClick={() => selectPpcSection("dashboard")}
                       className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs transition-all cursor-pointer ${
                         ppcSection === "dashboard"
                           ? "bg-indigo-100/70 text-indigo-900 font-black shadow-2xs"
@@ -280,10 +327,7 @@ export function ListingWorkspace({
                     {/* Mục con 1: Quản lý Phôi */}
                     <button
                       type="button"
-                      onClick={() => {
-                        selectView("ppc");
-                        setPpcSection("phoi");
-                      }}
+                      onClick={() => selectPpcSection("phoi")}
                       className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
                         ppcSection === "phoi"
                           ? "bg-indigo-100/70 text-indigo-900 font-black shadow-2xs"
@@ -301,10 +345,7 @@ export function ListingWorkspace({
                     {/* Mục con 2: Quản lý Rule */}
                     <button
                       type="button"
-                      onClick={() => {
-                        selectView("ppc");
-                        setPpcSection("rules");
-                      }}
+                      onClick={() => selectPpcSection("rules")}
                       className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
                         ppcSection === "rules"
                           ? "bg-indigo-100/70 text-indigo-900 font-black shadow-2xs"
@@ -374,15 +415,17 @@ export function ListingWorkspace({
 
           {/* Right Header Items: Trello Config & User Avatar */}
           <div className="flex items-center gap-2.5">
-            <button
-              type="button"
-              onClick={() => setShowTrelloConfigModal(true)}
-              className="flex items-center gap-2 rounded-xl border border-slate-200/90 bg-white px-3 py-1.5 text-xs font-extrabold text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-slate-300 transition duration-150 cursor-pointer"
-              title="Cấu hình Board và các cột Trello"
-            >
-              <GearIcon size={16} className="text-slate-500" weight="bold" />
-              <span>Cấu hình Trello</span>
-            </button>
+            {hasTrelloAccess ? (
+              <button
+                type="button"
+                onClick={() => setShowTrelloConfigModal(true)}
+                className="flex items-center gap-2 rounded-xl border border-slate-200/90 bg-white px-3 py-1.5 text-xs font-extrabold text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-slate-300 transition duration-150 cursor-pointer"
+                title="Cấu hình Board và các cột Trello"
+              >
+                <GearIcon size={16} className="text-slate-500" weight="bold" />
+                <span>Cấu hình Trello</span>
+              </button>
+            ) : null}
 
             {actor ? (
               <AccountMenu actor={actor} />

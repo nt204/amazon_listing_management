@@ -523,21 +523,101 @@ export function PpcSaleKwView({
     return () => controller.abort();
   }, [candidateBase, loading, registryLookupRetry, selectedStore]);
 
+  // Server-side candidates state (scans 100% of entire DB)
+  const [serverCandidates, setServerCandidates] = useState<SaleKwCandidate[] | null>(null);
+  const [serverTotal, setServerTotal] = useState<number | null>(null);
+  const [serverSummary, setServerSummary] = useState<any>(null);
+  const [serverLoading, setServerLoading] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!selectedStore || selectedStore === "ALL") return;
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setServerLoading(true);
+      try {
+        const params = new URLSearchParams({
+          storeName: selectedStore,
+          sku: selectedSku,
+          days: String(selectedDays),
+          orderThreshold: String(orderThreshold),
+          orderOperator,
+          hideLaunched: String(hideLaunched),
+          pageSize: "200", // Retrieve high-order candidates across whole DB
+          search: searchQuery.trim(),
+        });
+        const res = await fetch(`/api/ppc/search-terms/sale-keywords?${params}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error("Không thể tải ứng viên Sale KW từ server");
+        const json = await res.json();
+        if (json.success && json.data) {
+          const items: SaleKwCandidate[] = (json.data.items || []).map((it: any) => ({
+            key: `${(it.sku || "UNKNOWN").toLowerCase()}|||${(it.customerSearchTerm || "").toLowerCase()}`,
+            sku: it.sku || "UNKNOWN",
+            customerSearchTerm: it.customerSearchTerm,
+            sourceCampaignNames: it.sourceCampaignNames || [],
+            sourceCampaignId: it.sourceCampaignId,
+            sourceAdGroupId: it.sourceAdGroupId,
+            sourceAdGroupName: it.sourceAdGroupName,
+            impressions: Number(it.impressions) || 0,
+            clicks: Number(it.clicks) || 0,
+            spend: Number(it.spend) || 0,
+            sales: Number(it.sales) || 0,
+            orders: Number(it.orders) || 0,
+            cpc: Number(it.cpc) || 0,
+            acos: Number(it.acos) || 0,
+            bid: bidMode === "cpc" && it.cpc > 0 ? Math.max(0.1, it.cpc) : defaultBid,
+            storeId: it.storeId,
+            storeName: it.storeName || selectedStore,
+            isAlreadyLaunched: Boolean(it.isAlreadyLaunched),
+          }));
+          setServerCandidates(items);
+          setServerTotal(json.data.total || 0);
+          setServerSummary(json.data.summary || null);
+          setRegistryLookupReady(true);
+        }
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        console.error("Sale KW server fetch error:", err);
+      } finally {
+        if (!controller.signal.aborted) setServerLoading(false);
+      }
+    }, searchQuery ? 300 : 0);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [
+    selectedStore,
+    selectedSku,
+    selectedDays,
+    orderThreshold,
+    orderOperator,
+    hideLaunched,
+    searchQuery,
+    defaultBid,
+    bidMode,
+  ]);
+
   // Candidates count that are already launched
   const alreadyLaunchedCount = useMemo(() => {
-    return allCandidates.filter((c) => c.isAlreadyLaunched).length;
-  }, [allCandidates]);
+    const list = serverCandidates !== null ? serverCandidates : allCandidates;
+    return list.filter((c) => c.isAlreadyLaunched).length;
+  }, [serverCandidates, allCandidates]);
 
   // Unique SKUs for filter dropdown
   const candidateSkus = useMemo(() => {
-    return Array.from(new Set(allCandidates.map((c) => c.sku))).sort();
-  }, [allCandidates]);
+    const list = serverCandidates !== null ? serverCandidates : allCandidates;
+    return Array.from(new Set(list.map((c) => c.sku))).sort();
+  }, [serverCandidates, allCandidates]);
 
-  // Filtered candidates
+  // Filtered candidates (Uses server SQL results when available)
   const filteredCandidates = useMemo(() => {
-    let list = [...allCandidates];
+    let list = serverCandidates !== null ? [...serverCandidates] : [...allCandidates];
 
-    if (hideLaunched) {
+    if (hideLaunched && serverCandidates === null) {
       list = list.filter((c) => !c.isAlreadyLaunched);
     }
 
@@ -545,7 +625,7 @@ export function PpcSaleKwView({
       list = list.filter((c) => c.sku === skuFilter);
     }
 
-    if (searchQuery.trim()) {
+    if (searchQuery.trim() && serverCandidates === null) {
       const tokens = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
       list = list.filter((c) => {
         const text = `${c.customerSearchTerm} ${c.sku} ${c.sourceCampaignNames.join(" ")}`.toLowerCase();
@@ -557,7 +637,7 @@ export function PpcSaleKwView({
     list.sort((a, b) => b.orders - a.orders || b.sales - a.sales);
 
     return list;
-  }, [allCandidates, hideLaunched, skuFilter, searchQuery]);
+  }, [serverCandidates, allCandidates, hideLaunched, skuFilter, searchQuery]);
 
   // Group filtered candidates by SKU and generate the 3 Target Campaigns (Exact, Phrase, Broad)
   const skuGroups = useMemo(() => {

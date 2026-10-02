@@ -6,9 +6,9 @@ import { getCachedOrFetch, invalidateCachePattern } from "@/lib/redis";
 
 export const runtime = "nodejs";
 
-const METRICS_CACHE_TTL_MS = 60_000;
+const METRICS_CACHE_TTL_MS = 300_000; // 5 phút lưu trong L1 Memory
 const REDIS_METRICS_TTL_SEC = 900; // 15 phút lưu trong Redis
-const METRICS_CACHE_MAX_ENTRIES = 20;
+const METRICS_CACHE_MAX_ENTRIES = 100;
 type MetricsData = Awaited<ReturnType<typeof getPpcAnalyticsData>>;
 type MetricsSection = "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "search_terms";
 type MetricsResponse = ReturnType<typeof projectMetrics>;
@@ -40,20 +40,23 @@ function overviewSearchTerms(rows: PpcSearchTermRow[], targetAcos: number): PpcS
 }
 
 function projectMetrics(data: MetricsData, section: MetricsSection) {
-  const detailCounts = (data as any).detailCounts || (section === "overview"
-    ? {
-      campaigns: data.campaignPerformance.length,
-      targets: data.targets.length,
-      searchTerms: data.searchTerms.length,
-      skus: data.skuPerformance.length,
-    }
-    : {
-      ...(section === "campaigns" ? { campaigns: data.campaignPerformance.length } : {}),
-      ...(section === "ad_groups" ? { adGroups: data.adGroups.length } : {}),
-      ...(section === "targets" ? { targets: data.targets.length } : {}),
-      ...(section === "skus" ? { skus: data.skuPerformance.length } : {}),
-      ...(section === "search_terms" ? { searchTerms: data.searchTerms.length } : {}),
-    });
+  const exactSearchTermsCount = (data as any).dataHealth?.searchTermRows || (data as any).searchTermSummary?.totalTerms || (data as any).detailCounts?.searchTerms || data.searchTerms.length;
+  const detailCounts = (data as any).detailCounts
+    ? { ...(data as any).detailCounts, searchTerms: exactSearchTermsCount }
+    : (section === "overview"
+      ? {
+        campaigns: data.campaignPerformance.length,
+        targets: data.targets.length,
+        searchTerms: exactSearchTermsCount,
+        skus: data.skuPerformance.length,
+      }
+      : {
+        ...(section === "campaigns" ? { campaigns: data.campaignPerformance.length } : {}),
+        ...(section === "ad_groups" ? { adGroups: data.adGroups.length } : {}),
+        ...(section === "targets" ? { targets: data.targets.length } : {}),
+        ...(section === "skus" ? { skus: data.skuPerformance.length } : {}),
+        ...(section === "search_terms" ? { searchTerms: exactSearchTermsCount } : {}),
+      });
   if (section === "overview") {
     return {
       ...data,
@@ -197,9 +200,24 @@ export async function GET(request: Request) {
       cacheMetrics(cacheKey, data);
     }
 
+    const etag = `W/"${snapshotId}:${section}:${days}:${storeName}:${sku}:${campScope}"`;
+    const ifNoneMatch = request.headers.get("if-none-match");
+
+    if (!refresh && ifNoneMatch && ifNoneMatch === etag) {
+      return new Response(null, {
+        status: 304,
+        headers: {
+          "ETag": etag,
+          "Cache-Control": "private, max-age=60, stale-while-revalidate=300",
+          "X-PPC-Cache": "HIT_HTTP_304",
+        },
+      });
+    }
+
     return Response.json(data, {
       headers: {
-        "Cache-Control": "private, no-store",
+        "ETag": etag,
+        "Cache-Control": refresh ? "private, no-store" : "private, max-age=60, stale-while-revalidate=300",
         "X-PPC-Cache": cacheStatus,
       },
     });

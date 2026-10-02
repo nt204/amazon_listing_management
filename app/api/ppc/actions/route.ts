@@ -80,11 +80,39 @@ export async function DELETE(request: Request) {
     const storeId = isAllStores ? "ALL" : await resolveStoreId(storeTarget);
 
     let bodyActionIds: string[] | undefined;
+    let isAllFiltered = false;
+    let excludedIds: string[] | undefined;
+    let skuFilter: string | undefined;
+
     try {
       const body = await request.json();
-      if (Array.isArray(body?.actionIds)) bodyActionIds = body.actionIds;
-      else if (body?.actionId) bodyActionIds = [body.actionId];
+      if (body?.mode === "ALL_FILTERED") {
+        isAllFiltered = true;
+        if (Array.isArray(body?.excludedIds)) {
+          excludedIds = body.excludedIds.map((s: any) => String(s).trim()).filter(Boolean);
+        }
+        skuFilter = body?.filters?.sku || body?.sku;
+      } else if (Array.isArray(body?.actionIds)) {
+        bodyActionIds = body.actionIds;
+      } else if (Array.isArray(body?.selectedIds)) {
+        bodyActionIds = body.selectedIds;
+      } else if (body?.actionId) {
+        bodyActionIds = [body.actionId];
+      }
     } catch { }
+
+    if (isAllFiltered) {
+      const count = await removeActionsFromQueue(storeId, [], {
+        allFiltered: true,
+        excludedActionIds: excludedIds,
+        skuFilter: skuFilter && skuFilter !== "ALL" ? skuFilter : undefined,
+      });
+      return Response.json({
+        success: true,
+        count,
+        message: `Đã xóa ${count} hành động phù hợp bộ lọc khỏi Action Queue.`,
+      });
+    }
 
     const queryActionId = searchParams.get("actionId") || searchParams.get("id");
     const queryActionIds = searchParams.get("actionIds")

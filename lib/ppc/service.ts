@@ -588,7 +588,7 @@ export async function getPpcAnalyticsData(
   if (isDetailSection) {
     const campaignPerformance = section === "campaigns" ? campaignPerformanceFromFacts(performanceRows, targetAcos) : [];
     const adGroups = section === "ad_groups" ? adGroupPerformanceFromFacts(performanceRows) : [];
-    const targets = section === "targets" ? targetPerformanceFromFacts(performanceRows).slice(0, 20000) : [];
+    const targets = section === "targets" ? targetPerformanceFromFacts(performanceRows) : [];
     const allSkuPerformance = section === "skus" ? skuPerformanceFromFacts(performanceRows, targetAcos) : [];
     const skuPerformance = section === "skus"
       ? (sku === "ALL" ? allSkuPerformance : allSkuPerformance.filter((row) => row.sku.toLowerCase() === sku.toLowerCase()))
@@ -691,7 +691,7 @@ export async function getPpcAnalyticsData(
     : allSkuPerformance.filter((row) => row.sku.toLowerCase() === sku.toLowerCase());
   const campaignPerformance = campaignPerformanceFromFacts(performanceRows, targetAcos);
   const adGroups = adGroupPerformanceFromFacts(performanceRows);
-  const targets = targetPerformanceFromFacts(performanceRows).slice(0, 20000);
+  const targets = targetPerformanceFromFacts(performanceRows);
   const targetRows = performanceRows.filter((row) => row.grain === "TARGET" && !row.isNegative);
   const matchTypeBreakdown = targetRows.length ? groupPpcByMatchType(targetRows) : [];
   const targetTypeBreakdown = targetRows.length ? groupPpcByTargetType(targetRows) : [];

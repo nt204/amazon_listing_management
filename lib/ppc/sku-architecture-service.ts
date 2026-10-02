@@ -1710,15 +1710,38 @@ export async function getActionQueue(storeId?: string | null, approvedBy?: strin
   }));
 }
 
-export async function removeActionsFromQueue(storeId?: string | null, actionIds: string[] = []): Promise<number> {
-  if (!actionIds || actionIds.length === 0) return 0;
+export async function removeActionsFromQueue(
+  storeId?: string | null,
+  actionIds: string[] = [],
+  options?: {
+    excludedActionIds?: string[];
+    allFiltered?: boolean;
+    skuFilter?: string;
+  }
+): Promise<number> {
   const sql = await getDatabaseClient();
   const isAll = !storeId || storeId === "ALL";
+  const excludedIds = options?.excludedActionIds?.map(String).filter(Boolean) || [];
+
+  if (options?.allFiltered) {
+    const res = await sql`
+      UPDATE ppc_actions
+      SET status = 'IGNORED', updated_at = NOW()
+      WHERE status IN ('APPROVED', 'QUEUED')
+        ${isAll ? sql`` : sql`AND store_id = ${storeId}`}
+        ${options.skuFilter && options.skuFilter !== "ALL" ? sql`AND sku = ${options.skuFilter}` : sql``}
+        ${excludedIds.length > 0 ? sql`AND id != ALL(${excludedIds}::uuid[])` : sql``}
+    `;
+    return res.count;
+  }
+
+  if (!actionIds || actionIds.length === 0) return 0;
   const res = await sql`
     UPDATE ppc_actions
     SET status = 'IGNORED', updated_at = NOW()
     WHERE id = ANY(${actionIds})
       ${isAll ? sql`` : sql`AND store_id = ${storeId}`}
+      ${excludedIds.length > 0 ? sql`AND id != ALL(${excludedIds}::uuid[])` : sql``}
   `;
   return res.count;
 }
@@ -1735,6 +1758,10 @@ export async function exportBulkFromQueue(
   storeId: string,
   selectedActionIds?: string[],
   createdBy?: string | null,
+  options?: {
+    excludedActionIds?: string[];
+    statusList?: string[];
+  },
 ): Promise<{
   fileName: string;
   buffer: Buffer;
@@ -1742,6 +1769,7 @@ export async function exportBulkFromQueue(
   summary: { updateBid: number; pause: number; budget: number };
 }> {
   const sql = await getDatabaseClient();
+  const excludedIds = options?.excludedActionIds?.map(String).filter(Boolean) || [];
 
   let actions: any[];
   if (selectedActionIds && selectedActionIds.length > 0) {
@@ -1750,12 +1778,14 @@ export async function exportBulkFromQueue(
       WHERE store_id = ${storeId}
         AND id = ANY(${selectedActionIds})
         AND status IN ('APPROVED', 'QUEUED')
+        ${excludedIds.length > 0 ? sql`AND id != ALL(${excludedIds}::uuid[])` : sql``}
     `;
   } else {
     actions = await sql<any[]>`
       SELECT * FROM ppc_actions
       WHERE store_id = ${storeId}
         AND status IN ('APPROVED', 'QUEUED')
+        ${excludedIds.length > 0 ? sql`AND id != ALL(${excludedIds}::uuid[])` : sql``}
     `;
   }
 

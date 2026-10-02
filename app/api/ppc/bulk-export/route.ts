@@ -53,7 +53,12 @@ export async function POST(request: Request) {
 
     const body = await request.json().catch(() => ({}));
     const { searchParams } = new URL(request.url);
-    const actionIds = Array.isArray(body?.actionIds) ? body.actionIds : undefined;
+    const isAllFiltered = body?.mode === "ALL_FILTERED";
+    const excludedActionIds = isAllFiltered && Array.isArray(body?.excludedIds) ? body.excludedIds : undefined;
+    const actionIds = !isAllFiltered
+      ? (Array.isArray(body?.actionIds) ? body.actionIds : (Array.isArray(body?.selectedIds) ? body.selectedIds : undefined))
+      : undefined;
+
     const sql = await getDatabaseClient();
 
     let finalStoreId: string;
@@ -76,7 +81,7 @@ export async function POST(request: Request) {
       }
       finalStoreId = actionStoreRows[0].store_id;
     } else {
-      const storeTarget = (body?.storeId || body?.storeName || searchParams.get("storeId") || searchParams.get("storeName") || "").trim();
+      const storeTarget = (body?.storeId || body?.storeName || body?.filters?.storeId || body?.filters?.storeName || searchParams.get("storeId") || searchParams.get("storeName") || "").trim();
       if (!storeTarget || storeTarget === "ALL") {
         throw new ApiError("Vui lòng chọn 1 Store cụ thể trước khi xuất file Bulk từ hàng đợi.", 400);
       }
@@ -90,7 +95,12 @@ export async function POST(request: Request) {
       finalStoreId = storeRows[0].id;
     }
 
-    const result = await exportBulkFromQueue(finalStoreId, actionIds, actor.displayName || actor.userId);
+    const result = await exportBulkFromQueue(
+      finalStoreId,
+      actionIds,
+      actor.displayName || actor.userId,
+      excludedActionIds && excludedActionIds.length > 0 ? { excludedActionIds } : undefined
+    );
 
     return new Response(new Uint8Array(result.buffer), {
       status: 200,

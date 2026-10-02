@@ -271,22 +271,100 @@ export function PpcStOptimizationView({
     return list;
   }, [allCandidates, campaignFilter, searchQuery, sortField, sortDir]);
 
-  // 5. Pagination
-  const totalPages = Math.max(1, Math.ceil(filteredCandidates.length / pageSize));
+  // Server-side state for 100% DB coverage
+  const [serverCandidates, setServerCandidates] = useState<StOptimizationCandidate[] | null>(null);
+  const [serverTotal, setServerTotal] = useState<number | null>(null);
+  const [serverTotalPages, setServerTotalPages] = useState<number>(1);
+  const [serverSummary, setServerSummary] = useState<{
+    candidateCount: number;
+    totalWastedSpend: number;
+    totalWastedClicks: number;
+    totalImpressions: number;
+    avgCpc: number;
+  } | null>(null);
+  const [serverLoading, setServerLoading] = useState<boolean>(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setServerLoading(true);
+      try {
+        const params = new URLSearchParams({
+          storeName: selectedStore,
+          sku: selectedSku,
+          days: String(selectedDays),
+          clickThreshold: String(clickThreshold),
+          clickOperator,
+          hideAlreadyNegated: String(hideNegated),
+          page: String(page),
+          pageSize: String(pageSize),
+          search: searchQuery.trim(),
+          sortBy: sortField,
+          sortDir,
+        });
+        const res = await fetch(`/api/ppc/search-terms/optimization?${params}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error("Lỗi tải đề xuất ST Optimization từ server");
+        const json = await res.json();
+        if (json.success && json.data) {
+          setServerCandidates(json.data.items || []);
+          setServerTotal(json.data.total || 0);
+          setServerTotalPages(json.data.totalPages || 1);
+          setServerSummary(json.data.summary || null);
+        }
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        console.error("ST Optimization server fetch error:", err);
+      } finally {
+        if (!controller.signal.aborted) setServerLoading(false);
+      }
+    }, searchQuery ? 300 : 0);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [
+    selectedStore,
+    selectedSku,
+    selectedDays,
+    clickThreshold,
+    clickOperator,
+    hideNegated,
+    page,
+    pageSize,
+    searchQuery,
+    sortField,
+    sortDir,
+  ]);
+
+  // 5. Effective Candidates & Pagination (Prioritizes server result with 100% DB coverage)
+  const totalPages = serverTotal !== null ? serverTotalPages : Math.max(1, Math.ceil(filteredCandidates.length / pageSize));
   const paginatedCandidates = useMemo(() => {
+    if (serverCandidates !== null) return serverCandidates;
     const start = (page - 1) * pageSize;
     return filteredCandidates.slice(start, start + pageSize);
-  }, [filteredCandidates, page, pageSize]);
+  }, [serverCandidates, filteredCandidates, page, pageSize]);
 
-  // Summary Metrics
+  // Summary Metrics (Prioritizes server SQL aggregation across entire DB)
   const summaryMetrics = useMemo(() => {
+    if (serverSummary) {
+      return {
+        totalTerms: serverSummary.candidateCount,
+        totalClicks: serverSummary.totalWastedClicks,
+        totalSpend: serverSummary.totalWastedSpend,
+        affectedCampaigns: 0,
+      };
+    }
     const totalTerms = filteredCandidates.length;
     const totalClicks = filteredCandidates.reduce((s, c) => s + c.clicks, 0);
     const totalSpend = filteredCandidates.reduce((s, c) => s + c.spend, 0);
     const affectedCampaigns = new Set(filteredCandidates.map((c) => c.campaignName)).size;
 
     return { totalTerms, totalClicks, totalSpend, affectedCampaigns };
-  }, [filteredCandidates]);
+  }, [serverSummary, filteredCandidates]);
 
   // Checkbox handlers
   const handleToggleSelectAll = () => {
@@ -892,7 +970,7 @@ export function PpcStOptimizationView({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {loading ? (
+            {loading || serverLoading ? (
               <tr>
                 <td colSpan={9} className="p-8 text-center text-slate-400">
                   <div className="flex flex-col items-center justify-center gap-2">

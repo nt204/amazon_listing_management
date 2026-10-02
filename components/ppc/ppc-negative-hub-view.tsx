@@ -17,6 +17,8 @@ import {
 import { PpcPagination } from "./ppc-pagination";
 import { PpcCopyButton } from "./ppc-copy-button";
 import { extractSkuFromText } from "@/lib/ppc/sku-extractor";
+import { useBulkSelection } from "@/hooks/use-bulk-selection";
+import { PpcBulkSelectionBanner } from "./ppc-bulk-selection-banner";
 
 export interface NegativeRegistryItem {
   id: string;
@@ -67,9 +69,6 @@ export function PpcNegativeHubView({
   const [pageSize, setPageSize] = useState(50);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-  // Selection state for bulk actions
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-
   // Delete modal state
   const [deleteTarget, setDeleteTarget] = useState<NegativeRegistryItem | null>(null);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
@@ -102,36 +101,33 @@ export function PpcNegativeHubView({
     return filteredItems.slice(start, start + pageSize);
   }, [filteredItems, page, pageSize]);
 
-  // Checkbox helpers
-  const isAllPageSelected = useMemo(() => {
-    if (paginatedItems.length === 0) return false;
-    return paginatedItems.every((item) => selectedIds.has(item.id));
-  }, [paginatedItems, selectedIds]);
+  // Current filters snapshot for Enterprise Selection
+  const currentFilters = useMemo(
+    () => ({
+      storeName: selectedStore,
+      adType: adTypeFilter,
+      search: searchQuery.trim(),
+    }),
+    [selectedStore, adTypeFilter, searchQuery]
+  );
 
-  const isSomePageSelected = useMemo(() => {
-    if (paginatedItems.length === 0) return false;
-    return paginatedItems.some((item) => selectedIds.has(item.id)) && !isAllPageSelected;
-  }, [paginatedItems, selectedIds, isAllPageSelected]);
-
-  const handleToggleSelectAllPage = () => {
-    const next = new Set(selectedIds);
-    if (isAllPageSelected) {
-      paginatedItems.forEach((item) => next.delete(item.id));
-    } else {
-      paginatedItems.forEach((item) => next.add(item.id));
-    }
-    setSelectedIds(next);
-  };
-
-  const handleToggleSelectItem = (id: string) => {
-    const next = new Set(selectedIds);
-    if (next.has(id)) {
-      next.delete(id);
-    } else {
-      next.add(id);
-    }
-    setSelectedIds(next);
-  };
+  // Enterprise Bulk Selection Hook
+  const {
+    mode: bulkMode,
+    isSelected: isItemSelected,
+    isPageAllSelected,
+    isPageIndeterminate,
+    totalSelectedCount,
+    toggleSelectPage,
+    toggleItem,
+    selectAllFiltered,
+    clearSelection,
+    getPayload,
+  } = useBulkSelection({
+    currentPageItems: paginatedItems,
+    totalFilteredCount: filteredItems.length,
+    currentFilters,
+  });
 
   const handleCopy = async (text: string, id: string) => {
     try {
@@ -156,11 +152,7 @@ export function PpcNegativeHubView({
         throw new Error(json.error || json.message || "Lỗi khi xóa từ khóa.");
       }
       notify(`Đã xóa "${deleteTarget.keyword_text}" khỏi Negative Hub.`, "success");
-      setSelectedIds((prev) => {
-        const next = new Set(prev);
-        next.delete(deleteTarget.id);
-        return next;
-      });
+      clearSelection();
       setDeleteTarget(null);
       onRefresh();
     } catch (err: any) {
@@ -171,20 +163,21 @@ export function PpcNegativeHubView({
   };
 
   const handleBulkDelete = async () => {
-    if (selectedIds.size === 0) return;
+    if (totalSelectedCount === 0) return;
     setIsDeleting(true);
     try {
+      const payload = getPayload();
       const res = await fetch("/api/ppc/negative-keywords", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids: Array.from(selectedIds) }),
+        body: JSON.stringify(payload),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.success) {
         throw new Error(json.error || json.message || "Lỗi khi xóa từ khóa.");
       }
-      notify(`Đã xóa thành công ${selectedIds.size} từ khóa khỏi Negative Hub.`, "success");
-      setSelectedIds(new Set());
+      notify(json.message || `Đã xóa thành công ${totalSelectedCount.toLocaleString("vi-VN")} từ khóa khỏi Negative Hub.`, "success");
+      clearSelection();
       setIsBulkDeleting(false);
       onRefresh();
     } catch (err: any) {
@@ -315,18 +308,18 @@ export function PpcNegativeHubView({
       </div>
 
       {/* Bulk Selection Bar */}
-      {selectedIds.size > 0 && (
+      {totalSelectedCount > 0 && (
         <div className="flex items-center justify-between p-3 px-4 rounded-xl bg-linear-to-r from-rose-50 to-indigo-50 border border-rose-200 text-slate-800 animate-in fade-in duration-150">
           <div className="flex items-center gap-2 text-xs font-bold">
             <CheckSquare size={18} weight="fill" className="text-indigo-600 shrink-0" />
             <span>
-              Đã chọn <strong className="text-indigo-700 font-mono text-sm px-1.5 py-0.5 rounded bg-indigo-100/70">{selectedIds.size}</strong> từ khóa trong danh sách
+              Đã chọn <strong className="text-indigo-700 font-mono text-sm px-1.5 py-0.5 rounded bg-indigo-100/70">{totalSelectedCount.toLocaleString("vi-VN")}</strong> từ khóa {bulkMode === "ALL_FILTERED" ? "(toàn bộ bộ lọc)" : "trong danh sách"}
             </span>
           </div>
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setSelectedIds(new Set())}
+              onClick={clearSelection}
               className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-xs font-bold text-slate-700 transition cursor-pointer"
             >
               Bỏ chọn
@@ -337,7 +330,7 @@ export function PpcNegativeHubView({
               className="px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-xs cursor-pointer"
             >
               <Trash size={14} weight="bold" />
-              <span>Xóa {selectedIds.size} từ đã chọn</span>
+              <span>Xóa {totalSelectedCount.toLocaleString("vi-VN")} từ đã chọn</span>
             </button>
           </div>
         </div>
@@ -345,6 +338,18 @@ export function PpcNegativeHubView({
 
       {/* 3. Negative Keywords Table */}
       <div className="rounded-xl border border-slate-200 bg-white shadow-2xs overflow-hidden">
+        {/* Enterprise Gmail-Style Banner */}
+        <PpcBulkSelectionBanner
+          mode={bulkMode}
+          isPageAllSelected={isPageAllSelected}
+          currentPageCount={paginatedItems.length}
+          totalFilteredCount={filteredItems.length}
+          totalSelectedCount={totalSelectedCount}
+          onSelectAllFiltered={selectAllFiltered}
+          onClearSelection={clearSelection}
+          itemName="từ khóa"
+        />
+
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
@@ -352,13 +357,13 @@ export function PpcNegativeHubView({
                 <th className="py-2.5 px-3 w-10 text-center">
                   <input
                     type="checkbox"
-                    checked={isAllPageSelected}
+                    checked={isPageAllSelected}
                     ref={(el) => {
-                      if (el) el.indeterminate = isSomePageSelected;
+                      if (el) el.indeterminate = isPageIndeterminate;
                     }}
-                    onChange={handleToggleSelectAllPage}
+                    onChange={toggleSelectPage}
                     className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                    title={isAllPageSelected ? "Bỏ chọn trang này" : "Chọn tất cả trên trang này"}
+                    title={isPageAllSelected ? "Bỏ chọn trang này" : "Chọn tất cả trên trang này"}
                   />
                 </th>
                 <th className="py-2.5 px-3 w-12 text-center">STT</th>
@@ -396,7 +401,7 @@ export function PpcNegativeHubView({
                 paginatedItems.map((item, index) => {
                   const globalIdx = (page - 1) * pageSize + index + 1;
                   const isCopied = copiedKey === item.id;
-                  const isSelected = selectedIds.has(item.id);
+                  const isSelected = isItemSelected(item.id);
                   const isASIN =
                     item.keyword_text.toLowerCase().startsWith("b0") ||
                     item.keyword_text.toLowerCase().startsWith("asin=");
@@ -415,7 +420,7 @@ export function PpcNegativeHubView({
                         <input
                           type="checkbox"
                           checked={isSelected}
-                          onChange={() => handleToggleSelectItem(item.id)}
+                          onChange={() => toggleItem(item.id)}
                           className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
                         />
                       </td>
@@ -622,10 +627,10 @@ export function PpcNegativeHubView({
             <div className="p-5 space-y-3">
               <div className="flex items-center gap-2 text-rose-600 font-bold text-sm">
                 <WarningCircle size={20} weight="fill" />
-                <span>Xác nhận xóa hàng loạt ({selectedIds.size} từ khóa)</span>
+                <span>Xác nhận xóa hàng loạt ({totalSelectedCount.toLocaleString("vi-VN")} từ khóa)</span>
               </div>
               <p className="text-xs text-slate-600 leading-relaxed">
-                Bạn có chắc chắn muốn xóa <b className="font-extrabold text-rose-600">{selectedIds.size} từ khóa đã chọn</b> khỏi danh sách Negative Hub không?
+                Bạn có chắc chắn muốn xóa <b className="font-extrabold text-rose-600">{totalSelectedCount.toLocaleString("vi-VN")} từ khóa đã chọn</b> khỏi danh sách Negative Hub không?
               </p>
               <p className="text-[11px] text-slate-400 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
                 Lưu ý: Thao tác này sẽ xóa các bản ghi lưu vết trên hệ thống để những từ này có thể xuất hiện lại trong đề xuất tối ưu nếu tiếp tục phát sinh click không chuyển đổi.
@@ -647,7 +652,7 @@ export function PpcNegativeHubView({
                 className="px-4 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
               >
                 {isDeleting ? <CircleNotch size={14} className="animate-spin" /> : <Trash size={14} />}
-                <span>Xác Nhận Xóa {selectedIds.size} Từ Khóa</span>
+                <span>Xác Nhận Xóa {totalSelectedCount.toLocaleString("vi-VN")} Từ Khóa</span>
               </button>
             </div>
           </div>

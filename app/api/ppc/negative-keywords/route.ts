@@ -95,6 +95,10 @@ export async function DELETE(request: Request) {
 
     // Support single id or ids from query or body
     let ids: string[] = [];
+    let isAllFiltered = false;
+    let filters: { storeId?: string; storeName?: string; adType?: string; search?: string } = {};
+    let excludedIds: string[] = [];
+
     const queryId = searchParams.get("id")?.trim();
     const queryIds = searchParams.get("ids")?.trim();
 
@@ -104,18 +108,56 @@ export async function DELETE(request: Request) {
       ids = [queryId];
     } else {
       const body = await request.json().catch(() => null);
-      if (body?.ids && Array.isArray(body.ids)) {
+      if (body?.mode === "ALL_FILTERED") {
+        isAllFiltered = true;
+        filters = body.filters || {};
+        if (Array.isArray(body.excludedIds)) {
+          excludedIds = body.excludedIds.map((s: any) => String(s).trim()).filter(Boolean);
+        }
+      } else if (body?.selectedIds && Array.isArray(body.selectedIds)) {
+        ids = body.selectedIds.map((s: any) => String(s).trim()).filter(Boolean);
+      } else if (body?.ids && Array.isArray(body.ids)) {
         ids = body.ids.map((s: any) => String(s).trim()).filter(Boolean);
       } else if (body?.id) {
         ids = [String(body.id).trim()];
       }
     }
 
+    const sql = await getDatabaseClient();
+
+    if (isAllFiltered) {
+      const storeId = filters.storeId?.trim() || "";
+      const storeName = filters.storeName?.trim() || "";
+      const adType = filters.adType?.trim().toUpperCase() || "";
+      const search = filters.search?.trim().toLowerCase() || "";
+
+      const result = await sql`
+        DELETE FROM ppc_negative_registry
+        WHERE id IN (
+          SELECT nr.id
+          FROM ppc_negative_registry nr
+          LEFT JOIN ppc_stores s ON s.id = nr.store_id
+          WHERE nr.team_id = ${actor.teamId}
+            ${storeId && storeId !== "ALL" ? sql`AND nr.store_id = ${storeId}` : sql``}
+            ${!storeId && storeName && storeName !== "ALL" ? sql`AND LOWER(s.name) = LOWER(${storeName})` : sql``}
+            ${adType && adType !== "ALL" ? sql`AND nr.ad_type = ${adType}` : sql``}
+            ${search ? sql`AND (LOWER(nr.keyword_text) LIKE ${"%" + search + "%"} OR LOWER(nr.campaign_name) LIKE ${"%" + search + "%"})` : sql``}
+            ${excludedIds.length > 0 ? sql`AND nr.id != ALL(${excludedIds}::uuid[])` : sql``}
+        ) AND team_id = ${actor.teamId}
+        RETURNING id
+      `;
+
+      return Response.json({
+        success: true,
+        message: `Đã xóa ${result.length} từ khóa phù hợp bộ lọc khỏi Negative Hub.`,
+        deletedCount: result.length,
+      });
+    }
+
     if (ids.length === 0) {
       throw new ApiError("Vui lòng cung cấp ít nhất một ID cần xóa.", 400);
     }
 
-    const sql = await getDatabaseClient();
     const result = await sql`
       DELETE FROM ppc_negative_registry
       WHERE id = ANY(${ids}::uuid[]) AND team_id = ${actor.teamId}

@@ -6,6 +6,7 @@ import { syncPpcReportsFromR2 } from "../lib/ppc/service";
 
 const workerId = process.env.PPC_INGESTION_WORKER_ID || `${os.hostname()}:${process.pid}`;
 const pollMs = Math.max(1_000, Number(process.env.PPC_INGESTION_POLL_SECONDS || 5) * 1_000);
+const recycleAfterJob = process.env.PPC_INGESTION_RECYCLE_AFTER_JOB !== "false";
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function main() {
@@ -71,6 +72,16 @@ async function main() {
         } catch {
           // ignore
         }
+      }
+      // A large ingest can leave several GB of committed V8 pages attached to
+      // this long-lived process even after GC. Recycle only after the current
+      // job attempt has fully settled, never while parsing or inside a DB
+      // transaction. PM2 then starts a clean worker for the next queued job.
+      if (recycleAfterJob) {
+        const rssMb = Math.round(process.memoryUsage().rss / (1024 * 1024));
+        console.log(`[PPC Ingestion Worker] Job đã kết thúc; recycle process để trả RAM (RSS: ${rssMb} MB).`);
+        await sleep(100);
+        process.exit(0);
       }
     }
   }

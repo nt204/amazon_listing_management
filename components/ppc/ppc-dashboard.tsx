@@ -796,6 +796,78 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     targetRefreshKey,
   ]);
 
+  // Server-side paginated fetch for Search Terms (50 rows/page, accurate DB count)
+  const [serverSearchTerms, setServerSearchTerms] = useState<PpcSearchTermRow[] | null>(null);
+  const [serverSearchTermTotal, setServerSearchTermTotal] = useState<number | null>(null);
+  const [serverSearchTermTotalPages, setServerSearchTermTotalPages] = useState<number>(1);
+  const [serverSearchTermSummary, setServerSearchTermSummary] = useState<any>(null);
+  const [loadingSearchTermsServer, setLoadingSearchTermsServer] = useState<boolean>(false);
+  const lastLoadedSearchTermsParamsRef = useRef<string>("");
+
+  useEffect(() => {
+    if (activeTab !== "search_terms") return;
+
+    const currentParamsKey = `${selectedStore}:${selectedSku}:${selectedDays}:${termPage}:${termPageSize}:${searchTermQuery}:${termSortField}:${termSortDir}:${searchTermCampaignFilter}`;
+
+    if (lastLoadedSearchTermsParamsRef.current === currentParamsKey && serverSearchTerms !== null) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setLoadingSearchTermsServer(true);
+      try {
+        const params = new URLSearchParams({
+          storeName: selectedStore,
+          sku: selectedSku,
+          days: String(selectedDays),
+          page: String(termPage),
+          pageSize: String(termPageSize),
+          search: searchTermQuery.trim(),
+          sortBy: termSortField,
+          sortDir: termSortDir,
+          ...(searchTermCampaignFilter !== "ALL" ? { campaignName: searchTermCampaignFilter } : {}),
+        });
+        const res = await fetch(`/api/ppc/search-terms?${params}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error(`Không thể tải Search Terms (HTTP ${res.status})`);
+        const json = await res.json();
+        if (json.success && json.data) {
+          lastLoadedSearchTermsParamsRef.current = currentParamsKey;
+          setServerSearchTerms(json.data.items || []);
+          const exactTotal = Number(json.data.total || 0);
+          setServerSearchTermTotal(exactTotal);
+          setDetailCounts((current) => current ? { ...current, searchTerms: exactTotal } : current);
+          setServerSearchTermTotalPages(Math.max(1, Number(json.data.totalPages || 1)));
+          setServerSearchTermSummary(json.data.summary);
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        notify(error instanceof Error ? error.message : "Không thể tải Search Terms", "error");
+      } finally {
+        if (!controller.signal.aborted) setLoadingSearchTermsServer(false);
+      }
+    }, searchTermQuery ? 300 : 0);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [
+    activeTab,
+    selectedStore,
+    selectedSku,
+    selectedDays,
+    termPage,
+    termPageSize,
+    searchTermQuery,
+    termSortField,
+    termSortDir,
+    searchTermCampaignFilter,
+  ]);
+
   // On-demand child search terms loader for expanded Target row
   const handleToggleExpandTarget = useCallback(async (target: PpcTargetPerformance, targetKey: string) => {
     if (expandedTargetKey === targetKey) {
@@ -4159,7 +4231,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
 
               {/* Results count indicator */}
               <div className="ml-auto text-xs text-slate-500 font-medium">
-                Khớp <span className="font-extrabold text-slate-900">{filteredSortedSearchTerms.length.toLocaleString("vi-VN")}</span> / {aggregatedSearchTerms.length.toLocaleString("vi-VN")} từ khóa
+                Khớp <span className="font-extrabold text-slate-900">{(serverSearchTermTotal ?? filteredSortedSearchTerms.length).toLocaleString("vi-VN")}</span> / {(serverSearchTermTotal ?? detailCounts?.searchTerms ?? aggregatedSearchTerms.length).toLocaleString("vi-VN")} từ khóa
               </div>
             </div>
           </div>
@@ -4172,7 +4244,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   <th className="p-3 w-8 text-center">
                     <input
                       type="checkbox"
-                      checked={paginatedSearchTerms.length > 0 && paginatedSearchTerms.every((term) => selectedTerms.has(searchTermKey(term)))}
+                      checked={(serverSearchTerms || paginatedSearchTerms).length > 0 && (serverSearchTerms || paginatedSearchTerms).every((term) => selectedTerms.has(searchTermKey(term)))}
                       onChange={toggleSelectAllVisible}
                       className="rounded border-slate-300 accent-indigo-600"
                     />
@@ -4250,23 +4322,23 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
-                {(!searchTermsReady || loadingSection === "search_terms" || loading || isStoreSwitching) ? (
+                {(loadingSearchTermsServer || (!serverSearchTerms && (!searchTermsReady || loadingSection === "search_terms" || loading || isStoreSwitching))) ? (
                   <tr>
                     <td colSpan={13} className="p-12 text-center text-xs text-slate-500">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <CircleNotch size={24} className="animate-spin text-indigo-600" />
-                        <span className="font-bold text-slate-700">Đang tải dữ liệu Search Terms cho {selectedStore === "ALL" ? "tất cả store" : selectedStore}...</span>
+                        <span className="font-bold text-slate-700">Đang tải dữ liệu Search Terms từ máy chủ...</span>
                       </div>
                     </td>
                   </tr>
-                ) : paginatedSearchTerms.length === 0 ? (
+                ) : (serverSearchTerms || paginatedSearchTerms).length === 0 ? (
                   <tr>
                     <td colSpan={13} className="p-8 text-center text-slate-400 font-sans font-medium">
                       Không tìm thấy từ khóa nào phù hợp bộ lọc.
                     </td>
                   </tr>
                 ) : (
-                  paginatedSearchTerms.map((t, idx) => {
+                  (serverSearchTerms || paginatedSearchTerms).map((t, idx) => {
                     const isSelected = selectedTerms.has(searchTermKey(t));
                     const rowSku = extractSkuFromText(t.campaignName)
                       || extractSkuFromText(t.adGroupName);
@@ -4341,9 +4413,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
           {/* Pagination Controls */}
           <PpcPagination
             currentPage={termPage}
-            totalPages={totalTermPages}
+            totalPages={serverSearchTermTotal !== null ? serverSearchTermTotalPages : totalTermPages}
             pageSize={termPageSize}
-            totalItems={filteredSortedSearchTerms.length}
+            totalItems={serverSearchTermTotal ?? filteredSortedSearchTerms.length}
             pageSizeOptions={[15, 25, 50, 100]}
             itemName="từ khóa tìm kiếm"
             onPageChange={setTermPage}
