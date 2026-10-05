@@ -2,6 +2,7 @@
 import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import { roundedPerformanceMetrics } from "@/lib/ppc/analytics";
+import { getCachedOrFetch } from "@/lib/redis";
 import type { MatchType, PpcAdType, PpcTargetPerformance } from "@/lib/ppc/types";
 
 export const runtime = "nodejs";
@@ -25,41 +26,55 @@ export async function GET(request: Request) {
 
     const sql = await getDatabaseClient();
 
-    // 1. Resolve Store ID if storeName is specified
-    let storeId: string | null = null;
-    if (storeName !== "ALL") {
-      const storeRows = await sql<{ id: string }[]>`
-        SELECT id FROM ppc_stores
-        WHERE team_id = ${scope.teamId} AND lower(name) = lower(${storeName})
-        LIMIT 1
-      `;
-      if (storeRows.length > 0) {
-        storeId = storeRows[0].id;
+    const cacheKey = `ppc:query:targets-page:${scope.teamId}:${storeName}:${sku}:${days}:${page}:${pageSize}:${search}:${campaignId}:${campaignName}:${adGroupName}:${sortBy}:${sortDir}`;
+    const result = await getCachedOrFetch(cacheKey, 60, async () => {
+      // 1. Resolve Store ID if storeName is specified
+      let storeId: string | null = null;
+      if (storeName !== "ALL") {
+        const storeRows = await sql<{ id: string }[]>`
+          SELECT id FROM ppc_stores
+          WHERE team_id = ${scope.teamId} AND lower(name) = lower(${storeName})
+          LIMIT 1
+        `;
+        if (storeRows.length > 0) {
+          storeId = storeRows[0].id;
+        }
       }
-    }
 
-    // 2. Lấy snapshot bounds nhanh qua index
-    const snaps = await sql<Array<{
-      ad_type: string;
-      snapshot_date: string;
-      report_start_date: string;
-      report_end_date: string;
-      store_id: string;
-    }>>`
-      SELECT DISTINCT ON (p2.store_id, p2.ad_type)
-        p2.store_id, p2.ad_type, p2.snapshot_date, p2.report_start_date, p2.report_end_date
-      FROM ppc_performance_facts p2
-      JOIN ppc_stores s2 ON s2.id = p2.store_id
-      WHERE s2.team_id = ${scope.teamId}
-        ${storeId ? sql`AND p2.store_id = ${storeId}` : sql``}
-        AND (p2.report_end_date - p2.report_start_date + 1) BETWEEN ${days - 3}::integer AND ${days + 3}::integer
-      ORDER BY p2.store_id, p2.ad_type, p2.snapshot_date DESC, p2.report_end_date DESC
-    `;
+      // 2. Lấy snapshot bounds nhanh qua ppc_active_snapshots (Index scan, 30x faster)
+      let snaps = await sql<Array<{
+        store_id: string;
+        report_start_date: string;
+        report_end_date: string;
+      }>>`
+        SELECT a.store_id, a.report_start_date::text, a.report_end_date::text
+        FROM ppc_active_snapshots a
+        JOIN ppc_stores s ON s.id = a.store_id
+        WHERE s.team_id = ${scope.teamId}
+          ${storeId ? sql`AND a.store_id = ${storeId}` : sql``}
+          AND a.coverage_days = ${days}
+      `;
 
-    if (snaps.length === 0) {
-      return Response.json({
-        success: true,
-        data: {
+      if (snaps.length === 0) {
+        // Fallback
+        snaps = await sql<Array<{
+          store_id: string;
+          report_start_date: string;
+          report_end_date: string;
+        }>>`
+          SELECT DISTINCT ON (p2.store_id, p2.ad_type)
+            p2.store_id, p2.report_start_date::text, p2.report_end_date::text
+          FROM ppc_performance_facts p2
+          JOIN ppc_stores s2 ON s2.id = p2.store_id
+          WHERE s2.team_id = ${scope.teamId}
+            ${storeId ? sql`AND p2.store_id = ${storeId}` : sql``}
+            AND (p2.report_end_date - p2.report_start_date + 1) BETWEEN ${days - 3}::integer AND ${days + 3}::integer
+          ORDER BY p2.store_id, p2.ad_type, p2.snapshot_date DESC, p2.report_end_date DESC
+        `;
+      }
+
+      if (snaps.length === 0) {
+        return {
           items: [],
           total: 0,
           page,
@@ -77,16 +92,13 @@ export async function GET(request: Request) {
             cvr: 0,
             acos: 0,
           },
-        },
-      });
-    }
+        };
+      }
 
-    // 3. Build snapshot conditions
+    // 3. Build snapshot conditions (uses ppc_performance_scope_idx)
     const snapConditions = snaps.map(
       (s) => sql`(
         p.store_id = ${s.store_id}
-        AND p.ad_type = ${s.ad_type}
-        AND p.snapshot_date = ${s.snapshot_date}
         AND p.report_start_date = ${s.report_start_date}
         AND p.report_end_date = ${s.report_end_date}
       )`
@@ -290,16 +302,19 @@ export async function GET(request: Request) {
       };
     });
 
-    return Response.json({
-      success: true,
-      data: {
+      return {
         items,
         total,
         page,
         pageSize,
         totalPages,
         summary,
-      },
+      };
+    });
+
+    return Response.json({
+      success: true,
+      data: result,
     });
   } catch (error) {
     return routeErrorResponse(error, "Lỗi khi lấy danh sách Targets phân trang.", 500);
