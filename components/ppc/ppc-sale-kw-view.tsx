@@ -39,6 +39,7 @@ import {
   buildSaleKwCampaignName,
   generateSaleKwCampaignTriad,
   normalizeSaleKwDate,
+  extractSkuFromText,
   resolveSkuForSearchTerm,
 } from "@/lib/ppc/sku-extractor";
 import { PpcPagination } from "./ppc-pagination";
@@ -125,6 +126,7 @@ export function getCampaignArchitectureType(name: string): "SP04 (Auto)" | "SP03
 }
 
 interface PpcSaleKwViewProps {
+  isActive: boolean;
   searchTerms: PpcSearchTermRow[];
   selectedStore: string;
   selectedSku: string;
@@ -138,6 +140,7 @@ interface PpcSaleKwViewProps {
 }
 
 export function PpcSaleKwView({
+  isActive,
   searchTerms,
   selectedStore,
   selectedSku,
@@ -196,7 +199,7 @@ export function PpcSaleKwView({
         const key = `ppc_sale_kw_username_${id.trim().replace(/[^a-zA-Z0-9_-]/g, "_")}`;
         const saved = localStorage.getItem(key);
         if (saved && saved.trim()) return saved.trim();
-      } catch (e) {}
+      } catch (e) { }
     }
     if (actor?.displayName) {
       const raw = actor.displayName.trim();
@@ -219,7 +222,7 @@ export function PpcSaleKwView({
           setUserName(saved.trim());
           return;
         }
-      } catch (e) {}
+      } catch (e) { }
     }
     if (actor?.displayName) {
       const raw = actor.displayName.trim();
@@ -322,6 +325,7 @@ export function PpcSaleKwView({
     message: string;
   } | null>(null);
   const [autoUploadError, setAutoUploadError] = useState<string | null>(null);
+  const [autoUploadTargetItems, setAutoUploadTargetItems] = useState<SaleKwCandidate[] | null>(null);
   const [liveUploadStatus, setLiveUploadStatus] = useState<{
     status: string;
     stage: string;
@@ -330,6 +334,7 @@ export function PpcSaleKwView({
     resultSummary?: string;
     errorMessage?: string;
   } | null>(null);
+  const pendingAutoUploadCandidatesRef = useRef<SaleKwCandidate[]>([]);
 
   // Fetch registry
   const fetchRegistry = useCallback(async () => {
@@ -374,9 +379,10 @@ export function PpcSaleKwView({
   }, [selectedStore]);
 
   useEffect(() => {
+    if (!isActive) return;
     void fetchRegistry();
     return () => registryListRequestRef.current?.controller.abort();
-  }, [fetchRegistry]);
+  }, [fetchRegistry, isActive]);
 
   // Aggregate search terms by (SKU, customerSearchTerm)
   // Bỏ qua ASIN ("chỉ lấy keyword thôi, asin bỏ qua")
@@ -465,6 +471,10 @@ export function PpcSaleKwView({
 
   useEffect(() => {
     registryLookupRequestRef.current?.controller.abort();
+    if (!isActive) {
+      setLoadingRegistryLookup(false);
+      return;
+    }
     setLaunchedLookupSet(new Set());
     setRegistryLookupError(null);
 
@@ -523,16 +533,17 @@ export function PpcSaleKwView({
 
     void loadLookup();
     return () => controller.abort();
-  }, [candidateBase, loading, registryLookupRetry, selectedStore]);
+  }, [candidateBase, isActive, loading, registryLookupRetry, selectedStore]);
 
   // Server-side candidates state (scans 100% of entire DB)
   const [serverCandidates, setServerCandidates] = useState<SaleKwCandidate[] | null>(null);
   const [serverTotal, setServerTotal] = useState<number | null>(null);
   const [serverSummary, setServerSummary] = useState<any>(null);
   const [serverLoading, setServerLoading] = useState<boolean>(false);
+  const [serverRefreshKey, setServerRefreshKey] = useState<number>(0);
 
   useEffect(() => {
-    if (!selectedStore || selectedStore === "ALL") return;
+    if (!isActive || !selectedStore || selectedStore === "ALL") return;
     const controller = new AbortController();
     const timer = setTimeout(async () => {
       setServerLoading(true);
@@ -554,26 +565,29 @@ export function PpcSaleKwView({
         if (!res.ok) throw new Error("Không thể tải ứng viên Sale KW từ server");
         const json = await res.json();
         if (json.success && json.data) {
-          const items: SaleKwCandidate[] = (json.data.items || []).map((it: any) => ({
-            key: `${(it.sku || "UNKNOWN").toLowerCase()}|||${(it.customerSearchTerm || "").toLowerCase()}`,
-            sku: it.sku || "UNKNOWN",
-            customerSearchTerm: it.customerSearchTerm,
-            sourceCampaignNames: it.sourceCampaignNames || [],
-            sourceCampaignId: it.sourceCampaignId,
-            sourceAdGroupId: it.sourceAdGroupId,
-            sourceAdGroupName: it.sourceAdGroupName,
-            impressions: Number(it.impressions) || 0,
-            clicks: Number(it.clicks) || 0,
-            spend: Number(it.spend) || 0,
-            sales: Number(it.sales) || 0,
-            orders: Number(it.orders) || 0,
-            cpc: Number(it.cpc) || 0,
-            acos: Number(it.acos) || 0,
-            bid: bidMode === "cpc" && it.cpc > 0 ? Math.max(0.1, it.cpc) : defaultBid,
-            storeId: it.storeId,
-            storeName: it.storeName || selectedStore,
-            isAlreadyLaunched: Boolean(it.isAlreadyLaunched),
-          }));
+          const items: SaleKwCandidate[] = (json.data.items || []).map((it: any) => {
+            const cleanSku = extractSkuFromText(it.sku) || it.sku || "UNKNOWN";
+            return {
+              key: `${cleanSku.toLowerCase()}|||${(it.customerSearchTerm || "").toLowerCase()}`,
+              sku: cleanSku,
+              customerSearchTerm: it.customerSearchTerm,
+              sourceCampaignNames: it.sourceCampaignNames || [],
+              sourceCampaignId: it.sourceCampaignId,
+              sourceAdGroupId: it.sourceAdGroupId,
+              sourceAdGroupName: it.sourceAdGroupName,
+              impressions: Number(it.impressions) || 0,
+              clicks: Number(it.clicks) || 0,
+              spend: Number(it.spend) || 0,
+              sales: Number(it.sales) || 0,
+              orders: Number(it.orders) || 0,
+              cpc: Number(it.cpc) || 0,
+              acos: Number(it.acos) || 0,
+              bid: bidMode === "cpc" && it.cpc > 0 ? Math.max(0.1, it.cpc) : defaultBid,
+              storeId: it.storeId,
+              storeName: it.storeName || selectedStore,
+              isAlreadyLaunched: Boolean(it.isAlreadyLaunched),
+            };
+          });
           setServerCandidates(items);
           setServerTotal(json.data.total || 0);
           setServerSummary(json.data.summary || null);
@@ -602,25 +616,64 @@ export function PpcSaleKwView({
     searchQuery,
     defaultBid,
     bidMode,
+    serverRefreshKey,
+    isActive,
   ]);
+
+  // Set of all launched keywords from registry and immediate client actions
+  const registryLookupKeys = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of registryItems) {
+      const kw = (r.keyword_text || "").trim().toLowerCase();
+      if (kw) {
+        set.add(kw);
+        const sku = (extractSkuFromText(r.sku || "") || r.sku || "").trim().toLowerCase();
+        if (sku) {
+          set.add(`${sku}|||${kw}`);
+        }
+      }
+    }
+    return set;
+  }, [registryItems]);
+
+  // Unified candidates list ensuring isAlreadyLaunched is dynamically reactive
+  const effectiveCandidates = useMemo(() => {
+    const list = serverCandidates !== null ? serverCandidates : allCandidates;
+    return list.map((c) => {
+      const cleanSku = extractSkuFromText(c.sku) || c.sku || "";
+      const kw = (c.customerSearchTerm || "").trim().toLowerCase();
+      const skuKey = cleanSku ? `${cleanSku.toLowerCase()}|||${kw}` : null;
+      const isLaunched = Boolean(
+        c.isAlreadyLaunched ||
+        launchedLookupSet.has(c.key.toLowerCase()) ||
+        launchedLookupSet.has(kw) ||
+        (skuKey && launchedLookupSet.has(skuKey)) ||
+        registryLookupKeys.has(kw) ||
+        (skuKey && registryLookupKeys.has(skuKey))
+      );
+      return {
+        ...c,
+        sku: cleanSku || c.sku,
+        isAlreadyLaunched: isLaunched,
+      };
+    });
+  }, [serverCandidates, allCandidates, launchedLookupSet, registryLookupKeys]);
 
   // Candidates count that are already launched
   const alreadyLaunchedCount = useMemo(() => {
-    const list = serverCandidates !== null ? serverCandidates : allCandidates;
-    return list.filter((c) => c.isAlreadyLaunched).length;
-  }, [serverCandidates, allCandidates]);
+    return effectiveCandidates.filter((c) => c.isAlreadyLaunched).length;
+  }, [effectiveCandidates]);
 
   // Unique SKUs for filter dropdown
   const candidateSkus = useMemo(() => {
-    const list = serverCandidates !== null ? serverCandidates : allCandidates;
-    return Array.from(new Set(list.map((c) => c.sku))).sort();
-  }, [serverCandidates, allCandidates]);
+    return Array.from(new Set(effectiveCandidates.map((c) => c.sku))).sort();
+  }, [effectiveCandidates]);
 
   // Filtered candidates (Uses server SQL results when available)
   const filteredCandidates = useMemo(() => {
-    let list = serverCandidates !== null ? [...serverCandidates] : [...allCandidates];
+    let list = [...effectiveCandidates];
 
-    if (hideLaunched && serverCandidates === null) {
+    if (hideLaunched) {
       list = list.filter((c) => !c.isAlreadyLaunched);
     }
 
@@ -640,23 +693,24 @@ export function PpcSaleKwView({
     list.sort((a, b) => b.orders - a.orders || b.sales - a.sales);
 
     return list;
-  }, [serverCandidates, allCandidates, hideLaunched, skuFilter, searchQuery]);
+  }, [effectiveCandidates, serverCandidates, hideLaunched, skuFilter, searchQuery]);
 
   // Group filtered candidates by SKU and generate the 3 Target Campaigns (Exact, Phrase, Broad)
   const skuGroups = useMemo(() => {
     const map = new Map<string, SaleKwSkuGroup>();
 
     for (const c of filteredCandidates) {
-      if (!map.has(c.sku)) {
+      const cleanSku = extractSkuFromText(c.sku) || c.sku;
+      if (!map.has(cleanSku)) {
         const campNames = generateSaleKwCampaignTriad({
-          sku: c.sku,
+          sku: cleanSku,
           adTypeCode,
           userName: userName.trim() || "Loan",
           dateStr: customDate.trim() || formatYYYYMMDD(),
         });
 
-        map.set(c.sku, {
-          sku: c.sku,
+        map.set(cleanSku, {
+          sku: cleanSku,
           items: [],
           totalOrders: 0,
           totalSales: 0,
@@ -667,7 +721,7 @@ export function PpcSaleKwView({
           campaignNames: campNames,
         });
       }
-      const g = map.get(c.sku)!;
+      const g = map.get(cleanSku)!;
       g.items.push(c);
       g.totalOrders += Number(c.orders) || 0;
       g.totalSales += Number(c.sales) || 0;
@@ -823,9 +877,9 @@ export function PpcSaleKwView({
   }, [enabledTargetSkus, disabledMatchTypes]);
 
   // Build Campaign payload theo các match type được chọn cho từng SKU
-  const buildTriadCampaignsPayload = () => {
+  const buildTriadCampaignsPayload = (itemsToLaunch: SaleKwCandidate[] = launchableTargetItems) => {
     const skuMap = new Map<string, SaleKwCandidate[]>();
-    for (const it of launchableTargetItems) {
+    for (const it of itemsToLaunch) {
       if (!skuMap.has(it.sku)) {
         skuMap.set(it.sku, []);
       }
@@ -901,6 +955,52 @@ export function PpcSaleKwView({
     return campaigns;
   };
 
+  const fetchAllLaunchableCandidates = async (): Promise<SaleKwCandidate[]> => {
+    const params = new URLSearchParams({
+      storeName: selectedStore,
+      sku: selectedSku,
+      days: String(selectedDays),
+      orderThreshold: String(orderThreshold),
+      orderOperator,
+      hideLaunched: String(hideLaunched),
+      search: searchQuery.trim(),
+      all: "1",
+    });
+    const res = await fetch(`/api/ppc/search-terms/sale-keywords?${params}`, { cache: "no-store" });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.success || !Array.isArray(json.data?.items)) {
+      throw new Error(json.error || json.message || "Không thể tải toàn bộ ứng viên Sale KW.");
+    }
+
+    return (json.data.items as SaleKwCandidate[])
+      .map((item) => {
+        const cleanSku = extractSkuFromText(item.sku) || item.sku || "UNKNOWN";
+        const cpc = Number(item.cpc) || 0;
+        return {
+          ...item,
+          key: `${cleanSku.toLowerCase()}|||${(item.customerSearchTerm || "").toLowerCase()}`,
+          sku: cleanSku,
+          sourceCampaignNames: item.sourceCampaignNames || [],
+          impressions: Number(item.impressions) || 0,
+          clicks: Number(item.clicks) || 0,
+          spend: Number(item.spend) || 0,
+          sales: Number(item.sales) || 0,
+          orders: Number(item.orders) || 0,
+          cpc,
+          acos: Number(item.acos) || 0,
+          bid: bidMode === "cpc" && cpc > 0 ? Math.max(0.1, cpc) : defaultBid,
+          storeName: item.storeName || selectedStore,
+          isAlreadyLaunched: Boolean(item.isAlreadyLaunched),
+        };
+      })
+      .filter((candidate) => {
+        if (candidate.isAlreadyLaunched) return false;
+        if (skuFilter !== "ALL" && candidate.sku !== skuFilter) return false;
+        if (selectedKeys.size > 0 && !selectedKeys.has(candidate.key)) return false;
+        return SALE_KW_MATCH_TYPES.some((matchType) => isMatchTypeEnabled(candidate.sku, matchType));
+      });
+  };
+
   // Handle Manual Export Bulksheet
   const handleExportBulksheet = async () => {
     if (!registryLookupReady) {
@@ -914,15 +1014,22 @@ export function PpcSaleKwView({
 
     setIsExporting(true);
     try {
+      const exportItems = await fetchAllLaunchableCandidates();
+      if (exportItems.length === 0) {
+        throw new Error("Không có từ khóa hợp lệ trong phạm vi đã chọn để xuất file.");
+      }
+
       const storeObj = stores?.find((s) => s.name.toLowerCase() === selectedStore.toLowerCase());
       const activeStoreName = selectedStore !== "ALL"
         ? (storeObj?.name || selectedStore)
-        : launchableTargetItems.find((c) => c.storeName)?.storeName || launchableTargetItems[0]?.storeName || "STORE";
+        : exportItems.find((c) => c.storeName)?.storeName || exportItems[0]?.storeName || "STORE";
+      const activeStoreId = storeObj?.id || exportItems.find((c) => c.storeId)?.storeId || exportItems[0]?.storeId;
 
-      const triadCampaigns = buildTriadCampaignsPayload();
+      const triadCampaigns = buildTriadCampaignsPayload(exportItems);
 
       const payload = {
         storeName: activeStoreName,
+        storeId: activeStoreId,
         dailyBudget,
         defaultBid,
         negateInSource,
@@ -930,7 +1037,7 @@ export function PpcSaleKwView({
         dateStr: customDate,
         adTypeCode,
         campaigns: triadCampaigns,
-        items: launchableTargetItems.map((c) => ({
+        items: exportItems.map((c) => ({
           customerSearchTerm: c.customerSearchTerm,
           sku: c.sku,
           campaignName: c.sourceCampaignNames?.[0] || c.sku,
@@ -959,7 +1066,7 @@ export function PpcSaleKwView({
 
       const blob = await res.blob();
       const contentDisposition = res.headers.get("Content-Disposition") || "";
-      let filename = `Upload_${activeStoreName}_Sale_KW_${triadCampaigns.length}Camps_${launchableTargetItems.length}Terms.xlsx`;
+      let filename = `Upload_${activeStoreName}_Sale_KW_${triadCampaigns.length}Camps_${exportItems.length}Terms.xlsx`;
       const match = contentDisposition.match(/filename\*?=['"]?(?:UTF-8'')?([^'";\n]+)['"]?/i);
       if (match?.[1]) {
         filename = decodeURIComponent(match[1]);
@@ -978,16 +1085,18 @@ export function PpcSaleKwView({
       // Cập nhật ngay lập tức vào set đã lên Camp để chuyển sang Hub quản trị tức thì
       setLaunchedLookupSet((prev) => {
         const next = new Set(prev);
-        for (const it of launchableTargetItems) {
-          const keyword = it.customerSearchTerm.trim().toLowerCase();
-          if (it.sku) {
-            next.add(`${it.sku.trim().toLowerCase()}|||${keyword}`);
-          } else next.add(keyword);
+        for (const it of exportItems) {
+          const kw = it.customerSearchTerm.trim().toLowerCase();
+          next.add(kw);
+          const cleanSku = (extractSkuFromText(it.sku) || it.sku || "").trim().toLowerCase();
+          if (cleanSku) next.add(`${cleanSku}|||${kw}`);
+          if (it.key) next.add(it.key.toLowerCase());
         }
         return next;
       });
       setSelectedKeys(new Set());
       setHideLaunched(true);
+      setServerRefreshKey((k) => k + 1);
       fetchRegistry();
     } catch (err: any) {
       console.error(err);
@@ -998,7 +1107,7 @@ export function PpcSaleKwView({
   };
 
   // Open Auto Upload Modal
-  const handleOpenAutoUploadModal = () => {
+  const handleOpenAutoUploadModal = async () => {
     if (selectedStore === "ALL") {
       notify("Không thể Auto Upload khi đang chọn 'Tất cả Store'. Vui lòng chọn 1 Store cụ thể trên thanh điều hướng để đảm bảo upload chính xác vào đúng tài khoản Amazon Seller.", "error");
       return;
@@ -1007,12 +1116,19 @@ export function PpcSaleKwView({
       notify("Đang kiểm tra các từ khóa đã lên Campaign. Vui lòng chờ hoàn tất.", "error");
       return;
     }
-    if (launchableTargetItems.length === 0 || targetCampaignCount === 0) {
-      notify("Hãy chọn ít nhất một match type để Auto Upload.", "error");
+    let uploadItems: SaleKwCandidate[];
+    try {
+      uploadItems = await fetchAllLaunchableCandidates();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Không thể tải toàn bộ ứng viên Sale KW.", "error");
+      return;
+    }
+    if (uploadItems.length === 0) {
+      notify("Hãy chọn ít nhất một từ khóa và match type để Auto Upload.", "error");
       return;
     }
 
-    const conflictingItem = launchableTargetItems.find((c) => {
+    const conflictingItem = uploadItems.find((c) => {
       if (c.storeName && c.storeName !== "ALL" && c.storeName.toLowerCase() !== selectedStore.toLowerCase()) return true;
       return false;
     });
@@ -1024,6 +1140,7 @@ export function PpcSaleKwView({
     setAutoUploadError(null);
     setAutoUploadSuccessResult(null);
     setAutoUploadStep(0);
+    setAutoUploadTargetItems(uploadItems);
     setIsAutoUploadModalOpen(true);
   };
 
@@ -1037,7 +1154,8 @@ export function PpcSaleKwView({
       notify("Chưa thể xác nhận trạng thái các từ khóa đã lên Campaign.", "error");
       return;
     }
-    if (launchableTargetItems.length === 0 || targetCampaignCount === 0) {
+    const uploadItems = autoUploadTargetItems || launchableTargetItems;
+    if (uploadItems.length === 0) {
       notify("Hãy chọn ít nhất một match type để Auto Upload.", "error");
       return;
     }
@@ -1045,13 +1163,14 @@ export function PpcSaleKwView({
     setIsAutoUploading(true);
     setAutoUploadError(null);
     setAutoUploadStep(1);
+    pendingAutoUploadCandidatesRef.current = [...uploadItems];
 
     try {
       const storeObj = stores?.find((s) => s.name.toLowerCase() === selectedStore.toLowerCase());
       const activeStoreName = storeObj?.name || selectedStore;
-      const activeStoreId = storeObj?.id || launchableTargetItems.find((c) => c.storeId)?.storeId || launchableTargetItems[0]?.storeId;
+      const activeStoreId = storeObj?.id || uploadItems.find((c) => c.storeId)?.storeId || uploadItems[0]?.storeId;
 
-      const triadCampaigns = buildTriadCampaignsPayload();
+      const triadCampaigns = buildTriadCampaignsPayload(uploadItems);
 
       const payload = {
         storeName: activeStoreName,
@@ -1063,7 +1182,7 @@ export function PpcSaleKwView({
         dateStr: customDate,
         adTypeCode,
         campaigns: triadCampaigns,
-        items: launchableTargetItems.map((c) => ({
+        items: uploadItems.map((c) => ({
           customerSearchTerm: c.customerSearchTerm,
           sku: c.sku,
           campaignName: c.sourceCampaignNames?.[0] || c.sku,
@@ -1096,25 +1215,12 @@ export function PpcSaleKwView({
         jobId: json.jobId,
         fileName: json.fileName,
         campaignCount: json.campaignCount || triadCampaigns.length,
-        actionCount: json.actionCount || launchableTargetItems.length,
+        actionCount: json.actionCount || uploadItems.length,
         message: json.message || "Đã xếp hàng tác vụ Bulk Upload lên Mac mini.",
       });
 
       setAutoUploadStep(2);
-      notify("Đã xếp hàng Auto Upload thành công lên Mac mini!", "success");
-      setLaunchedLookupSet((prev) => {
-        const next = new Set(prev);
-        for (const it of launchableTargetItems) {
-          const keyword = it.customerSearchTerm.trim().toLowerCase();
-          if (it.sku) {
-            next.add(`${it.sku.trim().toLowerCase()}|||${keyword}`);
-          } else next.add(keyword);
-        }
-        return next;
-      });
-      setSelectedKeys(new Set());
-      setHideLaunched(true);
-      fetchRegistry();
+      notify("Đã xếp hàng Auto Upload lên Mac mini. Đang theo dõi tiến trình upload...", "success");
     } catch (err: any) {
       console.error("Auto upload error:", err);
       setAutoUploadError(err.message || "Lỗi khi kích hoạt Auto Upload.");
@@ -1124,9 +1230,16 @@ export function PpcSaleKwView({
     }
   };
 
+  const autoUploadItemsForModal = autoUploadTargetItems || launchableTargetItems;
+  const autoUploadSkuCount = new Set(autoUploadItemsForModal.map((item) => item.sku)).size;
+  const autoUploadCampaignCount = Array.from(new Set(autoUploadItemsForModal.map((item) => item.sku))).reduce(
+    (sum, sku) => sum + SALE_KW_MATCH_TYPES.filter((matchType) => isMatchTypeEnabled(sku, matchType)).length,
+    0,
+  );
+
   // Poll live upload status when job is submitted
   useEffect(() => {
-    if (!autoUploadSuccessResult?.jobId) return;
+    if (!isActive || !autoUploadSuccessResult?.jobId) return;
 
     let timer: NodeJS.Timeout;
     const pollStatus = async () => {
@@ -1147,7 +1260,28 @@ export function PpcSaleKwView({
 
           if (["SUCCESS", "PARTIAL_SUCCESS", "FAILED", "RESULT_TIMEOUT"].includes(l.status)) {
             if (l.status === "SUCCESS" || l.status === "PARTIAL_SUCCESS") {
+              // Auto upload THÀNH CÔNG: Lúc này mới chính thức chuyển sang mục Đã lên camp / Registry!
+              setLaunchedLookupSet((prev) => {
+                const next = new Set(prev);
+                for (const it of pendingAutoUploadCandidatesRef.current) {
+                  const kw = it.customerSearchTerm.trim().toLowerCase();
+                  next.add(kw);
+                  const cleanSku = (extractSkuFromText(it.sku) || it.sku || "").trim().toLowerCase();
+                  if (cleanSku) next.add(`${cleanSku}|||${kw}`);
+                  if (it.key) next.add(it.key.toLowerCase());
+                }
+                return next;
+              });
+              setSelectedKeys(new Set());
+              setHideLaunched(true);
+              setServerRefreshKey((k) => k + 1);
               fetchRegistry();
+              notify("Auto Upload thành công lên Amazon! Đã chuyển các từ khóa sang mục Quản trị Camp Sale KW.", "success");
+            } else {
+              // Upload XỊT (FAILED / RESULT_TIMEOUT): Vẫn ở đó, không chuyển đi!
+              setServerRefreshKey((k) => k + 1);
+              fetchRegistry();
+              notify(`Auto Upload thất bại: ${l.errorMessage || l.resultSummary || "Lỗi tải lên Amazon"}. Từ khóa vẫn được giữ lại ở danh sách đề xuất.`, "error");
             }
             return;
           }
@@ -1160,7 +1294,7 @@ export function PpcSaleKwView({
 
     pollStatus();
     return () => clearTimeout(timer);
-  }, [autoUploadSuccessResult?.jobId]);
+  }, [autoUploadSuccessResult?.jobId, isActive]);
 
   // Registry bulk delete
   const handleDeleteRegistrySelected = async () => {
@@ -1269,38 +1403,36 @@ export function PpcSaleKwView({
           <button
             type="button"
             onClick={() => setSubTab("candidates")}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer ${
-              subTab === "candidates"
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer ${subTab === "candidates"
                 ? "bg-emerald-600 text-white shadow-xs"
                 : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
-            }`}
+              }`}
           >
             <RocketLaunch size={15} weight="bold" />
             <span>Lên Camp Sale KW</span>
             <span
-              className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-                subTab === "candidates" ? "bg-emerald-700 text-white" : "bg-slate-100 text-slate-700"
-              }`}
+              className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${subTab === "candidates" ? "bg-emerald-700 text-white" : "bg-slate-100 text-slate-700"
+                }`}
             >
-              {allCandidates.filter((c) => !c.isAlreadyLaunched).length}
+              {hideLaunched
+                ? filteredCandidates.length
+                : effectiveCandidates.filter((c) => !c.isAlreadyLaunched).length}
             </span>
           </button>
 
           <button
             type="button"
             onClick={() => setSubTab("registry")}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer ${
-              subTab === "registry"
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer ${subTab === "registry"
                 ? "bg-slate-900 text-white shadow-xs"
                 : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
-            }`}
+              }`}
           >
             <ShieldCheck size={15} weight="bold" />
             <span>Quản trị Camp Sale KW (Registry)</span>
             <span
-              className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-                subTab === "registry" ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-700"
-              }`}
+              className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${subTab === "registry" ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-700"
+                }`}
             >
               {registrySummary.totalKeywords}
             </span>
@@ -1746,11 +1878,10 @@ export function PpcSaleKwView({
                           {/* Triad Campaigns Preview: Tách 3 camp Exact, Phrase, Broad */}
                           <div className="space-y-1.5 pt-1">
                             {/* Exact Camp */}
-                            <div className={`flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
-                              exactEnabled
+                            <div className={`flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${exactEnabled
                                 ? "bg-blue-50/70 border-blue-200/80"
                                 : "bg-slate-50 border-slate-200 text-slate-400"
-                            }`}>
+                              }`}>
                               <div className="flex items-center gap-2 min-w-0">
                                 <input
                                   type="checkbox"
@@ -1776,11 +1907,10 @@ export function PpcSaleKwView({
                             </div>
 
                             {/* Phrase Camp */}
-                            <div className={`flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
-                              phraseEnabled
+                            <div className={`flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${phraseEnabled
                                 ? "bg-sky-50/70 border-sky-200/80"
                                 : "bg-slate-50 border-slate-200 text-slate-400"
-                            }`}>
+                              }`}>
                               <div className="flex items-center gap-2 min-w-0">
                                 <input
                                   type="checkbox"
@@ -1806,11 +1936,10 @@ export function PpcSaleKwView({
                             </div>
 
                             {/* Broad Camp */}
-                            <div className={`flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
-                              broadEnabled
+                            <div className={`flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${broadEnabled
                                 ? "bg-emerald-50/70 border-emerald-200/80"
                                 : "bg-slate-50 border-slate-200 text-slate-400"
-                            }`}>
+                              }`}>
                               <div className="flex items-center gap-2 min-w-0">
                                 <input
                                   type="checkbox"
@@ -1874,9 +2003,8 @@ export function PpcSaleKwView({
                               return (
                                 <tr
                                   key={item.key}
-                                  className={`hover:bg-slate-50/80 transition-colors ${
-                                    isChecked ? "bg-emerald-50/30" : ""
-                                  }`}
+                                  className={`hover:bg-slate-50/80 transition-colors ${isChecked ? "bg-emerald-50/30" : ""
+                                    }`}
                                 >
                                   <td className="py-2.5 px-4">
                                     <input
@@ -1947,13 +2075,12 @@ export function PpcSaleKwView({
                                   </td>
                                   <td className="py-2.5 px-3 text-right">
                                     <span
-                                      className={`font-semibold ${
-                                        item.acos <= 25
+                                      className={`font-semibold ${item.acos <= 25
                                           ? "text-emerald-600"
                                           : item.acos <= 40
-                                          ? "text-amber-600"
-                                          : "text-rose-600"
-                                      }`}
+                                            ? "text-amber-600"
+                                            : "text-rose-600"
+                                        }`}
                                     >
                                       {item.acos.toFixed(1)}%
                                     </span>
@@ -2195,13 +2322,12 @@ export function PpcSaleKwView({
                           </div>
                         </td>
                         <td className="py-3 px-3 text-center">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                            item.match_type.toLowerCase() === "exact"
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${item.match_type.toLowerCase() === "exact"
                               ? "bg-blue-100 text-blue-800"
                               : item.match_type.toLowerCase() === "phrase"
-                              ? "bg-sky-100 text-sky-800"
-                              : "bg-emerald-100 text-emerald-800"
-                          }`}>
+                                ? "bg-sky-100 text-sky-800"
+                                : "bg-emerald-100 text-emerald-800"
+                            }`}>
                             {item.match_type}
                           </span>
                         </td>
@@ -2249,11 +2375,10 @@ export function PpcSaleKwView({
                         </td>
                         <td className="py-3 px-3 text-center">
                           <span
-                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                              item.source === "AUTO_UPLOAD"
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${item.source === "AUTO_UPLOAD"
                                 ? "bg-emerald-100 text-emerald-800"
                                 : "bg-slate-100 text-slate-700"
-                            }`}
+                              }`}
                           >
                             {item.source === "AUTO_UPLOAD" ? "Auto Mac" : "Xuất File"}
                           </span>
@@ -2320,15 +2445,15 @@ export function PpcSaleKwView({
                 <div className="bg-emerald-50/60 rounded-2xl p-4 border border-emerald-100/80 space-y-2 text-xs">
                   <div className="flex justify-between font-bold text-slate-800">
                     <span>Số Search Term sẽ lên Camp:</span>
-                    <span className="text-emerald-700 font-extrabold text-sm">{launchableTargetItems.length}</span>
+                    <span className="text-emerald-700 font-extrabold text-sm">{autoUploadItemsForModal.length}</span>
                   </div>
                   <div className="flex justify-between text-slate-600">
                     <span>Số SKU được chọn:</span>
-                    <span className="font-bold text-slate-900">{targetSkuCount} SKU</span>
+                    <span className="font-bold text-slate-900">{autoUploadSkuCount} SKU</span>
                   </div>
                   <div className="flex justify-between text-slate-600">
                     <span>Số Campaign mới theo match type đã chọn:</span>
-                    <span className="font-extrabold text-purple-700">{targetCampaignCount} campaigns</span>
+                    <span className="font-extrabold text-purple-700">{autoUploadCampaignCount} campaigns</span>
                   </div>
                   <div className="flex justify-between text-slate-600">
                     <span>Tên người dùng:</span>
@@ -2419,13 +2544,12 @@ export function PpcSaleKwView({
                     <div className="pt-2 border-t border-slate-200 space-y-1.5">
                       <div className="flex justify-between items-center">
                         <span className="font-bold text-slate-700">Trạng thái Mac mini:</span>
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
-                          liveUploadStatus.status === "SUCCESS"
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${liveUploadStatus.status === "SUCCESS"
                             ? "bg-emerald-100 text-emerald-800"
                             : liveUploadStatus.status === "FAILED"
-                            ? "bg-rose-100 text-rose-800"
-                            : "bg-blue-100 text-blue-800 animate-pulse"
-                        }`}>
+                              ? "bg-rose-100 text-rose-800"
+                              : "bg-blue-100 text-blue-800 animate-pulse"
+                          }`}>
                           {liveUploadStatus.status}
                         </span>
                       </div>

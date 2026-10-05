@@ -1,6 +1,7 @@
 // app/api/ppc/auto-upload/route.ts
 import { ApiError, authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
+import { invalidateCachePattern } from "@/lib/redis";
 import {
   cancelAutoUploadJob,
   executeAutoUploadZeroSpendActions,
@@ -35,19 +36,23 @@ export async function GET(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    await authorize(request, "write", "ppc");
+    const actor = await authorize(request, "write", "ppc");
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
     if (!id) {
       return Response.json({ success: false, message: "Thiếu ID tác vụ" }, { status: 400 });
     }
-    const cancelled = await cancelAutoUploadJob(id);
+    const cancelled = await cancelAutoUploadJob(id, actor.teamId);
     if (!cancelled) {
       return Response.json(
         { success: false, message: "Không thể hủy tác vụ (chỉ hủy được tác vụ đang ở trạng thái PENDING)." },
         { status: 400 }
       );
     }
+    await Promise.all([
+      invalidateCachePattern(`ppc:query:st-opt:${actor.teamId}:*`).catch(() => {}),
+      invalidateCachePattern(`ppc:query:sale-kw:${actor.teamId}:*`).catch(() => {}),
+    ]);
     return Response.json({ success: true, message: "Đã hủy tác vụ thành công." });
   } catch (error) {
     return routeErrorResponse(error, "Lỗi khi hủy tác vụ.", 500);

@@ -36,6 +36,7 @@ export interface PpcSearchTermRow {
   id?: string;
   storeId?: string;
   storeName?: string;
+  sku?: string;
   reportDate: string; // YYYY-MM-DD
   reportStartDate?: string; // coverage start, YYYY-MM-DD
   reportEndDate?: string; // coverage end, YYYY-MM-DD

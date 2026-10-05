@@ -7,6 +7,7 @@ import type {
   PpcReportGranularity,
   PpcSearchTermRow,
 } from "./types";
+import { resolveSkuForSearchTerm } from "./sku-extractor";
 
 function normalizeHeader(str: string): string {
   return str.trim().toLowerCase().replace(/[–—]/g, "-").replace(/[\s_]+/g, " ");
@@ -229,9 +230,16 @@ export async function parseSearchTermWorkbook(
       const metrics = calculateMetrics({ impressions, clicks, spend, sales, orders });
 
       const reportDate = reportDateString(getVal(dateCol));
+      const sku = resolveSkuForSearchTerm({
+        customerSearchTerm: searchTerm,
+        campaignName,
+        portfolioName,
+        adGroupName,
+      });
 
       results.push({
         storeName,
+        sku,
         reportDate,
         reportStartDate: reportDate,
         reportEndDate: reportDate,
@@ -385,8 +393,15 @@ export function parseSearchTermCsv(
       throw new Error("CSV có số liệu âm không hợp lệ.");
     }
     const metrics = calculateMetrics({ impressions, clicks, spend, sales, orders });
+    const sku = resolveSkuForSearchTerm({
+      customerSearchTerm,
+      campaignName,
+      portfolioName: get(record, indexes.portfolio) || "Unassigned",
+      adGroupName: get(record, indexes.adGroup),
+    });
     parsed.push({
       storeName: rowStoreName,
+      sku,
       reportDate: range.end,
       reportStartDate: range.start,
       reportEndDate: range.end,

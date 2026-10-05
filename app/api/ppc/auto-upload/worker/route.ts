@@ -1,5 +1,6 @@
 import { ApiError, authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
+import { invalidateCachePattern } from "@/lib/redis";
 
 export const runtime = "nodejs";
 
@@ -86,7 +87,7 @@ export async function PATCH(request: Request) {
       `;
       if (!updated.length) throw new ApiError("Lease upload Bulk không còn hợp lệ.", 409);
 
-      if (status === "SUCCESS") {
+      if (status === "SUCCESS" || status === "PARTIAL_SUCCESS") {
         await transaction`
           UPDATE ppc_actions SET status = 'APPLIED', updated_at = NOW()
           WHERE id IN (
@@ -100,9 +101,34 @@ export async function PATCH(request: Request) {
             WHERE id = ${jobId} AND team_id = ${actor.teamId}
           )
         `;
+        await transaction`
+          UPDATE ppc_sale_kw_registry
+          SET state = 'enabled', updated_at = NOW()
+          WHERE source_job_id = ${jobId} AND team_id = ${actor.teamId}
+        `;
+        await transaction`
+          UPDATE ppc_negative_registry
+          SET state = 'enabled', updated_at = NOW()
+          WHERE source_job_id = ${jobId} AND team_id = ${actor.teamId}
+        `;
+      } else if (status === "FAILED" || status === "RESULT_TIMEOUT") {
+        await transaction`
+          DELETE FROM ppc_sale_kw_registry
+          WHERE source_job_id = ${jobId} AND team_id = ${actor.teamId}
+        `;
+        await transaction`
+          DELETE FROM ppc_negative_registry
+          WHERE source_job_id = ${jobId} AND team_id = ${actor.teamId}
+        `;
       }
       return updated;
     });
+    if (terminal) {
+      await Promise.all([
+        invalidateCachePattern(`ppc:query:st-opt:${actor.teamId}:*`).catch(() => {}),
+        invalidateCachePattern(`ppc:query:sale-kw:${actor.teamId}:*`).catch(() => {}),
+      ]);
+    }
     return Response.json({ success: true, job: rows[0] });
   } catch (error) {
     return routeErrorResponse(error, "Lỗi khi cập nhật job upload Bulk.", 500);

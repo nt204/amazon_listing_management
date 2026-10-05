@@ -49,6 +49,7 @@ export interface StOptimizationCandidate {
 }
 
 interface PpcStOptimizationViewProps {
+  isActive: boolean;
   searchTerms: PpcSearchTermRow[];
   selectedStore: string;
   selectedSku: string;
@@ -61,6 +62,7 @@ interface PpcStOptimizationViewProps {
 }
 
 export function PpcStOptimizationView({
+  isActive,
   searchTerms,
   selectedStore,
   selectedSku,
@@ -113,14 +115,14 @@ export function PpcStOptimizationView({
   }, [selectedStore]);
 
   // Fetch registry
-  const fetchRegistry = async () => {
+  const fetchRegistry = async (signal?: AbortSignal) => {
     try {
       setLoadingRegistry(true);
       const params = new URLSearchParams();
       if (selectedStore && selectedStore !== "ALL") {
         params.set("storeName", selectedStore);
       }
-      const res = await fetch(`/api/ppc/negative-keywords?${params.toString()}`);
+      const res = await fetch(`/api/ppc/negative-keywords?${params.toString()}`, { signal });
       if (!res.ok) return;
       const json = await res.json();
       if (json.success && json.data) {
@@ -131,6 +133,7 @@ export function PpcStOptimizationView({
         setNegatedLookupSet(new Set(json.data.lookupKeys || []));
       }
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       console.error("Lỗi khi tải Negative Registry:", err);
     } finally {
       setLoadingRegistry(false);
@@ -138,8 +141,11 @@ export function PpcStOptimizationView({
   };
 
   useEffect(() => {
-    fetchRegistry();
-  }, [selectedStore]);
+    if (!isActive) return;
+    const controller = new AbortController();
+    void fetchRegistry(controller.signal);
+    return () => controller.abort();
+  }, [isActive, selectedStore]);
 
   // Auto Upload AdsPower modal state
   const [isAutoUploadModalOpen, setIsAutoUploadModalOpen] = useState<boolean>(false);
@@ -152,6 +158,7 @@ export function PpcStOptimizationView({
     message: string;
   } | null>(null);
   const [autoUploadError, setAutoUploadError] = useState<string | null>(null);
+  const [autoUploadCandidates, setAutoUploadCandidates] = useState<StOptimizationCandidate[] | null>(null);
   const [liveUploadStatus, setLiveUploadStatus] = useState<{
     status: string;
     stage: string;
@@ -235,12 +242,29 @@ export function PpcStOptimizationView({
     return allCandidates.filter((c) => c.isAlreadyNegated).length;
   }, [allCandidates]);
 
+  // Server-side state for 100% DB coverage
+  const [serverCandidates, setServerCandidates] = useState<StOptimizationCandidate[] | null>(null);
+  const [serverTotal, setServerTotal] = useState<number | null>(null);
+  const [serverTotalPages, setServerTotalPages] = useState<number>(1);
+  const [serverCampaigns, setServerCampaigns] = useState<string[]>([]);
+  const [serverSummary, setServerSummary] = useState<{
+    candidateCount: number;
+    totalWastedSpend: number;
+    totalWastedClicks: number;
+    totalImpressions: number;
+    avgCpc: number;
+    campaigns?: string[];
+  } | null>(null);
+  const [serverLoading, setServerLoading] = useState<boolean>(false);
+
   // Unique campaigns among candidates for filter dropdown
   const candidateCampaigns = useMemo(() => {
-    return Array.from(new Set(allCandidates.map((c) => c.campaignName))).sort();
-  }, [allCandidates]);
+    if (serverCampaigns && serverCampaigns.length > 0) return serverCampaigns;
+    const list = serverCandidates !== null ? serverCandidates : allCandidates;
+    return Array.from(new Set(list.map((c) => c.campaignName))).sort();
+  }, [serverCampaigns, serverCandidates, allCandidates]);
 
-  // 4. Filtered & Sorted candidates
+  // 4. Filtered & Sorted candidates (Client-side fallback)
   const filteredCandidates = useMemo(() => {
     let list = [...allCandidates];
 
@@ -271,22 +295,41 @@ export function PpcStOptimizationView({
     });
 
     return list;
-  }, [allCandidates, campaignFilter, searchQuery, sortField, sortDir]);
+  }, [allCandidates, hideNegated, campaignFilter, searchQuery, sortField, sortDir]);
 
-  // Server-side state for 100% DB coverage
-  const [serverCandidates, setServerCandidates] = useState<StOptimizationCandidate[] | null>(null);
-  const [serverTotal, setServerTotal] = useState<number | null>(null);
-  const [serverTotalPages, setServerTotalPages] = useState<number>(1);
-  const [serverSummary, setServerSummary] = useState<{
-    candidateCount: number;
-    totalWastedSpend: number;
-    totalWastedClicks: number;
-    totalImpressions: number;
-    avgCpc: number;
-  } | null>(null);
-  const [serverLoading, setServerLoading] = useState<boolean>(false);
+  // Store known candidates in ref so selected keys can always resolve full candidate objects
+  const candidateCacheRef = useRef<Map<string, StOptimizationCandidate>>(new Map());
 
   useEffect(() => {
+    if (serverCandidates) {
+      for (const item of serverCandidates) {
+        candidateCacheRef.current.set(item.key, item);
+      }
+    }
+    if (allCandidates) {
+      for (const item of allCandidates) {
+        candidateCacheRef.current.set(item.key, item);
+      }
+    }
+  }, [serverCandidates, allCandidates]);
+
+  // Effective selected candidate objects
+  const selectedCandidateList = useMemo(() => {
+    if (selectedKeys.size === 0) return [];
+    const list: StOptimizationCandidate[] = [];
+    const fallbackList = serverCandidates !== null ? serverCandidates : filteredCandidates;
+    for (const key of selectedKeys) {
+      const found = candidateCacheRef.current.get(key) || fallbackList.find((c) => c.key === key);
+      if (found) list.push(found);
+    }
+    return list;
+  }, [selectedKeys, serverCandidates, filteredCandidates]);
+
+  // Total count across all items
+  const totalAvailableCount = serverTotal !== null ? serverTotal : filteredCandidates.length;
+
+  useEffect(() => {
+    if (!isActive) return;
     const controller = new AbortController();
     const timer = setTimeout(async () => {
       setServerLoading(true);
@@ -303,6 +346,7 @@ export function PpcStOptimizationView({
           search: searchQuery.trim(),
           sortBy: sortField,
           sortDir,
+          campaignName: campaignFilter,
         });
         const res = await fetch(`/api/ppc/search-terms/optimization?${params}`, {
           cache: "no-store",
@@ -315,6 +359,9 @@ export function PpcStOptimizationView({
           setServerTotal(json.data.total || 0);
           setServerTotalPages(json.data.totalPages || 1);
           setServerSummary(json.data.summary || null);
+          if (json.data.summary?.campaigns) {
+            setServerCampaigns(json.data.summary.campaigns);
+          }
           onCandidateCountChange?.(json.data.total ?? json.data.summary?.candidateCount ?? 0);
         }
       } catch (err) {
@@ -341,6 +388,8 @@ export function PpcStOptimizationView({
     searchQuery,
     sortField,
     sortDir,
+    campaignFilter,
+    isActive,
   ]);
 
   // 5. Effective Candidates & Pagination (Prioritizes server result with 100% DB coverage)
@@ -358,7 +407,7 @@ export function PpcStOptimizationView({
         totalTerms: serverSummary.candidateCount,
         totalClicks: serverSummary.totalWastedClicks,
         totalSpend: serverSummary.totalWastedSpend,
-        affectedCampaigns: 0,
+        affectedCampaigns: serverSummary.campaigns?.length || 0,
       };
     }
     const totalTerms = filteredCandidates.length;
@@ -406,9 +455,14 @@ export function PpcStOptimizationView({
   };
 
   const handleCopySelectedOrAll = async () => {
-    const targetList = selectedKeys.size > 0
-      ? filteredCandidates.filter((c) => selectedKeys.has(c.key))
-      : filteredCandidates;
+    let targetList: StOptimizationCandidate[] = [];
+    if (selectedKeys.size > 0) {
+      targetList = selectedCandidateList;
+    } else if (serverCandidates !== null) {
+      targetList = serverCandidates;
+    } else {
+      targetList = filteredCandidates;
+    }
 
     if (targetList.length === 0) {
       notify("Không có từ khóa nào để copy", "error");
@@ -424,13 +478,52 @@ export function PpcStOptimizationView({
     }
   };
 
+  const fetchAllFilteredCandidates = async (): Promise<StOptimizationCandidate[]> => {
+    const params = new URLSearchParams({
+      storeName: selectedStore,
+      sku: selectedSku,
+      days: String(selectedDays),
+      clickThreshold: String(clickThreshold),
+      clickOperator,
+      hideAlreadyNegated: String(hideNegated),
+      search: searchQuery.trim(),
+      sortBy: sortField,
+      sortDir,
+      campaignName: campaignFilter,
+      all: "1",
+    });
+    const res = await fetch(`/api/ppc/search-terms/optimization?${params}`, { cache: "no-store" });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.success || !Array.isArray(json.data?.items)) {
+      throw new Error(json.error || json.message || "Không thể tải toàn bộ đề xuất phủ định.");
+    }
+    return json.data.items.filter((candidate: StOptimizationCandidate) => !candidate.isAlreadyNegated);
+  };
+
   // 6. Export Amazon Bulksheet (.xlsx)
   const handleExportBulksheet = async () => {
-    const targetList = selectedKeys.size > 0
-      ? filteredCandidates.filter((c) => selectedKeys.has(c.key))
-      : filteredCandidates;
+    let targetList: StOptimizationCandidate[] = [];
+    if (selectedKeys.size > 0) {
+      targetList = selectedCandidateList;
+    } else if (serverCandidates !== null) {
+      if (serverTotal !== null && serverTotal > serverCandidates.length) {
+        setIsExporting(true);
+        try {
+          targetList = await fetchAllFilteredCandidates();
+        } catch (error) {
+          setIsExporting(false);
+          notify(error instanceof Error ? error.message : "Không thể tải toàn bộ đề xuất phủ định.", "error");
+          return;
+        }
+      } else {
+        targetList = serverCandidates;
+      }
+    } else {
+      targetList = filteredCandidates;
+    }
 
     if (targetList.length === 0) {
+      setIsExporting(false);
       notify("Không có Search Term nào thỏa mãn để xuất file.", "error");
       return;
     }
@@ -439,6 +532,9 @@ export function PpcStOptimizationView({
     try {
       const payload = {
         storeName: selectedStore,
+        storeId:
+          stores?.find((s) => s.name.toLowerCase() === selectedStore.toLowerCase())?.id ||
+          targetList.find((c) => c.storeId)?.storeId,
         items: targetList.map((c) => ({
           customerSearchTerm: c.customerSearchTerm,
           campaignName: c.campaignName,
@@ -451,6 +547,8 @@ export function PpcStOptimizationView({
           clicks: c.clicks,
           orders: c.orders,
           spend: c.spend,
+          storeId: c.storeId,
+          storeName: c.storeName,
         })),
       };
 
@@ -485,7 +583,7 @@ export function PpcStOptimizationView({
       notify(`Đã xuất thành công file Bulksheet: ${filename}`, "success");
       setNegatedLookupSet((prev) => {
         const next = new Set(prev);
-        for (const it of modalCandidates) {
+        for (const it of targetList) {
           next.add(it.key);
           next.add(`${it.campaignName.trim().toLowerCase()}|||${it.customerSearchTerm.trim().toLowerCase()}`);
           next.add(it.customerSearchTerm.trim().toLowerCase());
@@ -494,6 +592,15 @@ export function PpcStOptimizationView({
       });
       setSelectedKeys(new Set());
       setHideNegated(true);
+      setServerCandidates((prev) => prev?.filter((candidate) => !targetList.some((item) => item.key === candidate.key)) ?? prev);
+      setServerTotal((prev) => prev === null ? prev : Math.max(0, prev - targetList.length));
+      setServerSummary((prev) => prev ? {
+        ...prev,
+        candidateCount: Math.max(0, prev.candidateCount - targetList.length),
+        totalWastedSpend: Math.max(0, prev.totalWastedSpend - targetList.reduce((sum, item) => sum + item.spend, 0)),
+        totalWastedClicks: Math.max(0, prev.totalWastedClicks - targetList.reduce((sum, item) => sum + item.clicks, 0)),
+        totalImpressions: Math.max(0, prev.totalImpressions - targetList.reduce((sum, item) => sum + item.impressions, 0)),
+      } : prev);
       fetchRegistry();
     } catch (err: any) {
       console.error(err);
@@ -505,23 +612,38 @@ export function PpcStOptimizationView({
 
   // Target list for modal and execution
   const modalCandidates = useMemo(() => {
-    const list = selectedKeys.size > 0
-      ? filteredCandidates.filter((c) => selectedKeys.has(c.key))
-      : filteredCandidates;
+    if (autoUploadCandidates !== null) return autoUploadCandidates;
+    let list: StOptimizationCandidate[] = [];
+    if (selectedKeys.size > 0) {
+      list = selectedCandidateList;
+    } else if (serverCandidates !== null) {
+      list = serverCandidates;
+    } else {
+      list = filteredCandidates;
+    }
     return list.filter((c) => !c.isAlreadyNegated);
-  }, [filteredCandidates, selectedKeys]);
+  }, [autoUploadCandidates, selectedKeys, selectedCandidateList, serverCandidates, filteredCandidates]);
 
-  const handleOpenAutoUploadModal = () => {
+  const handleOpenAutoUploadModal = async () => {
     if (selectedStore === "ALL") {
       notify("Không thể Auto Upload khi đang chọn 'Tất cả Store'. Vui lòng chọn 1 Store cụ thể trên thanh điều hướng để đảm bảo phủ định từ khóa chính xác trên tài khoản Amazon Seller.", "error");
       return;
     }
-    if (modalCandidates.length === 0) {
+    let candidates = selectedKeys.size > 0 ? selectedCandidateList : modalCandidates;
+    if (selectedKeys.size === 0 && serverTotal !== null && serverTotal > candidates.length) {
+      try {
+        candidates = await fetchAllFilteredCandidates();
+      } catch (error) {
+        notify(error instanceof Error ? error.message : "Không thể tải toàn bộ đề xuất phủ định.", "error");
+        return;
+      }
+    }
+    if (candidates.length === 0) {
       notify("Không có Search Term nào thỏa mãn để Auto Upload.", "error");
       return;
     }
 
-    const conflictingItem = modalCandidates.find((c) => {
+    const conflictingItem = candidates.find((c) => {
       if (c.storeName && c.storeName !== "ALL" && c.storeName.toLowerCase() !== selectedStore.toLowerCase()) return true;
       return false;
     });
@@ -533,6 +655,7 @@ export function PpcStOptimizationView({
     setAutoUploadError(null);
     setAutoUploadSuccessResult(null);
     setAutoUploadStep(0);
+    setAutoUploadCandidates(candidates);
     setIsAutoUploadModalOpen(true);
   };
 
@@ -606,6 +729,15 @@ export function PpcStOptimizationView({
       });
       setSelectedKeys(new Set());
       setHideNegated(true);
+      setServerCandidates((prev) => prev?.filter((candidate) => !modalCandidates.some((item) => item.key === candidate.key)) ?? prev);
+      setServerTotal((prev) => prev === null ? prev : Math.max(0, prev - modalCandidates.length));
+      setServerSummary((prev) => prev ? {
+        ...prev,
+        candidateCount: Math.max(0, prev.candidateCount - modalCandidates.length),
+        totalWastedSpend: Math.max(0, prev.totalWastedSpend - modalCandidates.reduce((sum, item) => sum + item.spend, 0)),
+        totalWastedClicks: Math.max(0, prev.totalWastedClicks - modalCandidates.reduce((sum, item) => sum + item.clicks, 0)),
+        totalImpressions: Math.max(0, prev.totalImpressions - modalCandidates.reduce((sum, item) => sum + item.impressions, 0)),
+      } : prev);
       fetchRegistry();
     } catch (err: any) {
       console.error("Auto upload ST optimization error:", err);
@@ -618,7 +750,7 @@ export function PpcStOptimizationView({
 
   // Poll live upload status from worker
   useEffect(() => {
-    if (!autoUploadSuccessResult?.jobId) return;
+    if (!isActive || !autoUploadSuccessResult?.jobId) return;
     const jobId = autoUploadSuccessResult.jobId;
 
     let isMounted = true;
@@ -652,7 +784,7 @@ export function PpcStOptimizationView({
       isMounted = false;
       clearInterval(interval);
     };
-  }, [autoUploadSuccessResult?.jobId]);
+  }, [autoUploadSuccessResult?.jobId, isActive]);
 
   const handleSort = (field: typeof sortField) => {
     if (sortField === field) {
@@ -684,7 +816,7 @@ export function PpcStOptimizationView({
                 subTab === "candidates" ? "bg-rose-700 text-white" : "bg-slate-100 text-slate-700"
               }`}
             >
-              {allCandidates.filter((c) => !c.isAlreadyNegated).length}
+              {totalAvailableCount}
             </span>
           </button>
 
@@ -823,18 +955,19 @@ export function PpcStOptimizationView({
           <button
             type="button"
             onClick={handleCopySelectedOrAll}
-            className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
+            disabled={totalAvailableCount === 0}
+            className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 transition flex items-center gap-1.5 cursor-pointer shadow-2xs disabled:opacity-40 disabled:cursor-not-allowed"
             title="Copy danh sách từ khóa"
           >
             <Copy size={13} />
-            <span>{selectedKeys.size > 0 ? `Copy (${selectedKeys.size})` : "Copy Tất Cả"}</span>
+            <span>{selectedKeys.size > 0 ? `Copy (${selectedKeys.size})` : `Copy Tất Cả (${totalAvailableCount})`}</span>
           </button>
 
           {/* Export Bulksheet Button */}
           <button
             type="button"
             onClick={handleExportBulksheet}
-            disabled={isExporting || filteredCandidates.length === 0}
+            disabled={isExporting || totalAvailableCount === 0}
             className="px-3.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs disabled:opacity-40 disabled:cursor-not-allowed"
             title="Xuất file Excel Bulksheet format chuẩn của Amazon Bulk Operations"
           >
@@ -846,7 +979,7 @@ export function PpcStOptimizationView({
             ) : (
               <>
                 <FileXls size={15} weight="bold" className="text-emerald-600" />
-                <span>Xuất Bulksheet ({selectedKeys.size > 0 ? selectedKeys.size : filteredCandidates.length})</span>
+                <span>Xuất Bulksheet ({selectedKeys.size > 0 ? selectedKeys.size : totalAvailableCount})</span>
               </>
             )}
           </button>
@@ -855,13 +988,13 @@ export function PpcStOptimizationView({
           <button
             type="button"
             onClick={handleOpenAutoUploadModal}
-            disabled={filteredCandidates.length === 0 || selectedStore === "ALL"}
-            className="px-4 py-1.5 rounded-lg bg-linear-to-r from-rose-600 to-red-600 hover:from-rose-700 hover:to-red-700 text-white text-xs font-black transition flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-40 disabled:cursor-not-allowed"
+            disabled={totalAvailableCount === 0 || selectedStore === "ALL"}
+            className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-700 hover:to-red-700 text-white text-xs font-black transition flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-40 disabled:cursor-not-allowed"
             title={selectedStore === "ALL" ? "Vui lòng chọn 1 Store cụ thể trên thanh công cụ để thực hiện Auto Upload" : "Tự động xếp hàng upload phủ định lên Amazon Ads thông qua AdsPower trên Mac mini"}
           >
             <Lightning size={15} weight="fill" className="text-amber-300 animate-pulse" />
             <span>
-              ⚡ Auto Upload AdsPower ({selectedKeys.size > 0 ? selectedKeys.size : filteredCandidates.length})
+              ⚡ Auto Upload AdsPower ({selectedKeys.size > 0 ? selectedKeys.size : totalAvailableCount})
             </span>
           </button>
         </div>
@@ -1139,7 +1272,7 @@ export function PpcStOptimizationView({
         currentPage={page}
         totalPages={totalPages}
         pageSize={pageSize}
-        totalItems={filteredCandidates.length}
+        totalItems={totalAvailableCount}
         itemName="search term vi phạm"
         onPageChange={setPage}
         onPageSizeChange={(size) => {

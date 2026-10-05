@@ -128,9 +128,6 @@ export function PpcPerformanceRankingChart({
         <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-800">
           SO SÁNH DẠNG CHẠY (SP03 · SP04 AUTO · SB01 · SB05...)
         </h4>
-        <span className="text-[11px] font-bold text-slate-400">
-          {formatRows.length} dạng chạy đang phát sinh chi tiêu / hiển thị
-        </span>
       </div>
 
       {/* Bảng dữ liệu đồng bộ phong cách */}

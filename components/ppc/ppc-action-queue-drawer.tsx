@@ -29,6 +29,7 @@ import {
   ArrowCounterClockwise,
   SlidersHorizontal,
   MagnifyingGlass,
+  PencilSimple,
 } from "@phosphor-icons/react";
 import type { BulkExport, PpcAction, PpcAutoUploadLog } from "@/lib/ppc/sku-architecture-types";
 import { PpcCopyButton } from "./ppc-copy-button";
@@ -207,6 +208,70 @@ export interface ActionSkuGroup {
   avgNewBid: number | null;
 }
 
+interface InlineBidInputProps {
+  initialValue: number;
+  isSaving: boolean;
+  onSave: (newBid: number) => Promise<void> | void;
+}
+
+function InlineBidInput({ initialValue, isSaving, onSave }: InlineBidInputProps) {
+  const [val, setVal] = useState<string>(initialValue ? initialValue.toFixed(2) : "0.00");
+  const [isFocused, setIsFocused] = useState(false);
+
+  useEffect(() => {
+    if (!isFocused) {
+      setVal(initialValue ? initialValue.toFixed(2) : "0.00");
+    }
+  }, [initialValue, isFocused]);
+
+  const commitChange = () => {
+    const parsed = parseFloat(val);
+    if (!isNaN(parsed) && parsed > 0 && Math.abs(parsed - initialValue) > 0.001) {
+      onSave(parsed);
+    } else {
+      setVal(initialValue ? initialValue.toFixed(2) : "0.00");
+    }
+  };
+
+  return (
+    <div
+      className={`inline-flex items-center justify-end rounded border px-1.5 py-0.5 transition ${
+        isFocused
+          ? "border-indigo-600 bg-white ring-1 ring-indigo-500 shadow-xs"
+          : "border-slate-200 bg-white hover:border-slate-300"
+      }`}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <span className="text-[10px] font-bold text-slate-400 select-none mr-0.5">$</span>
+      <input
+        type="number"
+        step="0.01"
+        min="0.02"
+        max="100"
+        value={val}
+        disabled={isSaving}
+        onChange={(e) => setVal(e.target.value)}
+        onFocus={() => setIsFocused(true)}
+        onBlur={() => {
+          setIsFocused(false);
+          commitChange();
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.currentTarget.blur();
+          } else if (e.key === "Escape") {
+            setVal(initialValue ? initialValue.toFixed(2) : "0.00");
+            e.currentTarget.blur();
+          }
+        }}
+        className="w-14 text-right font-mono font-black text-indigo-700 text-xs bg-transparent border-0 p-0 focus:outline-none focus:ring-0 disabled:opacity-50"
+        title="Nhập mức Bid mới và bấm Enter hoặc click ra ngoài để lưu"
+      />
+      {isSaving && <SpinnerGap size={11} className="animate-spin text-indigo-600 ml-1 shrink-0" />}
+    </div>
+  );
+}
+
 interface PpcActionQueueDrawerProps {
   isOpen: boolean;
   onClose: () => void;
@@ -309,10 +374,29 @@ export function PpcActionQueueDrawer({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, isAutoUploadModalOpen, isExportWizardOpen, isAutoUploading, selectedRunDetail, reuploadTarget, isReuploading, onClose]);
 
+  // Bid overrides state for inline editing
+  const [bidOverrides, setBidOverrides] = useState<Record<string, number>>({});
+  const [savingBidIds, setSavingBidIds] = useState<Set<string>>(new Set());
+
+  // Reset bid overrides when store changes
+  useEffect(() => {
+    setBidOverrides({});
+  }, [storeName]);
+
+  const effectiveActions = useMemo(() => {
+    if (Object.keys(bidOverrides).length === 0) return actions;
+    return actions.map((act) => {
+      if (bidOverrides[act.id] !== undefined) {
+        return { ...act, finalValue: bidOverrides[act.id] };
+      }
+      return act;
+    });
+  }, [actions, bidOverrides]);
+
   // Available SKUs in Action Queue
   const availableSkus = useMemo(() => {
     const map = new Map<string, { count: number; isZeroSpend: boolean }>();
-    for (const act of actions) {
+    for (const act of effectiveActions) {
       const s = (act.sku || "UNKNOWN").toUpperCase();
       const curr = map.get(s) || { count: 0, isZeroSpend: !!act.isZeroSpend };
       curr.count++;
@@ -321,13 +405,13 @@ export function PpcActionQueueDrawer({
     return Array.from(map.entries())
       .map(([sku, data]) => ({ sku, count: data.count, isZeroSpend: data.isZeroSpend }))
       .sort((a, b) => b.count - a.count);
-  }, [actions]);
+  }, [effectiveActions]);
 
   // Actions displayed after SKU filter
   const displayedActions = useMemo(() => {
-    if (selectedSkuFilter === "ALL") return actions;
-    return actions.filter((a) => (a.sku || "").toUpperCase() === selectedSkuFilter.toUpperCase());
-  }, [actions, selectedSkuFilter]);
+    if (selectedSkuFilter === "ALL") return effectiveActions;
+    return effectiveActions.filter((a) => (a.sku || "").toUpperCase() === selectedSkuFilter.toUpperCase());
+  }, [effectiveActions, selectedSkuFilter]);
 
   // Group actions by SKU and Campaign
   const [expandedSkus, setExpandedSkus] = useState<Set<string>>(new Set());
@@ -601,13 +685,13 @@ export function PpcActionQueueDrawer({
   // Summary counts for Wizard & Execution
   const targetActions = useMemo(() => {
     if (selectedIds.size > 0) {
-      return actions.filter((a) => selectedIds.has(a.id));
+      return effectiveActions.filter((a) => selectedIds.has(a.id));
     }
     if (selectedSkuFilter !== "ALL") {
       return displayedActions;
     }
-    return actions;
-  }, [actions, selectedIds, selectedSkuFilter, displayedActions]);
+    return effectiveActions;
+  }, [effectiveActions, selectedIds, selectedSkuFilter, displayedActions]);
 
   // Actions specifically for Zero Spend (SKU chưa cắn tiền)
   const zeroSpendCandidates = useMemo(() => {
@@ -896,6 +980,132 @@ export function PpcActionQueueDrawer({
     }
   };
 
+  // Update single bid
+  const handleUpdateBid = async (actionId: string, newBid: number) => {
+    const validBid = Math.max(0.02, Math.min(100, Math.round(newBid * 100) / 100));
+
+    // Optimistically update UI
+    setBidOverrides((prev) => ({ ...prev, [actionId]: validBid }));
+    setSavingBidIds((prev) => new Set(prev).add(actionId));
+
+    try {
+      const res = await fetch("/api/ppc/actions", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          storeName,
+          storeId,
+          actionId,
+          finalValue: validBid,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Không thể cập nhật bid");
+      }
+      onRefreshActionQueue?.();
+    } catch (err: any) {
+      console.error("Lỗi khi lưu bid:", err);
+      // Revert on error
+      setBidOverrides((prev) => {
+        const next = { ...prev };
+        delete next[actionId];
+        return next;
+      });
+      alert(err.message || "Lỗi khi lưu bid");
+    } finally {
+      setSavingBidIds((prev) => {
+        const next = new Set(prev);
+        next.delete(actionId);
+        return next;
+      });
+    }
+  };
+
+  // Batch update bids
+  const handleBatchUpdateBids = async (updates: Array<{ id: string; finalValue: number }>) => {
+    if (updates.length === 0) return;
+
+    // Optimistic update
+    const newOverrides = { ...bidOverrides };
+    const newSaving = new Set(savingBidIds);
+    for (const u of updates) {
+      newOverrides[u.id] = u.finalValue;
+      newSaving.add(u.id);
+    }
+    setBidOverrides(newOverrides);
+    setSavingBidIds(newSaving);
+
+    try {
+      const res = await fetch("/api/ppc/actions", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          storeName,
+          storeId,
+          updates,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Không thể cập nhật bid");
+      }
+      onRefreshActionQueue?.();
+    } catch (err: any) {
+      console.error("Lỗi khi lưu bid hàng loạt:", err);
+      setBidOverrides((prev) => {
+        const next = { ...prev };
+        for (const u of updates) delete next[u.id];
+        return next;
+      });
+      alert(err.message || "Lỗi khi lưu bid hàng loạt");
+    } finally {
+      setSavingBidIds((prev) => {
+        const next = new Set(prev);
+        for (const u of updates) next.delete(u.id);
+        return next;
+      });
+    }
+  };
+
+  // Batch edit for checked actions
+  const handleBatchEditSelectedBids = () => {
+    if (selectedIds.size === 0) return;
+    const bidPrompt = window.prompt(
+      `Nhập mức Bid mới cho ${selectedIds.size} mục đã chọn ($):`,
+      "0.75"
+    );
+    if (!bidPrompt) return;
+    const parsed = parseFloat(bidPrompt);
+    if (isNaN(parsed) || parsed < 0.02 || parsed > 100) {
+      alert("Mức Bid không hợp lệ. Vui lòng nhập số từ $0.02 đến $100.00.");
+      return;
+    }
+    const newBid = Math.round(parsed * 100) / 100;
+    const updates = Array.from(selectedIds).map((id) => ({ id, finalValue: newBid }));
+    void handleBatchUpdateBids(updates);
+  };
+
+  // Batch edit for all targets in a campaign
+  const handleEditCampaignBids = (camp: ActionCampaignGroup) => {
+    const targetActionList = camp.actions.filter((a) => a.actionType === "UPDATE_BID");
+    if (targetActionList.length === 0) return;
+    const currentAvg = camp.avgNewBid ? camp.avgNewBid.toFixed(2) : "0.75";
+    const bidPrompt = window.prompt(
+      `Nhập mức Bid mới áp dụng cho ${targetActionList.length} mục trong chiến dịch "${camp.campaignName}":`,
+      currentAvg
+    );
+    if (!bidPrompt) return;
+    const parsed = parseFloat(bidPrompt);
+    if (isNaN(parsed) || parsed < 0.02 || parsed > 100) {
+      alert("Mức Bid không hợp lệ. Vui lòng nhập số từ $0.02 đến $100.00.");
+      return;
+    }
+    const newBid = Math.round(parsed * 100) / 100;
+    const updates = targetActionList.map((a) => ({ id: a.id, finalValue: newBid }));
+    void handleBatchUpdateBids(updates);
+  };
+
   // Open Auto Upload modal with smart pre-selected SKU
   const handleOpenAutoUploadModal = () => {
     setAutoUploadError(null);
@@ -990,9 +1200,9 @@ export function PpcActionQueueDrawer({
         className="fixed inset-0 z-50 flex justify-end bg-slate-900/50 backdrop-blur-xs transition"
         onClick={onClose}
       >
-        {/* Rộng rãi & Thoải mái: max-w-6xl, xl:max-w-7xl, 2xl:max-w-[96vw] để hiển thị đầy đủ tên chiến dịch mà không bị co ép */}
+        {/* Rộng rãi & Thoải mái: tối ưu chiều rộng drawer để hiển thị trọn vẹn toàn bộ bảng */}
         <div
-          className="w-full max-w-6xl xl:max-w-7xl 2xl:max-w-[96vw] bg-white border-l border-slate-200 p-6 flex flex-col justify-between shadow-2xl animate-in slide-in-from-right duration-200 h-full overflow-hidden"
+          className="w-full max-w-[96vw] xl:max-w-[92vw] 2xl:max-w-[88vw] bg-white border-l border-slate-200 p-6 flex flex-col justify-between shadow-2xl animate-in slide-in-from-right duration-200 h-full overflow-hidden"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="space-y-5 overflow-y-auto flex-1 pr-1">
@@ -1105,6 +1315,19 @@ export function PpcActionQueueDrawer({
 
               {/* Right: Auto Upload & Bulk Export Buttons */}
               <div className="flex items-center gap-2">
+                {/* Nút Đổi bid các mục đã chọn */}
+                {selectedIds.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleBatchEditSelectedBids}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition shadow-xs cursor-pointer"
+                    title={`Đổi bid đồng loạt cho ${selectedIds.size} mục đang được chọn`}
+                  >
+                    <PencilSimple size={14} weight="bold" />
+                    <span>Đổi bid ({selectedIds.size})</span>
+                  </button>
+                )}
+
                 {/* Nút Auto Upload AdsPower áp dụng cho toàn bộ SKU */}
                 <button
                   onClick={handleOpenAutoUploadModal}
@@ -1174,14 +1397,14 @@ export function PpcActionQueueDrawer({
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-50/90 text-slate-600 sticky top-0 border-b border-slate-200 font-bold z-10 whitespace-nowrap">
                     <tr>
-                      <th className="py-2.5 px-3 w-10"></th>
-                      <th className="py-2.5 px-3 min-w-[160px]">SKU / Nhóm</th>
-                      <th className="py-2.5 px-3 min-w-[320px] lg:min-w-[440px]">Chiến dịch</th>
-                      <th className="py-2.5 px-3 min-w-[160px]">Mục tiêu (Targets)</th>
-                      <th className="py-2.5 px-3 w-32">Hành động</th>
-                      <th className="py-2.5 px-3 text-right w-24">Old (TB)</th>
-                      <th className="py-2.5 px-3 text-right w-24">New (TB)</th>
-                      <th className="py-2.5 px-3 text-center w-12">Xóa</th>
+                      <th className="py-2 px-2 w-8 text-center"></th>
+                      <th className="py-2 px-2 w-28">Khớp / Rule</th>
+                      <th className="py-2 px-2 max-w-[160px] lg:max-w-[200px]">Chiến dịch / Nhóm</th>
+                      <th className="py-2 px-2 max-w-[160px] lg:max-w-[200px]">Mục tiêu (Targets)</th>
+                      <th className="py-2 px-2 w-20 text-center">Hành động</th>
+                      <th className="py-2 px-2 text-right w-16">Old</th>
+                      <th className="py-2 px-2 text-right w-24">New (Bid)</th>
+                      <th className="py-2 px-2 text-center w-8">Xóa</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -1449,9 +1672,22 @@ export function PpcActionQueueDrawer({
 
                                       {/* New Avg Bid for Campaign */}
                                       <td className="py-2 px-3 text-right font-mono font-bold text-indigo-700 text-xs">
-                                        {camp.avgNewBid !== null
-                                          ? `$${camp.avgNewBid.toFixed(2)}`
-                                          : "—"}
+                                        <div className="flex items-center justify-end gap-1">
+                                          <span>{camp.avgNewBid !== null ? `$${camp.avgNewBid.toFixed(2)}` : "—"}</span>
+                                          {camp.updateBidCount > 0 && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleEditCampaignBids(camp);
+                                              }}
+                                              className="p-1 hover:bg-indigo-100 rounded text-slate-400 hover:text-indigo-600 transition cursor-pointer"
+                                              title={`Đặt cùng mức Bid cho tất cả ${camp.updateBidCount} mục trong chiến dịch này`}
+                                            >
+                                              <PencilSimple size={12} weight="bold" />
+                                            </button>
+                                          )}
+                                        </div>
                                       </td>
 
                                       {/* Delete Campaign */}
@@ -1505,8 +1741,8 @@ export function PpcActionQueueDrawer({
                                               </button>
                                             </td>
 
-                                            <td className="py-2 px-3 pl-8 text-slate-500 text-[11px] font-mono">
-                                              <div className="flex items-center gap-1.5">
+                                            <td className="py-1.5 px-2 pl-4 text-slate-500 text-[11px] font-mono whitespace-nowrap">
+                                              <div className="flex items-center gap-1">
                                                 <span>↳ {act.matchType || "Keyword"}</span>
                                                 {act.ruleVersion && (
                                                   <span className="px-1 py-0.2 rounded bg-slate-100 text-[9px] text-slate-400 font-sans">
@@ -1517,20 +1753,20 @@ export function PpcActionQueueDrawer({
                                             </td>
 
                                             <td
-                                              className="py-2 px-3 text-slate-500 text-[11px] min-w-[240px] max-w-[440px] truncate"
-                                              title={act.adGroupName || act.campaignName}
+                                              className="py-1.5 px-2 text-slate-500 text-[11px] max-w-[150px] lg:max-w-[200px] truncate"
+                                              title={act.adGroupName ? `Nhóm: ${act.adGroupName}` : act.campaignName}
                                             >
-                                              {act.adGroupName ? `Nhóm: ${act.adGroupName}` : act.campaignName}
+                                              {act.adGroupName ? act.adGroupName.replace(/^nhóm:\s*/i, "") : act.campaignName}
                                             </td>
 
                                             <td
-                                              className="py-2 px-3 font-bold text-slate-900 max-w-[200px] truncate"
+                                              className="py-1.5 px-2 font-bold text-slate-900 max-w-[160px] lg:max-w-[200px] truncate select-all"
                                               title={act.targetKeyword}
                                             >
                                               {act.targetKeyword}
                                             </td>
 
-                                            <td className="py-2 px-3 whitespace-nowrap">
+                                            <td className="py-1.5 px-2 text-center whitespace-nowrap">
                                               {act.actionType === "PAUSE_TARGET" ? (
                                                 <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
                                                   <Pause size={11} weight="bold" /> Pause
@@ -1542,17 +1778,23 @@ export function PpcActionQueueDrawer({
                                               )}
                                             </td>
 
-                                            <td className="py-2 px-3 text-right font-mono text-slate-500 text-[11px]">
+                                            <td className="py-1.5 px-2 text-right font-mono text-slate-500 text-[11px] whitespace-nowrap">
                                               {act.oldValue ? `$${act.oldValue.toFixed(2)}` : "—"}
                                             </td>
 
-                                            <td className="py-2 px-3 text-right font-black text-indigo-700 font-mono text-xs">
-                                              {act.actionType === "PAUSE_TARGET"
-                                                ? "—"
-                                                : `$${(act.finalValue || 0).toFixed(2)}`}
+                                            <td className="py-1.5 px-2 text-right whitespace-nowrap">
+                                              {act.actionType === "PAUSE_TARGET" ? (
+                                                <span className="font-mono text-slate-400 text-xs">—</span>
+                                              ) : (
+                                                <InlineBidInput
+                                                  initialValue={act.finalValue || 0}
+                                                  isSaving={savingBidIds.has(act.id)}
+                                                  onSave={(newBid) => handleUpdateBid(act.id, newBid)}
+                                                />
+                                              )}
                                             </td>
 
-                                            <td className="py-2 px-3 text-center">
+                                            <td className="py-1.5 px-2 text-center">
                                               <button
                                                 type="button"
                                                 onClick={() => onRemoveAction(act.id)}

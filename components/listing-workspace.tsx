@@ -70,7 +70,9 @@ export function ListingWorkspace({
   const hasTrelloAccess = allowedFeatureSet.has("listing") || allowedFeatureSet.has("mockups");
   const [brands, setBrands] = useState<BrandProfile[]>(initialBrands);
   const [activeView, setActiveView] = useState<WorkspaceView>(initialView);
-  const [ppcSection, setPpcSection] = useState<"dashboard" | "phoi" | "rules">("dashboard");
+  type PpcSection = "dashboard" | "negative_keyword" | "sale_kw" | "auto_bid" | "phoi" | "rules";
+  const [ppcSection, setPpcSection] = useState<PpcSection>("dashboard");
+  const [ppcNavNonce, setPpcNavNonce] = useState(0);
   const sidebarTab = activeView === "mockups" ? "mockups" : "trello";
   const viewMode = activeView === "sellersprite" || activeView === "ppc" ? activeView : "trello";
   const [showTrelloConfigModal, setShowTrelloConfigModal] = useState(false);
@@ -101,10 +103,11 @@ export function ListingWorkspace({
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   }, [allowedFeatureSet]);
 
-  const selectPpcSection = useCallback((section: "dashboard" | "phoi" | "rules") => {
+  const selectPpcSection = useCallback((section: PpcSection) => {
     if (!allowedFeatureSet.has("ppc")) return;
     setActiveView("ppc");
     setPpcSection(section);
+    setPpcNavNonce((prev) => prev + 1);
     try {
       localStorage.setItem("nce_last_active_view", "ppc");
       localStorage.setItem("nce_last_ppc_section", section);
@@ -124,17 +127,18 @@ export function ListingWorkspace({
     try {
       const url = new URL(window.location.href);
       const urlView = url.searchParams.get("view") as WorkspaceView | null;
-      const urlSection = url.searchParams.get("section") as ("dashboard" | "phoi" | "rules") | null;
+      const urlSection = url.searchParams.get("section") as PpcSection | null;
       const savedView = localStorage.getItem("nce_last_active_view") as WorkspaceView | null;
-      const savedSection = localStorage.getItem("nce_last_ppc_section") as ("dashboard" | "phoi" | "rules") | null;
+      const savedSection = localStorage.getItem("nce_last_ppc_section") as PpcSection | null;
 
       const effectiveView = urlView || savedView;
       const validViews: WorkspaceView[] = ["listing", "mockups", "sellersprite", "ppc"];
+      const validPpcSections: PpcSection[] = ["dashboard", "negative_keyword", "sale_kw", "auto_bid", "phoi", "rules"];
       if (effectiveView && validViews.includes(effectiveView) && allowedFeatureSet.has(effectiveView)) {
         setActiveView(effectiveView);
         if (effectiveView === "ppc") {
           const effectiveSection = urlSection || savedSection;
-          if (effectiveSection && ["dashboard", "phoi", "rules"].includes(effectiveSection)) {
+          if (effectiveSection && validPpcSections.includes(effectiveSection)) {
             setPpcSection(effectiveSection);
           }
         }
@@ -306,11 +310,11 @@ export function ListingWorkspace({
                 {/* Sub-items under PPC Analytics */}
                 {viewMode === "ppc" && (
                   <div className="ml-3 pl-2.5 border-l-2 border-indigo-100 space-y-0.5 pt-0.5 animate-in fade-in slide-in-from-top-1 duration-150">
-                    {/* Mục to: PPC Dashboard */}
+                    {/* Mục 1: PPC Dashboard */}
                     <button
                       type="button"
                       onClick={() => selectPpcSection("dashboard")}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs transition-all cursor-pointer ${
+                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
                         ppcSection === "dashboard"
                           ? "bg-indigo-100/70 text-indigo-900 font-black shadow-2xs"
                           : "text-slate-600 font-bold hover:bg-slate-100 hover:text-slate-900"
@@ -323,6 +327,63 @@ export function ListingWorkspace({
                       />
                       <span>PPC Dashboard</span>
                     </button>
+
+                    {/* Mục 2: Negative Keyword */}
+                    <button
+                      type="button"
+                      onClick={() => selectPpcSection("negative_keyword")}
+                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
+                        ppcSection === "negative_keyword"
+                          ? "bg-rose-50 text-rose-800 font-black shadow-2xs border border-rose-200/60"
+                          : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
+                      }`}
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full ml-0.5 transition-colors ${
+                          ppcSection === "negative_keyword" ? "bg-rose-600 ring-2 ring-rose-200" : "bg-slate-300"
+                        }`}
+                      />
+                      <span>Negative Keyword</span>
+                    </button>
+
+                    {/* Mục 3: Lên Camp Sale KW */}
+                    <button
+                      type="button"
+                      onClick={() => selectPpcSection("sale_kw")}
+                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
+                        ppcSection === "sale_kw"
+                          ? "bg-emerald-50 text-emerald-800 font-black shadow-2xs border border-emerald-200/60"
+                          : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
+                      }`}
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full ml-0.5 transition-colors ${
+                          ppcSection === "sale_kw" ? "bg-emerald-600 ring-2 ring-emerald-200" : "bg-slate-300"
+                        }`}
+                      />
+                      <span>Lên Camp Sale KW</span>
+                    </button>
+
+                    {/* Mục 4: Auto Bid */}
+                    <button
+                      type="button"
+                      onClick={() => selectPpcSection("auto_bid")}
+                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
+                        ppcSection === "auto_bid"
+                          ? "bg-indigo-100/70 text-indigo-900 font-black shadow-2xs"
+                          : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
+                      }`}
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full ml-0.5 transition-colors ${
+                          ppcSection === "auto_bid" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                        }`}
+                      />
+                      <span>Auto Bid</span>
+                    </button>
+
+                    {/* Phân cách danh mục cấu hình */}
+                    <div className="h-px bg-slate-200/70 my-1 mx-1" />
 
                     {/* Mục con 1: Quản lý Phôi */}
                     <button
@@ -406,6 +467,12 @@ export function ListingWorkspace({
                   ? "Amazon PPC - Quản Lý Phôi (Cost Master)"
                   : ppcSection === "rules"
                   ? "Amazon PPC - Quản Lý Rule PPC"
+                  : ppcSection === "negative_keyword"
+                  ? "Amazon PPC - Negative Keyword (ST Optimization)"
+                  : ppcSection === "sale_kw"
+                  ? "Amazon PPC - Lên Campaign Sale KW"
+                  : ppcSection === "auto_bid"
+                  ? "Amazon PPC - Đề Xuất & Auto Bid"
                   : "Amazon PPC Dashboard & Analytics"
                 : sidebarTab === "mockups"
                 ? "Auto Mockup Generator"
@@ -415,7 +482,7 @@ export function ListingWorkspace({
 
           {/* Right Header Items: Trello Config & User Avatar */}
           <div className="flex items-center gap-2.5">
-            {hasTrelloAccess ? (
+            {hasTrelloAccess && viewMode !== "ppc" ? (
               <button
                 type="button"
                 onClick={() => setShowTrelloConfigModal(true)}
@@ -489,7 +556,29 @@ export function ListingWorkspace({
               ) : ppcSection === "rules" ? (
                 <PpcRuleManagerStandalone />
               ) : (
-                <PpcDashboard isEmbedded={true} actor={actor} />
+                <PpcDashboard
+                  isEmbedded={true}
+                  actor={actor}
+                  navNonce={ppcNavNonce}
+                  standaloneTab={
+                    ppcSection === "negative_keyword"
+                      ? "st_optimization"
+                      : ppcSection === "sale_kw"
+                      ? "sale_kw"
+                      : ppcSection === "auto_bid"
+                      ? "recommendations"
+                      : undefined
+                  }
+                  initialTab={
+                    ppcSection === "negative_keyword"
+                      ? "st_optimization"
+                      : ppcSection === "sale_kw"
+                      ? "sale_kw"
+                      : ppcSection === "auto_bid"
+                      ? "recommendations"
+                      : "overview"
+                  }
+                />
               )}
             </div>
           ) : (

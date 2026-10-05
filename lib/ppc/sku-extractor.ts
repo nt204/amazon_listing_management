@@ -335,7 +335,8 @@ export function buildSaleKwCampaignName(params: {
   matchType: "Exact" | "Phrase" | "Broad";
   dateStr?: string;
 }): string {
-  const cleanSku = (params.sku || "").trim().toUpperCase() || "SKU";
+  const extractedSku = extractSkuFromText(params.sku);
+  const cleanSku = (extractedSku || params.sku || "").trim().toUpperCase() || "SKU";
   const runType = formatSaleKwRunType(params.adTypeCode);
   const user = sanitizeSaleKwUserName(params.userName);
   const dateStr = normalizeSaleKwDate(params.dateStr);
@@ -370,6 +371,8 @@ export function resolveSkuForSearchTerm(
   }
   const rawSku = (term as any).sku;
   if (rawSku && String(rawSku).trim()) {
+    const extracted = extractSkuFromText(rawSku);
+    if (extracted) return extracted;
     return String(rawSku).trim().toUpperCase();
   }
   const fromCamp = extractSkuFromText(term.campaignName);

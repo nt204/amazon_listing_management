@@ -7,6 +7,8 @@ import {
   removeActionFromQueue,
   removeActionsFromQueue,
   resolveStoreId,
+  updateActionBid,
+  updateActionsBids,
 } from "@/lib/ppc/sku-architecture-service";
 
 export const runtime = "nodejs";
@@ -135,3 +137,45 @@ export async function DELETE(request: Request) {
     return routeErrorResponse(error, "Lỗi khi xóa hành động.", 500);
   }
 }
+
+export async function PATCH(request: Request) {
+  try {
+    await authorize(request, "write", "ppc");
+    enforceRequestSize(request);
+
+    const body = await request.json();
+    const { searchParams } = new URL(request.url);
+    const storeTarget =
+      body?.storeId || body?.storeName || searchParams.get("storeId") || searchParams.get("storeName");
+    const isAllStores = !storeTarget || storeTarget === "ALL";
+    const storeId = isAllStores ? "ALL" : await resolveStoreId(storeTarget);
+
+    // Support batch updates: { updates: [{ id, finalValue }] }
+    if (Array.isArray(body?.updates) && body.updates.length > 0) {
+      const res = await updateActionsBids(storeId, body.updates);
+      return Response.json({
+        success: true,
+        message: `Đã cập nhật bid cho ${res.updatedCount} hành động.`,
+        data: res,
+      });
+    }
+
+    const actionId =
+      body?.actionId || body?.id || searchParams.get("actionId") || searchParams.get("id");
+    const finalValue = body?.finalValue ?? body?.bid ?? body?.newBid;
+
+    if (!actionId || finalValue === undefined || finalValue === null) {
+      throw new ApiError("Thiếu actionId hoặc giá trị bid mới (finalValue).", 400);
+    }
+
+    const res = await updateActionBid(storeId, String(actionId), Number(finalValue));
+    return Response.json({
+      success: true,
+      message: `Đã cập nhật bid thành $${res.finalValue.toFixed(2)}.`,
+      data: res,
+    });
+  } catch (error) {
+    return routeErrorResponse(error, "Lỗi khi cập nhật bid cho hành động.", 500);
+  }
+}
+

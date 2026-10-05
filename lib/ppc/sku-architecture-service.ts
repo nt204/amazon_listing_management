@@ -1750,6 +1750,63 @@ export async function removeActionFromQueue(storeId: string, actionId: string): 
   await removeActionsFromQueue(storeId, [actionId]);
 }
 
+export async function updateActionBid(
+  storeId: string,
+  actionId: string,
+  newBid: number,
+): Promise<{ success: boolean; id: string; finalValue: number }> {
+  const sql = await getDatabaseClient();
+  const isAll = !storeId || storeId === "ALL";
+  const validBid = Math.max(0.02, Math.min(100, Math.round(Number(newBid) * 100) / 100));
+
+  const rows = await sql<{ id: string; final_value: string }[]>`
+    UPDATE ppc_actions
+    SET final_value = ${validBid}, updated_at = NOW()
+    WHERE id = ${actionId}
+      ${isAll ? sql`` : sql`AND store_id = ${storeId}`}
+      AND status IN ('APPROVED', 'QUEUED')
+    RETURNING id, final_value
+  `;
+
+  if (!rows || rows.length === 0) {
+    throw new Error("Không tìm thấy hành động hoặc hành động không ở trạng thái hợp lệ.");
+  }
+
+  return {
+    success: true,
+    id: rows[0].id,
+    finalValue: Number(rows[0].final_value),
+  };
+}
+
+export async function updateActionsBids(
+  storeId: string,
+  updates: Array<{ id: string; finalValue: number }>,
+): Promise<{ updatedCount: number; updates: Array<{ id: string; finalValue: number }> }> {
+  const sql = await getDatabaseClient();
+  const isAll = !storeId || storeId === "ALL";
+  let count = 0;
+  const result: Array<{ id: string; finalValue: number }> = [];
+
+  for (const item of updates) {
+    const validBid = Math.max(0.02, Math.min(100, Math.round(Number(item.finalValue) * 100) / 100));
+    const rows = await sql<{ id: string; final_value: string }[]>`
+      UPDATE ppc_actions
+      SET final_value = ${validBid}, updated_at = NOW()
+      WHERE id = ${item.id}
+        ${isAll ? sql`` : sql`AND store_id = ${storeId}`}
+        AND status IN ('APPROVED', 'QUEUED')
+      RETURNING id, final_value
+    `;
+    if (rows && rows.length > 0) {
+      count++;
+      result.push({ id: rows[0].id, finalValue: Number(rows[0].final_value) });
+    }
+  }
+
+  return { updatedCount: count, updates: result };
+}
+
 /* =========================================================================
    6. BULK EXPORT WIZARD & HISTORY
    ========================================================================= */
@@ -2280,17 +2337,28 @@ export async function getAutoUploadDetails(logId: string): Promise<{
   };
 }
 
-export async function cancelAutoUploadJob(logId: string): Promise<boolean> {
+export async function cancelAutoUploadJob(logId: string, teamId: string): Promise<boolean> {
   const sql = await getDatabaseClient();
-  const rows = await sql<{ id: string; status: string }[]>`
-    UPDATE ppc_auto_upload_logs
-    SET status = 'CANCELLED',
-        error_message = 'Đã hủy bởi người dùng',
-        updated_at = NOW()
-    WHERE id = ${logId} AND status = 'PENDING'
-    RETURNING id, status
-  `;
-  return rows.length > 0;
+  return sql.begin(async (transaction) => {
+    const rows = await transaction<{ id: string; status: string }[]>`
+      UPDATE ppc_auto_upload_logs
+      SET status = 'CANCELLED',
+          error_message = 'Đã hủy bởi người dùng',
+          updated_at = NOW()
+      WHERE id = ${logId} AND team_id = ${teamId} AND status = 'PENDING'
+      RETURNING id, status
+    `;
+    if (!rows.length) return false;
+    await transaction`
+      DELETE FROM ppc_sale_kw_registry
+      WHERE source_job_id = ${logId} AND team_id = ${teamId}
+    `;
+    await transaction`
+      DELETE FROM ppc_negative_registry
+      WHERE source_job_id = ${logId} AND team_id = ${teamId}
+    `;
+    return true;
+  });
 }
 
 

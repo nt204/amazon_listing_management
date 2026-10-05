@@ -28,6 +28,7 @@ import {
   Info,
   ClipboardText,
   CircleNotch,
+  PencilSimple,
 } from "@phosphor-icons/react";
 import {
   SKU_PREFIX_ERROR_PRODUCT_TYPE,
@@ -35,8 +36,10 @@ import {
   type PpcAction,
 } from "@/lib/ppc/sku-architecture-types";
 import type { PpcRecommendation } from "@/lib/ppc/types";
+import { PpcPagination } from "./ppc-pagination";
 
 interface PpcSkuRecommendationGroupProps {
+  isActive: boolean;
   groups: SkuRecommendationGroup[];
   allRecommendations: PpcRecommendation[];
   isLoading: boolean;
@@ -76,7 +79,72 @@ export type SortField =
 
 export type SortOrder = "asc" | "desc";
 
+interface RecFinalBidInputProps {
+  initialValue: number;
+  onCommit: (val: number) => void;
+  disabled?: boolean;
+}
+
+function RecFinalBidInput({ initialValue, onCommit, disabled }: RecFinalBidInputProps) {
+  const [val, setVal] = useState<string>(initialValue ? initialValue.toFixed(2) : "0.00");
+  const [isFocused, setIsFocused] = useState(false);
+
+  useEffect(() => {
+    if (!isFocused) {
+      setVal(initialValue ? initialValue.toFixed(2) : "0.00");
+    }
+  }, [initialValue, isFocused]);
+
+  const handleCommit = () => {
+    const cleaned = val.replace(",", ".");
+    const parsed = parseFloat(cleaned);
+    if (!isNaN(parsed) && parsed > 0) {
+      const rounded = Math.round(parsed * 100) / 100;
+      onCommit(rounded);
+      setVal(rounded.toFixed(2));
+    } else {
+      setVal(initialValue ? initialValue.toFixed(2) : "0.00");
+    }
+  };
+
+  return (
+    <div
+      className={`inline-flex items-center justify-end rounded border px-1.5 py-0.5 transition ${
+        isFocused
+          ? "border-indigo-600 bg-white ring-1 ring-indigo-500 shadow-2xs"
+          : "border-slate-300 bg-white hover:border-indigo-400"
+      } ${disabled ? "opacity-50 pointer-events-none" : ""}`}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <span className="text-[10px] font-bold text-slate-400 select-none mr-0.5">$</span>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={val}
+        disabled={disabled}
+        onChange={(e) => setVal(e.target.value)}
+        onFocus={() => setIsFocused(true)}
+        onBlur={() => {
+          setIsFocused(false);
+          handleCommit();
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.currentTarget.blur();
+          } else if (e.key === "Escape") {
+            setVal(initialValue ? initialValue.toFixed(2) : "0.00");
+            e.currentTarget.blur();
+          }
+        }}
+        className="w-14 text-right font-mono font-bold text-slate-900 text-xs bg-transparent border-0 p-0 focus:outline-none focus:ring-0"
+        title="Nhập mức Final Bid và bấm Enter hoặc click ra ngoài để lưu"
+      />
+    </div>
+  );
+}
+
 export function PpcSkuRecommendationGroupView({
+  isActive,
   groups,
   allRecommendations,
   isLoading,
@@ -96,8 +164,13 @@ export function PpcSkuRecommendationGroupView({
   const [quickFilter, setQuickFilter] = useState<QuickFilterType>("ALL");
   const [sortField, setSortField] = useState<SortField>("totalRecommendations");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [selectedSkuGroup, setSelectedSkuGroup] = useState<SkuRecommendationGroup | null>(null);
   const [loadingSkuDetails, setLoadingSkuDetails] = useState(false);
+  const [selectedSkus, setSelectedSkus] = useState<Set<string>>(new Set());
+  const [isBulkApproving, setIsBulkApproving] = useState(false);
+  const selectAllSkusRef = useRef<HTMLInputElement>(null);
 
   // Detail View State
   const [selectedRecIds, setSelectedRecIds] = useState<Set<string>>(new Set());
@@ -117,6 +190,7 @@ export function PpcSkuRecommendationGroupView({
       previousStoreRef.current = selectedStore;
       setSelectedSkuGroup(null);
       setSelectedRecIds(new Set());
+      setSelectedSkus(new Set());
       setUserFinalBids({});
       setRecentlyApprovedIds(new Set());
       setRuleExplanationModal(null);
@@ -129,6 +203,8 @@ export function PpcSkuRecommendationGroupView({
   // Keep an open SKU detail modal attached to the newly loaded attribution
   // window instead of retaining the old group object in local state.
   useEffect(() => {
+    // This state mirrors the refreshed group object while the detail modal is open.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelectedSkuGroup((current) => {
       if (!current) return null;
       return groups.find((group) => group.sku.toUpperCase() === current.sku.toUpperCase()) || null;
@@ -141,10 +217,64 @@ export function PpcSkuRecommendationGroupView({
     if (previousRecommendationWindowRef.current !== recommendationWindowDays) {
       setRuleExplanationModal(null);
       setSelectedRecIds(new Set());
+      setSelectedSkus(new Set());
       setUserFinalBids({});
       previousRecommendationWindowRef.current = recommendationWindowDays;
     }
   }, [recommendationWindowDays]);
+
+  const handleToggleSku = (sku: string) => {
+    setSelectedSkus((current) => {
+      const next = new Set(current);
+      if (next.has(sku)) next.delete(sku);
+      else next.add(sku);
+      return next;
+    });
+  };
+
+  const handleToggleAllVisibleSkus = () => {
+    setSelectedSkus((current) => {
+      const next = new Set(current);
+      if (areAllVisibleSkusSelected) {
+        for (const group of filteredGroups) next.delete(group.sku);
+      } else {
+        for (const group of filteredGroups) next.add(group.sku);
+      }
+      return next;
+    });
+  };
+
+  const handleApproveSelectedSkus = async () => {
+    if (selectedSkus.size === 0 || isStoreSwitching || isBulkApproving) return;
+
+    try {
+      setIsBulkApproving(true);
+      const skuList = Array.from(selectedSkus);
+      const recommendations: PpcRecommendation[] = [];
+
+      // Load in small batches to avoid flooding the grouped recommendation API.
+      for (let index = 0; index < skuList.length; index += 5) {
+        const batch = skuList.slice(index, index + 5);
+        const batchResults = await Promise.all(batch.map((sku) => onLoadSkuRecommendations(sku)));
+        recommendations.push(...batchResults.flat());
+      }
+
+      if (recommendations.length === 0) {
+        alert("Các SKU đã chọn không còn đề xuất nào để duyệt.");
+        return;
+      }
+
+      await onApproveToQueue(recommendations.map((recommendation) => ({
+        recommendation,
+        userFinalBid: recommendation.recommendedBid ?? recommendation.currentBid ?? 0,
+      })));
+      setSelectedSkus(new Set());
+    } catch (err) {
+      alert("Lỗi khi duyệt nhiều SKU: " + String(err));
+    } finally {
+      setIsBulkApproving(false);
+    }
+  };
 
   const handleExplainRule = (rec: PpcRecommendation) => setRuleExplanationModal(rec);
 
@@ -245,6 +375,7 @@ export function PpcSkuRecommendationGroupView({
   };
 
   // Filtered & Sorted Level 1 Groups
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization
   const filteredGroups = useMemo(() => {
     const result = groups.filter((g) => {
       // 1. Search term
@@ -303,6 +434,30 @@ export function PpcSkuRecommendationGroupView({
       return sortOrder === "asc" ? numA - numB : numB - numA;
     });
   }, [groups, searchTerm, selectedPhôi, quickFilter, sortField, sortOrder]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredGroups.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * pageSize;
+  const paginatedGroups = filteredGroups.slice(pageStart, pageStart + pageSize);
+
+  useEffect(() => {
+    // Filters and sorting describe a new result set; show it from the first page.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPage(1);
+  }, [searchTerm, selectedPhôi, quickFilter, sortField, sortOrder]);
+
+  const selectedVisibleSkuCount = filteredGroups.reduce(
+    (count, group) => count + (selectedSkus.has(group.sku) ? 1 : 0),
+    0,
+  );
+  const areAllVisibleSkusSelected = filteredGroups.length > 0
+    && selectedVisibleSkuCount === filteredGroups.length;
+
+  useEffect(() => {
+    if (selectAllSkusRef.current) {
+      selectAllSkusRef.current.indeterminate = selectedVisibleSkuCount > 0 && !areAllVisibleSkusSelected;
+    }
+  }, [selectedVisibleSkuCount, areAllVisibleSkusSelected]);
 
   // Recommendations for the currently selected SKU (Modal)
   const currentSkuRecs = useMemo(() => {
@@ -422,6 +577,47 @@ export function PpcSkuRecommendationGroupView({
       ...prev,
       [id]: isNaN(num) ? 0 : num,
     }));
+  };
+
+  const handleBatchEditRecBids = () => {
+    if (selectedRecIds.size === 0) return;
+    const raw = window.prompt(`Nhập mức Final Bid ($) mới áp dụng cho ${selectedRecIds.size} mục đã chọn:`, "0.55");
+    if (!raw) return;
+    const cleaned = raw.replace(",", ".");
+    const num = parseFloat(cleaned);
+    if (isNaN(num) || num <= 0) {
+      alert("Vui lòng nhập số tiền hợp lệ (> 0).");
+      return;
+    }
+    const rounded = Math.round(num * 100) / 100;
+    setUserFinalBids((prev) => {
+      const next = { ...prev };
+      selectedRecIds.forEach((id) => {
+        next[id] = rounded;
+      });
+      return next;
+    });
+  };
+
+  const handleBatchEditCampaignRecBids = (recs: PpcRecommendation[], campaignName: string) => {
+    const activeRecs = recs.filter((r) => r.recType !== "PAUSE_TARGET");
+    if (activeRecs.length === 0) return;
+    const raw = window.prompt(`Nhập mức Final Bid ($) mới cho toàn bộ ${activeRecs.length} targets trong campaign "${campaignName}":`, "0.55");
+    if (!raw) return;
+    const cleaned = raw.replace(",", ".");
+    const num = parseFloat(cleaned);
+    if (isNaN(num) || num <= 0) {
+      alert("Vui lòng nhập số tiền hợp lệ (> 0).");
+      return;
+    }
+    const rounded = Math.round(num * 100) / 100;
+    setUserFinalBids((prev) => {
+      const next = { ...prev };
+      activeRecs.forEach((r) => {
+        next[r.id] = rounded;
+      });
+      return next;
+    });
   };
 
   // Targets already present in actionQueue
@@ -585,7 +781,7 @@ export function PpcSkuRecommendationGroupView({
     && loadedRecommendationWindowDays !== recommendationWindowDays;
 
   return (
-    <div className="relative space-y-4" aria-busy={isLoading}>
+    <div className="relative space-y-4" aria-busy={isActive && isLoading}>
       {isSwitchingWindow && (
         <div className="absolute inset-0 z-50 flex items-start justify-center rounded-2xl bg-white/45 pt-20 backdrop-blur-[1px] cursor-wait">
           <div className="rounded-xl border border-indigo-200 bg-white px-4 py-2.5 text-xs font-black text-indigo-700 shadow-lg">
@@ -882,11 +1078,60 @@ export function PpcSkuRecommendationGroupView({
         </div>
       </div>
 
+      {selectedSkus.size > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-3.5 py-2.5 shadow-2xs">
+          <div className="flex items-center gap-2 text-xs font-bold text-indigo-900">
+            <CheckSquare size={17} weight="fill" className="text-indigo-600" />
+            <span>Đã chọn {selectedSkus.size} SKU</span>
+            {selectedVisibleSkuCount !== selectedSkus.size && (
+              <span className="font-medium text-indigo-600">
+                ({selectedVisibleSkuCount} trong bộ lọc hiện tại)
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSelectedSkus(new Set())}
+              disabled={isBulkApproving}
+              className="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 hover:text-slate-900 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Bỏ chọn
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleApproveSelectedSkus()}
+              disabled={isBulkApproving || isStoreSwitching}
+              className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-black text-white shadow-2xs transition hover:bg-indigo-700 active:scale-[0.98] disabled:cursor-wait disabled:opacity-60"
+            >
+              {isBulkApproving ? (
+                <CircleNotch size={14} className="animate-spin" />
+              ) : (
+                <CheckCircle size={14} weight="bold" />
+              )}
+              <span>{isBulkApproving ? "Đang duyệt..." : `Duyệt ${selectedSkus.size} SKU`}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Level 1 Table: Grouped by SKU */}
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
         <table className="w-full text-left text-xs">
           <thead className="bg-slate-50/90 text-slate-600 border-b border-slate-200 font-bold">
             <tr>
+              <th className="w-10 py-3 pl-3 pr-1 text-center">
+                <input
+                  ref={selectAllSkusRef}
+                  type="checkbox"
+                  checked={areAllVisibleSkusSelected}
+                  onChange={handleToggleAllVisibleSkus}
+                  disabled={isLoading || filteredGroups.length === 0 || isBulkApproving}
+                  aria-label="Chọn tất cả SKU trong kết quả lọc"
+                  title="Chọn tất cả SKU trong kết quả lọc"
+                  className="h-4 w-4 cursor-pointer rounded border-slate-300 accent-indigo-600 disabled:cursor-not-allowed"
+                />
+              </th>
               {renderSortHeader("SKU", "sku", "left")}
               <th className="py-3 px-3">ASIN</th>
               <th className="py-3 px-3">Phôi</th>
@@ -904,7 +1149,7 @@ export function PpcSkuRecommendationGroupView({
           <tbody className="divide-y divide-slate-100 text-slate-700">
             {isLoading ? (
               <tr>
-                <td colSpan={12} className="py-16 text-center text-slate-500">
+                <td colSpan={13} className="py-16 text-center text-slate-500">
                   <div className="flex flex-col items-center justify-center gap-2.5">
                     <CircleNotch size={30} className="animate-spin text-indigo-600" />
                     <span className="font-bold text-sm text-slate-800">
@@ -918,14 +1163,15 @@ export function PpcSkuRecommendationGroupView({
               </tr>
             ) : filteredGroups.length === 0 ? (
               <tr>
-                <td colSpan={12} className="py-12 text-center text-slate-400 font-medium">
+                <td colSpan={13} className="py-12 text-center text-slate-400 font-medium">
                   Không tìm thấy SKU nào phù hợp với bộ lọc hiện tại.
                 </td>
               </tr>
             ) : (
-              filteredGroups.map((group) => {
+              paginatedGroups.map((group) => {
                 const isBleeding = group.spend > 0 && group.acos > group.breakEvenAcos;
                 const isGoodAcos = group.sales > 0 && group.acos <= group.breakEvenAcos;
+                const isSkuSelected = selectedSkus.has(group.sku);
 
                 return (
                   <tr
@@ -935,8 +1181,19 @@ export function PpcSkuRecommendationGroupView({
                       setRecentlyApprovedIds(new Set());
                       setSelectedRecIds(new Set());
                     }}
-                    className="hover:bg-indigo-50/30 transition cursor-pointer group"
+                    className={`transition cursor-pointer group ${isSkuSelected ? "bg-indigo-50/70 hover:bg-indigo-100/60" : "hover:bg-indigo-50/30"}`}
                   >
+                    <td className="py-3 pl-3 pr-1 text-center">
+                      <input
+                        type="checkbox"
+                        checked={isSkuSelected}
+                        onClick={(event) => event.stopPropagation()}
+                        onChange={() => handleToggleSku(group.sku)}
+                        disabled={isBulkApproving}
+                        aria-label={`Chọn SKU ${group.sku}`}
+                        className="h-4 w-4 cursor-pointer rounded border-slate-300 accent-indigo-600 disabled:cursor-not-allowed"
+                      />
+                    </td>
                     <td className="py-3 px-3 font-bold text-slate-900 group-hover:text-indigo-600 transition">
                       {group.sku}
                     </td>
@@ -998,6 +1255,22 @@ export function PpcSkuRecommendationGroupView({
           </tbody>
         </table>
       </div>
+
+      {filteredGroups.length > 0 && (
+        <PpcPagination
+          currentPage={currentPage}
+          totalPages={totalPages}
+          pageSize={pageSize}
+          totalItems={filteredGroups.length}
+          pageSizeOptions={[50, 100, 200]}
+          itemName="SKU"
+          onPageChange={setPage}
+          onPageSizeChange={(size) => {
+            setPageSize(size);
+            setPage(1);
+          }}
+        />
+      )}
 
       {/* SKU RECOMMENDATION DETAIL MODAL */}
       {selectedSkuGroup && (
@@ -1245,6 +1518,18 @@ export function PpcSkuRecommendationGroupView({
                       )}
                     </button>
 
+                    {selectedRecIds.size > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleBatchEditRecBids}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:border-indigo-300 text-xs font-bold transition shadow-2xs cursor-pointer"
+                        title="Chỉnh sửa Final Bid hàng loạt cho các mục đang chọn"
+                      >
+                        <PencilSimple size={13} weight="bold" />
+                        <span>Sửa Bid ({selectedRecIds.size})</span>
+                      </button>
+                    )}
+
                     {recentlyApprovedIds.size > 0 && selectedRecIds.size === 0 ? (
                       <button
                         onClick={handleOpenActionQueueModal}
@@ -1353,6 +1638,19 @@ export function PpcSkuRecommendationGroupView({
                             </div>
 
                             <div className="flex items-center gap-2 text-[11px]">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleBatchEditCampaignRecBids(cg.recs, cg.campaignName);
+                                }}
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200 bg-white transition cursor-pointer"
+                                title="Đặt nhanh Final Bid cho toàn bộ targets trong campaign này"
+                              >
+                                <PencilSimple size={11} weight="bold" />
+                                <span>Sửa Bid</span>
+                              </button>
+
                               <span className="px-2 py-0.5 rounded font-bold text-slate-600 bg-white border border-slate-200">
                                 {cg.recs.length} target{cg.recs.length > 1 ? "s" : ""}
                               </span>
@@ -1454,12 +1752,15 @@ export function PpcSkuRecommendationGroupView({
                                           {rec.recType === "PAUSE_TARGET" ? (
                                             <span className="text-slate-400 font-mono font-bold">Pause</span>
                                           ) : (
-                                            <input
-                                              type="text"
-                                              inputMode="decimal"
-                                              value={finalBid ? finalBid.toFixed(2) : ""}
-                                              onChange={(e) => handleFinalBidChange(rec.id, e.target.value)}
-                                              className="w-18 px-2 py-1 bg-slate-50 border border-slate-300 rounded text-right text-slate-900 font-mono text-xs focus:outline-none focus:border-indigo-600 focus:bg-white"
+                                            <RecFinalBidInput
+                                              initialValue={finalBid}
+                                              disabled={isApproving || isStoreSwitching}
+                                              onCommit={(newVal) => {
+                                                setUserFinalBids((prev) => ({
+                                                  ...prev,
+                                                  [rec.id]: newVal,
+                                                }));
+                                              }}
                                             />
                                           )}
                                         </td>

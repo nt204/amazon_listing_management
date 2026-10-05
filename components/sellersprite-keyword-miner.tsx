@@ -31,6 +31,7 @@ import type {
 } from "@/lib/amazon-asin-types";
 import type { UnifiedReverseKeywordItem } from "@/app/api/keywords/reverse/route";
 import { SellerSpriteSettingsModal } from "./sellersprite-settings-modal";
+import { Helium10SettingsModal } from "./helium10-settings-modal";
 
 interface SellerSpriteKeywordMinerProps {
   onImportKeywords?: (keywords: string[]) => void;
@@ -139,7 +140,10 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
   }, [stage1Result, stage1Tab]);
 
   // Stage 2 Data: Reverse ASINs & Volume Filter (SV < 20 excluded by default)
-  const [selectedTool, setSelectedTool] = useState<"sellersprite" | "helium10" | "auto">("sellersprite");
+  const [selectedTool, setSelectedTool] = useState<"sellersprite" | "helium10" | "auto">("helium10");
+  const [h10SettingsOpen, setH10SettingsOpen] = useState(false);
+  const [autoLoggingIn, setAutoLoggingIn] = useState(false);
+  const [autoLoginSuccessMsg, setAutoLoginSuccessMsg] = useState<string | null>(null);
   const [stage2Keywords, setStage2Keywords] = useState<UnifiedReverseKeywordItem[]>([]);
   const [stage2Warning, setStage2Warning] = useState<string | null>(null);
   const [stage2VolumeThreshold, setStage2VolumeThreshold] = useState<number>(20);
@@ -350,7 +354,7 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
         body: JSON.stringify({
           query: q,
           marketplace: "US",
-          provider: "sellersprite",
+          provider: selectedTool === "sellersprite" ? "sellersprite" : "helium10",
           weights: scoreWeights,
         }),
       });
@@ -752,31 +756,106 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
     }
   };
 
+  const handleAutoLoginHelium10 = async () => {
+    setAutoLoggingIn(true);
+    setErrorMsg(null);
+    setAutoLoginSuccessMsg(null);
+    try {
+      const res = await fetch("/api/settings/helium10/auto-login", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không thể tự động đăng nhập Helium 10.");
+      setAutoLoginSuccessMsg("Đăng nhập Helium 10 thành công! Đã tự động cập nhật Cookie phiên làm việc.");
+      setTimeout(() => setAutoLoginSuccessMsg(null), 6000);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Lỗi khi tự động đăng nhập.");
+    } finally {
+      setAutoLoggingIn(false);
+    }
+  };
+
   return (
     <div className="w-full space-y-4 text-slate-800 font-sans max-w-7xl mx-auto pb-10">
       {/* Top Header & Product Input Card */}
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <span className="p-1.5 rounded-lg bg-indigo-50 text-indigo-600 border border-indigo-100">
               <Lightning size={18} weight="fill" />
             </span>
             <h1 className="text-base font-black text-slate-900">
               Đào Từ Khóa (4 Bước)
             </h1>
+
+            {/* Provider Switcher: Helium 10 vs SellerSprite */}
+            <div className="inline-flex items-center gap-1 p-1 bg-slate-100/90 rounded-xl border border-slate-200">
+              <button
+                type="button"
+                onClick={() => setSelectedTool("helium10")}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition cursor-pointer ${
+                  selectedTool === "helium10"
+                    ? "bg-white text-sky-700 shadow-2xs border border-sky-200"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                <span className="h-2 w-2 rounded-full bg-sky-500 ring-2 ring-sky-200" />
+                <span>Helium 10 (Mặc định)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedTool("sellersprite")}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition cursor-pointer ${
+                  selectedTool === "sellersprite"
+                    ? "bg-white text-amber-700 shadow-2xs border border-amber-200"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                <span className="h-2 w-2 rounded-full bg-amber-500 ring-2 ring-amber-200" />
+                <span>Seller Sprite</span>
+              </button>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setSettingsOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-700 transition cursor-pointer"
-            >
-              <Gear size={15} className="text-slate-500" />
-              <span>Cài đặt Cookie</span>
-            </button>
+            {selectedTool === "helium10" ? (
+              <>
+                <button
+                  type="button"
+                  disabled={autoLoggingIn}
+                  onClick={() => void handleAutoLoginHelium10()}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-sky-200 bg-sky-50 hover:bg-sky-100 text-xs font-bold text-sky-700 transition cursor-pointer shadow-2xs disabled:opacity-50"
+                  title="Tự động mở Chrome đăng nhập và tự điền mã 2FA Google Authenticator"
+                >
+                  <ArrowsClockwise size={14} className={autoLoggingIn ? "animate-spin text-sky-600" : "text-sky-600"} />
+                  <span>{autoLoggingIn ? "Đang đăng nhập..." : "⚡ Đăng nhập H10 tự động"}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setH10SettingsOpen(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-700 transition cursor-pointer"
+                >
+                  <Gear size={15} className="text-slate-500" />
+                  <span>Cài đặt Cookie H10</span>
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-700 transition cursor-pointer"
+              >
+                <Gear size={15} className="text-slate-500" />
+                <span>Cài đặt Cookie SellerSprite</span>
+              </button>
+            )}
           </div>
         </div>
+
+        {autoLoginSuccessMsg && (
+          <div className="mt-3 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2 font-bold shadow-2xs">
+            <CheckCircle size={16} weight="fill" className="text-emerald-600 shrink-0" />
+            <span>{autoLoginSuccessMsg}</span>
+          </div>
+        )}
 
         {/* Input Bar */}
         <div className="pt-3 space-y-2">
@@ -2561,8 +2640,9 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
         </div>
       )}
 
-      {/* Settings Modal */}
+      {/* Settings Modals */}
       <SellerSpriteSettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <Helium10SettingsModal isOpen={h10SettingsOpen} onClose={() => setH10SettingsOpen(false)} />
     </div>
   );
 }

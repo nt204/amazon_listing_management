@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { readJsonBody } from "@/lib/api-guard";
 import { reverseSellerSpriteKeywords } from "@/lib/sellersprite";
+import { mineHelium10Keywords } from "@/lib/helium10-playwright";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -33,6 +34,7 @@ export async function POST(request: Request) {
 
     const productTitle = String(body.productTitle || "").trim();
     const marketplace = body.marketplace || "US";
+    const tool = body.tool || "helium10"; // Default: Helium 10
     const limit = Math.min(500, Math.max(10, body.limit || 200));
 
     if (asins.length === 0) {
@@ -42,7 +44,38 @@ export async function POST(request: Request) {
       );
     }
 
-    // 100% Authentic SellerSprite Reverse API - Zero simulation, zero fake fallback
+    if (tool === "helium10") {
+      // 100% Authentic Helium 10 Cerebro Reverse
+      const h10Result = await mineHelium10Keywords({
+        asins,
+        keyword: productTitle || asins.join(" "),
+        marketplace: marketplace as any,
+        limit,
+      });
+
+      const keywords: UnifiedReverseKeywordItem[] = (h10Result.keywords || []).map((k) => ({
+        keyword: k.keyword,
+        search_volume: k.search_volume,
+        cpc: k.cpc,
+        aba_rank: null,
+        organic_rank: k.organic_rank,
+        relevance_score: k.iq_score,
+        competing_products: k.competing_products,
+        asin_count: asins.length,
+        matched_asins: asins,
+      }));
+
+      return NextResponse.json({
+        asins,
+        productTitle,
+        marketplace,
+        totalKeywords: h10Result.totalResults || keywords.length,
+        keywords,
+        source: "helium10_live",
+      });
+    }
+
+    // Authentic SellerSprite Reverse API
     const { keywords, total } = await reverseSellerSpriteKeywords(asins, marketplace, limit);
 
     return NextResponse.json({
@@ -54,9 +87,9 @@ export async function POST(request: Request) {
       source: "sellersprite_live",
     });
   } catch (error) {
-    console.error("SellerSprite Reverse ASIN failed:", error);
+    console.error("Reverse ASIN failed:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Lỗi khi thực hiện Reverse ASIN từ SellerSprite." },
+      { error: error instanceof Error ? error.message : "Lỗi khi thực hiện Reverse ASIN." },
       { status: 500 }
     );
   }

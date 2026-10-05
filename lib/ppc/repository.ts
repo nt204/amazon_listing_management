@@ -13,6 +13,7 @@ import type {
   PpcSearchTermSummary,
   PpcStore,
 } from "./types";
+import { resolveSkuForSearchTerm } from "./sku-extractor";
 
 export type PpcSyncSource = "CLOUDFLARE_R2" | "MANUAL_UPLOAD" | "MOCK_DATA" | "ADSPOWER_DOWNLOAD" | "DATA_INGEST" | "SYSTEM";
 export type PpcSyncStatus = "SUCCESS" | "FAILED" | "SKIPPED" | "RUNNING";
@@ -528,7 +529,7 @@ export async function listPpcPerformance(
 export async function listTargetRowsForRecommendations(
   scope: DataScope,
   filters: { storeName: string; days: number },
-  options: { limit?: number } = {},
+  options: { limit?: number; offset?: number } = {},
 ): Promise<PpcPerformanceRow[]> {
   const sql = await getDatabaseClient();
   const teamId = (scope as any)?.teamId || "default";
@@ -579,6 +580,7 @@ export async function listTargetRowsForRecommendations(
         BETWEEN ${filters.days - 3}::integer AND ${filters.days + 3}::integer
     ORDER BY p.spend DESC, p.id
     LIMIT ${Math.min(50_000, Math.max(1, options.limit || 10_000))}
+    OFFSET ${Math.max(0, options.offset || 0)}
   `;
   return rows.map(mapPerformance);
 }
@@ -996,6 +998,7 @@ export async function upsertPpcSearchTerms(
     for (let start = 0; start < uniqueRows.length; start += 500) {
       const chunk = uniqueRows.slice(start, start + 500).map((row) => ({
         store_id: storeId,
+        sku: safeSqlString(row.sku ? row.sku.toUpperCase() : resolveSkuForSearchTerm(row)),
         report_date: safeSqlString(row.reportDate),
         report_start_date: safeSqlString(row.reportStartDate || row.reportDate),
         report_end_date: safeSqlString(row.reportEndDate || row.reportDate),
@@ -1033,6 +1036,7 @@ export async function upsertPpcSearchTerms(
           match_type
         )
         DO UPDATE SET
+          sku = COALESCE(EXCLUDED.sku, ppc_search_terms.sku),
           report_date = EXCLUDED.report_date,
           report_granularity = EXCLUDED.report_granularity,
           impressions = EXCLUDED.impressions,
@@ -1055,6 +1059,7 @@ export async function upsertPpcSearchTerms(
     }
 
     await refreshPpcDailySummary(scope, storeId, transaction);
+    await refreshSaleKwSummary(scope, storeId, transaction);
 
     return { inserted, updated, deduplicated: rows.length - uniqueRows.length };
   };
@@ -1177,6 +1182,138 @@ export async function refreshPpcDailySummary(
         roas = EXCLUDED.roas,
         updated_at = NOW();
     `;
+  }
+}
+
+export async function refreshSaleKwSummary(
+  scope: DataScope,
+  storeId?: string,
+  client?: any,
+  options?: { daysList?: number[] },
+): Promise<void> {
+  const sql = client || await getDatabaseClient();
+  const teamId = (scope as any)?.teamId || "default";
+  const daysList = options?.daysList || [7, 14, 30, 60];
+
+  const stores = await sql<{ id: string; team_id: string }[]>`
+    SELECT id, team_id FROM ppc_stores
+    WHERE team_id = ${teamId}
+      AND (${!storeId} OR id = ${storeId || null}::uuid)
+  `;
+
+  for (const s of stores) {
+    for (const d of daysList) {
+      await sql`
+        DELETE FROM ppc_sale_kw_summary
+        WHERE store_id = ${s.id} AND days_window = ${d};
+      `;
+
+      await sql`
+        WITH anchor AS (
+          SELECT COALESCE(MAX(report_date), CURRENT_DATE - 1) AS max_date
+          FROM ppc_search_terms
+          WHERE store_id = ${s.id}
+        ),
+        daily_counts AS (
+          SELECT store_id, ad_type, COUNT(*) as cnt
+          FROM ppc_search_terms p0
+          CROSS JOIN anchor a
+          WHERE p0.store_id = ${s.id}
+            AND p0.report_granularity = 'DAILY'
+            AND p0.report_date >= a.max_date - (${d} - 1)::integer
+            AND p0.report_date <= a.max_date
+          GROUP BY store_id, ad_type
+        ),
+        latest_range AS (
+          SELECT store_id, ad_type, MAX(report_end_date) as max_end_date
+          FROM ppc_search_terms p0
+          CROSS JOIN anchor a
+          WHERE p0.store_id = ${s.id}
+            AND p0.report_granularity = 'RANGE'
+            AND (p0.report_end_date - p0.report_start_date + 1)
+              BETWEEN ${d - 3}::integer AND ${d + 3}::integer
+            AND p0.report_end_date <= a.max_date
+          GROUP BY store_id, ad_type
+        ),
+        filtered AS (
+          SELECT
+            p.store_id,
+            COALESCE(
+              substring(p.sku from '([A-Za-z]{2,5}[0-9]{4,8}[A-Za-z0-9]*)'),
+              substring(p.campaign_name from '([A-Za-z]{2,5}[0-9]{4,8}[A-Za-z0-9]*)'),
+              substring(p.portfolio_name from '([A-Za-z]{2,5}[0-9]{4,8}[A-Za-z0-9]*)'),
+              NULLIF(trim(p.sku), ''),
+              NULLIF(trim(p.portfolio_name), ''),
+              'UNKNOWN_SKU'
+            ) AS resolved_sku,
+            p.customer_search_term,
+            p.campaign_id,
+            p.campaign_name,
+            p.ad_group_id,
+            p.ad_group_name,
+            p.impressions,
+            p.clicks,
+            p.spend,
+            p.sales,
+            p.orders
+          FROM ppc_search_terms p
+          CROSS JOIN anchor a
+          LEFT JOIN daily_counts dc ON dc.store_id = p.store_id AND dc.ad_type = p.ad_type
+          LEFT JOIN latest_range lr ON lr.store_id = p.store_id AND lr.ad_type = p.ad_type
+          WHERE p.store_id = ${s.id}
+            AND (
+              lower(p.customer_search_term) NOT LIKE 'asin=%'
+              AND lower(p.customer_search_term) NOT LIKE 'category=%'
+              AND p.customer_search_term !~* '^b0[0-9a-z]{8}$'
+              AND p.customer_search_term !~* '^[b][0-9a-z]{9}$'
+            )
+            AND (
+              (
+                p.report_granularity = 'DAILY'
+                AND p.report_date >= a.max_date - (${d} - 1)::integer
+                AND p.report_date <= a.max_date
+              )
+              OR
+              (
+                p.report_granularity = 'RANGE'
+                AND (dc.cnt IS NULL OR dc.cnt = 0)
+                AND p.report_end_date = lr.max_end_date
+              )
+            )
+        ),
+        aggregated AS (
+          SELECT
+            p.store_id,
+            upper(p.resolved_sku) as sku,
+            p.customer_search_term,
+            MIN(p.campaign_id) as source_campaign_id,
+            MIN(p.campaign_name) as source_campaign_name,
+            array_agg(DISTINCT p.campaign_name) as source_campaign_names,
+            MIN(p.ad_group_id) as source_ad_group_id,
+            MIN(p.ad_group_name) as source_ad_group_name,
+            SUM(p.impressions)::integer as impressions,
+            SUM(p.clicks)::integer as clicks,
+            SUM(p.spend)::numeric as spend,
+            SUM(p.sales)::numeric as sales,
+            SUM(p.orders)::integer as orders
+          FROM filtered p
+          GROUP BY p.store_id, upper(p.resolved_sku), p.customer_search_term
+          HAVING SUM(p.orders) >= 1 OR SUM(p.clicks) >= 10
+        )
+        INSERT INTO ppc_sale_kw_summary (
+          team_id, store_id, sku, customer_search_term, days_window,
+          source_campaign_id, source_campaign_name, source_campaign_names,
+          source_ad_group_id, source_ad_group_name,
+          impressions, clicks, spend, sales, orders, updated_at
+        )
+        SELECT
+          ${s.team_id}, a.store_id, a.sku, a.customer_search_term, ${d},
+          a.source_campaign_id, a.source_campaign_name, a.source_campaign_names,
+          a.source_ad_group_id, a.source_ad_group_name,
+          a.impressions, a.clicks, a.spend, a.sales, a.orders, NOW()
+        FROM aggregated a;
+      `;
+    }
   }
 }
 

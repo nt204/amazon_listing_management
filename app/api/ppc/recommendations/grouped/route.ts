@@ -52,11 +52,17 @@ export async function GET(request: Request) {
       result = await getCachedOrFetch(redisKey, RECOMMENDATION_CACHE_TTL_SECONDS, async () => {
         // Optimized query: only fetch enabled targets in targetable campaigns (SP03, SB05, SB01, VIDEO),
         // reducing row scan from 50k to ~1.5k.
-        const targetRows = await listTargetRowsForRecommendations(
-          scope,
-          { storeName, days },
-          { limit: 20000 },
-        );
+        const batchSize = 10_000;
+        const targetRows: Awaited<ReturnType<typeof listTargetRowsForRecommendations>> = [];
+        for (let offset = 0; ; offset += batchSize) {
+          const batch = await listTargetRowsForRecommendations(
+            scope,
+            { storeName, days },
+            { limit: batchSize, offset },
+          );
+          targetRows.push(...batch);
+          if (batch.length < batchSize) break;
+        }
         return getGroupedRecommendations(storeId, targetRows, days);
       });
       setCachedGroupedRecommendations(cacheKey, result);

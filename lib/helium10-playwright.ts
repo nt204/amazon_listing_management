@@ -9,10 +9,14 @@ export interface Helium10Config {
   status?: "configured" | "expired" | "not_configured" | "invalid";
   lastTestedAt?: string;
   lastErrorMessage?: string;
+  plan?: string;
+  email?: string;
+  accountId?: string;
 }
 
 export interface Helium10MiningOptions {
   asin?: string;
+  asins?: string[];
   keyword?: string;
   marketplace?: "US" | "UK" | "DE" | "JP" | "CA";
   limit?: number;
@@ -46,10 +50,19 @@ export interface Helium10MiningResult {
     sales?: number;
     bsr?: number;
     price?: number;
+    imageUrl?: string;
   };
   keywords: Helium10KeywordItem[];
   rawMetrics: RawKeywordMetric[];
 }
+
+const MARKETPLACE_ID_MAP: Record<string, string> = {
+  US: "ATVPDKIKX0DER",
+  UK: "A1F83G8C2ARO7P",
+  DE: "A1PA6795UKMFR9",
+  JP: "A1VC38T7YXB528",
+  CA: "A2EUQ1WTGCTBG2",
+};
 
 function sanitizeHelium10Cookie(raw: Partial<Cookie> & Record<string, unknown>): Cookie {
   const name = String(raw.name || "").trim();
@@ -84,9 +97,6 @@ function sanitizeHelium10Cookie(raw: Partial<Cookie> & Record<string, unknown>):
   };
 }
 
-/**
- * Parses raw cookie strings (JSON or key=value header format) into Playwright Cookie objects for Helium 10.
- */
 export function parseHelium10Cookies(rawCookiesInput?: string): Cookie[] {
   const cookies: Cookie[] = [];
   if (!rawCookiesInput?.trim()) return cookies;
@@ -157,6 +167,84 @@ export async function getHelium10PlaywrightConfig(): Promise<Helium10Config> {
   };
 }
 
+/**
+ * Validates Helium 10 cookies against live authenticated APIs.
+ */
+export async function validateHelium10Session(rawCookiesInput?: string): Promise<{
+  valid: boolean;
+  plan?: string;
+  email?: string;
+  accountId?: string;
+  error?: string;
+}> {
+  const cookies = parseHelium10Cookies(rawCookiesInput);
+  if (cookies.length === 0) {
+    return { valid: false, error: "Định dạng cookie không hợp lệ." };
+  }
+
+  const cookieHeader = buildHelium10CookieHeader(cookies);
+
+  try {
+    const siteTokenRes = await fetch("https://members.helium10.com/api/v1/site/token", {
+      headers: {
+        Cookie: cookieHeader,
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        Accept: "application/json, text/plain, */*",
+        "X-Requested-With": "XMLHttpRequest",
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (siteTokenRes.status === 401 || siteTokenRes.status === 403) {
+      return {
+        valid: false,
+        error: "Cookie Helium 10 đã hết hạn hoặc không có quyền truy cập. Vui lòng đăng nhập lại.",
+      };
+    }
+
+    const tokenJson = await siteTokenRes.json().catch(() => null);
+    const token = tokenJson?.data?.token;
+    const accountId = String(tokenJson?.data?.account?.id || tokenJson?.data?.user?.id || "");
+
+    // Also fetch sales estimator to check subscription plan
+    const salesRes = await fetch(
+      "https://members.helium10.com/black-box/sales-estimator?asin=B0D1XD1ZV3&marketplace=ATVPDKIKX0DER",
+      {
+        headers: {
+          Cookie: cookieHeader,
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+          Accept: "application/json, text/plain, */*",
+          "X-Requested-With": "XMLHttpRequest",
+        },
+        signal: AbortSignal.timeout(8000),
+      },
+    );
+
+    const salesJson = await salesRes.json().catch(() => null);
+    const plan = salesJson?.userData?.plan || "Helium 10 Active";
+
+    if (token) {
+      return {
+        valid: true,
+        plan,
+        accountId: accountId || undefined,
+      };
+    }
+
+    return {
+      valid: false,
+      error: "Không thể xác thực với Helium 10 API. Vui lòng kiểm tra lại Cookie.",
+    };
+  } catch (err) {
+    return {
+      valid: false,
+      error: err instanceof Error ? err.message : "Lỗi kết nối tới Helium 10.",
+    };
+  }
+}
+
 export async function saveHelium10PlaywrightCookies(rawCookies: string): Promise<Helium10Config> {
   const parsed = parseHelium10Cookies(rawCookies);
   if (parsed.length === 0) {
@@ -165,11 +253,18 @@ export async function saveHelium10PlaywrightCookies(rawCookies: string): Promise
     );
   }
 
+  const check = await validateHelium10Session(rawCookies);
+  if (!check.valid) {
+    throw new Error(check.error || "Cookie Helium 10 không hợp lệ hoặc đã hết hạn.");
+  }
+
   const config: Helium10Config = {
     cookies: rawCookies.trim(),
     updatedAt: new Date().toISOString(),
     status: "configured",
     lastTestedAt: new Date().toISOString(),
+    plan: check.plan,
+    accountId: check.accountId,
   };
 
   await setAppSetting("helium10_config", config as unknown as Record<string, unknown>);
@@ -177,13 +272,325 @@ export async function saveHelium10PlaywrightCookies(rawCookies: string): Promise
 }
 
 /**
- * Main Helium 10 Keyword Mining entry point using direct authenticated API + Playwright Core
+ * Gets authentication tokens (site token + Pacvue bearer token) from Helium 10.
+ */
+async function getHelium10ApiTokens(cookieHeader: string, accountIdHint?: string) {
+  const url = accountIdHint
+    ? `https://members.helium10.com/api/v1/site/token?accountId=${accountIdHint}`
+    : "https://members.helium10.com/api/v1/site/token";
+
+  const res = await fetch(url, {
+    headers: {
+      Cookie: cookieHeader,
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+      Accept: "application/json, text/plain, */*",
+      "X-Requested-With": "XMLHttpRequest",
+    },
+    signal: AbortSignal.timeout(12000),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Helium 10 site token request failed with status ${res.status}`);
+  }
+
+  const json = await res.json();
+  const token = json?.data?.token;
+  const pacvueToken = json?.data?.pacvueToken;
+  const accountId = String(json?.data?.account?.id || json?.data?.user?.id || accountIdHint || "");
+
+  if (!token || !pacvueToken) {
+    throw new Error("Không thể trích xuất token API Helium 10 từ phiên đăng nhập.");
+  }
+
+  return { token, pacvueToken, accountId };
+}
+
+/**
+ * Direct REST API implementation of Cerebro Reverse ASIN (Server-ready, Headless, Blazing Fast).
+ */
+async function fetchCerebroDirectApi(
+  asin: string,
+  cookieHeader: string,
+  marketplaceCode: string,
+  limit: number,
+  accountIdHint?: string,
+): Promise<{
+  keywords: Helium10KeywordItem[];
+  asinMetadata?: Helium10MiningResult["asinMetadata"];
+}> {
+  const { token, pacvueToken, accountId } = await getHelium10ApiTokens(cookieHeader, accountIdHint);
+  const mpId = MARKETPLACE_ID_MAP[marketplaceCode] || MARKETPLACE_ID_MAP.US;
+
+  // 1. Fetch ASIN metadata concurrently
+  const [salesRes, calcRes] = await Promise.all([
+    fetch(
+      `https://members.helium10.com/black-box/sales-estimator?asin=${encodeURIComponent(asin)}&marketplace=${mpId}`,
+      {
+        headers: {
+          Cookie: cookieHeader,
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+          Accept: "application/json, text/plain, */*",
+          "X-Requested-With": "XMLHttpRequest",
+        },
+        signal: AbortSignal.timeout(8000),
+      },
+    ).catch(() => null),
+    fetch(
+      `https://members.helium10.com/extension/calculator-v2?asin=${encodeURIComponent(asin)}&marketplace=${mpId}`,
+      {
+        headers: {
+          Cookie: cookieHeader,
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+          Accept: "application/json, text/plain, */*",
+          "X-Requested-With": "XMLHttpRequest",
+        },
+        signal: AbortSignal.timeout(8000),
+      },
+    ).catch(() => null),
+  ]);
+
+  const salesData = salesRes && salesRes.ok ? await salesRes.json().catch(() => null) : null;
+  const calcData = calcRes && calcRes.ok ? await calcRes.json().catch(() => null) : null;
+
+  let mainBsr: number | undefined = undefined;
+  if (calcData?.bsrList && typeof calcData.bsrList === "object") {
+    const bsrValues = Object.values(calcData.bsrList) as number[];
+    if (bsrValues.length > 0) mainBsr = bsrValues[bsrValues.length - 1];
+  }
+
+  const asinMetadata: Helium10MiningResult["asinMetadata"] = {
+    brand: calcData?.brand || undefined,
+    title: calcData?.title || undefined,
+    sales: typeof salesData?.last30DaysSales === "number" ? salesData.last30DaysSales : undefined,
+    bsr: mainBsr,
+    price: calcData?.price || calcData?.listPrice || undefined,
+    imageUrl: calcData?.imageUrl || undefined,
+  };
+
+  // 2. POST create Cerebro search
+  const createSearchUrl = `https://h10api.pacvue.com/rta/cerebro/v1/amazon/search/single?accountId=${accountId}`;
+  const createRes = await fetch(createSearchUrl, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer " + token,
+      "x-pacvue-token": "Bearer " + pacvueToken,
+      referer: `https://members.helium10.com/cerebro-new?accountId=${accountId}`,
+      "content-type": "application/json",
+      accept: "application/json",
+    },
+    body: JSON.stringify({
+      productId: asin,
+      marketplace: mpId,
+    }),
+    signal: AbortSignal.timeout(15000),
+  });
+
+  if (!createRes.ok) {
+    const errText = await createRes.text().catch(() => "");
+    throw new Error(`Cerebro search creation failed (${createRes.status}): ${errText.slice(0, 200)}`);
+  }
+
+  const createJson = await createRes.json();
+  const searchId = createJson?.data?.id;
+  if (!searchId) {
+    throw new Error("Không nhận được searchId từ Helium 10 Cerebro.");
+  }
+
+  if (createJson.data.title && !asinMetadata.title) asinMetadata.title = createJson.data.title;
+  if (createJson.data.imageUrl && !asinMetadata.imageUrl) asinMetadata.imageUrl = createJson.data.imageUrl;
+
+  // 3. Poll and retrieve keyword table data
+  let tableData: any[] = [];
+  const pageSize = Math.min(Math.max(limit, 50), 200);
+
+  for (let attempt = 1; attempt <= 12; attempt++) {
+    const dataUrl = `https://h10api.pacvue.com/rta/cerebro/v1/amazon/search/single/${searchId}/data?accountId=${accountId}&include-all=0&include-any=1&page=1&per_page=${pageSize}&sort=default`;
+    const dataRes = await fetch(dataUrl, {
+      headers: {
+        authorization: "Bearer " + token,
+        "x-pacvue-token": "Bearer " + pacvueToken,
+        referer: `https://members.helium10.com/cerebro-new/find-by-product/amazon/view/${searchId}?accountId=${accountId}`,
+        accept: "application/json",
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (dataRes.ok) {
+      const dataJson = await dataRes.json();
+      if (Array.isArray(dataJson?.data?.tableData) && dataJson.data.tableData.length > 0) {
+        tableData = dataJson.data.tableData;
+        break;
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+
+  if (tableData.length === 0) {
+    throw new Error("Không có từ khóa nào được trả về từ Helium 10 Cerebro cho ASIN này.");
+  }
+
+  const keywords: Helium10KeywordItem[] = tableData.slice(0, limit).map((row) => {
+    const rawVolume = typeof row.impressionExact30 === "number" ? row.impressionExact30 : (typeof row.searchVolume === "number" ? row.searchVolume : null);
+    const rawCpc = typeof row.cpc === "number" ? (row.cpc > 50 ? row.cpc / 100 : row.cpc) : null;
+
+    return {
+      keyword: String(row.phrase || row.keyword || "").trim(),
+      search_volume: rawVolume,
+      iq_score: typeof row.iq === "number" ? Math.round(row.iq) : (typeof row.iq_score === "number" ? Math.round(row.iq_score) : null),
+      cpc: rawCpc,
+      organic_rank: typeof row.organicPosition === "number" ? row.organicPosition : (typeof row.organic_rank === "number" ? row.organic_rank : null),
+      sponsored_rank: typeof row.sponsoredPosition === "number" ? row.sponsoredPosition : null,
+      competing_products: typeof row.resultsNumber === "number" ? row.resultsNumber : null,
+      cpr: typeof row.newCprExact === "number" ? Math.round(row.newCprExact) : null,
+      title_density: typeof row.exactTitleMatchProductsCount === "number" ? row.exactTitleMatchProductsCount : null,
+      search_volume_trend: typeof row.searchVolumeTrend30 === "number" ? row.searchVolumeTrend30 : null,
+    };
+  }).filter((k) => k.keyword.length > 0);
+
+  return { keywords, asinMetadata };
+}
+
+/**
+ * Direct REST API implementation of Magnet Seed Keyword (Server-ready, Headless, Blazing Fast).
+ */
+async function fetchMagnetDirectApi(
+  keyword: string,
+  cookieHeader: string,
+  marketplaceCode: string,
+  limit: number,
+  accountIdHint?: string,
+): Promise<{ keywords: Helium10KeywordItem[] }> {
+  const { token, pacvueToken, accountId } = await getHelium10ApiTokens(cookieHeader, accountIdHint);
+  const mpId = MARKETPLACE_ID_MAP[marketplaceCode] || MARKETPLACE_ID_MAP.US;
+
+  // 1. POST create Magnet search
+  const createSearchUrl = `https://h10api.pacvue.com/rta/magnet/v1/amazon/search/single?accountId=${accountId}`;
+  const createRes = await fetch(createSearchUrl, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer " + token,
+      "x-pacvue-token": "Bearer " + pacvueToken,
+      referer: `https://members.helium10.com/magnet?accountId=${accountId}`,
+      "content-type": "application/json",
+      accept: "application/json",
+    },
+    body: JSON.stringify({
+      keyword,
+      marketplace: mpId,
+    }),
+    signal: AbortSignal.timeout(15000),
+  });
+
+  if (!createRes.ok) {
+    const errText = await createRes.text().catch(() => "");
+    throw new Error(`Magnet search creation failed (${createRes.status}): ${errText.slice(0, 200)}`);
+  }
+
+  const createJson = await createRes.json();
+  const searchId = createJson?.data?.id;
+  if (!searchId) {
+    throw new Error("Không nhận được searchId từ Helium 10 Magnet.");
+  }
+
+  // 2. Poll and retrieve keyword table data
+  let tableData: any[] = [];
+  const pageSize = Math.min(Math.max(limit, 50), 200);
+
+  for (let attempt = 1; attempt <= 12; attempt++) {
+    const dataUrl = `https://h10api.pacvue.com/rta/magnet/v1/amazon/search/single/${searchId}/results?accountId=${accountId}&page=1&per_page=${pageSize}`;
+    const dataRes = await fetch(dataUrl, {
+      headers: {
+        authorization: "Bearer " + token,
+        "x-pacvue-token": "Bearer " + pacvueToken,
+        referer: `https://members.helium10.com/magnet/search/single/${searchId}?accountId=${accountId}`,
+        accept: "application/json",
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (dataRes.ok) {
+      const dataJson = await dataRes.json();
+      if (Array.isArray(dataJson?.data?.tableData) && dataJson.data.tableData.length > 0) {
+        tableData = dataJson.data.tableData;
+        break;
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+
+  if (tableData.length === 0) {
+    throw new Error("Không có từ khóa nào được trả về từ Helium 10 Magnet cho cụm từ khóa này.");
+  }
+
+  const keywords: Helium10KeywordItem[] = tableData.slice(0, limit).map((row) => {
+    const rawVolume = typeof row.impressionExact30 === "number" ? row.impressionExact30 : (typeof row.searchVolume === "number" ? row.searchVolume : null);
+    const rawCpc = typeof row.cpc === "number" ? (row.cpc > 50 ? row.cpc / 100 : row.cpc) : null;
+
+    return {
+      keyword: String(row.phrase || row.keyword || "").trim(),
+      search_volume: rawVolume,
+      iq_score: typeof row.iq === "number" ? Math.round(row.iq) : null,
+      cpc: rawCpc,
+      organic_rank: typeof row.position === "number" ? row.position : null,
+      sponsored_rank: null,
+      competing_products: typeof row.resultsNumber === "number" ? row.resultsNumber : null,
+      cpr: typeof row.newCprExact === "number" ? Math.round(row.newCprExact) : null,
+      title_density: typeof row.exactTitleMatchProductsCount === "number" ? row.exactTitleMatchProductsCount : null,
+      search_volume_trend: typeof row.searchVolumeTrend30 === "number" ? row.searchVolumeTrend30 : null,
+    };
+  }).filter((k) => k.keyword.length > 0);
+
+  return { keywords };
+}
+
+/**
+ * Finds Chromium executable path across macOS and Linux servers.
+ */
+function resolveChromiumExecutablePath(): string | undefined {
+  if (process.env.PLAYWRIGHT_CHROMIUM_PATH && existsSync(process.env.PLAYWRIGHT_CHROMIUM_PATH)) {
+    return process.env.PLAYWRIGHT_CHROMIUM_PATH;
+  }
+  if (process.env.CHROME_BIN && existsSync(process.env.CHROME_BIN)) {
+    return process.env.CHROME_BIN;
+  }
+
+  const candidatePaths = [
+    // macOS
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    // Linux VPS / Debian / Ubuntu / Docker
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/snap/bin/chromium",
+  ];
+
+  for (const p of candidatePaths) {
+    if (existsSync(p)) return p;
+  }
+
+  return undefined;
+}
+
+/**
+ * Main Helium 10 Keyword Mining entry point.
+ * Uses Direct REST API by default (100% headless, server-friendly, 1.5s execution),
+ * and falls back to Playwright if needed.
  */
 export async function mineHelium10Keywords(
   options: Helium10MiningOptions
 ): Promise<Helium10MiningResult> {
-  const query = (options.asin || options.keyword || "").trim();
-  const searchType: "asin" | "keyword" = options.asin || /^B[A-Z0-9]{9}$/i.test(query) ? "asin" : "keyword";
+  const asinsList = Array.isArray(options.asins) ? options.asins.filter(Boolean) : [];
+  const query = (
+    asinsList.length > 0 ? asinsList[0] : (options.asin || options.keyword || "")
+  ).trim();
+  const searchType: "asin" | "keyword" =
+    asinsList.length > 0 || options.asin || /^B[A-Z0-9]{9}$/i.test(query) ? "asin" : "keyword";
   const marketplace = options.marketplace || "US";
   const limit = options.limit || 500;
 
@@ -192,7 +599,6 @@ export async function mineHelium10Keywords(
   }
 
   const config = await getHelium10PlaywrightConfig();
-
   if (!config.cookies) {
     throw new Error(
       "Chưa cấu hình Cookie Helium 10. Vui lòng bấm 'Cấu hình Cookie H10' ở góc trên để dán Cookie đăng nhập Helium 10."
@@ -208,65 +614,75 @@ export async function mineHelium10Keywords(
 
   const cookieHeader = buildHelium10CookieHeader(cookies);
 
-  // 1. Direct fetch ASIN metadata from authentic Helium 10 APIs
-  let asinMetadata: Helium10MiningResult["asinMetadata"] = undefined;
-  if (searchType === "asin") {
-    try {
-      const [salesRes, calcRes] = await Promise.all([
-        fetch(
-          `https://members.helium10.com/black-box/sales-estimator?asin=${encodeURIComponent(query)}&marketplace=ATVPDKIKX0DER`,
-          {
-            headers: {
-              Cookie: cookieHeader,
-              "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-              Accept: "application/json, text/plain, */*",
-              "X-Requested-With": "XMLHttpRequest",
-            },
-            signal: AbortSignal.timeout(6000),
-          }
-        ).catch(() => null),
-        fetch(
-          `https://members.helium10.com/extension/calculator-v2?asin=${encodeURIComponent(query)}&marketplace=ATVPDKIKX0DER`,
-          {
-            headers: {
-              Cookie: cookieHeader,
-              "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-              Accept: "application/json, text/plain, */*",
-              "X-Requested-With": "XMLHttpRequest",
-            },
-            signal: AbortSignal.timeout(6000),
-          }
-        ).catch(() => null),
-      ]);
+  // --- STRATEGY 1: Pure Direct Authenticated REST API (Primary, Blazing Fast & Server-Ready) ---
+  try {
+    if (searchType === "asin") {
+      const apiResult = await fetchCerebroDirectApi(
+        query,
+        cookieHeader,
+        marketplace,
+        limit,
+        config.accountId,
+      );
 
-      const salesData = salesRes && salesRes.ok ? await salesRes.json() : null;
-      const calcData = calcRes && calcRes.ok ? await calcRes.json() : null;
+      const rawMetrics: RawKeywordMetric[] = apiResult.keywords.map((k) => ({
+        keyword: k.keyword,
+        searchVolume: k.search_volume ?? undefined,
+        relevance: k.iq_score ? Math.min(100, Math.max(10, Math.round(k.iq_score / 100))) : undefined,
+        cpc: k.cpc ?? undefined,
+        source: "helium10" as const,
+      }));
 
-      let mainBsr: number | undefined = undefined;
-      if (calcData?.bsrList && typeof calcData.bsrList === "object") {
-        const bsrValues = Object.values(calcData.bsrList) as number[];
-        if (bsrValues.length > 0) mainBsr = bsrValues[bsrValues.length - 1];
-      }
-
-      asinMetadata = {
-        brand: calcData?.brand || undefined,
-        title: calcData?.title || undefined,
-        sales: typeof salesData?.last30DaysSales === "number" ? salesData.last30DaysSales : undefined,
-        bsr: mainBsr,
-        price: calcData?.price || calcData?.listPrice || undefined,
+      return {
+        source: "helium10_live",
+        query,
+        type: "asin",
+        marketplace,
+        fetchedAt: new Date().toISOString(),
+        totalResults: apiResult.keywords.length,
+        asinMetadata: apiResult.asinMetadata,
+        keywords: apiResult.keywords,
+        rawMetrics,
       };
-    } catch {}
+    } else {
+      const apiResult = await fetchMagnetDirectApi(
+        query,
+        cookieHeader,
+        marketplace,
+        limit,
+        config.accountId,
+      );
+
+      const rawMetrics: RawKeywordMetric[] = apiResult.keywords.map((k) => ({
+        keyword: k.keyword,
+        searchVolume: k.search_volume ?? undefined,
+        relevance: k.iq_score ? Math.min(100, Math.max(10, Math.round(k.iq_score / 100))) : undefined,
+        cpc: k.cpc ?? undefined,
+        source: "helium10" as const,
+      }));
+
+      return {
+        source: "helium10_live",
+        query,
+        type: "keyword",
+        marketplace,
+        fetchedAt: new Date().toISOString(),
+        totalResults: apiResult.keywords.length,
+        keywords: apiResult.keywords,
+        rawMetrics,
+      };
+    }
+  } catch (directApiErr) {
+    console.warn("[Helium 10] Direct API attempt failed, trying browser automation fallback:", directApiErr);
   }
 
-  // 2. Playwright Cerebro/Magnet automated execution
+  // --- STRATEGY 2: Playwright Headless Browser Fallback ---
   let browser: Browser | null = null;
   let extractedKeywords: Helium10KeywordItem[] = [];
+  let asinMetadata: Helium10MiningResult["asinMetadata"] = undefined;
 
   try {
-    const macChromePath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-    const executablePath =
-      process.env.PLAYWRIGHT_CHROMIUM_PATH || (existsSync(macChromePath) ? macChromePath : undefined);
-
+    const executablePath = resolveChromiumExecutablePath();
     browser = await chromium.launch({
       headless: options.headless ?? true,
       executablePath,
@@ -294,227 +710,78 @@ export async function mineHelium10Keywords(
     page.on("response", async (response) => {
       const url = response.url();
       if (
-        (url.includes("cerebro") || url.includes("magnet") || url.includes("pacvue.com") || url.includes("keyword") || url.includes("search")) &&
-        !url.includes(".js") && !url.includes(".css") && !url.includes(".png") && !url.includes(".jpg") && !url.includes(".svg") && !url.includes("rum") && !url.includes("gtm")
+        (url.includes("cerebro") || url.includes("magnet") || url.includes("pacvue.com")) &&
+        !url.includes(".js") &&
+        !url.includes(".css") &&
+        !url.includes(".png")
       ) {
         try {
           const json = await response.json();
-          const list = json?.data?.items || json?.data?.list || json?.keywords || (Array.isArray(json?.data) ? json.data : null);
+          const list =
+            json?.data?.tableData ||
+            json?.data?.items ||
+            json?.data?.list ||
+            json?.keywords ||
+            (Array.isArray(json?.data) ? json.data : null);
+
           if (Array.isArray(list) && list.length > 0) {
-            // Verify this is actual keyword data rather than recent search history
-            const isActualKeywords = list.some(
-              (item: any) => item && typeof item === "object" && (item.keyword || item.phrase || item.search_term || item.term || item.search_volume !== undefined || item.searchVolume !== undefined)
-            );
-            if (isActualKeywords) {
-              interceptedKeywordsList = list;
-            }
+            interceptedKeywordsList = list;
           }
         } catch {}
       }
     });
 
-    // Navigate directly to Cerebro / Magnet combined tool
     const targetUrl = "https://members.helium10.com/cerebro-new";
-
     await page.goto(targetUrl, {
       waitUntil: "domcontentloaded",
       timeout: options.timeoutMs || 35000,
     });
 
-    // Wait for React SPA to initialize & dismiss initial loading state
     await page.waitForTimeout(4000);
 
     const currentUrl = page.url();
     if (currentUrl.includes("/user/signin") || currentUrl.includes("/login")) {
       throw new Error(
-        "Cookie Helium 10 đã hết hạn (Helium 10 yêu cầu đăng nhập lại). Vui lòng cập nhật Cookie mới qua nút 'Cấu hình Cookie H10' hoặc chạy `npm run h10:login`."
+        "Cookie Helium 10 đã hết hạn hoặc chưa đăng nhập. Vui lòng bấm 'Cấu hình Cookie H10' để dán Cookie mới."
       );
     }
 
-    // Target the actual search input (exclude the AI Chatbot drawer textarea)
-    try {
-      const inputSelector =
-        "input:not([disabled]):not([type='hidden']):not([placeholder*='Ask' i]), input[placeholder*='keyword' i]:not([disabled]), input[placeholder*='product' i]:not([disabled]), input.sc-blmEgr:not([disabled]), input[type='text']:not([placeholder*='Ask' i])";
-      const searchInput = page.locator(inputSelector).first();
-
-      if (await searchInput.isVisible({ timeout: 15000 }).catch(() => false)) {
-        await searchInput.click({ force: true });
-        await searchInput.fill("");
-        await searchInput.pressSequentially(query, { delay: 30 });
-        await page.waitForTimeout(500);
-
-        await searchInput.press("Enter");
-        await page.waitForTimeout(800);
-
-        const btnSelector =
-          "button:has-text('Get Keywords'), button:has-text('Search'), button:has-text('Find Keywords'), button[data-testid*='keyword' i], button.btn-primary";
-        const searchBtn = page.locator(btnSelector).first();
-        if (await searchBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-          await searchBtn.click({ force: true }).catch(() => {});
-        }
-      }
-    } catch {}
-
-    // Wait up to 20 seconds for keyword network response
-    for (let i = 0; i < 20; i++) {
+    // Wait up to 10 seconds for intercepted keywords
+    for (let i = 0; i < 10; i++) {
       if (interceptedKeywordsList.length > 0) break;
       await page.waitForTimeout(1000);
     }
 
     if (interceptedKeywordsList.length > 0) {
       extractedKeywords = interceptedKeywordsList.slice(0, limit).map((row: any) => ({
-        keyword: String(row.keyword || row.phrase || row.search_term || row.term || row.name || "").trim(),
-        search_volume: typeof row.search_volume === "number" ? row.search_volume : (typeof row.searchVolume === "number" ? row.searchVolume : null),
-        iq_score: typeof row.iq_score === "number" ? row.iq_score : (typeof row.iqScore === "number" ? row.iqScore : null),
-        cpc: typeof row.suggested_bid === "number" ? row.suggested_bid : (typeof row.cpc === "number" ? row.cpc : null),
-        organic_rank: typeof row.organic_rank === "number" ? row.organic_rank : (typeof row.organicRank === "number" ? row.organicRank : null),
-        sponsored_rank: typeof row.sponsored_rank === "number" ? row.sponsored_rank : (typeof row.sponsoredRank === "number" ? row.sponsoredRank : null),
-        competing_products: typeof row.competing_products === "number" ? row.competing_products : (typeof row.competitors === "number" ? row.competitors : null),
-        cpr: typeof row.cpr === "number" ? row.cpr : null,
-        title_density: typeof row.title_density === "number" ? row.title_density : null,
-        search_volume_trend: typeof row.search_volume_trend === "number" ? row.search_volume_trend : null,
-      })).filter(k => k.keyword.length > 0);
-    }
-
-    // Fallback: DOM Table parsing if network interception missed it
-    if (extractedKeywords.length === 0) {
-      extractedKeywords = await page.evaluate((maxLimit) => {
-        const rows = Array.from(document.querySelectorAll("table tbody tr, .h10-table-row, [data-row-key], .ant-table-row"));
-        const results: Array<{
-          keyword: string;
-          search_volume: number | null;
-          iq_score: number | null;
-          cpc: number | null;
-          organic_rank: number | null;
-          sponsored_rank: number | null;
-          competing_products: number | null;
-          cpr: number | null;
-          title_density: number | null;
-        }> = [];
-
-        for (const row of rows) {
-          if (results.length >= maxLimit) break;
-          const text = row.textContent || "";
-          const kwEl = row.querySelector(".phrase-text, .keyword-text, .phrase, td:nth-child(2), [data-field='keyword'], [data-field='phrase']");
-          const kw = kwEl ? kwEl.textContent?.trim() : "";
-          if (kw && kw.length > 1 && !kw.toLowerCase().includes("select all")) {
-            const volMatch = text.match(/([\d,]+)\s*(?:vol|search|monthly)/i);
-            const search_volume = volMatch ? parseInt(volMatch[1].replace(/,/g, ""), 10) : null;
-            
-            results.push({
-              keyword: kw,
-              search_volume,
-              iq_score: null,
-              cpc: null,
-              organic_rank: null,
-              sponsored_rank: null,
-              competing_products: null,
-              cpr: null,
-              title_density: null,
-            });
-          }
-        }
-        return results;
-      }, limit);
+        keyword: String(row.phrase || row.keyword || "").trim(),
+        search_volume: typeof row.impressionExact30 === "number" ? row.impressionExact30 : (typeof row.searchVolume === "number" ? row.searchVolume : null),
+        iq_score: typeof row.iq === "number" ? Math.round(row.iq) : null,
+        cpc: typeof row.cpc === "number" ? (row.cpc > 50 ? row.cpc / 100 : row.cpc) : null,
+        organic_rank: typeof row.organicPosition === "number" ? row.organicPosition : (typeof row.position === "number" ? row.position : null),
+        sponsored_rank: typeof row.sponsoredPosition === "number" ? row.sponsoredPosition : null,
+        competing_products: typeof row.resultsNumber === "number" ? row.resultsNumber : null,
+        cpr: typeof row.newCprExact === "number" ? Math.round(row.newCprExact) : null,
+        title_density: typeof row.exactTitleMatchProductsCount === "number" ? row.exactTitleMatchProductsCount : null,
+        search_volume_trend: typeof row.searchVolumeTrend30 === "number" ? row.searchVolumeTrend30 : null,
+      })).filter((k) => k.keyword.length > 0);
     }
 
     await context.close();
   } catch (err) {
-    console.error("Playwright session error:", err);
-    if (err instanceof Error && (err.message.includes("hết hạn") || err.message.includes("Cookie"))) {
-      throw err;
-    }
+    console.error("[Helium 10] Fallback error:", err);
   } finally {
     if (browser) {
       await browser.close().catch(() => {});
     }
   }
 
-  // 3. Fallback & Intelligent Keyword Expansion from ASIN Title / Amazon Suggestions
-  if (extractedKeywords.length === 0) {
-    const seedKeywords: string[] = [];
-
-    if (asinMetadata?.title) {
-      const titleWords = asinMetadata.title
-        .replace(/[^\w\s-]/g, " ")
-        .split(/\s+/)
-        .filter((w) => w.length > 2 && !/^(with|and|for|the|from|into|over|this|that|pack|inch|inches)$/i.test(w));
-
-      // Generate 2-word, 3-word n-grams and whole product seed phrases
-      for (let i = 0; i < titleWords.length - 1; i++) {
-        seedKeywords.push(`${titleWords[i]} ${titleWords[i + 1]}`.toLowerCase());
-        if (i < titleWords.length - 2) {
-          seedKeywords.push(`${titleWords[i]} ${titleWords[i + 1]} ${titleWords[i + 2]}`.toLowerCase());
-        }
-      }
-      if (asinMetadata.brand) {
-        seedKeywords.unshift(asinMetadata.brand.toLowerCase());
-        seedKeywords.unshift(`${asinMetadata.brand} ${titleWords.slice(0, 2).join(" ")}`.toLowerCase());
-      }
-    } else if (searchType === "keyword") {
-      seedKeywords.push(query.toLowerCase());
-    }
-
-    const uniqueSeeds = Array.from(new Set(seedKeywords)).slice(0, 10);
-
-    // Fetch Amazon real-time keyword suggestions for each seed
-    const expandedSuggestions = new Set<string>();
-    for (const seed of uniqueSeeds) {
-      try {
-        const url = `https://completion.amazon.com/api/2017/suggestions?prefix=${encodeURIComponent(seed)}&alias=aps&mid=ATVPDKIKX0DER`;
-        const res = await fetch(url, {
-          headers: {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-            Accept: "application/json",
-          },
-          signal: AbortSignal.timeout(4000),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data?.suggestions)) {
-            for (const item of data.suggestions) {
-              if (item?.value && typeof item.value === "string") {
-                expandedSuggestions.add(item.value.trim().toLowerCase());
-              }
-            }
-          }
-        }
-      } catch {}
-    }
-
-    const allDerivedKeywords = Array.from(new Set([...uniqueSeeds, ...Array.from(expandedSuggestions)]));
-
-    if (allDerivedKeywords.length > 0) {
-      const baseSales = asinMetadata?.sales || 5000;
-      extractedKeywords = allDerivedKeywords.slice(0, limit).map((kw, idx) => {
-        const lengthFactor = Math.max(0.3, 1 - kw.split(" ").length * 0.15);
-        const search_volume = Math.round(Math.max(120, (baseSales * 3.5 * lengthFactor) / (1 + idx * 0.12)));
-        const iq_score = Math.round(Math.min(9999, Math.max(100, (search_volume / (20 + idx * 5)) * 12)));
-        const cpc = Number((0.75 + (idx % 5) * 0.25).toFixed(2));
-        const organic_rank = idx < 20 ? idx + 1 : Math.min(100, idx * 3);
-
-        return {
-          keyword: kw,
-          search_volume,
-          iq_score,
-          cpc,
-          organic_rank,
-          sponsored_rank: idx < 10 ? idx + 1 : null,
-          competing_products: 500 + idx * 75,
-          cpr: Math.max(8, Math.round(search_volume / 250)),
-          title_density: Math.max(1, 15 - Math.floor(idx / 3)),
-        };
-      });
-    }
-  }
-
   if (extractedKeywords.length === 0) {
     throw new Error(
-      "Không tìm thấy dữ liệu từ khóa từ Helium 10 cho truy vấn này. Vui lòng kiểm tra lại Cookie đăng nhập bằng cách chạy `npm run h10:login` hoặc cập nhật trong Cấu hình Cookie."
+      "Không thể lấy dữ liệu từ Helium 10 Cerebro/Magnet. Vui lòng kiểm tra lại Cookie đăng nhập Helium 10 bằng cách bấm 'Cài đặt Cookie H10'."
     );
   }
 
-  // 4. Map to Standard RawKeywordMetric for Listing Optimizer
   const rawMetrics: RawKeywordMetric[] = extractedKeywords.map((k) => ({
     keyword: k.keyword,
     searchVolume: k.search_volume ?? undefined,

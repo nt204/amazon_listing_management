@@ -1,5 +1,6 @@
 import { ApiError, authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
+import { invalidateCachePattern } from "@/lib/redis";
 import { exportSaleKwBulksheetExcel, type SaleKwCampaignPayload } from "@/lib/ppc/service";
 import {
   isAsinProductTarget,
@@ -203,7 +204,7 @@ export async function POST(request: Request) {
                 target_type, sku, bid, daily_budget, orders, sales, clicks, spend, cpc,
                 state, source, created_at, updated_at
               ) VALUES (
-                ${actor.teamId}, ${resolvedStoreId}, ${storeName},
+                ${actor.teamId}, ${resolvedStoreId}, ${finalStoreName},
                 ${camp.sourceCampaignId || null}, ${camp.sourceCampaignName},
                 ${camp.targetCampaignName}, ${camp.adGroupName || camp.targetCampaignName},
                 ${kw.customerSearchTerm}, ${kw.matchType || "exact"},
@@ -224,6 +225,7 @@ export async function POST(request: Request) {
             `;
           }
         }
+        await invalidateCachePattern(`ppc:query:sale-kw:${actor.teamId}:*`).catch(() => {});
       }
     } catch (registryErr) {
       console.error("Lỗi khi ghi nhận vào ppc_sale_kw_registry từ export:", registryErr);

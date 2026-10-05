@@ -1,5 +1,6 @@
 import { ApiError, authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
+import { invalidateCachePattern } from "@/lib/redis";
 import { exportBulksheetUpdateExcel } from "@/lib/ppc/service";
 import type { PpcRecommendation } from "@/lib/ppc/types";
 
@@ -220,7 +221,7 @@ export async function POST(request: Request) {
               ad_group_id, ad_group_name, keyword_text, match_type, level,
               state, source, clicks, spend, reason, created_at, updated_at
             ) VALUES (
-              ${actor.teamId}, ${resolvedStoreId}, ${storeName}, ${rec.adType || "SP"},
+              ${actor.teamId}, ${resolvedStoreId}, ${finalStoreName}, ${rec.adType || "SP"},
               ${rec.campaignId || null}, ${campName},
               ${rec.adGroupId || null}, ${rec.adGroupName || null},
               ${rec.keyword}, 'negativeExact', ${rec.adGroupId ? "AD_GROUP" : "CAMPAIGN"},
@@ -235,6 +236,7 @@ export async function POST(request: Request) {
               spend = EXCLUDED.spend
           `;
         }
+        await invalidateCachePattern(`ppc:query:st-opt:${actor.teamId}:*`).catch(() => {});
       }
     } catch (registryErr) {
       console.error("Lỗi khi ghi nhận vào ppc_negative_registry từ export:", registryErr);

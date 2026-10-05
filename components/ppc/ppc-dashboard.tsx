@@ -25,10 +25,13 @@ import {
   Sliders,
   Plus,
   CircleNotch,
-  Prohibit,
-  RocketLaunch,
-  Lightning,
+  Calculator,
+  DotsThreeVertical,
+  CaretDown,
+  Check,
+  Info,
 } from "@phosphor-icons/react";
+import { PpcBidOutcomesView } from "./ppc-bid-outcomes-view";
 import { PpcStOptimizationView } from "./ppc-st-optimization-view";
 import { PpcSaleKwView } from "./ppc-sale-kw-view";
 import { PpcPagination } from "./ppc-pagination";
@@ -83,10 +86,12 @@ import type { RequestActor } from "@/lib/auth";
 
 interface PpcDashboardProps {
   isEmbedded?: boolean;
-  initialTab?: "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "settings";
+  initialTab?: "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "outcomes" | "settings";
   initialSubTab?: "phoi" | "rules" | "history";
   initialStore?: string;
   actor?: RequestActor;
+  navNonce?: number;
+  standaloneTab?: "st_optimization" | "sale_kw" | "recommendations" | "outcomes";
 }
 
 interface PpcDetailCounts {
@@ -95,6 +100,15 @@ interface PpcDetailCounts {
   targets: number;
   skus: number;
   searchTerms: number;
+}
+
+interface PpcOverviewAttentionSku {
+  sku: string;
+  spend: number;
+  orders: number;
+  sales: number;
+  acos: number;
+  breakEvenAcos: number;
 }
 
 type SortField = "spend" | "sales" | "orders" | "clicks" | "impressions" | "ctr" | "acos" | "cvr" | "roas";
@@ -197,23 +211,39 @@ export function getTargetDisplayType(target: {
   return { label, badgeColor, matchType: match || "Unknown" };
 }
 
-export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, initialStore, actor }: PpcDashboardProps) {
+export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, initialStore, actor, navNonce, standaloneTab }: PpcDashboardProps) {
   const mounted = useSyncExternalStore(subscribeToHydration, getClientSnapshot, getServerSnapshot);
 
   const [stores, setStores] = useState<PpcStore[]>([]);
   const [storeSummaries, setStoreSummaries] = useState<PpcStoreSummary[]>([]);
-  const [selectedStore, setSelectedStore] = useState<string>(() => {
-    if (initialStore) return initialStore;
-    if (typeof window !== "undefined") {
-      try {
-        const urlParam = new URLSearchParams(window.location.search).get("store");
-        if (urlParam) return urlParam;
-        const saved = localStorage.getItem("nce_ppc_last_store");
-        if (saved) return saved;
-      } catch {}
+  const [selectedStore, setSelectedStore] = useState<string>(initialStore || "ALL");
+  const [storePreferenceReady, setStorePreferenceReady] = useState(false);
+
+  useEffect(() => {
+    let restoredStore = initialStore || "";
+    try {
+      if (!restoredStore) {
+        restoredStore = new URLSearchParams(window.location.search).get("store") || "";
+      }
+      if (!restoredStore) {
+        restoredStore = localStorage.getItem("nce_ppc_last_store") || "";
+      }
+    } catch { }
+    setSelectedStore(restoredStore || "ALL");
+    setStorePreferenceReady(true);
+  }, [initialStore]);
+
+  // Khi mở tính năng yêu cầu chọn store mà đang ở ALL: Cảnh báo người dùng chọn store thay vì tự gán mặc định
+  useEffect(() => {
+    if (!storePreferenceReady) return;
+    if (standaloneTab && (selectedStore === "ALL" || !selectedStore)) {
+      setShowStoreNotice(true);
+      setIsStoreHighlight(true);
+      notify("Vui lòng chọn 1 Store cụ thể để sử dụng tính năng này", "info");
+      const timer = setTimeout(() => setIsStoreHighlight(false), 2500);
+      return () => clearTimeout(timer);
     }
-    return "ALL";
-  });
+  }, [standaloneTab, selectedStore, navNonce, storePreferenceReady]);
   const [selectedSku, setSelectedSku] = useState<string>("ALL");
   const [selectedDays, setSelectedDays] = useState(30);
   const [customStartDate, setCustomStartDate] = useState<string>("");
@@ -260,38 +290,49 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
 
   // Navigation tab for data slicing (Hierarchy: Overview -> Campaigns -> Ad Groups -> Targets -> Search Terms -> ST Optimization -> Sale KW | SKU parallel view | Settings)
   const [activeTab, setActiveTab] = useState<
-    "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "settings"
-  >(() => {
-    if (initialTab) return initialTab;
-    if (typeof window !== "undefined") {
-      try {
-        const urlParam = new URLSearchParams(window.location.search).get("tab") as any;
-        const validTabs = ["overview", "campaigns", "ad_groups", "targets", "skus", "match_types", "search_terms", "st_optimization", "sale_kw", "alerts", "recommendations", "settings"];
-        if (urlParam && validTabs.includes(urlParam)) return urlParam;
-        const saved = localStorage.getItem("nce_ppc_last_tab") as any;
-        if (saved && validTabs.includes(saved)) return saved;
-      } catch {}
-    }
-    return "overview";
-  });
-  const [settingsSubTab, setSettingsSubTab] = useState<"phoi" | "rules" | "history">(() => {
-    if (initialSubTab) return initialSubTab;
-    if (typeof window !== "undefined") {
-      try {
-        const urlParam = new URLSearchParams(window.location.search).get("subTab") as any;
-        if (urlParam && ["phoi", "rules", "history"].includes(urlParam)) return urlParam;
-        const saved = localStorage.getItem("nce_ppc_last_subtab") as any;
-        if (saved && ["phoi", "rules", "history"].includes(saved)) return saved;
-      } catch {}
-    }
-    return "phoi";
-  });
+    "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "outcomes" | "settings"
+  >(standaloneTab || initialTab || "overview");
 
   useEffect(() => {
-    if (initialTab) {
+    if (standaloneTab || initialTab) return;
+    try {
+      const urlParam = new URLSearchParams(window.location.search).get("tab") as any;
+      const validTabs = ["overview", "campaigns", "ad_groups", "targets", "skus", "match_types", "search_terms", "st_optimization", "sale_kw", "alerts", "recommendations", "outcomes", "settings"];
+      if (urlParam && validTabs.includes(urlParam)) {
+        setActiveTab(urlParam);
+        return;
+      }
+      const saved = localStorage.getItem("nce_ppc_last_tab") as any;
+      if (saved && validTabs.includes(saved)) setActiveTab(saved);
+    } catch { }
+  }, [standaloneTab, initialTab]);
+
+  const [settingsSubTab, setSettingsSubTab] = useState<"phoi" | "rules" | "history">(initialSubTab || "phoi");
+
+  useEffect(() => {
+    if (initialSubTab) return;
+    try {
+      const urlParam = new URLSearchParams(window.location.search).get("subTab") as any;
+      if (urlParam && ["phoi", "rules", "history"].includes(urlParam)) {
+        setSettingsSubTab(urlParam);
+        return;
+      }
+      const saved = localStorage.getItem("nce_ppc_last_subtab") as any;
+      if (saved && ["phoi", "rules", "history"].includes(saved)) setSettingsSubTab(saved);
+    } catch { }
+  }, [initialSubTab]);
+
+  useEffect(() => {
+    if (standaloneTab) {
+      setActiveTab(standaloneTab);
+    } else if (initialTab) {
       setActiveTab(initialTab);
+    } else {
+      setActiveTab("overview");
+      setShowStoreNotice(false);
+      setIsStoreHighlight(false);
     }
-  }, [initialTab]);
+  }, [standaloneTab, initialTab, navNonce]);
 
   useEffect(() => {
     if (initialSubTab) {
@@ -307,6 +348,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
 
   // Synchronize tab, store, subTab to localStorage and URL searchParams
   useEffect(() => {
+    if (!storePreferenceReady) return;
     try {
       localStorage.setItem("nce_ppc_last_tab", activeTab);
       localStorage.setItem("nce_ppc_last_store", selectedStore);
@@ -354,8 +396,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
       if (changed) {
         window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
       }
-    } catch {}
-  }, [activeTab, selectedStore, settingsSubTab]);
+    } catch { }
+  }, [activeTab, selectedStore, settingsSubTab, storePreferenceReady]);
 
   // Keep-alive state: preserve DOM and scroll position for visited tabs (zero re-render delay)
   const [mountedTabs, setMountedTabs] = useState<Set<string>>(() => new Set([initialTab || "overview"]));
@@ -432,6 +474,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
   const [targetPageSize, setTargetPageSize] = useState(25);
   const [skuPage, setSkuPage] = useState(1);
   const [skuPageSize, setSkuPageSize] = useState(25);
+  const [overviewWeakSkus, setOverviewWeakSkus] = useState<PpcOverviewAttentionSku[]>([]);
+  const [loadingOverviewWeakSkus, setLoadingOverviewWeakSkus] = useState(false);
   const [selectedTerms, setSelectedTerms] = useState<Set<string>>(new Set());
 
   // SKU category filter
@@ -492,6 +536,18 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
   const [showFileManagerModal, setShowFileManagerModal] = useState(false);
   const [showAddStoreModal, setShowAddStoreModal] = useState(false);
   const [showStoreManagerModal, setShowStoreManagerModal] = useState(false);
+  const [showActionDropdown, setShowActionDropdown] = useState(false);
+  const actionDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (actionDropdownRef.current && !actionDropdownRef.current.contains(e.target as Node)) {
+        setShowActionDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadStore, setUploadStore] = useState("HSOSTORE");
   const [uploadEndDate, setUploadEndDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -510,6 +566,89 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
   };
+
+  const storeSelectRef = useRef<HTMLButtonElement>(null);
+  const storeDropdownContainerRef = useRef<HTMLDivElement>(null);
+  const [isStoreDropdownOpen, setIsStoreDropdownOpen] = useState(false);
+  const [isStoreHighlight, setIsStoreHighlight] = useState(false);
+  const [showStoreNotice, setShowStoreNotice] = useState(false);
+  const [pendingFeatureTab, setPendingFeatureTab] = useState<
+    | "overview"
+    | "campaigns"
+    | "ad_groups"
+    | "targets"
+    | "skus"
+    | "match_types"
+    | "search_terms"
+    | "st_optimization"
+    | "sale_kw"
+    | "alerts"
+    | "recommendations"
+    | "outcomes"
+    | "settings"
+    | null
+  >(null);
+
+  useEffect(() => {
+    if (!isStoreDropdownOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (storeDropdownContainerRef.current && !storeDropdownContainerRef.current.contains(e.target as Node)) {
+        setIsStoreDropdownOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setIsStoreDropdownOpen(false);
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isStoreDropdownOpen]);
+
+  const handleFeatureTabClick = useCallback((tabKey: 
+    | "overview"
+    | "campaigns"
+    | "ad_groups"
+    | "targets"
+    | "skus"
+    | "match_types"
+    | "search_terms"
+    | "st_optimization"
+    | "sale_kw"
+    | "alerts"
+    | "recommendations"
+    | "outcomes"
+    | "settings"
+  ) => {
+    if (selectedStore === "ALL" && tabKey !== "overview") {
+      notify("Vui lòng chọn 1 Store cụ thể để sử dụng tính năng này", "info");
+      setIsStoreHighlight(true);
+      setShowStoreNotice(true);
+      setPendingFeatureTab(tabKey);
+      setIsStoreDropdownOpen(true);
+      setTimeout(() => setIsStoreHighlight(false), 2500);
+      storeSelectRef.current?.focus();
+      return;
+    }
+    setShowStoreNotice(false);
+    setActiveTab(tabKey);
+  }, [selectedStore]);
+
+  const handleStoreChange = useCallback((storeName: string) => {
+    setSelectedStore(storeName);
+    setSelectedSku("ALL");
+    setIsStoreHighlight(false);
+    setShowStoreNotice(false);
+    if (storeName === "ALL") {
+      setActiveTab("overview");
+      setPendingFeatureTab(null);
+    } else if (pendingFeatureTab) {
+      setActiveTab(pendingFeatureTab);
+      setPendingFeatureTab(null);
+    }
+  }, [pendingFeatureTab]);
 
   // Close upload modal on ESC key
   useEffect(() => {
@@ -1010,6 +1149,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     }
   }, [selectedStore, selectedSku, selectedDays]);
 
+  useEffect(() => {
+    if (activeTab === "recommendations") return;
+    groupedRecRequestRef.current?.controller.abort();
+  }, [activeTab]);
+
   const loadSkuRecommendationDetails = useCallback(async (sku: string) => {
     const cacheKey = `${selectedStore}:${selectedDays}:${sku.trim().toUpperCase()}`;
     const cached = skuRecDetailsCacheRef.current.get(cacheKey);
@@ -1313,11 +1457,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
       void loadGroupedRecommendations();
       void loadActionQueue(selectedStore);
       void loadActionQueueCount(selectedStore);
-    } else if (skuRecGroups.length === 0 && !loadingRecs && detailCounts?.skus) {
-      const preloadTimer = window.setTimeout(() => {
-        void loadGroupedRecommendations();
-      }, 400);
-      return () => window.clearTimeout(preloadTimer);
     }
   }, [
     activeTab,
@@ -1331,6 +1470,36 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     loadActionQueue,
     actionQueue.length,
   ]);
+
+  useEffect(() => {
+    if (activeTab !== "overview" || selectedStore === "ALL") {
+      setOverviewWeakSkus([]);
+      setLoadingOverviewWeakSkus(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    setLoadingOverviewWeakSkus(true);
+    void fetch(
+      `/api/ppc/sku-economics/overview?storeId=${encodeURIComponent(selectedStore)}&days=${selectedDays}`,
+      { cache: "no-store", signal: controller.signal },
+    )
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const body = await response.json();
+        setOverviewWeakSkus(Array.isArray(body?.data) ? body.data : []);
+      })
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        console.error("Không thể tải tổng quan SKU cần chú ý:", error);
+        setOverviewWeakSkus([]);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingOverviewWeakSkus(false);
+      });
+
+    return () => controller.abort();
+  }, [activeTab, selectedStore, selectedDays]);
 
   useEffect(() => {
     return () => {
@@ -1917,6 +2086,13 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
       : skuPerformance;
   }, [skuPerformance, hidePausedSkus]);
 
+  const overviewTopSkus = useMemo(() => {
+    return activeSkuPerformance
+      .filter((sku) => sku.orders > 0 && sku.acos <= targetAcos)
+      .sort((a, b) => b.sales - a.sales || b.orders - a.orders)
+      .slice(0, 5);
+  }, [activeSkuPerformance, targetAcos]);
+
   const filteredSortedSkus = useMemo(() => {
     let list = [...activeSkuPerformance];
     if (skuCategoryFilter !== "ALL") {
@@ -2130,15 +2306,15 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
       {/* Toast Notification */}
       {toast && (
         <div className={`fixed bottom-20 right-6 z-50 text-white px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2.5 text-xs font-bold border animate-in fade-in ${toast.type === "error"
-            ? "bg-rose-900 border-rose-700"
-            : toast.type === "info"
-              ? "bg-indigo-950 border-indigo-700 text-indigo-100"
-              : "bg-slate-900 border-slate-700"
+          ? "bg-rose-900 border-rose-700"
+          : toast.type === "info"
+            ? "bg-indigo-950 border-indigo-700 text-indigo-100"
+            : "bg-slate-900 border-slate-700"
           }`}>
           {toast.type === "error" ? (
             <X size={16} weight="bold" className="text-rose-200 shrink-0" />
           ) : toast.type === "info" ? (
-            <CircleNotch size={16} className="animate-spin text-indigo-400 shrink-0" />
+            <Info size={16} weight="bold" className="text-indigo-300 shrink-0" />
           ) : (
             <CheckCircle size={16} weight="fill" className="text-emerald-400 shrink-0" />
           )}
@@ -2147,248 +2323,240 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
       )}
 
       {/* Top Animated Progress Bar when loading */}
-      {(loading || isStoreSwitching || loadingSection !== null || loadingRecs) && (
+      {(loading || isStoreSwitching || loadingSection !== null) && (
         <div className="fixed top-0 left-0 right-0 h-1 z-50 overflow-hidden bg-indigo-100 shadow-xs">
           <div className="h-full bg-gradient-to-r from-indigo-500 via-sky-400 to-indigo-600 animate-[pulse_1s_ease-in-out_infinite] w-full" />
         </div>
       )}
 
-      {/* TOP CONTROL BAR (Executive Header) */}
-      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
-        <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-indigo-50 text-indigo-600 border border-indigo-100">
-              <ChartLineUp size={22} weight="duotone" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-sm font-black text-slate-900 tracking-tight">
-                  Amazon PPC Seller Dashboard
-                </h2>
-                {selectedStore === "ALL" ? (
-                  <span className="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase bg-indigo-50 text-indigo-700 border border-indigo-200">
-                    Multi-Store Live
-                  </span>
-                ) : (
-                  <span className="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
-                    <Storefront size={12} weight="bold" />
-                    <span>Store: {selectedStore}</span>
-                  </span>
-                )}
-              </div>
-              <p className="text-[11px] text-slate-500 font-medium">
-                {selectedStore === "ALL"
-                  ? "Tổng quan hiệu suất quảng cáo đa store"
-                  : `Phân tích chuyên sâu chiến dịch cho store ${selectedStore}`}
-              </p>
+      {/* MASTER TOP CONTROL BAR */}
+      <div className="rounded-xl border border-slate-200/90 bg-white p-2.5 shadow-2xs space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {/* Cụm Trái: Chọn Store nổi bật màu xanh lá, to rõ ràng */}
+          <div className="flex items-center gap-2">
+            <div ref={storeDropdownContainerRef} className="relative">
+              <button
+                ref={storeSelectRef}
+                type="button"
+                onClick={() => setIsStoreDropdownOpen((prev) => !prev)}
+                className={`flex items-center gap-2 rounded-xl px-3.5 py-1.5 transition-all duration-200 cursor-pointer select-none ${
+                  isStoreHighlight
+                    ? "ring-2 ring-emerald-500 border-emerald-500 bg-emerald-50 text-emerald-950 shadow-md scale-105"
+                    : isStoreDropdownOpen
+                    ? "bg-emerald-100 border border-emerald-400 text-emerald-950 shadow-xs"
+                    : "bg-emerald-50/90 hover:bg-emerald-100/90 border border-emerald-300/90 shadow-2xs text-emerald-950"
+                }`}
+              >
+                <Storefront
+                  size={19}
+                  className={isStoreHighlight ? "text-emerald-600 animate-bounce shrink-0" : "text-emerald-600 shrink-0"}
+                  weight="fill"
+                />
+                <span className="text-[11px] font-extrabold text-emerald-700 uppercase tracking-wider">Store:</span>
+                <span className="font-black text-emerald-900 text-sm sm:text-base tracking-tight truncate max-w-[130px] sm:max-w-[200px]">
+                  {selectedStore === "ALL" ? `All Stores (${stores.length})` : selectedStore}
+                </span>
+                <CaretDown
+                  size={13}
+                  weight="bold"
+                  className={`text-emerald-700 transition-transform duration-200 shrink-0 ${isStoreDropdownOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+
+              {/* Smooth Custom Dropdown Menu */}
+              {isStoreDropdownOpen && (
+                <div
+                  className="absolute left-0 top-full mt-1.5 w-64 z-50 rounded-2xl bg-white border border-slate-200/90 shadow-xl p-1.5 transition-all animate-in fade-in zoom-in-95 duration-150 origin-top-left"
+                  role="menu"
+                >
+                  <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100 mb-1 flex items-center justify-between">
+                    <span>Chọn gian hàng</span>
+                    <span className="text-[9px] font-semibold text-slate-400">{stores.length} stores</span>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto space-y-0.5 thin-scrollbar">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleStoreChange("ALL");
+                        setIsStoreDropdownOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer text-left ${
+                        selectedStore === "ALL"
+                          ? "bg-emerald-600 text-white font-black shadow-xs"
+                          : "text-slate-700 hover:bg-emerald-50 hover:text-emerald-900"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <Storefront size={16} weight={selectedStore === "ALL" ? "bold" : "regular"} className="shrink-0" />
+                        <span className="truncate">All Stores</span>
+                      </div>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
+                        selectedStore === "ALL" ? "bg-emerald-700 text-white" : "bg-slate-100 text-slate-600"
+                      }`}>
+                        {stores.length}
+                      </span>
+                    </button>
+
+                    {stores.map((s) => {
+                      const isSelected = selectedStore === s.name;
+                      return (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onClick={() => {
+                            handleStoreChange(s.name);
+                            setIsStoreDropdownOpen(false);
+                          }}
+                          className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer text-left ${
+                            isSelected
+                              ? "bg-emerald-600 text-white font-black shadow-xs"
+                              : "text-slate-700 hover:bg-emerald-50 hover:text-emerald-900"
+                          }`}
+                        >
+                          <span className="truncate">{s.name}</span>
+                          {isSelected && <Check size={14} weight="bold" className="shrink-0 ml-2" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Action Toolbar */}
-          <div className="flex items-center gap-2 self-stretch lg:self-auto justify-end flex-wrap">
-            {(selectedStore !== "ALL" || activeTab !== "overview") && (
+          {/* Cụm Phải: Chọn Kỳ thời gian (Pills) + Sync time + Thao tác */}
+          <div className="flex flex-wrap items-center gap-2 justify-end">
+
+            {/* Chọn Kỳ Thời Gian: Segmented Pill y hệt ảnh */}
+            <div className="flex items-center bg-slate-100 rounded-lg p-0.5 text-xs font-semibold">
+              {[7, 14, 30, 60].map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => {
+                    setIsCustomDate(false);
+                    setSelectedDays(d);
+                  }}
+                  className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
+                    !isCustomDate && selectedDays === d
+                      ? "bg-white text-indigo-700 shadow-2xs font-bold"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  {d}D
+                </button>
+              ))}
+            </div>
+
+            {/* Sync Time */}
+            {lastSyncedAt && (
+              <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-600" title="Thời gian đồng bộ dữ liệu gần nhất">
+                <Clock size={12} className="text-slate-400 shrink-0" weight="bold" />
+                <span className="font-mono font-bold text-[11px] text-slate-700">
+                  {formatSyncTime(lastSyncedAt)}
+                </span>
+              </div>
+            )}
+
+            {/* Compact Action Dropdown */}
+            <div className="relative" ref={actionDropdownRef}>
               <button
                 type="button"
-                onClick={() => {
-                  setSelectedStore("ALL");
-                  setSelectedSku("ALL");
-                  setActiveTab("overview");
-                }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50/90 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition cursor-pointer shadow-2xs"
-                title="Quay lại giao diện thống kê so sánh tất cả các store"
+                onClick={() => setShowActionDropdown((v) => !v)}
+                className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 px-2.5 py-1 text-xs font-bold text-slate-700 transition cursor-pointer shadow-2xs"
+                title="Công cụ & Thao tác (Tự động AdsPower, Đồng bộ R2, Nạp báo cáo PPC...)"
               >
-                <Storefront size={14} weight="bold" />
-                <span>← Tất cả Store</span>
+                <DotsThreeVertical size={14} weight="bold" className="text-slate-500" />
+                <span className="hidden sm:inline">Thao tác</span>
+                <CaretDown size={10} weight="bold" className="text-slate-400" />
               </button>
-            )}
-            {!isEmbedded && (
-              <Link
-                href="/"
-                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition"
-              >
-                ← Workspace
-              </Link>
-            )}
 
-            <button
-              type="button"
-              onClick={handleSyncAdsPower}
-              disabled={syncingAdsPower}
-              className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-extrabold text-white shadow-xs hover:bg-emerald-700 transition cursor-pointer disabled:opacity-60"
-              title="Tự động kết nối trình duyệt AdsPower, click tải báo cáo mới nhất từ Amazon và nạp thẳng vào Dashboard"
-            >
-              <ArrowsClockwise size={14} className={syncingAdsPower ? "animate-spin" : ""} weight="bold" />
-              <span>{syncingAdsPower ? "Đang tải AdsPower..." : "Tự động AdsPower"}</span>
-            </button>
+              {showActionDropdown && (
+                <div className="absolute right-0 top-full mt-1.5 w-56 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl z-50 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowActionDropdown(false);
+                      void handleSyncAdsPower();
+                    }}
+                    disabled={syncingAdsPower}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer disabled:opacity-50"
+                  >
+                    <ArrowsClockwise size={14} className={syncingAdsPower ? "animate-spin text-emerald-600" : "text-emerald-600"} weight="bold" />
+                    <span>{syncingAdsPower ? "Đang tải AdsPower..." : "Tự động AdsPower"}</span>
+                  </button>
 
-            <button
-              type="button"
-              onClick={handleSyncR2}
-              disabled={syncingR2}
-              className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-extrabold text-white shadow-xs hover:bg-indigo-700 transition cursor-pointer disabled:opacity-60"
-            >
-              <ArrowsClockwise size={14} className={syncingR2 ? "animate-spin" : ""} weight="bold" />
-              <span>{syncingR2 ? "Đang đồng bộ..." : "Đồng bộ R2"}</span>
-            </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowActionDropdown(false);
+                      void handleSyncR2();
+                    }}
+                    disabled={syncingR2}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer disabled:opacity-50"
+                  >
+                    <ArrowsClockwise size={14} className={syncingR2 ? "animate-spin text-indigo-600" : "text-indigo-600"} weight="bold" />
+                    <span>{syncingR2 ? "Đang đồng bộ..." : "Đồng bộ R2"}</span>
+                  </button>
 
-            <button
-              type="button"
-              onClick={() => setShowUploadModal(true)}
-              className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700 transition cursor-pointer"
-            >
-              <UploadSimple size={14} className="text-sky-600" weight="bold" />
-              <span>Nạp báo cáo PPC</span>
-            </button>
+                  <div className="h-px bg-slate-100 my-1" />
 
-            <button
-              type="button"
-              onClick={() => setShowFileManagerModal(true)}
-              className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 transition cursor-pointer shadow-2xs"
-              title="Quản lý và xóa triệt để file trên Server & Cloudflare R2"
-            >
-              <FolderSimple size={14} className="text-amber-600" weight="bold" />
-              <span>Quản lý File</span>
-            </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowActionDropdown(false);
+                      setShowUploadModal(true);
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                  >
+                    <UploadSimple size={14} className="text-sky-600" weight="bold" />
+                    <span>Nạp báo cáo PPC</span>
+                  </button>
 
-            <a
-              href={`/api/ppc/seed?storeName=${encodeURIComponent(selectedStore !== "ALL" ? selectedStore : "Bozspacer")}`}
-              download
-              className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-600 transition cursor-pointer"
-              title="Tải template Excel chuẩn"
-            >
-              <Download size={14} weight="bold" />
-              <span>Template</span>
-            </a>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowActionDropdown(false);
+                      setShowFileManagerModal(true);
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                  >
+                    <FolderSimple size={14} className="text-amber-600" weight="bold" />
+                    <span>Quản lý File</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowActionDropdown(false);
+                      setShowStoreManagerModal(true);
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                  >
+                    <Gear size={14} className="text-slate-500" weight="bold" />
+                    <span>Quản lý Store</span>
+                  </button>
+
+                  <a
+                    href={`/api/ppc/seed?storeName=${encodeURIComponent(selectedStore !== "ALL" ? selectedStore : "Bozspacer")}`}
+                    download
+                    onClick={() => setShowActionDropdown(false)}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                  >
+                    <Download size={14} className="text-slate-500" weight="bold" />
+                    <span>Tải Template</span>
+                  </a>
+                </div>
+              )}
+            </div>
 
             <PpcNotificationPopover onRefreshParent={() => void refreshData()} />
           </div>
         </div>
-
-        {/* Filters: Store, SKU & Compact Data Status */}
-        <div className="pt-2 flex flex-wrap items-center justify-between gap-2.5 text-xs">
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Store Filter */}
-            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1">
-              <Storefront size={15} className="text-indigo-600" weight="duotone" />
-              <span className="text-slate-500 font-semibold text-[11px]">Store:</span>
-              <select
-                value={selectedStore}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setSelectedStore(val);
-                  setSelectedSku("ALL");
-                  if (val === "ALL") {
-                    setActiveTab("overview");
-                  }
-                }}
-                className="bg-transparent text-slate-900 font-bold outline-none cursor-pointer text-xs"
-              >
-                <option value="ALL">All Stores ({stores.length})</option>
-                {stores.map((s) => (
-                  <option key={s.id} value={s.name}>
-                    {s.name === "HSOSTORE" ? "HSOSTORE (Brand: Warmstorey)" : s.name} ({s.marketplace}) - Target {s.targetAcos}%
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Store Loading Badge */}
-            {(loading || isStoreSwitching || loadingSection !== null) && (
-              <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-2.5 py-1 text-xs font-bold animate-pulse shadow-2xs">
-                <CircleNotch size={13} className="animate-spin text-amber-600 shrink-0" />
-                <span>Đang tải dữ liệu {selectedStore === "ALL" ? "tất cả store" : selectedStore}...</span>
-              </div>
-            )}
-
-            {/* Nút Quản Lý Store */}
-            <button
-              type="button"
-              onClick={() => setShowStoreManagerModal(true)}
-              className="flex items-center gap-1 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-bold transition cursor-pointer shadow-2xs"
-              title="Quản lý danh sách, chỉnh sửa hoặc xóa store"
-            >
-              <Gear size={13} weight="bold" className="text-slate-500" />
-              <span className="hidden sm:inline">Quản Lý Store</span>
-            </button>
-
-            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1">
-              <span className="text-slate-500 font-semibold text-[11px]">Date:</span>
-              <select
-                value={isCustomDate ? "custom" : selectedDays}
-                onChange={(event) => {
-                  if (event.target.value === "custom") {
-                    setIsCustomDate(true);
-                  } else {
-                    setIsCustomDate(false);
-                    setSelectedDays(Number(event.target.value));
-                  }
-                }}
-                className="bg-transparent text-slate-900 font-bold outline-none cursor-pointer text-xs"
-              >
-                <option value={7}>Last 7 Days</option>
-                <option value={14}>Last 14 Days</option>
-                <option value={30}>Last 30 Days</option>
-                <option value={60}>Last 60 Days</option>
-                <option value={90}>Last 90 Days</option>
-                {isCustomDate && (
-                  <option value="custom">
-                    Tùy chọn ({customStartDate && customEndDate ? `${customStartDate.slice(5).replace("-", "/")}—${customEndDate.slice(5).replace("-", "/")}` : "..."})
-                  </option>
-                )}
-              </select>
-            </div>
-
-            {dateRangeStart && dateRangeEnd && (
-              <div className="flex items-center gap-1.5 bg-indigo-50/80 border border-indigo-200/80 rounded-lg px-2.5 py-1 text-xs text-indigo-950 font-bold" title="Khoảng thời gian dữ liệu thực tế đang phân tích">
-                <CalendarBlank size={14} className="text-indigo-600 shrink-0" weight="bold" />
-                <span>
-                  {dateRangeStart.split("-").reverse().join("/")} — {dateRangeEnd.split("-").reverse().join("/")}
-                </span>
-              </div>
-            )}
-          </div>
-
-          {/* Right: Compact Data Status (Chỉ hiển thị khi đang soi 1 store cụ thể) */}
-          {loading && !dataHealth ? (
-            <div className="flex items-center gap-1.5 text-xs text-indigo-600 font-semibold animate-pulse">
-              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-ping" />
-              <span>Đang tải số liệu…</span>
-            </div>
-          ) : selectedStore !== "ALL" && dataHealth ? (
-            <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-              <div className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-medium border ${dataHealth.campaignRows > 0
-                ? "bg-emerald-50/80 text-emerald-800 border-emerald-200/60"
-                : "bg-amber-50 text-amber-800 border-amber-200"
-                }`} title="Bulk Performance Campaigns">
-                <span className="text-slate-500 font-normal">Bulk:</span>
-                <span className="font-bold">{dataHealth.campaignRows.toLocaleString()} camps</span>
-              </div>
-
-              <div className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-medium border ${dataHealth.searchTermRows > 0
-                ? "bg-sky-50/80 text-sky-800 border-sky-200/60"
-                : "bg-slate-50 text-slate-600 border-slate-200"
-                }`} title="Search Term Report Rows">
-                <span className="text-slate-500 font-normal">Search:</span>
-                <span className="font-bold">{dataHealth.searchTermRows.toLocaleString()}</span>
-              </div>
-
-              <div className="inline-flex items-center gap-1 rounded-md bg-indigo-50/70 border border-indigo-200/60 px-2 py-0.5 font-medium text-indigo-800" title="Targets Active">
-                <span className="text-slate-500 font-normal">Targets:</span>
-                <span className="font-bold">{dataHealth.targetRows.toLocaleString()}</span>
-              </div>
-
-              <div className="inline-flex items-center gap-1 text-slate-500 ml-1">
-                <span className="text-[10px] text-slate-400">Sync:</span>
-                <span className="font-mono font-bold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 text-[10px]">
-                  {formatSyncTime(lastSyncedAt)}
-                </span>
-              </div>
-            </div>
-          ) : null}
-        </div>
       </div>
 
-      {!loading && overviewSearchTerms.length === 0 && (!dataHealth || dataHealth.performanceRows === 0) && (
+
+      {!standaloneTab && !loading && overviewSearchTerms.length === 0 && (!dataHealth || dataHealth.performanceRows === 0) && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
           <strong>Chưa có dữ liệu PPC trong {selectedDays} ngày gần nhất.</strong>{" "}
           Hãy nạp Bulk SP/SB và Search Term SP/SB hoặc đồng bộ từ R2. Hệ thống không tự chèn dữ liệu mẫu.
@@ -2396,12 +2564,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
       )}
 
       {/* SKELETON LOADING STATE */}
-      {loading && !summary && (
+      {!standaloneTab && loading && !summary && (
         <PpcOverviewSkeleton />
       )}
 
       {/* NẾU ĐANG Ở CHẾ ĐỘ XEM TẤT CẢ SHOP VÀ TAB TỔNG QUAN: HIỂN THỊ GIAO DIỆN MULTI-STORE HUB */}
-      {selectedStore === "ALL" && activeTab === "overview" && (
+      {!standaloneTab && selectedStore === "ALL" && activeTab === "overview" && (
         <PpcMultiStoreView
           storeSummaries={storeSummaries}
           summary={summary}
@@ -2424,16 +2592,15 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
           dateRangeStart={dateRangeStart || undefined}
           dateRangeEnd={dateRangeEnd || undefined}
           onSelectStore={(storeName) => {
-            setSelectedStore(storeName);
-            setSelectedSku("ALL");
+            handleStoreChange(storeName);
           }}
           onRefreshStores={() => void refreshData()}
           currency="$"
         />
       )}
 
-      {/* EXECUTIVE KPI CARDS (KHI XEM 1 SHOP HOẶC KHI CHUYỂN CÁC TAB KHÁC) */}
-      {(selectedStore !== "ALL" || activeTab !== "overview") && summary && ((dataHealth?.campaignRows || 0) > 0 || overviewSearchTerms.length > 0) && (
+      {/* EXECUTIVE KPI CARDS (CHỈ HIỂN THỊ KHI Ở TAB TỔNG QUAN CỦA 1 SHOP CỤ THỂ, ẨN KHI Ở TÍNH NĂNG ĐỘC LẬP HOẶC TAB CHI TIẾT) */}
+      {!standaloneTab && activeTab === "overview" && selectedStore !== "ALL" && summary && ((dataHealth?.campaignRows || 0) > 0 || overviewSearchTerms.length > 0) && (
         <div className="space-y-3">
           {(dataHealth?.campaignRows || 0) === 0 && overviewSearchTerms.length > 0 && (
             <div className="flex items-center gap-2 rounded-xl bg-sky-50 border border-sky-200 px-4 py-2.5 text-xs text-sky-900 font-medium">
@@ -2567,101 +2734,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
               </div>
             </div>
           </div>
-
-          {/* AD TYPE BREAKDOWN & TRAFFIC ROW (1 dòng tinh gọn) */}
-          <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3.5 py-2 shadow-2xs overflow-x-auto">
-            {/* Left: Ad Type Pills */}
-            <div className="flex items-center gap-2 shrink-0">
-              {adTypeBreakdown.map((item) => {
-                const isSp = item.adType === "SP";
-                const isSb = item.adType === "SB";
-                const badgeClass = isSp
-                  ? "bg-amber-500 text-white"
-                  : isSb
-                    ? "bg-indigo-600 text-white"
-                    : "bg-slate-700 text-white";
-                const label = isSp ? "Sponsored Products" : isSb ? "Sponsored Brands" : item.adType;
-
-                return (
-                  <div
-                    key={item.adType}
-                    className="flex items-center gap-2.5 rounded-lg border border-slate-200 bg-slate-50/70 px-2.5 py-1.5 text-xs shadow-2xs"
-                  >
-                    <span
-                      className={`rounded px-1.5 py-0.5 text-[10px] font-black tracking-wider ${badgeClass}`}
-                      title={label}
-                    >
-                      {item.adType}
-                    </span>
-
-                    <div className="flex items-center gap-2.5">
-                      <div>
-                        <span className="text-slate-400 text-[10px] uppercase font-bold mr-1">{item.adType} Spend</span>
-                        <strong className="text-slate-900 font-black">
-                          ${item.spend.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-                        </strong>
-                      </div>
-
-                      <div className="h-3 w-px bg-slate-200" />
-
-                      <div>
-                        <span className="text-slate-400 text-[10px] uppercase font-bold mr-1">Sales</span>
-                        <strong className="text-emerald-700 font-black">
-                          ${item.sales.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-                        </strong>
-                      </div>
-
-                      <div className="h-3 w-px bg-slate-200" />
-
-                      <div>
-                        <span className="text-slate-400 text-[10px] uppercase font-bold mr-1">ACOS</span>
-                        <strong className={`font-black ${item.acos <= targetAcos ? "text-emerald-600" : "text-amber-600"}`}>
-                          {item.acos > 500 ? "0 sales" : `${item.acos.toFixed(1)}%`}
-                        </strong>
-                      </div>
-
-                      <div className="h-3 w-px bg-slate-200" />
-
-                      <div>
-                        <span className="text-slate-400 text-[10px] uppercase font-bold mr-1">Orders</span>
-                        <strong className="text-slate-800 font-bold">
-                          {item.orders.toLocaleString()}
-                        </strong>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Right: Traffic Group (Impressions + CTR) */}
-            <div className="flex items-center gap-2.5 shrink-0 pl-3 border-l border-slate-200">
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-black tracking-wider text-slate-400 uppercase">
-                  TRAFFIC
-                </span>
-                <div className="h-3 w-px bg-slate-200" />
-              </div>
-
-              <div className="flex items-center gap-2.5 rounded-lg border border-slate-200 bg-slate-50/70 px-2.5 py-1.5 text-xs shadow-2xs">
-                <div>
-                  <span className="text-slate-400 text-[10px] uppercase font-bold mr-1.5">Impressions</span>
-                  <strong className="text-slate-900 font-black">
-                    {summary.totalImpressions.toLocaleString()}
-                  </strong>
-                </div>
-
-                <div className="h-3 w-px bg-slate-200" />
-
-                <div>
-                  <span className="text-slate-400 text-[10px] uppercase font-bold mr-1.5">CTR</span>
-                  <strong className="text-indigo-600 font-black">
-                    {(summary.overallCtr * 100).toFixed(2)}%
-                  </strong>
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
       )}
 
@@ -2719,8 +2791,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
         </div>
       )}
 
-      {/* 2 BIỂU ĐỒ CỐT LÕI PPC DASHBOARD THEO SPEC KỸ THUẬT (KHI XEM 1 SHOP HOẶC CHUYỂN TAB) */}
-      {(selectedStore !== "ALL" || activeTab !== "overview") && mounted && summary && ((dataHealth?.campaignRows || 0) > 0 || overviewSearchTerms.length > 0) && (
+      {/* 2 BIỂU ĐỒ CỐT LÕI PPC DASHBOARD THEO SPEC KỸ THUẬT (CHỈ HIỂN THỊ KHI Ở TAB TỔNG QUAN CỦA 1 SHOP CỤ THỂ) */}
+      {!standaloneTab && activeTab === "overview" && selectedStore !== "ALL" && mounted && summary && ((dataHealth?.campaignRows || 0) > 0 || overviewSearchTerms.length > 0) && (
         <div className="space-y-4">
           {/* BIỂU ĐỒ 1: Spend vs Revenue / ROAS theo thời gian */}
           {dailyTrends.length > 0 ? <PpcTimeSeriesChart
@@ -2762,13 +2834,13 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
         </div>
       )}
 
-      {/* DATA SLICING SUB-TABS (Bóc tách dữ liệu theo kiến trúc 5 tầng + SKU song song - ẨN KHI Ở TỔNG QUAN TẤT CẢ SHOP) */}
-      {(selectedStore !== "ALL" || activeTab !== "overview") && (
+      {/* DATA SLICING SUB-TABS (ẨN KHI Ở CHẾ ĐỘ TÍNH NĂNG ĐỘC LẬP HOẶC KHI Ở TỔNG QUAN TẤT CẢ SHOP) */}
+      {!standaloneTab && (selectedStore !== "ALL" || activeTab !== "overview") && (
         <div className="flex items-center justify-between gap-2 p-1 bg-slate-200/60 rounded-xl border border-slate-200/80 shadow-2xs overflow-x-auto">
           <div className="flex items-center gap-1 shrink-0">
             <button
               type="button"
-              onClick={() => setActiveTab("overview")}
+              onClick={() => handleFeatureTabClick("overview")}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "overview"
                 ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
                 : "text-slate-600 hover:text-slate-900"
@@ -2780,7 +2852,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
 
             <button
               type="button"
-              onClick={() => setActiveTab("campaigns")}
+              onClick={() => handleFeatureTabClick("campaigns")}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "campaigns"
                 ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
                 : "text-slate-600 hover:text-slate-900"
@@ -2792,7 +2864,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
 
             <button
               type="button"
-              onClick={() => setActiveTab("targets")}
+              onClick={() => handleFeatureTabClick("targets")}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "targets"
                 ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
                 : "text-slate-600 hover:text-slate-900"
@@ -2808,7 +2880,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
 
             <button
               type="button"
-              onClick={() => setActiveTab("search_terms")}
+              onClick={() => handleFeatureTabClick("search_terms")}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "search_terms"
                 ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
                 : "text-slate-600 hover:text-slate-900"
@@ -2825,118 +2897,86 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
 
             <button
               type="button"
-              onClick={() => setActiveTab("st_optimization")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "st_optimization"
-                ? "bg-white text-rose-700 shadow-xs border border-rose-200"
-                : "text-slate-600 hover:text-slate-900"
-                }`}
-            >
-              <Prohibit size={15} weight={activeTab === "st_optimization" ? "bold" : "regular"} className={activeTab === "st_optimization" ? "text-rose-600" : "text-slate-400"} />
-              <span>5. ST Optimization ({stOptimizationServerCount !== null
-                ? stOptimizationServerCount.toLocaleString("vi-VN")
-                : (stOptimizationCandidateCount > 0 ? stOptimizationCandidateCount.toLocaleString("vi-VN") : (!searchTermsReady ? "..." : "0"))})</span>
-              {(stOptimizationServerCount !== null ? stOptimizationServerCount : stOptimizationCandidateCount) > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full bg-rose-600 text-white text-[10px] font-black">
-                  {stOptimizationServerCount !== null ? stOptimizationServerCount : stOptimizationCandidateCount}
-                </span>
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab("sale_kw")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "sale_kw"
-                ? "bg-white text-emerald-700 shadow-xs border border-emerald-200"
-                : "text-slate-600 hover:text-slate-900"
-                }`}
-            >
-              <RocketLaunch size={15} weight={activeTab === "sale_kw" ? "bold" : "regular"} className={activeTab === "sale_kw" ? "text-emerald-600" : "text-slate-400"} />
-              <span>6. Lên Camp Sale KW ({saleKwServerCount !== null
-                ? saleKwServerCount.toLocaleString("vi-VN")
-                : (saleKwCandidateCount > 0 ? saleKwCandidateCount.toLocaleString("vi-VN") : (!searchTermsReady ? "..." : "0"))})</span>
-              {(saleKwServerCount !== null ? saleKwServerCount : saleKwCandidateCount) > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full bg-emerald-600 text-white text-[10px] font-black">
-                  {saleKwServerCount !== null ? saleKwServerCount : saleKwCandidateCount}
-                </span>
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab("skus")}
+              onClick={() => handleFeatureTabClick("skus")}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "skus"
                 ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
                 : "text-slate-600 hover:text-slate-900"
                 }`}
             >
               <Tag size={15} weight={activeTab === "skus" ? "bold" : "regular"} />
-              <span>7. SKU ({detailCounts?.skus !== undefined ? detailCounts.skus.toLocaleString("vi-VN") : (loading ? "..." : activeSkuPerformance.length.toLocaleString("vi-VN"))})</span>
+              <span>5. SKU ({detailCounts?.skus !== undefined ? detailCounts.skus.toLocaleString("vi-VN") : (loading ? "..." : activeSkuPerformance.length.toLocaleString("vi-VN"))})</span>
             </button>
 
             <button
               type="button"
-              onClick={() => setActiveTab("recommendations")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "recommendations"
-                ? "bg-white text-emerald-700 shadow-xs border border-emerald-100"
+              onClick={() => handleFeatureTabClick("outcomes")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "outcomes"
+                ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
                 : "text-slate-600 hover:text-slate-900"
                 }`}
             >
-              <span>8. Đề Xuất ({skuRecGroups.length > 0 ? `${skuRecGroups.length.toLocaleString("vi-VN")} SKU` : (detailCounts?.skus !== undefined ? `${detailCounts.skus.toLocaleString("vi-VN")} SKU` : (loadingRecs ? "..." : "0 SKU"))})</span>
+              <Calculator size={15} weight={activeTab === "outcomes" ? "bold" : "regular"} />
+              <span>6. Kết Quả Đổi Bid</span>
             </button>
           </div>
         </div>
       )}
 
       {/* ========================================================================= */}
-      {/* VIEW 1: OVERVIEW SUMMARY TABLE (CHỈ HIỂN THỊ KHI ĐANG XEM 1 SHOP CỤ THỂ) */}
+      {/* VIEW 1: OVERVIEW SUMMARY TABLE (CHỈ HIỂN THỊ KHI ĐANG XEM TỔNG QUAN 1 SHOP CỤ THỂ) */}
       {/* ========================================================================= */}
-      {activeTab === "overview" && selectedStore !== "ALL" && (
+      {!standaloneTab && activeTab === "overview" && selectedStore !== "ALL" && (
         <div className="space-y-3">
-          {/* Quick High-Impact Table: Top Converting vs Bleeding Summary */}
+          {/* Quick High-Impact Table: Strong vs weak SKU performance */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {/* Top 5 Best Performers */}
+            {/* Top 5 best-selling SKUs */}
             <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
               <div className="flex items-center justify-between pb-2 border-b border-slate-100 mb-2">
                 <h4 className="text-xs font-black uppercase text-emerald-800 flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                  Top Profitable Search Terms (ACOS &le; {targetAcos.toFixed(1)}%)
-                  <span className="normal-case text-[9px] font-semibold text-slate-400">Nguồn: Search Term Report</span>
+                  SKU bán tốt
+                  <span className="normal-case text-[9px] font-semibold text-slate-400">Có đơn, ACOS &le; {targetAcos.toFixed(1)}%</span>
                 </h4>
                 <button
                   type="button"
                   onClick={() => {
-                    setTermPerformanceFilter("WITH_ORDERS");
-                    setActiveTab("search_terms");
+                    setSkuCategoryFilter("ALL");
+                    setSkuSortField("sales");
+                    setSkuSortDir("desc");
+                    setActiveTab("skus");
                   }}
                   className="text-[11px] font-bold text-indigo-600 hover:underline cursor-pointer"
                 >
-                  View all →
+                  Xem tất cả →
                 </button>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="text-[10px] uppercase font-bold text-slate-400 border-b border-slate-100">
-                      <th className="py-1.5">Search Term</th>
-                      <th className="py-1.5 text-right">Orders</th>
+                      <th className="py-1.5">SKU</th>
                       <th className="py-1.5 text-right">Spend</th>
+                      <th className="py-1.5 text-right">Orders</th>
                       <th className="py-1.5 text-right">Sales</th>
                       <th className="py-1.5 text-right">ACOS</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-medium">
-                    {overviewSearchTerms
-                      .filter((t) => t.orders >= 2 && t.acos <= targetAcos)
-                      .slice(0, 5)
-                      .map((t, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50">
+                    {overviewTopSkus.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="py-6 text-center text-[11px] text-slate-400">
+                          Chưa có SKU đạt mục tiêu trong kỳ này.
+                        </td>
+                      </tr>
+                    ) : overviewTopSkus.map((sku) => (
+                        <tr key={`${sku.storeName || selectedStore}-${sku.sku}`} className="hover:bg-slate-50">
                           <td className="py-1.5 font-bold text-slate-800 max-w-[160px] truncate">
-                            {t.customerSearchTerm}
+                            <span title={sku.sku}>{sku.sku}</span>
                           </td>
-                          <td className="py-1.5 text-right font-black text-slate-900">{t.orders}</td>
-                          <td className="py-1.5 text-right text-slate-600">${t.spend.toFixed(2)}</td>
-                          <td className="py-1.5 text-right font-black text-emerald-600">${t.sales.toFixed(2)}</td>
-                          <td className="py-1.5 text-right font-bold text-emerald-700">{t.acos.toFixed(1)}%</td>
+                          <td className="py-1.5 text-right text-slate-700">${sku.spend.toFixed(2)}</td>
+                          <td className="py-1.5 text-right font-black text-slate-900">{sku.orders}</td>
+                          <td className="py-1.5 text-right font-black text-emerald-600">${sku.sales.toFixed(2)}</td>
+                          <td className="py-1.5 text-right font-bold text-emerald-700">{sku.acos.toFixed(1)}%</td>
                         </tr>
                       ))}
                   </tbody>
@@ -2944,51 +2984,69 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
               </div>
             </div>
 
-            {/* Top 5 Bleeding Terms (Zero orders) */}
+            {/* Top 5 SKUs that need attention */}
             <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
               <div className="flex items-center justify-between pb-2 border-b border-slate-100 mb-2">
                 <h4 className="text-xs font-black uppercase text-rose-800 flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-rose-500" />
-                  Top Bleeding Terms (0 Orders, Clicks &ge; 9)
-                  <span className="normal-case text-[9px] font-semibold text-slate-400">Nguồn: Search Term Report</span>
+                  SKU cần chú ý
+                  <span className="normal-case text-[9px] font-semibold text-slate-400">ACOS &gt; Break-even ACOS của SKU</span>
                 </h4>
                 <button
                   type="button"
                   onClick={() => {
-                    setTermPerformanceFilter("ZERO_ORDERS_BLEEDING");
-                    setActiveTab("search_terms");
+                    setSkuCategoryFilter("ALL");
+                    setSkuSortField("acos");
+                    setSkuSortDir("desc");
+                    setActiveTab("skus");
                   }}
                   className="text-[11px] font-bold text-rose-600 hover:underline cursor-pointer"
                 >
-                  Review &amp; Negate →
+                  Kiểm tra SKU →
                 </button>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="text-[10px] uppercase font-bold text-slate-400 border-b border-slate-100">
-                      <th className="py-1.5">Search Term</th>
-                      <th className="py-1.5 text-right">Clicks</th>
+                      <th className="py-1.5">SKU</th>
                       <th className="py-1.5 text-right">Spend</th>
-                      <th className="py-1.5 text-right">CVR</th>
-                      <th className="py-1.5 text-right">Status</th>
+                      <th className="py-1.5 text-right">Orders</th>
+                      <th className="py-1.5 text-right">Sales</th>
+                      <th className="py-1.5 text-right">ACOS</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-medium">
-                    {overviewSearchTerms
-                      .filter((t) => t.clicks >= 9 && t.orders === 0)
-                      .slice(0, 5)
-                      .map((t, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50">
+                    {loadingOverviewWeakSkus ? (
+                      Array.from({ length: 5 }).map((_, index) => (
+                        <tr key={`attention-sku-skeleton-${index}`} aria-hidden="true">
+                          <td className="py-2 pr-4"><div className="h-3 w-28 animate-pulse rounded bg-slate-100" /></td>
+                          <td className="py-2 pl-4"><div className="ml-auto h-3 w-14 animate-pulse rounded bg-slate-100" /></td>
+                          <td className="py-2 pl-4"><div className="ml-auto h-3 w-8 animate-pulse rounded bg-slate-100" /></td>
+                          <td className="py-2 pl-4"><div className="ml-auto h-3 w-14 animate-pulse rounded bg-slate-100" /></td>
+                          <td className="py-2 pl-4"><div className="ml-auto h-4 w-12 animate-pulse rounded bg-rose-50" /></td>
+                        </tr>
+                      ))
+                    ) : overviewWeakSkus.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="py-6 text-center text-[11px] text-slate-400">
+                          Không có SKU vượt ngưỡng cảnh báo.
+                        </td>
+                      </tr>
+                    ) : overviewWeakSkus.map((sku) => (
+                        <tr key={`${selectedStore}-${sku.sku}`} className="hover:bg-slate-50">
                           <td className="py-1.5 font-bold text-slate-800 max-w-[160px] truncate">
-                            {t.customerSearchTerm}
+                            <span title={sku.sku}>{sku.sku}</span>
                           </td>
-                          <td className="py-1.5 text-right font-black text-rose-700">{t.clicks}</td>
-                          <td className="py-1.5 text-right font-black text-slate-900">${t.spend.toFixed(2)}</td>
-                          <td className="py-1.5 text-right text-slate-400">0%</td>
+                          <td className="py-1.5 text-right font-black text-rose-700">${sku.spend.toFixed(2)}</td>
+                          <td className="py-1.5 text-right font-black text-slate-900">{sku.orders}</td>
+                          <td className="py-1.5 text-right font-bold text-slate-700">${sku.sales.toFixed(2)}</td>
                           <td className="py-1.5 text-right">
-                            <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-rose-50 text-rose-700 border border-rose-200">
-                              0 ORDERS
+                            <span
+                              className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-rose-50 text-rose-700 border border-rose-200"
+                              title={`Break-even ACoS: ${sku.breakEvenAcos.toFixed(1)}%`}
+                            >
+                              {sku.acos.toFixed(1)}%
                             </span>
                           </td>
                         </tr>
@@ -4472,57 +4530,132 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
 
       {mountedTabs.has("st_optimization") && (
         <div className={activeTab === "st_optimization" ? "" : "hidden"}>
-          <PpcStOptimizationView
-            searchTerms={searchTerms}
-            selectedStore={selectedStore}
-            selectedSku={selectedSku}
-            selectedDays={selectedDays}
-            loading={loading}
-            notify={notify}
-            onOpenActionQueue={() => setIsActionQueueOpen(true)}
-            stores={stores}
-            onCandidateCountChange={(cnt) => setStOptimizationServerCount(cnt)}
-          />
+          {selectedStore === "ALL" ? (
+            <div className="p-8 text-center bg-amber-50/80 rounded-2xl border border-amber-200 space-y-3 my-4 shadow-2xs">
+              <Storefront size={36} className="mx-auto text-amber-600" weight="duotone" />
+              <h3 className="text-sm font-bold text-amber-950">Vui lòng chọn một Store cụ thể</h3>
+              <p className="text-xs text-amber-800 max-w-lg mx-auto">
+                Tính năng Negative Keyword cần xác định đúng Store để phát hiện từ khóa lãng phí và thực hiện phủ định chuẩn xác.
+              </p>
+              <div className="flex items-center justify-center gap-2 flex-wrap pt-2">
+                {stores.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => handleStoreChange(s.name)}
+                    className="px-3.5 py-1.5 rounded-xl bg-white border border-amber-300 text-amber-950 text-xs font-bold hover:bg-amber-100 hover:border-amber-400 transition cursor-pointer shadow-xs"
+                  >
+                    {s.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <PpcStOptimizationView
+              isActive={activeTab === "st_optimization"}
+              searchTerms={searchTerms}
+              selectedStore={selectedStore}
+              selectedSku={selectedSku}
+              selectedDays={selectedDays}
+              loading={loading}
+              notify={notify}
+              onOpenActionQueue={() => setIsActionQueueOpen(true)}
+              stores={stores}
+              onCandidateCountChange={(cnt) => setStOptimizationServerCount(cnt)}
+            />
+          )}
         </div>
       )}
 
       {mountedTabs.has("sale_kw") && (
         <div className={activeTab === "sale_kw" ? "" : "hidden"}>
-          <PpcSaleKwView
-            searchTerms={searchTerms}
-            selectedStore={selectedStore}
-            selectedSku={selectedSku}
-            selectedDays={selectedDays}
-            loading={loading}
-            notify={notify}
-            onOpenActionQueue={() => setIsActionQueueOpen(true)}
-            actor={actor}
-            stores={stores}
-            onCandidateCountChange={(cnt) => setSaleKwServerCount(cnt)}
-          />
+          {selectedStore === "ALL" ? (
+            <div className="p-8 text-center bg-amber-50/80 rounded-2xl border border-amber-200 space-y-3 my-4 shadow-2xs">
+              <Storefront size={36} className="mx-auto text-amber-600" weight="duotone" />
+              <h3 className="text-sm font-bold text-amber-950">Vui lòng chọn một Store cụ thể</h3>
+              <p className="text-xs text-amber-800 max-w-lg mx-auto">
+                Lên Camp Sale KW cần tính CPC, kiểm tra lịch sử và tạo Campaign riêng theo từng Store để tránh nhầm lẫn dữ liệu.
+              </p>
+              <div className="flex items-center justify-center gap-2 flex-wrap pt-2">
+                {stores.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => handleStoreChange(s.name)}
+                    className="px-3.5 py-1.5 rounded-xl bg-white border border-amber-300 text-amber-950 text-xs font-bold hover:bg-amber-100 hover:border-amber-400 transition cursor-pointer shadow-xs"
+                  >
+                    {s.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <PpcSaleKwView
+              isActive={activeTab === "sale_kw"}
+              searchTerms={searchTerms}
+              selectedStore={selectedStore}
+              selectedSku={selectedSku}
+              selectedDays={selectedDays}
+              loading={loading}
+              notify={notify}
+              onOpenActionQueue={() => setIsActionQueueOpen(true)}
+              actor={actor}
+              stores={stores}
+              onCandidateCountChange={(cnt) => setSaleKwServerCount(cnt)}
+            />
+          )}
         </div>
       )}
 
       {mountedTabs.has("recommendations") && (
         <div className={activeTab === "recommendations" ? "rounded-2xl border border-slate-200 bg-white p-4 shadow-xs" : "hidden"}>
-          <PpcSkuRecommendationGroupView
-            groups={skuRecGroups}
-            allRecommendations={skuRecAllRecs}
-            isLoading={loadingRecs}
-            recommendationWindowDays={selectedDays}
-            loadedRecommendationWindowDays={loadedRecommendationWindowDays}
-            onRecommendationWindowChange={(days) => {
-              setIsCustomDate(false);
-              setSelectedDays(days);
-            }}
-            onLoadSkuRecommendations={loadSkuRecommendationDetails}
-            onApproveToQueue={handleApproveToQueue}
-            onOpenActionQueue={() => setIsActionQueueOpen(true)}
-            pendingQueueCount={pendingActionCount}
-            actionQueue={actionQueue}
-            selectedStore={selectedStore}
-            isStoreSwitching={isStoreSwitching}
-          />
+          {selectedStore === "ALL" ? (
+            <div className="p-8 text-center bg-amber-50/80 rounded-2xl border border-amber-200 space-y-3 my-4 shadow-2xs">
+              <Storefront size={36} className="mx-auto text-amber-600" weight="duotone" />
+              <h3 className="text-sm font-bold text-amber-950">Vui lòng chọn một Store cụ thể</h3>
+              <p className="text-xs text-amber-800 max-w-lg mx-auto">
+                Auto Bid / Đề xuất tối ưu giá thầu được tính toán và áp dụng riêng biệt cho từng Store.
+              </p>
+              <div className="flex items-center justify-center gap-2 flex-wrap pt-2">
+                {stores.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => handleStoreChange(s.name)}
+                    className="px-3.5 py-1.5 rounded-xl bg-white border border-amber-300 text-amber-950 text-xs font-bold hover:bg-amber-100 hover:border-amber-400 transition cursor-pointer shadow-xs"
+                  >
+                    {s.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <PpcSkuRecommendationGroupView
+              isActive={activeTab === "recommendations"}
+              groups={skuRecGroups}
+              allRecommendations={skuRecAllRecs}
+              isLoading={loadingRecs}
+              recommendationWindowDays={selectedDays}
+              loadedRecommendationWindowDays={loadedRecommendationWindowDays}
+              onRecommendationWindowChange={(days) => {
+                setIsCustomDate(false);
+                setSelectedDays(days);
+              }}
+              onLoadSkuRecommendations={loadSkuRecommendationDetails}
+              onApproveToQueue={handleApproveToQueue}
+              onOpenActionQueue={() => setIsActionQueueOpen(true)}
+              pendingQueueCount={pendingActionCount}
+              actionQueue={actionQueue}
+              selectedStore={selectedStore}
+              isStoreSwitching={isStoreSwitching}
+            />
+          )}
+        </div>
+      )}
+
+      {mountedTabs.has("outcomes") && (
+        <div className={activeTab === "outcomes" ? "rounded-2xl border border-slate-200 bg-white p-4 shadow-xs" : "hidden"}>
+          <PpcBidOutcomesView selectedStore={selectedStore} />
         </div>
       )}
 

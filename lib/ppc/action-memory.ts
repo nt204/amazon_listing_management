@@ -21,12 +21,29 @@ export interface ActionOutcomeInput {
   observationStart: string;
   observationEnd: string;
   maturityDate?: string | null;
-  status: "OBSERVING" | "PROVISIONAL" | "MATURE" | "CONTAMINATED" | "INSUFFICIENT_DATA";
+  status:
+    | "OBSERVING"
+    | "PROVISIONAL"
+    | "READY"
+    | "MATURE"
+    | "FINALIZED"
+    | "CONTAMINATED"
+    | "INTERRUPTED"
+    | "SUPERSEDED"
+    | "INSUFFICIENT_DATA";
   baseline?: JsonObject;
   observed?: JsonObject;
   comparison?: JsonObject;
   evidenceQuality?: JsonObject;
-  outcomeLabel?: "POSITIVE" | "NEUTRAL" | "NEGATIVE" | null;
+  outcomeLabel?:
+    | "POSITIVE"
+    | "NEUTRAL"
+    | "NEGATIVE"
+    | "INCONCLUSIVE"
+    | "CONFOUNDED"
+    | "INTERRUPTED"
+    | "SUPERSEDED"
+    | null;
   evaluatorVersion?: string;
   evaluatedAt?: string | null;
 }

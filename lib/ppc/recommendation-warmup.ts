@@ -25,11 +25,17 @@ export async function warmGroupedRecommendationWindows(
   for (const days of windows) {
     const redisKey = groupedRecommendationsRedisKey(scope.teamId, storeName, days);
     const result = await getCachedOrFetch(redisKey, RECOMMENDATION_CACHE_TTL_SECONDS, async () => {
-      const targetRows = await listPpcPerformance(
-        scope,
-        { storeName, sku: "ALL", days },
-        { grain: "TARGET", limit: 50000 },
-      );
+      const batchSize = 10_000;
+      const targetRows: Awaited<ReturnType<typeof listPpcPerformance>> = [];
+      for (let offset = 0; ; offset += batchSize) {
+        const batch = await listPpcPerformance(
+          scope,
+          { storeName, sku: "ALL", days },
+          { grain: "TARGET", limit: batchSize, offset },
+        );
+        targetRows.push(...batch);
+        if (batch.length < batchSize) break;
+      }
       return getGroupedRecommendations(storeId, targetRows, days);
     });
     setCachedGroupedRecommendations(

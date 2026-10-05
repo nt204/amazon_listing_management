@@ -15,8 +15,10 @@ export async function GET(request: Request) {
     const sku = searchParams.get("sku") || "ALL";
     const days = Math.max(1, Math.min(3650, Number(searchParams.get("days") || 30)));
     const page = Math.max(1, Number(searchParams.get("page") || 1));
-    const pageSize = Math.min(200, Math.max(10, Number(searchParams.get("pageSize") || 50)));
+    const fetchAll = searchParams.get("all") === "1";
+    const pageSize = Math.min(5000, Math.max(10, Number(searchParams.get("pageSize") || 50)));
     const search = searchParams.get("search")?.trim().toLowerCase() || "";
+    const campaignName = searchParams.get("campaignName")?.trim() || "ALL";
     const clickThreshold = Math.max(1, Number(searchParams.get("clickThreshold") || 20));
     const clickOperator = searchParams.get("clickOperator") === ">=" ? ">=" : ">";
     const hideAlreadyNegated = searchParams.get("hideAlreadyNegated") !== "false";
@@ -60,6 +62,10 @@ export async function GET(request: Request) {
             OR lower(c.campaign_name) LIKE ${`%${search}%`}
             OR lower(c.ad_group_name) LIKE ${`%${search}%`}
           )`
+        : sql``;
+
+      const campaignFilter = campaignName !== "ALL"
+        ? sql`AND lower(c.campaign_name) = lower(${campaignName})`
         : sql``;
 
       const skuFilter = sku !== "ALL"
@@ -153,14 +159,21 @@ export async function GET(request: Request) {
         candidates_with_checks AS (
           SELECT
             gc.*,
-            (EXISTS (
+            ((EXISTS (
               SELECT 1 FROM ppc_performance_facts pf
               WHERE pf.store_id = gc.store_id
                 AND pf.grain = 'TARGET'
                 AND pf.is_negative = true
                 AND lower(trim(pf.target_expression)) = lower(trim(gc.customer_search_term))
               LIMIT 1
-            )) AS is_already_negated
+            )) OR (EXISTS (
+              SELECT 1 FROM ppc_negative_registry nr
+              WHERE nr.team_id = ${scope.teamId}
+                AND nr.store_id = gc.store_id
+                AND lower(trim(nr.campaign_name)) = lower(trim(gc.campaign_name))
+                AND lower(trim(nr.keyword_text)) = lower(trim(gc.customer_search_term))
+              LIMIT 1
+            ))) AS is_already_negated
           FROM grouped_candidates gc
         )
       `;
@@ -182,7 +195,20 @@ export async function GET(request: Request) {
         WHERE 1=1
           ${negatedFilter}
           ${searchFilter}
+          ${campaignFilter}
       `;
+
+      // Also get available candidate campaigns for filter dropdown
+      const campaignRows = await sql<Array<{ campaign_name: string }>>`
+        ${baseCte}
+        SELECT DISTINCT c.campaign_name
+        FROM candidates_with_checks c
+        WHERE 1=1
+          ${negatedFilter}
+        ORDER BY c.campaign_name ASC
+        LIMIT 200
+      `;
+      const campaigns = campaignRows.map((r) => r.campaign_name);
 
       const rawSummary = summaryRows[0] || {
         total_count: 0,
@@ -237,8 +263,9 @@ export async function GET(request: Request) {
         WHERE 1=1
           ${negatedFilter}
           ${searchFilter}
+          ${campaignFilter}
         ORDER BY ${orderClause}
-        LIMIT ${pageSize} OFFSET ${offset}
+        ${fetchAll ? sql`` : sql`LIMIT ${pageSize} OFFSET ${offset}`}
       `;
 
       const items = rows.map((r) => {
@@ -281,13 +308,14 @@ export async function GET(request: Request) {
         totalWastedClicks,
         totalImpressions,
         avgCpc: totalWastedClicks > 0 ? Math.round((totalWastedSpend / totalWastedClicks) * 100) / 100 : 0,
+        campaigns,
       };
 
       return {
         items,
         total,
         page,
-        pageSize,
+        pageSize: fetchAll ? items.length : pageSize,
         totalPages,
         summary,
       };

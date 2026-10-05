@@ -1,5 +1,6 @@
 import { ApiError, authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
+import { invalidateCachePattern } from "@/lib/redis";
 import { objectStorageDriver, putStoredObject, r2KeyPrefix } from "@/lib/object-storage";
 import { exportBulksheetUpdateExcel } from "@/lib/ppc/service";
 import type { PpcRecommendation } from "@/lib/ppc/types";
@@ -324,18 +325,20 @@ export async function POST(request: Request) {
             ${rec.campaignId || null}, ${campName},
             ${rec.adGroupId || null}, ${rec.adGroupName || null},
             ${rec.keyword}, 'negativeExact', ${rec.adGroupId ? "AD_GROUP" : "CAMPAIGN"},
-            'enabled', 'AUTO_UPLOAD', ${jobId},
+            'pending', 'AUTO_UPLOAD', ${jobId},
             ${matchingInput?.clicks || 0}, ${matchingInput?.spend || 0},
             ${rec.reason || null}, NOW(), NOW()
           )
           ON CONFLICT (store_id, campaign_name, keyword_text, match_type) DO UPDATE SET
             updated_at = NOW(),
+            state = 'pending',
             source_job_id = EXCLUDED.source_job_id,
             reason = EXCLUDED.reason,
             clicks = EXCLUDED.clicks,
             spend = EXCLUDED.spend
         `;
       }
+      await invalidateCachePattern(`ppc:query:st-opt:${actor.teamId}:*`).catch(() => {});
     } catch (registryErr) {
       console.error("Lỗi khi ghi nhận vào ppc_negative_registry:", registryErr);
     }

@@ -1,5 +1,6 @@
 import { ApiError, authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
+import { invalidateCachePattern } from "@/lib/redis";
 import { objectStorageDriver, putStoredObject, r2KeyPrefix } from "@/lib/object-storage";
 import { exportSaleKwBulksheetExcel, type SaleKwCampaignPayload } from "@/lib/ppc/service";
 import {
@@ -305,10 +306,11 @@ export async function POST(request: Request) {
               ${camp.dailyBudget || defaultDailyBudget},
               ${kw.orders || 0}, ${kw.sales || 0}, ${kw.clicks || 0}, ${kw.spend || 0},
               ${(kw.clicks || 0) > 0 ? Math.round(((kw.spend || 0) / (kw.clicks || 1)) * 100) / 100 : 0},
-              'enabled', 'AUTO_UPLOAD', ${jobId}, NOW(), NOW()
+              'pending', 'AUTO_UPLOAD', ${jobId}, NOW(), NOW()
             )
             ON CONFLICT (store_id, target_campaign_name, keyword_text, match_type) DO UPDATE SET
               updated_at = NOW(),
+              state = 'pending',
               source_job_id = EXCLUDED.source_job_id,
               orders = EXCLUDED.orders,
               sales = EXCLUDED.sales,
@@ -318,6 +320,7 @@ export async function POST(request: Request) {
           `;
         }
       }
+      await invalidateCachePattern(`ppc:query:sale-kw:${actor.teamId}:*`).catch(() => {});
     } catch (registryErr) {
       console.error("Lỗi khi ghi nhận vào ppc_sale_kw_registry từ auto-upload:", registryErr);
     }

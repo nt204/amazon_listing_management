@@ -49,8 +49,9 @@ export async function GET(request: Request) {
       FROM ppc_sale_kw_registry r
       LEFT JOIN ppc_stores s ON s.id = r.store_id
       WHERE r.team_id = ${actor.teamId}
+        AND r.state = 'enabled'
         ${storeId && storeId !== "ALL" ? sql`AND r.store_id = ${storeId}` : sql``}
-        ${!storeId && storeName && storeName !== "ALL" ? sql`AND LOWER(s.name) = LOWER(${storeName})` : sql``}
+        ${!storeId && storeName && storeName !== "ALL" ? sql`AND (LOWER(s.name) = LOWER(${storeName}) OR LOWER(r.store_name) = LOWER(${storeName}))` : sql``}
         ${search ? sql`AND (
           LOWER(r.keyword_text) LIKE ${"%" + search + "%"} OR 
           LOWER(r.source_campaign_name) LIKE ${"%" + search + "%"} OR
@@ -99,8 +100,9 @@ export async function GET(request: Request) {
       FROM ppc_sale_kw_registry r
       LEFT JOIN ppc_stores s ON s.id = r.store_id
       WHERE r.team_id = ${actor.teamId}
+        AND r.state = 'enabled'
         ${storeId && storeId !== "ALL" ? sql`AND r.store_id = ${storeId}` : sql``}
-        ${!storeId && storeName && storeName !== "ALL" ? sql`AND LOWER(s.name) = LOWER(${storeName})` : sql``}
+        ${!storeId && storeName && storeName !== "ALL" ? sql`AND (LOWER(s.name) = LOWER(${storeName}) OR LOWER(r.store_name) = LOWER(${storeName}))` : sql``}
         ${search ? sql`AND (
           LOWER(r.keyword_text) LIKE ${"%" + search + "%"} OR
           LOWER(r.source_campaign_name) LIKE ${"%" + search + "%"} OR

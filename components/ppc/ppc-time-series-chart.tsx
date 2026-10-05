@@ -840,22 +840,6 @@ export function PpcTimeSeriesChart({
             </div>
           );
         })()}
-
-        {/* Chú thích trực quan dưới chân biểu đồ */}
-        <div className="flex flex-wrap items-center justify-between gap-1.5 pt-2 border-t border-slate-100 text-[10.5px] text-slate-500">
-          <div className="flex items-center gap-2.5">
-            <span className="flex items-center gap-1">
-              <span className="w-2.5 h-2.5 rounded-sm bg-blue-500 inline-block" /> Cột Spend ($)
-            </span>
-            <span className="flex items-center gap-1">
-              <span className={`w-3 h-0.5 ${rightMetric === "ACOS" ? "bg-red-500" : "bg-emerald-500"} inline-block`} />
-              {rightMetric === "ACOS" ? "Dây & Điểm ACOS (Đỏ)" : "Đường Revenue ($)"}
-            </span>
-          </div>
-          <span className="text-[10px] text-slate-400 font-medium">
-            {badgeText} ({data.length} ngày)
-          </span>
-        </div>
       </div>
     );
   };
@@ -877,74 +861,41 @@ export function PpcTimeSeriesChart({
 
         {/* Toolbar điều khiển */}
         <div className="flex flex-wrap items-center gap-2">
-          {/* Chọn chế độ xem: Song song (7D & 30D) | 7D | 30D */}
-          <div className="flex items-center bg-slate-100 rounded-lg p-0.5 text-xs font-semibold">
-            <button
-              type="button"
-              onClick={() => setViewMode("split")}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-md transition cursor-pointer ${
-                viewMode === "split"
-                  ? "bg-white text-indigo-700 shadow-2xs font-bold"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-              title="Xem song song 7D và 30D trên cùng 1 dòng"
-            >
-              <SquaresFour size={13} weight="bold" />
-              <span>Song song (7D & 30D)</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setViewMode("single");
-                onDaysChange?.(7);
+          {/* Dropdown Chế độ xem: Song song (7D & 30D) | 7D | 30D */}
+          <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs">
+            <SquaresFour size={13} className="text-slate-400 shrink-0" weight="bold" />
+            <span className="text-[11px] text-slate-400 font-medium">Chế độ:</span>
+            <select
+              value={viewMode === "split" ? "split" : String(selectedDays)}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val === "split") {
+                  setViewMode("split");
+                } else {
+                  setViewMode("single");
+                  onDaysChange?.(Number(val));
+                }
               }}
-              className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
-                viewMode === "single" && selectedDays === 7
-                  ? "bg-white text-indigo-700 shadow-2xs font-bold"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
+              className="bg-transparent font-bold text-slate-800 outline-none cursor-pointer"
             >
-              7D
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setViewMode("single");
-                onDaysChange?.(30);
-              }}
-              className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
-                viewMode === "single" && selectedDays === 30
-                  ? "bg-white text-indigo-700 shadow-2xs font-bold"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              30D
-            </button>
+              <option value="split">7D & 30D</option>
+              <option value="7">7D</option>
+              <option value="30">30D</option>
+            </select>
           </div>
 
-          {/* Lọc Kênh Chạy: Tất cả / SP / SB */}
-          <div className="flex items-center bg-slate-100 rounded-lg p-0.5 text-xs font-semibold">
-            <button
-              type="button"
-              onClick={() => setChannel("ALL")}
-              className={`px-2 py-1 rounded-md transition cursor-pointer ${channel === "ALL" ? "bg-white text-indigo-700 shadow-2xs font-bold" : "text-slate-600 hover:text-slate-900"}`}
+          {/* Dropdown Lọc Kênh Chạy: Tất cả / SP / SB */}
+          <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs">
+            <span className="text-[11px] text-slate-400 font-medium">Kênh:</span>
+            <select
+              value={channel}
+              onChange={(e) => setChannel(e.target.value as "ALL" | "SP" | "SB")}
+              className="bg-transparent font-bold text-slate-800 outline-none cursor-pointer"
             >
-              Tất cả (SP+SB)
-            </button>
-            <button
-              type="button"
-              onClick={() => setChannel("SP")}
-              className={`px-2 py-1 rounded-md transition cursor-pointer ${channel === "SP" ? "bg-white text-amber-700 shadow-2xs font-bold" : "text-slate-600 hover:text-slate-900"}`}
-            >
-              SP
-            </button>
-            <button
-              type="button"
-              onClick={() => setChannel("SB")}
-              className={`px-2 py-1 rounded-md transition cursor-pointer ${channel === "SB" ? "bg-white text-indigo-700 shadow-2xs font-bold" : "text-slate-600 hover:text-slate-900"}`}
-            >
-              SB
-            </button>
+              <option value="ALL">Tất cả</option>
+              <option value="SP">SP</option>
+              <option value="SB">SB</option>
+            </select>
           </div>
 
           {/* Cấp độ thời gian */}
