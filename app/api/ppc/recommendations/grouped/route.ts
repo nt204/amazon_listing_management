@@ -50,19 +50,14 @@ export async function GET(request: Request) {
       result = cached;
     } else {
       result = await getCachedOrFetch(redisKey, RECOMMENDATION_CACHE_TTL_SECONDS, async () => {
-        // Optimized query: only fetch enabled targets in targetable campaigns (SP03, SB05, SB01, VIDEO),
-        // reducing row scan from 50k to ~1.5k.
-        const batchSize = 10_000;
-        const targetRows: Awaited<ReturnType<typeof listTargetRowsForRecommendations>> = [];
-        for (let offset = 0; ; offset += batchSize) {
-          const batch = await listTargetRowsForRecommendations(
-            scope,
-            { storeName, days },
-            { limit: batchSize, offset },
-          );
-          targetRows.push(...batch);
-          if (batch.length < batchSize) break;
-        }
+        // Fetch the complete eligible set in one database pass. OFFSET batches
+        // repeatedly scanned and sorted large snapshots, causing big stores to
+        // time out before Auto Bid could render any data.
+        const targetRows = await listTargetRowsForRecommendations(
+          scope,
+          { storeName, days },
+          { unbounded: true },
+        );
         return getGroupedRecommendations(storeId, targetRows, days);
       });
       setCachedGroupedRecommendations(cacheKey, result);

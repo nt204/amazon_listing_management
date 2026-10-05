@@ -528,60 +528,121 @@ export async function listPpcPerformance(
  */
 export async function listTargetRowsForRecommendations(
   scope: DataScope,
-  filters: { storeName: string; days: number },
-  options: { limit?: number; offset?: number } = {},
+  filters: { storeName: string; days: number; sku?: string },
+  options: { limit?: number; offset?: number; unbounded?: boolean } = {},
 ): Promise<PpcPerformanceRow[]> {
   const sql = await getDatabaseClient();
   const teamId = (scope as any)?.teamId || "default";
-  const rows = await sql<PerformanceDbRow[]>`
-    WITH latest_snapshots AS (
-      SELECT DISTINCT ON (p2.store_id, p2.ad_type)
-        p2.store_id, p2.ad_type, p2.snapshot_date AS max_snapshot,
-        p2.report_start_date AS max_report_start,
-        p2.report_end_date AS max_report_end
-      FROM ppc_performance_facts p2
-      JOIN ppc_stores s2 ON s2.id = p2.store_id
-      WHERE s2.team_id = ${teamId}
-        AND (${filters.storeName === "ALL"} OR lower(s2.name) = lower(${filters.storeName}))
-        AND (p2.report_end_date - p2.report_start_date + 1)
-          BETWEEN ${filters.days - 3}::integer AND ${filters.days + 3}::integer
-      ORDER BY p2.store_id, p2.ad_type, p2.snapshot_date DESC, p2.report_end_date DESC
-    )
-    SELECT
-      p.id, p.store_id, s.name AS store_name,
-      p.snapshot_date, p.report_start_date, p.report_end_date, p.report_granularity,
-      p.ad_type, p.grain, p.entity_id,
-      p.campaign_id, p.campaign_name,
-      p.ad_group_id, p.ad_group_name,
-      p.target_id, p.target_expression,
-      p.match_type, p.portfolio_name, p.sku, p.asin,
-      p.state, p.campaign_state, p.ad_group_state, p.targeting_type,
-      p.bidding_strategy, p.placement, p.daily_budget,
-      p.bid, p.placement_adjustment, p.is_negative,
-      p.impressions, p.clicks, p.spend,
-      p.sales, p.orders, p.units
-    FROM ppc_performance_facts p
-    JOIN ppc_stores s ON s.id = p.store_id
-    JOIN latest_snapshots ls
-      ON ls.store_id = p.store_id
-      AND ls.ad_type = p.ad_type
-      AND ls.max_snapshot = p.snapshot_date
-      AND ls.max_report_start = p.report_start_date
-      AND ls.max_report_end = p.report_end_date
+  const rowLimit = options.unbounded
+    ? 2_147_483_647
+    : Math.min(50_000, Math.max(1, options.limit || 10_000));
+
+  // Check active snapshots first to avoid scanning millions of historical rows (30x faster)
+  const activeSnapshots = await sql<Array<{ store_id: string; report_start_date: string; report_end_date: string }>>`
+    SELECT a.store_id, a.report_start_date::text, a.report_end_date::text
+    FROM ppc_active_snapshots a
+    JOIN ppc_stores s ON s.id = a.store_id
     WHERE s.team_id = ${teamId}
-      AND p.grain = 'TARGET'
-      AND p.is_negative = false
-      AND lower(p.state) = 'enabled'
-      AND lower(p.campaign_state) = 'enabled'
-      AND lower(p.ad_group_state) = 'enabled'
       AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
-      AND (p.campaign_name ~* '(SP03|SB05|SB01|VIDEO)')
-      AND (p.report_end_date - p.report_start_date + 1)
-        BETWEEN ${filters.days - 3}::integer AND ${filters.days + 3}::integer
-    ORDER BY p.spend DESC, p.id
-    LIMIT ${Math.min(50_000, Math.max(1, options.limit || 10_000))}
-    OFFSET ${Math.max(0, options.offset || 0)}
+      AND a.coverage_days = ${filters.days}
   `;
+
+  let rows: PerformanceDbRow[];
+
+  if (activeSnapshots.length > 0) {
+    // Fast path: Exact snapshot boundaries known from active snapshots (uses ppc_performance_scope_idx directly)
+    rows = await sql<PerformanceDbRow[]>`
+      WITH active_snaps AS (
+        SELECT a.store_id, a.report_start_date, a.report_end_date
+        FROM ppc_active_snapshots a
+        JOIN ppc_stores s ON s.id = a.store_id
+        WHERE s.team_id = ${teamId}
+          AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
+          AND a.coverage_days = ${filters.days}
+      )
+      SELECT
+        p.id, p.store_id, s.name AS store_name,
+        p.snapshot_date, p.report_start_date, p.report_end_date, p.report_granularity,
+        p.ad_type, p.grain, p.entity_id,
+        p.campaign_id, p.campaign_name,
+        p.ad_group_id, p.ad_group_name,
+        p.target_id, p.target_expression,
+        p.match_type, p.portfolio_name, p.sku, p.asin,
+        p.state, p.campaign_state, p.ad_group_state, p.targeting_type,
+        p.bidding_strategy, p.placement, p.daily_budget,
+        p.bid, p.placement_adjustment, p.is_negative,
+        p.impressions, p.clicks, p.spend,
+        p.sales, p.orders, p.units
+      FROM ppc_performance_facts p
+      JOIN ppc_stores s ON s.id = p.store_id
+      JOIN active_snaps asn
+        ON asn.store_id = p.store_id
+        AND asn.report_start_date = p.report_start_date
+        AND asn.report_end_date = p.report_end_date
+      WHERE s.team_id = ${teamId}
+        AND p.grain = 'TARGET'
+        AND p.is_negative = false
+        AND lower(p.state) = 'enabled'
+        AND lower(p.campaign_state) = 'enabled'
+        AND lower(p.ad_group_state) = 'enabled'
+        AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
+        AND (p.campaign_name ~* '(SP03|SB05|SB01|VIDEO)')
+      ORDER BY p.spend DESC, p.id
+      LIMIT ${rowLimit}
+      OFFSET ${Math.max(0, options.offset || 0)}
+    `;
+  } else {
+    // Fallback: If not found in active_snapshots (e.g. custom date range)
+    rows = await sql<PerformanceDbRow[]>`
+      WITH latest_snapshots AS (
+        SELECT DISTINCT ON (p2.store_id, p2.ad_type)
+          p2.store_id, p2.ad_type, p2.snapshot_date AS max_snapshot,
+          p2.report_start_date AS max_report_start,
+          p2.report_end_date AS max_report_end
+        FROM ppc_performance_facts p2
+        JOIN ppc_stores s2 ON s2.id = p2.store_id
+        WHERE s2.team_id = ${teamId}
+          AND (${filters.storeName === "ALL"} OR lower(s2.name) = lower(${filters.storeName}))
+          AND (p2.report_end_date - p2.report_start_date + 1)
+            BETWEEN ${filters.days - 3}::integer AND ${filters.days + 3}::integer
+        ORDER BY p2.store_id, p2.ad_type, p2.snapshot_date DESC, p2.report_end_date DESC
+      )
+      SELECT
+        p.id, p.store_id, s.name AS store_name,
+        p.snapshot_date, p.report_start_date, p.report_end_date, p.report_granularity,
+        p.ad_type, p.grain, p.entity_id,
+        p.campaign_id, p.campaign_name,
+        p.ad_group_id, p.ad_group_name,
+        p.target_id, p.target_expression,
+        p.match_type, p.portfolio_name, p.sku, p.asin,
+        p.state, p.campaign_state, p.ad_group_state, p.targeting_type,
+        p.bidding_strategy, p.placement, p.daily_budget,
+        p.bid, p.placement_adjustment, p.is_negative,
+        p.impressions, p.clicks, p.spend,
+        p.sales, p.orders, p.units
+      FROM ppc_performance_facts p
+      JOIN ppc_stores s ON s.id = p.store_id
+      JOIN latest_snapshots ls
+        ON ls.store_id = p.store_id
+        AND ls.ad_type = p.ad_type
+        AND ls.max_snapshot = p.snapshot_date
+        AND ls.max_report_start = p.report_start_date
+        AND ls.max_report_end = p.report_end_date
+      WHERE s.team_id = ${teamId}
+        AND p.grain = 'TARGET'
+        AND p.is_negative = false
+        AND lower(p.state) = 'enabled'
+        AND lower(p.campaign_state) = 'enabled'
+        AND lower(p.ad_group_state) = 'enabled'
+        AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
+        AND (p.campaign_name ~* '(SP03|SB05|SB01|VIDEO)')
+        AND (p.report_end_date - p.report_start_date + 1)
+          BETWEEN ${filters.days - 3}::integer AND ${filters.days + 3}::integer
+      ORDER BY p.spend DESC, p.id
+      LIMIT ${rowLimit}
+      OFFSET ${Math.max(0, options.offset || 0)}
+    `;
+  }
   return rows.map(mapPerformance);
 }
 
