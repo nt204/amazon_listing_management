@@ -768,38 +768,71 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
     updatedAt: new Date().toISOString(),
   };
 
-  const perfRows = await sql<any[]>`
-    WITH latest_snapshot AS (
-      SELECT DISTINCT ON (ad_type)
-        ad_type, snapshot_date, report_start_date, report_end_date
-      FROM ppc_performance_facts
-      WHERE store_id = ${storeId}
-        AND (report_end_date - report_start_date + 1)
-          BETWEEN ${days - 3}::integer AND ${days + 3}::integer
-      ORDER BY ad_type, snapshot_date DESC, report_end_date DESC
-    )
-    SELECT
-      NULLIF(TRIM(sku), '') as sku,
-      MAX(NULLIF(TRIM(asin), '')) as asin,
-      STRING_AGG(DISTINCT NULLIF(TRIM(campaign_name), ''), ' ') as sample_campaign,
-      SUM(spend) as total_spend,
-      SUM(sales) as total_sales,
-      SUM(orders) as total_orders,
-      SUM(units) as total_units,
-      SUM(clicks) as total_clicks,
-      SUM(impressions) as total_impressions
-    FROM ppc_performance_facts p
-    JOIN latest_snapshot latest
-      ON latest.ad_type = p.ad_type
-      AND latest.snapshot_date = p.snapshot_date
-      AND latest.report_start_date = p.report_start_date
-      AND latest.report_end_date = p.report_end_date
-    WHERE p.store_id = ${storeId}
-      AND p.grain = 'PRODUCT'
-      AND sku IS NOT NULL AND TRIM(sku) != ''
-    GROUP BY NULLIF(TRIM(sku), '')
-    ORDER BY total_spend DESC
+  const activeSnapshots = await sql<Array<{ report_start_date: string; report_end_date: string }>>`
+    SELECT a.report_start_date::text, a.report_end_date::text
+    FROM ppc_active_snapshots a
+    WHERE a.store_id = ${storeId}
+      AND a.coverage_days = ${days}
+    LIMIT 1
   `;
+
+  let perfRows: any[];
+  if (activeSnapshots.length > 0) {
+    const s = activeSnapshots[0];
+    perfRows = await sql<any[]>`
+      SELECT
+        NULLIF(TRIM(p.sku), '') as sku,
+        MAX(NULLIF(TRIM(p.asin), '')) as asin,
+        STRING_AGG(DISTINCT NULLIF(TRIM(p.campaign_name), ''), ' ') as sample_campaign,
+        SUM(p.spend) as total_spend,
+        SUM(p.sales) as total_sales,
+        SUM(p.orders) as total_orders,
+        SUM(p.units) as total_units,
+        SUM(p.clicks) as total_clicks,
+        SUM(p.impressions) as total_impressions
+      FROM ppc_performance_facts p
+      WHERE p.store_id = ${storeId}
+        AND p.grain = 'PRODUCT'
+        AND p.report_start_date = ${s.report_start_date}
+        AND p.report_end_date = ${s.report_end_date}
+        AND p.sku IS NOT NULL AND TRIM(p.sku) != ''
+      GROUP BY NULLIF(TRIM(p.sku), '')
+      ORDER BY total_spend DESC
+    `;
+  } else {
+    perfRows = await sql<any[]>`
+      WITH latest_snapshot AS (
+        SELECT DISTINCT ON (ad_type)
+          ad_type, snapshot_date, report_start_date, report_end_date
+        FROM ppc_performance_facts
+        WHERE store_id = ${storeId}
+          AND (report_end_date - report_start_date + 1)
+            BETWEEN ${days - 3}::integer AND ${days + 3}::integer
+        ORDER BY ad_type, snapshot_date DESC, report_end_date DESC
+      )
+      SELECT
+        NULLIF(TRIM(sku), '') as sku,
+        MAX(NULLIF(TRIM(asin), '')) as asin,
+        STRING_AGG(DISTINCT NULLIF(TRIM(campaign_name), ''), ' ') as sample_campaign,
+        SUM(spend) as total_spend,
+        SUM(sales) as total_sales,
+        SUM(orders) as total_orders,
+        SUM(units) as total_units,
+        SUM(clicks) as total_clicks,
+        SUM(impressions) as total_impressions
+      FROM ppc_performance_facts p
+      JOIN latest_snapshot latest
+        ON latest.ad_type = p.ad_type
+        AND latest.snapshot_date = p.snapshot_date
+        AND latest.report_start_date = p.report_start_date
+        AND latest.report_end_date = p.report_end_date
+      WHERE p.store_id = ${storeId}
+        AND p.grain = 'PRODUCT'
+        AND sku IS NOT NULL AND TRIM(sku) != ''
+      GROUP BY NULLIF(TRIM(sku), '')
+      ORDER BY total_spend DESC
+    `;
+  }
 
   const existingEconomics = await sql<any[]>`
     SELECT * FROM sku_economics WHERE store_id = ${storeId}
@@ -1662,26 +1695,36 @@ export async function getActionQueueCount(storeId?: string | null, approvedBy?: 
 export async function getActionQueue(storeId?: string | null, approvedBy?: string): Promise<PpcAction[]> {
   const sql = await getDatabaseClient();
   const isAll = !storeId || storeId === "ALL";
-  const rows = await sql<any[]>`
-    SELECT 
-      a.*,
-      COALESCE(p.total_spend, 0) as sku_spend
+  const actions = await sql<any[]>`
+    SELECT a.*
     FROM ppc_actions a
-    LEFT JOIN (
-      SELECT store_id, UPPER(TRIM(sku)) as sku_code, SUM(spend) as total_spend
-      FROM ppc_performance_facts
-      WHERE grain = 'PRODUCT' 
-        AND sku IS NOT NULL
-        ${isAll ? sql`` : sql`AND store_id = ${storeId}`}
-      GROUP BY store_id, UPPER(TRIM(sku))
-    ) p ON a.store_id = p.store_id AND UPPER(TRIM(a.sku)) = p.sku_code
     WHERE a.status IN ('APPROVED', 'QUEUED')
       ${isAll ? sql`` : sql`AND a.store_id = ${storeId}`}
       ${approvedBy ? sql`AND (a.approved_by = ${approvedBy} OR a.approved_by = 'User')` : sql``}
     ORDER BY a.created_at DESC
   `;
 
-  return rows.map((r: any) => ({
+  if (actions.length === 0) return [];
+
+  const skus = Array.from(new Set(actions.map((a: any) => String(a.sku || "").trim().toUpperCase()).filter(Boolean)));
+  const storeIds = Array.from(new Set(actions.map((a: any) => a.store_id).filter(Boolean)));
+
+  const spendMap = new Map<string, number>();
+  if (skus.length > 0 && storeIds.length > 0) {
+    const spendRows = await sql<Array<{ store_id: string; sku_code: string; total_spend: string | number }>>`
+      SELECT sk.store_id, UPPER(TRIM(sk.sku)) as sku_code, SUM(sk.spend)::numeric as total_spend
+      FROM ppc_sku_summary sk
+      JOIN ppc_active_snapshots act ON act.store_id = sk.store_id AND act.snapshot_id = sk.snapshot_id AND act.coverage_days = sk.coverage_days
+      WHERE sk.store_id IN ${sql(storeIds)}
+        AND UPPER(TRIM(sk.sku)) IN ${sql(skus)}
+      GROUP BY sk.store_id, UPPER(TRIM(sk.sku))
+    `;
+    for (const r of spendRows) {
+      spendMap.set(`${r.store_id}:${r.sku_code}`, Number(r.total_spend || 0));
+    }
+  }
+
+  return actions.map((r: any) => ({
     id: r.id,
     storeId: r.store_id,
     recommendationId: r.recommendation_id,
@@ -1704,7 +1747,7 @@ export async function getActionQueue(storeId?: string | null, approvedBy?: strin
     status: r.status,
     approvedBy: r.approved_by,
     approvedAt: r.approved_at ? new Date(r.approved_at).toISOString() : null,
-    isZeroSpend: Number(r.sku_spend || 0) <= 0,
+    isZeroSpend: (spendMap.get(`${r.store_id}:${String(r.sku || "").trim().toUpperCase()}`) || 0) <= 0,
     createdAt: new Date(r.created_at).toISOString(),
     updatedAt: new Date(r.updated_at).toISOString(),
   }));
