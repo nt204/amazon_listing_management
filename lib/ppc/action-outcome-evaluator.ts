@@ -1,5 +1,3 @@
-import "server-only";
-
 import { getDatabaseClient } from "@/lib/db";
 import {
   evaluateBidDecision,
