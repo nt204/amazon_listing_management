@@ -47,8 +47,6 @@ import { PpcSkuMappingPanel } from "./ppc-sku-mapping-panel";
 import { PpcSkuRecommendationGroupView } from "./ppc-sku-recommendation-group";
 import { PpcActionQueueDrawer } from "./ppc-action-queue-drawer";
 import { PpcFloatingActionQueue } from "./ppc-floating-action-queue";
-import { PpcFloatingBidResultsButton } from "./ppc-floating-bid-results-button";
-import { PpcAutoBidResultsModal } from "./ppc-auto-bid-results-modal";
 import { PpcSettingsTab } from "./ppc-settings-tab";
 import { PpcFileManagerModal } from "./ppc-file-manager-modal";
 import { PpcNotificationPopover } from "./ppc-notification-popover";
@@ -437,7 +435,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
   });
   const pendingActionCount = actionQueue.length > 0 ? actionQueue.length : actionQueueCount;
   const [isActionQueueOpen, setIsActionQueueOpen] = useState(false);
-  const [isAutoBidResultsOpen, setIsAutoBidResultsOpen] = useState(false);
   const [costMasters, setCostMasters] = useState<ProductCostMaster[]>([]);
   const [ruleVersions, setRuleVersions] = useState<PpcRuleVersion[]>([]);
   const [bulkHistory, setBulkHistory] = useState<BulkExport[]>([]);
@@ -4821,7 +4818,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
         }}
       />
 
-      {/* FLOATING ACTION QUEUE BUTTON (DRAGGABLE, ELEVATED ABOVE PAGINATION) */}
+      {/* FLOATING ACTION QUEUE BUTTON (DRAGGABLE, GÓC DƯỚI) */}
       {selectedStore !== "ALL" && (
         <PpcFloatingActionQueue
           onOpen={() => setIsActionQueueOpen(true)}
@@ -4829,19 +4826,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
           selectedStore={selectedStore}
         />
       )}
-
-      {/* FLOATING AUTO BID RESULTS BUTTON (DRAGGABLE, GÓC DƯỚI) */}
-      <PpcFloatingBidResultsButton
-        onOpen={() => setIsAutoBidResultsOpen(true)}
-        selectedStore={selectedStore}
-      />
-
-      {/* MODAL KẾT QUẢ AUTO BID */}
-      <PpcAutoBidResultsModal
-        isOpen={isAutoBidResultsOpen}
-        onClose={() => setIsAutoBidResultsOpen(false)}
-        selectedStore={selectedStore}
-      />
     </div>
   );
 }

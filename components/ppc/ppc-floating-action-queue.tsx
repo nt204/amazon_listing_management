@@ -9,17 +9,17 @@ interface PpcFloatingActionQueueProps {
   selectedStore?: string;
 }
 
-const STORAGE_KEY = "ppc_floating_action_queue_pos";
+const STORAGE_KEY = "ppc_floating_action_queue_pos_v2";
 
 export function PpcFloatingActionQueue({
   onOpen,
   pendingActionCount,
   selectedStore,
 }: PpcFloatingActionQueueProps) {
-  // Default position: bottom: 96px, right: 24px (tránh đè lên thanh phân trang pagination và scrollbar)
+  // Default position: góc dưới bên phải (bottom: 24px, right: 24px)
   const [position, setPosition] = useState<{ right: number; bottom: number }>({
     right: 24,
-    bottom: 96,
+    bottom: 24,
   });
   const [isDragging, setIsDragging] = useState(false);
   const dragRef = useRef<{
@@ -32,7 +32,7 @@ export function PpcFloatingActionQueue({
     startX: 0,
     startY: 0,
     startRight: 24,
-    startBottom: 96,
+    startBottom: 24,
     hasMoved: false,
   });
 
