@@ -18,6 +18,7 @@ export async function GET(request: Request) {
     const windowDays = windowParam ? Number(windowParam) : null;
     const labelFilter = searchParams.get("label");
     const eligibleOnly = searchParams.get("eligibleForLearning") === "true";
+    const searchQuery = searchParams.get("search")?.trim().toLowerCase();
     const limit = Math.max(1, Math.min(500, Number(searchParams.get("limit") || 100)));
     const offset = Math.max(0, Number(searchParams.get("offset") || 0));
 
@@ -43,7 +44,7 @@ export async function GET(request: Request) {
       ORDER BY action_timestamp DESC, outcome.window_days ASC
     `;
 
-    // Group rows into 1 item per action containing both d7 and d30
+    // Group rows into 1 item per action containing d3, d7, d14, d30
     const actionMap = new Map<string, any>();
     for (const r of rows) {
       if (!actionMap.has(r.action_id)) {
@@ -71,7 +72,9 @@ export async function GET(request: Request) {
           approved_by: r.approved_by,
           applied_on: r.applied_on,
           baseline: r.baseline || {},
+          d3: null,
           d7: null,
+          d14: null,
           d30: null,
           eligible_for_learning: false,
           evaluated_at: r.evaluated_at,
@@ -93,8 +96,12 @@ export async function GET(request: Request) {
         evaluated_at: r.evaluated_at,
       };
 
-      if (r.window_days === 7) {
+      if (r.window_days === 3) {
+        act.d3 = windowDetail;
+      } else if (r.window_days === 7) {
         act.d7 = windowDetail;
+      } else if (r.window_days === 14) {
+        act.d14 = windowDetail;
       } else if (r.window_days === 30) {
         act.d30 = windowDetail;
       }
@@ -121,21 +128,31 @@ export async function GET(request: Request) {
     let positiveCount = 0;
     let neutralCount = 0;
     let negativeCount = 0;
+    let warning3dCount = 0;
     let eligibleCount = 0;
     let totalRewardUsd = 0;
 
     for (const act of allGroupedActions) {
       if (act.eligible_for_learning) eligibleCount++;
 
-      // Check primary outcome label (prefer D30, fallback to D7)
-      const primary = act.d30 || act.d7;
+      // Check 3D early warning
+      const d3Obs = act.d3?.observed;
+      const bSpendDay = act.baseline?.spend ? Number(act.baseline.spend) / 30 : 0;
+      if (d3Obs?.spend && bSpendDay > 0 && (Number(d3Obs.spend) / 3) > bSpendDay * 2.0) {
+        warning3dCount++;
+      }
+
+      // Check primary outcome label (prefer D30, fallback to D14, then D7, then D3)
+      const primary = act.d30 || act.d14 || act.d7 || act.d3;
       const isInterrupted =
         act.d30?.status === "INTERRUPTED" ||
+        act.d14?.status === "INTERRUPTED" ||
         act.d7?.status === "INTERRUPTED" ||
         act.d30?.evidence_quality?.validity === "INTERRUPTED" ||
+        act.d14?.evidence_quality?.validity === "INTERRUPTED" ||
         act.d7?.evidence_quality?.validity === "INTERRUPTED";
 
-      const label = act.d30?.outcome_label || act.d7?.outcome_label;
+      const label = act.d30?.outcome_label || act.d14?.outcome_label || act.d7?.outcome_label || act.d3?.outcome_label;
 
       if (isInterrupted) {
         supersededCount++;
@@ -154,9 +171,11 @@ export async function GET(request: Request) {
         matureCount++;
       }
 
-      // Add reward (prioritizing D30 if evaluated, else D7 if evaluated)
+      // Add reward (prioritizing D30 if evaluated, else D14, else D7)
       if (act.d30?.comparison?.reward_usd != null) {
         totalRewardUsd += Number(act.d30.comparison.reward_usd);
+      } else if (act.d14?.comparison?.reward_usd != null) {
+        totalRewardUsd += Number(act.d14.comparison.reward_usd);
       } else if (act.d7?.comparison?.reward_usd != null) {
         totalRewardUsd += Number(act.d7.comparison.reward_usd);
       }
@@ -195,6 +214,16 @@ export async function GET(request: Request) {
       });
     }
 
+    if (searchQuery) {
+      filteredActions = filteredActions.filter((act) => {
+        return (
+          (act.target_keyword && act.target_keyword.toLowerCase().includes(searchQuery)) ||
+          (act.sku && act.sku.toLowerCase().includes(searchQuery)) ||
+          (act.campaign_name && act.campaign_name.toLowerCase().includes(searchQuery))
+        );
+      });
+    }
+
     if (eligibleOnly) {
       filteredActions = filteredActions.filter((act) => act.eligible_for_learning === true);
     }
@@ -209,6 +238,7 @@ export async function GET(request: Request) {
         summary: {
           total: allGroupedActions.length,
           totalFiltered: filteredActions.length,
+          uniqueTargets: new Set(allGroupedActions.map((a) => a.target_id)).size,
           mature: matureCount,
           observing: observingCount,
           superseded: supersededCount,
@@ -217,6 +247,7 @@ export async function GET(request: Request) {
           positive: positiveCount,
           neutral: neutralCount,
           negative: negativeCount,
+          warning3d: warning3dCount,
           eligibleForLearning: eligibleCount,
           totalRewardUsd: Number(totalRewardUsd.toFixed(2)),
           winRate,

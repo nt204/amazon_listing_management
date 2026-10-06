@@ -287,7 +287,7 @@ export function evaluateBidDecision(input: EvaluationInput): EvaluationResult {
     // 3.2 Low clicks AND low orders in after period
     const requiredClicks =
       config.min_clicks[window] ??
-      (window === 7 ? 15 : window === 14 ? 30 : 60);
+      (window === 3 ? 8 : window === 7 ? 15 : window === 14 ? 30 : 60);
 
     if (
       afterMetrics.clicks < requiredClicks &&

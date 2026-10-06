@@ -5,7 +5,7 @@ export type UserAction =
   | "REJECT"
   | "IGNORE";
 
-export type EvaluationWindow = 7 | 14 | 30 | number;
+export type EvaluationWindow = 3 | 7 | 14 | 30 | number;
 
 export type ExternalEventType =
   | "PRICE_CHANGE"

@@ -1,0 +1,1 @@
+15 7 * * * root /usr/local/sbin/ppc-server-storage-maintenance.sh >> /var/log/ppc-storage-maintenance.log 2>&1

@@ -6,6 +6,7 @@ export const DEFAULT_CONFIG: Readonly<EvaluatorConfig> = Object.freeze({
   t_expected_ratio: 0.1,
   quality_multiplier_low: 1.25,
   min_clicks: {
+    3: 8,
     7: 15,
     14: 30,
     30: 60,

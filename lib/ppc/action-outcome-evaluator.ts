@@ -126,8 +126,13 @@ export async function seedPendingOutcomesFromActions(options: { limit?: number }
            COALESCE(action.approved_at::date, action.created_at::date, CURRENT_DATE)::text AS applied_on
     FROM ppc_actions action
     WHERE action.status IN ('EXPORTED', 'APPLIED')
-      AND NOT EXISTS (
-        SELECT 1 FROM ppc_action_outcomes outcome WHERE outcome.action_id = action.id
+      AND EXISTS (
+        SELECT 1
+        FROM (VALUES (3), (7), (14), (30)) as w(window_days)
+        WHERE NOT EXISTS (
+          SELECT 1 FROM ppc_action_outcomes outcome
+          WHERE outcome.action_id = action.id AND outcome.window_days = w.window_days
+        )
       )
     ORDER BY action.created_at DESC
     LIMIT ${limit}
@@ -138,10 +143,11 @@ export async function seedPendingOutcomesFromActions(options: { limit?: number }
     const appliedOn = a.applied_on;
     const attributionDays = (a.campaign_type || "").toUpperCase().startsWith("SB") ? 14 : 7;
 
-    for (const windowDays of [7, 30]) {
+    for (const windowDays of [3, 7, 14, 30]) {
       const obsStart = addDaysToIso(appliedOn, 1);
-      const obsEnd = addDaysToIso(appliedOn, windowDays);
-      const maturity = addDaysToIso(appliedOn, windowDays + attributionDays);
+      // Store observation ranges as [start, end): end is the first excluded day.
+      const obsEnd = addDaysToIso(obsStart, windowDays);
+      const maturity = addDaysToIso(obsEnd, attributionDays);
 
       await sql`
         INSERT INTO ppc_action_outcomes (
@@ -183,9 +189,8 @@ async function readBaselineFacts(
     WHERE store_id = ${storeId}
       AND grain = 'TARGET'
       AND target_id = ${targetId}
-      AND (report_end_date - report_start_date) = 30
-      AND report_end_date <= ${appliedDate}::date + 2
-    ORDER BY report_end_date DESC
+      AND report_start_date = ${appliedDate}::date - 30
+      AND report_end_date = ${appliedDate}::date
     LIMIT 1
   `;
 
@@ -209,7 +214,8 @@ async function readBaselineFacts(
 }
 
 /**
- * Reads after metrics for a given window length.
+ * Reads after metrics for an exact [observationStart, observationEnd) range.
+ * Never pro-rates a report from another period.
  */
 async function readAfterFacts(
   storeId: string,
@@ -220,7 +226,7 @@ async function readAfterFacts(
   today: string
 ) {
   if (!targetId) return null;
-  // If the observation window has not completed yet, cannot compute full after metrics
+  // observationEnd is exclusive, so the full window is available on/after that date.
   if (today < observationEnd) {
     return null;
   }
@@ -232,18 +238,73 @@ async function readAfterFacts(
     sales: string | number;
     orders: string | number;
     impressions: string | number;
+    days: number;
   }[]>`
-    SELECT clicks, spend, sales, orders, impressions
+    SELECT clicks, spend, sales, orders, impressions, (report_end_date - report_start_date)::int as days
     FROM ppc_performance_facts
     WHERE store_id = ${storeId}
       AND grain = 'TARGET'
       AND target_id = ${targetId}
+      AND report_start_date = ${observationStart}::date
+      AND report_end_date = ${observationEnd}::date
       AND (report_end_date - report_start_date) = ${windowDays}
-      AND report_end_date >= ${observationEnd}::date - 2
-      AND report_start_date <= ${observationStart}::date + 2
-    ORDER BY report_end_date ASC
+    ORDER BY snapshot_date DESC
     LIMIT 1
   `;
+
+  // A 14-day result may be composed only from two exact, adjacent 7-day reports.
+  if (rows.length === 0 && windowDays === 14) {
+    const midpoint = addDaysToIso(observationStart, 7);
+    const weeklyReports = await sql<{
+      clicks: string | number;
+      spend: string | number;
+      sales: string | number;
+      orders: string | number;
+      impressions: string | number;
+      report_start_date: string;
+      report_end_date: string;
+      days: number;
+    }[]>`
+      SELECT DISTINCT ON (report_start_date, report_end_date)
+             clicks, spend, sales, orders, impressions,
+             report_start_date::text, report_end_date::text,
+             (report_end_date - report_start_date)::int as days
+      FROM ppc_performance_facts
+      WHERE store_id = ${storeId}
+        AND grain = 'TARGET'
+        AND target_id = ${targetId}
+        AND (
+          (report_start_date = ${observationStart}::date AND report_end_date = ${midpoint}::date)
+          OR
+          (report_start_date = ${midpoint}::date AND report_end_date = ${observationEnd}::date)
+        )
+        AND (report_end_date - report_start_date) = 7
+      ORDER BY report_start_date, report_end_date, snapshot_date DESC;
+    `;
+
+    const first = weeklyReports.find(
+      (report) => report.report_start_date === observationStart && report.report_end_date === midpoint
+    );
+    const second = weeklyReports.find(
+      (report) => report.report_start_date === midpoint && report.report_end_date === observationEnd
+    );
+
+    if (first && second) {
+      const totalClicks = Number(first.clicks || 0) + Number(second.clicks || 0);
+      const totalSpend = Number(first.spend || 0) + Number(second.spend || 0);
+      const totalSales = Number(first.sales || 0) + Number(second.sales || 0);
+      const totalOrders = Number(first.orders || 0) + Number(second.orders || 0);
+      return {
+        clicks: totalClicks,
+        spend: Number(totalSpend.toFixed(2)),
+        sales: Number(totalSales.toFixed(2)),
+        orders: totalOrders,
+        acos: totalSales > 0 ? (totalSpend / totalSales) * 100 : null,
+        days_with_data: 14,
+        total_days: 14,
+      };
+    }
+  }
 
   if (rows.length === 0) return null;
   const r = rows[0];
@@ -391,6 +452,12 @@ export async function evaluatePendingActionOutcomes(options: {
 
   for (const row of rows) {
     const appliedDate = (row.approved_at || row.created_at).slice(0, 10);
+    // Recalculate canonical ranges so legacy rows cannot reuse the old inclusive
+    // observation_end or an estimated result produced from it.
+    const observationStart = addDaysToIso(appliedDate, 1);
+    const observationEnd = addDaysToIso(observationStart, row.window_days);
+    const attributionDays = (row.campaign_type || "").toUpperCase().startsWith("SB") ? 14 : 7;
+    const maturityDate = addDaysToIso(observationEnd, attributionDays);
     const margin = await resolveMarginForSku(row.sku);
 
     // Read metrics from facts
@@ -399,8 +466,8 @@ export async function evaluatePendingActionOutcomes(options: {
       row.store_id,
       row.target_id,
       row.window_days,
-      row.observation_start,
-      row.observation_end,
+      observationStart,
+      observationEnd,
       today
     );
 
@@ -452,27 +519,27 @@ export async function evaluatePendingActionOutcomes(options: {
       })),
       baseline_metrics_summary: baselineFacts
         ? {
-            clicks: baselineFacts.clicks,
-            orders: baselineFacts.orders,
-            ad_sales: baselineFacts.sales,
-            ad_spend: baselineFacts.spend,
-            acos: baselineFacts.acos,
-            contribution: baselineFacts.sales * margin - baselineFacts.spend,
-            days_with_data: 30,
-            total_days: 30,
-          }
+          clicks: baselineFacts.clicks,
+          orders: baselineFacts.orders,
+          ad_sales: baselineFacts.sales,
+          ad_spend: baselineFacts.spend,
+          acos: baselineFacts.acos,
+          contribution: baselineFacts.sales * margin - baselineFacts.spend,
+          days_with_data: 30,
+          total_days: 30,
+        }
         : undefined,
       after_metrics_summary: afterFacts
         ? {
-            clicks: afterFacts.clicks,
-            orders: afterFacts.orders,
-            ad_sales: afterFacts.sales,
-            ad_spend: afterFacts.spend,
-            acos: afterFacts.acos,
-            contribution: afterFacts.sales * margin - afterFacts.spend,
-            days_with_data: row.window_days,
-            total_days: row.window_days,
-          }
+          clicks: afterFacts.clicks,
+          orders: afterFacts.orders,
+          ad_sales: afterFacts.sales,
+          ad_spend: afterFacts.spend,
+          acos: afterFacts.acos,
+          contribution: afterFacts.sales * margin - afterFacts.spend,
+          days_with_data: row.window_days,
+          total_days: row.window_days,
+        }
         : undefined,
     };
 
@@ -519,26 +586,26 @@ export async function evaluatePendingActionOutcomes(options: {
 
     const baselinePayload = evalResult.baseline_metrics
       ? {
-          clicks: evalResult.baseline_metrics.clicks,
-          orders: evalResult.baseline_metrics.orders,
-          spend: evalResult.baseline_metrics.ad_spend,
-          sales: evalResult.baseline_metrics.ad_sales,
-          acos: evalResult.baseline_metrics.acos,
-          contribution: evalResult.baseline_metrics.contribution,
-          days: 30,
-        }
+        clicks: evalResult.baseline_metrics.clicks,
+        orders: evalResult.baseline_metrics.orders,
+        spend: evalResult.baseline_metrics.ad_spend,
+        sales: evalResult.baseline_metrics.ad_sales,
+        acos: evalResult.baseline_metrics.acos,
+        contribution: evalResult.baseline_metrics.contribution,
+        days: 30,
+      }
       : {};
 
     const observedPayload = evalResult.after_metrics
       ? {
-          clicks: evalResult.after_metrics.clicks,
-          orders: evalResult.after_metrics.orders,
-          spend: evalResult.after_metrics.ad_spend,
-          sales: evalResult.after_metrics.ad_sales,
-          acos: evalResult.after_metrics.acos,
-          contribution: evalResult.after_metrics.contribution,
-          days: row.window_days,
-        }
+        clicks: evalResult.after_metrics.clicks,
+        orders: evalResult.after_metrics.orders,
+        spend: evalResult.after_metrics.ad_spend,
+        sales: evalResult.after_metrics.ad_sales,
+        acos: evalResult.after_metrics.acos,
+        contribution: evalResult.after_metrics.contribution,
+        days: row.window_days,
+      }
       : {};
 
     const comparisonPayload = {
@@ -570,9 +637,9 @@ export async function evaluatePendingActionOutcomes(options: {
     await upsertActionOutcome({
       actionId: row.action_id,
       windowDays: row.window_days,
-      observationStart: row.observation_start,
-      observationEnd: row.observation_end,
-      maturityDate: row.maturity_date,
+      observationStart,
+      observationEnd,
+      maturityDate,
       status: dbStatus,
       baseline: baselinePayload,
       observed: observedPayload,

@@ -469,7 +469,7 @@ export function inferPpcReportCoverage(
   }
 
   const endDate = options.endDate || isoDateFromReference(reference) || new Date().toISOString().slice(0, 10);
-  const daysMatch = reference.match(/(?:^|[^0-9])(7|14|30|60|90)\s*(?:day|days|ngay|ngày)(?:[^a-z]|$)/i);
+  const daysMatch = reference.match(/(?:^|[^0-9])(3|7|14|30|60|90)\s*(?:day|days|ngay|ngày)(?:[^a-z]|$)/i);
   const days = options.days || (daysMatch ? Number(daysMatch[1]) : 30);
   const end = new Date(`${endDate}T00:00:00Z`);
   if (Number.isNaN(end.getTime()) || !Number.isInteger(days) || days < 1 || days > 3650) {

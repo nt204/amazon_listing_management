@@ -29,6 +29,7 @@ import {
   ClipboardText,
   CircleNotch,
   PencilSimple,
+  Target,
 } from "@phosphor-icons/react";
 import {
   SKU_PREFIX_ERROR_PRODUCT_TYPE,
@@ -37,6 +38,7 @@ import {
 } from "@/lib/ppc/sku-architecture-types";
 import type { PpcRecommendation } from "@/lib/ppc/types";
 import { PpcPagination } from "./ppc-pagination";
+import { PpcAutoBidResultsModal } from "./ppc-auto-bid-results-modal";
 
 interface PpcSkuRecommendationGroupProps {
   isActive: boolean;
@@ -181,6 +183,7 @@ export function PpcSkuRecommendationGroupView({
   const [recentlyApprovedIds, setRecentlyApprovedIds] = useState<Set<string>>(new Set());
   const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set());
   const [ruleExplanationModal, setRuleExplanationModal] = useState<PpcRecommendation | null>(null);
+  const [showOutcomesModal, setShowOutcomesModal] = useState(false);
   const previousRecommendationWindowRef = useRef(recommendationWindowDays);
   const previousStoreRef = useRef(selectedStore);
 
@@ -858,6 +861,17 @@ export function PpcSkuRecommendationGroupView({
                 <span>Đặt lại</span>
               </button>
             )}
+
+            {/* Nút Kết Quả Auto Bid (Hộp thoại theo dõi hiệu quả chỉnh bid) */}
+            <button
+              type="button"
+              onClick={() => setShowOutcomesModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black text-indigo-700 bg-indigo-50 hover:bg-indigo-100 hover:border-indigo-300 border border-indigo-200 transition cursor-pointer shadow-2xs"
+              title="Xem theo dõi kết quả sau mỗi lần chỉnh bid (3D, 7D, 14D, 30D)"
+            >
+              <Target size={14} weight="bold" className="text-indigo-600" />
+              <span>Kết quả Auto Bid</span>
+            </button>
           </div>
 
           {/* Counts & Aggregates Badge */}
@@ -1984,6 +1998,13 @@ export function PpcSkuRecommendationGroupView({
           </div>
         );
       })()}
+
+      {/* Hộp thoại theo dõi kết quả Auto Bid (3D, 7D, 14D, 30D) */}
+      <PpcAutoBidResultsModal
+        isOpen={showOutcomesModal}
+        onClose={() => setShowOutcomesModal(false)}
+        selectedStore={selectedStore}
+      />
     </div>
   );
 }
