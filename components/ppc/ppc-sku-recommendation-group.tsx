@@ -866,10 +866,10 @@ export function PpcSkuRecommendationGroupView({
             <button
               type="button"
               onClick={() => setShowOutcomesModal(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black text-indigo-700 bg-indigo-50 hover:bg-indigo-100 hover:border-indigo-300 border border-indigo-200 transition cursor-pointer shadow-2xs"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black text-white bg-blue-700 hover:bg-blue-800 border border-blue-800 transition cursor-pointer shadow-2xs"
               title="Xem theo dõi kết quả sau mỗi lần chỉnh bid (3D, 7D, 14D, 30D)"
             >
-              <Target size={14} weight="bold" className="text-indigo-600" />
+              <Target size={14} weight="bold" className="text-blue-100" />
               <span>Kết quả Auto Bid</span>
             </button>
           </div>

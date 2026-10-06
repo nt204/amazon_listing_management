@@ -9,17 +9,17 @@ interface PpcFloatingActionQueueProps {
   selectedStore?: string;
 }
 
-const STORAGE_KEY = "ppc_floating_action_queue_pos_v2";
+const STORAGE_KEY = "ppc_floating_action_queue_pos_v3";
 
 export function PpcFloatingActionQueue({
   onOpen,
   pendingActionCount,
   selectedStore,
 }: PpcFloatingActionQueueProps) {
-  // Default position: góc dưới bên phải (bottom: 24px, right: 24px)
+  // Default position: góc dưới bên phải cách mép dưới 84px để không che các nút trong bảng
   const [position, setPosition] = useState<{ right: number; bottom: number }>({
     right: 24,
-    bottom: 24,
+    bottom: 84,
   });
   const [isDragging, setIsDragging] = useState(false);
   const dragRef = useRef<{
@@ -27,12 +27,16 @@ export function PpcFloatingActionQueue({
     startY: number;
     startRight: number;
     startBottom: number;
+    currentRight: number;
+    currentBottom: number;
     hasMoved: boolean;
   }>({
     startX: 0,
     startY: 0,
     startRight: 24,
-    startBottom: 24,
+    startBottom: 84,
+    currentRight: 24,
+    currentBottom: 84,
     hasMoved: false,
   });
 
@@ -75,6 +79,8 @@ export function PpcFloatingActionQueue({
       startY: e.clientY,
       startRight: position.right,
       startBottom: position.bottom,
+      currentRight: position.right,
+      currentBottom: position.bottom,
       hasMoved: false,
     };
 
@@ -98,6 +104,8 @@ export function PpcFloatingActionQueue({
         const clampedRight = Math.min(Math.max(12, newRight), maxRight);
         const clampedBottom = Math.min(Math.max(12, newBottom), maxBottom);
 
+        dragRef.current.currentRight = clampedRight;
+        dragRef.current.currentBottom = clampedBottom;
         setPosition({ right: clampedRight, bottom: clampedBottom });
       }
     };
@@ -112,8 +120,8 @@ export function PpcFloatingActionQueue({
           localStorage.setItem(
             STORAGE_KEY,
             JSON.stringify({
-              right: position.right,
-              bottom: position.bottom,
+              right: dragRef.current.currentRight,
+              bottom: dragRef.current.currentBottom,
             })
           );
         } catch {

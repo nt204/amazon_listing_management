@@ -36,9 +36,11 @@ export async function GET(request: Request) {
              action.old_value, action.system_suggested_value, action.final_value,
              action.status as action_status, action.approved_by,
              COALESCE(action.approved_at::date, action.created_at::date, CURRENT_DATE)::text as applied_on,
-             COALESCE(action.approved_at, action.created_at) as action_timestamp
+             COALESCE(action.approved_at, action.created_at) as action_timestamp,
+             context.context as action_context
       FROM ppc_action_outcomes outcome
       JOIN ppc_actions action ON action.id = outcome.action_id
+      LEFT JOIN ppc_action_contexts context ON context.action_id = action.id
       WHERE 1=1
         ${storeId !== "ALL" ? sql`AND action.store_id = ${storeId}` : sql``}
       ORDER BY action_timestamp DESC, outcome.window_days ASC
@@ -110,6 +112,26 @@ export async function GET(request: Request) {
         act.baseline = r.baseline;
       }
 
+      // Fallback from action_context if baseline is still empty
+      if ((!act.baseline || Object.keys(act.baseline).length === 0) && r.action_context) {
+        try {
+          const ctx = typeof r.action_context === "string" ? JSON.parse(r.action_context) : r.action_context;
+          const m = ctx?.baseline_windows?.["30"]?.metrics || ctx?.baseline_windows?.["7"]?.metrics || ctx?.metrics;
+          if (m && (m.spend !== undefined || m.clicks !== undefined)) {
+            act.baseline = {
+              clicks: Number(m.clicks || 0),
+              orders: Number(m.orders || 0),
+              spend: Number(m.spend || 0),
+              sales: Number(m.sales || 0),
+              acos: m.sales > 0 ? (Number(m.spend || 0) / Number(m.sales)) * 100 : null,
+              days: 30,
+            };
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      }
+
       if (r.evidence_quality?.eligible_for_learning === true) {
         act.eligible_for_learning = true;
       }
@@ -119,6 +141,49 @@ export async function GET(request: Request) {
     }
 
     const allGroupedActions = Array.from(actionMap.values());
+
+    // Enrich any remaining missing baselines from ppc_performance_facts
+    const missingTargetIds = allGroupedActions
+      .filter((a) => (!a.baseline || Object.keys(a.baseline).length === 0) && a.target_id)
+      .map((a) => a.target_id);
+
+    if (missingTargetIds.length > 0) {
+      try {
+        const factBaselines = await sql<{
+          target_id: string;
+          clicks: string | number;
+          spend: string | number;
+          sales: string | number;
+          orders: string | number;
+        }[]>`
+          SELECT DISTINCT ON (target_id)
+            target_id, clicks, spend, sales, orders
+          FROM ppc_performance_facts
+          WHERE grain = 'TARGET'
+            AND target_id = ANY(${missingTargetIds})
+            AND (report_end_date - report_start_date) >= 25
+          ORDER BY target_id, snapshot_date DESC;
+        `;
+        const factMap = new Map(factBaselines.map((f) => [f.target_id, f]));
+        for (const act of allGroupedActions) {
+          if ((!act.baseline || Object.keys(act.baseline).length === 0) && factMap.has(act.target_id)) {
+            const f = factMap.get(act.target_id)!;
+            const spend = Number(f.spend || 0);
+            const sales = Number(f.sales || 0);
+            act.baseline = {
+              clicks: Number(f.clicks || 0),
+              orders: Number(f.orders || 0),
+              spend,
+              sales,
+              acos: sales > 0 ? (spend / sales) * 100 : null,
+              days: 30,
+            };
+          }
+        }
+      } catch {
+        // Ignore fallback errors
+      }
+    }
 
     // Aggregate summary over all actions
     let matureCount = 0;

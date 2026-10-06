@@ -698,7 +698,7 @@ function ActionDecisionSupportModal({
 }) {
   // Ưu tiên đọc baseline từ action hoặc fallback sang d7/d3/d14
   const b =
-    action.baseline && Object.keys(action.baseline).length > 0 && Number(action.baseline.clicks || 0) > 0
+    action.baseline && Object.keys(action.baseline).length > 0 && (action.baseline.spend !== undefined || action.baseline.clicks !== undefined)
       ? action.baseline
       : (action.d7 as any)?.baseline && Object.keys((action.d7 as any).baseline).length > 0
       ? (action.d7 as any).baseline
@@ -923,8 +923,8 @@ function ActionDecisionSupportModal({
   const m14 = parseWindow(w14, 14);
   const m30 = parseWindow(w30, 30);
 
-  // Active evaluation window (prefer latest available: 14D -> 7D -> 3D)
-  const activeWin = m14.isAvailable ? m14 : (m7.isAvailable ? m7 : (m3.isAvailable ? m3 : m7));
+  // Active evaluation window (prefer latest available: 14D -> 7D -> 3D -> 30D)
+  const activeWin = m14.isAvailable ? m14 : (m7.isAvailable ? m7 : (m3.isAvailable ? m3 : (m30.isAvailable ? m30 : m7)));
 
   // Render metric cell helper (Value + Daily + Delta %)
   const renderMetricCell = (
