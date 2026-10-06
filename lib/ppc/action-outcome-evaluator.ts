@@ -166,10 +166,10 @@ export async function seedPendingOutcomesFromActions(options: { limit?: number }
 
 /**
  * Reads baseline metrics (30 days before applied date) for a target.
- * Looks up in order:
- * 1. Action context if stored at recommendation time
- * 2. Fact table for 30d report ending on or right before applied date
- * 3. Fallback to closest available 30d report for the target
+ * Looks up strictly from:
+ * 1. Action context saved at recommendation time (contains exact 30d metrics before action)
+ * 2. Fact table report strictly ending on or before appliedDate (report_end_date <= appliedDate)
+ * Never reads reports after appliedDate for baseline.
  */
 async function readBaselineFacts(
   storeId: string,
@@ -209,7 +209,7 @@ async function readBaselineFacts(
   if (!targetId && !targetKeyword) return null;
   const sql = await getDatabaseClient();
 
-  // 2. Query 30d report in ppc_performance_facts closest to appliedDate
+  // 2. Query exact 30d report in ppc_performance_facts ending strictly on or before appliedDate
   let rows = targetId
     ? await sql<{
         clicks: string | number;
@@ -224,16 +224,14 @@ async function readBaselineFacts(
         WHERE store_id = ${storeId}
           AND grain = 'TARGET'
           AND target_id = ${targetId}
-          AND (report_end_date - report_start_date) >= 25
-        ORDER BY 
-          CASE WHEN report_end_date <= ${appliedDate}::date THEN 0 ELSE 1 END ASC,
-          ABS(report_end_date - ${appliedDate}::date) ASC,
-          snapshot_date DESC
+          AND (report_end_date - report_start_date) >= 28
+          AND report_end_date <= ${appliedDate}::date
+        ORDER BY report_end_date DESC, snapshot_date DESC
         LIMIT 1
       `
     : [];
 
-  // Fallback by target keyword / expression if targetId didn't match
+  // Fallback by target keyword / expression if targetId didn't match (still strictly <= appliedDate)
   if (rows.length === 0 && targetKeyword) {
     rows = await sql<{
       clicks: string | number;
@@ -248,11 +246,9 @@ async function readBaselineFacts(
       WHERE store_id = ${storeId}
         AND grain = 'TARGET'
         AND lower(trim(target_expression)) = lower(trim(${targetKeyword}))
-        AND (report_end_date - report_start_date) >= 25
-      ORDER BY 
-        CASE WHEN report_end_date <= ${appliedDate}::date THEN 0 ELSE 1 END ASC,
-        ABS(report_end_date - ${appliedDate}::date) ASC,
-        snapshot_date DESC
+        AND (report_end_date - report_start_date) >= 28
+        AND report_end_date <= ${appliedDate}::date
+      ORDER BY report_end_date DESC, snapshot_date DESC
       LIMIT 1
     `;
   }
@@ -280,8 +276,12 @@ async function readBaselineFacts(
 
 /**
  * Reads after metrics for an exact [observationStart, observationEnd) range.
- * If the observation window is still in progress (today < observationEnd) or exact range is not yet ingested,
- * looks up interim facts from the latest report covering days after appliedDate, so the user can see live progress.
+ * Never uses fallback or pro-rated metrics from arbitrary periods.
+ * - 3D: exact 3D report
+ * - 7D: exact 7D report
+ * - 14D: exact 14D report OR sum of two adjacent non-overlapping 7D reports
+ * - 30D: exact 30D report
+ * If the observation window has not completed (today < observationEnd), returns null.
  */
 async function readAfterFacts(
   storeId: string,
@@ -290,152 +290,103 @@ async function readAfterFacts(
   observationStart: string,
   observationEnd: string,
   today: string,
-  appliedDate: string,
   targetKeyword?: string
 ) {
   if (!targetId && !targetKeyword) return null;
+  // observationEnd is exclusive: only mature on or after observationEnd
+  if (today < observationEnd) {
+    return null;
+  }
   const sql = await getDatabaseClient();
 
-  // 1. If mature/past window, look for exact reports
-  if (today >= observationEnd) {
-    const rows = await sql<{
-      clicks: string | number;
-      spend: string | number;
-      sales: string | number;
-      orders: string | number;
-      impressions: string | number;
-      days: number;
-    }[]>`
-      SELECT clicks, spend, sales, orders, impressions, (report_end_date - report_start_date)::int as days
-      FROM ppc_performance_facts
-      WHERE store_id = ${storeId}
-        AND grain = 'TARGET'
-        AND (target_id = ${targetId} OR (${targetKeyword ? sql`lower(trim(target_expression)) = lower(trim(${targetKeyword}))` : sql`false`}))
-        AND report_start_date = ${observationStart}::date
-        AND report_end_date = ${observationEnd}::date
-        AND (report_end_date - report_start_date) = ${windowDays}
-      ORDER BY snapshot_date DESC
-      LIMIT 1
-    `;
-
-    // A 14-day result may be composed only from two exact, adjacent 7-day reports.
-    if (rows.length === 0 && windowDays === 14) {
-      const midpoint = addDaysToIso(observationStart, 7);
-      const weeklyReports = await sql<{
-        clicks: string | number;
-        spend: string | number;
-        sales: string | number;
-        orders: string | number;
-        impressions: string | number;
-        report_start_date: string;
-        report_end_date: string;
-      }[]>`
-        SELECT DISTINCT ON (report_start_date, report_end_date)
-               clicks, spend, sales, orders, impressions,
-               report_start_date::text, report_end_date::text
-        FROM ppc_performance_facts
-        WHERE store_id = ${storeId}
-          AND grain = 'TARGET'
-          AND (target_id = ${targetId} OR (${targetKeyword ? sql`lower(trim(target_expression)) = lower(trim(${targetKeyword}))` : sql`false`}))
-          AND (
-            (report_start_date = ${observationStart}::date AND report_end_date = ${midpoint}::date)
-            OR
-            (report_start_date = ${midpoint}::date AND report_end_date = ${observationEnd}::date)
-          )
-          AND (report_end_date - report_start_date) = 7
-        ORDER BY report_start_date, report_end_date, snapshot_date DESC;
-      `;
-
-      const first = weeklyReports.find(
-        (report) => report.report_start_date === observationStart && report.report_end_date === midpoint
-      );
-      const second = weeklyReports.find(
-        (report) => report.report_start_date === midpoint && report.report_end_date === observationEnd
-      );
-
-      if (first && second) {
-        const totalClicks = Number(first.clicks || 0) + Number(second.clicks || 0);
-        const totalSpend = Number(first.spend || 0) + Number(second.spend || 0);
-        const totalSales = Number(first.sales || 0) + Number(second.sales || 0);
-        const totalOrders = Number(first.orders || 0) + Number(second.orders || 0);
-        return {
-          clicks: totalClicks,
-          spend: Number(totalSpend.toFixed(2)),
-          sales: Number(totalSales.toFixed(2)),
-          orders: totalOrders,
-          acos: totalSales > 0 ? (totalSpend / totalSales) * 100 : null,
-          days_with_data: 14,
-          total_days: 14,
-          is_interim: false,
-        };
-      }
-    }
-
-    if (rows.length > 0) {
-      const r = rows[0];
-      const clicks = Number(r.clicks || 0);
-      const spend = Number(r.spend || 0);
-      const sales = Number(r.sales || 0);
-      const orders = Number(r.orders || 0);
-      return {
-        clicks,
-        spend,
-        sales,
-        orders,
-        acos: sales > 0 ? (spend / sales) * 100 : null,
-        days_with_data: Number(r.days || windowDays),
-        total_days: windowDays,
-        is_interim: false,
-      };
-    }
-  }
-
-  // 2. If window is still observing OR exact range not found, look up interim post-action report
-  // (e.g. 7D report ending on latest snapshot that occurred after appliedDate)
-  const interimRows = await sql<{
+  // 1. Match exact report [observationStart, observationEnd]
+  const rows = await sql<{
     clicks: string | number;
     spend: string | number;
     sales: string | number;
     orders: string | number;
     impressions: string | number;
-    report_start_date: string;
-    report_end_date: string;
     days: number;
   }[]>`
-    SELECT clicks, spend, sales, orders, impressions,
-           report_start_date::text, report_end_date::text,
-           (report_end_date - report_start_date)::int as days
+    SELECT clicks, spend, sales, orders, impressions, (report_end_date - report_start_date)::int as days
     FROM ppc_performance_facts
     WHERE store_id = ${storeId}
       AND grain = 'TARGET'
       AND (target_id = ${targetId} OR (${targetKeyword ? sql`lower(trim(target_expression)) = lower(trim(${targetKeyword}))` : sql`false`}))
-      AND report_end_date > ${appliedDate}::date
-      AND (report_end_date - report_start_date) <= ${windowDays <= 7 ? 7 : 30}
-    ORDER BY 
-      snapshot_date DESC,
-      report_end_date DESC
+      AND report_start_date = ${observationStart}::date
+      AND report_end_date = ${observationEnd}::date
+      AND (report_end_date - report_start_date) = ${windowDays}
+    ORDER BY snapshot_date DESC
     LIMIT 1
   `;
 
-  if (interimRows.length > 0) {
-    const ir = interimRows[0];
-    const clicks = Number(ir.clicks || 0);
-    const spend = Number(ir.spend || 0);
-    const sales = Number(ir.sales || 0);
-    const orders = Number(ir.orders || 0);
-    return {
-      clicks,
-      spend,
-      sales,
-      orders,
-      acos: sales > 0 ? (spend / sales) * 100 : null,
-      days_with_data: Number(ir.days || windowDays),
-      total_days: windowDays,
-      is_interim: true,
-    };
+  // 2. A 14-day result formed strictly by summing two adjacent, non-overlapping 7-day reports
+  if (rows.length === 0 && windowDays === 14) {
+    const midpoint = addDaysToIso(observationStart, 7);
+    const weeklyReports = await sql<{
+      clicks: string | number;
+      spend: string | number;
+      sales: string | number;
+      orders: string | number;
+      impressions: string | number;
+      report_start_date: string;
+      report_end_date: string;
+    }[]>`
+      SELECT DISTINCT ON (report_start_date, report_end_date)
+             clicks, spend, sales, orders, impressions,
+             report_start_date::text, report_end_date::text
+      FROM ppc_performance_facts
+      WHERE store_id = ${storeId}
+        AND grain = 'TARGET'
+        AND (target_id = ${targetId} OR (${targetKeyword ? sql`lower(trim(target_expression)) = lower(trim(${targetKeyword}))` : sql`false`}))
+        AND (
+          (report_start_date = ${observationStart}::date AND report_end_date = ${midpoint}::date)
+          OR
+          (report_start_date = ${midpoint}::date AND report_end_date = ${observationEnd}::date)
+        )
+        AND (report_end_date - report_start_date) = 7
+      ORDER BY report_start_date, report_end_date, snapshot_date DESC;
+    `;
+
+    const first = weeklyReports.find(
+      (report) => report.report_start_date === observationStart && report.report_end_date === midpoint
+    );
+    const second = weeklyReports.find(
+      (report) => report.report_start_date === midpoint && report.report_end_date === observationEnd
+    );
+
+    if (first && second) {
+      const totalClicks = Number(first.clicks || 0) + Number(second.clicks || 0);
+      const totalSpend = Number(first.spend || 0) + Number(second.spend || 0);
+      const totalSales = Number(first.sales || 0) + Number(second.sales || 0);
+      const totalOrders = Number(first.orders || 0) + Number(second.orders || 0);
+      return {
+        clicks: totalClicks,
+        spend: Number(totalSpend.toFixed(2)),
+        sales: Number(totalSales.toFixed(2)),
+        orders: totalOrders,
+        acos: totalSales > 0 ? (totalSpend / totalSales) * 100 : null,
+        days_with_data: 14,
+        total_days: 14,
+      };
+    }
   }
 
-  return null;
+  if (rows.length === 0) return null;
+  const r = rows[0];
+  const clicks = Number(r.clicks || 0);
+  const spend = Number(r.spend || 0);
+  const sales = Number(r.sales || 0);
+  const orders = Number(r.orders || 0);
+  return {
+    clicks,
+    spend,
+    sales,
+    orders,
+    acos: sales > 0 ? (spend / sales) * 100 : null,
+    days_with_data: Number(r.days || windowDays),
+    total_days: windowDays,
+  };
 }
 
 const controlTargetPoolCache = new Map<string, string[]>();
@@ -588,7 +539,6 @@ export async function evaluatePendingActionOutcomes(options: {
       observationStart,
       observationEnd,
       today,
-      appliedDate,
       row.target_keyword
     );
 
@@ -736,7 +686,6 @@ export async function evaluatePendingActionOutcomes(options: {
         acos: evalResult.after_metrics.acos,
         contribution: evalResult.after_metrics.contribution,
         days: row.window_days,
-        is_interim: (afterFacts as any)?.is_interim === true,
       }
       : (afterFacts
         ? {
@@ -747,7 +696,6 @@ export async function evaluatePendingActionOutcomes(options: {
           acos: afterFacts.acos,
           contribution: afterFacts.sales * margin - afterFacts.spend,
           days: afterFacts.days_with_data || row.window_days,
-          is_interim: (afterFacts as any)?.is_interim === true,
         }
         : {});
 
