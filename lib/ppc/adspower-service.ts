@@ -892,10 +892,10 @@ async function detectActualBulkWorkbookAdType(filePath: string): Promise<"SP" | 
  */
 function sanitizeRawFileName(name: string, storeName: string): string {
   let clean = path.basename(name);
-  clean = clean.replace(new RegExp(`^(?:${storeName}|Warmstorey|HSOSTORE)_(?:Bulk|Search_Term)_(?:SP|SB)_(?:7|30)Days_`, "ig"), "");
+  clean = clean.replace(new RegExp(`^(?:${storeName}|Warmstorey|HSOSTORE)_(?:Bulk|Search_Term)_(?:SP|SB)_(?:3|7|30)Days_`, "ig"), "");
   clean = clean.replace(new RegExp(`^(?:${storeName}|Warmstorey|HSOSTORE)_(?:Bulk|Search_Term)_`, "ig"), "");
-  clean = clean.replace(/^(?:SP|SB)_(?:7|30)Days_/ig, "");
-  clean = clean.replace(/^(?:30Days_|7Days_)+/ig, "");
+  clean = clean.replace(/^(?:SP|SB)_(?:3|7|30)Days_/ig, "");
+  clean = clean.replace(/^(?:30Days_|7Days_|3Days_)+/ig, "");
   clean = clean.replace(new RegExp(`^(?:${storeName}|Warmstorey|HSOSTORE)_`, "ig"), "");
   return clean;
 }

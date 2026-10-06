@@ -256,7 +256,7 @@ export async function publishCompleteBatchWithStaging(
   tasks?: ReportTaskState[],
   signal?: AbortSignal,
 ): Promise<void> {
-  if (files.length !== 6) throw new Error(`Batch ${storeName} chưa đủ 6 file.`);
+  if (files.length !== 6 && files.length !== 8) throw new Error(`Batch ${storeName} chưa đủ số file (cần 6 hoặc 8 file, hiện có ${files.length}).`);
   const s3 = getS3Client();
   if (!s3) throw new Error("Thiếu credentials R2.");
 
@@ -522,10 +522,10 @@ interface BulkTableRow {
 
 function sanitizeRawFileName(name: string, storeName: string): string {
   let clean = path.basename(name);
-  clean = clean.replace(new RegExp(`^(?:${storeName}|Warmstorey|HSOSTORE)_(?:Bulk|Search_Term)_(?:SP|SB)_(?:7|30)Days_`, "ig"), "");
+  clean = clean.replace(new RegExp(`^(?:${storeName}|Warmstorey|HSOSTORE)_(?:Bulk|Search_Term)_(?:SP|SB)_(?:3|7|30)Days_`, "ig"), "");
   clean = clean.replace(new RegExp(`^(?:${storeName}|Warmstorey|HSOSTORE)_(?:Bulk|Search_Term)_`, "ig"), "");
-  clean = clean.replace(/^(?:SP|SB)_(?:7|30)Days_/ig, "");
-  clean = clean.replace(/^(?:30Days_|7Days_)+/ig, "");
+  clean = clean.replace(/^(?:SP|SB)_(?:3|7|30)Days_/ig, "");
+  clean = clean.replace(/^(?:30Days_|7Days_|3Days_)+/ig, "");
   clean = clean.replace(new RegExp(`^(?:${storeName}|Warmstorey|HSOSTORE)_`, "ig"), "");
   return clean;
 }
@@ -687,7 +687,7 @@ async function triggerBulkExport(
   bulkPage: Page,
   entityParam: string,
   adType: "SP" | "SB",
-  days: 7 | 30,
+  days: 3 | 7 | 30,
 ): Promise<string> {
   const bulkUrl = `https://advertising.amazon.com/bulk-operations${entityParam}`;
 
@@ -734,7 +734,7 @@ async function triggerBulkExport(
     }
   }
 
-  // 2. Cấu hình Date Range preset (7 Days hoặc 30 Days)
+  // 2. Cấu hình Date Range (3 Days, 7 Days hoặc 30 Days)
   const dateBtn = await bulkPage.$(
     'button[aria-label="Open date range picker"], button:has-text(" - 202"), div[data-takt-id="adz_bulkSheets_exportModal"] button:has-text(" - ")',
   );
@@ -742,22 +742,46 @@ async function triggerBulkExport(
     await dateBtn.click();
     await bulkPage.waitForTimeout(600);
 
-    const targetLabel = `${days} Days`;
-    const presetBtn = await bulkPage.$(
-      `button[data-takt-id="adz_bulkSheets_exportModal_date_range"]:has-text("${targetLabel}"), div[role="dialog"] button:has-text("${targetLabel}"), button:has-text("${targetLabel}"), button:has-text("Past ${days} days")`,
-    );
-    if (presetBtn) {
-      console.log(`  [BULK] Chọn preset ngày: ${targetLabel}`);
-      await presetBtn.click();
-      await bulkPage.waitForTimeout(500);
+    if (days === 3) {
+      // Amazon Bulksheet không có preset button "3 Days", cần chọn dải ngày 3 ngày trên calendar
+      const now = new Date();
+      const startDateObj = new Date();
+      startDateObj.setDate(now.getDate() - 3);
 
-      const applyBtn = await bulkPage.$(
-        'button[data-takt-id="adz_bulkSheets_exportModal_date_range-save"], button:has-text("Apply")',
-      );
-      if (applyBtn) {
-        await applyBtn.click();
-        await bulkPage.waitForTimeout(600);
+      const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+      const startStr = `${monthNames[startDateObj.getMonth()]} ${startDateObj.getDate()} ${startDateObj.getFullYear()}`;
+      const endStr = `${monthNames[now.getMonth()]} ${now.getDate()} ${now.getFullYear()}`;
+
+      console.log(`  [BULK] Chọn dải ngày 3 Days trên calendar: "${startStr}" -> "${endStr}"`);
+      const startBtn = await bulkPage.$(`button[data-takt-id="adz_bulkSheets_exportModal_date_range"][aria-label*="${startStr}"]`);
+      const endBtn = await bulkPage.$(`button[data-takt-id="adz_bulkSheets_exportModal_date_range"][aria-label*="${endStr}"]`);
+
+      if (startBtn && endBtn) {
+        await startBtn.click();
+        await bulkPage.waitForTimeout(400);
+        await endBtn.click();
+        await bulkPage.waitForTimeout(400);
+      } else {
+        console.warn(`  [BULK] ⚠️ Không tìm thấy nút ngày trên calendar: start=${!!startBtn}, end=${!!endBtn}`);
       }
+    } else {
+      const targetLabel = `${days} Days`;
+      const presetBtn = await bulkPage.$(
+        `button[data-takt-id="adz_bulkSheets_exportModal_date_range"]:has-text("${targetLabel}"), div[role="dialog"] button:has-text("${targetLabel}"), button:has-text("${targetLabel}"), button:has-text("Past ${days} days")`,
+      );
+      if (presetBtn) {
+        console.log(`  [BULK] Chọn preset ngày: ${targetLabel}`);
+        await presetBtn.click();
+        await bulkPage.waitForTimeout(500);
+      }
+    }
+
+    const applyBtn = await bulkPage.$(
+      'button[data-takt-id="adz_bulkSheets_exportModal_date_range-save"], button:has-text("Apply")',
+    );
+    if (applyBtn) {
+      await applyBtn.click();
+      await bulkPage.waitForTimeout(600);
     } else {
       await bulkPage.keyboard.press("Escape").catch(() => { });
       await bulkPage.waitForTimeout(300);
@@ -893,14 +917,14 @@ async function triggerBulkExport(
 
 interface BulkTaskItem {
   adType: "SP" | "SB";
-  days: 7 | 30;
+  days: 3 | 7 | 30;
   requestId: string;
   filePath?: string;
 }
 
 async function downloadBulkFileByRow(
   bulkPage: Page,
-  task: { adType: "SP" | "SB"; days: 7 | 30; requestId: string },
+  task: { adType: "SP" | "SB"; days: 3 | 7 | 30; requestId: string },
   downloadUrl: string,
   storeName: string,
   spDir: string,
@@ -1040,7 +1064,7 @@ async function downloadBulkFileByRow(
   return { savedPath: standardizedPath, actualAdType: effectiveAdType, targetDir: correctTargetDir };
 }
 
-async function createAndDownloadAllBulkReports(
+export async function createAndDownloadAllBulkReports(
   bulkPage: Page,
   entityParam: string,
   storeName: string,
@@ -1057,6 +1081,8 @@ async function createAndDownloadAllBulkReports(
     { adType: "SB", days: 30, requestId: "" },
     { adType: "SP", days: 7, requestId: "" },
     { adType: "SB", days: 7, requestId: "" },
+    { adType: "SP", days: 3, requestId: "" },
+    { adType: "SB", days: 3, requestId: "" },
   ];
   const tasks = requestedSlots?.length
     ? allTasks.filter((task) => requestedSlots.some((slot) => slot.adType === task.adType && slot.days === task.days))
@@ -1071,14 +1097,14 @@ async function createAndDownloadAllBulkReports(
 
   console.log(`\n================================================================`);
   console.log(`🔒 [BULK PHA 1] KHÓA MÃ ID (exportRequestId) NGAY KHI BẤM`);
-  console.log(`Quy tắc: Bấm SP 30d ➔ Ghi nhớ ID ➔ Chờ 6s ➔ Bấm SB 30d ➔ Ghi nhớ ID ➔ Chờ 6s ➔ Bấm SP 7d ➔ Ghi nhớ ID ➔ Chờ 6s ➔ Bấm SB 7d ➔ Ghi nhớ ID`);
+  console.log(`Quy tắc: SP 30d ➔ SB 30d ➔ SP 7d ➔ SB 7d ➔ SP 3d ➔ SB 3d`);
   console.log(`================================================================\n`);
 
   for (let i = 0; i < tasks.length; i++) {
     throwIfAborted(signal);
     const task = tasks[i];
     if (task.requestId) continue;
-    console.log(`\n[BULK PHA 1] [${i + 1}/4] Kích hoạt tạo Bulk ${task.adType} ${task.days} Days...`);
+    console.log(`\n[BULK PHA 1] [${i + 1}/${tasks.length}] Kích hoạt tạo Bulk ${task.adType} ${task.days} Days...`);
     if (onProgress) await onProgress(`[${storeName}] Kích hoạt Bulk ${task.adType} ${task.days}d`, 20 + i * 5);
 
     task.requestId = await triggerBulkExport(bulkPage, entityParam, task.adType, task.days);
@@ -1719,14 +1745,17 @@ async function inspectWorkbookStreaming(filePath: string, headerRows = 0): Promi
   return { sheetNames: sheetNames.join(" "), headerText };
 }
 
-async function validateDownloadedBatch(files: DownloadedFileInfo[]): Promise<void> {
-  const expected = new Set(["BULK_SP:30", "BULK_SB:30", "BULK_SP:7", "BULK_SB:7", "ST_SP:30", "ST_SB:30"]);
+export async function validateDownloadedBatch(files: DownloadedFileInfo[]): Promise<void> {
+  const expected8 = new Set(["BULK_SP:30", "BULK_SB:30", "BULK_SP:7", "BULK_SB:7", "BULK_SP:3", "BULK_SB:3", "ST_SP:30", "ST_SB:30"]);
+  const expected6 = new Set(["BULK_SP:30", "BULK_SB:30", "BULK_SP:7", "BULK_SB:7", "ST_SP:30", "ST_SB:30"]);
   const actual = new Set(files.map((file) => `${file.type}:${file.days}`));
-  if (files.length !== 6 || actual.size !== 6 || [...expected].some((slot) => !actual.has(slot))) {
-    throw new Error(`Batch sai thành phần. Có: ${[...actual].join(", ")}; cần đủ 6 slot chuẩn.`);
+  const is8 = files.length === 8 && actual.size === 8 && [...expected8].every((slot) => actual.has(slot));
+  const is6 = files.length === 6 && actual.size === 6 && [...expected6].every((slot) => actual.has(slot));
+  if (!is8 && !is6) {
+    throw new Error(`Batch sai thành phần. Có: ${[...actual].join(", ")}; cần đủ 8 slot (hoặc 6 slot cũ).`);
   }
   const realPaths = new Set(files.map((file) => fs.realpathSync(file.path)));
-  if (realPaths.size !== 6) throw new Error("Batch có file trùng đường dẫn.");
+  if (realPaths.size !== files.length) throw new Error("Batch có file trùng đường dẫn.");
   for (const file of files) {
     try {
       const stat = fs.statSync(file.path);
@@ -1883,9 +1912,11 @@ export async function crawlStore(
     findTask("BULK_SB", 30),
     findTask("BULK_SP", 7),
     findTask("BULK_SB", 7),
+    findTask("BULK_SP", 3),
+    findTask("BULK_SB", 3),
   ].filter(Boolean) as ReportTaskState[];
 
-  const allBulkDone = bulkTasks.length === 4 && bulkTasks.every((t) => t.localPath && fs.existsSync(t.localPath) && fs.statSync(t.localPath).size > 0);
+  const allBulkDone = bulkTasks.length === 6 && bulkTasks.every((t) => t.localPath && fs.existsSync(t.localPath) && fs.statSync(t.localPath).size > 0);
 
   console.log("\n************************************************************");
   console.log(`>>> BẮT ĐẦU CRAWL CHO STORE: [${store.store_name}]`);
@@ -2094,7 +2125,7 @@ export async function crawlStore(
     );
     console.log(`\n  [Manifest] Đã lưu manifest của [${store.store_name}] tại: ${manifestPath}`);
 
-    if (onProgress) await onProgress(`[${store.store_name}] Đã kiểm tra đủ 6 file, đang publish batch lên R2`, 98);
+    if (onProgress) await onProgress(`[${store.store_name}] Đã kiểm tra đủ ${downloadedFiles.length} file, đang publish batch lên R2`, 98);
     await publishCompleteBatchWithStaging(downloadedFiles, store.store_name, batchDate, checkpoint.batchId, tasks, options?.signal);
     checkpoint.stage = "UPLOADED";
     saveCheckpoint();

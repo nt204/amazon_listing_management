@@ -153,6 +153,8 @@ export function createDefaultTasksForStore(storeName: string): ReportTaskState[]
     { type: "BULK_SB", days: 30 },
     { type: "BULK_SP", days: 7 },
     { type: "BULK_SB", days: 7 },
+    { type: "BULK_SP", days: 3 },
+    { type: "BULK_SB", days: 3 },
     { type: "ST_SP", days: 30 },
     { type: "ST_SB", days: 30 },
   ];

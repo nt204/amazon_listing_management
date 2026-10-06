@@ -173,16 +173,24 @@ def main():
             print(f"       => [THẤT BẠI] Lỗi upload file {file_name}: {e}", file=sys.stderr)
 
     # Publish marker last. Server ignores every batch without this marker.
-    for sname, keys in uploaded_keys.items():
         expected_slots = {
-            "Bulk_SP_30Days", "Bulk_SB_30Days", "Bulk_SP_7Days",
-            "Bulk_SB_7Days", "Search_Term_SP_30Days", "Search_Term_SB_30Days",
+            "Bulk_SP_30Days", "Bulk_SB_30Days",
+            "Bulk_SP_7Days", "Bulk_SB_7Days",
+            "Bulk_SP_3Days", "Bulk_SB_3Days",
+            "Search_Term_SP_30Days", "Search_Term_SB_30Days",
+        }
+        legacy_slots = {
+            "Bulk_SP_30Days", "Bulk_SB_30Days",
+            "Bulk_SP_7Days", "Bulk_SB_7Days",
+            "Search_Term_SP_30Days", "Search_Term_SB_30Days",
         }
         actual_slots = {
             slot for slot in expected_slots if any(slot.lower() in key.lower() for key in keys)
         }
-        if len(keys) != 6 or actual_slots != expected_slots:
-            print(f"[LỖI] [{sname}] chưa đúng đủ 6 slot; không publish _COMPLETE.json.", file=sys.stderr)
+        is_8_slots = (len(keys) == 8 and actual_slots == expected_slots)
+        is_6_slots = (len(keys) == 6 and actual_slots == legacy_slots)
+        if not (is_8_slots or is_6_slots):
+            print(f"[LỖI] [{sname}] chưa đúng đủ 8 slot (hoặc 6 slot cũ); không publish _COMPLETE.json. Hiện có {len(keys)} files, {len(actual_slots)} slots.", file=sys.stderr)
             continue
         marker_key = f"{r2_prefix}/input/{batch_date}/{sname}/{batch_ids[sname]}/_COMPLETE.json"
         marker = json.dumps({

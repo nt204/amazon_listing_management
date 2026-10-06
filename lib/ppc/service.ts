@@ -1105,7 +1105,8 @@ export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarg
   const committedBatchRank = new Map<string, string>();
   const expectedSlots = [
     "bulk_sp_30days", "bulk_sb_30days", "bulk_sp_7days",
-    "bulk_sb_7days", "search_term_sp_30days", "search_term_sb_30days",
+    "bulk_sb_7days", "bulk_sp_3days", "bulk_sb_3days",
+    "search_term_sp_30days", "search_term_sb_30days",
   ];
   for (const markerObject of objects.filter((object) => (object.Key || "").endsWith("/_COMPLETE.json"))) {
     const markerKey = markerObject.Key || "";
@@ -1123,7 +1124,9 @@ export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarg
         }
       }
       const slots = new Set(keys.map((key: string) => key.toLowerCase()).flatMap((key: string) => expectedSlots.filter((slot) => key.includes(slot))));
-      if (keys.length !== 6 || new Set(keys).size !== 6 || slots.size !== 6) throw new Error("marker không đủ 6 slot PPC");
+      const isLegacy6Slots = keys.length === 6 && slots.size === 6;
+      const isCurrent8Slots = keys.length === 8 && slots.size === 8;
+      if (!isLegacy6Slots && !isCurrent8Slots) throw new Error(`marker không đủ slot PPC (${keys.length} files, ${slots.size} slots)`);
       for (const key of keys) {
         if (!key.startsWith(batchPrefix) || !objectByKey.has(key)) throw new Error(`object không thuộc batch hoặc chưa tồn tại: ${key}`);
         const expected = checksumByKey.get(key);
@@ -1192,8 +1195,8 @@ export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarg
     const syncStates = await Promise.all(selectedFiles.map((object) =>
       hasSuccessfulPpcSync(scope, "CLOUDFLARE_R2", object.Key || "", r2Version(object)),
     ));
-    if (selectedFiles.length === 6 && syncStates.every(Boolean)) {
-      console.log(`[R2 Sync] Bỏ qua batch ${latestBatch}/${storeName}: đủ 6 file đã đồng bộ thành công.`);
+    if ((selectedFiles.length === 6 || selectedFiles.length === 8) && syncStates.every(Boolean)) {
+      console.log(`[R2 Sync] Bỏ qua batch ${latestBatch}/${storeName}: đủ ${selectedFiles.length} file đã đồng bộ thành công.`);
       filesProcessed += selectedFiles.length;
       continue;
     }
@@ -1254,9 +1257,10 @@ export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarg
     }
 
     // Snapshot là đơn vị nguyên tử: một file lỗi thì không thay thế dữ liệu cũ
-    // bằng phần còn lại của batch.
-    if (failures.length > failuresBeforeStore || parsedSearchTerms.length !== 2 || parsedPerformance.length !== 4) {
-      console.warn(`[R2 Sync] Giữ nguyên snapshot cũ của ${storeName}: batch mới chưa parse đủ 6 file.`);
+    // bằng phần còn lại của batch. Hỗ trợ cả batch 6 file cũ lẫn 8 file mới.
+    const isCompleteBatch = parsedSearchTerms.length === 2 && (parsedPerformance.length === 4 || parsedPerformance.length === 6);
+    if (failures.length > failuresBeforeStore || !isCompleteBatch) {
+      console.warn(`[R2 Sync] Giữ nguyên snapshot cũ của ${storeName}: batch mới chưa parse đủ file (ST: ${parsedSearchTerms.length}/2, Perf: ${parsedPerformance.length}/[4|6]).`);
       continue;
     }
 
