@@ -58,9 +58,13 @@ function formatDateRangeLabel(start?: string, end?: string): string {
 }
 
 // Tính kỳ so sánh = cùng kỳ tháng trước (an toàn số ngày trong tháng)
-function getSamePeriodLastMonth(startStr: string, endStr: string): DateRange {
-  const [y1, m1, d1] = startStr.split("-").map(Number);
-  const [y2, m2, d2] = endStr.split("-").map(Number);
+function getSamePeriodLastMonth(startStr?: string, endStr?: string): DateRange | null {
+  if (!startStr || !endStr) return null;
+  const p1 = startStr.split("-").map(Number);
+  const p2 = endStr.split("-").map(Number);
+  if (p1.length < 3 || p2.length < 3 || p1.some(Number.isNaN) || p2.some(Number.isNaN)) return null;
+  const [y1, m1, d1] = p1;
+  const [y2, m2, d2] = p2;
 
   // Month 1 - 1 tháng
   const prevMonthIndex1 = m1 - 2;
@@ -83,9 +87,13 @@ function getSamePeriodLastMonth(startStr: string, endStr: string): DateRange {
 }
 
 // Tính kỳ so sánh = kỳ liền trước (previous period)
-function getPreviousPeriod(startStr: string, endStr: string): DateRange {
-  const [y1, m1, d1] = startStr.split("-").map(Number);
-  const [y2, m2, d2] = endStr.split("-").map(Number);
+function getPreviousPeriod(startStr?: string, endStr?: string): DateRange | null {
+  if (!startStr || !endStr) return null;
+  const p1 = startStr.split("-").map(Number);
+  const p2 = endStr.split("-").map(Number);
+  if (p1.length < 3 || p2.length < 3 || p1.some(Number.isNaN) || p2.some(Number.isNaN)) return null;
+  const [y1, m1, d1] = p1;
+  const [y2, m2, d2] = p2;
   const s = new Date(y1, m1 - 1, d1);
   const e = new Date(y2, m2 - 1, d2);
   const diffDays = Math.round((e.getTime() - s.getTime()) / 86400000) + 1;
@@ -97,7 +105,55 @@ function getPreviousPeriod(startStr: string, endStr: string): DateRange {
   return { startDate: formatDate(pStart), endDate: formatDate(pEnd) };
 }
 
-export function PpcStCampaignRollupView({
+class RollupErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("[PpcStCampaignRollupView] Lỗi hiển thị:", error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-8 text-center bg-rose-50 border border-rose-200 rounded-2xl space-y-3">
+          <div className="font-extrabold text-rose-800 text-sm">
+            Đã có sự cố khi hiển thị dữ liệu đối soát:
+          </div>
+          <div className="text-xs text-rose-600 font-mono">
+            {this.state.error?.message || "Lỗi không xác định"}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              this.setState({ hasError: false, error: null });
+            }}
+            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-xs transition cursor-pointer"
+          >
+            Thử tải lại bảng
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export function PpcStCampaignRollupView(props: Props) {
+  return (
+    <RollupErrorBoundary>
+      <PpcStCampaignRollupViewInner {...props} />
+    </RollupErrorBoundary>
+  );
+}
+
+function PpcStCampaignRollupViewInner({
   selectedStore,
   selectedSku,
   targetAcos = 30,
@@ -158,12 +214,14 @@ export function PpcStCampaignRollupView({
   const effectiveComparePeriod = useMemo<DateRange | null>(() => {
     if (compareType === "none") return null;
     if (compareType === "same_last_month") {
-      return getSamePeriodLastMonth(primaryPeriod.startDate, primaryPeriod.endDate);
+      const r = getSamePeriodLastMonth(primaryPeriod?.startDate, primaryPeriod?.endDate);
+      return r?.startDate && r?.endDate ? r : null;
     }
     if (compareType === "prev_period") {
-      return getPreviousPeriod(primaryPeriod.startDate, primaryPeriod.endDate);
+      const r = getPreviousPeriod(primaryPeriod?.startDate, primaryPeriod?.endDate);
+      return r?.startDate && r?.endDate ? r : null;
     }
-    return customComparePeriod;
+    return customComparePeriod?.startDate && customComparePeriod?.endDate ? customComparePeriod : null;
   }, [compareType, primaryPeriod, customComparePeriod]);
 
   const compareLabel = useMemo(() => {
@@ -321,9 +379,11 @@ export function PpcStCampaignRollupView({
   const items = data?.items || [];
   const totalCount = data?.total || 0;
   const totalPages = data?.totalPages || 1;
-  const incompleteCoverage = isCompare
-    ? data?.coverage && (!data.coverage.p1?.complete || !data.coverage.p2?.complete)
-    : data?.coverage && !data.coverage.complete;
+  const incompleteCoverage = Boolean(
+    isCompare
+      ? data?.coverage?.p1 && data?.coverage?.p2 && (!data.coverage.p1.complete || !data.coverage.p2.complete)
+      : data?.coverage?.dataDays !== undefined && !data.coverage.p1 && !data.coverage.complete
+  );
 
   // Lấy giá trị chính và delta cho KPI card
   const curSpend = isCompare ? Number(summary?.p1?.spend ?? 0) : Number(summary?.spend ?? 0);
@@ -565,13 +625,13 @@ export function PpcStCampaignRollupView({
           </div>
         )}
 
-        {incompleteCoverage && (
+        {incompleteCoverage && data?.coverage && (
           <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-900">
             <Fire size={14} weight="fill" className="mt-0.5 shrink-0 text-amber-600" />
             <span>
-              Dữ liệu chưa phủ đủ khoảng đã chọn. {isCompare
-                ? `Kỳ hiện tại có ${data.coverage.p1.dataDays}/${data.coverage.p1.expectedDays} ngày; kỳ so sánh có ${data.coverage.p2.dataDays}/${data.coverage.p2.expectedDays} ngày.`
-                : `Hiện có ${data.coverage.dataDays}/${data.coverage.expectedDays} ngày.`} Các tỷ lệ vẫn được tính đúng trên dữ liệu hiện có, nhưng không nên kết luận xu hướng cho đến khi đủ ngày.
+              Dữ liệu chưa phủ đủ khoảng đã chọn. {isCompare && data.coverage.p1 && data.coverage.p2
+                ? `Kỳ hiện tại có ${data.coverage.p1.dataDays ?? 0}/${data.coverage.p1.expectedDays ?? 0} ngày; kỳ so sánh có ${data.coverage.p2.dataDays ?? 0}/${data.coverage.p2.expectedDays ?? 0} ngày.`
+                : `Hiện có ${data.coverage.dataDays ?? 0}/${data.coverage.expectedDays ?? 0} ngày.`} Các tỷ lệ vẫn được tính đúng trên dữ liệu hiện có, nhưng không nên kết luận xu hướng cho đến khi đủ ngày.
             </span>
           </div>
         )}
