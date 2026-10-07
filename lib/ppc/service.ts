@@ -1288,8 +1288,8 @@ export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarg
     }
   }
 
-  // Tự động dọn dẹp các bản ghi lịch sử cũ hơn 90 ngày & log cũ hơn 30 ngày
-  await cleanupPpcHistoricalData(scope, 90).catch((err) => {
+  // Tự động dọn dẹp các bản ghi lịch sử cũ hơn 120 ngày & log cũ hơn 30 ngày
+  await cleanupPpcHistoricalData(scope, 120).catch((err) => {
     console.warn("[R2 Sync] Bỏ qua lỗi dọn dẹp dữ liệu cũ:", err);
   });
 
