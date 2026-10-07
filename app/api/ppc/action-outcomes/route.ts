@@ -35,8 +35,17 @@ export async function GET(request: Request) {
              action.target_id, action.target_keyword, action.match_type, action.sku,
              action.old_value, action.system_suggested_value, action.final_value,
              action.status as action_status, action.approved_by,
-             COALESCE(action.approved_at::date, action.created_at::date, CURRENT_DATE)::text as applied_on,
-             COALESCE(action.approved_at, action.created_at) as action_timestamp,
+             COALESCE(
+               (SELECT MIN(item.created_at)::date FROM bulk_export_items item WHERE item.action_id = action.id),
+               action.approved_at::date,
+               action.created_at::date,
+               CURRENT_DATE
+             )::text as applied_on,
+             COALESCE(
+               (SELECT MIN(item.created_at) FROM bulk_export_items item WHERE item.action_id = action.id),
+               action.approved_at,
+               action.created_at
+             ) as action_timestamp,
              context.context as action_context
       FROM ppc_action_outcomes outcome
       JOIN ppc_actions action ON action.id = outcome.action_id

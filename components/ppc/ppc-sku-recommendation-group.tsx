@@ -30,6 +30,7 @@ import {
   CircleNotch,
   PencilSimple,
   Target,
+  Sparkle,
 } from "@phosphor-icons/react";
 import {
   SKU_PREFIX_ERROR_PRODUCT_TYPE,
@@ -37,8 +38,13 @@ import {
   type PpcAction,
 } from "@/lib/ppc/sku-architecture-types";
 import type { PpcRecommendation } from "@/lib/ppc/types";
+import type { AiReviewerExecutionResult } from "@/lib/ppc/ai-reviewer";
 import { PpcPagination } from "./ppc-pagination";
 import { PpcAutoBidResultsModal } from "./ppc-auto-bid-results-modal";
+import {
+  PpcAiReviewerModal,
+  type AiReviewApplicationSnapshot,
+} from "./ppc-ai-reviewer-modal";
 
 interface PpcSkuRecommendationGroupProps {
   isActive: boolean;
@@ -49,7 +55,12 @@ interface PpcSkuRecommendationGroupProps {
   loadedRecommendationWindowDays: number | null;
   onRecommendationWindowChange: (days: 7 | 30) => void;
   onLoadSkuRecommendations: (sku: string) => Promise<PpcRecommendation[]>;
-  onApproveToQueue: (items: Array<{ recommendation: PpcRecommendation; userFinalBid?: number }>) => Promise<void>;
+  onApproveToQueue: (items: Array<{
+    recommendation: PpcRecommendation;
+    userFinalBid?: number;
+    decisionSource?: "AI_AGENT";
+    aiReview?: AiReviewApplicationSnapshot;
+  }>) => Promise<void>;
   onOpenActionQueue: () => void;
   pendingQueueCount: number;
   actionQueue?: PpcAction[];
@@ -177,6 +188,10 @@ export function PpcSkuRecommendationGroupView({
   // Detail View State
   const [selectedRecIds, setSelectedRecIds] = useState<Set<string>>(new Set());
   const [userFinalBids, setUserFinalBids] = useState<Record<string, number>>({});
+  const [aiReviewApplications, setAiReviewApplications] = useState<Record<string, {
+    source: "AI_AGENT" | "RULE_FALLBACK";
+    audit: AiReviewApplicationSnapshot;
+  }>>({});
   const [isApproving, setIsApproving] = useState(false);
   const [modalSearch, setModalSearch] = useState("");
   const [modalActionFilter, setModalActionFilter] = useState<"ALL" | "BID_INCREASE" | "BID_DECREASE" | "PAUSE_TARGET">("ALL");
@@ -195,6 +210,7 @@ export function PpcSkuRecommendationGroupView({
       setSelectedRecIds(new Set());
       setSelectedSkus(new Set());
       setUserFinalBids({});
+      setAiReviewApplications({});
       setRecentlyApprovedIds(new Set());
       setRuleExplanationModal(null);
       setSearchTerm("");
@@ -222,6 +238,7 @@ export function PpcSkuRecommendationGroupView({
       setSelectedRecIds(new Set());
       setSelectedSkus(new Set());
       setUserFinalBids({});
+      setAiReviewApplications({});
       previousRecommendationWindowRef.current = recommendationWindowDays;
     }
   }, [recommendationWindowDays]);
@@ -280,6 +297,41 @@ export function PpcSkuRecommendationGroupView({
   };
 
   const handleExplainRule = (rec: PpcRecommendation) => setRuleExplanationModal(rec);
+
+  const [aiReviewModalRec, setAiReviewModalRec] = useState<PpcRecommendation | null>(null);
+  const [aiReviewResult, setAiReviewResult] = useState<AiReviewerExecutionResult | null>(null);
+  const [aiReviewScenarioInfo, setAiReviewScenarioInfo] = useState<any>(null);
+  const [aiReviewRetrievalMetadata, setAiReviewRetrievalMetadata] = useState<any>(null);
+  const [isAiReviewLoading, setIsAiReviewLoading] = useState(false);
+  const [aiReviewError, setAiReviewError] = useState<string | null>(null);
+
+  const handleOpenAiReview = async (rec: PpcRecommendation) => {
+    setAiReviewModalRec(rec);
+    setAiReviewResult(null);
+    setAiReviewScenarioInfo(null);
+    setAiReviewRetrievalMetadata(null);
+    setAiReviewError(null);
+    setIsAiReviewLoading(true);
+
+    try {
+      const res = await fetch("/api/ppc/ai-review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recommendation: rec }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "Không thể gọi AI Reviewer");
+      }
+      setAiReviewResult(data.result);
+      setAiReviewScenarioInfo(data.scenario_info);
+      setAiReviewRetrievalMetadata(data.retrieval_metadata);
+    } catch (err: unknown) {
+      setAiReviewError(err instanceof Error ? err.message : "Lỗi kết nối AI Reviewer");
+    } finally {
+      setIsAiReviewLoading(false);
+    }
+  };
 
   const handleOpenActionQueueModal = () => {
     setSelectedSkuGroup(null);
@@ -580,6 +632,11 @@ export function PpcSkuRecommendationGroupView({
       ...prev,
       [id]: isNaN(num) ? 0 : num,
     }));
+    setAiReviewApplications((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
   };
 
   const handleBatchEditRecBids = () => {
@@ -598,6 +655,11 @@ export function PpcSkuRecommendationGroupView({
       selectedRecIds.forEach((id) => {
         next[id] = rounded;
       });
+      return next;
+    });
+    setAiReviewApplications((prev) => {
+      const next = { ...prev };
+      selectedRecIds.forEach((id) => delete next[id]);
       return next;
     });
   };
@@ -619,6 +681,11 @@ export function PpcSkuRecommendationGroupView({
       activeRecs.forEach((r) => {
         next[r.id] = rounded;
       });
+      return next;
+    });
+    setAiReviewApplications((prev) => {
+      const next = { ...prev };
+      activeRecs.forEach((rec) => delete next[rec.id]);
       return next;
     });
   };
@@ -649,6 +716,8 @@ export function PpcSkuRecommendationGroupView({
         .map((r) => ({
           recommendation: r,
           userFinalBid: userFinalBids[r.id] ?? r.recommendedBid ?? r.currentBid ?? 0,
+          decisionSource: aiReviewApplications[r.id]?.source === "AI_AGENT" ? "AI_AGENT" as const : undefined,
+          aiReview: aiReviewApplications[r.id]?.audit,
         }));
 
       if (selectedStore && selectedStore !== "ALL") {
@@ -689,6 +758,8 @@ export function PpcSkuRecommendationGroupView({
         {
           recommendation: rec,
           userFinalBid: userFinalBids[rec.id] ?? rec.recommendedBid ?? rec.currentBid ?? 0,
+          decisionSource: aiReviewApplications[rec.id]?.source === "AI_AGENT" ? "AI_AGENT" as const : undefined,
+          aiReview: aiReviewApplications[rec.id]?.audit,
         },
       ]);
       setRecentlyApprovedIds((prev) => new Set([...prev, rec.id]));
@@ -1749,6 +1820,15 @@ export function PpcSkuRecommendationGroupView({
                                               <Info size={10} weight="bold" />
                                               <span>Explain</span>
                                             </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleOpenAiReview(rec)}
+                                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-gradient-to-r from-purple-500/10 via-indigo-500/10 to-pink-500/10 hover:from-purple-500/20 hover:to-indigo-500/20 text-purple-700 border border-purple-200 transition cursor-pointer shrink-0 shadow-2xs group"
+                                              title="AI Reviewer (gpt-5.6-terra): Bấm để AI phản biện và xem bảng số liệu chứng minh"
+                                            >
+                                              <Sparkle size={10} weight="fill" className="text-purple-600 group-hover:scale-110 transition-transform" />
+                                              <span>AI</span>
+                                            </button>
                                           </div>
                                           {rec.matchType && (
                                             <div className="text-[10px] text-slate-400 uppercase font-mono mt-0.5">
@@ -1774,6 +1854,11 @@ export function PpcSkuRecommendationGroupView({
                                                   ...prev,
                                                   [rec.id]: newVal,
                                                 }));
+                                                setAiReviewApplications((prev) => {
+                                                  const next = { ...prev };
+                                                  delete next[rec.id];
+                                                  return next;
+                                                });
                                               }}
                                             />
                                           )}
@@ -2004,6 +2089,30 @@ export function PpcSkuRecommendationGroupView({
         isOpen={showOutcomesModal}
         onClose={() => setShowOutcomesModal(false)}
         selectedStore={selectedStore}
+      />
+
+      {/* Modal AI Reviewer Phản Biện */}
+      <PpcAiReviewerModal
+        isOpen={!!aiReviewModalRec}
+        onClose={() => setAiReviewModalRec(null)}
+        recommendation={aiReviewModalRec}
+        aiResult={aiReviewResult}
+        scenarioInfo={aiReviewScenarioInfo}
+        retrievalMetadata={aiReviewRetrievalMetadata}
+        isLoading={isAiReviewLoading}
+        errorMessage={aiReviewError}
+        onApplyBid={(bid, source, audit) => {
+          if (aiReviewModalRec) {
+            setUserFinalBids((prev) => ({
+              ...prev,
+              [aiReviewModalRec.id]: bid,
+            }));
+            setAiReviewApplications((prev) => ({
+              ...prev,
+              [aiReviewModalRec.id]: { source, audit },
+            }));
+          }
+        }}
       />
     </div>
   );

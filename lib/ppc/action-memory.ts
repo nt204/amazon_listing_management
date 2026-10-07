@@ -13,6 +13,32 @@ export interface ActionContextInput {
   recommendation: PpcRecommendation;
   finalValue: number;
   approvedBy: string;
+  requestedSource?: ActionDecisionSource;
+  aiReview?: unknown;
+}
+
+export type ActionDecisionSource = "RULE_ENGINE" | "USER_EDIT" | "AI_AGENT";
+
+const BID_COMPARISON_EPSILON = 0.005;
+
+export function inferActionDecisionSource(input: {
+  systemSuggestedValue?: number | null;
+  finalValue?: number | null;
+  requestedSource?: ActionDecisionSource;
+}): ActionDecisionSource {
+  if (input.requestedSource === "AI_AGENT") return "AI_AGENT";
+
+  const suggested = Number(input.systemSuggestedValue);
+  const finalValue = Number(input.finalValue);
+  if (
+    Number.isFinite(suggested) &&
+    Number.isFinite(finalValue) &&
+    Math.abs(finalValue - suggested) >= BID_COMPARISON_EPSILON
+  ) {
+    return "USER_EDIT";
+  }
+
+  return input.requestedSource || "RULE_ENGINE";
 }
 
 export interface ActionOutcomeInput {
@@ -96,9 +122,53 @@ function safeTimestamp(value: string | undefined): string {
   return new Date().toISOString();
 }
 
-export function buildActionDecisionContext(input: ActionContextInput): JsonObject {
+function safeJsonObject(value: unknown): JsonObject | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  try {
+    return JSON.parse(JSON.stringify(value)) as JsonObject;
+  } catch {
+    return undefined;
+  }
+}
+
+export function buildActionDecisionContext(
+  input: ActionContextInput,
+  economicsSnapshot?: Record<string, unknown>,
+): JsonObject {
   const rec = input.recommendation;
   const cpc = finiteOrNull(rec.cpc) ?? ratio(rec.spend, rec.clicks);
+  const decisionSource = inferActionDecisionSource({
+    systemSuggestedValue: rec.recommendedBid,
+    finalValue: input.finalValue,
+    requestedSource: input.requestedSource,
+  });
+
+  const breakEvenAcos = economicsSnapshot
+    ? Number(economicsSnapshot.break_even_acos)
+    : undefined;
+
+  const actualAcos = ratio(rec.spend, rec.sales, 100);
+  let acosBeRatio: number | null = null;
+  if (actualAcos !== null && typeof breakEvenAcos === "number" && breakEvenAcos > 0) {
+    acosBeRatio = Math.round((actualAcos / breakEvenAcos) * 100) / 100;
+  }
+
+  // Derive scenario snapshot at action time (frozen permanently in memory)
+  const orders = Number(rec.orders || 0);
+  const clicks = Number(rec.clicks || 0);
+  let scenario = "OTHER";
+  if (orders === 0) {
+    const isBleed = /không có đơn|zero order|bleed|clicks,\s*không có đơn/i.test(rec.reason || "") || clicks >= 7;
+    scenario = isBleed ? "ZERO_ORDER_BLEED" : "STARVED_TRAFFIC";
+  } else if (acosBeRatio !== null) {
+    if (acosBeRatio > 1.0) {
+      scenario = "HIGH_ACOS_TRIM";
+    } else if (acosBeRatio > 0.75) {
+      scenario = "MARGINAL_ACOS";
+    } else {
+      scenario = "PROFITABLE_SCALE";
+    }
+  }
 
   return {
     target: {
@@ -122,9 +192,19 @@ export function buildActionDecisionContext(input: ActionContextInput): JsonObjec
       spend: finiteOrNull(rec.spend),
       sales: finiteOrNull(rec.sales),
       avg_cpc: cpc,
-      acos: ratio(rec.spend, rec.sales, 100),
+      acos: actualAcos,
       roas: ratio(rec.sales, rec.spend),
       cvr: ratio(rec.orders, rec.clicks, 100),
+    },
+    scenario_at_action: scenario,
+    state_at_action: {
+      scenario,
+      acos_be_ratio: acosBeRatio,
+      clicks_at_action: clicks,
+      orders_at_action: orders,
+      actual_acos_at_action: actualAcos,
+      break_even_acos_at_action: breakEvenAcos || null,
+      trigger_reason: rec.reason || null,
     },
     decision: {
       recommendation_id: rec.id,
@@ -136,11 +216,13 @@ export function buildActionDecisionContext(input: ActionContextInput): JsonObjec
       rule_version: rec.ruleProfile || "v1.0",
       reason: rec.reason,
       approved_by: input.approvedBy,
+      source: decisionSource,
     },
     provenance: {
       recommendation_created_at: safeTimestamp(rec.createdAt),
       captured_at: new Date().toISOString(),
     },
+    ai_review: safeJsonObject(input.aiReview),
   };
 }
 
@@ -161,16 +243,16 @@ export async function saveActionContextsBestEffort(inputs: ActionContextInput[])
     ));
     const sourceRows = targetIds.length > 0
       ? await sql<SourceReportRow[]>`
-          SELECT DISTINCT ON (store_id, target_id, report_end_date - report_start_date)
+          SELECT DISTINCT ON (store_id, target_id, report_end_date - report_start_date + 1)
             store_id, target_id, report_start_date::text, report_end_date::text,
             report_granularity,
-            (report_end_date - report_start_date)::int AS window_days,
+            (report_end_date - report_start_date + 1)::int AS window_days,
             snapshot_date::text, impressions, clicks, spend, sales, orders, units
           FROM ppc_performance_facts
           WHERE grain = 'TARGET'
             AND target_id = ANY(${targetIds})
-            AND (report_end_date - report_start_date) IN (7, 30)
-          ORDER BY store_id, target_id, (report_end_date - report_start_date),
+            AND (report_end_date - report_start_date + 1) IN (7, 30)
+          ORDER BY store_id, target_id, (report_end_date - report_start_date + 1),
                    snapshot_date DESC, report_end_date DESC
         `
       : [];
@@ -204,7 +286,15 @@ export async function saveActionContextsBestEffort(inputs: ActionContextInput[])
         `${input.recommendation.storeId}\0${(input.recommendation.sku || "").trim().toUpperCase()}`,
       ),
     })).map(({ input, sources, economics }) => {
-      const context = buildActionDecisionContext(input);
+      const context = buildActionDecisionContext(
+        input,
+        economics ? { break_even_acos: economics.break_even_acos } : undefined,
+      );
+      const decisionSource = inferActionDecisionSource({
+        systemSuggestedValue: input.recommendation.recommendedBid,
+        finalValue: input.finalValue,
+        requestedSource: input.requestedSource,
+      });
       const baselineWindows: JsonObject = {};
       for (const source of sources) {
         const clicks = Number(source.clicks || 0);
@@ -268,7 +358,7 @@ export async function saveActionContextsBestEffort(inputs: ActionContextInput[])
       return {
         action_id: input.actionId,
         schema_version: PPC_ACTION_CONTEXT_SCHEMA_VERSION,
-        decision_source: "RULE_ENGINE",
+        decision_source: decisionSource,
         data_as_of: safeTimestamp(input.recommendation.createdAt),
         report_start_date: source?.report_start_date || null,
         report_end_date: source?.report_end_date || null,

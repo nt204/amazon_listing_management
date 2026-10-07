@@ -70,7 +70,7 @@ export async function POST(request: Request) {
       const processedFiles = Number(body.processedFiles);
       const taskIds = new Set<string>();
       const expectedStores = new Set(storeNames.map((name) => name.toLowerCase()));
-      const tasksValid = taskStates.length === storeNames.length * 6 && taskStates.every((value) => {
+      const tasksValid = (taskStates.length === storeNames.length * 6 || taskStates.length === storeNames.length * 8) && taskStates.every((value) => {
         if (!value || typeof value !== "object" || Array.isArray(value)) return false;
         const task = value as Record<string, unknown>;
         const id = String(task.id || "");
@@ -80,7 +80,7 @@ export async function POST(request: Request) {
         return true;
       });
       if (!tasksValid || !Number.isInteger(processedFiles) || processedFiles !== taskStates.length) {
-        throw new ApiError("Crawler handoff yêu cầu đúng 6 task UPLOADED cho mỗi store.", 409);
+        throw new ApiError("Crawler handoff yêu cầu đúng 6 hoặc 8 task UPLOADED cho mỗi store.", 409);
       }
       await verifyExactR2BatchMarkers({ batchId, batchDate, storeNames });
       try {
@@ -124,8 +124,9 @@ export async function POST(request: Request) {
           await completePpcIngestion(claimed.id, token, result);
           console.log(`[Auto Ingestion] ✅ Nạp thành công batch ${claimed.batch_id}: ${result.filesProcessed} files.`);
           try {
-            const { cleanupDuplicateR2Batches } = await import("@/lib/ppc/file-manager");
+            const { cleanupDuplicateR2Batches, cleanupOldZeroMetricFacts } = await import("@/lib/ppc/file-manager");
             await cleanupDuplicateR2Batches();
+            await cleanupOldZeroMetricFacts();
           } catch {}
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);

@@ -18,7 +18,7 @@ if [ -f "$SCRIPT_DIR/config.env" ]; then
 fi
 
 export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:$PATH"
-export NODE_OPTIONS="--dns-result-order=ipv4first $NODE_OPTIONS"
+export NODE_OPTIONS="--max-old-space-size=4096 --dns-result-order=ipv4first $NODE_OPTIONS"
 
 if [ ! -f "$SCRIPT_DIR/node_modules/.bin/tsx" ]; then
   echo "[Setup] Chưa có node_modules, đang tự động cài đặt thư viện..."

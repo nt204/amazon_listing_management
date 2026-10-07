@@ -260,7 +260,7 @@ export function PpcRemoteCrawlerModal({
             </div>
             <div>
               <h3 className="text-sm font-bold text-slate-900">Điều Khiển Crawl Từ Xa (Mac mini)</h3>
-              <p className="text-[11px] text-slate-500">Mô hình Checkpoint 6 Tasks, Lease 90s, Heartbeat 15s</p>
+              <p className="text-[11px] text-slate-500">Mô hình Checkpoint 8 Tasks, Lease 90s, Heartbeat 15s</p>
             </div>
           </div>
           <div className="flex items-center gap-2">

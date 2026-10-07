@@ -25,6 +25,9 @@
     "ppc:ingest-worker": "node --max-old-space-size=6144 --expose-gc --conditions=react-server --env-file-if-exists=.env --import tsx scripts/ppc-ingestion-worker.ts",
     "ppc:outcome-worker": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/ppc-action-outcome-worker.ts",
     "ppc:outcome-worker:watch": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/ppc-action-outcome-worker.ts --watch",
+    "ppc:memory-readiness": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/ppc-action-memory-readiness.ts",
+    "ppc:shadow-decisions": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/ppc-shadow-decision-runner.ts",
+    "ppc:ai-review": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/ppc-ai-reviewer-runner.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "node --conditions=react-server --import tsx --test tests/*.test.ts"

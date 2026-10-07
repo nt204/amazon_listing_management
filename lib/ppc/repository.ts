@@ -3377,10 +3377,10 @@ export interface PpcCleanupResult {
 
 export async function cleanupPpcHistoricalData(
   _scope?: DataScope,
-  retentionDays = 60,
+  retentionDays = 90,
 ): Promise<PpcCleanupResult> {
   const sql = await getDatabaseClient();
-  const safeDays = Math.max(30, retentionDays);
+  const safeDays = Math.max(60, retentionDays);
 
   console.log(`[PPC Cleanup] Bắt đầu kiểm tra và dọn dẹp dữ liệu cũ hơn ${safeDays} ngày...`);
 

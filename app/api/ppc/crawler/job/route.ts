@@ -266,7 +266,7 @@ export async function POST(request: Request) {
     } else {
       targetStoreNames = [storeName];
     }
-    const totalFiles = targetStoreNames.length * 6;
+    const totalFiles = targetStoreNames.length * 8;
     const enqueueKey = body?.enqueueKey == null ? null : String(body.enqueueKey).trim();
     if (enqueueKey && !/^[A-Za-z0-9._:-]{8,200}$/.test(enqueueKey)) {
       throw new ApiError("enqueueKey của crawler không hợp lệ.", 400);
@@ -346,6 +346,8 @@ export async function POST(request: Request) {
       { type: "BULK_SB", days: 30 },
       { type: "BULK_SP", days: 7 },
       { type: "BULK_SB", days: 7 },
+      { type: "BULK_SP", days: 3 },
+      { type: "BULK_SB", days: 3 },
       { type: "ST_SP", days: 30 },
       { type: "ST_SB", days: 30 },
     ];

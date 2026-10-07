@@ -1039,8 +1039,9 @@ export async function verifyExactR2BatchMarkers(target: {
     } catch (error) {
       throw new Error(`Không đọc được marker R2 chính xác cho ${storeName}/${target.batchId}: ${error instanceof Error ? error.message : String(error)}`);
     }
-    if (marker.batchId !== target.batchId || marker.storeName?.toLowerCase() !== storeName.toLowerCase() || marker.files?.length !== 6) {
-      throw new Error(`Marker R2 không khớp batch/store hoặc không đủ 6 file: ${markerKey}`);
+    const fileCount = marker.files?.length;
+    if (marker.batchId !== target.batchId || marker.storeName?.toLowerCase() !== storeName.toLowerCase() || (fileCount !== 6 && fileCount !== 8)) {
+      throw new Error(`Marker R2 không khớp batch/store hoặc không đủ 6 hoặc 8 file: ${markerKey}`);
     }
   }
 }
@@ -1287,8 +1288,8 @@ export async function syncPpcReportsFromR2(scope: DataScope, target?: R2SyncTarg
     }
   }
 
-  // Tự động dọn dẹp các bản ghi lịch sử cũ hơn 60 ngày & log cũ hơn 30 ngày
-  await cleanupPpcHistoricalData(scope, 60).catch((err) => {
+  // Tự động dọn dẹp các bản ghi lịch sử cũ hơn 90 ngày & log cũ hơn 30 ngày
+  await cleanupPpcHistoricalData(scope, 90).catch((err) => {
     console.warn("[R2 Sync] Bỏ qua lỗi dọn dẹp dữ liệu cũ:", err);
   });
 

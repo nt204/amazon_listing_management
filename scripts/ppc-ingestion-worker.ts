@@ -49,13 +49,19 @@ async function main() {
 
       // Tự động dọn dẹp các đợt cũ trùng ngày trên R2 nếu đợt mới đã nạp thành công
       try {
-        const { cleanupDuplicateR2Batches } = await import("../lib/ppc/file-manager");
+        const { cleanupDuplicateR2Batches, cleanupOldZeroMetricFacts } = await import("../lib/ppc/file-manager");
         const cleanup = await cleanupDuplicateR2Batches();
         if (cleanup.deletedBatches.length > 0) {
           console.log(`[PPC Ingestion Worker] 🧹 Đã tự động dọn dẹp ${cleanup.deletedBatches.length} batch cũ trùng ngày (${cleanup.deletedFilesCount} file, ${(cleanup.freedBytes / (1024 * 1024)).toFixed(1)} MB)`);
         }
+
+        // Tự động dọn dẹp dòng rác 0-metrics của các snapshot ngày cũ trong DB
+        const factsCleanup = await cleanupOldZeroMetricFacts();
+        if (factsCleanup.deletedFactsCount > 0) {
+          console.log(`[PPC Ingestion Worker] 🧹 Đã dọn dẹp ${factsCleanup.deletedFactsCount} dòng rác ngày cũ trong ppc_performance_facts.`);
+        }
       } catch (cleanupErr) {
-        console.warn("[PPC Ingestion Worker] Không thể dọn dẹp batch cũ:", cleanupErr);
+        console.warn("[PPC Ingestion Worker] Không thể dọn dẹp batch/facts cũ:", cleanupErr);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

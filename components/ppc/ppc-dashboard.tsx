@@ -25,12 +25,13 @@ import {
   Sliders,
   Plus,
   CircleNotch,
-  Calculator,
   DotsThreeVertical,
   CaretDown,
   Check,
   Info,
+  Scales,
 } from "@phosphor-icons/react";
+import { PpcStCampaignRollupView } from "./ppc-st-campaign-rollup-view";
 import { PpcBidOutcomesView } from "./ppc-bid-outcomes-view";
 import { PpcStOptimizationView } from "./ppc-st-optimization-view";
 import { PpcSaleKwView } from "./ppc-sale-kw-view";
@@ -86,12 +87,12 @@ import type { RequestActor } from "@/lib/auth";
 
 interface PpcDashboardProps {
   isEmbedded?: boolean;
-  initialTab?: "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "outcomes" | "settings";
+  initialTab?: "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_campaigns" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "outcomes" | "settings";
   initialSubTab?: "phoi" | "rules" | "history";
   initialStore?: string;
   actor?: RequestActor;
   navNonce?: number;
-  standaloneTab?: "st_optimization" | "sale_kw" | "recommendations" | "outcomes";
+  standaloneTab?: "st_campaigns" | "st_optimization" | "sale_kw" | "recommendations" | "outcomes";
 }
 
 interface PpcDetailCounts {
@@ -288,16 +289,16 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
   const [expandedTargetKey, setExpandedTargetKey] = useState<string | null>(null);
   const lastLoadedTargetsParamsRef = useRef<string>("");
 
-  // Navigation tab for data slicing (Hierarchy: Overview -> Campaigns -> Ad Groups -> Targets -> Search Terms -> ST Optimization -> Sale KW | SKU parallel view | Settings)
+  // Navigation tab for data slicing (Hierarchy: Overview -> Campaigns -> Ad Groups -> Targets -> Search Terms -> ST Campaigns -> ST Optimization -> Sale KW | SKU parallel view | Settings)
   const [activeTab, setActiveTab] = useState<
-    "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "outcomes" | "settings"
+    "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_campaigns" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "outcomes" | "settings"
   >(standaloneTab || initialTab || "overview");
 
   useEffect(() => {
     if (standaloneTab || initialTab) return;
     try {
       const urlParam = new URLSearchParams(window.location.search).get("tab") as any;
-      const validTabs = ["overview", "campaigns", "ad_groups", "targets", "skus", "match_types", "search_terms", "st_optimization", "sale_kw", "alerts", "recommendations", "outcomes", "settings"];
+      const validTabs = ["overview", "campaigns", "ad_groups", "targets", "skus", "match_types", "search_terms", "st_campaigns", "st_optimization", "sale_kw", "alerts", "recommendations", "outcomes", "settings"];
       if (urlParam && validTabs.includes(urlParam)) {
         setActiveTab(urlParam);
         return;
@@ -580,6 +581,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     | "skus"
     | "match_types"
     | "search_terms"
+    | "st_campaigns"
     | "st_optimization"
     | "sale_kw"
     | "alerts"
@@ -615,6 +617,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     | "skus"
     | "match_types"
     | "search_terms"
+    | "st_campaigns"
     | "st_optimization"
     | "sale_kw"
     | "alerts"
@@ -1259,7 +1262,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     notify(`Đã lưu mapping cho ${body.updatedCount || mappings.length} SKU.`, "success");
   };
 
-  const handleApproveToQueue = async (items: Array<{ recommendation: PpcRecommendation; userFinalBid?: number }>) => {
+  const handleApproveToQueue = async (items: Array<{
+    recommendation: PpcRecommendation;
+    userFinalBid?: number;
+    decisionSource?: "AI_AGENT";
+    aiReview?: unknown;
+  }>) => {
     const storeObj = stores.find((s) => s.name.toLowerCase() === selectedStore.toLowerCase());
     const res = await fetch("/api/ppc/actions", {
       method: "POST",
@@ -2897,6 +2905,18 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
 
             <button
               type="button"
+              onClick={() => handleFeatureTabClick("st_campaigns")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "st_campaigns"
+                ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
+                : "text-slate-600 hover:text-slate-900"
+                }`}
+            >
+              <Scales size={15} weight={activeTab === "st_campaigns" ? "bold" : "regular"} />
+              <span>5. Đối Soát Search Term</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => handleFeatureTabClick("skus")}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "skus"
                 ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
@@ -2904,19 +2924,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                 }`}
             >
               <Tag size={15} weight={activeTab === "skus" ? "bold" : "regular"} />
-              <span>5. SKU ({detailCounts?.skus !== undefined ? detailCounts.skus.toLocaleString("vi-VN") : (loading ? "..." : activeSkuPerformance.length.toLocaleString("vi-VN"))})</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleFeatureTabClick("outcomes")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "outcomes"
-                ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
-                : "text-slate-600 hover:text-slate-900"
-                }`}
-            >
-              <Calculator size={15} weight={activeTab === "outcomes" ? "bold" : "regular"} />
-              <span>6. Kết Quả Đổi Bid</span>
+              <span>6. SKU ({detailCounts?.skus !== undefined ? detailCounts.skus.toLocaleString("vi-VN") : (loading ? "..." : activeSkuPerformance.length.toLocaleString("vi-VN"))})</span>
             </button>
           </div>
         </div>
@@ -4528,6 +4536,20 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
         </div>
       )}
 
+      {/* VIEW 5.5: ST CAMPAIGN ROLL-UP (ĐỐI SOÁT CHIẾN DỊCH TỔNG HỢP TỪ SEARCH TERMS) */}
+      {/* ========================================================================= */}
+      {mountedTabs.has("st_campaigns") && (
+        <div className={activeTab === "st_campaigns" ? "space-y-3" : "hidden"}>
+          <PpcStCampaignRollupView
+            selectedStore={selectedStore}
+            selectedSku={selectedSku}
+            stores={stores}
+            targetAcos={targetAcos}
+            notify={notify}
+          />
+        </div>
+      )}
+
       {mountedTabs.has("st_optimization") && (
         <div className={activeTab === "st_optimization" ? "" : "hidden"}>
           {selectedStore === "ALL" ? (
@@ -4653,11 +4675,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
         </div>
       )}
 
-      {mountedTabs.has("outcomes") && (
-        <div className={activeTab === "outcomes" ? "rounded-2xl border border-slate-200 bg-white p-4 shadow-xs" : "hidden"}>
-          <PpcBidOutcomesView selectedStore={selectedStore} />
-        </div>
-      )}
 
       {/* MODAL UPLOAD EXCEL FILE */}
       {showUploadModal && (

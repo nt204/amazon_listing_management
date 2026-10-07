@@ -1,87 +1,85 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildActionDecisionContext } from "../lib/ppc/action-memory";
+import { buildActionDecisionContext, inferActionDecisionSource } from "../lib/ppc/action-memory";
 import type { PpcRecommendation } from "../lib/ppc/types";
+import { inferOutcomeUserAction } from "../lib/ppc/action-outcome-evaluator";
 
-test("PPC action memory captures the rule decision and observed metrics without changing it", () => {
-  const recommendation: PpcRecommendation = {
-    id: "rec-1",
-    storeId: "store-1",
-    storeName: "Store A",
-    adType: "SP",
-    recType: "BID_INCREASE",
-    targetType: "EXACT",
-    matchType: "Exact",
-    keyword: "glass ornament",
-    campaignId: "campaign-1",
-    campaignName: "Campaign A",
-    adGroupId: "group-1",
-    adGroupName: "Group A",
-    keywordId: "target-1",
-    sku: "SKU-1",
-    currentBid: 0.8,
-    recommendedBid: 0.84,
-    reason: "Rule matched",
-    estimatedSavings: 0,
-    status: "PENDING",
-    ruleProfile: "v1.0",
-    clicks: 35,
-    orders: 4,
-    spend: 22,
-    sales: 100,
-    cpc: 0.6286,
-    createdAt: "2026-09-30T00:00:00.000Z",
-  };
-
-  const context = buildActionDecisionContext({
-    actionId: "action-1",
-    recommendation,
-    finalValue: 0.84,
-    approvedBy: "operator@example.com",
-  });
-
-  const decision = context.decision as Record<string, unknown>;
-  const metrics = context.metrics as Record<string, unknown>;
-  const target = context.target as Record<string, unknown>;
-
-  assert.equal(decision.current_bid, 0.8);
-  assert.equal(decision.rule_proposed_bid, 0.84);
-  assert.equal(decision.approved_final_bid, 0.84);
-  assert.equal(metrics.acos, 22);
-  assert.equal(metrics.cvr, (4 / 35) * 100);
-  assert.equal(target.target_id, "target-1");
+test("unchanged rule bid remains a rule decision", () => {
+  assert.equal(inferActionDecisionSource({
+    systemSuggestedValue: 0.64,
+    finalValue: 0.64,
+  }), "RULE_ENGINE");
+  assert.equal(inferOutcomeUserAction({
+    systemSuggestedValue: 0.64,
+    finalValue: 0.64,
+  }), "APPLY_RULE");
 });
 
-test("PPC action memory uses null for unavailable or unsafe calculated metrics", () => {
-  const recommendation = {
-    id: "rec-2",
+test("a material user bid change is classified as an edit", () => {
+  assert.equal(inferActionDecisionSource({
+    systemSuggestedValue: 0.64,
+    finalValue: 0.66,
+  }), "USER_EDIT");
+  assert.equal(inferOutcomeUserAction({
+    systemSuggestedValue: 0.64,
+    finalValue: 0.66,
+  }), "EDIT");
+});
+
+test("cent-rounding noise does not become an edit", () => {
+  assert.equal(inferOutcomeUserAction({
+    systemSuggestedValue: 0.64,
+    finalValue: 0.644,
+  }), "APPLY_RULE");
+});
+
+test("an explicit AI context is preserved", () => {
+  assert.equal(inferOutcomeUserAction({
+    systemSuggestedValue: 0.64,
+    finalValue: 0.64,
+    context: {
+      decision: { source: "AI_AGENT" },
+    },
+  }), "APPLY_AI");
+});
+
+test("accepted AI application stores its audit snapshot in action context", () => {
+  const recommendation: PpcRecommendation = {
+    id: "rec-ai-1",
     storeId: "store-1",
     storeName: "Store A",
     recType: "BID_DECREASE",
     targetType: "EXACT",
-    keyword: "glass ornament",
-    reason: "Rule matched",
+    keyword: "ornament hook",
+    reason: "High ACoS",
     estimatedSavings: 0,
     status: "PENDING",
-    clicks: 0,
-    spend: 5,
-    sales: 0,
-    orders: 0,
-    createdAt: "invalid",
-  } satisfies PpcRecommendation;
-
+    currentBid: 0.8,
+    recommendedBid: 0.7,
+    clicks: 30,
+    orders: 2,
+    spend: 20,
+    sales: 40,
+    createdAt: "2026-10-01T00:00:00.000Z",
+  };
   const context = buildActionDecisionContext({
-    actionId: "action-2",
+    actionId: "action-ai-1",
     recommendation,
-    finalValue: 0.5,
-    approvedBy: "User",
+    finalValue: 0.68,
+    approvedBy: "operator",
+    requestedSource: "AI_AGENT",
+    aiReview: {
+      validation_status: "ACCEPTED_SHADOW",
+      effective_candidate_id: "DECREASE_AVG_CPC_MINUS_10",
+      sample_count: 25,
+    },
   });
 
-  const metrics = context.metrics as Record<string, unknown>;
-
-  assert.equal(metrics.avg_cpc, null);
-  assert.equal(metrics.acos, null);
-  assert.equal(metrics.roas, 0);
-  assert.equal(metrics.cvr, null);
+  assert.equal((context.decision as Record<string, unknown>).source, "AI_AGENT");
+  assert.deepEqual(context.ai_review, {
+    validation_status: "ACCEPTED_SHADOW",
+    effective_candidate_id: "DECREASE_AVG_CPC_MINUS_10",
+    sample_count: 25,
+  });
 });

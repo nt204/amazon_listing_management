@@ -1539,6 +1539,8 @@ export async function approveRecommendationsToActionQueue(
     recommendation: PpcRecommendation;
     userFinalBid?: number;
     approvedBy?: string;
+    decisionSource?: "RULE_ENGINE" | "USER_EDIT" | "AI_AGENT";
+    aiReview?: unknown;
   }>,
   defaultApprovedBy = "User",
 ): Promise<{ addedCount: number; supersededCount: number }> {
@@ -1667,6 +1669,8 @@ export async function approveRecommendationsToActionQueue(
             recommendation,
             finalValue: Number(row.final_value || 0),
             approvedBy: row.approved_by || defaultApprovedBy,
+            requestedSource: items.find((item) => item.recommendation.id === row.recommendation_id)?.decisionSource,
+            aiReview: items.find((item) => item.recommendation.id === row.recommendation_id)?.aiReview,
           });
         }
       }

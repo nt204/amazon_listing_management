@@ -777,3 +777,56 @@ export async function cleanupDuplicateR2Batches(): Promise<CleanupR2BatchesResul
   };
 }
 
+export interface CleanupOldFactsResult {
+  deletedFactsCount: number;
+}
+
+/**
+ * Tự động dọn dẹp các dòng rác 0-metrics của các snapshot ngày cũ trong bảng ppc_performance_facts.
+ * Quy tắc an toàn tuyệt đối:
+ * 1. KHÔNG BAO GIỜ xóa snapshot của ngày mới nhất (p.snapshot_date < (SELECT MAX(snapshot_date) FROM ppc_performance_facts)).
+ * 2. KHÔNG BAO GIỜ xóa các dòng có phát sinh số liệu (spend > 0 OR clicks > 0 OR impressions > 0 OR sales > 0).
+ * 3. KHÔNG BAO GIỜ xóa các target từng có action điều chỉnh bid trong ppc_actions (để phục vụ Evaluator Before vs After).
+ * 4. CHỈ xóa các dòng target không hoạt động (grain = 'TARGET') của ngày cũ.
+ */
+export async function cleanupOldZeroMetricFacts(): Promise<CleanupOldFactsResult> {
+  try {
+    const sql = await getDatabaseClient();
+    const result = await sql<{ count: string }[]>`
+      WITH latest_snapshot AS (
+        SELECT MAX(snapshot_date) AS max_date FROM ppc_performance_facts
+      ),
+      deleted AS (
+        DELETE FROM ppc_performance_facts p
+        WHERE p.snapshot_date < (SELECT max_date FROM latest_snapshot)
+          AND p.spend = 0
+          AND p.clicks = 0
+          AND p.impressions = 0
+          AND p.sales = 0
+          AND p.grain = 'TARGET'
+          AND NOT EXISTS (
+            SELECT 1 FROM ppc_actions a
+            WHERE a.store_id = p.store_id
+              AND a.target_id = p.target_id
+          )
+        RETURNING 1
+      )
+      SELECT count(*)::text as count FROM deleted;
+    `;
+    const deletedFactsCount = Number(result[0]?.count || 0);
+
+    if (deletedFactsCount > 0) {
+      try {
+        await sql`VACUUM (PARALLEL 0, ANALYZE) ppc_performance_facts`;
+      } catch (vacuumErr) {
+        console.warn("[File Manager] Không thể chạy VACUUM ANALYZE tự động:", vacuumErr);
+      }
+    }
+
+    return { deletedFactsCount };
+  } catch (error) {
+    console.warn("[File Manager] Lỗi dọn dẹp facts 0-metrics ngày cũ:", error);
+    return { deletedFactsCount: 0 };
+  }
+}
+

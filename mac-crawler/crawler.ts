@@ -563,8 +563,8 @@ async function getBulkTableRows(bulkPage: Page): Promise<BulkTableRow[]> {
         guid,
         text: fullText,
         href: item.href,
-        isSuccess: /Success/i.test(fullText),
-        isDownloading: /Downloading|In progress|Pending/i.test(fullText),
+        isSuccess: /(?:Success|Partial|Completed|Finished)/i.test(fullText) || Boolean(item.href),
+        isDownloading: /Downloading|In progress|Pending/i.test(fullText) && !item.href,
       };
     });
   });
@@ -764,6 +764,14 @@ async function triggerBulkExport(
       } else {
         console.warn(`  [BULK] ⚠️ Không tìm thấy nút ngày trên calendar: start=${!!startBtn}, end=${!!endBtn}`);
       }
+
+      const applyBtn = await bulkPage.$(
+        'button[data-takt-id="adz_bulkSheets_exportModal_date_range-save"], button:has-text("Apply")',
+      );
+      if (applyBtn) {
+        await applyBtn.click();
+        await bulkPage.waitForTimeout(600);
+      }
     } else {
       const targetLabel = `${days} Days`;
       const presetBtn = await bulkPage.$(
@@ -773,18 +781,15 @@ async function triggerBulkExport(
         console.log(`  [BULK] Chọn preset ngày: ${targetLabel}`);
         await presetBtn.click();
         await bulkPage.waitForTimeout(500);
-      }
-    }
 
-    const applyBtn = await bulkPage.$(
-      'button[data-takt-id="adz_bulkSheets_exportModal_date_range-save"], button:has-text("Apply")',
-    );
-    if (applyBtn) {
-      await applyBtn.click();
-      await bulkPage.waitForTimeout(600);
-    } else {
-      await bulkPage.keyboard.press("Escape").catch(() => { });
-      await bulkPage.waitForTimeout(300);
+        const applyBtn = await bulkPage.$(
+          'button[data-takt-id="adz_bulkSheets_exportModal_date_range-save"], button:has-text("Apply")',
+        );
+        if (applyBtn) {
+          await applyBtn.click();
+          await bulkPage.waitForTimeout(600);
+        }
+      }
     }
   }
 
@@ -847,9 +852,22 @@ async function triggerBulkExport(
   console.log(`  [BULK] Snapshot bảng hiện tại: ${existingGuids.size} file GUID.`);
 
   // 4. Bấm Download trong modal và lắng nghe phản hồi POST để khóa exportRequestId
-  const modalDownload = await bulkPage.$(
+  let modalDownload = await bulkPage.$(
     'button[data-takt-id="adz_bulkSheets_exportModal_download_button"], button:text-is("Download"), button[type="submit"]',
   );
+  if (!modalDownload) {
+    console.warn("  [BULK] ⚠️ Không thấy nút Download trong modal, thử kiểm tra lại modal...");
+    const reopenBtn = await bulkPage.$(
+      'button[data-takt-id="Bulksheet_home_download_campaigns_button"], button:has-text("Create & download"), button:has-text("Download a bulksheet")',
+    );
+    if (reopenBtn) {
+      await reopenBtn.click().catch(() => {});
+      await bulkPage.waitForTimeout(1500);
+      modalDownload = await bulkPage.$(
+        'button[data-takt-id="adz_bulkSheets_exportModal_download_button"], button:text-is("Download"), button[type="submit"]',
+      );
+    }
+  }
   if (!modalDownload) {
     throw new Error("Không tìm thấy nút Download trong modal Bulksheet");
   }
@@ -1036,6 +1054,12 @@ async function downloadBulkFileByRow(
 
   if (!standardizedPath || !fs.existsSync(standardizedPath)) {
     throw new Error(`Không tìm thấy file Bulk sau khi tải và chuẩn hóa (ID: ${task.requestId}).`);
+  }
+
+  const { sheetNames: initialSheets } = await inspectWorkbookStreaming(standardizedPath).catch(() => ({ sheetNames: "" }));
+  if (/download error summary|error summary/.test(initialSheets)) {
+    try { fs.unlinkSync(standardizedPath); } catch {}
+    throw new Error(`Amazon Ads trả về file lỗi "Download error summary" cho request ${task.requestId}. Dữ liệu campaigns bị thiếu.`);
   }
 
   // Tự động kiểm tra sheet bên trong file để đảm bảo gắn nhãn SP/SB chính xác 100%
@@ -1761,8 +1785,10 @@ export async function validateDownloadedBatch(files: DownloadedFileInfo[]): Prom
       const stat = fs.statSync(file.path);
       if (!stat.isFile() || stat.size === 0) throw new Error(`File rỗng hoặc không hợp lệ: ${file.name}`);
       if (file.type.startsWith("BULK_")) {
-        if (!file.name.toLowerCase().endsWith(".xlsx")) throw new Error(`Bulk phải là XLSX: ${file.name}`);
         const { sheetNames } = await inspectWorkbookStreaming(file.path);
+        if (/download error summary|error summary/.test(sheetNames)) {
+          throw new Error(`File ${file.name} chứa sheet "Download error summary" do Amazon Ads bị lỗi kết xuất dữ liệu.`);
+        }
         const expectedAdType = file.relativeSubdir;
         const valid = expectedAdType === "SP"
           ? /sponsored products|sp campaigns/.test(sheetNames)

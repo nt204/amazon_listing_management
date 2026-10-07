@@ -173,6 +173,7 @@ def main():
             print(f"       => [THẤT BẠI] Lỗi upload file {file_name}: {e}", file=sys.stderr)
 
     # Publish marker last. Server ignores every batch without this marker.
+    for sname, keys in uploaded_keys.items():
         expected_slots = {
             "Bulk_SP_30Days", "Bulk_SB_30Days",
             "Bulk_SP_7Days", "Bulk_SB_7Days",
