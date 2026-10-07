@@ -71,7 +71,9 @@ export function ListingWorkspace({
   const [brands, setBrands] = useState<BrandProfile[]>(initialBrands);
   const [activeView, setActiveView] = useState<WorkspaceView>(initialView);
   type PpcSection = "dashboard" | "negative_keyword" | "sale_kw" | "auto_bid" | "phoi" | "rules";
+  type PpcDashboardTab = "overview" | "campaigns" | "targets" | "search_terms" | "skus" | "st_campaigns";
   const [ppcSection, setPpcSection] = useState<PpcSection>("dashboard");
+  const [ppcDashboardTab, setPpcDashboardTab] = useState<PpcDashboardTab>("overview");
   const [ppcNavNonce, setPpcNavNonce] = useState(0);
   const sidebarTab = activeView === "mockups" ? "mockups" : "trello";
   const viewMode = activeView === "sellersprite" || activeView === "ppc" ? activeView : "trello";
@@ -103,23 +105,49 @@ export function ListingWorkspace({
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   }, [allowedFeatureSet]);
 
+  const selectPpcDashboardTab = useCallback((tab: PpcDashboardTab) => {
+    if (!allowedFeatureSet.has("ppc")) return;
+    setActiveView("ppc");
+    setPpcSection("dashboard");
+    setPpcDashboardTab(tab);
+    try {
+      localStorage.setItem("nce_last_active_view", "ppc");
+      localStorage.setItem("nce_last_ppc_section", "dashboard");
+      localStorage.setItem("nce_ppc_last_tab", tab);
+      const url = new URL(window.location.href);
+      url.searchParams.set("view", "ppc");
+      url.searchParams.delete("section");
+      if (tab === "overview") {
+        url.searchParams.delete("tab");
+      } else {
+        url.searchParams.set("tab", tab);
+      }
+      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    } catch {}
+  }, [allowedFeatureSet]);
+
   const selectPpcSection = useCallback((section: PpcSection) => {
     if (!allowedFeatureSet.has("ppc")) return;
     setActiveView("ppc");
     setPpcSection(section);
-    setPpcNavNonce((prev) => prev + 1);
+    if (section === "dashboard") {
+      setPpcDashboardTab("overview");
+      setPpcNavNonce((prev) => prev + 1);
+    }
     try {
       localStorage.setItem("nce_last_active_view", "ppc");
       localStorage.setItem("nce_last_ppc_section", section);
+      const url = new URL(window.location.href);
+      url.searchParams.set("view", "ppc");
+      if (section === "dashboard") {
+        url.searchParams.delete("section");
+        url.searchParams.delete("tab");
+      } else {
+        url.searchParams.set("section", section);
+        url.searchParams.delete("tab");
+      }
+      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
     } catch {}
-    const url = new URL(window.location.href);
-    url.searchParams.set("view", "ppc");
-    if (section === "dashboard") {
-      url.searchParams.delete("section");
-    } else {
-      url.searchParams.set("section", section);
-    }
-    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   }, [allowedFeatureSet]);
 
   // Restore position on initial mount if not specified in SSR initialView
@@ -128,18 +156,27 @@ export function ListingWorkspace({
       const url = new URL(window.location.href);
       const urlView = url.searchParams.get("view") as WorkspaceView | null;
       const urlSection = url.searchParams.get("section") as PpcSection | null;
+      const urlTab = url.searchParams.get("tab") as PpcDashboardTab | null;
       const savedView = localStorage.getItem("nce_last_active_view") as WorkspaceView | null;
       const savedSection = localStorage.getItem("nce_last_ppc_section") as PpcSection | null;
+      const savedTab = localStorage.getItem("nce_ppc_last_tab") as PpcDashboardTab | null;
 
       const effectiveView = urlView || savedView;
       const validViews: WorkspaceView[] = ["listing", "mockups", "sellersprite", "ppc"];
       const validPpcSections: PpcSection[] = ["dashboard", "negative_keyword", "sale_kw", "auto_bid", "phoi", "rules"];
+      const validDashboardTabs: PpcDashboardTab[] = ["overview", "campaigns", "targets", "search_terms", "skus", "st_campaigns"];
       if (effectiveView && validViews.includes(effectiveView) && allowedFeatureSet.has(effectiveView)) {
         setActiveView(effectiveView);
         if (effectiveView === "ppc") {
           const effectiveSection = urlSection || savedSection;
           if (effectiveSection && validPpcSections.includes(effectiveSection)) {
             setPpcSection(effectiveSection);
+            if (effectiveSection === "dashboard") {
+              const effectiveTab = urlTab || savedTab;
+              if (effectiveTab && validDashboardTabs.includes(effectiveTab)) {
+                setPpcDashboardTab(effectiveTab);
+              }
+            }
           }
         }
       }
@@ -313,20 +350,125 @@ export function ListingWorkspace({
                     {/* Mục 1: PPC Dashboard */}
                     <button
                       type="button"
-                      onClick={() => selectPpcSection("dashboard")}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
-                        ppcSection === "dashboard"
-                          ? "bg-indigo-100/70 text-indigo-900 font-black shadow-2xs"
-                          : "text-slate-600 font-bold hover:bg-slate-100 hover:text-slate-900"
+                      onClick={() => {
+                        selectPpcSection("dashboard");
+                        setPpcDashboardTab("overview");
+                      }}
+                      className={`flex w-full items-center justify-between gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
+                        ppcSection === "dashboard" && ppcDashboardTab === "overview"
+                          ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                          : ppcSection === "dashboard"
+                          ? "text-indigo-900 font-semibold hover:bg-slate-100"
+                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
                       }`}
                     >
-                      <span
-                        className={`h-2 w-2 rounded-full transition-colors ${
-                          ppcSection === "dashboard" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                        }`}
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span
+                          className={`h-2 w-2 rounded-full shrink-0 transition-colors ${
+                            ppcSection === "dashboard" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                          }`}
+                        />
+                        <span className="truncate">PPC Dashboard</span>
+                      </div>
+                      <CaretDownIcon
+                        size={11}
+                        weight="bold"
+                        className="rotate-0 text-indigo-500 shrink-0"
                       />
-                      <span>PPC Dashboard</span>
                     </button>
+
+                    {/* Sub-items under PPC Dashboard - giữ cố định mở luôn */}
+                    <div className="ml-2 pl-2 border-l border-indigo-200/80 space-y-0.5 py-0.5">
+                      {/* Mục: Campaign */}
+                      <button
+                        type="button"
+                        onClick={() => selectPpcDashboardTab("campaigns")}
+                        className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${
+                          ppcSection === "dashboard" && ppcDashboardTab === "campaigns"
+                            ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                            : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                        }`}
+                      >
+                        <span
+                          className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${
+                            ppcSection === "dashboard" && ppcDashboardTab === "campaigns" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                          }`}
+                        />
+                        <span className="truncate">Campaign</span>
+                      </button>
+
+                      {/* Mục: Target */}
+                      <button
+                        type="button"
+                        onClick={() => selectPpcDashboardTab("targets")}
+                        className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${
+                          ppcSection === "dashboard" && ppcDashboardTab === "targets"
+                            ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                            : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                        }`}
+                      >
+                        <span
+                          className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${
+                            ppcSection === "dashboard" && ppcDashboardTab === "targets" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                          }`}
+                        />
+                        <span className="truncate">Target</span>
+                      </button>
+
+                      {/* Mục: Search Term */}
+                      <button
+                        type="button"
+                        onClick={() => selectPpcDashboardTab("search_terms")}
+                        className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${
+                          ppcSection === "dashboard" && ppcDashboardTab === "search_terms"
+                            ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                            : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                        }`}
+                      >
+                        <span
+                          className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${
+                            ppcSection === "dashboard" && ppcDashboardTab === "search_terms" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                          }`}
+                        />
+                        <span className="truncate">Search Term</span>
+                      </button>
+
+                      {/* Mục: SKU */}
+                      <button
+                        type="button"
+                        onClick={() => selectPpcDashboardTab("skus")}
+                        className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${
+                          ppcSection === "dashboard" && ppcDashboardTab === "skus"
+                            ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                            : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                        }`}
+                      >
+                        <span
+                          className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${
+                            ppcSection === "dashboard" && ppcDashboardTab === "skus" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                          }`}
+                        />
+                        <span className="truncate">SKU</span>
+                      </button>
+
+                      {/* Mục: Đối Soát ST */}
+                      <button
+                        type="button"
+                        onClick={() => selectPpcDashboardTab("st_campaigns")}
+                        className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${
+                          ppcSection === "dashboard" && ppcDashboardTab === "st_campaigns"
+                            ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                            : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                        }`}
+                      >
+                        <span
+                          className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${
+                            ppcSection === "dashboard" && ppcDashboardTab === "st_campaigns" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                          }`}
+                        />
+                        <span className="truncate">Đối Soát ST</span>
+                      </button>
+                    </div>
 
                     {/* Mục 2: Negative Keyword */}
                     <button
@@ -334,12 +476,12 @@ export function ListingWorkspace({
                       onClick={() => selectPpcSection("negative_keyword")}
                       className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
                         ppcSection === "negative_keyword"
-                          ? "bg-rose-50 text-rose-800 font-black shadow-2xs border border-rose-200/60"
-                          : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
+                          ? "bg-rose-50 text-rose-800 font-bold shadow-2xs border border-rose-200/60"
+                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
                       }`}
                     >
                       <span
-                        className={`h-1.5 w-1.5 rounded-full ml-0.5 transition-colors ${
+                        className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${
                           ppcSection === "negative_keyword" ? "bg-rose-600 ring-2 ring-rose-200" : "bg-slate-300"
                         }`}
                       />
@@ -352,12 +494,12 @@ export function ListingWorkspace({
                       onClick={() => selectPpcSection("sale_kw")}
                       className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
                         ppcSection === "sale_kw"
-                          ? "bg-emerald-50 text-emerald-800 font-black shadow-2xs border border-emerald-200/60"
-                          : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
+                          ? "bg-emerald-50 text-emerald-800 font-bold shadow-2xs border border-emerald-200/60"
+                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
                       }`}
                     >
                       <span
-                        className={`h-1.5 w-1.5 rounded-full ml-0.5 transition-colors ${
+                        className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${
                           ppcSection === "sale_kw" ? "bg-emerald-600 ring-2 ring-emerald-200" : "bg-slate-300"
                         }`}
                       />
@@ -370,12 +512,12 @@ export function ListingWorkspace({
                       onClick={() => selectPpcSection("auto_bid")}
                       className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
                         ppcSection === "auto_bid"
-                          ? "bg-indigo-100/70 text-indigo-900 font-black shadow-2xs"
-                          : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
+                          ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
                       }`}
                     >
                       <span
-                        className={`h-1.5 w-1.5 rounded-full ml-0.5 transition-colors ${
+                        className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${
                           ppcSection === "auto_bid" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
                         }`}
                       />
@@ -391,12 +533,12 @@ export function ListingWorkspace({
                       onClick={() => selectPpcSection("phoi")}
                       className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
                         ppcSection === "phoi"
-                          ? "bg-indigo-100/70 text-indigo-900 font-black shadow-2xs"
-                          : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
+                          ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
                       }`}
                     >
                       <span
-                        className={`h-1.5 w-1.5 rounded-full ml-0.5 transition-colors ${
+                        className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${
                           ppcSection === "phoi" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
                         }`}
                       />
@@ -409,12 +551,12 @@ export function ListingWorkspace({
                       onClick={() => selectPpcSection("rules")}
                       className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
                         ppcSection === "rules"
-                          ? "bg-indigo-100/70 text-indigo-900 font-black shadow-2xs"
-                          : "text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900"
+                          ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
                       }`}
                     >
                       <span
-                        className={`h-1.5 w-1.5 rounded-full ml-0.5 transition-colors ${
+                        className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${
                           ppcSection === "rules" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
                         }`}
                       />
@@ -473,6 +615,16 @@ export function ListingWorkspace({
                   ? "Amazon PPC - Lên Campaign Sale KW"
                   : ppcSection === "auto_bid"
                   ? "Amazon PPC - Đề Xuất & Auto Bid"
+                  : ppcDashboardTab === "campaigns"
+                  ? "Amazon PPC - Quản Lý Campaign"
+                  : ppcDashboardTab === "targets"
+                  ? "Amazon PPC - Quản Lý Target & Keyword"
+                  : ppcDashboardTab === "search_terms"
+                  ? "Amazon PPC - Báo Cáo Search Terms"
+                  : ppcDashboardTab === "skus"
+                  ? "Amazon PPC - Hiệu Suất Theo SKU"
+                  : ppcDashboardTab === "st_campaigns"
+                  ? "Amazon PPC - Đối Soát Search Term"
                   : "Amazon PPC Dashboard & Analytics"
                 : sidebarTab === "mockups"
                 ? "Auto Mockup Generator"
@@ -576,8 +728,18 @@ export function ListingWorkspace({
                       ? "sale_kw"
                       : ppcSection === "auto_bid"
                       ? "recommendations"
-                      : "overview"
+                      : ppcDashboardTab
                   }
+                  activeTabProp={
+                    ppcSection === "dashboard" ? ppcDashboardTab : undefined
+                  }
+                  onTabChange={(newTab) => {
+                    if (ppcSection === "dashboard") {
+                      if (["overview", "campaigns", "targets", "search_terms", "skus", "st_campaigns"].includes(newTab)) {
+                        setPpcDashboardTab(newTab as PpcDashboardTab);
+                      }
+                    }
+                  }}
                 />
               )}
             </div>

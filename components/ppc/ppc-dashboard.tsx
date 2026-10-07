@@ -93,6 +93,8 @@ interface PpcDashboardProps {
   actor?: RequestActor;
   navNonce?: number;
   standaloneTab?: "st_campaigns" | "st_optimization" | "sale_kw" | "recommendations" | "outcomes";
+  activeTabProp?: "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_campaigns" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "outcomes" | "settings";
+  onTabChange?: (tab: string) => void;
 }
 
 interface PpcDetailCounts {
@@ -212,7 +214,7 @@ export function getTargetDisplayType(target: {
   return { label, badgeColor, matchType: match || "Unknown" };
 }
 
-export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, initialStore, actor, navNonce, standaloneTab }: PpcDashboardProps) {
+export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, initialStore, actor, navNonce, standaloneTab, activeTabProp, onTabChange }: PpcDashboardProps) {
   const mounted = useSyncExternalStore(subscribeToHydration, getClientSnapshot, getServerSnapshot);
 
   const [stores, setStores] = useState<PpcStore[]>([]);
@@ -290,9 +292,26 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
   const lastLoadedTargetsParamsRef = useRef<string>("");
 
   // Navigation tab for data slicing (Hierarchy: Overview -> Campaigns -> Ad Groups -> Targets -> Search Terms -> ST Campaigns -> ST Optimization -> Sale KW | SKU parallel view | Settings)
-  const [activeTab, setActiveTab] = useState<
+  const [activeTab, setActiveTabState] = useState<
     "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_campaigns" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "outcomes" | "settings"
-  >(standaloneTab || initialTab || "overview");
+  >(standaloneTab || activeTabProp || initialTab || "overview");
+
+  const setActiveTab = useCallback((tab: any) => {
+    setActiveTabState(tab);
+    onTabChange?.(tab);
+  }, [onTabChange]);
+
+  useEffect(() => {
+    if (activeTabProp) {
+      if (selectedStore === "ALL" && activeTabProp !== "overview") {
+        notify("Vui lòng chọn 1 Store cụ thể để xem chi tiết", "info");
+        setIsStoreHighlight(true);
+        setShowStoreNotice(true);
+        setTimeout(() => setIsStoreHighlight(false), 2500);
+      }
+      setActiveTabState(activeTabProp);
+    }
+  }, [activeTabProp, selectedStore]);
 
   useEffect(() => {
     if (standaloneTab || initialTab) return;
@@ -325,15 +344,17 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
 
   useEffect(() => {
     if (standaloneTab) {
-      setActiveTab(standaloneTab);
+      setActiveTabState(standaloneTab);
+    } else if (activeTabProp) {
+      setActiveTabState(activeTabProp);
     } else if (initialTab) {
-      setActiveTab(initialTab);
+      setActiveTabState(initialTab);
     } else {
-      setActiveTab("overview");
+      setActiveTabState("overview");
       setShowStoreNotice(false);
       setIsStoreHighlight(false);
     }
-  }, [standaloneTab, initialTab, navNonce]);
+  }, [standaloneTab, activeTabProp, initialTab, navNonce]);
 
   useEffect(() => {
     if (initialSubTab) {
@@ -2258,7 +2279,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
         const campSafe = `"${t.campaignName.replace(/"/g, '""')}"`;
         return `${termSafe},"${t.matchType}",${portSafe},${campSafe},${t.clicks},${t.spend.toFixed(2)},${t.sales.toFixed(2)},${t.orders},${(t.ctr * 100).toFixed(2)},${(t.cvr * 100).toFixed(1)},${t.acos.toFixed(1)}`;
       });
-      filename = `ppc-search-terms-${Date.now()}.csv`;
+      const cleanStore = (selectedStore && selectedStore !== "ALL" ? selectedStore : "ALL").replace(/[/\\?%*:|"<>]/g, "_").trim().replace(/\s+/g, "_");
+      filename = `ppc-search-terms-${cleanStore}-${Date.now()}.csv`;
     } else if (type === "campaigns") {
       const params = new URLSearchParams({
         storeName: selectedStore, sku: selectedSku, days: String(selectedDays), query: campaignQuery,
@@ -2296,7 +2318,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
         const tier = s.skuCategory === "HERO" ? "Hero" : s.skuCategory === "BLEEDING" ? "Bleeding" : s.skuCategory === "POTENTIAL" ? "Potential" : s.clicks === 0 ? "0 Clicks" : "Neutral";
         return `"${s.sku}","${s.storeName}","${tier}",${s.impressions || 0},${s.clicks},${(s.ctr || 0).toFixed(2)},${s.spend.toFixed(2)},${s.sales.toFixed(2)},${s.orders},${s.cvr.toFixed(1)},${s.acos.toFixed(1)},${s.roas.toFixed(2)}`;
       });
-      filename = `ppc-skus-${Date.now()}.csv`;
+      const cleanStore = (selectedStore && selectedStore !== "ALL" ? selectedStore : "ALL").replace(/[/\\?%*:|"<>]/g, "_").trim().replace(/\s+/g, "_");
+      filename = `ppc-skus-${cleanStore}-${Date.now()}.csv`;
     }
 
     const blob = new Blob(["\uFEFF" + header + rows.join("\n")], { type: "text/csv;charset=utf-8;" });
@@ -2842,93 +2865,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
         </div>
       )}
 
-      {/* DATA SLICING SUB-TABS (ẨN KHI Ở CHẾ ĐỘ TÍNH NĂNG ĐỘC LẬP HOẶC KHI Ở TỔNG QUAN TẤT CẢ SHOP) */}
-      {!standaloneTab && (selectedStore !== "ALL" || activeTab !== "overview") && (
-        <div className="flex items-center justify-between gap-2 p-1 bg-slate-200/60 rounded-xl border border-slate-200/80 shadow-2xs overflow-x-auto">
-          <div className="flex items-center gap-1 shrink-0">
-            <button
-              type="button"
-              onClick={() => handleFeatureTabClick("overview")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "overview"
-                ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
-                : "text-slate-600 hover:text-slate-900"
-                }`}
-            >
-              <ChartLineUp size={15} weight={activeTab === "overview" ? "bold" : "regular"} />
-              <span>1. Tổng Quan</span>
-            </button>
 
-            <button
-              type="button"
-              onClick={() => handleFeatureTabClick("campaigns")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "campaigns"
-                ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
-                : "text-slate-600 hover:text-slate-900"
-                }`}
-            >
-              <FolderSimple size={15} weight={activeTab === "campaigns" ? "bold" : "regular"} />
-              <span>2. Campaign ({detailCounts?.campaigns !== undefined ? detailCounts.campaigns.toLocaleString("vi-VN") : (loading ? "..." : campaignPerformance.length.toLocaleString("vi-VN"))})</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleFeatureTabClick("targets")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "targets"
-                ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
-                : "text-slate-600 hover:text-slate-900"
-                }`}
-            >
-              <Crosshair size={15} weight={activeTab === "targets" ? "bold" : "regular"} />
-              <span>3. Target / Keyword ({activeTab === "targets"
-                ? (loadingTargetsServer ? "..." : serverTargetTotal.toLocaleString("vi-VN"))
-                : detailCounts?.targets !== undefined
-                  ? detailCounts.targets.toLocaleString("vi-VN")
-                  : (loading ? "..." : targetPerformance.length.toLocaleString("vi-VN"))})</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleFeatureTabClick("search_terms")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "search_terms"
-                ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
-                : "text-slate-600 hover:text-slate-900"
-                }`}
-            >
-              <MagnifyingGlass size={15} weight={activeTab === "search_terms" ? "bold" : "regular"} />
-              <span>4. Search Terms ({serverSearchTermTotal !== null && serverSearchTermTotal > 0
-                ? serverSearchTermTotal.toLocaleString("vi-VN")
-                : (detailCounts?.searchTerms !== undefined && detailCounts.searchTerms > 20000
-                  ? detailCounts.searchTerms.toLocaleString("vi-VN")
-                  : (dataHealth?.searchTermRows ? dataHealth.searchTermRows.toLocaleString("vi-VN") : (detailCounts?.searchTerms !== undefined ? detailCounts.searchTerms.toLocaleString("vi-VN") : "...")))
-              })</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleFeatureTabClick("st_campaigns")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "st_campaigns"
-                ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
-                : "text-slate-600 hover:text-slate-900"
-                }`}
-            >
-              <Scales size={15} weight={activeTab === "st_campaigns" ? "bold" : "regular"} />
-              <span>5. Đối Soát Search Term</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleFeatureTabClick("skus")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer shrink-0 ${activeTab === "skus"
-                ? "bg-white text-indigo-700 shadow-xs border border-indigo-100/50"
-                : "text-slate-600 hover:text-slate-900"
-                }`}
-            >
-              <Tag size={15} weight={activeTab === "skus" ? "bold" : "regular"} />
-              <span>6. SKU ({detailCounts?.skus !== undefined ? detailCounts.skus.toLocaleString("vi-VN") : (loading ? "..." : activeSkuPerformance.length.toLocaleString("vi-VN"))})</span>
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* ========================================================================= */}
       {/* VIEW 1: OVERVIEW SUMMARY TABLE (CHỈ HIỂN THỊ KHI ĐANG XEM TỔNG QUAN 1 SHOP CỤ THỂ) */}

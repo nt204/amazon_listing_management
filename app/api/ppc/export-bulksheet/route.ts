@@ -86,6 +86,16 @@ export async function POST(request: Request) {
     if (recommendations.length === 0) {
       return Response.json({ error: "Không có đề xuất nào được chọn để xuất file." }, { status: 400 });
     }
+
+    // Kiểm tra an toàn: Chặn xuất file nếu các đề xuất thuộc nhiều Store khác nhau
+    const distinctStores = Array.from(new Set(recommendations.map((r) => r.storeName).filter(Boolean)));
+    if (distinctStores.length > 1) {
+      throw new ApiError(
+        `Các đề xuất được chọn thuộc nhiều Store khác nhau (${distinctStores.join(", ")}). Mỗi file Bulksheet chỉ được nạp cho 1 Store duy nhất trên Amazon Ads. Vui lòng lọc từng Store trước khi xuất file.`,
+        400,
+      );
+    }
+
     if (recommendations.some((recommendation) => recommendation.adType !== "SP")) {
       throw new ApiError("Exporter hiện chỉ hỗ trợ action Sponsored Products đã được Bulk SP xác minh.", 400);
     }

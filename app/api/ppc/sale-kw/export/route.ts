@@ -67,12 +67,22 @@ export async function POST(request: Request) {
       throw new ApiError("Không có Search Term nào được chọn để lên Camp Sale KW.", 400);
     }
 
+    // Kiểm tra an toàn: Chặn xuất file nếu các Search Term thuộc nhiều Store khác nhau
+    const itemStoreNames = Array.from(new Set(rawItems.map((i) => i.storeName).filter(Boolean)));
+    const itemStoreIds = Array.from(new Set(rawItems.map((i) => i.storeId).filter(Boolean)));
+    if (itemStoreNames.length > 1 || itemStoreIds.length > 1) {
+      throw new ApiError(
+        `Các từ khóa được chọn thuộc nhiều Store khác nhau (${itemStoreNames.join(", ")}). Để tránh nhầm lẫn tài khoản Amazon Ads, vui lòng lọc từng Store cụ thể trước khi xuất file.`,
+        400,
+      );
+    }
+
     const requestedStoreId = String(body?.storeId || "").trim();
 
-    // Resolve store id with full fallbacks
+    // Resolve store id with full precision
     let resolvedStoreId = "";
     let finalStoreName = storeName;
-    if (requestedStoreId) {
+    if (requestedStoreId && requestedStoreId !== "ALL") {
       const storeRes = await sql<{ id: string; name: string }[]>`
         SELECT id, name FROM ppc_stores
         WHERE id = ${requestedStoreId} AND team_id = ${actor.teamId}
@@ -94,17 +104,33 @@ export async function POST(request: Request) {
         finalStoreName = storeRes[0].name;
       }
     }
-    if (!resolvedStoreId) {
-      const fallbackRows = await sql<{ id: string; name: string }[]>`
+    if (!resolvedStoreId && itemStoreNames.length === 1 && itemStoreNames[0]) {
+      const storeRes = await sql<{ id: string; name: string }[]>`
         SELECT id, name FROM ppc_stores
-        WHERE team_id = ${actor.teamId}
-        ORDER BY created_at ASC
+        WHERE LOWER(name) = LOWER(${itemStoreNames[0]}) AND team_id = ${actor.teamId}
         LIMIT 1
       `;
-      if (fallbackRows.length > 0) {
-        resolvedStoreId = fallbackRows[0].id;
-        finalStoreName = fallbackRows[0].name;
+      if (storeRes.length > 0) {
+        resolvedStoreId = storeRes[0].id;
+        finalStoreName = storeRes[0].name;
       }
+    }
+    if (!resolvedStoreId && itemStoreIds.length === 1 && itemStoreIds[0]) {
+      const storeRes = await sql<{ id: string; name: string }[]>`
+        SELECT id, name FROM ppc_stores
+        WHERE id = ${itemStoreIds[0]} AND team_id = ${actor.teamId}
+        LIMIT 1
+      `;
+      if (storeRes.length > 0) {
+        resolvedStoreId = storeRes[0].id;
+        finalStoreName = storeRes[0].name;
+      }
+    }
+    if (!resolvedStoreId && (storeName === "ALL" || storeName === "STORE" || !storeName)) {
+      throw new ApiError(
+        "Vui lòng chọn 1 Store cụ thể để xuất file Lên Camp Sale KW.",
+        400,
+      );
     }
 
     let campaignsPayload: SaleKwCampaignPayload[] = [];

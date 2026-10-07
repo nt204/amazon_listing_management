@@ -52,6 +52,72 @@ export async function POST(request: Request) {
       throw new ApiError("Không có Search Term nào được chọn để xuất file phủ định.", 400);
     }
 
+    // 0. Kiểm tra an toàn: Chặn xuất file nếu các Search Term thuộc nhiều Store khác nhau
+    const itemStoreNames = Array.from(new Set(rawItems.map((i) => i.storeName).filter(Boolean)));
+    const itemStoreIds = Array.from(new Set(rawItems.map((i) => i.storeId).filter(Boolean)));
+    if (itemStoreNames.length > 1 || itemStoreIds.length > 1) {
+      throw new ApiError(
+        `Các Search Term được chọn thuộc nhiều Store khác nhau (${itemStoreNames.join(", ")}). Để tránh nhầm lẫn tài khoản Amazon Ads, vui lòng lọc từng Store cụ thể trước khi xuất file.`,
+        400,
+      );
+    }
+
+    // Xác định Store ID và Store Name chính xác
+    const requestedStoreId = String(body?.storeId || "").trim();
+    let resolvedStoreId = "";
+    let finalStoreName = storeName;
+
+    if (requestedStoreId && requestedStoreId !== "ALL") {
+      const storeRes = await sql<{ id: string; name: string }[]>`
+        SELECT id, name FROM ppc_stores
+        WHERE id = ${requestedStoreId} AND team_id = ${actor.teamId}
+        LIMIT 1
+      `;
+      if (storeRes.length > 0) {
+        resolvedStoreId = storeRes[0].id;
+        finalStoreName = storeRes[0].name;
+      }
+    }
+    if (!resolvedStoreId && storeName && storeName !== "STORE" && storeName !== "ALL") {
+      const storeRes = await sql<{ id: string; name: string }[]>`
+        SELECT id, name FROM ppc_stores
+        WHERE LOWER(name) = LOWER(${storeName}) AND team_id = ${actor.teamId}
+        LIMIT 1
+      `;
+      if (storeRes.length > 0) {
+        resolvedStoreId = storeRes[0].id;
+        finalStoreName = storeRes[0].name;
+      }
+    }
+    if (!resolvedStoreId && itemStoreNames.length === 1 && itemStoreNames[0]) {
+      const storeRes = await sql<{ id: string; name: string }[]>`
+        SELECT id, name FROM ppc_stores
+        WHERE LOWER(name) = LOWER(${itemStoreNames[0]}) AND team_id = ${actor.teamId}
+        LIMIT 1
+      `;
+      if (storeRes.length > 0) {
+        resolvedStoreId = storeRes[0].id;
+        finalStoreName = storeRes[0].name;
+      }
+    }
+    if (!resolvedStoreId && itemStoreIds.length === 1 && itemStoreIds[0]) {
+      const storeRes = await sql<{ id: string; name: string }[]>`
+        SELECT id, name FROM ppc_stores
+        WHERE id = ${itemStoreIds[0]} AND team_id = ${actor.teamId}
+        LIMIT 1
+      `;
+      if (storeRes.length > 0) {
+        resolvedStoreId = storeRes[0].id;
+        finalStoreName = storeRes[0].name;
+      }
+    }
+    if (!resolvedStoreId && (storeName === "ALL" || storeName === "STORE" || !storeName)) {
+      throw new ApiError(
+        "Vui lòng chọn 1 Store cụ thể để xuất file phủ định từ khóa Amazon Ads.",
+        400,
+      );
+    }
+
     // 1. Deduplicate by (campaignName, customerSearchTerm) - crucial for Amazon Bulksheet
     const dedupMap = new Map<string, StCandidateInput>();
     for (const item of rawItems) {
@@ -69,7 +135,7 @@ export async function POST(request: Request) {
       throw new ApiError("Danh sách Search Term không hợp lệ.", 400);
     }
 
-    // 2. Tra cứu Amazon campaign_id và ad_group_id từ ppc_performance_facts nếu thiếu
+    // 2. Tra cứu Amazon campaign_id và ad_group_id từ ppc_performance_facts theo ĐÚNG store của team
     const needsCampId = uniqueItems.some((it) => !it.campaignId || !it.adGroupId);
     const campaignIdLookup = new Map<string, string>();
     const campaignAdTypeLookup = new Map<string, string>();
@@ -84,9 +150,12 @@ export async function POST(request: Request) {
         ad_group_name: string;
         ad_group_id: string;
       }>>`
-        SELECT DISTINCT campaign_name, campaign_id, ad_type, ad_group_name, ad_group_id
-        FROM ppc_performance_facts
-        WHERE campaign_id IS NOT NULL AND length(campaign_id) > 0
+        SELECT DISTINCT f.campaign_name, f.campaign_id, f.ad_type, f.ad_group_name, f.ad_group_id
+        FROM ppc_performance_facts f
+        JOIN ppc_stores s ON s.id = f.store_id
+        WHERE s.team_id = ${actor.teamId}
+          ${resolvedStoreId ? sql`AND f.store_id = ${resolvedStoreId}` : sql``}
+          AND f.campaign_id IS NOT NULL AND length(f.campaign_id) > 0
       `;
 
       for (const f of facts) {
@@ -126,8 +195,8 @@ export async function POST(request: Request) {
 
       return {
         id: `st-opt-${idx}-${Date.now()}`,
-        storeId: it.storeId || "store-default",
-        storeName: storeName || "STORE",
+        storeId: resolvedStoreId || it.storeId || "store-default",
+        storeName: finalStoreName || storeName || "STORE",
         adType: (resolvedAdType as any) || "SP",
         recType: "NEGATIVE_KEYWORD",
         targetType: isProduct ? "PRODUCT" : "EXACT",
@@ -169,44 +238,6 @@ export async function POST(request: Request) {
 
     // 5. Đăng ký các từ khóa vào bảng ppc_negative_registry để quản lý và tránh phủ định trùng lặp
     try {
-      const requestedStoreId = String(body?.storeId || "").trim();
-      let resolvedStoreId = "";
-      let finalStoreName = storeName;
-      if (requestedStoreId) {
-        const storeRes = await sql<{ id: string; name: string }[]>`
-          SELECT id, name FROM ppc_stores
-          WHERE id = ${requestedStoreId} AND team_id = ${actor.teamId}
-          LIMIT 1
-        `;
-        if (storeRes.length > 0) {
-          resolvedStoreId = storeRes[0].id;
-          finalStoreName = storeRes[0].name;
-        }
-      }
-      if (!resolvedStoreId && storeName && storeName !== "STORE" && storeName !== "ALL") {
-        const storeRes = await sql<{ id: string; name: string }[]>`
-          SELECT id, name FROM ppc_stores
-          WHERE LOWER(name) = LOWER(${storeName}) AND team_id = ${actor.teamId}
-          LIMIT 1
-        `;
-        if (storeRes.length > 0) {
-          resolvedStoreId = storeRes[0].id;
-          finalStoreName = storeRes[0].name;
-        }
-      }
-      if (!resolvedStoreId) {
-        const fallbackRows = await sql<{ id: string; name: string }[]>`
-          SELECT id, name FROM ppc_stores
-          WHERE team_id = ${actor.teamId}
-          ORDER BY created_at ASC
-          LIMIT 1
-        `;
-        if (fallbackRows.length > 0) {
-          resolvedStoreId = fallbackRows[0].id;
-          finalStoreName = fallbackRows[0].name;
-        }
-      }
-
       if (resolvedStoreId) {
         for (const rec of recommendations) {
           const campName = String(rec.campaignName || "").trim();

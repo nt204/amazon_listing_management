@@ -356,9 +356,10 @@ function PpcStCampaignRollupViewInner({
 
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
+    const cleanStore = (selectedStore && selectedStore !== "ALL" ? selectedStore : "ALL").replace(/[/\\?%*:|"<>]/g, "_").trim().replace(/\s+/g, "_");
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `ppc-campaigns-by-st-${compareType}-${Date.now()}.csv`);
+    link.setAttribute("download", `ppc-campaigns-by-st-${cleanStore}-${compareType}-${Date.now()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

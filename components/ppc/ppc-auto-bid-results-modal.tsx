@@ -291,12 +291,12 @@ export function PpcAutoBidResultsModal({
     if (reward != null) {
       const num = Number(reward);
       if (num > 0) {
-        return { badge: `🟢 ${formatCurrencyUsd(num, true)}`, color: "text-emerald-950 bg-emerald-100/90 border-emerald-400 font-black", tip: `Tăng thêm ${formatCurrencyUsd(num)} lợi nhuận ròng` };
+        return { badge: `🟢 ${formatCurrencyUsd(num, true)}`, color: "text-emerald-950 bg-emerald-100/90 border-emerald-400 font-black", tip: `Tăng thêm ${formatCurrencyUsd(num)} Net Profit` };
       }
       if (num < 0) {
-        return { badge: `🔴 ${formatCurrencyUsd(num)}`, color: "text-rose-950 bg-rose-100/90 border-rose-400 font-black", tip: `Giảm ${formatCurrencyUsd(num)} lợi nhuận` };
+        return { badge: `🔴 ${formatCurrencyUsd(num)}`, color: "text-rose-950 bg-rose-100/90 border-rose-400 font-black", tip: `Giảm ${formatCurrencyUsd(num)} Net Profit` };
       }
-      return { badge: "🟡 Hòa vốn", color: "text-slate-700 bg-slate-100 border-slate-300", tip: "Lợi nhuận không đổi đáng kể" };
+      return { badge: "🟡 Hòa vốn", color: "text-slate-700 bg-slate-100 border-slate-300", tip: "Net Profit không đổi đáng kể" };
     }
 
     if (d30.outcome_label === "POSITIVE") {
@@ -446,7 +446,7 @@ export function PpcAutoBidResultsModal({
           <div className="rounded-2xl border border-indigo-200 bg-indigo-50/60 p-3 shadow-2xs">
             <span className="text-[11px] font-bold text-indigo-800 flex items-center gap-1">
               <TrendUp size={13} weight="bold" className="text-indigo-600" />
-              <span>Lợi nhuận ròng</span>
+              <span>Net Profit</span>
             </span>
             <div className="flex items-baseline gap-1 mt-0.5">
               <span className={`text-lg font-black ${(summary?.totalRewardUsd || 0) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
