@@ -3,6 +3,7 @@ import { authorize, routeErrorResponse } from "@/lib/api-guard";
 import {
   importSkuMasterFromWorkbook,
   importInboundShipmentsFromWorkbook,
+  processAndSaveImportTemplate,
 } from "@/lib/accounting/inventory-db";
 import { getStoreById } from "@/lib/accounting/accounting-db";
 
@@ -41,6 +42,15 @@ export async function POST(request: Request) {
     const workbook = new ExcelJS.Workbook();
     const buffer = Buffer.from(await file.arrayBuffer());
     await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
+
+    // Cách 1: Tự động lưu bộ khung template của file gốc cho Store
+    await processAndSaveImportTemplate(
+      storeId,
+      type === "inbound" ? "inbound" : "sku",
+      file.name,
+      buffer,
+      workbook,
+    );
 
     if (type === "inbound") {
       const result = await importInboundShipmentsFromWorkbook(storeId, workbook);

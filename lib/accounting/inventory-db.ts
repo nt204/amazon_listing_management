@@ -792,7 +792,7 @@ export async function restoreInventoryHistory(
 
 // ----------------- EXCEL IMPORT ENGINE -----------------
 
-function getExcelCellValue(cell: ExcelJS.Cell | undefined): string | number | null {
+export function getExcelCellValue(cell: ExcelJS.Cell | undefined): string | number | null {
   if (!cell || cell.value === null || cell.value === undefined) return null;
   let val: unknown = cell.value;
   if (typeof val === "object" && val !== null) {
@@ -810,22 +810,22 @@ function getExcelCellValue(cell: ExcelJS.Cell | undefined): string | number | nu
   return val ? String(val) : null;
 }
 
-function parseNumeric(val: unknown): number | null {
+export function parseNumeric(val: unknown): number | null {
   if (val === null || val === undefined || val === "") return null;
   const n = typeof val === "number" ? val : parseFloat(String(val).replace(/,/g, ""));
   return isNaN(n) ? null : n;
 }
 
-function parseInteger(val: unknown): number | null {
+export function parseInteger(val: unknown): number | null {
   const n = parseNumeric(val);
   return n === null ? null : Math.round(n);
 }
 
-function normalizeSheetName(name: string): string {
+export function normalizeSheetName(name: string): string {
   return name.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
-function findWorksheetByName(workbook: ExcelJS.Workbook, aliases: string[]): ExcelJS.Worksheet | null {
+export function findWorksheetByName(workbook: ExcelJS.Workbook, aliases: string[]): ExcelJS.Worksheet | null {
   const normAliases = aliases.map(normalizeSheetName);
   for (const ws of workbook.worksheets) {
     const norm = normalizeSheetName(ws.name);
@@ -834,6 +834,447 @@ function findWorksheetByName(workbook: ExcelJS.Workbook, aliases: string[]): Exc
     }
   }
   return null;
+}
+
+// ----------------- INVENTORY TEMPLATES (CÁCH 1) -----------------
+
+export async function saveInventoryTemplate(
+  storeId: string,
+  templateType: "sku" | "inbound" | "all",
+  fileName: string,
+  buffer: Buffer,
+  sheetNames: string[],
+  hasSkuSheet: boolean,
+  hasInboundSheet: boolean,
+): Promise<void> {
+  const sql = await getDatabaseClient();
+  await sql`
+    INSERT INTO accounting_inventory_templates (
+      store_id,
+      template_type,
+      file_name,
+      file_buffer,
+      has_sku_sheet,
+      has_inbound_sheet,
+      sheet_names,
+      file_size,
+      updated_at
+    ) VALUES (
+      ${storeId},
+      ${templateType},
+      ${fileName},
+      ${buffer},
+      ${hasSkuSheet},
+      ${hasInboundSheet},
+      ${sheetNames},
+      ${buffer.length},
+      NOW()
+    )
+    ON CONFLICT (store_id, template_type)
+    DO UPDATE SET
+      file_name = EXCLUDED.file_name,
+      file_buffer = EXCLUDED.file_buffer,
+      has_sku_sheet = EXCLUDED.has_sku_sheet,
+      has_inbound_sheet = EXCLUDED.has_inbound_sheet,
+      sheet_names = EXCLUDED.sheet_names,
+      file_size = EXCLUDED.file_size,
+      updated_at = NOW()
+  `;
+}
+
+export async function processAndSaveImportTemplate(
+  storeId: string,
+  importType: "sku" | "inbound",
+  fileName: string,
+  buffer: Buffer,
+  workbook: ExcelJS.Workbook,
+): Promise<void> {
+  try {
+    const sheetNames = workbook.worksheets.map((w) => w.name);
+    const hasSkuSheet = !!findWorksheetByName(workbook, ["BẢNG MÃ", "BANG MA", "SKU MASTER"]);
+    const hasInboundSheet = !!findWorksheetByName(workbook, ["CHI TIẾT ĐI HÀNG", "CHI TIET DI HANG", "INBOUND SHIPMENTS"]);
+
+    // Lưu template cho đúng loại import hiện tại
+    await saveInventoryTemplate(storeId, importType, fileName, buffer, sheetNames, hasSkuSheet, hasInboundSheet);
+
+    // Nếu file chứa cả 2 sheet, đồng thời lưu/cập nhật mẫu master "all"
+    if (hasSkuSheet && hasInboundSheet) {
+      await saveInventoryTemplate(storeId, "all", fileName, buffer, sheetNames, hasSkuSheet, hasInboundSheet);
+    }
+  } catch (err) {
+    console.error("[InventoryTemplate] Lỗi khi lưu template tự động:", err);
+  }
+}
+
+export async function getInventoryTemplate(
+  storeId: string,
+  templateType: "sku" | "inbound" | "all",
+): Promise<{ fileName: string; buffer: Buffer; hasSkuSheet: boolean; hasInboundSheet: boolean } | null> {
+  const sql = await getDatabaseClient();
+  let rows: any[] = [];
+
+  if (templateType === "sku") {
+    rows = await sql`
+      SELECT file_name, file_buffer, has_sku_sheet, has_inbound_sheet
+      FROM accounting_inventory_templates
+      WHERE store_id = ${storeId} AND (template_type = 'sku' OR has_sku_sheet = true)
+      ORDER BY CASE WHEN template_type = 'sku' THEN 1 ELSE 2 END, updated_at DESC
+      LIMIT 1
+    `;
+  } else if (templateType === "inbound") {
+    rows = await sql`
+      SELECT file_name, file_buffer, has_sku_sheet, has_inbound_sheet
+      FROM accounting_inventory_templates
+      WHERE store_id = ${storeId} AND (template_type = 'inbound' OR has_inbound_sheet = true)
+      ORDER BY CASE WHEN template_type = 'inbound' THEN 1 ELSE 2 END, updated_at DESC
+      LIMIT 1
+    `;
+  } else {
+    rows = await sql`
+      SELECT file_name, file_buffer, has_sku_sheet, has_inbound_sheet
+      FROM accounting_inventory_templates
+      WHERE store_id = ${storeId}
+      ORDER BY CASE WHEN template_type = 'all' THEN 1 WHEN template_type = 'sku' THEN 2 ELSE 3 END, updated_at DESC
+      LIMIT 1
+    `;
+  }
+
+  if (!rows[0]) return null;
+  return {
+    fileName: rows[0].file_name,
+    buffer: rows[0].file_buffer,
+    hasSkuSheet: Boolean(rows[0].has_sku_sheet),
+    hasInboundSheet: Boolean(rows[0].has_inbound_sheet),
+  };
+}
+
+export const SKU_HEADER_MAP: Record<string, string> = {
+  "brand": "brand",
+  "thương hiệu": "brand",
+  "thuong hieu": "brand",
+  "product type": "product_type",
+  "loại sản phẩm": "product_type",
+  "loai san pham": "product_type",
+  "loại sp": "product_type",
+  "loai sp": "product_type",
+  "mockup": "mockup",
+  "mockup url": "mockup_url",
+  "url mockup": "mockup_url",
+  "link mockup": "mockup_url",
+  "hình ảnh": "mockup",
+  "hinh anh": "mockup",
+  "ảnh": "mockup",
+  "anh": "mockup",
+  "sku": "sku",
+  "mã sku": "sku",
+  "ma sku": "sku",
+  "asin": "asin",
+  "fnsku": "fnsku",
+  "amazon fee (chưa có referal fee)": "amazon_fee",
+  "amazon fee (chua co referal fee)": "amazon_fee",
+  "amazon fee": "amazon_fee",
+  "fba fee": "amazon_fee",
+  "% referal": "referral_fee_pct",
+  "% referral": "referral_fee_pct",
+  "referal": "referral_fee_pct",
+  "referral": "referral_fee_pct",
+  "referral fee": "referral_fee_pct",
+  "pic mkt": "pic_mkt",
+  "marketing": "pic_mkt",
+  "mkt pic": "pic_mkt",
+  "loại": "loai",
+  "loai": "loai",
+  "niche": "niche",
+  "pic idea": "pic_idea",
+  "idea pic": "pic_idea",
+  "trạng thái": "status",
+  "trang thai": "status",
+  "status": "status",
+  "event": "event",
+  "sự kiện": "event",
+  "su kien": "event",
+  "tình trạng": "tinh_trang",
+  "tinh trang": "tinh_trang",
+  "design pic": "design_pic",
+  "pic design": "design_pic",
+  "tháng listing": "thang_listing",
+  "thang listing": "thang_listing",
+  "tháng đánh giá": "thang_danh_gia",
+  "thang danh gia": "thang_danh_gia",
+  "event 250th": "event_250th",
+  "ngày đánh giá sku event": "ngay_danh_gia_sku_event",
+  "ngay danh gia sku event": "ngay_danh_gia_sku_event",
+  "amazon fba fee thay đổi": "amazon_fba_fee_thay_doi",
+  "amazon fba fee thay doi": "amazon_fba_fee_thay_doi",
+  "basecost trung bình": "basecost_tb",
+  "basecost tb": "basecost_tb",
+  "base cost tb": "basecost_tb",
+  "brand entity id": "brand_entity_id",
+  "creative asins (video)": "creative_asins_video",
+  "creative asins video": "creative_asins_video",
+  "creative asins (collection)": "creative_asins_collection",
+  "creative asins collection": "creative_asins_collection",
+  "video media ids": "video_media_ids",
+  "video media id": "video_media_ids",
+  "creative headline": "creative_headline",
+  "brand logo asset id": "brand_logo_asset_id",
+  "landing page url": "landing_page_url",
+  "landing page": "landing_page_url",
+};
+
+export const INBOUND_HEADER_MAP: Record<string, string> = {
+  "brand": "brand",
+  "thương hiệu": "brand",
+  "thuong hieu": "brand",
+  "sup": "sup",
+  "supplier": "sup",
+  "nhà cung cấp": "sup",
+  "nha cung cap": "sup",
+  "ngày request": "ngay_request",
+  "ngay request": "ngay_request",
+  "request date": "ngay_request",
+  "product type": "product_type",
+  "loại sản phẩm": "product_type",
+  "loai san pham": "product_type",
+  "loại sp": "product_type",
+  "loai sp": "product_type",
+  "mockup": "mockup",
+  "hình ảnh": "mockup",
+  "hinh anh": "mockup",
+  "ảnh": "mockup",
+  "anh": "mockup",
+  "sku": "sku",
+  "mã sku": "sku",
+  "ma sku": "sku",
+  "quantity": "quantity",
+  "số lượng": "quantity",
+  "so luong": "quantity",
+  "qty": "quantity",
+  "sl": "quantity",
+  "line ship": "line_ship",
+  "vận chuyển": "line_ship",
+  "base cost/unit": "base_cost_per_unit",
+  "base cost / unit": "base_cost_per_unit",
+  "base cost": "base_cost_per_unit",
+  "basecost/unit": "base_cost_per_unit",
+  "card": "card",
+  "tag": "tag",
+  "shipping fee": "shipping_fee",
+  "phí ship": "shipping_fee",
+  "phi ship": "shipping_fee",
+  "hộp/túi": "hop_tui",
+  "hop/tui": "hop_tui",
+  "hộp": "hop_tui",
+  "túi": "hop_tui",
+  "final basecost": "final_basecost",
+  "final base cost": "final_basecost",
+  "total basecost": "total_basecost",
+  "total base cost": "total_basecost",
+  "ngày thanh toán": "ngay_thanh_toan",
+  "ngay thanh toan": "ngay_thanh_toan",
+  "tên lô hàng": "ten_lo_hang",
+  "ten lo hang": "ten_lo_hang",
+  "shipment id": "shipment_id",
+  "ngày đi": "ngay_di",
+  "ngay di": "ngay_di",
+  "ngày đến": "ngay_den",
+  "ngay den": "ngay_den",
+  "amazon received": "amazon_received",
+  "tình trạng hàng đến kho": "tinh_trang_hang_den_kho",
+  "tinh trang hang den kho": "tinh_trang_hang_den_kho",
+  "status": "status",
+  "số lượng amazon nhận": "so_luong_amazon_nhan",
+  "so luong amazon nhan": "so_luong_amazon_nhan",
+  "discrepancy": "discrepancy",
+  "chênh lệch": "discrepancy",
+  "chenh lech": "discrepancy",
+  "note": "note",
+  "ghi chú": "note",
+  "ghi chu": "note",
+  "trạng thái": "trang_thai",
+  "trang thai": "trang_thai",
+};
+
+export function populateSkuWorksheet(worksheet: ExcelJS.Worksheet, skus: any[]): void {
+  const totalCols = Math.max(worksheet.columnCount || 30, 30);
+  const colFieldMap: Record<number, string | null> = {};
+  const colStyles: Record<number, Partial<ExcelJS.Style>> = {};
+  const colFormulas: Record<number, string> = {};
+
+  const DEFAULT_SKU_COLS = [
+    "brand", "product_type", "mockup", "sku", "asin", "fnsku",
+    "amazon_fee", "referral_fee_pct", "pic_mkt", "loai", "niche",
+    "pic_idea", "status", "event", "tinh_trang", "design_pic",
+    "mockup_url", "thang_listing", "thang_danh_gia", "event_250th",
+    "ngay_danh_gia_sku_event", "amazon_fba_fee_thay_doi",
+    "basecost_tb", "brand_entity_id", "creative_asins_video",
+    "creative_asins_collection", "video_media_ids",
+    "creative_headline", "brand_logo_asset_id", "landing_page_url"
+  ];
+
+  const sampleRow = worksheet.rowCount >= 2 ? worksheet.getRow(2) : null;
+
+  for (let c = 1; c <= totalCols; c++) {
+    const headerCell = worksheet.getRow(1).getCell(c);
+    const rawHeaderText = getExcelCellValue(headerCell);
+    const headerText = rawHeaderText ? String(rawHeaderText).trim().toLowerCase() : "";
+
+    const mappedField = SKU_HEADER_MAP[headerText] || (c <= DEFAULT_SKU_COLS.length ? DEFAULT_SKU_COLS[c - 1] : null);
+    colFieldMap[c] = mappedField;
+
+    if (sampleRow) {
+      const cell = sampleRow.getCell(c);
+      colStyles[c] = {
+        font: cell.font ? { ...cell.font } : undefined,
+        alignment: cell.alignment ? { ...cell.alignment } : undefined,
+        border: cell.border ? { ...cell.border } : undefined,
+        numFmt: cell.numFmt,
+        fill: cell.fill ? { ...cell.fill } : undefined,
+      };
+      if (cell.formula) {
+        colFormulas[c] = cell.formula;
+      }
+    }
+  }
+
+  // Xóa sạch các dòng dữ liệu cũ trong mẫu, giữ lại dòng 1 (Tiêu đề)
+  for (let i = worksheet.rowCount; i >= 2; i--) {
+    worksheet.spliceRows(i, 1);
+  }
+
+  // Điền dữ liệu từ cơ sở dữ liệu
+  for (let idx = 0; idx < skus.length; idx++) {
+    const rowData = skus[idx];
+    const targetRowNum = idx + 2;
+    const rowValues: any[] = [];
+
+    for (let c = 1; c <= totalCols; c++) {
+      const field = colFieldMap[c];
+      let val: any = null;
+      if (field && rowData[field] !== undefined) {
+        val = rowData[field];
+      } else if (rowData.custom_fields && field && rowData.custom_fields[field] !== undefined) {
+        val = rowData.custom_fields[field];
+      }
+
+      if (field === "amazon_fee" || field === "referral_fee_pct" || field === "amazon_fba_fee_thay_doi" || field === "basecost_tb") {
+        val = val !== null && val !== undefined && val !== "" ? Number(val) : null;
+      }
+
+      rowValues.push(val);
+    }
+
+    const addedRow = worksheet.addRow(rowValues);
+    for (let c = 1; c <= totalCols; c++) {
+      const cell = addedRow.getCell(c);
+      const style = colStyles[c];
+      if (style) {
+        if (style.font) cell.font = style.font;
+        if (style.alignment) cell.alignment = style.alignment;
+        if (style.border) cell.border = style.border;
+        if (style.numFmt) cell.numFmt = style.numFmt;
+        if (style.fill) cell.fill = style.fill;
+      }
+      if (colFormulas[c]) {
+        const adaptedFormula = colFormulas[c].replace(/\b([A-Z]{1,3})2\b/g, `$1${targetRowNum}`);
+        cell.value = { formula: adaptedFormula, result: cell.value as any };
+      }
+    }
+  }
+}
+
+export function populateInboundWorksheet(worksheet: ExcelJS.Worksheet, shipments: any[]): void {
+  const totalCols = Math.max(worksheet.columnCount || 27, 27);
+  const colFieldMap: Record<number, string | null> = {};
+  const colStyles: Record<number, Partial<ExcelJS.Style>> = {};
+  const colFormulas: Record<number, string> = {};
+
+  const DEFAULT_INBOUND_COLS = [
+    "brand", "sup", "ngay_request", "product_type", "mockup", "sku",
+    "quantity", "line_ship", "base_cost_per_unit", "card", "tag",
+    "shipping_fee", "hop_tui", "final_basecost", "total_basecost",
+    "ngay_thanh_toan", "ten_lo_hang", "shipment_id", "ngay_di", "ngay_den",
+    "amazon_received", "tinh_trang_hang_den_kho", "status",
+    "so_luong_amazon_nhan", "discrepancy", "note", "trang_thai"
+  ];
+
+  const sampleRow = worksheet.rowCount >= 2 ? worksheet.getRow(2) : null;
+
+  for (let c = 1; c <= totalCols; c++) {
+    const headerCell = worksheet.getRow(1).getCell(c);
+    const rawHeaderText = getExcelCellValue(headerCell);
+    const headerText = rawHeaderText ? String(rawHeaderText).trim().toLowerCase() : "";
+
+    const mappedField = INBOUND_HEADER_MAP[headerText] || (c <= DEFAULT_INBOUND_COLS.length ? DEFAULT_INBOUND_COLS[c - 1] : null);
+    colFieldMap[c] = mappedField;
+
+    if (sampleRow) {
+      const cell = sampleRow.getCell(c);
+      colStyles[c] = {
+        font: cell.font ? { ...cell.font } : undefined,
+        alignment: cell.alignment ? { ...cell.alignment } : undefined,
+        border: cell.border ? { ...cell.border } : undefined,
+        numFmt: cell.numFmt,
+        fill: cell.fill ? { ...cell.fill } : undefined,
+      };
+      if (cell.formula) {
+        colFormulas[c] = cell.formula;
+      }
+    }
+  }
+
+  for (let i = worksheet.rowCount; i >= 2; i--) {
+    worksheet.spliceRows(i, 1);
+  }
+
+  for (let idx = 0; idx < shipments.length; idx++) {
+    const rowData = shipments[idx];
+    const targetRowNum = idx + 2;
+    const rowValues: any[] = [];
+
+    for (let c = 1; c <= totalCols; c++) {
+      const field = colFieldMap[c];
+      let val: any = null;
+      if (field && rowData[field] !== undefined) {
+        val = rowData[field];
+      } else if (rowData.custom_fields && field && rowData.custom_fields[field] !== undefined) {
+        val = rowData.custom_fields[field];
+      }
+
+      if (
+        field === "quantity" || field === "amazon_received" ||
+        field === "so_luong_amazon_nhan" || field === "discrepancy"
+      ) {
+        val = val !== null && val !== undefined && val !== "" ? Number(val) : 0;
+      } else if (
+        field === "base_cost_per_unit" || field === "card" ||
+        field === "tag" || field === "shipping_fee" ||
+        field === "hop_tui" || field === "final_basecost" ||
+        field === "total_basecost"
+      ) {
+        val = val !== null && val !== undefined && val !== "" ? Number(val) : null;
+      }
+
+      rowValues.push(val);
+    }
+
+    const addedRow = worksheet.addRow(rowValues);
+    for (let c = 1; c <= totalCols; c++) {
+      const cell = addedRow.getCell(c);
+      const style = colStyles[c];
+      if (style) {
+        if (style.font) cell.font = style.font;
+        if (style.alignment) cell.alignment = style.alignment;
+        if (style.border) cell.border = style.border;
+        if (style.numFmt) cell.numFmt = style.numFmt;
+        if (style.fill) cell.fill = style.fill;
+      }
+      if (colFormulas[c]) {
+        const adaptedFormula = colFormulas[c].replace(/\b([A-Z]{1,3})2\b/g, `$1${targetRowNum}`);
+        cell.value = { formula: adaptedFormula, result: cell.value as any };
+      }
+    }
+  }
 }
 
 export async function importSkuMasterFromWorkbook(
