@@ -1291,42 +1291,77 @@ export async function importSkuMasterFromWorkbook(
   let count = 0;
   const skuBatch: Partial<SkuMasterItem>[] = [];
 
+  const DEFAULT_SKU_COLS = [
+    "brand", "product_type", "mockup", "sku", "asin", "fnsku",
+    "amazon_fee", "referral_fee_pct", "pic_mkt", "loai", "niche",
+    "pic_idea", "status", "event", "tinh_trang", "design_pic",
+    "mockup_url", "thang_listing", "thang_danh_gia", "event_250th",
+    "ngay_danh_gia_sku_event", "amazon_fba_fee_thay_doi",
+    "basecost_tb", "brand_entity_id", "creative_asins_video",
+    "creative_asins_collection", "video_media_ids",
+    "creative_headline", "brand_logo_asset_id", "landing_page_url"
+  ];
+
+  // 1. Quét dòng 1 để map vị trí cột tự động theo Header Name
+  const headerRow = wsSku.getRow(1);
+  const totalCols = Math.max(wsSku.columnCount || 30, 30);
+  const colFieldMap: Record<number, string> = {};
+
+  for (let c = 1; c <= totalCols; c++) {
+    const headerVal = getExcelCellValue(headerRow.getCell(c));
+    const headerText = headerVal ? String(headerVal).trim().toLowerCase() : "";
+    const mapped = SKU_HEADER_MAP[headerText] || (c <= DEFAULT_SKU_COLS.length ? DEFAULT_SKU_COLS[c - 1] : null);
+    if (mapped) {
+      colFieldMap[c] = mapped;
+    }
+  }
+
+  // 2. Đọc từng dòng dữ liệu dựa trên colFieldMap
   wsSku.eachRow((row, rowNumber) => {
     if (rowNumber === 1) return;
-    const skuVal = getExcelCellValue(row.getCell(4));
+
+    const rowValues: Record<string, any> = {};
+    for (let c = 1; c <= totalCols; c++) {
+      const field = colFieldMap[c];
+      if (field) {
+        rowValues[field] = getExcelCellValue(row.getCell(c));
+      }
+    }
+
+    const skuVal = rowValues["sku"];
     if (!skuVal) return;
     const sku = String(skuVal).trim();
     if (!sku) return;
 
-    const brand = (getExcelCellValue(row.getCell(1)) as string) || null;
-    const product_type = (getExcelCellValue(row.getCell(2)) as string) || null;
-    const rawMockup = getExcelCellValue(row.getCell(3));
-    const asin = (getExcelCellValue(row.getCell(5)) as string) || null;
-    const fnsku = (getExcelCellValue(row.getCell(6)) as string) || null;
-    const amazon_fee = parseNumeric(getExcelCellValue(row.getCell(7)));
-    const referral_fee_pct = parseNumeric(getExcelCellValue(row.getCell(8)));
-    const pic_mkt = (getExcelCellValue(row.getCell(9)) as string) || null;
-    const loai = (getExcelCellValue(row.getCell(10)) as string) || null;
-    const niche = (getExcelCellValue(row.getCell(11)) as string) || null;
-    const pic_idea = (getExcelCellValue(row.getCell(12)) as string) || null;
-    const status = (getExcelCellValue(row.getCell(13)) as string) || "Active";
-    const event = (getExcelCellValue(row.getCell(14)) as string) || null;
-    const tinh_trang = (getExcelCellValue(row.getCell(15)) as string) || null;
-    const design_pic = (getExcelCellValue(row.getCell(16)) as string) || null;
-    const mockup_url = (getExcelCellValue(row.getCell(17)) as string) || null;
-    const thang_listing = (getExcelCellValue(row.getCell(18)) as string) || null;
-    const thang_danh_gia = (getExcelCellValue(row.getCell(19)) as string) || null;
-    const event_250th = (getExcelCellValue(row.getCell(20)) as string) || null;
-    const ngay_danh_gia_sku_event = (getExcelCellValue(row.getCell(21)) as string) || null;
-    const amazon_fba_fee_thay_doi = parseNumeric(getExcelCellValue(row.getCell(22)));
-    const basecost_tb = parseNumeric(getExcelCellValue(row.getCell(23)));
-    const brand_entity_id = (getExcelCellValue(row.getCell(24)) as string) || null;
-    const creative_asins_video = (getExcelCellValue(row.getCell(25)) as string) || null;
-    const creative_asins_collection = (getExcelCellValue(row.getCell(26)) as string) || null;
-    const video_media_ids = (getExcelCellValue(row.getCell(27)) as string) || null;
-    const creative_headline = (getExcelCellValue(row.getCell(28)) as string) || null;
-    const brand_logo_asset_id = (getExcelCellValue(row.getCell(29)) as string) || null;
-    const landing_page_url = (getExcelCellValue(row.getCell(30)) as string) || null;
+    const brand = (rowValues["brand"] as string) || null;
+    const product_type = (rowValues["product_type"] as string) || null;
+    const rawMockup = rowValues["mockup"];
+    const asin = (rowValues["asin"] as string) || null;
+    const fnsku = (rowValues["fnsku"] as string) || null;
+    const amazon_fee = parseNumeric(rowValues["amazon_fee"]);
+    const referral_fee_pct = parseNumeric(rowValues["referral_fee_pct"]);
+    const pic_mkt = (rowValues["pic_mkt"] as string) || null;
+    const loai = (rowValues["loai"] as string) || null;
+    const niche = (rowValues["niche"] as string) || null;
+    const pic_idea = (rowValues["pic_idea"] as string) || null;
+    const status = (rowValues["status"] as string) || "Active";
+    const event = (rowValues["event"] as string) || null;
+    const tinh_trang = (rowValues["tinh_trang"] as string) || null;
+    const design_pic = (rowValues["design_pic"] as string) || null;
+    const mockup_url = (rowValues["mockup_url"] as string) || null;
+    const thang_listing = (rowValues["thang_listing"] as string) || null;
+    const thang_danh_gia = (rowValues["thang_danh_gia"] as string) || null;
+    const event_250th = (rowValues["event_250th"] as string) || null;
+    const ngay_danh_gia_sku_event = (rowValues["ngay_danh_gia_sku_event"] as string) || null;
+    const amazon_fba_fee_thay_doi = parseNumeric(rowValues["amazon_fba_fee_thay_doi"]);
+    const basecost_tb = parseNumeric(rowValues["basecost_tb"]);
+    const brand_entity_id = (rowValues["brand_entity_id"] as string) || null;
+    const creative_asins_video = (rowValues["creative_asins_video"] as string) || null;
+    const creative_asins_collection = (rowValues["creative_asins_collection"] as string) || null;
+    const video_media_ids = (rowValues["video_media_ids"] as string) || null;
+    const creative_headline = (rowValues["creative_headline"] as string) || null;
+    const brand_logo_asset_id = (rowValues["brand_logo_asset_id"] as string) || null;
+    const landing_page_url = (rowValues["landing_page_url"] as string) || null;
 
     const resolvedMockup =
       mockup_url ||
@@ -1393,40 +1428,73 @@ export async function importInboundShipmentsFromWorkbook(
   let count = 0;
   const inboundBatch: Partial<InboundShipmentItem>[] = [];
 
+  const DEFAULT_INBOUND_COLS = [
+    "brand", "sup", "ngay_request", "product_type", "mockup", "sku",
+    "quantity", "line_ship", "base_cost_per_unit", "card", "tag",
+    "shipping_fee", "hop_tui", "final_basecost", "total_basecost",
+    "ngay_thanh_toan", "ten_lo_hang", "shipment_id", "ngay_di", "ngay_den",
+    "amazon_received", "tinh_trang_hang_den_kho", "status",
+    "so_luong_amazon_nhan", "discrepancy", "note", "trang_thai"
+  ];
+
+  // 1. Quét dòng 1 để map vị trí cột tự động theo Header Name
+  const headerRow = wsInbound.getRow(1);
+  const totalCols = Math.max(wsInbound.columnCount || 27, 27);
+  const colFieldMap: Record<number, string> = {};
+
+  for (let c = 1; c <= totalCols; c++) {
+    const headerVal = getExcelCellValue(headerRow.getCell(c));
+    const headerText = headerVal ? String(headerVal).trim().toLowerCase() : "";
+    const mapped = INBOUND_HEADER_MAP[headerText] || (c <= DEFAULT_INBOUND_COLS.length ? DEFAULT_INBOUND_COLS[c - 1] : null);
+    if (mapped) {
+      colFieldMap[c] = mapped;
+    }
+  }
+
+  // 2. Đọc từng dòng dữ liệu dựa trên colFieldMap
   wsInbound.eachRow((row, rowNumber) => {
     if (rowNumber === 1) return;
-    const skuVal = getExcelCellValue(row.getCell(6));
+
+    const rowValues: Record<string, any> = {};
+    for (let c = 1; c <= totalCols; c++) {
+      const field = colFieldMap[c];
+      if (field) {
+        rowValues[field] = getExcelCellValue(row.getCell(c));
+      }
+    }
+
+    const skuVal = rowValues["sku"];
     if (!skuVal) return;
     const sku = String(skuVal).trim();
     if (!sku) return;
 
-    const brand = (getExcelCellValue(row.getCell(1)) as string) || null;
-    const sup = (getExcelCellValue(row.getCell(2)) as string) || null;
-    const ngay_request = (getExcelCellValue(row.getCell(3)) as string) || null;
-    const product_type = (getExcelCellValue(row.getCell(4)) as string) || null;
-    const rawMockup = getExcelCellValue(row.getCell(5));
+    const brand = (rowValues["brand"] as string) || null;
+    const sup = (rowValues["sup"] as string) || null;
+    const ngay_request = (rowValues["ngay_request"] as string) || null;
+    const product_type = (rowValues["product_type"] as string) || null;
+    const rawMockup = rowValues["mockup"];
     const mockup = typeof rawMockup === "string" && !rawMockup.startsWith("=") ? rawMockup : null;
-    const quantity = parseInteger(getExcelCellValue(row.getCell(7))) || 0;
-    const line_ship = (getExcelCellValue(row.getCell(8)) as string) || null;
-    const base_cost_per_unit = parseNumeric(getExcelCellValue(row.getCell(9)));
-    const card = parseNumeric(getExcelCellValue(row.getCell(10)));
-    const tag = parseNumeric(getExcelCellValue(row.getCell(11)));
-    const shipping_fee = parseNumeric(getExcelCellValue(row.getCell(12)));
-    const hop_tui = parseNumeric(getExcelCellValue(row.getCell(13)));
-    const final_basecost = parseNumeric(getExcelCellValue(row.getCell(14)));
-    const total_basecost = parseNumeric(getExcelCellValue(row.getCell(15)));
-    const ngay_thanh_toan = (getExcelCellValue(row.getCell(16)) as string) || null;
-    const ten_lo_hang = (getExcelCellValue(row.getCell(17)) as string) || null;
-    const shipment_id = (getExcelCellValue(row.getCell(18)) as string) || null;
-    const ngay_di = (getExcelCellValue(row.getCell(19)) as string) || null;
-    const ngay_den = (getExcelCellValue(row.getCell(20)) as string) || null;
-    const amazon_received = parseInteger(getExcelCellValue(row.getCell(21)));
-    const tinh_trang_hang_den_kho = (getExcelCellValue(row.getCell(22)) as string) || null;
-    const status = (getExcelCellValue(row.getCell(23)) as string) || null;
-    const so_luong_amazon_nhan = parseInteger(getExcelCellValue(row.getCell(24)));
-    const discrepancy = parseInteger(getExcelCellValue(row.getCell(25)));
-    const note = (getExcelCellValue(row.getCell(26)) as string) || null;
-    const trang_thai = (getExcelCellValue(row.getCell(27)) as string) || null;
+    const quantity = parseInteger(rowValues["quantity"]) || 0;
+    const line_ship = (rowValues["line_ship"] as string) || null;
+    const base_cost_per_unit = parseNumeric(rowValues["base_cost_per_unit"]);
+    const card = parseNumeric(rowValues["card"]);
+    const tag = parseNumeric(rowValues["tag"]);
+    const shipping_fee = parseNumeric(rowValues["shipping_fee"]);
+    const hop_tui = parseNumeric(rowValues["hop_tui"]);
+    const final_basecost = parseNumeric(rowValues["final_basecost"]);
+    const total_basecost = parseNumeric(rowValues["total_basecost"]);
+    const ngay_thanh_toan = (rowValues["ngay_thanh_toan"] as string) || null;
+    const ten_lo_hang = (rowValues["ten_lo_hang"] as string) || null;
+    const shipment_id = (rowValues["shipment_id"] as string) || null;
+    const ngay_di = (rowValues["ngay_di"] as string) || null;
+    const ngay_den = (rowValues["ngay_den"] as string) || null;
+    const amazon_received = parseInteger(rowValues["amazon_received"]);
+    const tinh_trang_hang_den_kho = (rowValues["tinh_trang_hang_den_kho"] as string) || null;
+    const status = (rowValues["status"] as string) || null;
+    const so_luong_amazon_nhan = parseInteger(rowValues["so_luong_amazon_nhan"]);
+    const discrepancy = parseInteger(rowValues["discrepancy"]);
+    const note = (rowValues["note"] as string) || null;
+    const trang_thai = (rowValues["trang_thai"] as string) || null;
 
     inboundBatch.push({
       store_id: storeId,
