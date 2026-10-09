@@ -1,0 +1,174 @@
+name: CI and production deploy
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  verify:
+    name: Test and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: listing_desk_test
+          POSTGRES_USER: listing_desk
+          POSTGRES_PASSWORD: listing_desk
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U listing_desk -d listing_desk_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      NODE_ENV: test
+      AI_MOCK_MODE: "true"
+      DATABASE_URL: postgresql://listing_desk:listing_desk@127.0.0.1:5432/listing_desk_test
+      REDIS_URL: redis://127.0.0.1:6379
+      LISTING_DESK_AUTH_MODE: optional
+      LISTING_DESK_SESSION_SECRET: ci-only-session-secret-at-least-32-characters
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Restore Next.js build cache
+        uses: actions/cache@v4
+        with:
+          path: .next/cache
+          key: ${{ runner.os }}-next-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-next-${{ hashFiles('package-lock.json') }}-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply migrations to disposable CI database
+        run: npm run db:migrate
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build production application
+        env:
+          NODE_ENV: production
+        run: npm run build
+
+  deploy:
+    name: Deploy production
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production
+
+    steps:
+      - name: Configure pinned SSH connection
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          test -n "$DEPLOY_SSH_KEY"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/amazon_listing_deploy
+          chmod 600 ~/.ssh/amazon_listing_deploy
+          printf '%s\n' '167.233.26.87 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGm1Bi07G73BiJAchqvaOLALrPsI6SjeLx/uyn3BPaHE' > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy verified commit
+        env:
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          ssh \
+            -i ~/.ssh/amazon_listing_deploy \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            root@167.233.26.87 \
+            "bash -s -- '$TARGET_SHA'" <<'REMOTE'
+          set -Eeuo pipefail
+
+          target_sha="$1"
+          app_dir=/var/www/amazon-listing
+
+          exec 9>/var/lock/amazon-listing-deploy.lock
+          flock -n 9 || {
+            echo "Another production deployment is already running."
+            exit 1
+          }
+
+          cd "$app_dir"
+
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Production worktree is not clean; refusing to overwrite server changes."
+            git status --short
+            exit 1
+          fi
+
+          current_sha="$(git rev-parse HEAD)"
+          git fetch --prune origin main
+
+          if [ "$(git rev-parse origin/main)" != "$target_sha" ]; then
+            echo "origin/main no longer matches the verified GitHub commit."
+            exit 1
+          fi
+
+          if ! git merge-base --is-ancestor "$current_sha" "$target_sha"; then
+            echo "The target would roll back or diverge from the running production commit."
+            echo "Merge the current production branch into main before deploying."
+            exit 1
+          fi
+
+          git checkout main
+          git merge --ff-only "$target_sha"
+          npm ci
+          npm run build
+          npm run db:migrate
+          pm2 restart amazon-listing --update-env
+          pm2 restart ppc-ingestion-worker --update-env
+          pm2 restart ppc-outcome-worker --update-env
+          pm2 save
+
+          for attempt in $(seq 1 20); do
+            if curl -fsS --max-time 5 http://127.0.0.1:2411/api/health | grep -q '"redis":"ready"'; then
+              echo "Production health check passed."
+              exit 0
+            fi
+            echo "Waiting for production health check ($attempt/20)..."
+            sleep 3
+          done
+
+          echo "Production health check failed."
+          pm2 status
+          pm2 logs amazon-listing --lines 80 --nostream
+          exit 1
+          REMOTE

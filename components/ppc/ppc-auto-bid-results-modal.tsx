@@ -18,6 +18,8 @@ import {
   Target,
   CircleNotch,
   Prohibit,
+  CaretDown,
+  CaretRight,
 } from "@phosphor-icons/react";
 
 export interface WindowDetail {
@@ -66,6 +68,7 @@ export interface BidOutcomeActionItem {
   action_status: string;
   approved_by: string | null;
   applied_on: string;
+  action_timestamp?: string | null;
   baseline: Record<string, any>;
   d3: WindowDetail | null;
   d7: WindowDetail | null;
@@ -135,6 +138,9 @@ export function PpcAutoBidResultsModal({
   const [statusFilter, setStatusFilter] = useState<"ALL" | "WIN" | "NEUTRAL" | "LOSS" | "WARNING_3D" | "OBSERVING" | "INTERRUPTED">("ALL");
   const [selectedAction, setSelectedAction] = useState<BidOutcomeActionItem | null>(null);
 
+  // Quản lý đóng/mở từng chiến dịch (mặc định đóng toàn bộ)
+  const [expandedCampaigns, setExpandedCampaigns] = useState<Record<string, boolean>>({});
+
   const fetchOutcomes = useCallback(async () => {
     if (!isOpen) return;
     try {
@@ -146,8 +152,8 @@ export function PpcAutoBidResultsModal({
       if (search.trim()) {
         params.set("search", search.trim());
       }
-      // Load đủ dữ liệu để các bộ đếm không bị lệch grain
-      params.set("limit", "500");
+      // Load đủ dữ liệu để hiển thị toàn bộ các đợt chỉnh bid (không bị giới hạn 500)
+      params.set("limit", "1500");
 
       const res = await fetch(`/api/ppc/action-outcomes?${params.toString()}`);
       if (!res.ok) throw new Error("Không thể tải kết quả theo dõi bid");
@@ -342,6 +348,230 @@ export function PpcAutoBidResultsModal({
     });
   }, [items, statusFilter]);
 
+  // CHỈ LẤY BẢN GHI MỚI NHẤT CHO MỖI TARGET (Sắp xếp thời gian giảm dần, loại bỏ các lần bị đè)
+  const latestTargetItems = useMemo(() => {
+    // Sắp xếp đảm bảo bản ghi có thời gian/ngày chỉnh mới nhất luôn đứng trước
+    const sorted = [...filteredItems].sort((a, b) => {
+      const timeA = new Date(a.action_timestamp || a.applied_on || 0).getTime();
+      const timeB = new Date(b.action_timestamp || b.applied_on || 0).getTime();
+      return timeB - timeA;
+    });
+
+    const seenTargets = new Set<string>();
+    const result: BidOutcomeActionItem[] = [];
+
+    for (const item of sorted) {
+      const key = item.target_id || `${item.campaign_id || ""}_${item.target_keyword}_${item.match_type}`;
+      if (!seenTargets.has(key)) {
+        seenTargets.add(key);
+        result.push(item);
+      }
+    }
+
+    return result;
+  }, [filteredItems]);
+
+  // Cấu trúc nhóm Chiến dịch (chứa các targets mới nhất)
+  const campaignGroups = useMemo(() => {
+    const campMap = new Map<string, BidOutcomeActionItem[]>();
+
+    for (const item of latestTargetItems) {
+      const cKey = item.campaign_id || item.campaign_name || "unknown";
+      if (!campMap.has(cKey)) {
+        campMap.set(cKey, []);
+      }
+      campMap.get(cKey)!.push(item);
+    }
+
+    const sortedCampKeys = Array.from(campMap.keys()).sort((a, b) => {
+      const itemsA = campMap.get(a)!;
+      const itemsB = campMap.get(b)!;
+      const nameA = itemsA[0]?.campaign_name || a;
+      const nameB = itemsB[0]?.campaign_name || b;
+      return nameA.localeCompare(nameB);
+    });
+
+    return sortedCampKeys.map((cKey) => {
+      const cItems = campMap.get(cKey)!;
+      const first = cItems[0];
+
+      let warning3d = 0;
+      let loss = 0;
+      let win = 0;
+
+      for (const item of cItems) {
+        const label = item.d30?.outcome_label || item.d14?.outcome_label || item.d7?.outcome_label;
+        if (label === "POSITIVE") win++;
+        else if (label === "NEGATIVE") loss++;
+
+        const st3 = get3dStatus(item);
+        if (st3.badge.includes("Spend") || st3.badge.includes("traffic")) warning3d++;
+      }
+
+      return {
+        campaignId: first?.campaign_id || cKey,
+        campaignName: first?.campaign_name || (cKey === "unknown" ? "Chiến dịch không xác định" : cKey),
+        campaignType: first?.campaign_type || "SP",
+        sku: first?.sku || "",
+        items: cItems,
+        stats: {
+          total: cItems.length,
+          warning3d,
+          loss,
+          win,
+        },
+      };
+    });
+  }, [latestTargetItems]);
+
+  // Mặc định ĐÓNG TOÀN BỘ; chỉ tự động mở khi có tìm kiếm hoặc lọc trạng thái
+  useEffect(() => {
+    if (search.trim() || statusFilter !== "ALL") {
+      const all: Record<string, boolean> = {};
+      for (const c of campaignGroups) {
+        all[c.campaignId] = true;
+      }
+      setExpandedCampaigns(all);
+    } else {
+      setExpandedCampaigns({});
+    }
+  }, [search, statusFilter]);
+
+  const toggleCampaign = (campaignId: string) => {
+    setExpandedCampaigns((prev) => ({
+      ...prev,
+      [campaignId]: !prev[campaignId],
+    }));
+  };
+
+  const handleExpandAll = () => {
+    const all: Record<string, boolean> = {};
+    for (const c of campaignGroups) {
+      all[c.campaignId] = true;
+    }
+    setExpandedCampaigns(all);
+  };
+
+  const handleCollapseAll = () => {
+    setExpandedCampaigns({});
+  };
+
+  // Render từng dòng Target/Từ khóa (Gọn gàng, sạch sẽ)
+  const renderTargetRow = (item: BidOutcomeActionItem) => {
+    const st3 = get3dStatus(item);
+    const st7 = get7dStatus(item);
+    const st14 = get14dStatus(item);
+    const st30 = get30dStatus(item);
+
+    const deltaPct = item.applied_delta_pct || 0;
+    const isIncrease = deltaPct > 0;
+
+    return (
+      <tr
+        key={item.action_id}
+        onClick={() => setSelectedAction(item)}
+        className="hover:bg-indigo-50/40 transition cursor-pointer group"
+      >
+        {/* TARGET / KEYWORD */}
+        <td className="py-2.5 px-4">
+          <div className="font-bold text-slate-900 group-hover:text-indigo-700 transition">
+            {item.target_keyword || "—"}
+          </div>
+          <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-semibold mt-0.5">
+            {item.match_type && (
+              <span className="rounded bg-slate-100 px-1.5 py-0.2 text-slate-600 font-bold uppercase">
+                {item.match_type}
+              </span>
+            )}
+            {item.sku && (
+              <span className="text-slate-500 font-mono">
+                SKU: {item.sku}
+              </span>
+            )}
+            {item.applied_on && (
+              <>
+                <span>•</span>
+                <span className="text-slate-400">
+                  {item.applied_on}
+                </span>
+              </>
+            )}
+          </div>
+        </td>
+
+        {/* BID CHANGE */}
+        <td className="py-2.5 px-3">
+          <div className="flex items-center gap-1.5 font-bold font-mono text-slate-800">
+            <span className="text-slate-400">${Number(item.old_value || 0).toFixed(2)}</span>
+            <ArrowRight size={12} className="text-slate-300" weight="bold" />
+            <span className={isIncrease ? "text-emerald-700 font-extrabold" : "text-rose-700 font-extrabold"}>
+              ${Number(item.final_value || item.system_suggested_value || 0).toFixed(2)}
+            </span>
+          </div>
+          <div className="text-[10px] font-bold mt-0.5">
+            <span className={isIncrease ? "text-emerald-600" : "text-rose-600"}>
+              {isIncrease ? "+" : ""}{deltaPct.toFixed(1)}%
+            </span>
+          </div>
+        </td>
+
+        {/* 3D STATUS */}
+        <td className="py-2.5 px-2 text-center">
+          <span
+            title={st3.tip}
+            className={`inline-block px-2.5 py-1 rounded-lg text-[11px] border transition ${st3.color}`}
+          >
+            {st3.badge}
+          </span>
+        </td>
+
+        {/* 7D STATUS */}
+        <td className="py-2.5 px-2 text-center">
+          <span
+            title={st7.tip}
+            className={`inline-block px-2.5 py-1 rounded-lg text-[11px] border transition ${st7.color}`}
+          >
+            {st7.badge}
+          </span>
+        </td>
+
+        {/* 14D STATUS */}
+        <td className="py-2.5 px-2 text-center">
+          <span
+            title={st14.tip}
+            className={`inline-block px-2.5 py-1 rounded-lg text-[11px] border transition ${st14.color}`}
+          >
+            {st14.badge}
+          </span>
+        </td>
+
+        {/* 30D STATUS */}
+        <td className="py-2.5 px-2 text-center">
+          <span
+            title={st30.tip}
+            className={`inline-block px-2.5 py-1 rounded-lg text-[11px] border transition ${st30.color}`}
+          >
+            {st30.badge}
+          </span>
+        </td>
+
+        {/* ACTION BUTTON */}
+        <td className="py-2.5 px-3 text-right">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedAction(item);
+            }}
+            className="rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-700 hover:bg-indigo-600 hover:text-white transition shadow-2xs cursor-pointer"
+          >
+            Chi tiết
+          </button>
+        </td>
+      </tr>
+    );
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -521,16 +751,34 @@ export function PpcAutoBidResultsModal({
               </button>
             </div>
           </div>
+
+          {/* EXPAND CONTROLS: ĐƠN GIẢN, GỌN GÀNG */}
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={handleExpandAll}
+              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-bold text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition shadow-2xs cursor-pointer"
+            >
+              Mở tất cả
+            </button>
+            <button
+              type="button"
+              onClick={handleCollapseAll}
+              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-bold text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition shadow-2xs cursor-pointer"
+            >
+              Thu gọn
+            </button>
+          </div>
         </div>
 
-        {/* MAIN TABLE */}
-        <div className="flex-1 overflow-y-auto px-6 py-3 thin-scrollbar">
+        {/* MAIN BODY: DANH SÁCH CHIẾN DỊCH (GOM THEO CHIẾN DỊCH, CHỈ LẤY TARGET MỚI NHẤT) */}
+        <div className="flex-1 overflow-y-auto px-6 py-4 thin-scrollbar">
           {loading ? (
             <div className="flex h-64 flex-col items-center justify-center gap-2 text-slate-400">
               <CircleNotch size={28} className="animate-spin text-indigo-600" />
               <span className="text-xs font-bold">Đang tải kết quả theo dõi bid...</span>
             </div>
-          ) : filteredItems.length === 0 ? (
+          ) : campaignGroups.length === 0 ? (
             <div className="flex h-64 flex-col items-center justify-center gap-2 text-slate-400">
               <Clock size={36} className="text-slate-300" weight="duotone" />
               <span className="text-sm font-bold text-slate-600">Chưa có dữ liệu chỉnh bid trong bộ lọc này</span>
@@ -539,140 +787,96 @@ export function PpcAutoBidResultsModal({
               </p>
             </div>
           ) : (
-            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xs">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50/90 text-[11px] font-black uppercase tracking-wider text-slate-500">
-                    <th className="py-3 px-4">Target / Từ Khóa</th>
-                    <th className="py-3 px-3">Lần Chỉnh Bid</th>
-                    <th className="py-3 px-2 text-center">3D</th>
-                    <th className="py-3 px-2 text-center">7D</th>
-                    <th className="py-3 px-2 text-center">14D</th>
-                    <th className="py-3 px-2 text-center">30D</th>
-                    <th className="py-3 px-3 text-right">Chi Tiết</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredItems.map((item) => {
-                    const st3 = get3dStatus(item);
-                    const st7 = get7dStatus(item);
-                    const st14 = get14dStatus(item);
-                    const st30 = get30dStatus(item);
+            <div className="space-y-2.5">
+              {campaignGroups.map((camp) => {
+                const isOpen = expandedCampaigns[camp.campaignId] ?? false;
 
-                    const deltaPct = item.applied_delta_pct || 0;
-                    const isIncrease = deltaPct > 0;
-
-                    return (
-                      <tr
-                        key={item.action_id}
-                        onClick={() => setSelectedAction(item)}
-                        className="hover:bg-indigo-50/30 transition cursor-pointer group"
-                      >
-                        {/* TARGET / KEYWORD */}
-                        <td className="py-3 px-4">
-                          <div className="font-extrabold text-slate-900 group-hover:text-indigo-700 transition">
-                            {item.target_keyword || "—"}
-                          </div>
-                          <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-semibold mt-0.5">
-                            {item.match_type && (
-                              <span className="rounded bg-slate-100 px-1.5 py-0.2 text-slate-600 font-bold">
-                                {item.match_type}
-                              </span>
-                            )}
-                            {item.sku && (
-                              <span className="text-slate-500 font-mono">
-                                SKU: {item.sku}
-                              </span>
-                            )}
-                            <span>•</span>
-                            <span className="text-slate-400">
-                              {item.applied_on || "Vừa xong"}
-                            </span>
-                          </div>
-                        </td>
-
-                        {/* BID CHANGE */}
-                        <td className="py-3 px-3">
-                          <div className="flex items-center gap-1.5 font-bold font-mono text-slate-800">
-                            <span className="text-slate-400">${Number(item.old_value || 0).toFixed(2)}</span>
-                            <ArrowRight size={12} className="text-slate-300" weight="bold" />
-                            <span className={isIncrease ? "text-emerald-700 font-extrabold" : "text-rose-700 font-extrabold"}>
-                              ${Number(item.final_value || item.system_suggested_value || 0).toFixed(2)}
-                            </span>
-                          </div>
-                          <div className="text-[10px] font-bold mt-0.5">
-                            <span className={isIncrease ? "text-emerald-600" : "text-rose-600"}>
-                              {isIncrease ? "+" : ""}{deltaPct.toFixed(1)}%
-                            </span>
-                          </div>
-                        </td>
-
-                        {/* 3D STATUS */}
-                        <td className="py-3 px-2 text-center">
-                          <span
-                            title={st3.tip}
-                            className={`inline-block px-2.5 py-1 rounded-lg text-[11px] border transition ${st3.color}`}
-                          >
-                            {st3.badge}
+                return (
+                  <div
+                    key={camp.campaignId}
+                    className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-2xs transition"
+                  >
+                    {/* HEADER CHIẾN DỊCH: 1 DÒNG GỌN GÀNG, KHÔNG RƯỜM RÀ */}
+                    <div
+                      onClick={() => toggleCampaign(camp.campaignId)}
+                      className="flex items-center justify-between gap-3 px-4 py-2.5 bg-slate-50/90 hover:bg-slate-100/70 transition cursor-pointer select-none"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="text-slate-400 hover:text-slate-700 shrink-0">
+                          {isOpen ? (
+                            <CaretDown size={13} weight="bold" />
+                          ) : (
+                            <CaretRight size={13} weight="bold" />
+                          )}
+                        </div>
+                        <span className="text-xs font-bold text-slate-800 truncate" title={camp.campaignName}>
+                          {camp.campaignName}
+                        </span>
+                        {camp.campaignType && (
+                          <span className="rounded bg-slate-200/70 px-1.5 py-0.2 text-[10px] font-bold text-slate-600 shrink-0">
+                            {camp.campaignType}
                           </span>
-                        </td>
-
-                        {/* 7D STATUS */}
-                        <td className="py-3 px-2 text-center">
-                          <span
-                            title={st7.tip}
-                            className={`inline-block px-2.5 py-1 rounded-lg text-[11px] border transition ${st7.color}`}
-                          >
-                            {st7.badge}
+                        )}
+                        {camp.sku && (
+                          <span className="font-mono text-[10px] text-slate-500 bg-white px-1.5 py-0.2 rounded border border-slate-200 shrink-0">
+                            {camp.sku}
                           </span>
-                        </td>
+                        )}
+                      </div>
 
-                        {/* 14D STATUS */}
-                        <td className="py-3 px-2 text-center">
-                          <span
-                            title={st14.tip}
-                            className={`inline-block px-2.5 py-1 rounded-lg text-[11px] border transition ${st14.color}`}
-                          >
-                            {st14.badge}
+                      {/* SỐ LƯỢNG VÀ BADGE CẢNH BÁO */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-xs font-semibold text-slate-500">
+                          {camp.stats.total} targets
+                        </span>
+                        {camp.stats.warning3d > 0 && (
+                          <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 border border-amber-200">
+                            ⚠️ {camp.stats.warning3d}
                           </span>
-                        </td>
-
-                        {/* 30D STATUS */}
-                        <td className="py-3 px-2 text-center">
-                          <span
-                            title={st30.tip}
-                            className={`inline-block px-2.5 py-1 rounded-lg text-[11px] border transition ${st30.color}`}
-                          >
-                            {st30.badge}
+                        )}
+                        {camp.stats.loss > 0 && (
+                          <span className="rounded-md bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700 border border-rose-200">
+                            🔴 {camp.stats.loss}
                           </span>
-                        </td>
+                        )}
+                      </div>
+                    </div>
 
-                        {/* ACTION BUTTON */}
-                        <td className="py-3 px-3 text-right">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedAction(item);
-                            }}
-                            className="rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-700 hover:bg-indigo-600 hover:text-white transition shadow-2xs"
-                          >
-                            Chi tiết
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                    {/* BẢNG TARGETS KHI MỞ */}
+                    {isOpen && (
+                      <div className="border-t border-slate-200 overflow-x-auto">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead>
+                            <tr className="border-b border-slate-200 bg-slate-50/60 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                              <th className="py-2.5 px-4">Target / Từ Khóa</th>
+                              <th className="py-2.5 px-3">Lần Chỉnh Bid</th>
+                              <th className="py-2.5 px-2 text-center">3D</th>
+                              <th className="py-2.5 px-2 text-center">7D</th>
+                              <th className="py-2.5 px-2 text-center">14D</th>
+                              <th className="py-2.5 px-2 text-center">30D</th>
+                              <th className="py-2.5 px-3 text-right">Chi Tiết</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {camp.items.map((item) => renderTargetRow(item))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
 
         {/* FOOTER INFO BAR */}
-        <div className="flex items-center justify-end border-t border-slate-200 px-6 py-2.5 bg-slate-50 text-[11px] text-slate-500 font-medium">
+        <div className="flex items-center justify-between border-t border-slate-200 px-6 py-2.5 bg-slate-50 text-[11px] text-slate-500 font-medium">
           <div>
-            <span>Hiển thị <strong>{filteredItems.length}</strong> / {summary?.total || items.length} lần chỉnh</span>
+            <span>Hiển thị <strong>{latestTargetItems.length}</strong> targets · <strong>{campaignGroups.length}</strong> chiến dịch (Lần chỉnh mới nhất)</span>
+          </div>
+          <div>
+            <span className="text-slate-400">Tổng toàn bộ: {summary?.total || items.length} lần chỉnh</span>
           </div>
         </div>
       </div>

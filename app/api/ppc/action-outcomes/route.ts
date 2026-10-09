@@ -19,7 +19,7 @@ export async function GET(request: Request) {
     const labelFilter = searchParams.get("label");
     const eligibleOnly = searchParams.get("eligibleForLearning") === "true";
     const searchQuery = searchParams.get("search")?.trim().toLowerCase();
-    const limit = Math.max(1, Math.min(500, Number(searchParams.get("limit") || 100)));
+    const limit = Math.max(1, Math.min(2000, Number(searchParams.get("limit") || 100)));
     const offset = Math.max(0, Number(searchParams.get("offset") || 0));
 
     const sql = await getDatabaseClient();
@@ -82,6 +82,7 @@ export async function GET(request: Request) {
           action_status: r.action_status,
           approved_by: r.approved_by,
           applied_on: r.applied_on,
+          action_timestamp: r.action_timestamp,
           baseline: r.baseline || {},
           d3: null,
           d7: null,

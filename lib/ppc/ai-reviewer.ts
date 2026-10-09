@@ -337,7 +337,7 @@ export function validateAiReviewerResponse(
   if (decision === "HOLD") {
     const holdCandidate = payload.available_candidates.find((c) => c.id === "HOLD");
     if (!holdCandidate || !holdCandidate.allowed) {
-        return {
+      return {
         valid: false,
         status: "AI_REVIEW_INVALID",
         fallback_reason: "HOLD_CANDIDATE_NOT_ALLOWED",

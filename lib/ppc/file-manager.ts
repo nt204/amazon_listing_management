@@ -8,7 +8,9 @@ import {
   ListObjectsV2Command,
   DeleteObjectsCommand,
   DeleteObjectCommand,
+  GetObjectCommand,
 } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getDatabaseClient, type DataScope } from "@/lib/db";
 import { canonicalStoreName, reportAdType } from "./service";
 import { listPpcStores } from "./repository";
@@ -66,6 +68,87 @@ function getR2Client() {
   });
 
   return { client, bucket, prefix };
+}
+
+/**
+ * Tạo Presigned URL để tải trực tiếp từ Cloudflare R2
+ * Trình duyệt của user sẽ tải trực tiếp từ Cloudflare Edge CDN, không qua RAM/băng thông của máy chủ.
+ */
+export async function getPpcFileDownloadUrl(params: {
+  fileName: string;
+  r2Key?: string;
+  expiresInSeconds?: number;
+}): Promise<string | null> {
+  const r2 = getR2Client();
+  if (!r2) return null;
+
+  let key = params.r2Key;
+  if (!key) {
+    const res = await r2.client.send(
+      new ListObjectsV2Command({
+        Bucket: r2.bucket,
+        Prefix: `${r2.prefix}/`,
+        MaxKeys: 1000,
+      }),
+    );
+    const match = res.Contents?.find((c) => (c.Key || "").endsWith(params.fileName));
+    if (match?.Key) key = match.Key;
+  }
+
+  if (!key) return null;
+
+  const cleanFileName = params.fileName.replace(/[/\\?%*:|"<>]/g, "_");
+  const command = new GetObjectCommand({
+    Bucket: r2.bucket,
+    Key: key,
+    ResponseContentDisposition: `attachment; filename="${cleanFileName}"`,
+  });
+
+  return await getSignedUrl(r2.client, command, {
+    expiresIn: params.expiresInSeconds || 1800, // 30 phút
+  });
+}
+
+/**
+ * Xác minh và lấy đường dẫn file cục bộ an toàn (chống Directory Traversal)
+ */
+export function resolvePpcLocalFilePath(params: {
+  fileName: string;
+  serverPath?: string;
+  relativePath?: string;
+}): string | null {
+  const baseDir = path.resolve(LOCAL_BULK_DIR);
+
+  // 1. Nếu có serverPath được chỉ định
+  if (params.serverPath) {
+    const resolved = path.resolve(params.serverPath);
+    if (resolved.startsWith(baseDir) && fs.existsSync(resolved) && fs.statSync(resolved).isFile()) {
+      return resolved;
+    }
+  }
+
+  // 2. Nếu có relativePath
+  if (params.relativePath) {
+    const candidate = path.resolve(baseDir, params.relativePath);
+    if (candidate.startsWith(baseDir) && fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+      return candidate;
+    }
+  }
+
+  // 3. Tìm trực tiếp trong baseDir
+  const directPath = path.join(baseDir, params.fileName);
+  if (fs.existsSync(directPath) && fs.statSync(directPath).isFile()) {
+    return directPath;
+  }
+
+  // 4. Tìm đệ quy trong LOCAL_BULK_DIR
+  const allFiles = findFilesRecursively(baseDir, 5);
+  const found = allFiles.find((p) => path.basename(p) === params.fileName);
+  if (found && fs.existsSync(found)) {
+    return found;
+  }
+
+  return null;
 }
 
 export function detectFileType(fileName: string): ManagedPpcFile["fileType"] {

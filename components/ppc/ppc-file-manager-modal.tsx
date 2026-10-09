@@ -23,6 +23,7 @@ import {
   CaretRight,
   TreeStructure,
   Table,
+  DownloadSimple,
 } from "@phosphor-icons/react";
 import type { ManagedPpcFile, PpcStorageStats } from "@/lib/ppc/file-manager";
 
@@ -87,6 +88,8 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [downloadingBatch, setDownloadingBatch] = useState(false);
 
   // Chế độ hiển thị: Cây phân cấp (tree) hoặc Bảng phẳng (table)
   const [viewMode, setViewMode] = useState<"tree" | "table">("tree");
@@ -338,6 +341,66 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
     setTimeout(() => setCopiedId(null), 2000);
   };
 
+  const handleDownloadFile = async (file: ManagedPpcFile) => {
+    try {
+      setDownloadingId(file.id);
+      setErrorMsg(null);
+
+      const query = new URLSearchParams({
+        fileName: file.fileName,
+        format: "json",
+      });
+      if (file.locations.r2Key) query.set("r2Key", file.locations.r2Key);
+      if (file.locations.serverPath) query.set("serverPath", file.locations.serverPath);
+
+      const res = await fetch(`/api/ppc/files/download?${query.toString()}`);
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error?.message || errJson.message || "Không thể lấy liên kết tải file.");
+      }
+
+      const json = await res.json();
+      if (!json.downloadUrl) {
+        throw new Error("Không tìm thấy liên kết tải file.");
+      }
+
+      // Kích hoạt tải trực tiếp về máy người dùng
+      const a = document.createElement("a");
+      a.href = json.downloadUrl;
+      a.download = file.fileName;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Lỗi khi tải file báo cáo.");
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
+  const handleDownloadSelected = async (targetFiles: ManagedPpcFile[]) => {
+    if (targetFiles.length === 0) return;
+    setDownloadingBatch(true);
+    setErrorMsg(null);
+    setSuccessMsg(`Đang khởi tạo tải ${targetFiles.length} file...`);
+
+    try {
+      for (let i = 0; i < targetFiles.length; i++) {
+        await handleDownloadFile(targetFiles[i]);
+        if (i < targetFiles.length - 1) {
+          await new Promise((r) => setTimeout(r, 400));
+        }
+      }
+      setSuccessMsg(`Đã gửi yêu cầu tải ${targetFiles.length} file về máy.`);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Lỗi khi tải các file đã chọn.");
+    } finally {
+      setDownloadingBatch(false);
+    }
+  };
+
   const handleOrganizeFiles = async () => {
     try {
       setOrganizing(true);
@@ -551,6 +614,24 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
               </select>
             </div>
 
+            {filterStore !== "ALL" && (
+              <button
+                type="button"
+                onClick={() => {
+                  const storeFiles = files.filter(
+                    (f) => f.storeName.toUpperCase() === filterStore.toUpperCase()
+                  );
+                  void handleDownloadSelected(storeFiles);
+                }}
+                disabled={downloadingBatch}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition shadow-2xs disabled:opacity-50 cursor-pointer"
+                title={`Tải toàn bộ file của store ${filterStore}`}
+              >
+                <DownloadSimple size={13} weight="bold" />
+                <span>Tải Store {filterStore}</span>
+              </button>
+            )}
+
             {/* Date Filter */}
             <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-slate-200 bg-slate-50 text-xs">
               <CalendarBlank size={14} className="text-slate-400" />
@@ -736,18 +817,34 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
             </label>
 
             {selectedFileIds.size > 0 && (
-              <button
-                type="button"
-                onClick={() => {
-                  const selected = files.filter((f) => selectedFileIds.has(f.id));
-                  void handleDelete(selected);
-                }}
-                disabled={deleting}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs transition shadow-2xs disabled:opacity-50"
-              >
-                <Trash size={14} weight="bold" />
-                <span>Xóa {selectedFileIds.size} file đã chọn</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const selected = files.filter((f) => selectedFileIds.has(f.id));
+                    void handleDownloadSelected(selected);
+                  }}
+                  disabled={downloadingBatch || deleting}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition shadow-2xs disabled:opacity-50"
+                  title="Tải tất cả các file đã chọn về máy"
+                >
+                  <DownloadSimple size={14} className={downloadingBatch ? "animate-bounce" : ""} weight="bold" />
+                  <span>{downloadingBatch ? "Đang tải..." : `Tải xuống (${selectedFileIds.size})`}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const selected = files.filter((f) => selectedFileIds.has(f.id));
+                    void handleDelete(selected);
+                  }}
+                  disabled={deleting || downloadingBatch}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs transition shadow-2xs disabled:opacity-50"
+                >
+                  <Trash size={14} weight="bold" />
+                  <span>Xóa ({selectedFileIds.size})</span>
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -893,6 +990,19 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
                                   <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-50 text-sky-700 border border-sky-200">
                                     SB: {storeGroup.sbGroup.length}
                                   </span>
+
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void handleDownloadSelected(storeGroup.files);
+                                    }}
+                                    disabled={downloadingBatch}
+                                    className="p-1 rounded-md text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 transition shadow-2xs disabled:opacity-50 ml-1 cursor-pointer"
+                                    title={`Tải toàn bộ ${storeGroup.files.length} file của store ${storeGroup.storeName}`}
+                                  >
+                                    <DownloadSimple size={14} weight="bold" />
+                                  </button>
                                 </div>
                               </div>
 
@@ -943,6 +1053,18 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
                                             <span>{batch.files.length} file</span>
                                             <span>•</span>
                                             <span>{formatBytes(batch.totalBytes)}</span>
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                void handleDownloadSelected(batch.files);
+                                              }}
+                                              disabled={downloadingBatch}
+                                              className="p-1 rounded text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition disabled:opacity-50 ml-0.5 cursor-pointer"
+                                              title={`Tải ${batch.files.length} file của đợt này`}
+                                            >
+                                              <DownloadSimple size={13} weight="bold" />
+                                            </button>
                                           </div>
                                         </div>
 
@@ -976,6 +1098,8 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
                                                     file={file}
                                                     isSelected={selectedFileIds.has(file.id)}
                                                     onToggleSelect={() => toggleSelect(file.id)}
+                                                    onDownload={() => void handleDownloadFile(file)}
+                                                    isDownloading={downloadingId === file.id}
                                                     onCopyPath={() => handleCopyPath(file)}
                                                     isCopied={copiedId === file.id}
                                                     onDelete={() => void handleDelete([file])}
@@ -1014,6 +1138,8 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
                                                     file={file}
                                                     isSelected={selectedFileIds.has(file.id)}
                                                     onToggleSelect={() => toggleSelect(file.id)}
+                                                    onDownload={() => void handleDownloadFile(file)}
+                                                    isDownloading={downloadingId === file.id}
                                                     onCopyPath={() => handleCopyPath(file)}
                                                     isCopied={copiedId === file.id}
                                                     onDelete={() => void handleDelete([file])}
@@ -1152,6 +1278,15 @@ export function PpcFileManagerModal({ isOpen, onClose, onDataChanged }: PpcFileM
                           <div className="flex items-center justify-center gap-1">
                             <button
                               type="button"
+                              onClick={() => void handleDownloadFile(file)}
+                              disabled={downloadingId === file.id}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition"
+                              title="Tải file báo cáo về máy"
+                            >
+                              <DownloadSimple size={14} className={downloadingId === file.id ? "animate-bounce text-indigo-600" : ""} weight="bold" />
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => handleCopyPath(file)}
                               className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition"
                               title="Sao chép đường dẫn file trên máy"
@@ -1210,6 +1345,8 @@ function TreeFileItem({
   file,
   isSelected,
   onToggleSelect,
+  onDownload,
+  isDownloading,
   onCopyPath,
   isCopied,
   onDelete,
@@ -1218,6 +1355,8 @@ function TreeFileItem({
   file: ManagedPpcFile;
   isSelected: boolean;
   onToggleSelect: () => void;
+  onDownload: () => void;
+  isDownloading: boolean;
   onCopyPath: () => void;
   isCopied: boolean;
   onDelete: () => void;
@@ -1289,6 +1428,15 @@ function TreeFileItem({
 
         {/* Actions */}
         <div className="flex items-center gap-0.5 opacity-80 group-hover:opacity-100 transition">
+          <button
+            type="button"
+            onClick={onDownload}
+            disabled={isDownloading}
+            className="p-1 rounded text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition"
+            title="Tải file báo cáo về máy"
+          >
+            <DownloadSimple size={13} className={isDownloading ? "animate-bounce text-indigo-600" : ""} weight="bold" />
+          </button>
           <button
             type="button"
             onClick={onCopyPath}

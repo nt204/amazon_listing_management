@@ -177,7 +177,7 @@ export async function closeDatabaseConnection() {
 
 export type AppUserStatus = "pending" | "approved" | "rejected" | "disabled";
 
-export const ALL_SYSTEM_FEATURES = ["listing", "mockups", "sellersprite", "ppc"] as const;
+export const ALL_SYSTEM_FEATURES = ["listing", "mockups", "sellersprite", "ppc", "accounting"] as const;
 export type SystemFeature = (typeof ALL_SYSTEM_FEATURES)[number];
 
 export interface AppUserSummary {

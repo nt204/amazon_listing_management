@@ -16,3 +16,4 @@ scratch/
 mac-crawler/scratch/
 __pycache__/
 *.pyc
+.agents/

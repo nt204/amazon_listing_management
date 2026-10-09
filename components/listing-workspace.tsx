@@ -11,6 +11,13 @@ import {
   XIcon,
   ChartLineUpIcon,
   CaretDownIcon,
+  ReceiptIcon,
+  SquaresFourIcon,
+  StorefrontIcon,
+  PackageIcon,
+  ShoppingCartIcon,
+  WalletIcon,
+  TrendUpIcon,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
@@ -40,6 +47,10 @@ const PpcRuleManagerStandalone = dynamic(
   () => import("@/components/ppc/ppc-settings-tab").then((module) => module.PpcRuleManagerStandalone),
   { loading: ViewLoading },
 );
+const AccountingWorkspace = dynamic(
+  () => import("@/components/accounting/accounting-workspace").then((module) => module.AccountingWorkspace),
+  { loading: ViewLoading },
+);
 
 interface SystemGuideItem {
   id: string;
@@ -56,7 +67,7 @@ interface ListingWorkspaceProps {
   initialView?: WorkspaceView;
 }
 
-type WorkspaceView = "listing" | "mockups" | "sellersprite" | "ppc";
+type WorkspaceView = "listing" | "mockups" | "sellersprite" | "ppc" | "accounting";
 
 export function ListingWorkspace({
   initialBrands = [],
@@ -64,7 +75,7 @@ export function ListingWorkspace({
   initialView = "listing",
 }: ListingWorkspaceProps) {
   const allowedFeatureSet = useMemo(
-    () => new Set<WorkspaceView>((actor?.allowedFeatures as WorkspaceView[] | undefined) ?? ["listing", "mockups", "sellersprite", "ppc"]),
+    () => new Set<WorkspaceView>((actor?.allowedFeatures as WorkspaceView[] | undefined) ?? ["listing", "mockups", "sellersprite", "ppc", "accounting"]),
     [actor?.allowedFeatures],
   );
   const hasTrelloAccess = allowedFeatureSet.has("listing") || allowedFeatureSet.has("mockups");
@@ -72,11 +83,31 @@ export function ListingWorkspace({
   const [activeView, setActiveView] = useState<WorkspaceView>(initialView);
   type PpcSection = "dashboard" | "negative_keyword" | "sale_kw" | "auto_bid" | "phoi" | "rules";
   type PpcDashboardTab = "overview" | "campaigns" | "targets" | "search_terms" | "skus" | "st_campaigns";
+  type AccountingSection =
+    | "overview"
+    | "stores"
+    | "inventory"
+    | "orders"
+    | "financials"
+    | "reports"
+    | "admin"
+    | "dashboard"
+    | "revenue"
+    | "costs"
+    | "amazon_fees"
+    | "ads"
+    | "pnl"
+    | "settlements";
   const [ppcSection, setPpcSection] = useState<PpcSection>("dashboard");
   const [ppcDashboardTab, setPpcDashboardTab] = useState<PpcDashboardTab>("overview");
   const [ppcNavNonce, setPpcNavNonce] = useState(0);
+  const [accountingSection, setAccountingSection] = useState<AccountingSection>("overview");
+  const [accountingSubTab, setAccountingSubTab] = useState<string | undefined>(undefined);
   const sidebarTab = activeView === "mockups" ? "mockups" : "trello";
-  const viewMode = activeView === "sellersprite" || activeView === "ppc" ? activeView : "trello";
+  const viewMode =
+    activeView === "sellersprite" || activeView === "ppc" || activeView === "accounting"
+      ? activeView
+      : "trello";
   const [showTrelloConfigModal, setShowTrelloConfigModal] = useState(false);
   const [showGuidesModal, setShowGuidesModal] = useState(false);
   const [guides, setGuides] = useState<SystemGuideItem[]>([]);
@@ -94,7 +125,7 @@ export function ListingWorkspace({
     setActiveView(view);
     try {
       localStorage.setItem("nce_last_active_view", view);
-    } catch {}
+    } catch { }
     const url = new URL(window.location.href);
     if (view === "listing") {
       url.searchParams.delete("view");
@@ -123,7 +154,7 @@ export function ListingWorkspace({
         url.searchParams.set("tab", tab);
       }
       window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
-    } catch {}
+    } catch { }
   }, [allowedFeatureSet]);
 
   const selectPpcSection = useCallback((section: PpcSection) => {
@@ -147,8 +178,42 @@ export function ListingWorkspace({
         url.searchParams.delete("tab");
       }
       window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
-    } catch {}
+    } catch { }
   }, [allowedFeatureSet]);
+
+  const selectAccountingSection = useCallback(
+    (section: AccountingSection = "overview", subTab?: string) => {
+      if (!allowedFeatureSet.has("accounting")) return;
+      setActiveView("accounting");
+      setAccountingSection(section);
+      setAccountingSubTab(subTab);
+      try {
+        localStorage.setItem("nce_last_active_view", "accounting");
+        localStorage.setItem("nce_last_accounting_section", section);
+        if (subTab) {
+          localStorage.setItem("nce_last_accounting_subtab", subTab);
+        } else {
+          localStorage.removeItem("nce_last_accounting_subtab");
+        }
+        const url = new URL(window.location.href);
+        url.searchParams.set("view", "accounting");
+        if (section === "overview") {
+          url.searchParams.delete("section");
+          url.searchParams.delete("subtab");
+        } else {
+          url.searchParams.set("section", section);
+          if (subTab) {
+            url.searchParams.set("subtab", subTab);
+          } else {
+            url.searchParams.delete("subtab");
+          }
+        }
+        url.searchParams.delete("tab");
+        window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+      } catch { }
+    },
+    [allowedFeatureSet],
+  );
 
   // Restore position on initial mount if not specified in SSR initialView
   useEffect(() => {
@@ -162,9 +227,25 @@ export function ListingWorkspace({
       const savedTab = localStorage.getItem("nce_ppc_last_tab") as PpcDashboardTab | null;
 
       const effectiveView = urlView || savedView;
-      const validViews: WorkspaceView[] = ["listing", "mockups", "sellersprite", "ppc"];
+      const validViews: WorkspaceView[] = ["listing", "mockups", "sellersprite", "ppc", "accounting"];
       const validPpcSections: PpcSection[] = ["dashboard", "negative_keyword", "sale_kw", "auto_bid", "phoi", "rules"];
       const validDashboardTabs: PpcDashboardTab[] = ["overview", "campaigns", "targets", "search_terms", "skus", "st_campaigns"];
+      const validAccountingSections: AccountingSection[] = [
+        "overview",
+        "stores",
+        "inventory",
+        "orders",
+        "financials",
+        "reports",
+        "admin",
+        "dashboard",
+        "revenue",
+        "costs",
+        "amazon_fees",
+        "ads",
+        "pnl",
+        "settlements",
+      ];
       if (effectiveView && validViews.includes(effectiveView) && allowedFeatureSet.has(effectiveView)) {
         setActiveView(effectiveView);
         if (effectiveView === "ppc") {
@@ -178,9 +259,33 @@ export function ListingWorkspace({
               }
             }
           }
+        } else if (effectiveView === "accounting") {
+          const savedAccSection = localStorage.getItem("nce_last_accounting_section") as AccountingSection | null;
+          const savedAccSubTab = localStorage.getItem("nce_last_accounting_subtab") || undefined;
+          const urlSubTab = url.searchParams.get("subtab") || undefined;
+          const effectiveAccSection = (urlSection as AccountingSection) || savedAccSection;
+          if (effectiveAccSection && validAccountingSections.includes(effectiveAccSection)) {
+            if (effectiveAccSection === "dashboard") {
+              setAccountingSection("overview");
+            } else if (
+              effectiveAccSection === "revenue" ||
+              effectiveAccSection === "costs" ||
+              effectiveAccSection === "amazon_fees" ||
+              effectiveAccSection === "ads"
+            ) {
+              setAccountingSection("financials");
+              setAccountingSubTab(effectiveAccSection);
+            } else if (effectiveAccSection === "pnl" || effectiveAccSection === "settlements") {
+              setAccountingSection("reports");
+              setAccountingSubTab(effectiveAccSection);
+            } else {
+              setAccountingSection(effectiveAccSection);
+              setAccountingSubTab(urlSubTab || savedAccSubTab);
+            }
+          }
         }
       }
-    } catch {}
+    } catch { }
   }, [allowedFeatureSet]);
 
   const handleOpenGuides = async () => {
@@ -228,7 +333,7 @@ export function ListingWorkspace({
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-slate-50 text-slate-800 font-sans">
       {/* LEFT SIDEBAR NAVIGATION */}
-      <aside className="flex w-56 shrink-0 flex-col justify-between border-r border-slate-200/80 bg-white p-3.5 shadow-xs select-none">
+      <aside className="flex w-64 shrink-0 flex-col justify-between border-r border-slate-200/80 bg-white p-3.5 shadow-xs select-none">
         <div>
           {/* Logo & App Info */}
           <div className="mb-5 flex items-center gap-2.5 px-1 pt-1">
@@ -249,11 +354,10 @@ export function ListingWorkspace({
               <button
                 type="button"
                 onClick={() => selectView("listing")}
-                className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
-                  sidebarTab === "trello" && viewMode === "trello"
+                className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${sidebarTab === "trello" && viewMode === "trello"
                     ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                     : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                }`}
+                  }`}
               >
                 <KanbanIcon
                   size={17}
@@ -269,11 +373,10 @@ export function ListingWorkspace({
               <button
                 type="button"
                 onClick={() => selectView("mockups")}
-                className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
-                  sidebarTab === "mockups" && viewMode === "trello"
+                className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${sidebarTab === "mockups" && viewMode === "trello"
                     ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                     : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                }`}
+                  }`}
               >
                 <ImageSquareIcon
                   size={17}
@@ -289,11 +392,10 @@ export function ListingWorkspace({
               <button
                 type="button"
                 onClick={() => selectView("sellersprite")}
-                className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
-                  viewMode === "sellersprite"
+                className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${viewMode === "sellersprite"
                     ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                     : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                }`}
+                  }`}
               >
                 <LightningIcon
                   size={17}
@@ -310,11 +412,10 @@ export function ListingWorkspace({
                 <button
                   type="button"
                   onClick={() => selectPpcSection("dashboard")}
-                  className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
-                    viewMode === "ppc"
+                  className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${viewMode === "ppc"
                       ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                       : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center gap-2.5">
                     <ChartLineUpIcon
@@ -326,20 +427,18 @@ export function ListingWorkspace({
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span
-                      className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded border transition-colors ${
-                        viewMode === "ppc"
+                      className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded border transition-colors ${viewMode === "ppc"
                           ? "bg-indigo-100/70 text-indigo-700 border-indigo-200"
                           : "bg-emerald-50 text-emerald-700 border-emerald-200"
-                      }`}
+                        }`}
                     >
                       MỚI
                     </span>
                     <CaretDownIcon
                       size={12}
                       weight="bold"
-                      className={`transition-transform duration-200 ${
-                        viewMode === "ppc" ? "rotate-0 text-indigo-600" : "-rotate-90 text-slate-400"
-                      }`}
+                      className={`transition-transform duration-200 ${viewMode === "ppc" ? "rotate-0 text-indigo-600" : "-rotate-90 text-slate-400"
+                        }`}
                     />
                   </div>
                 </button>
@@ -354,19 +453,17 @@ export function ListingWorkspace({
                         selectPpcSection("dashboard");
                         setPpcDashboardTab("overview");
                       }}
-                      className={`flex w-full items-center justify-between gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
-                        ppcSection === "dashboard" && ppcDashboardTab === "overview"
+                      className={`flex w-full items-center justify-between gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "overview"
                           ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
                           : ppcSection === "dashboard"
-                          ? "text-indigo-900 font-semibold hover:bg-slate-100"
-                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
-                      }`}
+                            ? "text-indigo-900 font-semibold hover:bg-slate-100"
+                            : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                        }`}
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         <span
-                          className={`h-2 w-2 rounded-full shrink-0 transition-colors ${
-                            ppcSection === "dashboard" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                          }`}
+                          className={`h-2 w-2 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                            }`}
                         />
                         <span className="truncate">PPC Dashboard</span>
                       </div>
@@ -383,16 +480,14 @@ export function ListingWorkspace({
                       <button
                         type="button"
                         onClick={() => selectPpcDashboardTab("campaigns")}
-                        className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${
-                          ppcSection === "dashboard" && ppcDashboardTab === "campaigns"
+                        className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "campaigns"
                             ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
                             : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
-                        }`}
+                          }`}
                       >
                         <span
-                          className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${
-                            ppcSection === "dashboard" && ppcDashboardTab === "campaigns" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                          }`}
+                          className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "campaigns" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                            }`}
                         />
                         <span className="truncate">Campaign</span>
                       </button>
@@ -401,16 +496,14 @@ export function ListingWorkspace({
                       <button
                         type="button"
                         onClick={() => selectPpcDashboardTab("targets")}
-                        className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${
-                          ppcSection === "dashboard" && ppcDashboardTab === "targets"
+                        className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "targets"
                             ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
                             : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
-                        }`}
+                          }`}
                       >
                         <span
-                          className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${
-                            ppcSection === "dashboard" && ppcDashboardTab === "targets" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                          }`}
+                          className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "targets" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                            }`}
                         />
                         <span className="truncate">Target</span>
                       </button>
@@ -419,16 +512,14 @@ export function ListingWorkspace({
                       <button
                         type="button"
                         onClick={() => selectPpcDashboardTab("search_terms")}
-                        className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${
-                          ppcSection === "dashboard" && ppcDashboardTab === "search_terms"
+                        className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "search_terms"
                             ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
                             : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
-                        }`}
+                          }`}
                       >
                         <span
-                          className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${
-                            ppcSection === "dashboard" && ppcDashboardTab === "search_terms" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                          }`}
+                          className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "search_terms" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                            }`}
                         />
                         <span className="truncate">Search Term</span>
                       </button>
@@ -437,16 +528,14 @@ export function ListingWorkspace({
                       <button
                         type="button"
                         onClick={() => selectPpcDashboardTab("skus")}
-                        className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${
-                          ppcSection === "dashboard" && ppcDashboardTab === "skus"
+                        className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "skus"
                             ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
                             : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
-                        }`}
+                          }`}
                       >
                         <span
-                          className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${
-                            ppcSection === "dashboard" && ppcDashboardTab === "skus" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                          }`}
+                          className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "skus" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                            }`}
                         />
                         <span className="truncate">SKU</span>
                       </button>
@@ -455,16 +544,14 @@ export function ListingWorkspace({
                       <button
                         type="button"
                         onClick={() => selectPpcDashboardTab("st_campaigns")}
-                        className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${
-                          ppcSection === "dashboard" && ppcDashboardTab === "st_campaigns"
+                        className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "st_campaigns"
                             ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
                             : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
-                        }`}
+                          }`}
                       >
                         <span
-                          className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${
-                            ppcSection === "dashboard" && ppcDashboardTab === "st_campaigns" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                          }`}
+                          className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "st_campaigns" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                            }`}
                         />
                         <span className="truncate">Đối Soát ST</span>
                       </button>
@@ -474,16 +561,14 @@ export function ListingWorkspace({
                     <button
                       type="button"
                       onClick={() => selectPpcSection("negative_keyword")}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
-                        ppcSection === "negative_keyword"
+                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "negative_keyword"
                           ? "bg-rose-50 text-rose-800 font-bold shadow-2xs border border-rose-200/60"
                           : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
-                      }`}
+                        }`}
                     >
                       <span
-                        className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${
-                          ppcSection === "negative_keyword" ? "bg-rose-600 ring-2 ring-rose-200" : "bg-slate-300"
-                        }`}
+                        className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "negative_keyword" ? "bg-rose-600 ring-2 ring-rose-200" : "bg-slate-300"
+                          }`}
                       />
                       <span>Negative Keyword</span>
                     </button>
@@ -492,16 +577,14 @@ export function ListingWorkspace({
                     <button
                       type="button"
                       onClick={() => selectPpcSection("sale_kw")}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
-                        ppcSection === "sale_kw"
+                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "sale_kw"
                           ? "bg-emerald-50 text-emerald-800 font-bold shadow-2xs border border-emerald-200/60"
                           : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
-                      }`}
+                        }`}
                     >
                       <span
-                        className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${
-                          ppcSection === "sale_kw" ? "bg-emerald-600 ring-2 ring-emerald-200" : "bg-slate-300"
-                        }`}
+                        className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "sale_kw" ? "bg-emerald-600 ring-2 ring-emerald-200" : "bg-slate-300"
+                          }`}
                       />
                       <span>Lên Camp Sale KW</span>
                     </button>
@@ -510,16 +593,14 @@ export function ListingWorkspace({
                     <button
                       type="button"
                       onClick={() => selectPpcSection("auto_bid")}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
-                        ppcSection === "auto_bid"
+                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "auto_bid"
                           ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
                           : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
-                      }`}
+                        }`}
                     >
                       <span
-                        className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${
-                          ppcSection === "auto_bid" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                        }`}
+                        className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "auto_bid" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                          }`}
                       />
                       <span>Auto Bid</span>
                     </button>
@@ -531,16 +612,14 @@ export function ListingWorkspace({
                     <button
                       type="button"
                       onClick={() => selectPpcSection("phoi")}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
-                        ppcSection === "phoi"
+                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "phoi"
                           ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
                           : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
-                      }`}
+                        }`}
                     >
                       <span
-                        className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${
-                          ppcSection === "phoi" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                        }`}
+                        className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "phoi" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                          }`}
                       />
                       <span>Quản lý Phôi</span>
                     </button>
@@ -549,18 +628,229 @@ export function ListingWorkspace({
                     <button
                       type="button"
                       onClick={() => selectPpcSection("rules")}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
-                        ppcSection === "rules"
+                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "rules"
                           ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
                           : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
-                      }`}
+                        }`}
                     >
                       <span
-                        className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${
-                          ppcSection === "rules" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                        }`}
+                        className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "rules" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                          }`}
                       />
                       <span>Quản lý Rule</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Accounting Group (cùng cấp với PPC Analytics) */}
+            {(actor?.allowedFeatures?.includes("accounting") ?? true) && (
+              <div className="space-y-1">
+                <button
+                  type="button"
+                  onClick={() => selectAccountingSection("overview")}
+                  className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${viewMode === "accounting"
+                      ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
+                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                    }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <ReceiptIcon
+                      size={17}
+                      weight={viewMode === "accounting" ? "fill" : "duotone"}
+                      className={viewMode === "accounting" ? "text-indigo-600" : "text-slate-500"}
+                    />
+                    <span>Accounting</span>
+                  </div>
+                  <CaretDownIcon
+                    size={12}
+                    weight="bold"
+                    className={`transition-transform duration-200 ${viewMode === "accounting" ? "rotate-0 text-indigo-600" : "-rotate-90 text-slate-400"
+                      }`}
+                  />
+                </button>
+
+                {/* Sub-items under Accounting: 6 main groups + System Admin */}
+                {viewMode === "accounting" && (
+                  <div className="space-y-0.5 pt-1 animate-in fade-in slide-in-from-top-1 duration-150">
+                    {/* 1. Overview */}
+                    <button
+                      type="button"
+                      onClick={() => selectAccountingSection("overview")}
+                      className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "overview" || accountingSection === "dashboard"
+                          ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
+                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        }`}
+                    >
+                      <SquaresFourIcon
+                        size={17}
+                        weight={accountingSection === "overview" || accountingSection === "dashboard" ? "fill" : "duotone"}
+                        className={`shrink-0 mt-0.5 ${accountingSection === "overview" || accountingSection === "dashboard"
+                            ? "text-indigo-600"
+                            : "text-slate-400"
+                          }`}
+                      />
+                      <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                        <span className="text-xs font-bold text-slate-800">Overview</span>
+                        <span className="text-[10.5px] font-normal text-slate-400 leading-snug">Dashboard tổng quan</span>
+                      </div>
+                    </button>
+
+                    {/* 2. Stores */}
+                    <button
+                      type="button"
+                      onClick={() => selectAccountingSection("stores")}
+                      className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "stores"
+                          ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
+                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        }`}
+                    >
+                      <StorefrontIcon
+                        size={17}
+                        weight={accountingSection === "stores" ? "fill" : "duotone"}
+                        className={`shrink-0 mt-0.5 ${accountingSection === "stores" ? "text-indigo-600" : "text-slate-400"
+                          }`}
+                      />
+                      <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                        <span className="text-xs font-bold text-slate-800">Stores</span>
+                        <span className="text-[10.5px] font-normal text-slate-400 leading-snug">Quản lý Store</span>
+                      </div>
+                    </button>
+
+                    {/* 3. Inventory */}
+                    <button
+                      type="button"
+                      onClick={() => selectAccountingSection("inventory")}
+                      className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "inventory"
+                          ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
+                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        }`}
+                    >
+                      <PackageIcon
+                        size={17}
+                        weight={accountingSection === "inventory" ? "fill" : "duotone"}
+                        className={`shrink-0 mt-0.5 ${accountingSection === "inventory" ? "text-indigo-600" : "text-slate-400"
+                          }`}
+                      />
+                      <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                        <span className="text-xs font-bold text-slate-800">Inventory</span>
+                        <span className="text-[10.5px] font-normal text-slate-400 leading-snug break-words">SKU, phôi, lô hàng, shipment</span>
+                      </div>
+                    </button>
+
+                    {/* 4. Orders */}
+                    <button
+                      type="button"
+                      onClick={() => selectAccountingSection("orders")}
+                      className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "orders"
+                          ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
+                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        }`}
+                    >
+                      <ShoppingCartIcon
+                        size={17}
+                        weight={accountingSection === "orders" ? "fill" : "duotone"}
+                        className={`shrink-0 mt-0.5 ${accountingSection === "orders" ? "text-indigo-600" : "text-slate-400"
+                          }`}
+                      />
+                      <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                        <span className="text-xs font-bold text-slate-800">Orders</span>
+                        <span className="text-[10.5px] font-normal text-slate-400 leading-snug break-words">Đơn hàng, hoàn tiền, hủy đơn</span>
+                      </div>
+                    </button>
+
+                    {/* 5. Financials */}
+                    <button
+                      type="button"
+                      onClick={() => selectAccountingSection("financials")}
+                      className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "financials" ||
+                          accountingSection === "revenue" ||
+                          accountingSection === "costs" ||
+                          accountingSection === "amazon_fees" ||
+                          accountingSection === "ads"
+                          ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
+                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        }`}
+                    >
+                      <WalletIcon
+                        size={17}
+                        weight={
+                          accountingSection === "financials" ||
+                            accountingSection === "revenue" ||
+                            accountingSection === "costs" ||
+                            accountingSection === "amazon_fees" ||
+                            accountingSection === "ads"
+                            ? "fill"
+                            : "duotone"
+                        }
+                        className={`shrink-0 mt-0.5 ${accountingSection === "financials" ||
+                            accountingSection === "revenue" ||
+                            accountingSection === "costs" ||
+                            accountingSection === "amazon_fees" ||
+                            accountingSection === "ads"
+                            ? "text-indigo-600"
+                            : "text-slate-400"
+                          }`}
+                      />
+                      <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                        <span className="text-xs font-bold text-slate-800">Financials</span>
+                        <span className="text-[10.5px] font-normal text-slate-400 leading-snug break-words">Doanh thu, chi phí, Amazon Fees, Ads</span>
+                      </div>
+                    </button>
+
+                    {/* 6. Reports */}
+                    <button
+                      type="button"
+                      onClick={() => selectAccountingSection("reports")}
+                      className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "reports" ||
+                          accountingSection === "pnl" ||
+                          accountingSection === "settlements"
+                          ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
+                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        }`}
+                    >
+                      <TrendUpIcon
+                        size={17}
+                        weight={
+                          accountingSection === "reports" ||
+                            accountingSection === "pnl" ||
+                            accountingSection === "settlements"
+                            ? "fill"
+                            : "duotone"
+                        }
+                        className={`shrink-0 mt-0.5 ${accountingSection === "reports" ||
+                            accountingSection === "pnl" ||
+                            accountingSection === "settlements"
+                            ? "text-indigo-600"
+                            : "text-slate-400"
+                          }`}
+                      />
+                      <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                        <span className="text-xs font-bold text-slate-800">Reports</span>
+                        <span className="text-[10.5px] font-normal text-slate-400 leading-snug break-words">P&L, Settlement, đối soát</span>
+                      </div>
+                    </button>
+
+                    {/* Subtle Divider before System Admin */}
+                    <div className="my-1.5 border-t border-slate-100" />
+
+                    {/* 7. System Admin */}
+                    <button
+                      type="button"
+                      onClick={() => selectAccountingSection("admin")}
+                      className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "admin"
+                          ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
+                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        }`}
+                    >
+                      <GearIcon
+                        size={17}
+                        weight={accountingSection === "admin" ? "fill" : "duotone"}
+                        className={`shrink-0 ${accountingSection === "admin" ? "text-indigo-600" : "text-slate-400"
+                          }`}
+                      />
+                      <span className="text-xs font-bold text-slate-800">System Admin</span>
                     </button>
                   </div>
                 )}
@@ -605,36 +895,56 @@ export function ListingWorkspace({
               {viewMode === "sellersprite"
                 ? "Đào Keyword"
                 : viewMode === "ppc"
-                ? ppcSection === "phoi"
-                  ? "Amazon PPC - Quản Lý Phôi (Cost Master)"
-                  : ppcSection === "rules"
-                  ? "Amazon PPC - Quản Lý Rule PPC"
-                  : ppcSection === "negative_keyword"
-                  ? "Amazon PPC - Negative Keyword (ST Optimization)"
-                  : ppcSection === "sale_kw"
-                  ? "Amazon PPC - Lên Campaign Sale KW"
-                  : ppcSection === "auto_bid"
-                  ? "Amazon PPC - Đề Xuất & Auto Bid"
-                  : ppcDashboardTab === "campaigns"
-                  ? "Amazon PPC - Quản Lý Campaign"
-                  : ppcDashboardTab === "targets"
-                  ? "Amazon PPC - Quản Lý Target & Keyword"
-                  : ppcDashboardTab === "search_terms"
-                  ? "Amazon PPC - Báo Cáo Search Terms"
-                  : ppcDashboardTab === "skus"
-                  ? "Amazon PPC - Hiệu Suất Theo SKU"
-                  : ppcDashboardTab === "st_campaigns"
-                  ? "Amazon PPC - Đối Soát Search Term"
-                  : "Amazon PPC Dashboard & Analytics"
-                : sidebarTab === "mockups"
-                ? "Auto Mockup Generator"
-                : "Bảng Trello Kanban & Listing"}
+                  ? ppcSection === "phoi"
+                    ? "Amazon PPC - Quản Lý Phôi (Cost Master)"
+                    : ppcSection === "rules"
+                      ? "Amazon PPC - Quản Lý Rule PPC"
+                      : ppcSection === "negative_keyword"
+                        ? "Amazon PPC - Negative Keyword (ST Optimization)"
+                        : ppcSection === "sale_kw"
+                          ? "Amazon PPC - Lên Campaign Sale KW"
+                          : ppcSection === "auto_bid"
+                            ? "Amazon PPC - Đề Xuất & Auto Bid"
+                            : ppcDashboardTab === "campaigns"
+                              ? "Amazon PPC - Quản Lý Campaign"
+                              : ppcDashboardTab === "targets"
+                                ? "Amazon PPC - Quản Lý Target & Keyword"
+                                : ppcDashboardTab === "search_terms"
+                                  ? "Amazon PPC - Báo Cáo Search Terms"
+                                  : ppcDashboardTab === "skus"
+                                    ? "Amazon PPC - Hiệu Suất Theo SKU"
+                                    : ppcDashboardTab === "st_campaigns"
+                                      ? "Amazon PPC - Đối Soát Search Term"
+                                      : "Amazon PPC Dashboard & Analytics"
+                  : viewMode === "accounting"
+                    ? accountingSection === "stores"
+                      ? "Accounting - Quản Lý Store"
+                      : accountingSection === "overview" || accountingSection === "dashboard"
+                        ? "Accounting - Overview & Dashboard"
+                        : accountingSection === "inventory"
+                          ? "Accounting - Quản Lý Inventory"
+                          : accountingSection === "orders"
+                            ? "Accounting - Quản Lý Orders"
+                            : accountingSection === "financials" ||
+                              accountingSection === "revenue" ||
+                              accountingSection === "costs" ||
+                              accountingSection === "amazon_fees" ||
+                              accountingSection === "ads"
+                              ? "Accounting - Financials (Tài Chính)"
+                              : accountingSection === "reports" ||
+                                accountingSection === "pnl" ||
+                                accountingSection === "settlements"
+                                ? "Accounting - Báo Cáo & Đối Soát"
+                                : "Accounting - System Admin"
+                    : sidebarTab === "mockups"
+                      ? "Auto Mockup Generator"
+                      : "Bảng Trello Kanban & Listing"}
             </h2>
           </div>
 
           {/* Right Header Items: Trello Config & User Avatar */}
           <div className="flex items-center gap-2.5">
-            {hasTrelloAccess && viewMode !== "ppc" ? (
+            {hasTrelloAccess && viewMode !== "ppc" && viewMode !== "accounting" ? (
               <button
                 type="button"
                 onClick={() => setShowTrelloConfigModal(true)}
@@ -716,19 +1026,19 @@ export function ListingWorkspace({
                     ppcSection === "negative_keyword"
                       ? "st_optimization"
                       : ppcSection === "sale_kw"
-                      ? "sale_kw"
-                      : ppcSection === "auto_bid"
-                      ? "recommendations"
-                      : undefined
+                        ? "sale_kw"
+                        : ppcSection === "auto_bid"
+                          ? "recommendations"
+                          : undefined
                   }
                   initialTab={
                     ppcSection === "negative_keyword"
                       ? "st_optimization"
                       : ppcSection === "sale_kw"
-                      ? "sale_kw"
-                      : ppcSection === "auto_bid"
-                      ? "recommendations"
-                      : ppcDashboardTab
+                        ? "sale_kw"
+                        : ppcSection === "auto_bid"
+                          ? "recommendations"
+                          : ppcDashboardTab
                   }
                   activeTabProp={
                     ppcSection === "dashboard" ? ppcDashboardTab : undefined
@@ -742,6 +1052,14 @@ export function ListingWorkspace({
                   }}
                 />
               )}
+            </div>
+          ) : viewMode === "accounting" ? (
+            <div className="h-full w-full overflow-y-auto p-6 bg-slate-50 font-[family-name:var(--font-accounting)] thin-scrollbar">
+              <AccountingWorkspace
+                activeSection={accountingSection}
+                activeSubTab={accountingSubTab}
+                onSectionChange={(s, tab) => selectAccountingSection(s, tab)}
+              />
             </div>
           ) : (
             <div className="h-full w-full overflow-hidden">

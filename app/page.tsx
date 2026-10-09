@@ -3,14 +3,14 @@ import { AccessStatusScreen } from "@/components/access-status-screen";
 import { ListingWorkspace } from "@/components/listing-workspace";
 import { resolveActorFromHeaders } from "@/lib/auth-server";
 
-type WorkspaceView = "listing" | "mockups" | "sellersprite" | "ppc";
+type WorkspaceView = "listing" | "mockups" | "sellersprite" | "ppc" | "accounting";
 
 function resolveAllowedView(
   candidateView: string | string[] | undefined,
-  allowedFeatures: string[] = ["listing", "mockups", "sellersprite", "ppc"],
+  allowedFeatures: string[] = ["listing", "mockups", "sellersprite", "ppc", "accounting"],
 ): WorkspaceView | null {
   const candidate = (Array.isArray(candidateView) ? candidateView[0] : candidateView) as WorkspaceView;
-  const validViews: WorkspaceView[] = ["listing", "mockups", "sellersprite", "ppc"];
+  const validViews: WorkspaceView[] = ["listing", "mockups", "sellersprite", "ppc", "accounting"];
 
   // Nếu người dùng chọn một view hợp lệ và có quyền, cho phép
   if (candidate && validViews.includes(candidate) && allowedFeatures.includes(candidate)) {
@@ -38,7 +38,7 @@ export default async function Home({
   }
 
   const features = actor.allowedFeatures ??
-    (actor.role === "admin" ? ["listing", "mockups", "sellersprite", "ppc"] : []);
+    (actor.role === "admin" ? ["listing", "mockups", "sellersprite", "ppc", "accounting"] : []);
 
   if (features.length === 0) {
     return <AccessStatusScreen status="no_features" email={email} />;

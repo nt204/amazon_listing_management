@@ -15,7 +15,7 @@ export type Permission =
   | "manage_templates"
   | "manage_users"
   | "manage_storage";
-export type SystemFeature = "listing" | "mockups" | "sellersprite" | "ppc";
+export type SystemFeature = "listing" | "mockups" | "sellersprite" | "ppc" | "accounting";
 
 export interface RequestActor {
   teamId: string;
@@ -143,7 +143,7 @@ export function verifySessionToken(token: string | undefined): RequestActor | nu
       displayName: decoded.displayName,
       role: decoded.role,
       ruleProfile: decoded.ruleProfile || "",
-      allowedFeatures: decoded.allowedFeatures || ["listing", "mockups", "sellersprite", "ppc"],
+      allowedFeatures: decoded.allowedFeatures || ["listing", "mockups", "sellersprite", "ppc", "accounting"],
       ...(decoded.email ? { email: decoded.email } : {}),
     };
   } catch {
@@ -160,7 +160,7 @@ export function authenticateTeamToken(token: string) {
     displayName: match.display_name || match.user_id,
     role: match.role,
     ruleProfile: match.rule_profile || "",
-    allowedFeatures: ["listing", "mockups", "sellersprite", "ppc"],
+    allowedFeatures: ["listing", "mockups", "sellersprite", "ppc", "accounting"],
   } satisfies RequestActor;
 }
 
@@ -176,7 +176,7 @@ export function developmentActor(): RequestActor {
     displayName: "Admin (ndtrince)",
     role: "admin",
     ruleProfile: process.env.LISTING_RULE_PROFILE || "",
-    allowedFeatures: ["listing", "mockups", "sellersprite", "ppc"],
+    allowedFeatures: ["listing", "mockups", "sellersprite", "ppc", "accounting"],
     email: "ndtrince@gmail.com",
   };
 }
