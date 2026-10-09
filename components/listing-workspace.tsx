@@ -1054,7 +1054,7 @@ export function ListingWorkspace({
               )}
             </div>
           ) : viewMode === "accounting" ? (
-            <div className="h-full w-full overflow-y-auto p-6 bg-slate-50 font-[family-name:var(--font-accounting)] thin-scrollbar">
+            <div className="font-accounting-system h-full w-full overflow-y-auto p-6 bg-slate-50 thin-scrollbar">
               <AccountingWorkspace
                 activeSection={accountingSection}
                 activeSubTab={accountingSubTab}

@@ -470,13 +470,8 @@ function PaginationBar({
 function getOptimizedThumbnailUrl(url: string | null): string | null {
   if (!url) return null;
   const trimmed = url.trim();
-  const driveMatch = trimmed.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
-  if (driveMatch && driveMatch[1]) {
-    return `https://drive.google.com/thumbnail?id=${driveMatch[1]}&sz=w120`;
-  }
-  const driveIdMatch = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-  if (trimmed.includes("drive.google.com") && driveIdMatch && driveIdMatch[1]) {
-    return `https://drive.google.com/thumbnail?id=${driveIdMatch[1]}&sz=w120`;
+  if (trimmed.includes("trello.com") || trimmed.includes("drive.google.com")) {
+    return `/api/accounting/inventory/mockup-proxy?url=${encodeURIComponent(trimmed)}`;
   }
   return trimmed;
 }
@@ -1300,25 +1295,34 @@ function InventoryViewInner() {
               </h1>
             </div>
 
-            {/* STORE BUTTONS: BOZSPACER, FASTPEACE, LIMIMA, MALFIRST, WARMSTOREY */}
-            <div className="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-300">
-              {stores.map((s) => {
-                const isSelected = s.id === selectedStoreId;
-                return (
-                  <button
-                    key={s.id}
-                    type="button"
-                    onClick={() => handleStoreSelect(s.id)}
-                    className={`rounded-md px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
-                      isSelected
-                        ? "bg-emerald-600 text-white shadow-xs border border-emerald-700 font-extrabold"
-                        : "text-slate-700 hover:bg-white/80 hover:text-slate-950"
-                    }`}
-                  >
-                    <span>{s.name}</span>
-                  </button>
-                );
-              })}
+            {/* Store selector: store changes are infrequent, so keep the header compact. */}
+            <div className="flex items-center gap-2">
+              <label
+                htmlFor="inventory-store-select"
+                className="text-[11px] font-semibold uppercase tracking-[0.06em] text-slate-500"
+              >
+                Store
+              </label>
+              <select
+                id="inventory-store-select"
+                value={selectedStoreId}
+                onChange={(event) => handleStoreSelect(event.target.value)}
+                disabled={loadingStores || stores.length === 0}
+                aria-label="Chọn Store để xem dữ liệu Inventory"
+                className="min-w-[220px] rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800 shadow-2xs outline-none transition hover:border-slate-400 hover:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:text-slate-400"
+              >
+                {loadingStores ? (
+                  <option value="">Đang tải danh sách Store...</option>
+                ) : stores.length === 0 ? (
+                  <option value="">Chưa có Store</option>
+                ) : (
+                  stores.map((store) => (
+                    <option key={store.id} value={store.id}>
+                      {store.name}
+                    </option>
+                  ))
+                )}
+              </select>
             </div>
           </div>
 
@@ -2896,7 +2900,7 @@ function InventoryViewInner() {
                   <span className="font-bold text-slate-700 text-[11px]">Xem trước ảnh phôi</span>
                   {skuFormData.mockup_url ? (
                     <div className="h-14 w-14 rounded-lg border border-slate-300 p-0.5 overflow-hidden bg-white">
-                      <img src={skuFormData.mockup_url} alt="preview" className="h-full w-full object-contain" />
+                      <img src={getOptimizedThumbnailUrl(skuFormData.mockup_url) || skuFormData.mockup_url} alt="preview" className="h-full w-full object-contain" />
                     </div>
                   ) : (
                     <span className="text-[11px] text-slate-400">Chưa có link ảnh</span>
@@ -3765,7 +3769,7 @@ function InventoryViewInner() {
             </button>
             <div className="relative flex items-center justify-center w-full max-h-[75vh] overflow-hidden rounded-xl bg-slate-100">
               <img
-                src={previewModalUrl}
+                src={getOptimizedThumbnailUrl(previewModalUrl) || previewModalUrl}
                 alt="Mockup Preview"
                 className="max-w-full max-h-[75vh] object-contain rounded-lg"
               />
