@@ -187,7 +187,7 @@ export async function listSkuMaster(
         created_at < ${cursorCreatedAt}::timestamptz
         OR (created_at = ${cursorCreatedAt}::timestamptz AND id < ${cursorId}::uuid)
       ))
-    ORDER BY created_at DESC, id DESC
+    ORDER BY thang_listing DESC NULLS LAST, created_at DESC, id DESC
     LIMIT ${limit} OFFSET ${offset}
   `;
 
@@ -500,7 +500,7 @@ export async function listInboundShipments(
         s.created_at < ${cursorCreatedAt}::timestamptz
         OR (s.created_at = ${cursorCreatedAt}::timestamptz AND s.id < ${cursorId}::uuid)
       ))
-    ORDER BY s.created_at DESC, s.id DESC
+    ORDER BY s.ngay_di DESC NULLS LAST, s.created_at DESC, s.id DESC
     LIMIT ${limit} OFFSET ${offset}
   `;
 

@@ -40,7 +40,7 @@ export async function GET(request: Request) {
               custom_fields
             FROM accounting_sku_master
             WHERE store_id = ${storeId} AND deleted_at IS NULL
-            ORDER BY created_at DESC, sku ASC
+            ORDER BY thang_listing DESC NULLS LAST, created_at DESC, sku ASC
           `
         : [];
 
@@ -60,7 +60,7 @@ export async function GET(request: Request) {
             FROM accounting_inbound_shipments s
             LEFT JOIN accounting_sku_master m ON m.store_id = s.store_id AND m.sku = s.sku AND m.deleted_at IS NULL
             WHERE s.store_id = ${storeId} AND s.deleted_at IS NULL
-            ORDER BY s.created_at DESC, s.id DESC
+            ORDER BY s.ngay_di DESC NULLS LAST, s.created_at DESC, s.id DESC
           `
         : [];
 

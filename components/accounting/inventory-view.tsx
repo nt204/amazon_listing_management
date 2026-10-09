@@ -1060,15 +1060,42 @@ function InventoryViewInner() {
     [selectedStore, selectedStoreId, skuPage, skuLimit, shipmentPage, shipmentLimit, debouncedSkuSearch, debouncedShipmentSearch, skuStatusFilter, skuTypeFilter, shipmentStatusFilter, inlineEditing, queryClient]
   );
 
-  // Mặc định hiển thị phôi SKU mới nhất lên đầu để người dùng dễ theo dõi và chỉnh sửa
+  const compareDatesDesc = (aStr?: string | null, bStr?: string | null): number => {
+    const aClean = (aStr || "").trim();
+    const bClean = (bStr || "").trim();
+    if (aClean && !bClean) return -1;
+    if (!aClean && bClean) return 1;
+    if (!aClean && !bClean) return 0;
+    const timeA = Date.parse(aClean);
+    const timeB = Date.parse(bClean);
+    if (!isNaN(timeA) && !isNaN(timeB) && timeA !== timeB) {
+      return timeB - timeA;
+    }
+    return bClean.localeCompare(aClean);
+  };
+
+  // Mặc định sắp xếp BẢNG MÃ theo tháng listing mới nhất
   const sortedSkus = useMemo(() => {
     return [...allSkus].sort((a, b) => {
+      const cmp = compareDatesDesc(a.thang_listing, b.thang_listing);
+      if (cmp !== 0) return cmp;
       const ca = a.created_at ? new Date(a.created_at).getTime() : 0;
       const cb = b.created_at ? new Date(b.created_at).getTime() : 0;
       if (ca !== cb) return cb - ca;
       return (a.row_order ?? 999999) - (b.row_order ?? 999999);
     });
   }, [allSkus]);
+
+  // Mặc định sắp xếp CHI TIẾT ĐI HÀNG theo ngày đi từ mới nhất
+  const sortedShipments = useMemo(() => {
+    return [...allShipments].sort((a, b) => {
+      const cmp = compareDatesDesc(a.ngay_di, b.ngay_di);
+      if (cmp !== 0) return cmp;
+      const ca = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const cb = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return cb - ca;
+    });
+  }, [allShipments]);
 
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
@@ -3007,7 +3034,7 @@ function InventoryViewInner() {
                       Đang tải danh sách lô hàng của Store {selectedStore?.name}...
                     </td>
                   </tr>
-                ) : allShipments.length === 0 ? (
+                ) : sortedShipments.length === 0 ? (
                   <tr>
                     <td colSpan={inboundVisibleCount + 1} className="py-20 text-center text-slate-500 text-sm">
                       <TruckIcon size={40} className="mx-auto mb-2 text-slate-400" />
@@ -3015,7 +3042,7 @@ function InventoryViewInner() {
                     </td>
                   </tr>
                 ) : (
-                  allShipments.map((item, idx) => {
+                  sortedShipments.map((item, idx) => {
                     const stt = (shipmentPage - 1) * shipmentLimit + idx + 1;
                     return (
                       <tr
