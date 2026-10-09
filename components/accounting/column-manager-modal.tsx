@@ -3,9 +3,13 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ArrowCounterClockwiseIcon,
+  CaretDownIcon,
+  CaretUpIcon,
   CheckIcon,
+  DotsSixVerticalIcon,
   EyeIcon,
   EyeSlashIcon,
+  LockIcon,
   MagnifyingGlassIcon,
   PencilSimpleIcon,
   PlusIcon,
@@ -95,19 +99,62 @@ export function ColumnHeaderCell({
   col,
   children,
   className = "",
+  draggable = false,
+  isDragging = false,
+  isDragOver = false,
+  onDragStart,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  onDragEnd,
   onQuickHide,
   onQuickRename,
 }: {
   col?: ColumnConfig;
   children: React.ReactNode;
   className?: string;
+  draggable?: boolean;
+  isDragging?: boolean;
+  isDragOver?: boolean;
+  onDragStart?: (e: React.DragEvent<HTMLTableCellElement>) => void;
+  onDragOver?: (e: React.DragEvent<HTMLTableCellElement>) => void;
+  onDragLeave?: (e: React.DragEvent<HTMLTableCellElement>) => void;
+  onDrop?: (e: React.DragEvent<HTMLTableCellElement>) => void;
+  onDragEnd?: (e: React.DragEvent<HTMLTableCellElement>) => void;
   onQuickHide?: (id: string) => void;
   onQuickRename?: (id: string, currentLabel: string) => void;
 }) {
+  const isMovable = !!(col && !col.isFrozen && draggable);
+
   return (
-    <th className={`group/th relative ${className}`}>
+    <th
+      draggable={isMovable}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
+      title={isMovable ? "Kéo thả tiêu đề cột này để đổi vị trí trực tiếp trên bảng" : undefined}
+      className={`group/th relative select-none transition-all ${
+        isMovable ? "cursor-grab active:cursor-grabbing hover:brightness-105" : ""
+      } ${
+        isDragging
+          ? "opacity-30 bg-amber-700/80 !border-dashed !border-amber-900"
+          : isDragOver
+          ? "bg-amber-300 ring-2 ring-indigo-600 shadow-md !border-l-4 !border-l-indigo-600 scale-[1.01]"
+          : ""
+      } ${className}`}
+    >
       <div className="flex items-center justify-between gap-1 w-full">
-        <div className="flex-1">{children}</div>
+        {isMovable && (
+          <span
+            className="opacity-0 group-hover/th:opacity-60 text-slate-900/70 mr-1 text-[11px] font-mono shrink-0 select-none cursor-grab"
+            title="Kéo cột"
+          >
+            ⠿
+          </span>
+        )}
+        <div className="flex-1 min-w-0">{children}</div>
         {col && !col.isFrozen && (
           <div className="hidden group-hover/th:flex items-center gap-0.5 ml-1 shrink-0">
             {onQuickRename && (
@@ -166,6 +213,8 @@ export function ColumnManagerModal({
   const [newColType, setNewColType] = useState<"text" | "number" | "date">("text");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingLabel, setEditingLabel] = useState("");
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
 
   // Keep in sync when modal opens or columns prop changes
   useEffect(() => {
@@ -174,11 +223,18 @@ export function ColumnManagerModal({
       setSearch("");
       setNewColName("");
       setEditingId(null);
+      setDraggedId(null);
+      setDragOverId(null);
     }
   }, [isOpen, columns]);
 
   const visibleCount = useMemo(
     () => localColumns.filter((c) => c.visible).length,
+    [localColumns]
+  );
+
+  const movableCols = useMemo(
+    () => localColumns.filter((c) => !c.isFrozen),
     [localColumns]
   );
 
@@ -208,6 +264,46 @@ export function ColumnManagerModal({
     );
   };
 
+  // Reorder movable columns via drag & drop
+  const handleReorder = (fromId: string, toId: string) => {
+    setLocalColumns((prev) => {
+      const fromIndex = prev.findIndex((c) => c.id === fromId);
+      const toIndex = prev.findIndex((c) => c.id === toId);
+      if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return prev;
+      if (prev[fromIndex].isFrozen || prev[toIndex].isFrozen) return prev;
+
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+  };
+
+  // Move a column one slot up (before)
+  const handleMoveUp = (id: string) => {
+    setLocalColumns((prev) => {
+      const idx = prev.findIndex((c) => c.id === id);
+      if (idx <= 0 || prev[idx].isFrozen) return prev;
+      if (prev[idx - 1].isFrozen) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(idx, 1);
+      next.splice(idx - 1, 0, moved);
+      return next;
+    });
+  };
+
+  // Move a column one slot down (after)
+  const handleMoveDown = (id: string) => {
+    setLocalColumns((prev) => {
+      const idx = prev.findIndex((c) => c.id === id);
+      if (idx === -1 || idx >= prev.length - 1 || prev[idx].isFrozen) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(idx, 1);
+      next.splice(idx + 1, 0, moved);
+      return next;
+    });
+  };
+
   // Show all columns
   const handleShowAll = () => {
     setLocalColumns((prev) => prev.map((c) => ({ ...c, visible: true })));
@@ -229,7 +325,7 @@ export function ColumnManagerModal({
 
   // Reset to original defaults
   const handleResetToDefault = () => {
-    if (confirm("Khôi phục toàn bộ cột và tên hiển thị về mặc định ban đầu?")) {
+    if (confirm("Khôi phục toàn bộ cột, thứ tự và tên hiển thị về mặc định ban đầu?")) {
       onReset();
       onClose();
     }
@@ -301,7 +397,7 @@ export function ColumnManagerModal({
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-3xl max-h-[90vh] bg-white rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden"
+        className="relative w-full max-w-3xl max-h-[92vh] bg-white rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* HEADER */}
@@ -353,7 +449,7 @@ export function ColumnManagerModal({
               type="button"
               onClick={handleResetToDefault}
               className="px-2.5 py-1.5 rounded-lg font-bold bg-white hover:bg-red-50 text-red-700 border border-red-200 transition flex items-center gap-1 cursor-pointer"
-              title="Khôi phục về trạng thái ban đầu của hệ thống"
+              title="Khôi phục thứ tự và tên cột về trạng thái ban đầu của hệ thống"
             >
               <ArrowCounterClockwiseIcon size={14} weight="bold" />
               Khôi phục gốc
@@ -410,25 +506,107 @@ export function ColumnManagerModal({
               <PlusIcon size={14} weight="bold" /> Thêm cột
             </button>
           </form>
+
+          {/* DRAG-AND-DROP TIP */}
+          <div className="flex items-center justify-between text-xs text-slate-600 bg-amber-50/80 border border-amber-200/80 px-3.5 py-2 rounded-xl">
+            <div className="flex items-center gap-2">
+              <DotsSixVerticalIcon size={16} weight="bold" className="text-amber-700 shrink-0" />
+              <span className="font-semibold text-amber-950">
+                Kéo thả biểu tượng <span className="font-mono bg-white px-1 py-0.5 rounded border border-amber-300">⠿</span> hoặc dùng nút <span className="font-bold">▲ ▼</span> để đổi thứ tự cột
+              </span>
+            </div>
+            <span className="text-[11px] text-amber-800 font-medium">
+              (4 cột đầu luôn cố định ở đầu bảng)
+            </span>
+          </div>
+
+          {search.trim() && (
+            <div className="text-[11px] text-slate-500 italic">
+              * Đang tìm kiếm: Vui lòng xóa ô tìm kiếm nếu bạn muốn kéo thả sắp xếp thứ tự cột.
+            </div>
+          )}
         </div>
 
-        {/* COLUMNS LIST (SCROLLABLE) */}
+        {/* COLUMNS LIST (SCROLLABLE & REORDERABLE) */}
         <div className="flex-1 overflow-y-auto px-6 py-2 space-y-2 max-h-[460px]">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
             {filteredColumns.map((col) => {
               const isEditing = editingId === col.id;
               const isRenamed = col.label !== col.defaultLabel;
+              const isBeingDragged = draggedId === col.id;
+              const isDragTarget = dragOverId === col.id;
+
+              const movableIndex = col.isFrozen
+                ? -1
+                : movableCols.findIndex((c) => c.id === col.id);
+              const isFirstMovable = movableIndex === 0;
+              const isLastMovable = movableIndex === movableCols.length - 1;
 
               return (
                 <div
                   key={col.id}
-                  className={`flex items-center justify-between p-2.5 rounded-xl border transition-all ${
-                    col.visible
-                      ? "bg-white border-slate-200 hover:border-amber-300 shadow-2xs"
+                  draggable={!col.isFrozen && !isEditing && !search.trim()}
+                  onDragStart={(e) => {
+                    if (col.isFrozen || isEditing || search.trim()) return;
+                    e.dataTransfer.setData("text/plain", col.id);
+                    e.dataTransfer.effectAllowed = "move";
+                    setDraggedId(col.id);
+                  }}
+                  onDragOver={(e) => {
+                    if (col.isFrozen || !draggedId || draggedId === col.id) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                    if (dragOverId !== col.id) {
+                      setDragOverId(col.id);
+                    }
+                  }}
+                  onDragLeave={() => {
+                    if (dragOverId === col.id) {
+                      setDragOverId(null);
+                    }
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (col.isFrozen) return;
+                    const sourceId = e.dataTransfer.getData("text/plain") || draggedId;
+                    if (sourceId && sourceId !== col.id) {
+                      handleReorder(sourceId, col.id);
+                    }
+                    setDraggedId(null);
+                    setDragOverId(null);
+                  }}
+                  onDragEnd={() => {
+                    setDraggedId(null);
+                    setDragOverId(null);
+                  }}
+                  className={`group/card flex items-center justify-between p-2.5 rounded-xl border transition-all select-none ${
+                    isBeingDragged
+                      ? "opacity-30 border-dashed border-amber-500 bg-amber-50 scale-[0.98]"
+                      : isDragTarget
+                      ? "border-2 border-amber-500 bg-amber-100/70 shadow-lg ring-2 ring-amber-400 scale-[1.02]"
+                      : col.visible
+                      ? "bg-white border-slate-200 hover:border-amber-400 hover:shadow-xs"
                       : "bg-slate-100/70 border-dashed border-slate-300 opacity-60 hover:opacity-100"
                   }`}
                 >
-                  <div className="flex items-center gap-2.5 min-w-0 flex-1 mr-2">
+                  <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
+                    {/* DRAG HANDLE OR LOCK ICON */}
+                    {col.isFrozen ? (
+                      <div
+                        className="p-1 text-slate-400 shrink-0 cursor-default"
+                        title="Cột cố định - Luôn nằm ở đầu bảng"
+                      >
+                        <LockIcon size={14} weight="bold" />
+                      </div>
+                    ) : (
+                      <div
+                        className="p-1 text-slate-400 hover:text-amber-800 cursor-grab active:cursor-grabbing rounded hover:bg-amber-100 transition shrink-0"
+                        title="Kéo thả để sắp xếp thứ tự cột"
+                      >
+                        <DotsSixVerticalIcon size={16} weight="bold" />
+                      </div>
+                    )}
+
                     {/* CHECKBOX / VISIBILITY TOGGLE */}
                     <input
                       type="checkbox"
@@ -436,12 +614,12 @@ export function ColumnManagerModal({
                       checked={col.visible}
                       disabled={col.isFrozen}
                       onChange={() => handleToggleVisible(col.id)}
-                      className="w-4 h-4 rounded text-amber-600 border-slate-300 focus:ring-amber-500 cursor-pointer disabled:opacity-50"
+                      className="w-4 h-4 rounded text-amber-600 border-slate-300 focus:ring-amber-500 cursor-pointer disabled:opacity-50 shrink-0"
                     />
 
                     {/* LABEL OR INLINE EDIT INPUT */}
                     {isEditing ? (
-                      <div className="flex items-center gap-1 flex-1">
+                      <div className="flex items-center gap-1 flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="text"
                           value={editingLabel}
@@ -488,11 +666,16 @@ export function ColumnManagerModal({
                     )}
 
                     {/* BADGES */}
-                    {col.isFrozen && (
+                    {col.isFrozen ? (
                       <span className="shrink-0 px-1.5 py-0.5 text-[9px] font-bold rounded bg-slate-200 text-slate-700">
                         Cố định
                       </span>
+                    ) : (
+                      <span className="shrink-0 px-1.5 py-0.5 text-[9px] font-mono font-bold rounded bg-amber-100 text-amber-900 border border-amber-200">
+                        #{movableIndex + 1}
+                      </span>
                     )}
+
                     {col.isCustom && (
                       <span className="shrink-0 px-1.5 py-0.5 text-[9px] font-black rounded bg-purple-100 text-purple-800 border border-purple-200">
                         Tùy chỉnh
@@ -500,8 +683,32 @@ export function ColumnManagerModal({
                     )}
                   </div>
 
-                  {/* ACTION BUTTONS (EDIT NAME, RESTORE NAME, HIDE, DELETE) */}
-                  <div className="flex items-center gap-1 shrink-0">
+                  {/* ACTION BUTTONS: UP/DOWN, EDIT NAME, RESTORE NAME, HIDE, DELETE */}
+                  <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                    {/* QUICK MOVE UP / DOWN BUTTONS */}
+                    {!col.isFrozen && (
+                      <div className="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-200 mr-0.5">
+                        <button
+                          type="button"
+                          disabled={isFirstMovable || !!search.trim()}
+                          onClick={() => handleMoveUp(col.id)}
+                          className="p-1 rounded hover:bg-white text-slate-600 hover:text-slate-900 disabled:opacity-25 transition cursor-pointer disabled:cursor-not-allowed"
+                          title="Chuyển lên trước"
+                        >
+                          <CaretUpIcon size={12} weight="bold" />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isLastMovable || !!search.trim()}
+                          onClick={() => handleMoveDown(col.id)}
+                          className="p-1 rounded hover:bg-white text-slate-600 hover:text-slate-900 disabled:opacity-25 transition cursor-pointer disabled:cursor-not-allowed"
+                          title="Chuyển xuống sau"
+                        >
+                          <CaretDownIcon size={12} weight="bold" />
+                        </button>
+                      </div>
+                    )}
+
                     {!isEditing && (
                       <button
                         type="button"

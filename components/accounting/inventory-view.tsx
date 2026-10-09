@@ -711,12 +711,38 @@ function InventoryViewInner() {
       }
       if (skuStored) {
         const parsed: ColumnConfig[] = JSON.parse(skuStored);
-        const merged = DEFAULT_SKU_COLUMNS.map((def) => {
+        const defaultMap = new Map(DEFAULT_SKU_COLUMNS.map((def) => [def.id, def]));
+        const ordered: ColumnConfig[] = [];
+        const seenIds = new Set<string>();
+
+        // Frozen columns always stay first
+        for (const def of DEFAULT_SKU_COLUMNS.filter((c) => c.isFrozen)) {
           const found = parsed.find((p) => p.id === def.id);
-          return found ? found : def;
-        });
-        const customs = parsed.filter((p) => p.isCustom);
-        setSkuColumns([...merged, ...customs]);
+          ordered.push(found ? { ...def, ...found, isFrozen: true } : def);
+          seenIds.add(def.id);
+        }
+
+        // Add columns in the order saved by user in parsed
+        for (const item of parsed) {
+          if (seenIds.has(item.id)) continue;
+          if (defaultMap.has(item.id)) {
+            const def = defaultMap.get(item.id)!;
+            ordered.push({ ...def, ...item, isFrozen: false });
+            seenIds.add(item.id);
+          } else if (item.isCustom) {
+            ordered.push(item);
+            seenIds.add(item.id);
+          }
+        }
+
+        // Add any remaining default columns
+        for (const def of DEFAULT_SKU_COLUMNS) {
+          if (!seenIds.has(def.id)) {
+            ordered.push(def);
+            seenIds.add(def.id);
+          }
+        }
+        setSkuColumns(ordered);
       } else {
         setSkuColumns(DEFAULT_SKU_COLUMNS);
       }
@@ -727,12 +753,38 @@ function InventoryViewInner() {
       }
       if (inboundStored) {
         const parsed: ColumnConfig[] = JSON.parse(inboundStored);
-        const merged = DEFAULT_INBOUND_COLUMNS.map((def) => {
+        const defaultMap = new Map(DEFAULT_INBOUND_COLUMNS.map((def) => [def.id, def]));
+        const ordered: ColumnConfig[] = [];
+        const seenIds = new Set<string>();
+
+        // Frozen columns always stay first
+        for (const def of DEFAULT_INBOUND_COLUMNS.filter((c) => c.isFrozen)) {
           const found = parsed.find((p) => p.id === def.id);
-          return found ? found : def;
-        });
-        const customs = parsed.filter((p) => p.isCustom);
-        setInboundColumns([...merged, ...customs]);
+          ordered.push(found ? { ...def, ...found, isFrozen: true } : def);
+          seenIds.add(def.id);
+        }
+
+        // Add columns in the order saved by user in parsed
+        for (const item of parsed) {
+          if (seenIds.has(item.id)) continue;
+          if (defaultMap.has(item.id)) {
+            const def = defaultMap.get(item.id)!;
+            ordered.push({ ...def, ...item, isFrozen: false });
+            seenIds.add(item.id);
+          } else if (item.isCustom) {
+            ordered.push(item);
+            seenIds.add(item.id);
+          }
+        }
+
+        // Add any remaining default columns
+        for (const def of DEFAULT_INBOUND_COLUMNS) {
+          if (!seenIds.has(def.id)) {
+            ordered.push(def);
+            seenIds.add(def.id);
+          }
+        }
+        setInboundColumns(ordered);
       } else {
         setInboundColumns(DEFAULT_INBOUND_COLUMNS);
       }
@@ -832,6 +884,10 @@ function InventoryViewInner() {
     return skuColumns.filter((c) => c.visible).length;
   }, [skuColumns]);
 
+  const activeScrollableSkuColumns = useMemo(() => {
+    return skuColumns.filter((c) => !c.isFrozen && c.visible !== false);
+  }, [skuColumns]);
+
   const inboundColMap = useMemo(() => {
     const map: Record<string, ColumnConfig> = {};
     for (const c of inboundColumns) map[c.id] = c;
@@ -844,6 +900,10 @@ function InventoryViewInner() {
 
   const inboundVisibleCount = useMemo(() => {
     return inboundColumns.filter((c) => c.visible).length;
+  }, [inboundColumns]);
+
+  const activeScrollableInboundColumns = useMemo(() => {
+    return inboundColumns.filter((c) => !c.isFrozen && c.visible !== false);
   }, [inboundColumns]);
 
   // Pagination 50/1 states
@@ -1701,6 +1761,492 @@ function InventoryViewInner() {
     }
   };
 
+  // Direct Drag-and-Drop state and handlers for Table Headers
+  const [headerDragId, setHeaderDragId] = useState<string | null>(null);
+  const [headerDragOverId, setHeaderDragOverId] = useState<string | null>(null);
+
+  const handleReorderSkuColumns = useCallback((fromId: string, toId: string) => {
+    if (fromId === toId) return;
+    setSkuColumns((prev) => {
+      const fromIndex = prev.findIndex((c) => c.id === fromId);
+      const toIndex = prev.findIndex((c) => c.id === toId);
+      if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return prev;
+      if (prev[fromIndex].isFrozen || prev[toIndex].isFrozen) return prev;
+
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      try {
+        localStorage.setItem(SKU_COLUMNS_STORAGE_KEY, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    notify("Đã thay đổi vị trí cột!", "success");
+  }, []);
+
+  const handleReorderInboundColumns = useCallback((fromId: string, toId: string) => {
+    if (fromId === toId) return;
+    setInboundColumns((prev) => {
+      const fromIndex = prev.findIndex((c) => c.id === fromId);
+      const toIndex = prev.findIndex((c) => c.id === toId);
+      if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return prev;
+      if (prev[fromIndex].isFrozen || prev[toIndex].isFrozen) return prev;
+
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      try {
+        localStorage.setItem(INBOUND_COLUMNS_STORAGE_KEY, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    notify("Đã thay đổi vị trí cột!", "success");
+  }, []);
+
+  // Dynamic Scrollable Column Header & Cell Renderers (Follows user-customized order)
+  const renderSkuHeader = useCallback((col: ColumnConfig) => {
+    const isCustom = col.isCustom;
+    const isFee = col.id === "amazon_fee";
+    const isPercent = col.id === "referral_fee_pct";
+    const isRight = col.id === "amazon_fba_fee_thay_doi" || col.id === "basecost_tb";
+    const isCenter = isFee || isPercent;
+
+    let alignClass = "";
+    if (isCenter) alignClass = "text-center";
+    else if (isRight) alignClass = "text-right";
+
+    const isDragging = headerDragId === col.id;
+    const isDragOver = headerDragOverId === col.id;
+
+    return (
+      <ColumnHeaderCell
+        key={col.id}
+        col={col}
+        draggable={!col.isFrozen}
+        isDragging={isDragging}
+        isDragOver={isDragOver}
+        onDragStart={(e) => {
+          e.dataTransfer.setData("text/plain", col.id);
+          e.dataTransfer.effectAllowed = "move";
+          setHeaderDragId(col.id);
+        }}
+        onDragOver={(e) => {
+          if (!headerDragId || headerDragId === col.id || col.isFrozen) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          if (headerDragOverId !== col.id) {
+            setHeaderDragOverId(col.id);
+          }
+        }}
+        onDragLeave={() => {
+          if (headerDragOverId === col.id) {
+            setHeaderDragOverId(null);
+          }
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          if (col.isFrozen) return;
+          const sourceId = e.dataTransfer.getData("text/plain") || headerDragId;
+          if (sourceId && sourceId !== col.id) {
+            handleReorderSkuColumns(sourceId, col.id);
+          }
+          setHeaderDragId(null);
+          setHeaderDragOverId(null);
+        }}
+        onDragEnd={() => {
+          setHeaderDragId(null);
+          setHeaderDragOverId(null);
+        }}
+        className={`py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight ${alignClass}`}
+        onQuickHide={(id) => handleQuickHideColumn("sku", id)}
+        onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}
+      >
+        <div className={isCenter ? "flex flex-col items-center justify-center" : isRight ? "flex flex-col items-end" : ""}>
+          <div className="flex items-center gap-1">
+            <span>{col.label}</span>
+            {isCustom && (
+              <span className="text-[9px] px-1 rounded bg-purple-200 text-purple-900 font-bold">
+                Custom
+              </span>
+            )}
+          </div>
+          {col.id === "amazon_fee" && (
+            <div className="text-[10px] font-bold opacity-90">(chưa có referal fee)</div>
+          )}
+        </div>
+      </ColumnHeaderCell>
+    );
+  }, [headerDragId, headerDragOverId, handleReorderSkuColumns, handleQuickHideColumn, handleQuickRenameColumn]);
+
+  const renderSkuCell = useCallback((col: ColumnConfig, item: SkuMasterItem) => {
+    const cid = col.id;
+
+    if (col.isCustom) {
+      return (
+        <EditableCell
+          key={col.id}
+          table="sku"
+          id={item.id}
+          field={col.id}
+          value={item.custom_fields?.[col.id] ?? ""}
+          display={safeDisplay(item.custom_fields?.[col.id])}
+          className="py-1.5 px-3 text-xs border-r border-slate-200"
+          inlineEditing={inlineEditing}
+          inlineSaving={inlineSaving}
+          onStartEdit={startInlineEdit}
+          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
+          onSave={handleSaveInlineCell}
+          onCancel={() => setInlineEditing(null)}
+        />
+      );
+    }
+
+    if (cid === "mockup_url") {
+      return (
+        <td key={col.id} className="py-1.5 px-3 text-xs border-r border-slate-200">
+          {item.mockup_url ? (
+            <a
+              href={item.mockup_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition"
+            >
+              <ArrowSquareOutIcon size={14} weight="bold" />
+              <span>Mở link</span>
+            </a>
+          ) : (
+            "—"
+          )}
+        </td>
+      );
+    }
+
+    if (cid === "landing_page_url") {
+      return (
+        <td key={col.id} className="py-1.5 px-3 text-xs border-r border-slate-200">
+          {item.landing_page_url ? (
+            <a
+              href={item.landing_page_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700 border border-slate-300 hover:bg-slate-200 transition"
+            >
+              <ArrowSquareOutIcon size={14} weight="bold" />
+              <span>Landing Page</span>
+            </a>
+          ) : (
+            "—"
+          )}
+        </td>
+      );
+    }
+
+    let cellValue: any = (item as any)[cid];
+    let displayNode: React.ReactNode = safeDisplay(cellValue);
+    let cellClass = "py-1.5 px-3 text-xs border-r border-slate-200";
+
+    switch (cid) {
+      case "brand":
+        displayNode = <span className="font-semibold text-slate-800">{safeDisplay(item.brand)}</span>;
+        break;
+      case "asin":
+        cellClass = "py-1.5 px-3 text-xs font-mono text-xs font-bold text-slate-900 border-r border-slate-200";
+        break;
+      case "fnsku":
+        cellClass = "py-1.5 px-3 text-xs font-mono text-xs font-semibold text-slate-800 border-r border-slate-200";
+        break;
+      case "amazon_fee":
+        displayNode = item.amazon_fee != null ? `$${item.amazon_fee.toFixed(2)}` : "—";
+        cellClass = "py-1.5 px-3 text-xs text-center font-mono font-bold text-pink-950 bg-pink-50/80 group-even:bg-pink-100/40 border-r border-pink-200";
+        break;
+      case "referral_fee_pct":
+        displayNode = item.referral_fee_pct != null ? `${(item.referral_fee_pct * 100).toFixed(0)}%` : "—";
+        cellClass = "py-1.5 px-3 text-xs text-center font-mono font-semibold text-slate-900 border-r border-slate-200";
+        break;
+      case "pic_mkt":
+        displayNode = <EntityBadge value={item.pic_mkt} />;
+        break;
+      case "loai":
+        displayNode = <EntityBadge value={item.loai} />;
+        break;
+      case "niche":
+        displayNode = <EntityBadge value={item.niche} />;
+        break;
+      case "pic_idea":
+        displayNode = <EntityBadge value={item.pic_idea} />;
+        break;
+      case "status":
+        displayNode = <StatusBadge status={item.status} />;
+        break;
+      case "event":
+        displayNode = <EntityBadge value={item.event} />;
+        break;
+      case "tinh_trang":
+        displayNode = <EntityBadge value={item.tinh_trang} />;
+        break;
+      case "design_pic":
+        displayNode = <EntityBadge value={item.design_pic} />;
+        break;
+      case "thang_listing":
+        displayNode = safeDisplay(formatDate(item.thang_listing));
+        cellClass = "py-1.5 px-3 text-xs text-slate-800 font-mono text-xs font-semibold border-r border-slate-200";
+        break;
+      case "thang_danh_gia":
+        displayNode = safeDisplay(formatDate(item.thang_danh_gia));
+        cellClass = "py-1.5 px-3 text-xs text-slate-800 font-mono text-xs font-semibold border-r border-slate-200";
+        break;
+      case "event_250th":
+        displayNode = safeDisplay(formatDate(item.event_250th));
+        cellClass = "py-1.5 px-3 text-xs text-slate-800 font-mono text-xs font-semibold border-r border-slate-200";
+        break;
+      case "ngay_danh_gia_sku_event":
+        displayNode = safeDisplay(formatDate(item.ngay_danh_gia_sku_event));
+        cellClass = "py-1.5 px-3 text-xs text-slate-800 font-mono text-xs font-semibold border-r border-slate-200";
+        break;
+      case "amazon_fba_fee_thay_doi":
+        displayNode = item.amazon_fba_fee_thay_doi != null ? `$${item.amazon_fba_fee_thay_doi.toFixed(2)}` : "—";
+        cellClass = "py-1.5 px-3 text-xs text-right font-mono font-semibold text-pink-950 bg-pink-50/50 group-even:bg-pink-100/30 border-r border-pink-200 text-xs";
+        break;
+      case "basecost_tb":
+        displayNode = item.basecost_tb != null ? `$${item.basecost_tb.toFixed(2)}` : "—";
+        cellClass = "py-1.5 px-3 text-xs text-right font-mono font-black text-slate-950 border-r border-slate-200 text-xs";
+        break;
+      case "brand_entity_id":
+      case "creative_asins_video":
+      case "creative_asins_collection":
+      case "video_media_ids":
+      case "brand_logo_asset_id":
+        cellClass = "py-1.5 px-3 text-xs font-mono text-xs font-semibold text-slate-700 border-r border-slate-200";
+        break;
+      case "creative_headline":
+        cellClass = "py-1.5 px-3 text-xs text-slate-900 font-semibold border-r border-slate-200 text-xs";
+        break;
+    }
+
+    return (
+      <EditableCell
+        key={col.id}
+        table="sku"
+        id={item.id}
+        field={cid as any}
+        value={cellValue}
+        display={displayNode}
+        className={cellClass}
+        inlineEditing={inlineEditing}
+        inlineSaving={inlineSaving}
+        onStartEdit={startInlineEdit}
+        onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
+        onSave={handleSaveInlineCell}
+        onCancel={() => setInlineEditing(null)}
+      />
+    );
+  }, [inlineEditing, inlineSaving, startInlineEdit, handleSaveInlineCell]);
+
+  const renderInboundHeader = useCallback((col: ColumnConfig) => {
+    const isCustom = col.isCustom;
+    const isCenter = col.id === "line_ship" || col.id === "discrepancy";
+    const isRight =
+      col.id === "quantity" ||
+      col.id === "base_cost_per_unit" ||
+      col.id === "card" ||
+      col.id === "tag" ||
+      col.id === "shipping_fee" ||
+      col.id === "hop_tui" ||
+      col.id === "final_basecost" ||
+      col.id === "total_basecost" ||
+      col.id === "amazon_received" ||
+      col.id === "so_luong_amazon_nhan";
+
+    let alignClass = "";
+    if (isCenter) alignClass = "text-center";
+    else if (isRight) alignClass = "text-right";
+
+    const isDragging = headerDragId === col.id;
+    const isDragOver = headerDragOverId === col.id;
+
+    return (
+      <ColumnHeaderCell
+        key={col.id}
+        col={col}
+        draggable={!col.isFrozen}
+        isDragging={isDragging}
+        isDragOver={isDragOver}
+        onDragStart={(e) => {
+          e.dataTransfer.setData("text/plain", col.id);
+          e.dataTransfer.effectAllowed = "move";
+          setHeaderDragId(col.id);
+        }}
+        onDragOver={(e) => {
+          if (!headerDragId || headerDragId === col.id || col.isFrozen) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          if (headerDragOverId !== col.id) {
+            setHeaderDragOverId(col.id);
+          }
+        }}
+        onDragLeave={() => {
+          if (headerDragOverId === col.id) {
+            setHeaderDragOverId(null);
+          }
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          if (col.isFrozen) return;
+          const sourceId = e.dataTransfer.getData("text/plain") || headerDragId;
+          if (sourceId && sourceId !== col.id) {
+            handleReorderInboundColumns(sourceId, col.id);
+          }
+          setHeaderDragId(null);
+          setHeaderDragOverId(null);
+        }}
+        onDragEnd={() => {
+          setHeaderDragId(null);
+          setHeaderDragOverId(null);
+        }}
+        className={`py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight ${alignClass}`}
+        onQuickHide={(id) => handleQuickHideColumn("inbound", id)}
+        onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}
+      >
+        <div className={isCenter ? "flex flex-col items-center justify-center" : isRight ? "flex flex-col items-end" : ""}>
+          <div className="flex items-center gap-1">
+            <span>{col.label}</span>
+            {isCustom && (
+              <span className="text-[9px] px-1 rounded bg-purple-200 text-purple-900 font-bold">
+                Custom
+              </span>
+            )}
+          </div>
+        </div>
+      </ColumnHeaderCell>
+    );
+  }, [headerDragId, headerDragOverId, handleReorderInboundColumns, handleQuickHideColumn, handleQuickRenameColumn]);
+
+  const renderInboundCell = useCallback((col: ColumnConfig, item: InboundShipmentItem) => {
+    const cid = col.id;
+
+    if (col.isCustom) {
+      return (
+        <EditableCell
+          key={col.id}
+          table="inbound"
+          id={item.id}
+          field={col.id}
+          value={item.custom_fields?.[col.id] ?? ""}
+          display={safeDisplay(item.custom_fields?.[col.id])}
+          className="py-1.5 px-3 text-xs border-r border-slate-200"
+          inlineEditing={inlineEditing}
+          inlineSaving={inlineSaving}
+          onStartEdit={startInlineEdit}
+          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
+          onSave={handleSaveInlineCell}
+          onCancel={() => setInlineEditing(null)}
+        />
+      );
+    }
+
+    let cellValue: any = (item as any)[cid];
+    let displayNode: React.ReactNode = safeDisplay(cellValue);
+    let cellClass = "py-1.5 px-3 text-xs border-r border-slate-200";
+
+    switch (cid) {
+      case "brand":
+        displayNode = <span className="font-semibold text-slate-800">{safeDisplay(item.brand)}</span>;
+        break;
+      case "sup":
+        displayNode = <EntityBadge value={item.sup} />;
+        break;
+      case "ngay_request":
+      case "ngay_thanh_toan":
+      case "ngay_di":
+      case "ngay_den":
+        displayNode = safeDisplay(formatDate(cellValue));
+        cellClass = "py-1.5 px-3 text-xs text-slate-800 font-mono text-xs font-semibold border-r border-slate-200";
+        break;
+      case "quantity":
+        displayNode = item.quantity?.toLocaleString() || 0;
+        cellClass = "py-1.5 px-3 text-xs text-right font-mono font-bold text-slate-950 border-r border-slate-200 text-xs";
+        break;
+      case "line_ship":
+        displayNode = <EntityBadge value={item.line_ship} />;
+        cellClass = "py-1.5 px-3 text-xs text-center border-r border-slate-200";
+        break;
+      case "base_cost_per_unit":
+        displayNode = item.base_cost_per_unit != null ? `$${item.base_cost_per_unit.toFixed(2)}` : "—";
+        cellClass = "py-1.5 px-3 text-xs text-right font-mono font-semibold text-slate-900 border-r border-slate-200 text-xs";
+        break;
+      case "card":
+      case "tag":
+      case "shipping_fee":
+      case "hop_tui":
+        displayNode = cellValue != null ? `$${cellValue.toFixed(2)}` : "—";
+        cellClass = "py-1.5 px-3 text-xs text-right font-mono text-slate-800 border-r border-slate-200 text-xs";
+        break;
+      case "final_basecost":
+        displayNode = item.final_basecost != null ? `$${item.final_basecost.toFixed(2)}` : "—";
+        cellClass = "py-1.5 px-3 text-xs text-right font-mono font-bold text-slate-950 border-r border-slate-200 text-xs";
+        break;
+      case "total_basecost":
+        displayNode = item.total_basecost != null ? `$${item.total_basecost.toLocaleString()}` : "—";
+        cellClass = "py-1.5 px-3 text-xs text-right font-mono font-black text-indigo-700 border-r border-slate-200 text-xs";
+        break;
+      case "ten_lo_hang":
+        displayNode = safeDisplay(item.ten_lo_hang);
+        cellClass = "py-1.5 px-3 text-xs font-semibold text-slate-900 border-r border-slate-200 text-xs";
+        break;
+      case "shipment_id":
+        displayNode = safeDisplay(item.shipment_id);
+        cellClass = "py-1.5 px-3 text-xs font-mono text-xs font-semibold text-slate-800 border-r border-slate-200";
+        break;
+      case "amazon_received":
+        displayNode = item.amazon_received?.toLocaleString() || "—";
+        cellClass = "py-1.5 px-3 text-xs text-right font-mono font-bold text-slate-900 border-r border-slate-200 text-xs";
+        break;
+      case "tinh_trang_hang_den_kho":
+        displayNode = <EntityBadge value={item.tinh_trang_hang_den_kho} />;
+        break;
+      case "status":
+        displayNode = <StatusBadge status={item.status} />;
+        break;
+      case "so_luong_amazon_nhan":
+        displayNode = item.so_luong_amazon_nhan?.toLocaleString() || "—";
+        cellClass = "py-1.5 px-3 text-xs text-right font-mono font-bold text-emerald-700 border-r border-slate-200 text-xs";
+        break;
+      case "discrepancy":
+        displayNode = item.discrepancy ? (
+          <span className="font-mono font-bold text-rose-600">{item.discrepancy}</span>
+        ) : (
+          <span className="text-slate-400">0</span>
+        );
+        cellClass = "py-1.5 px-3 text-xs text-center border-r border-slate-200";
+        break;
+      case "note":
+        displayNode = safeDisplay(item.note);
+        cellClass = "py-1.5 px-3 text-xs text-slate-800 border-r border-slate-200 text-xs";
+        break;
+      case "trang_thai":
+        displayNode = <EntityBadge value={item.trang_thai} />;
+        break;
+    }
+
+    return (
+      <EditableCell
+        key={col.id}
+        table="inbound"
+        id={item.id}
+        field={cid as any}
+        value={cellValue}
+        display={displayNode}
+        className={cellClass}
+        inlineEditing={inlineEditing}
+        inlineSaving={inlineSaving}
+        onStartEdit={startInlineEdit}
+        onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
+        onSave={handleSaveInlineCell}
+        onCancel={() => setInlineEditing(null)}
+      />
+    );
+  }, [inlineEditing, inlineSaving, startInlineEdit, handleSaveInlineCell]);
+
   return (
     <div className="w-full space-y-2.5">
       {/* Toast Alert */}
@@ -2056,159 +2602,8 @@ function InventoryViewInner() {
                     </th>
                   )}
 
-                  {/* SCROLLABLE COLUMNS */}
-                  {skuColMap["brand"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["brand"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      {skuColMap["brand"]?.label || "Brand"}
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["asin"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["asin"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      {skuColMap["asin"]?.label || "ASIN"}
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["fnsku"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["fnsku"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      {skuColMap["fnsku"]?.label || "FNSKU"}
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["amazon_fee"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["amazon_fee"]} className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      <div>{skuColMap["amazon_fee"]?.label || "AMAZON FEE"}</div>
-                      <div className="text-[10px] font-bold opacity-90">(chưa có referal fee)</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["referral_fee_pct"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["referral_fee_pct"]} className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      <div>{skuColMap["referral_fee_pct"]?.label || "% Referal"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["pic_mkt"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["pic_mkt"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      <div>{skuColMap["pic_mkt"]?.label || "PIC MKT"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["loai"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["loai"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      {skuColMap["loai"]?.label || "Loại"}
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["niche"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["niche"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      {skuColMap["niche"]?.label || "Niche"}
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["pic_idea"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["pic_idea"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      <div>{skuColMap["pic_idea"]?.label || "PIC Idea"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["status"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["status"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      {skuColMap["status"]?.label || "Trạng thái"}
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["event"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["event"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      {skuColMap["event"]?.label || "Event"}
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["tinh_trang"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["tinh_trang"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      {skuColMap["tinh_trang"]?.label || "Tình trạng"}
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["design_pic"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["design_pic"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      <div>{skuColMap["design_pic"]?.label || "DESIGN PIC"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["mockup_url"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["mockup_url"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      <div>{skuColMap["mockup_url"]?.label || "Mockup URL"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["thang_listing"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["thang_listing"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      <div>{skuColMap["thang_listing"]?.label || "Tháng listing"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["thang_danh_gia"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["thang_danh_gia"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      <div>{skuColMap["thang_danh_gia"]?.label || "Tháng đánh giá"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["event_250th"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["event_250th"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      <div>{skuColMap["event_250th"]?.label || "Event 250th"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["ngay_danh_gia_sku_event"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["ngay_danh_gia_sku_event"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      <div>{skuColMap["ngay_danh_gia_sku_event"]?.label || "Ngày đánh giá SKU Event"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["amazon_fba_fee_thay_doi"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["amazon_fba_fee_thay_doi"]} className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      <div>{skuColMap["amazon_fba_fee_thay_doi"]?.label || "Amazon FBA Fee thay đổi"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["basecost_tb"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["basecost_tb"]} className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      <div>{skuColMap["basecost_tb"]?.label || "Basecost trung bình"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["brand_entity_id"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["brand_entity_id"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      <div>{skuColMap["brand_entity_id"]?.label || "Brand Entity ID"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["creative_asins_video"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["creative_asins_video"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      <div>{skuColMap["creative_asins_video"]?.label || "Creative ASINs (Video)"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["creative_asins_collection"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["creative_asins_collection"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      <div>{skuColMap["creative_asins_collection"]?.label || "Creative ASINs (Collection)"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["video_media_ids"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["video_media_ids"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      <div>{skuColMap["video_media_ids"]?.label || "Video Media IDs"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["creative_headline"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["creative_headline"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      <div>{skuColMap["creative_headline"]?.label || "Creative Headline"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["brand_logo_asset_id"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["brand_logo_asset_id"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      <div>{skuColMap["brand_logo_asset_id"]?.label || "Brand Logo Asset ID"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {skuColMap["landing_page_url"]?.visible !== false && (
-                    <ColumnHeaderCell col={skuColMap["landing_page_url"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
-                      <div>{skuColMap["landing_page_url"]?.label || "Landing Page URL"}</div>
-                    </ColumnHeaderCell>
-                  )}
-
-                  {/* CUSTOM COLUMNS ADDED BY USER */}
-                  {skuCustomColumns.filter((c) => c.visible).map((c) => (
-                    <ColumnHeaderCell
-                      key={c.id}
-                      col={c}
-                      className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight"
-                      onQuickHide={(id) => handleQuickHideColumn("sku", id)}
-                      onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}
-                    >
-                      <div className="flex items-center gap-1">
-                        <span>{c.label}</span>
-                        <span className="text-[9px] px-1 rounded bg-purple-200 text-purple-900 font-bold">Custom</span>
-                      </div>
-                    </ColumnHeaderCell>
-                  ))}
+                  {/* SCROLLABLE DYNAMIC COLUMNS (IN USER-DEFINED ORDER) */}
+                  {activeScrollableSkuColumns.map((col) => renderSkuHeader(col))}
 
                   <th className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-950 font-black">Thao tác</th>
                 </tr>
@@ -2304,493 +2699,8 @@ function InventoryViewInner() {
                         />
 )}
 
-                        {/* SCROLLABLE DATA CELLS */}
-                        {skuColMap["brand"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="brand"
-                          value={item.brand}
-                          display={<span className="font-semibold text-slate-800">{safeDisplay(item.brand)}</span>}
-                          className="py-1.5 px-3 text-xs border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["asin"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="asin"
-                          value={item.asin}
-                          display={safeDisplay(item.asin)}
-                          className="py-1.5 px-3 text-xs font-mono text-xs font-bold text-slate-900 border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["fnsku"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="fnsku"
-                          value={item.fnsku}
-                          display={safeDisplay(item.fnsku)}
-                          className="py-1.5 px-3 text-xs font-mono text-xs font-semibold text-slate-800 border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["amazon_fee"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="amazon_fee"
-                          value={item.amazon_fee}
-                          display={item.amazon_fee != null ? `$${item.amazon_fee.toFixed(2)}` : "—"}
-                          className="py-1.5 px-3 text-xs text-center font-mono font-bold text-pink-950 bg-pink-50/80 group-even:bg-pink-100/40 border-r border-pink-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["referral_fee_pct"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="referral_fee_pct"
-                          value={item.referral_fee_pct}
-                          display={
-                            item.referral_fee_pct != null
-                              ? `${(item.referral_fee_pct * 100).toFixed(0)}%`
-                              : "—"
-                          }
-                          className="py-1.5 px-3 text-xs text-center font-mono font-semibold text-slate-900 border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["pic_mkt"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="pic_mkt"
-                          value={item.pic_mkt}
-                          display={<EntityBadge value={item.pic_mkt} />}
-                          className="py-1.5 px-3 text-xs border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["loai"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="loai"
-                          value={item.loai}
-                          display={<EntityBadge value={item.loai} />}
-                          className="py-1.5 px-3 text-xs border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["niche"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="niche"
-                          value={item.niche}
-                          display={<EntityBadge value={item.niche} />}
-                          className="py-1.5 px-3 text-xs border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["pic_idea"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="pic_idea"
-                          value={item.pic_idea}
-                          display={<EntityBadge value={item.pic_idea} />}
-                          className="py-1.5 px-3 text-xs border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["status"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="status"
-                          value={item.status}
-                          display={<StatusBadge status={item.status} />}
-                          className="py-1.5 px-3 text-xs border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["event"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="event"
-                          value={item.event}
-                          display={<EntityBadge value={item.event} />}
-                          className="py-1.5 px-3 text-xs border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["tinh_trang"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="tinh_trang"
-                          value={item.tinh_trang}
-                          display={<EntityBadge value={item.tinh_trang} />}
-                          className="py-1.5 px-3 text-xs border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["design_pic"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="design_pic"
-                          value={item.design_pic}
-                          display={<EntityBadge value={item.design_pic} />}
-                          className="py-1.5 px-3 text-xs border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["mockup_url"]?.visible !== false && (
-<td className="py-1.5 px-3 text-xs border-r border-slate-200">
-                          {item.mockup_url ? (
-                            <a
-                              href={item.mockup_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 rounded bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition"
-                            >
-                              <ArrowSquareOutIcon size={14} weight="bold" />
-                              <span>Mở link</span>
-                            </a>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-)}
-
-                        {skuColMap["thang_listing"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="thang_listing"
-                          value={item.thang_listing}
-                          display={safeDisplay(formatDate(item.thang_listing))}
-                          className="py-1.5 px-3 text-xs text-slate-800 font-mono text-xs font-semibold border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["thang_danh_gia"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="thang_danh_gia"
-                          value={item.thang_danh_gia}
-                          display={safeDisplay(formatDate(item.thang_danh_gia))}
-                          className="py-1.5 px-3 text-xs text-slate-800 font-mono text-xs font-semibold border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["event_250th"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="event_250th"
-                          value={item.event_250th}
-                          display={safeDisplay(formatDate(item.event_250th))}
-                          className="py-1.5 px-3 text-xs text-slate-800 font-mono text-xs font-semibold border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["ngay_danh_gia_sku_event"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="ngay_danh_gia_sku_event"
-                          value={item.ngay_danh_gia_sku_event}
-                          display={safeDisplay(formatDate(item.ngay_danh_gia_sku_event))}
-                          className="py-1.5 px-3 text-xs text-slate-800 font-mono text-xs font-semibold border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["amazon_fba_fee_thay_doi"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="amazon_fba_fee_thay_doi"
-                          value={item.amazon_fba_fee_thay_doi}
-                          display={
-                            item.amazon_fba_fee_thay_doi != null
-                              ? `$${item.amazon_fba_fee_thay_doi.toFixed(2)}`
-                              : "—"
-                          }
-                          className="py-1.5 px-3 text-xs text-right font-mono font-semibold text-pink-950 bg-pink-50/50 group-even:bg-pink-100/30 border-r border-pink-200 text-xs"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["basecost_tb"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="basecost_tb"
-                          value={item.basecost_tb}
-                          display={item.basecost_tb != null ? `$${item.basecost_tb.toFixed(2)}` : "—"}
-                          className="py-1.5 px-3 text-xs text-right font-mono font-black text-slate-950 border-r border-slate-200 text-xs"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["brand_entity_id"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="brand_entity_id"
-                          value={item.brand_entity_id}
-                          display={safeDisplay(item.brand_entity_id)}
-                          className="py-1.5 px-3 text-xs font-mono text-xs font-semibold text-slate-700 border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["creative_asins_video"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="creative_asins_video"
-                          value={item.creative_asins_video}
-                          display={safeDisplay(item.creative_asins_video)}
-                          className="py-1.5 px-3 text-xs font-mono text-xs font-semibold text-slate-700 border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["creative_asins_collection"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="creative_asins_collection"
-                          value={item.creative_asins_collection}
-                          display={safeDisplay(item.creative_asins_collection)}
-                          className="py-1.5 px-3 text-xs font-mono text-xs font-semibold text-slate-700 border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["video_media_ids"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="video_media_ids"
-                          value={item.video_media_ids}
-                          display={safeDisplay(item.video_media_ids)}
-                          className="py-1.5 px-3 text-xs font-mono text-xs font-semibold text-slate-700 border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["creative_headline"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="creative_headline"
-                          value={item.creative_headline}
-                          display={safeDisplay(item.creative_headline)}
-                          className="py-1.5 px-3 text-xs text-slate-900 font-semibold border-r border-slate-200 text-xs"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["brand_logo_asset_id"]?.visible !== false && (
-<EditableCell
-                          table="sku"
-                          id={item.id}
-                          field="brand_logo_asset_id"
-                          value={item.brand_logo_asset_id}
-                          display={safeDisplay(item.brand_logo_asset_id)}
-                          className="py-1.5 px-3 text-xs font-mono text-xs font-semibold text-slate-700 border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {skuColMap["landing_page_url"]?.visible !== false && (
-<td className="py-1.5 px-3 text-xs border-r border-slate-200">
-                          {item.landing_page_url ? (
-                            <a
-                              href={item.landing_page_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 rounded bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700 border border-slate-300 hover:bg-slate-200 transition"
-                            >
-                              <ArrowSquareOutIcon size={14} weight="bold" />
-                              <span>Landing Page</span>
-                            </a>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-)}
-                        {/* CUSTOM COLUMNS DATA CELLS */}
-                        {skuCustomColumns.filter((c) => c.visible).map((c) => (
-                          <EditableCell
-                            key={c.id}
-                            table="sku"
-                            id={item.id}
-                            field={c.id}
-                            value={item.custom_fields?.[c.id] ?? ""}
-                            display={safeDisplay(item.custom_fields?.[c.id])}
-                            className="py-1.5 px-3 text-xs border-r border-slate-200"
-                            inlineEditing={inlineEditing}
-                            inlineSaving={inlineSaving}
-                            onStartEdit={startInlineEdit}
-                            onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                            onSave={handleSaveInlineCell}
-                            onCancel={() => setInlineEditing(null)}
-                          />
-                        ))}
+                        {/* SCROLLABLE DYNAMIC DATA CELLS (IN USER-DEFINED ORDER) */}
+                        {activeScrollableSkuColumns.map((col) => renderSkuCell(col, item))}
 
                         {/* THAO TÁC: Sửa, Sao chép (Duplicate), Xóa */}
                         <td className="py-1.5 px-3 text-xs text-center whitespace-nowrap">
@@ -2885,143 +2795,8 @@ function InventoryViewInner() {
                     </th>
                   )}
 
-                  {/* SCROLLABLE INBOUND COLUMNS */}
-                  {inboundColMap["brand"]?.visible !== false && (
-                    <ColumnHeaderCell col={inboundColMap["brand"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
-                      {inboundColMap["brand"]?.label || "BRAND"}
-                    </ColumnHeaderCell>
-                  )}
-                  {inboundColMap["sup"]?.visible !== false && (
-                    <ColumnHeaderCell col={inboundColMap["sup"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
-                      {inboundColMap["sup"]?.label || "SUP"}
-                    </ColumnHeaderCell>
-                  )}
-                  {inboundColMap["ngay_request"]?.visible !== false && (
-                    <ColumnHeaderCell col={inboundColMap["ngay_request"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
-                      <div>{inboundColMap["ngay_request"]?.label || "Ngày request"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {inboundColMap["quantity"]?.visible !== false && (
-                    <ColumnHeaderCell col={inboundColMap["quantity"]} className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
-                      {inboundColMap["quantity"]?.label || "Quantity"}
-                    </ColumnHeaderCell>
-                  )}
-                  {inboundColMap["line_ship"]?.visible !== false && (
-                    <ColumnHeaderCell col={inboundColMap["line_ship"]} className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
-                      <div>{inboundColMap["line_ship"]?.label || "Line ship"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {inboundColMap["base_cost_per_unit"]?.visible !== false && (
-                    <ColumnHeaderCell col={inboundColMap["base_cost_per_unit"]} className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
-                      <div>{inboundColMap["base_cost_per_unit"]?.label || "Base Cost /Unit"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {inboundColMap["card"]?.visible !== false && (
-                    <ColumnHeaderCell col={inboundColMap["card"]} className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
-                      {inboundColMap["card"]?.label || "Card"}
-                    </ColumnHeaderCell>
-                  )}
-                  {inboundColMap["tag"]?.visible !== false && (
-                    <ColumnHeaderCell col={inboundColMap["tag"]} className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
-                      {inboundColMap["tag"]?.label || "Tag"}
-                    </ColumnHeaderCell>
-                  )}
-                  {inboundColMap["shipping_fee"]?.visible !== false && (
-                    <ColumnHeaderCell col={inboundColMap["shipping_fee"]} className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
-                      <div>{inboundColMap["shipping_fee"]?.label || "Shipping fee"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {inboundColMap["hop_tui"]?.visible !== false && (
-                    <ColumnHeaderCell col={inboundColMap["hop_tui"]} className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
-                      {inboundColMap["hop_tui"]?.label || "Hộp/túi"}
-                    </ColumnHeaderCell>
-                  )}
-                  {inboundColMap["final_basecost"]?.visible !== false && (
-                    <ColumnHeaderCell col={inboundColMap["final_basecost"]} className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
-                      <div>{inboundColMap["final_basecost"]?.label || "Final Basecost"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {inboundColMap["total_basecost"]?.visible !== false && (
-                    <ColumnHeaderCell col={inboundColMap["total_basecost"]} className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
-                      <div>{inboundColMap["total_basecost"]?.label || "Total Basecost"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {inboundColMap["ngay_thanh_toan"]?.visible !== false && (
-                    <ColumnHeaderCell col={inboundColMap["ngay_thanh_toan"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
-                      <div>{inboundColMap["ngay_thanh_toan"]?.label || "Ngày thanh toán"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {inboundColMap["ten_lo_hang"]?.visible !== false && (
-                    <ColumnHeaderCell col={inboundColMap["ten_lo_hang"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
-                      {inboundColMap["ten_lo_hang"]?.label || "Tên lô hàng"}
-                    </ColumnHeaderCell>
-                  )}
-                  {inboundColMap["shipment_id"]?.visible !== false && (
-                    <ColumnHeaderCell col={inboundColMap["shipment_id"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
-                      <div>{inboundColMap["shipment_id"]?.label || "Shipment ID"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {inboundColMap["ngay_di"]?.visible !== false && (
-                    <ColumnHeaderCell col={inboundColMap["ngay_di"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
-                      {inboundColMap["ngay_di"]?.label || "Ngày đi"}
-                    </ColumnHeaderCell>
-                  )}
-                  {inboundColMap["ngay_den"]?.visible !== false && (
-                    <ColumnHeaderCell col={inboundColMap["ngay_den"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
-                      {inboundColMap["ngay_den"]?.label || "Ngày đến"}
-                    </ColumnHeaderCell>
-                  )}
-                  {inboundColMap["amazon_received"]?.visible !== false && (
-                    <ColumnHeaderCell col={inboundColMap["amazon_received"]} className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
-                      <div>{inboundColMap["amazon_received"]?.label || "Amazon Received"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {inboundColMap["tinh_trang_hang_den_kho"]?.visible !== false && (
-                    <ColumnHeaderCell col={inboundColMap["tinh_trang_hang_den_kho"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
-                      <div>{inboundColMap["tinh_trang_hang_den_kho"]?.label || "Tình trạng hàng đến kho"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {inboundColMap["status"]?.visible !== false && (
-                    <ColumnHeaderCell col={inboundColMap["status"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
-                      {inboundColMap["status"]?.label || "Status"}
-                    </ColumnHeaderCell>
-                  )}
-                  {inboundColMap["so_luong_amazon_nhan"]?.visible !== false && (
-                    <ColumnHeaderCell col={inboundColMap["so_luong_amazon_nhan"]} className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
-                      <div>{inboundColMap["so_luong_amazon_nhan"]?.label || "Số lượng Amazon nhận"}</div>
-                    </ColumnHeaderCell>
-                  )}
-                  {inboundColMap["discrepancy"]?.visible !== false && (
-                    <ColumnHeaderCell col={inboundColMap["discrepancy"]} className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
-                      {inboundColMap["discrepancy"]?.label || "Discrepancy"}
-                    </ColumnHeaderCell>
-                  )}
-                  {inboundColMap["note"]?.visible !== false && (
-                    <ColumnHeaderCell col={inboundColMap["note"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
-                      {inboundColMap["note"]?.label || "Note"}
-                    </ColumnHeaderCell>
-                  )}
-                  {inboundColMap["trang_thai"]?.visible !== false && (
-                    <ColumnHeaderCell col={inboundColMap["trang_thai"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
-                      {inboundColMap["trang_thai"]?.label || "Trạng thái"}
-                    </ColumnHeaderCell>
-                  )}
-
-                  {/* CUSTOM COLUMNS ADDED BY USER */}
-                  {inboundCustomColumns.filter((c) => c.visible).map((c) => (
-                    <ColumnHeaderCell
-                      key={c.id}
-                      col={c}
-                      className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight"
-                      onQuickHide={(id) => handleQuickHideColumn("inbound", id)}
-                      onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}
-                    >
-                      <div className="flex items-center gap-1">
-                        <span>{c.label}</span>
-                        <span className="text-[9px] px-1 rounded bg-purple-200 text-purple-900 font-bold">Custom</span>
-                      </div>
-                    </ColumnHeaderCell>
-                  ))}
+                  {/* SCROLLABLE DYNAMIC COLUMNS (IN USER-DEFINED ORDER) */}
+                  {activeScrollableInboundColumns.map((col) => renderInboundHeader(col))}
 
                   <th className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-950 font-black">Thao tác</th>
                 </tr>
@@ -3117,440 +2892,8 @@ function InventoryViewInner() {
                         />
 )}
 
-                        {/* SCROLLABLE INBOUND DATA */}
-                        {inboundColMap["brand"]?.visible !== false && (
-<EditableCell
-                          table="inbound"
-                          id={item.id}
-                          field="brand"
-                          value={item.brand}
-                          display={<span className="font-semibold text-slate-800">{safeDisplay(item.brand)}</span>}
-                          className="py-1.5 px-3 text-xs border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {inboundColMap["sup"]?.visible !== false && (
-<EditableCell
-                          table="inbound"
-                          id={item.id}
-                          field="sup"
-                          value={item.sup}
-                          display={<EntityBadge value={item.sup} />}
-                          className="py-1.5 px-3 text-xs border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {inboundColMap["ngay_request"]?.visible !== false && (
-<EditableCell
-                          table="inbound"
-                          id={item.id}
-                          field="ngay_request"
-                          value={item.ngay_request}
-                          display={safeDisplay(formatDate(item.ngay_request))}
-                          className="py-1.5 px-3 text-xs text-slate-800 font-mono text-xs font-semibold border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {inboundColMap["quantity"]?.visible !== false && (
-<EditableCell
-                          table="inbound"
-                          id={item.id}
-                          field="quantity"
-                          value={item.quantity}
-                          display={item.quantity?.toLocaleString() || 0}
-                          className="py-1.5 px-3 text-xs text-right font-mono font-bold text-slate-950 border-r border-slate-200 text-xs"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {inboundColMap["line_ship"]?.visible !== false && (
-<EditableCell
-                          table="inbound"
-                          id={item.id}
-                          field="line_ship"
-                          value={item.line_ship}
-                          display={<EntityBadge value={item.line_ship} />}
-                          className="py-1.5 px-3 text-xs text-center border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {inboundColMap["base_cost_per_unit"]?.visible !== false && (
-<EditableCell
-                          table="inbound"
-                          id={item.id}
-                          field="base_cost_per_unit"
-                          value={item.base_cost_per_unit}
-                          display={item.base_cost_per_unit != null ? `$${item.base_cost_per_unit.toFixed(2)}` : "—"}
-                          className="py-1.5 px-3 text-xs text-right font-mono font-semibold text-slate-900 border-r border-slate-200 text-xs"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {inboundColMap["card"]?.visible !== false && (
-<EditableCell
-                          table="inbound"
-                          id={item.id}
-                          field="card"
-                          value={item.card}
-                          display={item.card != null ? `$${item.card.toFixed(2)}` : "—"}
-                          className="py-1.5 px-3 text-xs text-right font-mono text-slate-800 border-r border-slate-200 text-xs"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {inboundColMap["tag"]?.visible !== false && (
-<EditableCell
-                          table="inbound"
-                          id={item.id}
-                          field="tag"
-                          value={item.tag}
-                          display={item.tag != null ? `$${item.tag.toFixed(2)}` : "—"}
-                          className="py-1.5 px-3 text-xs text-right font-mono text-slate-800 border-r border-slate-200 text-xs"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {inboundColMap["shipping_fee"]?.visible !== false && (
-<EditableCell
-                          table="inbound"
-                          id={item.id}
-                          field="shipping_fee"
-                          value={item.shipping_fee}
-                          display={item.shipping_fee != null ? `$${item.shipping_fee.toFixed(2)}` : "—"}
-                          className="py-1.5 px-3 text-xs text-right font-mono text-slate-800 border-r border-slate-200 text-xs"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {inboundColMap["hop_tui"]?.visible !== false && (
-<EditableCell
-                          table="inbound"
-                          id={item.id}
-                          field="hop_tui"
-                          value={item.hop_tui}
-                          display={item.hop_tui != null ? `$${item.hop_tui.toFixed(2)}` : "—"}
-                          className="py-1.5 px-3 text-xs text-right font-mono text-slate-800 border-r border-slate-200 text-xs"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {inboundColMap["final_basecost"]?.visible !== false && (
-<EditableCell
-                          table="inbound"
-                          id={item.id}
-                          field="final_basecost"
-                          value={item.final_basecost}
-                          display={item.final_basecost != null ? `$${item.final_basecost.toFixed(2)}` : "—"}
-                          className="py-1.5 px-3 text-xs text-right font-mono font-bold text-slate-950 border-r border-slate-200 text-xs"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {inboundColMap["total_basecost"]?.visible !== false && (
-<EditableCell
-                          table="inbound"
-                          id={item.id}
-                          field="total_basecost"
-                          value={item.total_basecost}
-                          display={item.total_basecost != null ? `$${item.total_basecost.toLocaleString()}` : "—"}
-                          className="py-1.5 px-3 text-xs text-right font-mono font-black text-indigo-700 border-r border-slate-200 text-xs"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {inboundColMap["ngay_thanh_toan"]?.visible !== false && (
-<EditableCell
-                          table="inbound"
-                          id={item.id}
-                          field="ngay_thanh_toan"
-                          value={item.ngay_thanh_toan}
-                          display={safeDisplay(formatDate(item.ngay_thanh_toan))}
-                          className="py-1.5 px-3 text-xs text-slate-800 font-mono text-xs font-semibold border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {inboundColMap["ten_lo_hang"]?.visible !== false && (
-<EditableCell
-                          table="inbound"
-                          id={item.id}
-                          field="ten_lo_hang"
-                          value={item.ten_lo_hang}
-                          display={safeDisplay(item.ten_lo_hang)}
-                          className="py-1.5 px-3 text-xs font-semibold text-slate-900 border-r border-slate-200 text-xs"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {inboundColMap["shipment_id"]?.visible !== false && (
-<EditableCell
-                          table="inbound"
-                          id={item.id}
-                          field="shipment_id"
-                          value={item.shipment_id}
-                          display={safeDisplay(item.shipment_id)}
-                          className="py-1.5 px-3 text-xs font-mono text-xs font-semibold text-slate-800 border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {inboundColMap["ngay_di"]?.visible !== false && (
-<EditableCell
-                          table="inbound"
-                          id={item.id}
-                          field="ngay_di"
-                          value={item.ngay_di}
-                          display={safeDisplay(formatDate(item.ngay_di))}
-                          className="py-1.5 px-3 text-xs text-slate-800 font-mono text-xs font-semibold border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {inboundColMap["ngay_den"]?.visible !== false && (
-<EditableCell
-                          table="inbound"
-                          id={item.id}
-                          field="ngay_den"
-                          value={item.ngay_den}
-                          display={safeDisplay(formatDate(item.ngay_den))}
-                          className="py-1.5 px-3 text-xs text-slate-800 font-mono text-xs font-semibold border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {inboundColMap["amazon_received"]?.visible !== false && (
-<EditableCell
-                          table="inbound"
-                          id={item.id}
-                          field="amazon_received"
-                          value={item.amazon_received}
-                          display={item.amazon_received?.toLocaleString() || "—"}
-                          className="py-1.5 px-3 text-xs text-right font-mono font-bold text-slate-900 border-r border-slate-200 text-xs"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {inboundColMap["tinh_trang_hang_den_kho"]?.visible !== false && (
-<EditableCell
-                          table="inbound"
-                          id={item.id}
-                          field="tinh_trang_hang_den_kho"
-                          value={item.tinh_trang_hang_den_kho}
-                          display={<EntityBadge value={item.tinh_trang_hang_den_kho} />}
-                          className="py-1.5 px-3 text-xs border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {inboundColMap["status"]?.visible !== false && (
-<EditableCell
-                          table="inbound"
-                          id={item.id}
-                          field="status"
-                          value={item.status}
-                          display={<StatusBadge status={item.status} />}
-                          className="py-1.5 px-3 text-xs border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {inboundColMap["so_luong_amazon_nhan"]?.visible !== false && (
-<EditableCell
-                          table="inbound"
-                          id={item.id}
-                          field="so_luong_amazon_nhan"
-                          value={item.so_luong_amazon_nhan}
-                          display={item.so_luong_amazon_nhan?.toLocaleString() || "—"}
-                          className="py-1.5 px-3 text-xs text-right font-mono font-bold text-emerald-700 border-r border-slate-200 text-xs"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {inboundColMap["discrepancy"]?.visible !== false && (
-<EditableCell
-                          table="inbound"
-                          id={item.id}
-                          field="discrepancy"
-                          value={item.discrepancy}
-                          display={
-                            item.discrepancy ? (
-                              <span className="font-mono font-bold text-rose-600">
-                                {item.discrepancy}
-                              </span>
-                            ) : (
-                              <span className="text-slate-400">0</span>
-                            )
-                          }
-                          className="py-1.5 px-3 text-xs text-center border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {inboundColMap["note"]?.visible !== false && (
-<EditableCell
-                          table="inbound"
-                          id={item.id}
-                          field="note"
-                          value={item.note}
-                          display={safeDisplay(item.note)}
-                          className="py-1.5 px-3 text-xs text-slate-800 border-r border-slate-200 text-xs"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-
-                        {inboundColMap["trang_thai"]?.visible !== false && (
-<EditableCell
-                          table="inbound"
-                          id={item.id}
-                          field="trang_thai"
-                          value={item.trang_thai}
-                          display={<EntityBadge value={item.trang_thai} />}
-                          className="py-1.5 px-3 text-xs border-r border-slate-200"
-                          inlineEditing={inlineEditing}
-                          inlineSaving={inlineSaving}
-                          onStartEdit={startInlineEdit}
-                          onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                          onSave={handleSaveInlineCell}
-                          onCancel={() => setInlineEditing(null)}
-                        />
-)}
-                        {/* CUSTOM COLUMNS DATA CELLS */}
-                        {inboundCustomColumns.filter((c) => c.visible).map((c) => (
-                          <EditableCell
-                            key={c.id}
-                            table="inbound"
-                            id={item.id}
-                            field={c.id}
-                            value={item.custom_fields?.[c.id] ?? ""}
-                            display={safeDisplay(item.custom_fields?.[c.id])}
-                            className="py-1.5 px-3 text-xs border-r border-slate-200"
-                            inlineEditing={inlineEditing}
-                            inlineSaving={inlineSaving}
-                            onStartEdit={startInlineEdit}
-                            onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
-                            onSave={handleSaveInlineCell}
-                            onCancel={() => setInlineEditing(null)}
-                          />
-                        ))}
+                        {/* SCROLLABLE DYNAMIC DATA CELLS (IN USER-DEFINED ORDER) */}
+                        {activeScrollableInboundColumns.map((col) => renderInboundCell(col, item))}
 
                         {/* THAO TÁC: Sửa, Sao chép (Duplicate), Xóa */}
                         <td className="py-1.5 px-3 text-xs text-center whitespace-nowrap">
