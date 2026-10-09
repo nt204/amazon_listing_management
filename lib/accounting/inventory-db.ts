@@ -36,6 +36,7 @@ export interface SkuMasterItem {
   creative_headline: string | null;
   brand_logo_asset_id: string | null;
   landing_page_url: string | null;
+  custom_fields?: Record<string, any> | null;
   row_order?: number | null;
   created_at: string;
   updated_at: string;
@@ -72,8 +73,21 @@ export interface InboundShipmentItem {
   discrepancy: number | null;
   note: string | null;
   trang_thai: string | null;
+  custom_fields?: Record<string, any> | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface InventoryHistoryItem {
+  id: string;
+  entity_type: "sku" | "inbound";
+  entity_id: string;
+  store_id: string;
+  action: "create" | "update" | "delete" | "restore";
+  before_data: Record<string, unknown> | null;
+  after_data: Record<string, unknown> | null;
+  changed_by: string;
+  created_at: string;
 }
 
 export async function listSkuMaster(
@@ -106,6 +120,7 @@ export async function listSkuMaster(
     SELECT COUNT(*)::text as count
     FROM accounting_sku_master
     WHERE store_id = ${storeId}
+      AND deleted_at IS NULL
       AND (${searchPattern}::text IS NULL OR (
         LOWER(sku) LIKE ${searchPattern}
         OR LOWER(COALESCE(asin, '')) LIKE ${searchPattern}
@@ -153,10 +168,12 @@ export async function listSkuMaster(
       creative_headline,
       brand_logo_asset_id,
       landing_page_url,
+      custom_fields,
       created_at::text,
       updated_at::text
     FROM accounting_sku_master
     WHERE store_id = ${storeId}
+      AND deleted_at IS NULL
       AND (${searchPattern}::text IS NULL OR (
         LOWER(sku) LIKE ${searchPattern}
         OR LOWER(COALESCE(asin, '')) LIKE ${searchPattern}
@@ -186,6 +203,7 @@ export async function listSkuMaster(
 export async function upsertSkuMasterItem(
   storeId: string,
   data: Partial<SkuMasterItem> & { sku: string },
+  changedBy = "system",
 ): Promise<SkuMasterItem> {
   const sql = await getDatabaseClient();
   const rows = await sql<SkuMasterItem[]>`
@@ -221,6 +239,7 @@ export async function upsertSkuMasterItem(
       creative_headline,
       brand_logo_asset_id,
       landing_page_url,
+      last_changed_by,
       updated_at
     ) VALUES (
       ${storeId},
@@ -254,6 +273,7 @@ export async function upsertSkuMasterItem(
       ${data.creative_headline ?? null},
       ${data.brand_logo_asset_id ?? null},
       ${data.landing_page_url ?? null},
+      ${changedBy},
       NOW()
     )
     ON CONFLICT (store_id, sku) DO UPDATE SET
@@ -286,6 +306,8 @@ export async function upsertSkuMasterItem(
       creative_headline = COALESCE(EXCLUDED.creative_headline, accounting_sku_master.creative_headline),
       brand_logo_asset_id = COALESCE(EXCLUDED.brand_logo_asset_id, accounting_sku_master.brand_logo_asset_id),
       landing_page_url = COALESCE(EXCLUDED.landing_page_url, accounting_sku_master.landing_page_url),
+      deleted_at = NULL,
+      last_changed_by = EXCLUDED.last_changed_by,
       updated_at = NOW()
     RETURNING
       id, store_id, brand, product_type, mockup, sku, asin, fnsku,
@@ -295,17 +317,91 @@ export async function upsertSkuMasterItem(
       amazon_fba_fee_thay_doi::float, basecost_tb::float, brand_entity_id,
       creative_asins_video, creative_asins_collection, video_media_ids,
       creative_headline, brand_logo_asset_id, landing_page_url,
+      custom_fields,
       created_at::text, updated_at::text
   `;
   return rows[0];
 }
 
-export async function deleteSkuMasterItem(id: string, storeId: string): Promise<boolean> {
+export async function deleteSkuMasterItem(id: string, storeId: string, changedBy = "system"): Promise<boolean> {
   const sql = await getDatabaseClient();
   const res = await sql`
-    DELETE FROM accounting_sku_master WHERE id = ${id} AND store_id = ${storeId}
+    UPDATE accounting_sku_master
+    SET deleted_at = NOW(), last_changed_by = ${changedBy}, updated_at = NOW()
+    WHERE id = ${id} AND store_id = ${storeId} AND deleted_at IS NULL
   `;
   return res.count > 0;
+}
+
+export async function patchSkuMasterField(
+  storeId: string,
+  id: string,
+  field: string,
+  value: any,
+  changedBy = "system",
+): Promise<SkuMasterItem> {
+  const sql = await getDatabaseClient();
+  const trimmed = typeof value === "string" ? value.trim() : value;
+
+  if (field.startsWith("custom_")) {
+    const rows = await sql<SkuMasterItem[]>`
+      UPDATE accounting_sku_master
+      SET
+        custom_fields = jsonb_set(COALESCE(custom_fields, '{}'::jsonb), ARRAY[${field}], to_jsonb(${trimmed === "" ? null : trimmed}::text)),
+        last_changed_by = ${changedBy},
+        updated_at = NOW()
+      WHERE id = ${id} AND store_id = ${storeId}
+      RETURNING
+        id, store_id, brand, product_type, mockup, sku, asin, fnsku,
+        amazon_fee::float, referral_fee_pct::float, pic_mkt, loai, niche,
+        pic_idea, status, event, tinh_trang, design_pic, mockup_url,
+        thang_listing, thang_danh_gia, event_250th, ngay_danh_gia_sku_event,
+        amazon_fba_fee_thay_doi::float, basecost_tb::float, brand_entity_id,
+        creative_asins_video, creative_asins_collection, video_media_ids,
+        creative_headline, brand_logo_asset_id, landing_page_url,
+        custom_fields, created_at::text, updated_at::text
+    `;
+    if (!rows[0]) throw new Error("Không tìm thấy SKU cần cập nhật.");
+    return rows[0];
+  }
+
+  const numFields = ["amazon_fee", "referral_fee_pct", "amazon_fba_fee_thay_doi", "basecost_tb"];
+  const val = numFields.includes(field)
+    ? trimmed === "" || trimmed == null ? null : parseFloat(trimmed)
+    : trimmed === "" || trimmed == null ? null : trimmed;
+
+  const validFields = [
+    "brand", "product_type", "mockup", "sku", "asin", "fnsku",
+    "amazon_fee", "referral_fee_pct", "pic_mkt", "loai", "niche",
+    "pic_idea", "status", "event", "tinh_trang", "design_pic", "mockup_url",
+    "thang_listing", "thang_danh_gia", "event_250th", "ngay_danh_gia_sku_event",
+    "amazon_fba_fee_thay_doi", "basecost_tb", "brand_entity_id",
+    "creative_asins_video", "creative_asins_collection", "video_media_ids",
+    "creative_headline", "brand_logo_asset_id", "landing_page_url"
+  ];
+  if (!validFields.includes(field)) {
+    throw new Error(`Trường '${field}' không hợp lệ.`);
+  }
+
+  const rows = await sql<SkuMasterItem[]>`
+    UPDATE accounting_sku_master
+    SET
+      ${sql(field)} = ${val},
+      last_changed_by = ${changedBy},
+      updated_at = NOW()
+    WHERE id = ${id} AND store_id = ${storeId}
+    RETURNING
+      id, store_id, brand, product_type, mockup, sku, asin, fnsku,
+      amazon_fee::float, referral_fee_pct::float, pic_mkt, loai, niche,
+      pic_idea, status, event, tinh_trang, design_pic, mockup_url,
+      thang_listing, thang_danh_gia, event_250th, ngay_danh_gia_sku_event,
+      amazon_fba_fee_thay_doi::float, basecost_tb::float, brand_entity_id,
+      creative_asins_video, creative_asins_collection, video_media_ids,
+      creative_headline, brand_logo_asset_id, landing_page_url,
+      custom_fields, created_at::text, updated_at::text
+  `;
+  if (!rows[0]) throw new Error("Không tìm thấy SKU cần cập nhật.");
+  return rows[0];
 }
 
 export async function listInboundShipments(
@@ -338,6 +434,7 @@ export async function listInboundShipments(
     SELECT COUNT(*)::text as count
     FROM accounting_inbound_shipments
     WHERE store_id = ${storeId}
+      AND deleted_at IS NULL
       AND (${searchPattern}::text IS NULL OR (
         LOWER(sku) LIKE ${searchPattern}
         OR LOWER(COALESCE(shipment_id, '')) LIKE ${searchPattern}
@@ -383,11 +480,13 @@ export async function listInboundShipments(
       s.discrepancy,
       s.note,
       s.trang_thai,
+      s.custom_fields,
       s.created_at::text,
       s.updated_at::text
     FROM accounting_inbound_shipments s
-    LEFT JOIN accounting_sku_master m ON m.store_id = s.store_id AND m.sku = s.sku
+    LEFT JOIN accounting_sku_master m ON m.store_id = s.store_id AND m.sku = s.sku AND m.deleted_at IS NULL
     WHERE s.store_id = ${storeId}
+      AND s.deleted_at IS NULL
       AND (${searchPattern}::text IS NULL OR (
         LOWER(s.sku) LIKE ${searchPattern}
         OR LOWER(COALESCE(s.shipment_id, '')) LIKE ${searchPattern}
@@ -417,6 +516,7 @@ export async function listInboundShipments(
 export async function upsertInboundShipmentItem(
   storeId: string,
   data: Partial<InboundShipmentItem> & { sku: string; quantity: number },
+  changedBy = "system",
 ): Promise<InboundShipmentItem> {
   const sql = await getDatabaseClient();
 
@@ -464,6 +564,7 @@ export async function upsertInboundShipmentItem(
       discrepancy,
       note,
       trang_thai,
+      last_changed_by,
       updated_at
     ) VALUES (
       ${storeId},
@@ -495,6 +596,7 @@ export async function upsertInboundShipmentItem(
       ${discrepancy},
       ${data.note ?? null},
       ${data.trang_thai ?? null},
+      ${changedBy},
       NOW()
     )
     RETURNING
@@ -504,17 +606,188 @@ export async function upsertInboundShipmentItem(
       total_basecost::float, ngay_thanh_toan, ten_lo_hang, shipment_id,
       ngay_di, ngay_den, amazon_received, tinh_trang_hang_den_kho, status,
       so_luong_amazon_nhan, discrepancy, note, trang_thai,
+      custom_fields,
       created_at::text, updated_at::text
   `;
   return rows[0];
 }
 
-export async function deleteInboundShipmentItem(id: string, storeId: string): Promise<boolean> {
+export async function patchInboundShipmentField(
+  storeId: string,
+  id: string,
+  field: string,
+  value: any,
+  changedBy = "system",
+): Promise<InboundShipmentItem> {
+  const sql = await getDatabaseClient();
+  const trimmed = typeof value === "string" ? value.trim() : value;
+
+  if (field.startsWith("custom_")) {
+    const rows = await sql<InboundShipmentItem[]>`
+      UPDATE accounting_inbound_shipments
+      SET
+        custom_fields = jsonb_set(COALESCE(custom_fields, '{}'::jsonb), ARRAY[${field}], to_jsonb(${trimmed === "" ? null : trimmed}::text)),
+        last_changed_by = ${changedBy},
+        updated_at = NOW()
+      WHERE id = ${id} AND store_id = ${storeId}
+      RETURNING
+        id, store_id, sku_id, brand, sup, ngay_request, product_type, mockup,
+        sku, quantity, line_ship, base_cost_per_unit::float, card::float,
+        tag::float, shipping_fee::float, hop_tui::float, final_basecost::float,
+        total_basecost::float, ngay_thanh_toan, ten_lo_hang, shipment_id,
+        ngay_di, ngay_den, amazon_received, tinh_trang_hang_den_kho, status,
+        so_luong_amazon_nhan, discrepancy, note, trang_thai,
+        custom_fields, created_at::text, updated_at::text
+    `;
+    if (!rows[0]) throw new Error("Không tìm thấy lô hàng cần cập nhật.");
+    return rows[0];
+  }
+
+  const intFields = ["quantity", "amazon_received", "so_luong_amazon_nhan", "discrepancy"];
+  const floatFields = ["base_cost_per_unit", "card", "tag", "shipping_fee", "hop_tui", "final_basecost", "total_basecost"];
+
+  let val: any = trimmed === "" || trimmed == null ? null : trimmed;
+  if (intFields.includes(field)) {
+    val = trimmed === "" || trimmed == null ? 0 : parseInt(trimmed, 10);
+  } else if (floatFields.includes(field)) {
+    val = trimmed === "" || trimmed == null ? null : parseFloat(trimmed);
+  }
+
+  const validFields = [
+    "brand", "sup", "ngay_request", "product_type", "mockup", "sku",
+    "quantity", "line_ship", "base_cost_per_unit", "card", "tag",
+    "shipping_fee", "hop_tui", "final_basecost", "total_basecost",
+    "ngay_thanh_toan", "ten_lo_hang", "shipment_id", "ngay_di", "ngay_den",
+    "amazon_received", "tinh_trang_hang_den_kho", "status",
+    "so_luong_amazon_nhan", "discrepancy", "note", "trang_thai"
+  ];
+  if (!validFields.includes(field)) {
+    throw new Error(`Trường '${field}' không hợp lệ.`);
+  }
+
+  const rows = await sql<InboundShipmentItem[]>`
+    UPDATE accounting_inbound_shipments
+    SET
+      ${sql(field)} = ${val},
+      last_changed_by = ${changedBy},
+      updated_at = NOW()
+    WHERE id = ${id} AND store_id = ${storeId}
+    RETURNING
+      id, store_id, sku_id, brand, sup, ngay_request, product_type, mockup,
+      sku, quantity, line_ship, base_cost_per_unit::float, card::float,
+      tag::float, shipping_fee::float, hop_tui::float, final_basecost::float,
+      total_basecost::float, ngay_thanh_toan, ten_lo_hang, shipment_id,
+      ngay_di, ngay_den, amazon_received, tinh_trang_hang_den_kho, status,
+      so_luong_amazon_nhan, discrepancy, note, trang_thai,
+      custom_fields, created_at::text, updated_at::text
+  `;
+  if (!rows[0]) throw new Error("Không tìm thấy lô hàng cần cập nhật.");
+  return rows[0];
+}
+
+export async function deleteInboundShipmentItem(id: string, storeId: string, changedBy = "system"): Promise<boolean> {
   const sql = await getDatabaseClient();
   const res = await sql`
-    DELETE FROM accounting_inbound_shipments WHERE id = ${id} AND store_id = ${storeId}
+    UPDATE accounting_inbound_shipments
+    SET deleted_at = NOW(), last_changed_by = ${changedBy}, updated_at = NOW()
+    WHERE id = ${id} AND store_id = ${storeId} AND deleted_at IS NULL
   `;
   return res.count > 0;
+}
+
+export async function listInventoryHistory(
+  storeId: string,
+  entityType?: "sku" | "inbound" | null,
+  entityId?: string | null,
+): Promise<InventoryHistoryItem[]> {
+  const sql = await getDatabaseClient();
+  return sql<InventoryHistoryItem[]>`
+    SELECT id, entity_type, entity_id, store_id, action, before_data, after_data,
+      changed_by, created_at::text
+    FROM inventory_change_history
+    WHERE store_id = ${storeId}
+      AND (${entityType ?? null}::text IS NULL OR entity_type = ${entityType ?? null})
+      AND (${entityId ?? null}::uuid IS NULL OR entity_id = ${entityId ?? null}::uuid)
+    ORDER BY created_at DESC
+    LIMIT 100
+  `;
+}
+
+export async function restoreSoftDeletedItem(
+  storeId: string,
+  entityType: "sku" | "inbound",
+  entityId: string,
+  changedBy = "system",
+): Promise<boolean> {
+  const sql = await getDatabaseClient();
+  const table = entityType === "sku" ? "accounting_sku_master" : "accounting_inbound_shipments";
+  const res = await sql`
+    UPDATE ${sql(table)}
+    SET deleted_at = NULL, last_changed_by = ${changedBy}, updated_at = NOW()
+    WHERE id = ${entityId} AND store_id = ${storeId} AND deleted_at IS NOT NULL
+  `;
+  return res.count > 0;
+}
+
+const SKU_RESTORE_FIELDS = [
+  "brand", "product_type", "mockup", "sku", "asin", "fnsku", "amazon_fee",
+  "referral_fee_pct", "pic_mkt", "loai", "niche", "pic_idea", "status", "event",
+  "tinh_trang", "design_pic", "mockup_url", "thang_listing", "thang_danh_gia",
+  "event_250th", "ngay_danh_gia_sku_event", "amazon_fba_fee_thay_doi", "basecost_tb",
+  "brand_entity_id", "creative_asins_video", "creative_asins_collection", "video_media_ids",
+  "creative_headline", "brand_logo_asset_id", "landing_page_url", "custom_fields", "row_order",
+] as const;
+
+const INBOUND_RESTORE_FIELDS = [
+  "sku_id", "brand", "sup", "ngay_request", "product_type", "mockup", "sku", "quantity",
+  "line_ship", "base_cost_per_unit", "card", "tag", "shipping_fee", "hop_tui",
+  "final_basecost", "total_basecost", "ngay_thanh_toan", "ten_lo_hang", "shipment_id",
+  "ngay_di", "ngay_den", "amazon_received", "tinh_trang_hang_den_kho", "status",
+  "so_luong_amazon_nhan", "discrepancy", "note", "trang_thai", "custom_fields", "row_order",
+] as const;
+
+export async function restoreInventoryHistory(
+  storeId: string,
+  historyId: string,
+  changedBy = "system",
+): Promise<{ entityType: "sku" | "inbound"; entityId: string }> {
+  const sql = await getDatabaseClient();
+  return sql.begin(async (tx) => {
+    const historyRows = await tx<InventoryHistoryItem[]>`
+      SELECT id, entity_type, entity_id, store_id, action, before_data, after_data,
+        changed_by, created_at::text
+      FROM inventory_change_history
+      WHERE id = ${historyId} AND store_id = ${storeId}
+      FOR UPDATE
+    `;
+    const history = historyRows[0];
+    if (!history) throw new Error("Không tìm thấy phiên bản lịch sử.");
+
+    const table = history.entity_type === "sku"
+      ? "accounting_sku_master"
+      : "accounting_inbound_shipments";
+    const fields = history.entity_type === "sku" ? SKU_RESTORE_FIELDS : INBOUND_RESTORE_FIELDS;
+
+    if (history.action === "create" || !history.before_data) {
+      await tx`
+        UPDATE ${tx(table)}
+        SET deleted_at = NOW(), last_changed_by = ${changedBy}, updated_at = NOW()
+        WHERE id = ${history.entity_id} AND store_id = ${storeId}
+      `;
+    } else {
+      const restored = Object.fromEntries(fields.map((field) => [field, history.before_data?.[field] ?? null]));
+      await tx`
+        UPDATE ${tx(table)}
+        SET ${tx(restored as any, [...fields] as any)},
+          deleted_at = NULL,
+          last_changed_by = ${changedBy},
+          updated_at = NOW()
+        WHERE id = ${history.entity_id} AND store_id = ${storeId}
+      `;
+    }
+
+    return { entityType: history.entity_type, entityId: history.entity_id };
+  });
 }
 
 // ----------------- EXCEL IMPORT ENGINE -----------------

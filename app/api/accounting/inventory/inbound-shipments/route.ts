@@ -3,6 +3,7 @@ import { authorize, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
 import {
   deleteInboundShipmentItem,
   listInboundShipments,
+  patchInboundShipmentField,
   upsertInboundShipmentItem,
 } from "@/lib/accounting/inventory-db";
 
@@ -36,6 +37,7 @@ const inboundInputSchema = z.object({
   discrepancy: z.number().int().nullable().optional(),
   note: z.string().trim().nullable().optional(),
   trang_thai: z.string().trim().nullable().optional(),
+  custom_fields: z.record(z.string(), z.any()).nullable().optional(),
 });
 
 export async function GET(request: Request) {
@@ -63,26 +65,40 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    await authorize(request, "write", "accounting");
+    const actor = await authorize(request, "write", "accounting");
     const body = await readJsonBody(request, 50_000);
     const parsed = inboundInputSchema.parse(body);
-    const item = await upsertInboundShipmentItem(parsed.store_id, parsed);
+    const item = await upsertInboundShipmentItem(parsed.store_id, parsed, actor.email || actor.displayName || actor.userId);
     return Response.json({ item });
   } catch (error) {
     return routeErrorResponse(error, "Failed to save Inbound Shipment.");
   }
 }
 
+export async function PATCH(request: Request) {
+  try {
+    const actor = await authorize(request, "write", "accounting");
+    const body = (await readJsonBody(request, 10_000)) as { id?: string; store_id?: string; field?: string; value?: any };
+    if (!body?.id || !body?.store_id || !body?.field) {
+      return Response.json({ error: "id, store_id, and field are required" }, { status: 400 });
+    }
+    const item = await patchInboundShipmentField(body.store_id, body.id, body.field, body.value, actor.email || actor.displayName || actor.userId);
+    return Response.json({ item });
+  } catch (error) {
+    return routeErrorResponse(error, "Failed to update Inbound Shipment field.");
+  }
+}
+
 export async function DELETE(request: Request) {
   try {
-    await authorize(request, "write", "accounting");
+    const actor = await authorize(request, "write", "accounting");
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
     const storeId = searchParams.get("store_id");
     if (!id || !storeId) {
       return Response.json({ error: "id and store_id are required" }, { status: 400 });
     }
-    const success = await deleteInboundShipmentItem(id, storeId);
+    const success = await deleteInboundShipmentItem(id, storeId, actor.email || actor.displayName || actor.userId);
     return Response.json({ success });
   } catch (error) {
     return routeErrorResponse(error, "Failed to delete Inbound Shipment.");

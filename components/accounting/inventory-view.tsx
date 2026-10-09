@@ -9,8 +9,11 @@ import {
 } from "@tanstack/react-query";
 import {
   ArrowClockwiseIcon,
+  ArrowCounterClockwiseIcon,
   ArrowSquareOutIcon,
   CheckCircleIcon,
+  ClockCounterClockwiseIcon,
+  CopyIcon,
   EyeIcon,
   FileXlsIcon,
   FloppyDiskIcon,
@@ -20,6 +23,7 @@ import {
   PackageIcon,
   PencilSimpleIcon,
   PlusIcon,
+  SlidersHorizontalIcon,
   TrashIcon,
   TruckIcon,
   UploadSimpleIcon,
@@ -28,6 +32,14 @@ import {
 } from "@phosphor-icons/react";
 import type { SkuMasterItem, InboundShipmentItem } from "@/lib/accounting/inventory-db";
 import type { Store } from "@/lib/accounting/types";
+import {
+  ColumnManagerModal,
+  type ColumnConfig,
+  DEFAULT_SKU_COLUMNS,
+  DEFAULT_INBOUND_COLUMNS,
+  ColumnHeaderCell,
+} from "./column-manager-modal";
+import { InventoryHistoryDrawer } from "./inventory-history-drawer";
 
 // Debounce hook for instant, throttled searching (300ms)
 function useDebounce<T>(value: T, delay: number): T {
@@ -681,6 +693,159 @@ function InventoryViewInner() {
   // Blur backdrop mockup preview modal state
   const [previewModalUrl, setPreviewModalUrl] = useState<string | null>(null);
 
+  // Column management states
+  const [skuColumns, setSkuColumns] = useState<ColumnConfig[]>(DEFAULT_SKU_COLUMNS);
+  const [inboundColumns, setInboundColumns] = useState<ColumnConfig[]>(DEFAULT_INBOUND_COLUMNS);
+  const [showColumnModal, setShowColumnModal] = useState(false);
+
+  // Storage keys áp dụng đồng bộ cho tất cả các store
+  const SKU_COLUMNS_STORAGE_KEY = "accounting_sku_columns_global";
+  const INBOUND_COLUMNS_STORAGE_KEY = "accounting_inbound_columns_global";
+
+  // Load columns from localStorage (áp dụng đồng bộ tất cả store)
+  useEffect(() => {
+    try {
+      let skuStored = localStorage.getItem(SKU_COLUMNS_STORAGE_KEY);
+      if (!skuStored && selectedStoreId) {
+        skuStored = localStorage.getItem(`accounting_sku_columns_${selectedStoreId}`);
+      }
+      if (skuStored) {
+        const parsed: ColumnConfig[] = JSON.parse(skuStored);
+        const merged = DEFAULT_SKU_COLUMNS.map((def) => {
+          const found = parsed.find((p) => p.id === def.id);
+          return found ? found : def;
+        });
+        const customs = parsed.filter((p) => p.isCustom);
+        setSkuColumns([...merged, ...customs]);
+      } else {
+        setSkuColumns(DEFAULT_SKU_COLUMNS);
+      }
+
+      let inboundStored = localStorage.getItem(INBOUND_COLUMNS_STORAGE_KEY);
+      if (!inboundStored && selectedStoreId) {
+        inboundStored = localStorage.getItem(`accounting_inbound_columns_${selectedStoreId}`);
+      }
+      if (inboundStored) {
+        const parsed: ColumnConfig[] = JSON.parse(inboundStored);
+        const merged = DEFAULT_INBOUND_COLUMNS.map((def) => {
+          const found = parsed.find((p) => p.id === def.id);
+          return found ? found : def;
+        });
+        const customs = parsed.filter((p) => p.isCustom);
+        setInboundColumns([...merged, ...customs]);
+      } else {
+        setInboundColumns(DEFAULT_INBOUND_COLUMNS);
+      }
+    } catch {}
+  }, [selectedStoreId]);
+
+  const handleSaveSkuColumns = useCallback((newCols: ColumnConfig[]) => {
+    setSkuColumns(newCols);
+    try {
+      localStorage.setItem(SKU_COLUMNS_STORAGE_KEY, JSON.stringify(newCols));
+    } catch {}
+    notify("Đã lưu thiết lập cột BẢNG MÃ (Đồng bộ tất cả Store)!", "success");
+  }, []);
+
+  const handleResetSkuColumns = useCallback(() => {
+    setSkuColumns(DEFAULT_SKU_COLUMNS);
+    try {
+      localStorage.removeItem(SKU_COLUMNS_STORAGE_KEY);
+    } catch {}
+    notify("Đã khôi phục cột BẢNG MÃ về mặc định!", "success");
+  }, []);
+
+  const handleSaveInboundColumns = useCallback((newCols: ColumnConfig[]) => {
+    setInboundColumns(newCols);
+    try {
+      localStorage.setItem(INBOUND_COLUMNS_STORAGE_KEY, JSON.stringify(newCols));
+    } catch {}
+    notify("Đã lưu thiết lập cột CHI TIẾT ĐI HÀNG (Đồng bộ tất cả Store)!", "success");
+  }, []);
+
+  const handleResetInboundColumns = useCallback(() => {
+    setInboundColumns(DEFAULT_INBOUND_COLUMNS);
+    try {
+      localStorage.removeItem(INBOUND_COLUMNS_STORAGE_KEY);
+    } catch {}
+    notify("Đã khôi phục cột CHI TIẾT ĐI HÀNG về mặc định!", "success");
+  }, []);
+
+  const handleQuickHideColumn = useCallback((tab: "sku" | "inbound", colId: string) => {
+    if (tab === "sku") {
+      setSkuColumns((prev) => {
+        const updated = prev.map((c) => (c.id === colId ? { ...c, visible: false } : c));
+        try {
+          localStorage.setItem(SKU_COLUMNS_STORAGE_KEY, JSON.stringify(updated));
+        } catch {}
+        return updated;
+      });
+      notify("Đã ẩn cột khỏi bảng!", "success");
+    } else {
+      setInboundColumns((prev) => {
+        const updated = prev.map((c) => (c.id === colId ? { ...c, visible: false } : c));
+        try {
+          localStorage.setItem(INBOUND_COLUMNS_STORAGE_KEY, JSON.stringify(updated));
+        } catch {}
+        return updated;
+      });
+      notify("Đã ẩn cột khỏi bảng!", "success");
+    }
+  }, []);
+
+  const handleQuickRenameColumn = useCallback((tab: "sku" | "inbound", colId: string, currentLabel: string) => {
+    const newName = prompt("Nhập tên hiển thị mới cho cột này:", currentLabel);
+    if (newName && newName.trim() && newName.trim() !== currentLabel) {
+      if (tab === "sku") {
+        setSkuColumns((prev) => {
+          const updated = prev.map((c) => (c.id === colId ? { ...c, label: newName.trim() } : c));
+          try {
+            localStorage.setItem(SKU_COLUMNS_STORAGE_KEY, JSON.stringify(updated));
+          } catch {}
+          return updated;
+        });
+        notify(`Đã đổi tên cột thành "${newName.trim()}"!`, "success");
+      } else {
+        setInboundColumns((prev) => {
+          const updated = prev.map((c) => (c.id === colId ? { ...c, label: newName.trim() } : c));
+          try {
+            localStorage.setItem(INBOUND_COLUMNS_STORAGE_KEY, JSON.stringify(updated));
+          } catch {}
+          return updated;
+        });
+        notify(`Đã đổi tên cột thành "${newName.trim()}"!`, "success");
+      }
+    }
+  }, []);
+
+  const skuColMap = useMemo(() => {
+    const map: Record<string, ColumnConfig> = {};
+    for (const c of skuColumns) map[c.id] = c;
+    return map;
+  }, [skuColumns]);
+
+  const skuCustomColumns = useMemo(() => {
+    return skuColumns.filter((c) => c.isCustom);
+  }, [skuColumns]);
+
+  const skuVisibleCount = useMemo(() => {
+    return skuColumns.filter((c) => c.visible).length;
+  }, [skuColumns]);
+
+  const inboundColMap = useMemo(() => {
+    const map: Record<string, ColumnConfig> = {};
+    for (const c of inboundColumns) map[c.id] = c;
+    return map;
+  }, [inboundColumns]);
+
+  const inboundCustomColumns = useMemo(() => {
+    return inboundColumns.filter((c) => c.isCustom);
+  }, [inboundColumns]);
+
+  const inboundVisibleCount = useMemo(() => {
+    return inboundColumns.filter((c) => c.visible).length;
+  }, [inboundColumns]);
+
   // Pagination 50/1 states
   const [skuPage, setSkuPage] = useState(1);
   const [skuLimit, setSkuLimit] = useState(50);
@@ -895,14 +1060,12 @@ function InventoryViewInner() {
     [selectedStore, selectedStoreId, skuPage, skuLimit, shipmentPage, shipmentLimit, debouncedSkuSearch, debouncedShipmentSearch, skuStatusFilter, skuTypeFilter, shipmentStatusFilter, inlineEditing, queryClient]
   );
 
-  // Mặc định sắp xếp phôi tháng listing từ mới nhất đến cũ
+  // Mặc định hiển thị phôi SKU mới nhất lên đầu để người dùng dễ theo dõi và chỉnh sửa
   const sortedSkus = useMemo(() => {
     return [...allSkus].sort((a, b) => {
-      const da = a.thang_listing ? a.thang_listing.trim() : "";
-      const db = b.thang_listing ? b.thang_listing.trim() : "";
-      if (da && !db) return -1;
-      if (!da && db) return 1;
-      if (da && db && da !== db) return db.localeCompare(da);
+      const ca = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const cb = b.created_at ? new Date(b.created_at).getTime() : 0;
+      if (ca !== cb) return cb - ca;
       return (a.row_order ?? 999999) - (b.row_order ?? 999999);
     });
   }, [allSkus]);
@@ -982,7 +1145,69 @@ function InventoryViewInner() {
     ).sort((a, b) => a.localeCompare(b));
   }, [allSkus, allShipments]);
 
-  // Delete SKU
+  // History Drawer state
+  const [historyDrawer, setHistoryDrawer] = useState<{
+    isOpen: boolean;
+    entityType?: "sku" | "inbound";
+    entityId?: string;
+    entityTitle?: string;
+  }>({ isOpen: false });
+
+  // 30s Undo state for deleted items
+  const [undoDelete, setUndoDelete] = useState<{
+    entityType: "sku" | "inbound";
+    entityId: string;
+    label: string;
+    secondsLeft: number;
+  } | null>(null);
+  const [undoing, setUndoing] = useState(false);
+
+  // Countdown timer for 30s Undo delete
+  useEffect(() => {
+    if (!undoDelete) return;
+    const timer = setInterval(() => {
+      setUndoDelete((prev) => {
+        if (!prev) return null;
+        if (prev.secondsLeft <= 1) return null;
+        return { ...prev, secondsLeft: prev.secondsLeft - 1 };
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [undoDelete?.entityId]);
+
+  const handleUndoDelete = async () => {
+    if (!undoDelete || !selectedStoreId) return;
+    setUndoing(true);
+    try {
+      const res = await fetch("/api/accounting/inventory/history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          store_id: selectedStoreId,
+          entity_type: undoDelete.entityType,
+          entity_id: undoDelete.entityId,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Không thể hoàn tác thao tác xóa.");
+      }
+      notify(`Đã hoàn tác và khôi phục ${undoDelete.label} thành công!`, "success");
+      const restoredType = undoDelete.entityType;
+      setUndoDelete(null);
+      if (restoredType === "sku") {
+        fetchSkus();
+      } else {
+        fetchShipments();
+      }
+    } catch (err) {
+      notify((err as Error).message, "error");
+    } finally {
+      setUndoing(false);
+    }
+  };
+
+  // Delete SKU (Soft-delete with 30s Undo)
   const handleDeleteSku = async (id: string, skuName: string) => {
     if (!confirm(`Bạn có chắc chắn muốn xóa SKU ${skuName}?`)) return;
     try {
@@ -991,14 +1216,20 @@ function InventoryViewInner() {
         { method: "DELETE" },
       );
       if (!res.ok) throw new Error("Không thể xóa SKU");
-      notify(`Đã xóa SKU ${skuName}`);
+      setUndoDelete({
+        entityType: "sku",
+        entityId: id,
+        label: skuName,
+        secondsLeft: 30,
+      });
+      notify(`Đã chuyển SKU ${skuName} vào thùng rác (Có thể hoàn tác trong 30s)`);
       fetchSkus();
     } catch (err) {
       notify((err as Error).message, "error");
     }
   };
 
-  // Delete Shipment
+  // Delete Shipment (Soft-delete with 30s Undo)
   const handleDeleteShipment = async (id: string, name: string) => {
     if (!confirm(`Bạn có chắc muốn xóa lô hàng ${name}?`)) return;
     try {
@@ -1007,7 +1238,13 @@ function InventoryViewInner() {
         { method: "DELETE" },
       );
       if (!res.ok) throw new Error("Không thể xóa lô hàng");
-      notify(`Đã xóa lô hàng ${name}`);
+      setUndoDelete({
+        entityType: "inbound",
+        entityId: id,
+        label: name,
+        secondsLeft: 30,
+      });
+      notify(`Đã chuyển lô hàng ${name} vào thùng rác (Có thể hoàn tác trong 30s)`);
       fetchShipments();
     } catch (err) {
       notify((err as Error).message, "error");
@@ -1059,6 +1296,97 @@ function InventoryViewInner() {
       landing_page_url: item.landing_page_url || "",
     });
     setShowSkuModal(true);
+  };
+
+  // Duplicate (Nhân bản) SKU lên dòng mới nhất để sửa mã SKU
+  const [duplicatingSkuId, setDuplicatingSkuId] = useState<string | null>(null);
+  const handleDuplicateSku = async (item: SkuMasterItem) => {
+    if (!selectedStoreId) return;
+    setDuplicatingSkuId(item.id);
+    try {
+      const baseSku = item.sku.replace(/-COPY(-\d+)?$/i, "");
+      let copySku = `${baseSku}-COPY`;
+      let counter = 1;
+      const existingSkus = new Set(allSkus.map((s) => s.sku.toLowerCase()));
+      while (existingSkus.has(copySku.toLowerCase())) {
+        counter++;
+        copySku = `${baseSku}-COPY-${counter}`;
+      }
+
+      const payload = {
+        store_id: selectedStoreId,
+        sku: copySku,
+        brand: item.brand || null,
+        product_type: item.product_type || null,
+        mockup: item.mockup || null,
+        mockup_url: item.mockup_url || item.mockup || null,
+        asin: item.asin || null,
+        fnsku: item.fnsku || null,
+        amazon_fee: item.amazon_fee != null ? Number(item.amazon_fee) : null,
+        referral_fee_pct: item.referral_fee_pct != null ? Number(item.referral_fee_pct) : null,
+        pic_mkt: item.pic_mkt || null,
+        loai: item.loai || null,
+        niche: item.niche || null,
+        pic_idea: item.pic_idea || null,
+        status: item.status || "Active",
+        event: item.event || null,
+        tinh_trang: item.tinh_trang || null,
+        design_pic: item.design_pic || null,
+        thang_listing: item.thang_listing || null,
+        thang_danh_gia: item.thang_danh_gia || null,
+        event_250th: item.event_250th || null,
+        ngay_danh_gia_sku_event: item.ngay_danh_gia_sku_event || null,
+        amazon_fba_fee_thay_doi: item.amazon_fba_fee_thay_doi != null ? Number(item.amazon_fba_fee_thay_doi) : null,
+        basecost_tb: item.basecost_tb != null ? Number(item.basecost_tb) : null,
+        brand_entity_id: item.brand_entity_id || null,
+        creative_asins_video: item.creative_asins_video || null,
+        creative_asins_collection: item.creative_asins_collection || null,
+        video_media_ids: item.video_media_ids || null,
+        creative_headline: item.creative_headline || null,
+        brand_logo_asset_id: item.brand_logo_asset_id || null,
+        landing_page_url: item.landing_page_url || null,
+        custom_fields: item.custom_fields || null,
+      };
+
+      const res = await fetch("/api/accounting/inventory/sku-master", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không thể nhân bản SKU");
+
+      setSkuPage(1);
+
+      // Cập nhật tức thời vào cache query
+      queryClient.setQueryData(
+        ["sku-master", selectedStoreId, 1, skuLimit, debouncedSkuSearch, skuStatusFilter, skuTypeFilter],
+        (oldData: any) => {
+          if (!oldData) return oldData;
+          return {
+            ...oldData,
+            items: [data.item, ...oldData.items.filter((i: any) => i.id !== data.item.id)],
+            total: (oldData.total || 0) + 1,
+          };
+        }
+      );
+
+      await fetchSkus();
+
+      notify(`Đã nhân bản SKU lên dòng đầu tiên! Nhập mã SKU mới để hoàn tất.`, "success");
+
+      // Tự động kích hoạt sửa trực tiếp ô SKU mới để người dùng gõ ngay mã mới
+      if (data.item?.id) {
+        setTimeout(() => {
+          startInlineEdit("sku", data.item.id, "sku", data.item.sku);
+        }, 120);
+      }
+    } catch (err) {
+      notify((err as Error).message, "error");
+    } finally {
+      setDuplicatingSkuId(null);
+    }
   };
 
   // Submit SKU Form (Add or Edit)
@@ -1235,6 +1563,85 @@ function InventoryViewInner() {
     }
   };
 
+  // Duplicate (Nhân bản) Lô hàng
+  const [duplicatingShipmentId, setDuplicatingShipmentId] = useState<string | null>(null);
+  const handleDuplicateShipment = async (item: InboundShipmentItem) => {
+    if (!selectedStoreId) return;
+    setDuplicatingShipmentId(item.id);
+    try {
+      const baseName = item.ten_lo_hang || item.sku || "Shipment";
+      const copyName = `${baseName}-COPY`;
+
+      const payload = {
+        store_id: selectedStoreId,
+        sku_id: item.sku_id || null,
+        sku: item.sku,
+        brand: item.brand || null,
+        sup: item.sup || null,
+        ngay_request: item.ngay_request || null,
+        product_type: item.product_type || null,
+        mockup: item.mockup || null,
+        quantity: item.quantity ? Number(item.quantity) : 0,
+        line_ship: item.line_ship || null,
+        base_cost_per_unit: item.base_cost_per_unit != null ? Number(item.base_cost_per_unit) : null,
+        card: item.card != null ? Number(item.card) : null,
+        tag: item.tag != null ? Number(item.tag) : null,
+        shipping_fee: item.shipping_fee != null ? Number(item.shipping_fee) : null,
+        hop_tui: item.hop_tui != null ? Number(item.hop_tui) : null,
+        final_basecost: item.final_basecost != null ? Number(item.final_basecost) : null,
+        total_basecost: item.total_basecost != null ? Number(item.total_basecost) : null,
+        ngay_thanh_toan: item.ngay_thanh_toan || null,
+        ten_lo_hang: copyName,
+        shipment_id: item.shipment_id ? `${item.shipment_id}-COPY` : null,
+        ngay_di: item.ngay_di || null,
+        ngay_den: item.ngay_den || null,
+        amazon_received: item.amazon_received != null ? Number(item.amazon_received) : null,
+        tinh_trang_hang_den_kho: item.tinh_trang_hang_den_kho || null,
+        status: item.status || "In Transit",
+        so_luong_amazon_nhan: item.so_luong_amazon_nhan != null ? Number(item.so_luong_amazon_nhan) : null,
+        discrepancy: item.discrepancy != null ? Number(item.discrepancy) : null,
+        note: item.note || null,
+        trang_thai: item.trang_thai || null,
+        custom_fields: item.custom_fields || null,
+      };
+
+      const res = await fetch("/api/accounting/inventory/inbound-shipments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không thể nhân bản lô hàng");
+
+      setShipmentPage(1);
+      queryClient.setQueryData(
+        ["inbound-shipments", selectedStoreId, 1, shipmentLimit, debouncedShipmentSearch, shipmentStatusFilter],
+        (oldData: any) => {
+          if (!oldData) return oldData;
+          return {
+            ...oldData,
+            items: [data.item, ...oldData.items.filter((i: any) => i.id !== data.item.id)],
+            total: (oldData.total || 0) + 1,
+          };
+        }
+      );
+      await fetchShipments();
+
+      notify(`Đã nhân bản lô hàng lên dòng đầu tiên!`, "success");
+
+      if (data.item?.id) {
+        setTimeout(() => {
+          startInlineEdit("inbound", data.item.id, "ten_lo_hang", data.item.ten_lo_hang);
+        }, 120);
+      }
+    } catch (err) {
+      notify((err as Error).message, "error");
+    } finally {
+      setDuplicatingShipmentId(null);
+    }
+  };
+
   // Import Action
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1358,6 +1765,30 @@ function InventoryViewInner() {
             >
               <UploadSimpleIcon size={15} weight="bold" />
               <span>{activeTab === "sku" ? "Nhập Bảng Mã" : "Nhập Đi Hàng"}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowColumnModal(true)}
+              className="inline-flex items-center justify-center rounded-lg border border-amber-400 bg-amber-50 p-2 text-amber-950 hover:bg-amber-100 transition shadow-2xs cursor-pointer"
+              title={`Cấu hình cột ${activeTab === "sku" ? "BẢNG MÃ" : "CHI TIẾT ĐI HÀNG"} (${activeTab === "sku" ? skuVisibleCount : inboundVisibleCount}/${activeTab === "sku" ? skuColumns.length : inboundColumns.length})`}
+            >
+              <SlidersHorizontalIcon size={16} weight="bold" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                setHistoryDrawer({
+                  isOpen: true,
+                  entityType: activeTab,
+                })
+              }
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 hover:text-indigo-700 transition shadow-2xs cursor-pointer"
+              title="Xem lịch sử thay đổi & khôi phục dữ liệu"
+            >
+              <ClockCounterClockwiseIcon size={15} weight="bold" />
+              <span>Lịch sử</span>
             </button>
 
             <a
@@ -1574,121 +2005,198 @@ function InventoryViewInner() {
               <thead className="sticky top-0 z-30 bg-[#ff9900] text-slate-950 border-b-2 border-amber-600 shadow-xs">
                 <tr className="text-xs font-semibold uppercase tracking-[0.04em] whitespace-nowrap">
                   {/* FROZEN 1: STT */}
-                  <th className="py-2 px-1 text-center w-[58px] min-w-[58px] bg-[#f59e0b] border-r border-amber-600 sticky left-0 z-40 text-xs text-slate-950">
-                    STT
-                  </th>
+                  {skuColMap["stt"]?.visible !== false && (
+                    <th className="py-2 px-1 text-center w-[58px] min-w-[58px] bg-[#f59e0b] border-r border-amber-600 sticky left-0 z-40 text-xs text-slate-950">
+                      {skuColMap["stt"]?.label || "STT"}
+                    </th>
+                  )}
                   {/* FROZEN 2: Product Type */}
-                  <th className="py-2 px-3 w-[155px] min-w-[155px] bg-[#f59e0b] border-r border-amber-600 sticky left-[58px] z-40 text-xs text-slate-950">
-                    Product Type
-                  </th>
+                  {skuColMap["product_type"]?.visible !== false && (
+                    <th className="py-2 px-3 w-[155px] min-w-[155px] bg-[#f59e0b] border-r border-amber-600 sticky left-[58px] z-40 text-xs text-slate-950">
+                      {skuColMap["product_type"]?.label || "Product Type"}
+                    </th>
+                  )}
                   {/* FROZEN 3: Mockup */}
-                  <th className="py-2 px-1 text-center w-[76px] min-w-[76px] bg-[#f59e0b] border-r border-amber-600 sticky left-[213px] z-40 text-xs text-slate-950">
-                    Mockup
-                  </th>
+                  {skuColMap["mockup"]?.visible !== false && (
+                    <th className="py-2 px-1 text-center w-[76px] min-w-[76px] bg-[#f59e0b] border-r border-amber-600 sticky left-[213px] z-40 text-xs text-slate-950">
+                      {skuColMap["mockup"]?.label || "Mockup"}
+                    </th>
+                  )}
                   {/* FROZEN 4: SKU */}
-                  <th className="py-2 px-3 w-[160px] min-w-[160px] bg-[#f59e0b] border-r-2 !border-r-amber-800 sticky left-[289px] z-40 shadow-[4px_0_8px_-1px_rgba(0,0,0,0.18)] text-xs text-slate-950">
-                    SKU
-                  </th>
+                  {skuColMap["sku"]?.visible !== false && (
+                    <th className="py-2 px-3 w-[160px] min-w-[160px] bg-[#f59e0b] border-r-2 !border-r-amber-800 sticky left-[289px] z-40 shadow-[4px_0_8px_-1px_rgba(0,0,0,0.18)] text-xs text-slate-950">
+                      {skuColMap["sku"]?.label || "SKU"}
+                    </th>
+                  )}
 
-                  {/* SCROLLABLE COLUMNS (Exact names and vàng cam color from Excel) */}
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60">Brand</th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60">ASIN</th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60">FNSKU</th>
-                  <th className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>AMAZON FEE</div>
-                    <div className="text-[10px] font-bold opacity-90">(chưa có referal fee)</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>%</div>
-                    <div>Referal</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>PIC</div>
-                    <div>MKT</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60">Loại</th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60">Niche</th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>PIC</div>
-                    <div>Idea</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60">Trạng thái</th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60">Event</th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60">Tình trạng</th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>DESIGN</div>
-                    <div>PIC</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Mockup</div>
-                    <div>url</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Tháng</div>
-                    <div>listing</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Tháng</div>
-                    <div>đánh giá</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Event</div>
-                    <div>250th</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Ngày đánh giá</div>
-                    <div>SKU Event</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Amazon FBA Fee</div>
-                    <div>thay đổi</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Basecost</div>
-                    <div>trung bình</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Brand Entity</div>
-                    <div>ID</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Creative ASINs</div>
-                    <div>(Video)</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Creative ASINs</div>
-                    <div>(Collection)</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Video Media</div>
-                    <div>IDs</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Creative</div>
-                    <div>Headline</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Brand Logo</div>
-                    <div>Asset ID</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Landing Page</div>
-                    <div>URL</div>
-                  </th>
+                  {/* SCROLLABLE COLUMNS */}
+                  {skuColMap["brand"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["brand"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      {skuColMap["brand"]?.label || "Brand"}
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["asin"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["asin"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      {skuColMap["asin"]?.label || "ASIN"}
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["fnsku"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["fnsku"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      {skuColMap["fnsku"]?.label || "FNSKU"}
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["amazon_fee"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["amazon_fee"]} className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      <div>{skuColMap["amazon_fee"]?.label || "AMAZON FEE"}</div>
+                      <div className="text-[10px] font-bold opacity-90">(chưa có referal fee)</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["referral_fee_pct"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["referral_fee_pct"]} className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      <div>{skuColMap["referral_fee_pct"]?.label || "% Referal"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["pic_mkt"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["pic_mkt"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      <div>{skuColMap["pic_mkt"]?.label || "PIC MKT"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["loai"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["loai"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      {skuColMap["loai"]?.label || "Loại"}
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["niche"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["niche"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      {skuColMap["niche"]?.label || "Niche"}
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["pic_idea"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["pic_idea"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      <div>{skuColMap["pic_idea"]?.label || "PIC Idea"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["status"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["status"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      {skuColMap["status"]?.label || "Trạng thái"}
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["event"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["event"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      {skuColMap["event"]?.label || "Event"}
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["tinh_trang"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["tinh_trang"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      {skuColMap["tinh_trang"]?.label || "Tình trạng"}
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["design_pic"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["design_pic"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      <div>{skuColMap["design_pic"]?.label || "DESIGN PIC"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["mockup_url"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["mockup_url"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      <div>{skuColMap["mockup_url"]?.label || "Mockup URL"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["thang_listing"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["thang_listing"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      <div>{skuColMap["thang_listing"]?.label || "Tháng listing"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["thang_danh_gia"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["thang_danh_gia"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      <div>{skuColMap["thang_danh_gia"]?.label || "Tháng đánh giá"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["event_250th"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["event_250th"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      <div>{skuColMap["event_250th"]?.label || "Event 250th"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["ngay_danh_gia_sku_event"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["ngay_danh_gia_sku_event"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      <div>{skuColMap["ngay_danh_gia_sku_event"]?.label || "Ngày đánh giá SKU Event"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["amazon_fba_fee_thay_doi"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["amazon_fba_fee_thay_doi"]} className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      <div>{skuColMap["amazon_fba_fee_thay_doi"]?.label || "Amazon FBA Fee thay đổi"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["basecost_tb"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["basecost_tb"]} className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      <div>{skuColMap["basecost_tb"]?.label || "Basecost trung bình"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["brand_entity_id"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["brand_entity_id"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      <div>{skuColMap["brand_entity_id"]?.label || "Brand Entity ID"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["creative_asins_video"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["creative_asins_video"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      <div>{skuColMap["creative_asins_video"]?.label || "Creative ASINs (Video)"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["creative_asins_collection"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["creative_asins_collection"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      <div>{skuColMap["creative_asins_collection"]?.label || "Creative ASINs (Collection)"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["video_media_ids"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["video_media_ids"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      <div>{skuColMap["video_media_ids"]?.label || "Video Media IDs"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["creative_headline"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["creative_headline"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      <div>{skuColMap["creative_headline"]?.label || "Creative Headline"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["brand_logo_asset_id"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["brand_logo_asset_id"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      <div>{skuColMap["brand_logo_asset_id"]?.label || "Brand Logo Asset ID"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {skuColMap["landing_page_url"]?.visible !== false && (
+                    <ColumnHeaderCell col={skuColMap["landing_page_url"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("sku", id)} onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}>
+                      <div>{skuColMap["landing_page_url"]?.label || "Landing Page URL"}</div>
+                    </ColumnHeaderCell>
+                  )}
+
+                  {/* CUSTOM COLUMNS ADDED BY USER */}
+                  {skuCustomColumns.filter((c) => c.visible).map((c) => (
+                    <ColumnHeaderCell
+                      key={c.id}
+                      col={c}
+                      className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight"
+                      onQuickHide={(id) => handleQuickHideColumn("sku", id)}
+                      onQuickRename={(id, l) => handleQuickRenameColumn("sku", id, l)}
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>{c.label}</span>
+                        <span className="text-[9px] px-1 rounded bg-purple-200 text-purple-900 font-bold">Custom</span>
+                      </div>
+                    </ColumnHeaderCell>
+                  ))}
+
                   <th className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-950 font-black">Thao tác</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
                 {loadingSkus ? (
                   <tr>
-                    <td colSpan={32} className="py-20 text-center text-slate-500 font-bold text-base">
+                    <td colSpan={skuVisibleCount + 1} className="py-20 text-center text-slate-500 font-bold text-base">
                       <ArrowClockwiseIcon size={28} className="mx-auto mb-2 animate-spin text-indigo-600" />
                       Đang tải Bảng Mã của Store {selectedStore?.name}...
                     </td>
                   </tr>
                 ) : sortedSkus.length === 0 ? (
                   <tr>
-                    <td colSpan={32} className="py-20 text-center text-slate-500 text-sm">
+                    <td colSpan={skuVisibleCount + 1} className="py-20 text-center text-slate-500 text-sm">
                       <PackageIcon size={40} className="mx-auto mb-2 text-slate-400" />
                       Chưa có SKU nào trong Store {selectedStore?.name}. Nhấn <strong>Thêm Phôi SKU</strong> hoặc <strong>Import Bảng Mã</strong> để nhập dữ liệu.
                     </td>
@@ -1702,6 +2210,7 @@ function InventoryViewInner() {
                         className="group h-[52px] min-h-[52px] bg-white even:bg-[#f8fafc] hover:bg-[#fef9c3] transition-colors whitespace-nowrap [&>td]:border-b [&>td]:border-slate-200"
                       >
                           {/* FROZEN 1: STT with Pencil Button aligned */}
+                          {skuColMap["stt"]?.visible !== false && (
                           <td className="py-1 px-1 text-center font-mono text-xs font-bold text-slate-700 bg-white group-even:bg-[#f8fafc] group-hover:bg-[#fef9c3] border-r border-slate-300 sticky left-0 z-20">
                             <div className="flex items-center justify-between gap-1 w-full px-1">
                               <span className="w-5 text-center font-mono font-bold text-slate-600">{stt}</span>
@@ -1715,9 +2224,11 @@ function InventoryViewInner() {
                               </button>
                             </div>
                           </td>
+                          )}
 
                           {/* FROZEN 2: Product Type */}
-                          <EditableCell
+                          {skuColMap["product_type"]?.visible !== false && (
+<EditableCell
                             table="sku"
                             id={item.id}
                             field="product_type"
@@ -1731,8 +2242,10 @@ function InventoryViewInner() {
                             onSave={handleSaveInlineCell}
                             onCancel={() => setInlineEditing(null)}
                           />
+)}
 
                           {/* FROZEN 3: Mockup */}
+                          {skuColMap["mockup"]?.visible !== false && (
                           <td className="py-1 px-1 text-center bg-white group-even:bg-[#f8fafc] group-hover:bg-[#fef9c3] border-r border-slate-300 sticky left-[213px] z-20">
                             <MockupThumbnail
                               url={item.mockup_url || item.mockup}
@@ -1740,9 +2253,11 @@ function InventoryViewInner() {
                               onPreview={(url) => setPreviewModalUrl(url)}
                             />
                           </td>
+                          )}
 
                           {/* FROZEN 4: SKU */}
-                          <EditableCell
+                          {skuColMap["sku"]?.visible !== false && (
+<EditableCell
                             table="sku"
                             id={item.id}
                             field="sku"
@@ -1760,9 +2275,11 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
                         {/* SCROLLABLE DATA CELLS */}
-                        <EditableCell
+                        {skuColMap["brand"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="brand"
@@ -1776,8 +2293,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {skuColMap["asin"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="asin"
@@ -1791,8 +2310,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {skuColMap["fnsku"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="fnsku"
@@ -1806,8 +2327,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {skuColMap["amazon_fee"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="amazon_fee"
@@ -1821,8 +2344,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {skuColMap["referral_fee_pct"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="referral_fee_pct"
@@ -1840,8 +2365,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {skuColMap["pic_mkt"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="pic_mkt"
@@ -1855,8 +2382,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {skuColMap["loai"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="loai"
@@ -1870,8 +2399,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {skuColMap["niche"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="niche"
@@ -1885,8 +2416,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {skuColMap["pic_idea"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="pic_idea"
@@ -1900,8 +2433,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {skuColMap["status"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="status"
@@ -1915,8 +2450,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {skuColMap["event"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="event"
@@ -1930,8 +2467,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {skuColMap["tinh_trang"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="tinh_trang"
@@ -1945,8 +2484,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {skuColMap["design_pic"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="design_pic"
@@ -1960,8 +2501,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <td className="py-1.5 px-3 text-xs border-r border-slate-200">
+                        {skuColMap["mockup_url"]?.visible !== false && (
+<td className="py-1.5 px-3 text-xs border-r border-slate-200">
                           {item.mockup_url ? (
                             <a
                               href={item.mockup_url}
@@ -1976,8 +2519,10 @@ function InventoryViewInner() {
                             "—"
                           )}
                         </td>
+)}
 
-                        <EditableCell
+                        {skuColMap["thang_listing"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="thang_listing"
@@ -1991,8 +2536,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {skuColMap["thang_danh_gia"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="thang_danh_gia"
@@ -2006,8 +2553,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {skuColMap["event_250th"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="event_250th"
@@ -2021,8 +2570,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {skuColMap["ngay_danh_gia_sku_event"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="ngay_danh_gia_sku_event"
@@ -2036,8 +2587,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {skuColMap["amazon_fba_fee_thay_doi"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="amazon_fba_fee_thay_doi"
@@ -2055,8 +2608,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {skuColMap["basecost_tb"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="basecost_tb"
@@ -2070,8 +2625,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {skuColMap["brand_entity_id"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="brand_entity_id"
@@ -2085,8 +2642,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {skuColMap["creative_asins_video"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="creative_asins_video"
@@ -2100,8 +2659,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {skuColMap["creative_asins_collection"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="creative_asins_collection"
@@ -2115,8 +2676,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {skuColMap["video_media_ids"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="video_media_ids"
@@ -2130,8 +2693,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {skuColMap["creative_headline"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="creative_headline"
@@ -2145,8 +2710,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {skuColMap["brand_logo_asset_id"]?.visible !== false && (
+<EditableCell
                           table="sku"
                           id={item.id}
                           field="brand_logo_asset_id"
@@ -2160,8 +2727,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <td className="py-1.5 px-3 text-xs border-r border-slate-200">
+                        {skuColMap["landing_page_url"]?.visible !== false && (
+<td className="py-1.5 px-3 text-xs border-r border-slate-200">
                           {item.landing_page_url ? (
                             <a
                               href={item.landing_page_url}
@@ -2176,7 +2745,27 @@ function InventoryViewInner() {
                             "—"
                           )}
                         </td>
-                        {/* THAO TÁC: Sửa, Xem chi tiết, Xóa */}
+)}
+                        {/* CUSTOM COLUMNS DATA CELLS */}
+                        {skuCustomColumns.filter((c) => c.visible).map((c) => (
+                          <EditableCell
+                            key={c.id}
+                            table="sku"
+                            id={item.id}
+                            field={c.id}
+                            value={item.custom_fields?.[c.id] ?? ""}
+                            display={safeDisplay(item.custom_fields?.[c.id])}
+                            className="py-1.5 px-3 text-xs border-r border-slate-200"
+                            inlineEditing={inlineEditing}
+                            inlineSaving={inlineSaving}
+                            onStartEdit={startInlineEdit}
+                            onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
+                            onSave={handleSaveInlineCell}
+                            onCancel={() => setInlineEditing(null)}
+                          />
+                        ))}
+
+                        {/* THAO TÁC: Sửa, Sao chép (Duplicate), Xóa */}
                         <td className="py-1.5 px-3 text-xs text-center whitespace-nowrap">
                           <div className="flex items-center justify-center gap-1.5">
                             <button
@@ -2189,11 +2778,16 @@ function InventoryViewInner() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => setSelectedSkuDetail(item)}
-                              className="rounded-lg bg-slate-100 border border-slate-200 p-1 text-slate-700 hover:bg-slate-200 transition cursor-pointer"
-                              title="Xem chi tiết"
+                              disabled={duplicatingSkuId === item.id}
+                              onClick={() => handleDuplicateSku(item)}
+                              className="rounded-lg bg-emerald-50 border border-emerald-200 p-1 text-emerald-700 hover:bg-emerald-100 transition cursor-pointer disabled:opacity-50"
+                              title="Nhân bản (Sao chép) SKU lên dòng mới nhất để sửa mã"
                             >
-                              <EyeIcon size={16} weight="bold" />
+                              {duplicatingSkuId === item.id ? (
+                                <ArrowClockwiseIcon size={16} className="animate-spin" />
+                              ) : (
+                                <CopyIcon size={16} weight="bold" />
+                              )}
                             </button>
                             <button
                               type="button"
@@ -2240,94 +2834,182 @@ function InventoryViewInner() {
               <thead className="sticky top-0 z-30 bg-[#ff9900] text-slate-950 border-b-2 border-amber-600 shadow-xs">
                 <tr className="text-xs font-semibold uppercase tracking-[0.04em] whitespace-nowrap">
                   {/* FROZEN 1: STT */}
-                  <th className="py-2 px-1 text-center w-[58px] min-w-[58px] bg-[#f59e0b] border-r border-amber-600 sticky left-0 z-40 text-xs text-slate-950">
-                    STT
-                  </th>
+                  {inboundColMap["stt"]?.visible !== false && (
+                    <th className="py-2 px-1 text-center w-[58px] min-w-[58px] bg-[#f59e0b] border-r border-amber-600 sticky left-0 z-40 text-xs text-slate-950">
+                      {inboundColMap["stt"]?.label || "STT"}
+                    </th>
+                  )}
                   {/* FROZEN 2: Product Type */}
-                  <th className="py-2 px-3 w-[155px] min-w-[155px] bg-[#f59e0b] border-r border-amber-600 sticky left-[58px] z-40 text-xs text-slate-950">
-                    Product Type
-                  </th>
+                  {inboundColMap["product_type"]?.visible !== false && (
+                    <th className="py-2 px-3 w-[155px] min-w-[155px] bg-[#f59e0b] border-r border-amber-600 sticky left-[58px] z-40 text-xs text-slate-950">
+                      {inboundColMap["product_type"]?.label || "Product Type"}
+                    </th>
+                  )}
                   {/* FROZEN 3: Mockup */}
-                  <th className="py-2 px-1 text-center w-[76px] min-w-[76px] bg-[#f59e0b] border-r border-amber-600 sticky left-[213px] z-40 text-xs text-slate-950">
-                    Mockup
-                  </th>
+                  {inboundColMap["mockup"]?.visible !== false && (
+                    <th className="py-2 px-1 text-center w-[76px] min-w-[76px] bg-[#f59e0b] border-r border-amber-600 sticky left-[213px] z-40 text-xs text-slate-950">
+                      {inboundColMap["mockup"]?.label || "Mockup"}
+                    </th>
+                  )}
                   {/* FROZEN 4: SKU */}
-                  <th className="py-2 px-3 w-[160px] min-w-[160px] bg-[#f59e0b] border-r-2 !border-r-amber-800 sticky left-[289px] z-40 shadow-[4px_0_8px_-1px_rgba(0,0,0,0.18)] text-xs text-slate-950">
-                    SKU
-                  </th>
+                  {inboundColMap["sku"]?.visible !== false && (
+                    <th className="py-2 px-3 w-[160px] min-w-[160px] bg-[#f59e0b] border-r-2 !border-r-amber-800 sticky left-[289px] z-40 shadow-[4px_0_8px_-1px_rgba(0,0,0,0.18)] text-xs text-slate-950">
+                      {inboundColMap["sku"]?.label || "SKU"}
+                    </th>
+                  )}
 
-                  {/* SCROLLABLE INBOUND COLUMNS (Exact names and vàng cam color from Excel) */}
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60">BRAND</th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60">SUP</th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Ngày</div>
-                    <div>request</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60">Quantity</th>
-                  <th className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Line</div>
-                    <div>ship</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Base Cost</div>
-                    <div>/Unit</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60">Card</th>
-                  <th className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60">Tag</th>
-                  <th className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Shipping</div>
-                    <div>fee</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60">Hộp/túi</th>
-                  <th className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Final</div>
-                    <div>Basecost</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Total</div>
-                    <div>Basecost</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Ngày</div>
-                    <div>thanh toán</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60">Tên lô hàng</th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Shipment</div>
-                    <div>ID</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60">Ngày đi</th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60">Ngày đến</th>
-                  <th className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Amazon</div>
-                    <div>Received</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Tình trạng hàng</div>
-                    <div>đến kho</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60">Status</th>
-                  <th className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight">
-                    <div>Số lượng</div>
-                    <div>Amazon nhận</div>
-                  </th>
-                  <th className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60">Discrepancy</th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60">Note</th>
-                  <th className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60">Trạng thái</th>
+                  {/* SCROLLABLE INBOUND COLUMNS */}
+                  {inboundColMap["brand"]?.visible !== false && (
+                    <ColumnHeaderCell col={inboundColMap["brand"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
+                      {inboundColMap["brand"]?.label || "BRAND"}
+                    </ColumnHeaderCell>
+                  )}
+                  {inboundColMap["sup"]?.visible !== false && (
+                    <ColumnHeaderCell col={inboundColMap["sup"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
+                      {inboundColMap["sup"]?.label || "SUP"}
+                    </ColumnHeaderCell>
+                  )}
+                  {inboundColMap["ngay_request"]?.visible !== false && (
+                    <ColumnHeaderCell col={inboundColMap["ngay_request"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
+                      <div>{inboundColMap["ngay_request"]?.label || "Ngày request"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {inboundColMap["quantity"]?.visible !== false && (
+                    <ColumnHeaderCell col={inboundColMap["quantity"]} className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
+                      {inboundColMap["quantity"]?.label || "Quantity"}
+                    </ColumnHeaderCell>
+                  )}
+                  {inboundColMap["line_ship"]?.visible !== false && (
+                    <ColumnHeaderCell col={inboundColMap["line_ship"]} className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
+                      <div>{inboundColMap["line_ship"]?.label || "Line ship"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {inboundColMap["base_cost_per_unit"]?.visible !== false && (
+                    <ColumnHeaderCell col={inboundColMap["base_cost_per_unit"]} className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
+                      <div>{inboundColMap["base_cost_per_unit"]?.label || "Base Cost /Unit"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {inboundColMap["card"]?.visible !== false && (
+                    <ColumnHeaderCell col={inboundColMap["card"]} className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
+                      {inboundColMap["card"]?.label || "Card"}
+                    </ColumnHeaderCell>
+                  )}
+                  {inboundColMap["tag"]?.visible !== false && (
+                    <ColumnHeaderCell col={inboundColMap["tag"]} className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
+                      {inboundColMap["tag"]?.label || "Tag"}
+                    </ColumnHeaderCell>
+                  )}
+                  {inboundColMap["shipping_fee"]?.visible !== false && (
+                    <ColumnHeaderCell col={inboundColMap["shipping_fee"]} className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
+                      <div>{inboundColMap["shipping_fee"]?.label || "Shipping fee"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {inboundColMap["hop_tui"]?.visible !== false && (
+                    <ColumnHeaderCell col={inboundColMap["hop_tui"]} className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
+                      {inboundColMap["hop_tui"]?.label || "Hộp/túi"}
+                    </ColumnHeaderCell>
+                  )}
+                  {inboundColMap["final_basecost"]?.visible !== false && (
+                    <ColumnHeaderCell col={inboundColMap["final_basecost"]} className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
+                      <div>{inboundColMap["final_basecost"]?.label || "Final Basecost"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {inboundColMap["total_basecost"]?.visible !== false && (
+                    <ColumnHeaderCell col={inboundColMap["total_basecost"]} className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
+                      <div>{inboundColMap["total_basecost"]?.label || "Total Basecost"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {inboundColMap["ngay_thanh_toan"]?.visible !== false && (
+                    <ColumnHeaderCell col={inboundColMap["ngay_thanh_toan"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
+                      <div>{inboundColMap["ngay_thanh_toan"]?.label || "Ngày thanh toán"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {inboundColMap["ten_lo_hang"]?.visible !== false && (
+                    <ColumnHeaderCell col={inboundColMap["ten_lo_hang"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
+                      {inboundColMap["ten_lo_hang"]?.label || "Tên lô hàng"}
+                    </ColumnHeaderCell>
+                  )}
+                  {inboundColMap["shipment_id"]?.visible !== false && (
+                    <ColumnHeaderCell col={inboundColMap["shipment_id"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
+                      <div>{inboundColMap["shipment_id"]?.label || "Shipment ID"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {inboundColMap["ngay_di"]?.visible !== false && (
+                    <ColumnHeaderCell col={inboundColMap["ngay_di"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
+                      {inboundColMap["ngay_di"]?.label || "Ngày đi"}
+                    </ColumnHeaderCell>
+                  )}
+                  {inboundColMap["ngay_den"]?.visible !== false && (
+                    <ColumnHeaderCell col={inboundColMap["ngay_den"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
+                      {inboundColMap["ngay_den"]?.label || "Ngày đến"}
+                    </ColumnHeaderCell>
+                  )}
+                  {inboundColMap["amazon_received"]?.visible !== false && (
+                    <ColumnHeaderCell col={inboundColMap["amazon_received"]} className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
+                      <div>{inboundColMap["amazon_received"]?.label || "Amazon Received"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {inboundColMap["tinh_trang_hang_den_kho"]?.visible !== false && (
+                    <ColumnHeaderCell col={inboundColMap["tinh_trang_hang_den_kho"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
+                      <div>{inboundColMap["tinh_trang_hang_den_kho"]?.label || "Tình trạng hàng đến kho"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {inboundColMap["status"]?.visible !== false && (
+                    <ColumnHeaderCell col={inboundColMap["status"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
+                      {inboundColMap["status"]?.label || "Status"}
+                    </ColumnHeaderCell>
+                  )}
+                  {inboundColMap["so_luong_amazon_nhan"]?.visible !== false && (
+                    <ColumnHeaderCell col={inboundColMap["so_luong_amazon_nhan"]} className="py-2 px-3 text-xs text-right bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
+                      <div>{inboundColMap["so_luong_amazon_nhan"]?.label || "Số lượng Amazon nhận"}</div>
+                    </ColumnHeaderCell>
+                  )}
+                  {inboundColMap["discrepancy"]?.visible !== false && (
+                    <ColumnHeaderCell col={inboundColMap["discrepancy"]} className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
+                      {inboundColMap["discrepancy"]?.label || "Discrepancy"}
+                    </ColumnHeaderCell>
+                  )}
+                  {inboundColMap["note"]?.visible !== false && (
+                    <ColumnHeaderCell col={inboundColMap["note"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
+                      {inboundColMap["note"]?.label || "Note"}
+                    </ColumnHeaderCell>
+                  )}
+                  {inboundColMap["trang_thai"]?.visible !== false && (
+                    <ColumnHeaderCell col={inboundColMap["trang_thai"]} className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60" onQuickHide={(id) => handleQuickHideColumn("inbound", id)} onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}>
+                      {inboundColMap["trang_thai"]?.label || "Trạng thái"}
+                    </ColumnHeaderCell>
+                  )}
+
+                  {/* CUSTOM COLUMNS ADDED BY USER */}
+                  {inboundCustomColumns.filter((c) => c.visible).map((c) => (
+                    <ColumnHeaderCell
+                      key={c.id}
+                      col={c}
+                      className="py-2 px-3 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight"
+                      onQuickHide={(id) => handleQuickHideColumn("inbound", id)}
+                      onQuickRename={(id, l) => handleQuickRenameColumn("inbound", id, l)}
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>{c.label}</span>
+                        <span className="text-[9px] px-1 rounded bg-purple-200 text-purple-900 font-bold">Custom</span>
+                      </div>
+                    </ColumnHeaderCell>
+                  ))}
+
                   <th className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-950 font-black">Thao tác</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
                 {loadingShipments ? (
                   <tr>
-                    <td colSpan={29} className="py-20 text-center text-slate-500 font-bold text-base">
+                    <td colSpan={inboundVisibleCount + 1} className="py-20 text-center text-slate-500 font-bold text-base">
                       <ArrowClockwiseIcon size={28} className="mx-auto mb-2 animate-spin text-indigo-600" />
                       Đang tải danh sách lô hàng của Store {selectedStore?.name}...
                     </td>
                   </tr>
                 ) : allShipments.length === 0 ? (
                   <tr>
-                    <td colSpan={29} className="py-20 text-center text-slate-500 text-sm">
+                    <td colSpan={inboundVisibleCount + 1} className="py-20 text-center text-slate-500 text-sm">
                       <TruckIcon size={40} className="mx-auto mb-2 text-slate-400" />
                       Chưa có lô hàng nào trong Store {selectedStore?.name}. Nhấn <strong>Thêm Lô Hàng</strong> hoặc <strong>Import Đi Hàng</strong> để nạp dữ liệu.
                     </td>
@@ -2341,6 +3023,7 @@ function InventoryViewInner() {
                         className="group h-[52px] min-h-[52px] bg-white even:bg-[#f8fafc] hover:bg-[#fef9c3] transition-colors whitespace-nowrap [&>td]:border-b [&>td]:border-slate-200"
                       >
                           {/* FROZEN 1: STT with Pencil Button aligned */}
+                          {inboundColMap["stt"]?.visible !== false && (
                           <td className="py-1 px-1 text-center font-mono text-xs font-bold text-slate-700 bg-white group-even:bg-[#f8fafc] group-hover:bg-[#fef9c3] border-r border-slate-300 sticky left-0 z-20">
                             <div className="flex items-center justify-between gap-1 w-full px-1">
                               <span className="w-5 text-center font-mono font-bold text-slate-600">{stt}</span>
@@ -2354,9 +3037,11 @@ function InventoryViewInner() {
                               </button>
                             </div>
                           </td>
+                          )}
 
                           {/* FROZEN 2: Product Type */}
-                          <EditableCell
+                          {inboundColMap["product_type"]?.visible !== false && (
+<EditableCell
                             table="inbound"
                             id={item.id}
                             field="product_type"
@@ -2370,8 +3055,10 @@ function InventoryViewInner() {
                             onSave={handleSaveInlineCell}
                             onCancel={() => setInlineEditing(null)}
                           />
+)}
 
                           {/* FROZEN 3: Mockup */}
+                          {inboundColMap["mockup"]?.visible !== false && (
                           <td className="py-1 px-1 text-center bg-white group-even:bg-[#f8fafc] group-hover:bg-[#fef9c3] border-r border-slate-300 sticky left-[213px] z-20">
                             <MockupThumbnail
                               url={item.mockup}
@@ -2379,9 +3066,11 @@ function InventoryViewInner() {
                               onPreview={(url) => setPreviewModalUrl(url)}
                             />
                           </td>
+                          )}
 
                           {/* FROZEN 4: SKU */}
-                          <EditableCell
+                          {inboundColMap["sku"]?.visible !== false && (
+<EditableCell
                             table="inbound"
                             id={item.id}
                             field="sku"
@@ -2399,9 +3088,11 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
                         {/* SCROLLABLE INBOUND DATA */}
-                        <EditableCell
+                        {inboundColMap["brand"]?.visible !== false && (
+<EditableCell
                           table="inbound"
                           id={item.id}
                           field="brand"
@@ -2415,8 +3106,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {inboundColMap["sup"]?.visible !== false && (
+<EditableCell
                           table="inbound"
                           id={item.id}
                           field="sup"
@@ -2430,8 +3123,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {inboundColMap["ngay_request"]?.visible !== false && (
+<EditableCell
                           table="inbound"
                           id={item.id}
                           field="ngay_request"
@@ -2445,8 +3140,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {inboundColMap["quantity"]?.visible !== false && (
+<EditableCell
                           table="inbound"
                           id={item.id}
                           field="quantity"
@@ -2460,8 +3157,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {inboundColMap["line_ship"]?.visible !== false && (
+<EditableCell
                           table="inbound"
                           id={item.id}
                           field="line_ship"
@@ -2475,8 +3174,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {inboundColMap["base_cost_per_unit"]?.visible !== false && (
+<EditableCell
                           table="inbound"
                           id={item.id}
                           field="base_cost_per_unit"
@@ -2490,8 +3191,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {inboundColMap["card"]?.visible !== false && (
+<EditableCell
                           table="inbound"
                           id={item.id}
                           field="card"
@@ -2505,8 +3208,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {inboundColMap["tag"]?.visible !== false && (
+<EditableCell
                           table="inbound"
                           id={item.id}
                           field="tag"
@@ -2520,8 +3225,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {inboundColMap["shipping_fee"]?.visible !== false && (
+<EditableCell
                           table="inbound"
                           id={item.id}
                           field="shipping_fee"
@@ -2535,8 +3242,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {inboundColMap["hop_tui"]?.visible !== false && (
+<EditableCell
                           table="inbound"
                           id={item.id}
                           field="hop_tui"
@@ -2550,8 +3259,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {inboundColMap["final_basecost"]?.visible !== false && (
+<EditableCell
                           table="inbound"
                           id={item.id}
                           field="final_basecost"
@@ -2565,8 +3276,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {inboundColMap["total_basecost"]?.visible !== false && (
+<EditableCell
                           table="inbound"
                           id={item.id}
                           field="total_basecost"
@@ -2580,8 +3293,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {inboundColMap["ngay_thanh_toan"]?.visible !== false && (
+<EditableCell
                           table="inbound"
                           id={item.id}
                           field="ngay_thanh_toan"
@@ -2595,8 +3310,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {inboundColMap["ten_lo_hang"]?.visible !== false && (
+<EditableCell
                           table="inbound"
                           id={item.id}
                           field="ten_lo_hang"
@@ -2610,8 +3327,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {inboundColMap["shipment_id"]?.visible !== false && (
+<EditableCell
                           table="inbound"
                           id={item.id}
                           field="shipment_id"
@@ -2625,8 +3344,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {inboundColMap["ngay_di"]?.visible !== false && (
+<EditableCell
                           table="inbound"
                           id={item.id}
                           field="ngay_di"
@@ -2640,8 +3361,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {inboundColMap["ngay_den"]?.visible !== false && (
+<EditableCell
                           table="inbound"
                           id={item.id}
                           field="ngay_den"
@@ -2655,8 +3378,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {inboundColMap["amazon_received"]?.visible !== false && (
+<EditableCell
                           table="inbound"
                           id={item.id}
                           field="amazon_received"
@@ -2670,8 +3395,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {inboundColMap["tinh_trang_hang_den_kho"]?.visible !== false && (
+<EditableCell
                           table="inbound"
                           id={item.id}
                           field="tinh_trang_hang_den_kho"
@@ -2685,8 +3412,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {inboundColMap["status"]?.visible !== false && (
+<EditableCell
                           table="inbound"
                           id={item.id}
                           field="status"
@@ -2700,8 +3429,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {inboundColMap["so_luong_amazon_nhan"]?.visible !== false && (
+<EditableCell
                           table="inbound"
                           id={item.id}
                           field="so_luong_amazon_nhan"
@@ -2715,8 +3446,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {inboundColMap["discrepancy"]?.visible !== false && (
+<EditableCell
                           table="inbound"
                           id={item.id}
                           field="discrepancy"
@@ -2738,8 +3471,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {inboundColMap["note"]?.visible !== false && (
+<EditableCell
                           table="inbound"
                           id={item.id}
                           field="note"
@@ -2753,8 +3488,10 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
+)}
 
-                        <EditableCell
+                        {inboundColMap["trang_thai"]?.visible !== false && (
+<EditableCell
                           table="inbound"
                           id={item.id}
                           field="trang_thai"
@@ -2768,7 +3505,27 @@ function InventoryViewInner() {
                           onSave={handleSaveInlineCell}
                           onCancel={() => setInlineEditing(null)}
                         />
-                        {/* THAO TÁC: Sửa, Xem chi tiết, Xóa */}
+)}
+                        {/* CUSTOM COLUMNS DATA CELLS */}
+                        {inboundCustomColumns.filter((c) => c.visible).map((c) => (
+                          <EditableCell
+                            key={c.id}
+                            table="inbound"
+                            id={item.id}
+                            field={c.id}
+                            value={item.custom_fields?.[c.id] ?? ""}
+                            display={safeDisplay(item.custom_fields?.[c.id])}
+                            className="py-1.5 px-3 text-xs border-r border-slate-200"
+                            inlineEditing={inlineEditing}
+                            inlineSaving={inlineSaving}
+                            onStartEdit={startInlineEdit}
+                            onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
+                            onSave={handleSaveInlineCell}
+                            onCancel={() => setInlineEditing(null)}
+                          />
+                        ))}
+
+                        {/* THAO TÁC: Sửa, Sao chép (Duplicate), Xóa */}
                         <td className="py-1.5 px-3 text-xs text-center whitespace-nowrap">
                           <div className="flex items-center justify-center gap-1.5">
                             <button
@@ -2781,11 +3538,16 @@ function InventoryViewInner() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => setSelectedShipmentDetail(item)}
-                              className="rounded-lg bg-slate-100 border border-slate-200 p-1 text-slate-700 hover:bg-slate-200 transition cursor-pointer"
-                              title="Xem chi tiết"
+                              disabled={duplicatingShipmentId === item.id}
+                              onClick={() => handleDuplicateShipment(item)}
+                              className="rounded-lg bg-emerald-50 border border-emerald-200 p-1 text-emerald-700 hover:bg-emerald-100 transition cursor-pointer disabled:opacity-50"
+                              title="Nhân bản (Sao chép) lô hàng lên dòng mới nhất để sửa"
                             >
-                              <EyeIcon size={16} weight="bold" />
+                              {duplicatingShipmentId === item.id ? (
+                                <ArrowClockwiseIcon size={16} className="animate-spin" />
+                              ) : (
+                                <CopyIcon size={16} weight="bold" />
+                              )}
                             </button>
                             <button
                               type="button"
@@ -2840,13 +3602,33 @@ function InventoryViewInner() {
                   </p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setShowSkuModal(false)}
-                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
-              >
-                <XIcon size={20} />
-              </button>
+              <div className="flex items-center gap-1.5">
+                {skuFormData.id && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHistoryDrawer({
+                        isOpen: true,
+                        entityType: "sku",
+                        entityId: skuFormData.id,
+                        entityTitle: skuFormData.sku,
+                      });
+                    }}
+                    className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700 transition flex items-center gap-1.5 cursor-pointer"
+                    title="Xem lịch sử chỉnh sửa của riêng SKU này"
+                  >
+                    <ClockCounterClockwiseIcon size={14} weight="bold" />
+                    <span>Lịch sử</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowSkuModal(false)}
+                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition cursor-pointer"
+                >
+                  <XIcon size={20} />
+                </button>
+              </div>
             </div>
 
             <form onSubmit={handleSaveSku} className="space-y-4">
@@ -3251,13 +4033,33 @@ function InventoryViewInner() {
                   </p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setShowShipmentModal(false)}
-                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
-              >
-                <XIcon size={20} />
-              </button>
+              <div className="flex items-center gap-1.5">
+                {shipmentFormData.id && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHistoryDrawer({
+                        isOpen: true,
+                        entityType: "inbound",
+                        entityId: shipmentFormData.id,
+                        entityTitle: shipmentFormData.ten_lo_hang || shipmentFormData.sku,
+                      });
+                    }}
+                    className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700 transition flex items-center gap-1.5 cursor-pointer"
+                    title="Xem lịch sử chỉnh sửa của riêng lô hàng này"
+                  >
+                    <ClockCounterClockwiseIcon size={14} weight="bold" />
+                    <span>Lịch sử</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowShipmentModal(false)}
+                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition cursor-pointer"
+                >
+                  <XIcon size={20} />
+                </button>
+              </div>
             </div>
 
             <form onSubmit={handleSaveShipment} className="space-y-4">
@@ -3743,6 +4545,79 @@ function InventoryViewInner() {
                 Đóng
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL QUẢN LÝ & TÙY CHỈNH CỘT (THÊM / SỬA / XÓA / ẨN CỘT) */}
+      <ColumnManagerModal
+        isOpen={showColumnModal}
+        onClose={() => setShowColumnModal(false)}
+        title={activeTab === "sku" ? "BẢNG MÃ" : "CHI TIẾT ĐI HÀNG"}
+        columns={activeTab === "sku" ? skuColumns : inboundColumns}
+        onSave={activeTab === "sku" ? handleSaveSkuColumns : handleSaveInboundColumns}
+        onReset={activeTab === "sku" ? handleResetSkuColumns : handleResetInboundColumns}
+      />
+
+      {/* DRAWER LỊCH SỬ THAY ĐỔI & KHÔI PHỤC PHIÊN BẢN */}
+      <InventoryHistoryDrawer
+        isOpen={historyDrawer.isOpen}
+        onClose={() => setHistoryDrawer({ isOpen: false })}
+        storeId={selectedStoreId || ""}
+        storeName={selectedStore?.name}
+        entityType={historyDrawer.entityType}
+        entityId={historyDrawer.entityId}
+        entityTitle={historyDrawer.entityTitle}
+        onRestored={() => {
+          fetchSkus();
+          fetchShipments();
+          notify("Đã khôi phục dữ liệu thành công!", "success");
+        }}
+      />
+
+      {/* THÔNG BÁO HOÀN TÁC 30 GIÂY KHI XÓA (UNDO BANNER) */}
+      {undoDelete && (
+        <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2 rounded-2xl border border-slate-700/80 bg-slate-900/95 backdrop-blur-md text-white p-3.5 shadow-2xl animate-in slide-in-from-bottom-5 duration-200 max-w-sm w-full">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-rose-500/20 text-rose-400 font-bold border border-rose-500/30">
+                <TrashIcon size={16} />
+              </span>
+              <div className="min-w-0">
+                <p className="text-xs font-bold truncate">
+                  Đã xóa {undoDelete.entityType === "sku" ? "SKU" : "lô hàng"}:{" "}
+                  <span className="font-mono text-amber-300">{undoDelete.label}</span>
+                </p>
+                <p className="text-[11px] text-slate-400">
+                  Hoàn tác trong <strong className="text-amber-400 font-mono">{undoDelete.secondsLeft}s</strong>
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={handleUndoDelete}
+                disabled={undoing}
+                className="rounded-lg bg-amber-400 px-3 py-1.5 text-xs font-black text-slate-950 hover:bg-amber-300 transition flex items-center gap-1 shadow-sm cursor-pointer disabled:opacity-50"
+              >
+                <ArrowCounterClockwiseIcon size={13} weight="bold" />
+                {undoing ? "Đang phục hồi..." : "Hoàn tác"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setUndoDelete(null)}
+                className="rounded-lg p-1 text-slate-400 hover:text-white transition cursor-pointer"
+                title="Đóng thông báo"
+              >
+                <XIcon size={15} />
+              </button>
+            </div>
+          </div>
+          <div className="h-1 w-full bg-slate-800 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-amber-400 transition-all duration-1000 ease-linear rounded-full"
+              style={{ width: `${(undoDelete.secondsLeft / 30) * 100}%` }}
+            />
           </div>
         </div>
       )}
