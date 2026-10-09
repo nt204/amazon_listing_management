@@ -47,7 +47,10 @@ const availableFeatures = [
   { id: "mockups", label: "Mockup Design", desc: "Tạo ảnh Mockup AI Gemini/ChatGPT" },
   { id: "sellersprite", label: "Đào Keyword", desc: "Đào từ khóa và phân tích đối thủ" },
   { id: "ppc", label: "PPC Analytics", desc: "Chiến dịch PPC, Phôi, Rules" },
+  { id: "accounting", label: "Accounting", desc: "Store, Inventory và quản lý tài chính" },
 ];
+
+const defaultFeatureIds = availableFeatures.map((feature) => feature.id);
 
 function formatBytes(bytes: number) {
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -87,7 +90,7 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
   const [newEmail, setNewEmail] = useState("");
   const [newName, setNewName] = useState("");
   const [newRole, setNewRole] = useState<"editor" | "reviewer" | "admin">("editor");
-  const [newFeatures, setNewFeatures] = useState<string[]>(["listing", "mockups", "sellersprite", "ppc"]);
+  const [newFeatures, setNewFeatures] = useState<string[]>([...defaultFeatureIds]);
   const [addingUser, setAddingUser] = useState(false);
 
   // Modal Phân Quyền Features
@@ -276,7 +279,7 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
       setNewEmail("");
       setNewName("");
       setNewRole("editor");
-      setNewFeatures(["listing", "mockups", "sellersprite", "ppc"]);
+      setNewFeatures([...defaultFeatureIds]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Lỗi thêm tài khoản.");
     } finally {
@@ -286,7 +289,7 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
 
   const openEditFeatures = (user: AppUserSummary) => {
     setEditingFeaturesUser(user);
-    setEditFeatures(user.allowedFeatures ?? ["listing", "mockups", "sellersprite", "ppc"]);
+    setEditFeatures(user.allowedFeatures ?? [...defaultFeatureIds]);
   };
 
   const handleSaveFeatures = async () => {
@@ -464,7 +467,7 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
                       {/* Danh sách các chức năng được cấp */}
                       <div className="mt-2 flex flex-wrap items-center gap-1.5">
                         <span className="text-[10px] font-bold text-slate-400">Chức năng:</span>
-                        {(user.allowedFeatures || ["listing", "mockups", "sellersprite", "ppc"]).map((feat) => {
+                        {(user.allowedFeatures || defaultFeatureIds).map((feat) => {
                           const item = availableFeatures.find((f) => f.id === feat);
                           return (
                             <span

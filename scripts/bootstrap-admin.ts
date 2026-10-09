@@ -13,13 +13,13 @@ async function main() {
           allowed_features, approved_by, approved_at, created_at, updated_at
         ) VALUES (
           'default', ${`admin-${email.split("@")[0]}`}, ${email}, ${`Admin (${email.split("@")[0]})`},
-          NULL, 'admin', 'approved', ARRAY['listing', 'mockups', 'sellersprite', 'ppc']::TEXT[],
+          NULL, 'admin', 'approved', ARRAY['listing', 'mockups', 'sellersprite', 'ppc', 'accounting']::TEXT[],
           'system', NOW(), NOW(), NOW()
         )
         ON CONFLICT (team_id, LOWER(username)) DO UPDATE SET
           role = 'admin',
           status = 'approved',
-          allowed_features = ARRAY['listing', 'mockups', 'sellersprite', 'ppc']::TEXT[],
+          allowed_features = ARRAY['listing', 'mockups', 'sellersprite', 'ppc', 'accounting']::TEXT[],
           updated_at = NOW()
       `;
     }

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ApiError, authorize, dataScope, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
 import {
+  ALL_SYSTEM_FEATURES,
   addTeamUserByAdmin,
   deleteTeamUserAccount,
   listTeamUserAccounts,
@@ -14,15 +15,15 @@ const createSchema = z.object({
   email: z.string().trim().email("Email không hợp lệ").max(256),
   displayName: z.string().trim().max(128).optional(),
   role: z.enum(["editor", "reviewer", "admin"]).default("editor"),
-  allowedFeatures: z.array(z.enum(["listing", "mockups", "sellersprite", "ppc"])).max(4)
-    .default(["listing", "mockups", "sellersprite", "ppc"]),
+  allowedFeatures: z.array(z.enum(ALL_SYSTEM_FEATURES)).max(ALL_SYSTEM_FEATURES.length)
+    .default([...ALL_SYSTEM_FEATURES]),
 }).strict();
 
 const updateSchema = z.object({
   userId: z.string().trim().min(1).max(128),
   action: z.enum(["approve", "reject", "disable", "restore"]).optional(),
   role: z.enum(["editor", "reviewer", "admin"]).optional(),
-  allowedFeatures: z.array(z.enum(["listing", "mockups", "sellersprite", "ppc"])).max(4).optional(),
+  allowedFeatures: z.array(z.enum(ALL_SYSTEM_FEATURES)).max(ALL_SYSTEM_FEATURES.length).optional(),
 }).strict().refine((data) => data.action || data.role || data.allowedFeatures, {
   message: "Cần cung cấp ít nhất một trường để cập nhật (action, role, hoặc allowedFeatures).",
 });

@@ -212,7 +212,7 @@ interface AppUserRow {
 }
 
 function toAppUserSummary(row: AppUserRow): AppUserSummary {
-  const defaultFeatures = ["listing", "mockups", "sellersprite", "ppc"];
+  const defaultFeatures = [...ALL_SYSTEM_FEATURES];
   return {
     teamId: row.team_id,
     userId: row.user_id,
@@ -330,7 +330,7 @@ export async function getOrCreateCloudflareUser(
     if (isAdmin && (row.role !== "admin" || row.status !== "approved")) {
       const updated = await sql<AppUserRow[]>`
         UPDATE app_users
-        SET role = 'admin', status = 'approved', allowed_features = ARRAY['listing', 'mockups', 'sellersprite', 'ppc']::TEXT[],
+        SET role = 'admin', status = 'approved', allowed_features = ${[...ALL_SYSTEM_FEATURES]}::TEXT[],
             last_login_at = NOW(), updated_at = NOW()
         WHERE team_id = ${teamId} AND user_id = ${row.user_id}
         RETURNING team_id, user_id, username, display_name, password_hash, role,
@@ -348,7 +348,7 @@ export async function getOrCreateCloudflareUser(
   const newUserId = isAdmin && cleanEmail === "ndtrince@gmail.com" ? "admin-ndtrince" : crypto.randomUUID();
   const role = isAdmin ? "admin" : "editor";
   const status: AppUserStatus = isAdmin ? "approved" : "pending";
-  const allowedFeatures = ["listing", "mockups", "sellersprite", "ppc"];
+  const allowedFeatures = [...ALL_SYSTEM_FEATURES];
 
   const inserted = await sql<AppUserRow[]>`
     INSERT INTO app_users (

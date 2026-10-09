@@ -11,7 +11,7 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
-    await authorize(request, "read");
+    await authorize(request, "read", "accounting");
     const { searchParams } = new URL(request.url);
     const rawUrl = searchParams.get("url");
 
