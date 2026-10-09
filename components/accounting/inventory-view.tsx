@@ -2026,32 +2026,32 @@ function InventoryViewInner() {
           SOLID 100% OPAQUE BACKGROUND & CRISP DIVIDER LINE */}
       {activeTab === "sku" && (
         <div className="rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col">
-          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-230px)] min-h-[480px]">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-230px)] min-h-[480px] scrollbar-thin [scrollbar-color:#94a3b8_#f1f5f9] [&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-slate-400 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-600">
             <div style={{ zoom: `${tableZoom}%` }} className="min-w-full">
               <table className="min-w-max w-full border-collapse text-left text-sm">
               <thead className="sticky top-0 z-30 bg-[#ff9900] text-slate-950 border-b-2 border-amber-600 shadow-xs">
                 <tr className="text-xs font-semibold uppercase tracking-[0.04em] whitespace-nowrap">
                   {/* FROZEN 1: STT */}
                   {skuColMap["stt"]?.visible !== false && (
-                    <th className="py-2 px-1 text-center w-[58px] min-w-[58px] bg-[#f59e0b] border-r border-amber-600 sticky left-0 z-40 text-xs text-slate-950">
+                    <th className="py-2 px-1 text-center w-[58px] min-w-[58px] max-w-[58px] bg-[#f59e0b] border-r border-amber-600 sticky left-0 z-40 text-xs text-slate-950">
                       {skuColMap["stt"]?.label || "STT"}
                     </th>
                   )}
                   {/* FROZEN 2: Product Type */}
                   {skuColMap["product_type"]?.visible !== false && (
-                    <th className="py-2 px-3 w-[155px] min-w-[155px] bg-[#f59e0b] border-r border-amber-600 sticky left-[58px] z-40 text-xs text-slate-950">
+                    <th className="py-2 px-3 w-[155px] min-w-[155px] max-w-[155px] bg-[#f59e0b] border-r border-amber-600 sticky left-[58px] z-40 text-xs text-slate-950">
                       {skuColMap["product_type"]?.label || "Product Type"}
                     </th>
                   )}
                   {/* FROZEN 3: Mockup */}
                   {skuColMap["mockup"]?.visible !== false && (
-                    <th className="py-2 px-1 text-center w-[76px] min-w-[76px] bg-[#f59e0b] border-r border-amber-600 sticky left-[213px] z-40 text-xs text-slate-950">
+                    <th className="py-2 px-1 text-center w-[76px] min-w-[76px] max-w-[76px] bg-[#f59e0b] border-r border-amber-600 sticky left-[213px] z-40 text-xs text-slate-950">
                       {skuColMap["mockup"]?.label || "Mockup"}
                     </th>
                   )}
-                  {/* FROZEN 4: SKU */}
+                  {/* FROZEN 4: SKU - BOUNDARY DIVIDER WITH BULLETPROOF LINE */}
                   {skuColMap["sku"]?.visible !== false && (
-                    <th className="py-2 px-3 w-[160px] min-w-[160px] bg-[#f59e0b] border-r-2 !border-r-amber-800 sticky left-[289px] z-40 shadow-[4px_0_8px_-1px_rgba(0,0,0,0.18)] text-xs text-slate-950">
+                    <th className="py-2 px-3 w-[160px] min-w-[160px] max-w-[160px] bg-[#f59e0b] sticky left-[289px] z-40 shadow-[4px_0_8px_-1px_rgba(0,0,0,0.18)] after:absolute after:top-0 after:bottom-0 after:right-0 after:w-[2px] after:bg-amber-900 after:z-50 border-r-2 !border-r-amber-900 text-xs text-slate-950">
                       {skuColMap["sku"]?.label || "SKU"}
                     </th>
                   )}
@@ -2238,7 +2238,7 @@ function InventoryViewInner() {
                       >
                           {/* FROZEN 1: STT with Pencil Button aligned */}
                           {skuColMap["stt"]?.visible !== false && (
-                          <td className="py-1 px-1 text-center font-mono text-xs font-bold text-slate-700 bg-white group-even:bg-[#f8fafc] group-hover:bg-[#fef9c3] border-r border-slate-300 sticky left-0 z-20">
+                          <td className="py-1 px-1 text-center font-mono text-xs font-bold text-slate-700 bg-white group-even:bg-[#f8fafc] group-hover:bg-[#fef9c3] border-r border-slate-300 sticky left-0 z-20 w-[58px] min-w-[58px] max-w-[58px]">
                             <div className="flex items-center justify-between gap-1 w-full px-1">
                               <span className="w-5 text-center font-mono font-bold text-slate-600">{stt}</span>
                               <button
@@ -2261,7 +2261,7 @@ function InventoryViewInner() {
                             field="product_type"
                             value={item.product_type}
                             display={<EntityBadge value={item.product_type} />}
-                            className="py-1.5 px-3 bg-white group-even:bg-[#f8fafc] group-hover:bg-[#fef9c3] border-r border-slate-300 sticky left-[58px] z-20 text-xs"
+                            className="py-1.5 px-3 bg-white group-even:bg-[#f8fafc] group-hover:bg-[#fef9c3] border-r border-slate-300 sticky left-[58px] z-20 text-xs w-[155px] min-w-[155px] max-w-[155px]"
                             inlineEditing={inlineEditing}
                             inlineSaving={inlineSaving}
                             onStartEdit={startInlineEdit}
@@ -2273,7 +2273,7 @@ function InventoryViewInner() {
 
                           {/* FROZEN 3: Mockup */}
                           {skuColMap["mockup"]?.visible !== false && (
-                          <td className="py-1 px-1 text-center bg-white group-even:bg-[#f8fafc] group-hover:bg-[#fef9c3] border-r border-slate-300 sticky left-[213px] z-20">
+                          <td className="py-1 px-1 text-center bg-white group-even:bg-[#f8fafc] group-hover:bg-[#fef9c3] border-r border-slate-300 sticky left-[213px] z-20 w-[76px] min-w-[76px] max-w-[76px]">
                             <MockupThumbnail
                               url={item.mockup_url || item.mockup}
                               alt={item.sku}
@@ -2282,7 +2282,7 @@ function InventoryViewInner() {
                           </td>
                           )}
 
-                          {/* FROZEN 4: SKU */}
+                          {/* FROZEN 4: SKU - BOUNDARY DIVIDER WITH BULLETPROOF LINE */}
                           {skuColMap["sku"]?.visible !== false && (
 <EditableCell
                             table="sku"
@@ -2294,7 +2294,7 @@ function InventoryViewInner() {
                               {item.sku}
                             </span>
                           }
-                          className="py-1.5 px-3 bg-white group-even:bg-[#f8fafc] group-hover:bg-[#fef9c3] border-r-2 !border-r-slate-500 sticky left-[289px] z-20 shadow-[4px_0_8px_-1px_rgba(0,0,0,0.18)] text-xs"
+                          className="py-1.5 px-3 bg-white group-even:bg-[#f8fafc] group-hover:bg-[#fef9c3] sticky left-[289px] z-20 shadow-[4px_0_8px_-1px_rgba(0,0,0,0.18)] after:absolute after:top-0 after:bottom-0 after:right-0 after:w-[2px] after:bg-slate-600 after:z-30 border-r-2 !border-r-slate-600 text-xs w-[160px] min-w-[160px] max-w-[160px]"
                           inlineEditing={inlineEditing}
                           inlineSaving={inlineSaving}
                           onStartEdit={startInlineEdit}
@@ -2855,32 +2855,32 @@ function InventoryViewInner() {
           FROZEN COLUMNS: STT (left-0), Product Type (left-[56px]), Mockup (left-[230px]), Mã SKU (left-[326px]) */}
       {activeTab === "inbound" && (
         <div className="rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col">
-          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-230px)] min-h-[480px]">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-230px)] min-h-[480px] scrollbar-thin [scrollbar-color:#94a3b8_#f1f5f9] [&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-slate-400 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-600">
             <div style={{ zoom: `${tableZoom}%` }} className="min-w-full">
               <table className="min-w-max w-full border-collapse text-left text-sm">
               <thead className="sticky top-0 z-30 bg-[#ff9900] text-slate-950 border-b-2 border-amber-600 shadow-xs">
                 <tr className="text-xs font-semibold uppercase tracking-[0.04em] whitespace-nowrap">
                   {/* FROZEN 1: STT */}
                   {inboundColMap["stt"]?.visible !== false && (
-                    <th className="py-2 px-1 text-center w-[58px] min-w-[58px] bg-[#f59e0b] border-r border-amber-600 sticky left-0 z-40 text-xs text-slate-950">
+                    <th className="py-2 px-1 text-center w-[58px] min-w-[58px] max-w-[58px] bg-[#f59e0b] border-r border-amber-600 sticky left-0 z-40 text-xs text-slate-950">
                       {inboundColMap["stt"]?.label || "STT"}
                     </th>
                   )}
                   {/* FROZEN 2: Product Type */}
                   {inboundColMap["product_type"]?.visible !== false && (
-                    <th className="py-2 px-3 w-[155px] min-w-[155px] bg-[#f59e0b] border-r border-amber-600 sticky left-[58px] z-40 text-xs text-slate-950">
+                    <th className="py-2 px-3 w-[155px] min-w-[155px] max-w-[155px] bg-[#f59e0b] border-r border-amber-600 sticky left-[58px] z-40 text-xs text-slate-950">
                       {inboundColMap["product_type"]?.label || "Product Type"}
                     </th>
                   )}
                   {/* FROZEN 3: Mockup */}
                   {inboundColMap["mockup"]?.visible !== false && (
-                    <th className="py-2 px-1 text-center w-[76px] min-w-[76px] bg-[#f59e0b] border-r border-amber-600 sticky left-[213px] z-40 text-xs text-slate-950">
+                    <th className="py-2 px-1 text-center w-[76px] min-w-[76px] max-w-[76px] bg-[#f59e0b] border-r border-amber-600 sticky left-[213px] z-40 text-xs text-slate-950">
                       {inboundColMap["mockup"]?.label || "Mockup"}
                     </th>
                   )}
-                  {/* FROZEN 4: SKU */}
+                  {/* FROZEN 4: SKU - BOUNDARY DIVIDER WITH BULLETPROOF LINE */}
                   {inboundColMap["sku"]?.visible !== false && (
-                    <th className="py-2 px-3 w-[160px] min-w-[160px] bg-[#f59e0b] border-r-2 !border-r-amber-800 sticky left-[289px] z-40 shadow-[4px_0_8px_-1px_rgba(0,0,0,0.18)] text-xs text-slate-950">
+                    <th className="py-2 px-3 w-[160px] min-w-[160px] max-w-[160px] bg-[#f59e0b] sticky left-[289px] z-40 shadow-[4px_0_8px_-1px_rgba(0,0,0,0.18)] after:absolute after:top-0 after:bottom-0 after:right-0 after:w-[2px] after:bg-amber-900 after:z-50 border-r-2 !border-r-amber-900 text-xs text-slate-950">
                       {inboundColMap["sku"]?.label || "SKU"}
                     </th>
                   )}
@@ -3051,7 +3051,7 @@ function InventoryViewInner() {
                       >
                           {/* FROZEN 1: STT with Pencil Button aligned */}
                           {inboundColMap["stt"]?.visible !== false && (
-                          <td className="py-1 px-1 text-center font-mono text-xs font-bold text-slate-700 bg-white group-even:bg-[#f8fafc] group-hover:bg-[#fef9c3] border-r border-slate-300 sticky left-0 z-20">
+                          <td className="py-1 px-1 text-center font-mono text-xs font-bold text-slate-700 bg-white group-even:bg-[#f8fafc] group-hover:bg-[#fef9c3] border-r border-slate-300 sticky left-0 z-20 w-[58px] min-w-[58px] max-w-[58px]">
                             <div className="flex items-center justify-between gap-1 w-full px-1">
                               <span className="w-5 text-center font-mono font-bold text-slate-600">{stt}</span>
                               <button
@@ -3074,7 +3074,7 @@ function InventoryViewInner() {
                             field="product_type"
                             value={item.product_type}
                             display={<EntityBadge value={item.product_type} />}
-                            className="py-1.5 px-3 bg-white group-even:bg-[#f8fafc] group-hover:bg-[#fef9c3] border-r border-slate-300 sticky left-[58px] z-20 text-xs"
+                            className="py-1.5 px-3 bg-white group-even:bg-[#f8fafc] group-hover:bg-[#fef9c3] border-r border-slate-300 sticky left-[58px] z-20 text-xs w-[155px] min-w-[155px] max-w-[155px]"
                             inlineEditing={inlineEditing}
                             inlineSaving={inlineSaving}
                             onStartEdit={startInlineEdit}
@@ -3086,7 +3086,7 @@ function InventoryViewInner() {
 
                           {/* FROZEN 3: Mockup */}
                           {inboundColMap["mockup"]?.visible !== false && (
-                          <td className="py-1 px-1 text-center bg-white group-even:bg-[#f8fafc] group-hover:bg-[#fef9c3] border-r border-slate-300 sticky left-[213px] z-20">
+                          <td className="py-1 px-1 text-center bg-white group-even:bg-[#f8fafc] group-hover:bg-[#fef9c3] border-r border-slate-300 sticky left-[213px] z-20 w-[76px] min-w-[76px] max-w-[76px]">
                             <MockupThumbnail
                               url={item.mockup}
                               alt={item.sku}
@@ -3095,7 +3095,7 @@ function InventoryViewInner() {
                           </td>
                           )}
 
-                          {/* FROZEN 4: SKU */}
+                          {/* FROZEN 4: SKU - BOUNDARY DIVIDER WITH BULLETPROOF LINE */}
                           {inboundColMap["sku"]?.visible !== false && (
 <EditableCell
                             table="inbound"
@@ -3107,7 +3107,7 @@ function InventoryViewInner() {
                               {item.sku}
                             </span>
                           }
-                          className="py-1.5 px-3 bg-white group-even:bg-[#f8fafc] group-hover:bg-[#fef9c3] border-r-2 !border-r-slate-500 sticky left-[289px] z-20 shadow-[4px_0_8px_-1px_rgba(0,0,0,0.18)] text-xs"
+                          className="py-1.5 px-3 bg-white group-even:bg-[#f8fafc] group-hover:bg-[#fef9c3] sticky left-[289px] z-20 shadow-[4px_0_8px_-1px_rgba(0,0,0,0.18)] after:absolute after:top-0 after:bottom-0 after:right-0 after:w-[2px] after:bg-slate-600 after:z-30 border-r-2 !border-r-slate-600 text-xs w-[160px] min-w-[160px] max-w-[160px]"
                           inlineEditing={inlineEditing}
                           inlineSaving={inlineSaving}
                           onStartEdit={startInlineEdit}
