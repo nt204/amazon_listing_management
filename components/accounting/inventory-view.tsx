@@ -11,6 +11,7 @@ import {
   ArrowClockwiseIcon,
   ArrowCounterClockwiseIcon,
   ArrowSquareOutIcon,
+  CaretDownIcon,
   CheckCircleIcon,
   ClockCounterClockwiseIcon,
   CopyIcon,
@@ -32,6 +33,57 @@ import {
 } from "@phosphor-icons/react";
 import type { SkuMasterItem, InboundShipmentItem } from "@/lib/accounting/inventory-db";
 import type { Store } from "@/lib/accounting/types";
+
+const DEFAULT_PRODUCT_TYPES = [
+  "11 Oz Glass",
+  "11 Oz Mug",
+  "20oz Tumbler",
+  "Acrylic Ornament",
+  "Acrylic Suncatcher Ornament",
+  "Blanket",
+  "Blanket Hoodie",
+  "Book Nook",
+  "Cake Topper",
+  "Car Visor",
+  "Ceramic Ornament",
+  "Docking Station",
+  "Garden Flag",
+  "Glass Ornament",
+  "Handprint Kit",
+  "Hologram Ornament",
+  "Kitchen Towel",
+  "Makeup Bag",
+  "Oodie",
+  "Ornament",
+  "Pillow",
+  "Poster",
+  "Resin Ornament",
+  "Reserved Chair Sign",
+  "Stained Glass Suncatcher",
+  "Suncatcher Ornament",
+  "Tumbler 20 Oz",
+  "Wind Chime",
+  "Wooden Ornament",
+];
+
+const DEFAULT_INBOUND_STATUS = [
+  "Working",
+  "In Transit",
+  "Receiving",
+  "Closed",
+  "Cancelled",
+  "Delivered",
+];
+
+const DEFAULT_INBOUND_TRANG_THAI = [
+  "Phát triển",
+  "Active",
+  "Test",
+  "Tối ưu",
+  "Hủy",
+  "Tạm dừng",
+  "Đã updated",
+];
 import {
   ColumnManagerModal,
   type ColumnConfig,
@@ -281,11 +333,19 @@ const EditableCell = memo(
       : className.includes("text-right")
       ? "text-right"
       : "text-left";
+    const typed = localVal.trim().toLowerCase();
+    const suggestedOptions = typed && localVal !== getRawEditableString(value)
+      ? options.filter((option) => option.toLowerCase().includes(typed))
+      : options;
+
+    const hasOptions = options.length > 0;
 
     return (
       <td
         onDoubleClick={() => onStartEdit(table, id, field, value)}
-        className={`group/cell relative cursor-pointer select-none transition-colors hover:bg-amber-100/60 ${className}`}
+        className={`group/cell relative cursor-pointer select-none transition-colors hover:bg-amber-100/60 ${className} ${
+          isEditing ? "!z-[90] overflow-visible" : ""
+        }`}
       >
         {/* Ghost in-flow content maintains EXACT column width and height - ZERO SHIFT */}
         <div className={`w-full h-full flex items-center ${alignClass} ${isEditing ? "invisible pointer-events-none select-none opacity-0" : ""}`}>
@@ -301,9 +361,13 @@ const EditableCell = memo(
               onStartEdit(table, id, field, value);
             }}
             className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 rounded opacity-0 group-hover/cell:opacity-100 hover:bg-slate-200/80 text-slate-400 hover:text-indigo-600 transition cursor-pointer"
-            title="Sửa ô này"
+            title={hasOptions ? "Chọn hoặc sửa ô này" : "Sửa ô này"}
           >
-            <PencilSimpleIcon size={12} weight="bold" />
+            {hasOptions ? (
+              <CaretDownIcon size={12} weight="bold" className="text-slate-600" />
+            ) : (
+              <PencilSimpleIcon size={12} weight="bold" />
+            )}
           </button>
         )}
 
@@ -312,29 +376,7 @@ const EditableCell = memo(
             className="absolute inset-0 z-30 p-0.5 flex items-center bg-white rounded ring-2 ring-emerald-600 shadow-md"
             onClick={(e) => e.stopPropagation()}
           >
-            {options.length > 0 ? (
-              <select
-                autoFocus
-                value={localVal}
-                onChange={(e) => {
-                  isCommittingRef.current = true;
-                  setLocalVal(e.target.value);
-                  onSave(table, id, field, e.target.value);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") {
-                    e.preventDefault();
-                    isCommittingRef.current = true;
-                    onCancel();
-                  }
-                }}
-                className={`h-full w-full rounded border border-emerald-500 bg-white px-2 text-xs font-bold text-slate-950 focus:outline-none ${inputAlignClass}`}
-              >
-                <option value="">—</option>
-                {localVal && !options.includes(localVal) && <option value={localVal}>{localVal}</option>}
-                {options.map((option) => <option key={option} value={option}>{option}</option>)}
-              </select>
-            ) : (
+            <div className="relative h-full w-full">
               <input
                 ref={inputRef}
                 type="text"
@@ -351,9 +393,36 @@ const EditableCell = memo(
                   }
                 }}
                 onBlur={commitSave}
-                className={`h-full w-full rounded border border-emerald-500 bg-white px-2 text-xs font-bold text-slate-950 focus:outline-none ${inputAlignClass}`}
+                className={`h-full w-full rounded border border-emerald-500 bg-white px-2 ${hasOptions ? "pr-6" : ""} text-xs font-bold text-slate-950 focus:outline-none ${inputAlignClass}`}
               />
-            )}
+              {hasOptions && (
+                <div className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400">
+                  <CaretDownIcon size={12} weight="bold" />
+                </div>
+              )}
+              {hasOptions && (
+                <div className="absolute left-0 top-full z-[100] mt-1 max-h-56 min-w-[200px] w-full overflow-y-auto rounded-lg border border-slate-200 bg-white p-1 shadow-2xl">
+                  {suggestedOptions.slice(0, 40).map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        isCommittingRef.current = true;
+                        setLocalVal(option);
+                        onSave(table, id, field, option);
+                      }}
+                      className="block w-full whitespace-nowrap rounded px-2.5 py-1.5 text-left text-xs font-semibold text-slate-800 hover:bg-indigo-50 hover:text-indigo-700"
+                    >
+                      {option}
+                    </button>
+                  ))}
+                  {suggestedOptions.length === 0 && (
+                    <div className="px-2.5 py-2 text-xs text-slate-400">Nhấn Enter để lưu giá trị mới</div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </td>
@@ -375,6 +444,8 @@ const EditableCell = memo(
     if (prevProps.id !== nextProps.id) return false;
     if (prevProps.field !== nextProps.field) return false;
     if (prevProps.className !== nextProps.className) return false;
+    if (prevProps.options?.length !== nextProps.options?.length) return false;
+    if (prevProps.options?.some((option, index) => option !== nextProps.options?.[index])) return false;
     return true;
   }
 );
@@ -945,7 +1016,7 @@ function InventoryViewInner() {
       if (!res.ok) throw new Error("Không thể tải danh sách lựa chọn của Store");
       return res.json() as Promise<{
         sku: Record<"product_type" | "pic_mkt" | "loai" | "niche" | "pic_idea" | "status" | "event" | "tinh_trang" | "design_pic", string[]>;
-        inbound: Record<"product_type" | "sup" | "line_ship" | "status", string[]>;
+        inbound: Record<"product_type" | "sup" | "line_ship" | "status" | "trang_thai", string[]>;
       }>;
     },
     enabled: !!selectedStoreId,
@@ -999,19 +1070,45 @@ function InventoryViewInner() {
   const [fieldEditor, setFieldEditor] = useState<{ entity_type: "sku" | "inbound"; field_id: string; label: string; input_type: "text" | "select"; options: string[]; allow_custom_value: boolean } | null>(null);
   const [newFieldOption, setNewFieldOption] = useState("");
 
+  const scanOptionsFromRows = useCallback((tab: "sku" | "inbound", fieldId: string) => {
+    const items = tab === "sku" ? allSkus : allShipments;
+    const values = new Set<string>();
+    for (const item of items) {
+      const val = (item as any)[fieldId] ?? (item as any)?.custom_fields?.[fieldId];
+      if (val != null && typeof val === "string") {
+        const trimmed = val.trim();
+        if (trimmed && trimmed !== "—" && trimmed !== "-") values.add(trimmed);
+      }
+    }
+    return Array.from(values).sort((a, b) => a.localeCompare(b));
+  }, [allSkus, allShipments]);
+
   const handleQuickRenameColumn = useCallback((tab: "sku" | "inbound", colId: string, currentLabel: string) => {
     const saved = fieldSettingsQuery.data?.settings.find((item) => item.entity_type === tab && item.field_id === colId);
     setNewFieldOption("");
-    const scanned = tab === "sku" ? (fieldOptionsQuery.data?.sku as Record<string, string[]> | undefined)?.[colId] : (fieldOptionsQuery.data?.inbound as Record<string, string[]> | undefined)?.[colId];
-    setFieldEditor(saved ? { ...saved, options: [...saved.options] } : { entity_type: tab, field_id: colId, label: currentLabel, input_type: "select", options: scanned || [], allow_custom_value: true });
-  }, [fieldSettingsQuery.data, fieldOptionsQuery.data]);
+    const scannedDb = tab === "sku" ? (fieldOptionsQuery.data?.sku as Record<string, string[]> | undefined)?.[colId] : (fieldOptionsQuery.data?.inbound as Record<string, string[]> | undefined)?.[colId];
+    const rowValues = scanOptionsFromRows(tab, colId);
+
+    let initialOptions: string[] = [];
+    if (saved && Array.isArray(saved.options) && saved.options.length > 0) {
+      initialOptions = [...saved.options];
+    } else {
+      initialOptions = [...new Set([...(scannedDb || []), ...rowValues])].filter(Boolean);
+    }
+
+    setFieldEditor(saved ? { ...saved, options: initialOptions } : { entity_type: tab, field_id: colId, label: currentLabel, input_type: "select", options: initialOptions, allow_custom_value: true });
+  }, [fieldSettingsQuery.data, fieldOptionsQuery.data, scanOptionsFromRows]);
 
   const saveFieldEditor = async () => {
     if (!fieldEditor || !selectedStoreId || !fieldEditor.label.trim()) return;
     const res = await fetch("/api/accounting/inventory/field-settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...fieldEditor, input_type: "select", store_id: selectedStoreId }) });
     if (!res.ok) { notify("Không thể lưu cấu hình cột", "error"); return; }
-    (fieldEditor.entity_type === "sku" ? setSkuColumns : setInboundColumns)((prev) => prev.map((col) => col.id === fieldEditor.field_id ? { ...col, label: fieldEditor.label.trim() } : col));
-    await Promise.all([queryClient.invalidateQueries({ queryKey: ["inventory-field-settings", selectedStoreId] }), queryClient.invalidateQueries({ queryKey: ["inventory-field-options", selectedStoreId] })]);
+    const savedSetting = { ...fieldEditor, label: fieldEditor.label.trim(), input_type: "select" as const };
+    (fieldEditor.entity_type === "sku" ? setSkuColumns : setInboundColumns)((prev) => prev.map((col) => col.id === fieldEditor.field_id ? { ...col, label: savedSetting.label } : col));
+    queryClient.setQueryData(["inventory-field-settings", selectedStoreId], (current: typeof fieldSettingsQuery.data) => ({
+      settings: [...(current?.settings || []).filter((item) => !(item.entity_type === savedSetting.entity_type && item.field_id === savedSetting.field_id)), savedSetting],
+    }));
+    queryClient.invalidateQueries({ queryKey: ["inventory-field-options", selectedStoreId] });
     setFieldEditor(null);
     notify("Đã lưu cấu hình cột");
   };
@@ -1084,33 +1181,17 @@ function InventoryViewInner() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Không thể lưu ô dữ liệu.");
 
-        // Direct in-place cache mutation for single record (0ms lag, no refetch of whole table needed!)
+        const updateCachedRows = (oldData: any) => {
+          if (!oldData?.items) return oldData;
+          return {
+            ...oldData,
+            items: oldData.items.map((item: any) => item.id === id ? { ...item, ...data.item } : item),
+          };
+        };
         if (table === "sku") {
-          queryClient.setQueryData(
-            ["sku-master", selectedStoreId, skuPage, skuLimit, debouncedSkuSearch, skuStatusFilter, skuTypeFilter],
-            (oldData: any) => {
-              if (!oldData) return oldData;
-              return {
-                ...oldData,
-                items: oldData.items.map((item: any) =>
-                  item.id === id ? { ...item, ...data.item } : item
-                ),
-              };
-            }
-          );
+          queryClient.setQueriesData({ queryKey: ["sku-master", selectedStoreId] }, updateCachedRows);
         } else {
-          queryClient.setQueryData(
-            ["inbound-shipments", selectedStoreId, shipmentPage, shipmentLimit, debouncedShipmentSearch, shipmentStatusFilter],
-            (oldData: any) => {
-              if (!oldData) return oldData;
-              return {
-                ...oldData,
-                items: oldData.items.map((item: any) =>
-                  item.id === id ? { ...item, ...data.item } : item
-                ),
-              };
-            }
-          );
+          queryClient.setQueriesData({ queryKey: ["inbound-shipments", selectedStoreId] }, updateCachedRows);
         }
 
         notify("Đã lưu ô dữ liệu thành công!", "success");
@@ -1205,25 +1286,49 @@ function InventoryViewInner() {
       .filter((item) => item.entity_type === entityType && item.field_id === "product_type" && item.input_type === "select")
       .flatMap((item) => item.options) || [];
     if (configured.length) return [...new Set(configured)].sort((a, b) => a.localeCompare(b));
-    return [...new Set(fieldOptionsQuery.data?.[entityType].product_type || [])].sort((a, b) => a.localeCompare(b));
+    const scanned = fieldOptionsQuery.data?.[entityType]?.product_type || [];
+    return [...new Set([...scanned, ...DEFAULT_PRODUCT_TYPES])].sort((a, b) => a.localeCompare(b));
   }, [fieldOptionsQuery.data, fieldSettingsQuery.data]);
   const skuProductTypes = useMemo(() => productTypesFor("sku"), [productTypesFor]);
   const inboundProductTypes = useMemo(() => productTypesFor("inbound"), [productTypesFor]);
 
   const skuOptions = useMemo(() => {
-    const base: Record<string, string[]> = fieldOptionsQuery.data?.sku || {};
-    return Object.fromEntries(Object.entries(base).map(([field, values]) => {
-      const setting = fieldSettingsQuery.data?.settings.find((item) => item.entity_type === "sku" && item.field_id === field);
-      return [field, setting?.input_type === "select" ? setting.options : values];
-    }));
-  }, [fieldOptionsQuery.data, fieldSettingsQuery.data]);
+    const base: Record<string, string[]> = { ...(fieldOptionsQuery.data?.sku || {}) };
+    const settings = fieldSettingsQuery.data?.settings || [];
+    const allFieldIds = new Set([...Object.keys(base), ...skuColumns.map((c) => c.id)]);
+    const res: Record<string, string[]> = {};
+    for (const field of allFieldIds) {
+      const dbVals = base[field] || [];
+      const rowVals = scanOptionsFromRows("sku", field);
+      const setting = settings.find((item) => item.entity_type === "sku" && item.field_id === field);
+      let opts = setting?.input_type === "select" && setting.options && setting.options.length > 0
+        ? setting.options
+        : [...new Set([...dbVals, ...rowVals])].filter(Boolean);
+      if (field === "product_type" && (!opts || opts.length === 0)) opts = DEFAULT_PRODUCT_TYPES;
+      res[field] = opts;
+    }
+    return res;
+  }, [fieldOptionsQuery.data, fieldSettingsQuery.data, skuColumns, scanOptionsFromRows]);
+
   const inboundOptions = useMemo(() => {
-    const base: Record<string, string[]> = fieldOptionsQuery.data?.inbound || {};
-    return Object.fromEntries(Object.entries(base).map(([field, values]) => {
-      const setting = fieldSettingsQuery.data?.settings.find((item) => item.entity_type === "inbound" && item.field_id === field);
-      return [field, setting?.input_type === "select" ? setting.options : values];
-    }));
-  }, [fieldOptionsQuery.data, fieldSettingsQuery.data]);
+    const base: Record<string, string[]> = { ...(fieldOptionsQuery.data?.inbound || {}) };
+    const settings = fieldSettingsQuery.data?.settings || [];
+    const allFieldIds = new Set([...Object.keys(base), ...inboundColumns.map((c) => c.id)]);
+    const res: Record<string, string[]> = {};
+    for (const field of allFieldIds) {
+      const dbVals = base[field] || [];
+      const rowVals = scanOptionsFromRows("inbound", field);
+      const setting = settings.find((item) => item.entity_type === "inbound" && item.field_id === field);
+      let opts = setting?.input_type === "select" && setting.options && setting.options.length > 0
+        ? setting.options
+        : [...new Set([...dbVals, ...rowVals])].filter(Boolean);
+      if (field === "status" && (!opts || opts.length === 0)) opts = DEFAULT_INBOUND_STATUS;
+      if (field === "trang_thai" && (!opts || opts.length === 0)) opts = DEFAULT_INBOUND_TRANG_THAI;
+      if (field === "product_type" && (!opts || opts.length === 0)) opts = DEFAULT_PRODUCT_TYPES;
+      res[field] = opts;
+    }
+    return res;
+  }, [fieldOptionsQuery.data, fieldSettingsQuery.data, inboundColumns, scanOptionsFromRows]);
 
   useEffect(() => {
     const settings = fieldSettingsQuery.data?.settings;
@@ -2045,10 +2150,10 @@ function InventoryViewInner() {
         onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
         onSave={handleSaveInlineCell}
         onCancel={() => setInlineEditing(null)}
-        options={setting?.input_type === "select" ? setting.options : []}
+        options={setting?.input_type === "select" ? setting.options : (skuOptions[cid] || [])}
       />
     );
-  }, [inlineEditing, inlineSaving, startInlineEdit, handleSaveInlineCell, fieldSettingsQuery.data]);
+  }, [inlineEditing, inlineSaving, startInlineEdit, handleSaveInlineCell, fieldSettingsQuery.data, skuOptions]);
 
   const renderInboundHeader = useCallback((col: ColumnConfig) => {
     const isCustom = col.isCustom;
@@ -2252,10 +2357,21 @@ function InventoryViewInner() {
         onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
         onSave={handleSaveInlineCell}
         onCancel={() => setInlineEditing(null)}
-        options={setting?.input_type === "select" ? setting.options : []}
+        options={
+          setting?.input_type === "select"
+            ? setting.options
+            : (inboundOptions[cid] ||
+                (cid === "trang_thai"
+                  ? DEFAULT_INBOUND_TRANG_THAI
+                  : cid === "status"
+                  ? DEFAULT_INBOUND_STATUS
+                  : cid === "product_type"
+                  ? inboundProductTypes
+                  : []))
+        }
       />
     );
-  }, [inlineEditing, inlineSaving, startInlineEdit, handleSaveInlineCell, fieldSettingsQuery.data]);
+  }, [inlineEditing, inlineSaving, startInlineEdit, handleSaveInlineCell, fieldSettingsQuery.data, inboundOptions]);
 
   return (
     <div className="w-full space-y-2.5">
@@ -2673,6 +2789,7 @@ function InventoryViewInner() {
                             onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
                             onSave={handleSaveInlineCell}
                             onCancel={() => setInlineEditing(null)}
+                            options={skuProductTypes}
                           />
 )}
 
@@ -2866,6 +2983,7 @@ function InventoryViewInner() {
                             onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
                             onSave={handleSaveInlineCell}
                             onCancel={() => setInlineEditing(null)}
+                            options={inboundProductTypes}
                           />
 )}
 
@@ -3588,7 +3706,18 @@ function InventoryViewInner() {
                     value={shipmentFormData.status}
                     onChange={(val) => setShipmentFormData({ ...shipmentFormData, status: val })}
                     placeholder="Chọn status hoặc nhập mới..."
-                    options={inboundOptions?.status || []}
+                    options={inboundOptions?.status || DEFAULT_INBOUND_STATUS}
+                  />
+                </div>
+
+                {/* Trạng thái */}
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">Trạng thái</label>
+                  <OptionTextInput
+                    value={shipmentFormData.trang_thai}
+                    onChange={(val) => setShipmentFormData({ ...shipmentFormData, trang_thai: val })}
+                    placeholder="Chọn trạng thái hoặc nhập mới..."
+                    options={inboundOptions?.trang_thai || DEFAULT_INBOUND_TRANG_THAI}
                   />
                 </div>
 
@@ -4032,8 +4161,121 @@ function InventoryViewInner() {
               <button type="button" onClick={() => setFieldEditor(null)} className="p-1 text-slate-400 hover:text-slate-700"><XIcon size={18} /></button>
             </div>
             <div className="space-y-4 p-5 text-xs">
-              <label className="block font-bold text-slate-700">Tên cột<input value={fieldEditor.label} onChange={(e) => setFieldEditor({ ...fieldEditor, label: e.target.value })} className="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></label>
-              <div className="font-bold text-slate-700">Giá trị lựa chọn</div><div className="max-h-40 space-y-1 overflow-y-auto">{fieldEditor.options.map((option, index) => <div key={`${option}-${index}`} className="flex gap-2"><input value={option} onChange={(e) => setFieldEditor({ ...fieldEditor, options: fieldEditor.options.map((item, i) => i === index ? e.target.value : item) })} className="min-w-0 flex-1 rounded border border-slate-300 px-2 py-1.5" /><button type="button" onClick={() => setFieldEditor({ ...fieldEditor, options: fieldEditor.options.filter((_, i) => i !== index) })} className="text-rose-600">Xóa</button></div>)}</div><div className="flex gap-2"><input value={newFieldOption} onChange={(e) => setNewFieldOption(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && newFieldOption.trim()) { e.preventDefault(); setFieldEditor({ ...fieldEditor, options: [...fieldEditor.options, newFieldOption.trim()] }); setNewFieldOption(""); } }} placeholder="Thêm giá trị mới" className="min-w-0 flex-1 rounded border border-slate-300 px-2 py-1.5" /><button type="button" onClick={() => { if (newFieldOption.trim()) { setFieldEditor({ ...fieldEditor, options: [...fieldEditor.options, newFieldOption.trim()] }); setNewFieldOption(""); } }} className="rounded bg-slate-100 px-3 font-bold">Thêm</button></div><label className="flex items-center gap-2 font-semibold text-slate-700"><input type="checkbox" checked={fieldEditor.allow_custom_value} onChange={(e) => setFieldEditor({ ...fieldEditor, allow_custom_value: e.target.checked })} />Cho phép nhập giá trị khác</label>
+              <label className="block font-bold text-slate-700">
+                Tên cột
+                <input
+                  value={fieldEditor.label}
+                  onChange={(e) => setFieldEditor({ ...fieldEditor, label: e.target.value })}
+                  className="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900"
+                />
+              </label>
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-bold text-slate-700">
+                    Giá trị lựa chọn ({fieldEditor.options.length})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const rowVals = scanOptionsFromRows(fieldEditor.entity_type, fieldEditor.field_id);
+                      const dbVals = fieldEditor.entity_type === "sku"
+                        ? (fieldOptionsQuery.data?.sku as Record<string, string[]> | undefined)?.[fieldEditor.field_id] || []
+                        : (fieldOptionsQuery.data?.inbound as Record<string, string[]> | undefined)?.[fieldEditor.field_id] || [];
+                      const merged = [...new Set([...fieldEditor.options, ...dbVals, ...rowVals])].filter(Boolean);
+                      const added = merged.length - fieldEditor.options.length;
+                      setFieldEditor({ ...fieldEditor, options: merged });
+                      if (added > 0) {
+                        notify(`Đã quét thêm ${added} giá trị mới từ bảng!`);
+                      } else {
+                        notify("Không có thêm giá trị mới nào trong bảng");
+                      }
+                    }}
+                    className="inline-flex items-center gap-1 rounded bg-indigo-50 px-2 py-1 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100 transition cursor-pointer"
+                    title="Tự động quét tất cả các dòng trong bảng để lấy giá trị hiện có"
+                  >
+                    <ArrowClockwiseIcon size={12} weight="bold" />
+                    <span>Quét giá trị từ bảng</span>
+                  </button>
+                </div>
+
+                {fieldEditor.options.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3 text-center text-xs text-slate-500">
+                    Chưa có giá trị nào. Bạn có thể bấm <strong>&quot;Quét giá trị từ bảng&quot;</strong> hoặc nhập giá trị mới bên dưới.
+                  </div>
+                ) : (
+                  <div className="max-h-48 space-y-1.5 overflow-y-auto pr-1">
+                    {fieldEditor.options.map((option, index) => (
+                      <div key={`${option}-${index}`} className="flex gap-2 items-center">
+                        <input
+                          value={option}
+                          onChange={(e) =>
+                            setFieldEditor({
+                              ...fieldEditor,
+                              options: fieldEditor.options.map((item, i) => (i === index ? e.target.value : item)),
+                            })
+                          }
+                          className="min-w-0 flex-1 rounded border border-slate-300 px-2.5 py-1.5 text-xs text-slate-800 font-medium focus:border-indigo-500 focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setFieldEditor({
+                              ...fieldEditor,
+                              options: fieldEditor.options.filter((_, i) => i !== index),
+                            })
+                          }
+                          className="text-xs font-semibold text-rose-600 hover:text-rose-800 px-2 py-1"
+                        >
+                          Xóa
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <input
+                  value={newFieldOption}
+                  onChange={(e) => setNewFieldOption(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && newFieldOption.trim()) {
+                      e.preventDefault();
+                      if (!fieldEditor.options.includes(newFieldOption.trim())) {
+                        setFieldEditor({ ...fieldEditor, options: [...fieldEditor.options, newFieldOption.trim()] });
+                      }
+                      setNewFieldOption("");
+                    }
+                  }}
+                  placeholder="Thêm giá trị mới..."
+                  className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-900 focus:border-indigo-500 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (newFieldOption.trim()) {
+                      if (!fieldEditor.options.includes(newFieldOption.trim())) {
+                        setFieldEditor({ ...fieldEditor, options: [...fieldEditor.options, newFieldOption.trim()] });
+                      }
+                      setNewFieldOption("");
+                    }
+                  }}
+                  className="rounded-lg bg-slate-100 hover:bg-slate-200 px-3 py-2 font-bold text-slate-700 transition"
+                >
+                  Thêm
+                </button>
+              </div>
+
+              <label className="flex items-center gap-2 font-semibold text-slate-700 pt-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={fieldEditor.allow_custom_value}
+                  onChange={(e) => setFieldEditor({ ...fieldEditor, allow_custom_value: e.target.checked })}
+                  className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                />
+                Cho phép nhập giá trị khác
+              </label>
             </div>
             <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-4"><button type="button" onClick={() => setFieldEditor(null)} className="rounded-lg px-3 py-2 font-bold text-slate-600">Hủy</button><button type="button" onClick={saveFieldEditor} className="rounded-lg bg-indigo-600 px-4 py-2 font-bold text-white">Lưu</button></div>
           </div>

@@ -92,7 +92,7 @@ export interface InventoryHistoryItem {
 
 export interface InventoryFieldOptions {
   sku: Record<"product_type" | "pic_mkt" | "loai" | "niche" | "pic_idea" | "status" | "event" | "tinh_trang" | "design_pic", string[]>;
-  inbound: Record<"product_type" | "sup" | "line_ship" | "status", string[]>;
+  inbound: Record<"product_type" | "brand" | "sup" | "line_ship" | "status" | "tinh_trang_hang_den_kho" | "trang_thai", string[]>;
 }
 
 export interface InventoryFieldSetting {
@@ -140,7 +140,7 @@ export async function saveInventoryFieldSetting(storeId: string, setting: Invent
 export async function listInventoryFieldOptions(storeId: string): Promise<InventoryFieldOptions> {
   const sql = await getDatabaseClient();
   const skuFields = ["product_type", "pic_mkt", "loai", "niche", "pic_idea", "status", "event", "tinh_trang", "design_pic"] as const;
-  const inboundFields = ["product_type", "sup", "line_ship", "status"] as const;
+  const inboundFields = ["product_type", "brand", "sup", "line_ship", "status", "tinh_trang_hang_den_kho", "trang_thai"] as const;
 
   const getValues = async (table: "accounting_sku_master" | "accounting_inbound_shipments", field: string) => {
     const rows = await sql<{ value: string }[]>`
@@ -155,9 +155,45 @@ export async function listInventoryFieldOptions(storeId: string): Promise<Invent
     return rows.map((row) => row.value);
   };
 
+  // Lấy toàn bộ Product Type chuẩn từ product_cost_master để luôn có danh sách phôi hoàn chỉnh
+  let masterProductTypes: string[] = [];
+  try {
+    const masterRows = await sql<{ value: string }[]>`
+      SELECT DISTINCT BTRIM(product_type) AS value
+      FROM product_cost_master
+      WHERE product_type IS NOT NULL AND BTRIM(product_type) <> ''
+      ORDER BY value ASC
+    `;
+    masterProductTypes = masterRows.map((r) => r.value);
+  } catch {}
+
   const [skuEntries, inboundEntries] = await Promise.all([
-    Promise.all(skuFields.map(async (field) => [field, await getValues("accounting_sku_master", field)] as const)),
-    Promise.all(inboundFields.map(async (field) => [field, await getValues("accounting_inbound_shipments", field)] as const)),
+    Promise.all(skuFields.map(async (field) => {
+      const vals = await getValues("accounting_sku_master", field);
+      if (field === "product_type") {
+        const merged = [...new Set([...vals, ...masterProductTypes])].sort((a, b) => a.localeCompare(b));
+        return [field, merged] as const;
+      }
+      return [field, vals] as const;
+    })),
+    Promise.all(inboundFields.map(async (field) => {
+      const vals = await getValues("accounting_inbound_shipments", field);
+      if (field === "product_type") {
+        const merged = [...new Set([...vals, ...masterProductTypes])].sort((a, b) => a.localeCompare(b));
+        return [field, merged] as const;
+      }
+      if (field === "status") {
+        const defaults = ["Working", "In Transit", "Receiving", "Closed", "Cancelled", "Delivered"];
+        const merged = [...new Set([...vals, ...defaults])];
+        return [field, merged] as const;
+      }
+      if (field === "trang_thai") {
+        const defaults = ["Phát triển", "Active", "Test", "Hủy", "Tạm dừng", "Đã updated", "Tối ưu"];
+        const merged = [...new Set([...vals, ...defaults])];
+        return [field, merged] as const;
+      }
+      return [field, vals] as const;
+    })),
   ]);
 
   return {
