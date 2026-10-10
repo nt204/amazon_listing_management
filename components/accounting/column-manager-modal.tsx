@@ -155,7 +155,7 @@ export function ColumnHeaderCell({
           </span>
         )}
         <div className="flex-1 min-w-0">{children}</div>
-        {col && !col.isFrozen && (
+        {col && (
           <div className="hidden group-hover/th:flex items-center gap-0.5 ml-1 shrink-0">
             {onQuickRename && (
               <button
@@ -170,7 +170,7 @@ export function ColumnHeaderCell({
                 <PencilSimpleIcon size={12} weight="bold" />
               </button>
             )}
-            {onQuickHide && (
+            {!col.isFrozen && onQuickHide && (
               <button
                 type="button"
                 onClick={(e) => {

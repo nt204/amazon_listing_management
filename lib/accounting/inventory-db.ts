@@ -90,6 +90,82 @@ export interface InventoryHistoryItem {
   created_at: string;
 }
 
+export interface InventoryFieldOptions {
+  sku: Record<"product_type" | "pic_mkt" | "loai" | "niche" | "pic_idea" | "status" | "event" | "tinh_trang" | "design_pic", string[]>;
+  inbound: Record<"product_type" | "sup" | "line_ship" | "status", string[]>;
+}
+
+export interface InventoryFieldSetting {
+  entity_type: "sku" | "inbound";
+  field_id: string;
+  label: string;
+  input_type: "text" | "select";
+  options: string[];
+  allow_custom_value: boolean;
+}
+
+export async function listInventoryFieldSettings(storeId: string): Promise<InventoryFieldSetting[]> {
+  const sql = await getDatabaseClient();
+  const rows = await sql<InventoryFieldSetting[]>`
+    SELECT entity_type, field_id, label, input_type, options, allow_custom_value
+    FROM accounting_inventory_field_settings WHERE store_id = ${storeId}
+  `;
+  return rows.map((row) => ({
+    ...row,
+    options: Array.isArray(row.options)
+      ? row.options
+      : typeof row.options === "string"
+        ? JSON.parse(row.options)
+        : [],
+  }));
+}
+
+export async function saveInventoryFieldSetting(storeId: string, setting: InventoryFieldSetting) {
+  const sql = await getDatabaseClient();
+  const options = [...new Set(setting.options.map((value) => value.trim()).filter(Boolean))];
+  await sql`
+    INSERT INTO accounting_inventory_field_settings (store_id, entity_type, field_id, label, input_type, options, allow_custom_value)
+    VALUES (${storeId}, ${setting.entity_type}, ${setting.field_id}, ${setting.label.trim()}, ${setting.input_type}, ${sql.json(options)}, ${setting.allow_custom_value})
+    ON CONFLICT (store_id, entity_type, field_id) DO UPDATE SET
+      label = EXCLUDED.label, input_type = EXCLUDED.input_type, options = EXCLUDED.options,
+      allow_custom_value = EXCLUDED.allow_custom_value, updated_at = NOW()
+  `;
+}
+
+/**
+ * Returns every usable text value for the selected store.  This deliberately
+ * does not depend on the paginated table query, so new forms can suggest
+ * values that are only present on older records.
+ */
+export async function listInventoryFieldOptions(storeId: string): Promise<InventoryFieldOptions> {
+  const sql = await getDatabaseClient();
+  const skuFields = ["product_type", "pic_mkt", "loai", "niche", "pic_idea", "status", "event", "tinh_trang", "design_pic"] as const;
+  const inboundFields = ["product_type", "sup", "line_ship", "status"] as const;
+
+  const getValues = async (table: "accounting_sku_master" | "accounting_inbound_shipments", field: string) => {
+    const rows = await sql<{ value: string }[]>`
+      SELECT DISTINCT BTRIM(${sql(field)}) AS value
+      FROM ${sql(table)}
+      WHERE store_id = ${storeId}
+        AND deleted_at IS NULL
+        AND ${sql(field)} IS NOT NULL
+        AND BTRIM(${sql(field)}) <> ''
+      ORDER BY value ASC
+    `;
+    return rows.map((row) => row.value);
+  };
+
+  const [skuEntries, inboundEntries] = await Promise.all([
+    Promise.all(skuFields.map(async (field) => [field, await getValues("accounting_sku_master", field)] as const)),
+    Promise.all(inboundFields.map(async (field) => [field, await getValues("accounting_inbound_shipments", field)] as const)),
+  ]);
+
+  return {
+    sku: Object.fromEntries(skuEntries) as InventoryFieldOptions["sku"],
+    inbound: Object.fromEntries(inboundEntries) as InventoryFieldOptions["inbound"],
+  };
+}
+
 export async function listSkuMaster(
   storeId: string,
   params: { search?: string; status?: string; productType?: string; cursor?: string; page?: number; limit?: number } = {},

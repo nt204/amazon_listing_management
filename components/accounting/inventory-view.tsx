@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   QueryClient,
   QueryClientProvider,
@@ -123,74 +123,44 @@ function ProductTypeBadge({ type }: { type: string | null | undefined }) {
   return <EntityBadge value={type} />;
 }
 
-// Clean Autocomplete Input for Product Type (No annotations, no 'Chọn' text)
-function ProductTypeInput({
+// Native datalist keeps a field editable while offering values already used in this Store.
+function OptionTextInput({
   value,
   onChange,
-  existingTypes,
+  options,
+  placeholder,
 }: {
   value: string;
   onChange: (val: string) => void;
-  existingTypes: string[];
+  options: string[];
+  placeholder: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const cleanVal = (value || "").trim().toLowerCase();
-  const filtered = cleanVal
-    ? existingTypes.filter((t) => t.toLowerCase().includes(cleanVal))
-    : existingTypes;
+  const listId = useId();
 
   return (
-    <div className="relative space-y-1">
+    <>
+      <input
+        type="text"
+        list={listId}
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-800 focus:border-indigo-500 focus:outline-hidden"
+      />
+      <datalist id={listId}>
+        {options.map((option) => <option key={option} value={option} />)}
+      </datalist>
+    </>
+  );
+}
+
+function ProductTypeInput(props: Omit<React.ComponentProps<typeof OptionTextInput>, "placeholder">) {
+  return (
+    <div className="space-y-1">
       <label className="font-bold text-slate-700">
         Tên Phôi (Product Type) <span className="text-rose-500">*</span>
       </label>
-
-      <div className="relative">
-        <input
-          type="text"
-          placeholder="Nhập tên phôi..."
-          value={value}
-          onFocus={() => setOpen(true)}
-          onChange={(e) => {
-            onChange(e.target.value);
-            setOpen(true);
-          }}
-          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 focus:border-indigo-500 focus:outline-hidden"
-        />
-        {value && (
-          <button
-            type="button"
-            onClick={() => {
-              onChange("");
-              setOpen(false);
-            }}
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
-          >
-            <XIcon size={14} />
-          </button>
-        )}
-      </div>
-
-      {open && filtered.length > 0 && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 right-0 top-full mt-1 max-h-52 overflow-y-auto rounded-lg border border-slate-300 bg-white p-1 shadow-2xl z-50 divide-y divide-slate-100">
-            {filtered.slice(0, 15).map((type) => (
-              <button
-                key={type}
-                type="button"
-                onClick={() => {
-                  onChange(type);
-                  setOpen(false);
-                }}
-                className="flex w-full items-center px-3 py-2 text-xs text-left font-semibold text-slate-800 hover:bg-indigo-50 hover:text-indigo-900 rounded transition cursor-pointer"
-              >
-                <span>{type}</span>
-              </button>
-            ))}
-          </div>
-        </>
-      )}
+      <OptionTextInput {...props} placeholder="Chọn từ Store hoặc nhập tên phôi..." />
     </div>
   );
 }
@@ -250,6 +220,7 @@ const EditableCell = memo(
     onChangeValue: _onChangeValue,
     onSave,
     onCancel,
+    options = [],
   }: {
     table: "sku" | "inbound";
     id: string;
@@ -263,6 +234,7 @@ const EditableCell = memo(
     onChangeValue?: (newVal: string) => void;
     onSave: (table?: "sku" | "inbound" | unknown, id?: string, field?: string, val?: string) => void | Promise<void>;
     onCancel: () => void;
+    options?: string[];
   }) {
     const isEditing =
       inlineEditing?.table === table &&
@@ -340,26 +312,48 @@ const EditableCell = memo(
             className="absolute inset-0 z-30 p-0.5 flex items-center bg-white rounded ring-2 ring-emerald-600 shadow-md"
             onClick={(e) => e.stopPropagation()}
           >
-            <input
-              ref={inputRef}
-              type="text"
-              value={localVal}
-              onChange={(e) => setLocalVal(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  commitSave();
-                } else if (e.key === "Escape") {
-                  e.preventDefault();
+            {options.length > 0 ? (
+              <select
+                autoFocus
+                value={localVal}
+                onChange={(e) => {
                   isCommittingRef.current = true;
-                  onCancel();
-                }
-              }}
-              onBlur={() => {
-                commitSave();
-              }}
-              className={`h-full w-full rounded border border-emerald-500 bg-white px-2 text-xs font-bold text-slate-950 focus:outline-none ${inputAlignClass}`}
-            />
+                  setLocalVal(e.target.value);
+                  onSave(table, id, field, e.target.value);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    isCommittingRef.current = true;
+                    onCancel();
+                  }
+                }}
+                className={`h-full w-full rounded border border-emerald-500 bg-white px-2 text-xs font-bold text-slate-950 focus:outline-none ${inputAlignClass}`}
+              >
+                <option value="">—</option>
+                {localVal && !options.includes(localVal) && <option value={localVal}>{localVal}</option>}
+                {options.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+            ) : (
+              <input
+                ref={inputRef}
+                type="text"
+                value={localVal}
+                onChange={(e) => setLocalVal(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    commitSave();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    isCommittingRef.current = true;
+                    onCancel();
+                  }
+                }}
+                onBlur={commitSave}
+                className={`h-full w-full rounded border border-emerald-500 bg-white px-2 text-xs font-bold text-slate-950 focus:outline-none ${inputAlignClass}`}
+              />
+            )}
           </div>
         )}
       </td>
@@ -698,17 +692,13 @@ function InventoryViewInner() {
   const [inboundColumns, setInboundColumns] = useState<ColumnConfig[]>(DEFAULT_INBOUND_COLUMNS);
   const [showColumnModal, setShowColumnModal] = useState(false);
 
-  // Storage keys áp dụng đồng bộ cho tất cả các store
-  const SKU_COLUMNS_STORAGE_KEY = "accounting_sku_columns_global";
-  const INBOUND_COLUMNS_STORAGE_KEY = "accounting_inbound_columns_global";
+  const SKU_COLUMNS_STORAGE_KEY = `accounting_sku_columns_${selectedStoreId || "none"}`;
+  const INBOUND_COLUMNS_STORAGE_KEY = `accounting_inbound_columns_${selectedStoreId || "none"}`;
 
   // Load columns from localStorage (áp dụng đồng bộ tất cả store)
   useEffect(() => {
     try {
-      let skuStored = localStorage.getItem(SKU_COLUMNS_STORAGE_KEY);
-      if (!skuStored && selectedStoreId) {
-        skuStored = localStorage.getItem(`accounting_sku_columns_${selectedStoreId}`);
-      }
+      const skuStored = localStorage.getItem(SKU_COLUMNS_STORAGE_KEY);
       if (skuStored) {
         const parsed: ColumnConfig[] = JSON.parse(skuStored);
         const defaultMap = new Map(DEFAULT_SKU_COLUMNS.map((def) => [def.id, def]));
@@ -747,10 +737,7 @@ function InventoryViewInner() {
         setSkuColumns(DEFAULT_SKU_COLUMNS);
       }
 
-      let inboundStored = localStorage.getItem(INBOUND_COLUMNS_STORAGE_KEY);
-      if (!inboundStored && selectedStoreId) {
-        inboundStored = localStorage.getItem(`accounting_inbound_columns_${selectedStoreId}`);
-      }
+      const inboundStored = localStorage.getItem(INBOUND_COLUMNS_STORAGE_KEY);
       if (inboundStored) {
         const parsed: ColumnConfig[] = JSON.parse(inboundStored);
         const defaultMap = new Map(DEFAULT_INBOUND_COLUMNS.map((def) => [def.id, def]));
@@ -789,15 +776,15 @@ function InventoryViewInner() {
         setInboundColumns(DEFAULT_INBOUND_COLUMNS);
       }
     } catch {}
-  }, [selectedStoreId]);
+  }, [selectedStoreId, SKU_COLUMNS_STORAGE_KEY, INBOUND_COLUMNS_STORAGE_KEY]);
 
   const handleSaveSkuColumns = useCallback((newCols: ColumnConfig[]) => {
     setSkuColumns(newCols);
     try {
       localStorage.setItem(SKU_COLUMNS_STORAGE_KEY, JSON.stringify(newCols));
     } catch {}
-    notify("Đã lưu thiết lập cột BẢNG MÃ (Đồng bộ tất cả Store)!", "success");
-  }, []);
+    notify("Đã lưu thiết lập cột BẢNG MÃ cho Store này!", "success");
+  }, [SKU_COLUMNS_STORAGE_KEY]);
 
   const handleResetSkuColumns = useCallback(() => {
     setSkuColumns(DEFAULT_SKU_COLUMNS);
@@ -805,15 +792,15 @@ function InventoryViewInner() {
       localStorage.removeItem(SKU_COLUMNS_STORAGE_KEY);
     } catch {}
     notify("Đã khôi phục cột BẢNG MÃ về mặc định!", "success");
-  }, []);
+  }, [SKU_COLUMNS_STORAGE_KEY]);
 
   const handleSaveInboundColumns = useCallback((newCols: ColumnConfig[]) => {
     setInboundColumns(newCols);
     try {
       localStorage.setItem(INBOUND_COLUMNS_STORAGE_KEY, JSON.stringify(newCols));
     } catch {}
-    notify("Đã lưu thiết lập cột CHI TIẾT ĐI HÀNG (Đồng bộ tất cả Store)!", "success");
-  }, []);
+    notify("Đã lưu thiết lập cột CHI TIẾT ĐI HÀNG cho Store này!", "success");
+  }, [INBOUND_COLUMNS_STORAGE_KEY]);
 
   const handleResetInboundColumns = useCallback(() => {
     setInboundColumns(DEFAULT_INBOUND_COLUMNS);
@@ -821,7 +808,7 @@ function InventoryViewInner() {
       localStorage.removeItem(INBOUND_COLUMNS_STORAGE_KEY);
     } catch {}
     notify("Đã khôi phục cột CHI TIẾT ĐI HÀNG về mặc định!", "success");
-  }, []);
+  }, [INBOUND_COLUMNS_STORAGE_KEY]);
 
   const handleQuickHideColumn = useCallback((tab: "sku" | "inbound", colId: string) => {
     if (tab === "sku") {
@@ -843,32 +830,7 @@ function InventoryViewInner() {
       });
       notify("Đã ẩn cột khỏi bảng!", "success");
     }
-  }, []);
-
-  const handleQuickRenameColumn = useCallback((tab: "sku" | "inbound", colId: string, currentLabel: string) => {
-    const newName = prompt("Nhập tên hiển thị mới cho cột này:", currentLabel);
-    if (newName && newName.trim() && newName.trim() !== currentLabel) {
-      if (tab === "sku") {
-        setSkuColumns((prev) => {
-          const updated = prev.map((c) => (c.id === colId ? { ...c, label: newName.trim() } : c));
-          try {
-            localStorage.setItem(SKU_COLUMNS_STORAGE_KEY, JSON.stringify(updated));
-          } catch {}
-          return updated;
-        });
-        notify(`Đã đổi tên cột thành "${newName.trim()}"!`, "success");
-      } else {
-        setInboundColumns((prev) => {
-          const updated = prev.map((c) => (c.id === colId ? { ...c, label: newName.trim() } : c));
-          try {
-            localStorage.setItem(INBOUND_COLUMNS_STORAGE_KEY, JSON.stringify(updated));
-          } catch {}
-          return updated;
-        });
-        notify(`Đã đổi tên cột thành "${newName.trim()}"!`, "success");
-      }
-    }
-  }, []);
+  }, [SKU_COLUMNS_STORAGE_KEY, INBOUND_COLUMNS_STORAGE_KEY]);
 
   const skuColMap = useMemo(() => {
     const map: Record<string, ColumnConfig> = {};
@@ -976,6 +938,29 @@ function InventoryViewInner() {
     enabled: !!selectedStoreId,
   });
 
+  const fieldOptionsQuery = useQuery({
+    queryKey: ["inventory-field-options", selectedStoreId],
+    queryFn: async ({ signal }) => {
+      const res = await fetch(`/api/accounting/inventory/options?store_id=${selectedStoreId}`, { signal });
+      if (!res.ok) throw new Error("Không thể tải danh sách lựa chọn của Store");
+      return res.json() as Promise<{
+        sku: Record<"product_type" | "pic_mkt" | "loai" | "niche" | "pic_idea" | "status" | "event" | "tinh_trang" | "design_pic", string[]>;
+        inbound: Record<"product_type" | "sup" | "line_ship" | "status", string[]>;
+      }>;
+    },
+    enabled: !!selectedStoreId,
+  });
+
+  const fieldSettingsQuery = useQuery({
+    queryKey: ["inventory-field-settings", selectedStoreId],
+    queryFn: async () => {
+      const res = await fetch(`/api/accounting/inventory/field-settings?store_id=${selectedStoreId}`);
+      if (!res.ok) throw new Error("Không thể tải cấu hình cột");
+      return res.json() as Promise<{ settings: Array<{ entity_type: "sku" | "inbound"; field_id: string; label: string; input_type: "text" | "select"; options: string[]; allow_custom_value: boolean }> }>;
+    },
+    enabled: !!selectedStoreId,
+  });
+
   const allShipments = shipmentQuery.data?.items || [];
   const shipmentTotalCount = shipmentQuery.data?.total ?? 0;
   const shipmentTotal = shipmentTotalCount;
@@ -1011,6 +996,25 @@ function InventoryViewInner() {
   const [showShipmentModal, setShowShipmentModal] = useState(false);
   const [shipmentFormData, setShipmentFormData] = useState(emptyShipmentForm);
   const [savingShipment, setSavingShipment] = useState(false);
+  const [fieldEditor, setFieldEditor] = useState<{ entity_type: "sku" | "inbound"; field_id: string; label: string; input_type: "text" | "select"; options: string[]; allow_custom_value: boolean } | null>(null);
+  const [newFieldOption, setNewFieldOption] = useState("");
+
+  const handleQuickRenameColumn = useCallback((tab: "sku" | "inbound", colId: string, currentLabel: string) => {
+    const saved = fieldSettingsQuery.data?.settings.find((item) => item.entity_type === tab && item.field_id === colId);
+    setNewFieldOption("");
+    const scanned = tab === "sku" ? (fieldOptionsQuery.data?.sku as Record<string, string[]> | undefined)?.[colId] : (fieldOptionsQuery.data?.inbound as Record<string, string[]> | undefined)?.[colId];
+    setFieldEditor(saved ? { ...saved, options: [...saved.options] } : { entity_type: tab, field_id: colId, label: currentLabel, input_type: "select", options: scanned || [], allow_custom_value: true });
+  }, [fieldSettingsQuery.data, fieldOptionsQuery.data]);
+
+  const saveFieldEditor = async () => {
+    if (!fieldEditor || !selectedStoreId || !fieldEditor.label.trim()) return;
+    const res = await fetch("/api/accounting/inventory/field-settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...fieldEditor, input_type: "select", store_id: selectedStoreId }) });
+    if (!res.ok) { notify("Không thể lưu cấu hình cột", "error"); return; }
+    (fieldEditor.entity_type === "sku" ? setSkuColumns : setInboundColumns)((prev) => prev.map((col) => col.id === fieldEditor.field_id ? { ...col, label: fieldEditor.label.trim() } : col));
+    await Promise.all([queryClient.invalidateQueries({ queryKey: ["inventory-field-settings", selectedStoreId] }), queryClient.invalidateQueries({ queryKey: ["inventory-field-options", selectedStoreId] })]);
+    setFieldEditor(null);
+    notify("Đã lưu cấu hình cột");
+  };
 
   // View Detail Modals
   const [selectedSkuDetail, setSelectedSkuDetail] = useState<SkuMasterItem | null>(null);
@@ -1195,42 +1199,42 @@ function InventoryViewInner() {
     setSelectedStoreId(storeId);
   };
 
-  // Dynamic set of all existing product types for autocomplete
-  const existingProductTypes = useMemo(() => {
-    return Array.from(
-      new Set([
-        ...allSkus.map((s) => s.product_type?.trim()).filter(Boolean),
-        ...allShipments.map((s) => s.product_type?.trim()).filter(Boolean),
-        "Bullet Tumbler",
-        "3D Popup Card",
-        "Stainless Steel Tumbler",
-        "Aryclic Ornament",
-        "Glass Ornament",
-        "Garden Flag",
-        "30oz Tumbler",
-        "20oz Tumbler",
-        "14oz Tumbler",
-        "Pebble Ornament",
-        "Pebble Card",
-        "Banner",
-        "Slate",
-        "pebble plaque",
-        "Hat",
-        "Suncatcher Ornament",
-        "Open When Envelopes",
-        "Badge Reel",
-        "Pocket Hug",
-        "Resin",
-        "Fan Flag",
-        "Metal Sign",
-        "Stained Glass Suncatcher",
-        "Bunting Flag",
-        "Glass Suncatcher",
-        "Wood Sign",
-        "Wooden Block",
-      ] as string[])
-    ).sort((a, b) => a.localeCompare(b));
-  }, [allSkus, allShipments]);
+  // Options are scoped to the selected Store and include every record, not only this page.
+  const productTypesFor = useCallback((entityType: "sku" | "inbound") => {
+    const configured = fieldSettingsQuery.data?.settings
+      .filter((item) => item.entity_type === entityType && item.field_id === "product_type" && item.input_type === "select")
+      .flatMap((item) => item.options) || [];
+    if (configured.length) return [...new Set(configured)].sort((a, b) => a.localeCompare(b));
+    return [...new Set(fieldOptionsQuery.data?.[entityType].product_type || [])].sort((a, b) => a.localeCompare(b));
+  }, [fieldOptionsQuery.data, fieldSettingsQuery.data]);
+  const skuProductTypes = useMemo(() => productTypesFor("sku"), [productTypesFor]);
+  const inboundProductTypes = useMemo(() => productTypesFor("inbound"), [productTypesFor]);
+
+  const skuOptions = useMemo(() => {
+    const base: Record<string, string[]> = fieldOptionsQuery.data?.sku || {};
+    return Object.fromEntries(Object.entries(base).map(([field, values]) => {
+      const setting = fieldSettingsQuery.data?.settings.find((item) => item.entity_type === "sku" && item.field_id === field);
+      return [field, setting?.input_type === "select" ? setting.options : values];
+    }));
+  }, [fieldOptionsQuery.data, fieldSettingsQuery.data]);
+  const inboundOptions = useMemo(() => {
+    const base: Record<string, string[]> = fieldOptionsQuery.data?.inbound || {};
+    return Object.fromEntries(Object.entries(base).map(([field, values]) => {
+      const setting = fieldSettingsQuery.data?.settings.find((item) => item.entity_type === "inbound" && item.field_id === field);
+      return [field, setting?.input_type === "select" ? setting.options : values];
+    }));
+  }, [fieldOptionsQuery.data, fieldSettingsQuery.data]);
+
+  useEffect(() => {
+    const settings = fieldSettingsQuery.data?.settings;
+    if (!settings) return;
+    const applyLabels = (columns: ColumnConfig[], type: "sku" | "inbound") => columns.map((column) => {
+      const setting = settings.find((item) => item.entity_type === type && item.field_id === column.id);
+      return setting ? { ...column, label: setting.label } : column;
+    });
+    setSkuColumns((current) => applyLabels(current, "sku"));
+    setInboundColumns((current) => applyLabels(current, "inbound"));
+  }, [fieldSettingsQuery.data]);
 
   // History Drawer state
   const [historyDrawer, setHistoryDrawer] = useState<{
@@ -1534,6 +1538,7 @@ function InventoryViewInner() {
 
       notify(skuFormData.id ? "Đã cập nhật phôi SKU thành công!" : "Đã tạo phôi SKU mới thành công!");
       setShowSkuModal(false);
+      queryClient.invalidateQueries({ queryKey: ["inventory-field-options", selectedStoreId] });
       fetchSkus();
     } catch (err) {
       notify((err as Error).message, "error");
@@ -1642,6 +1647,7 @@ function InventoryViewInner() {
 
       notify(shipmentFormData.id ? "Đã cập nhật lô hàng thành công!" : "Đã tạo lô hàng mới thành công!");
       setShowShipmentModal(false);
+      queryClient.invalidateQueries({ queryKey: ["inventory-field-options", selectedStoreId] });
       fetchShipments();
     } catch (err) {
       notify((err as Error).message, "error");
@@ -1782,7 +1788,7 @@ function InventoryViewInner() {
       return next;
     });
     notify("Đã thay đổi vị trí cột!", "success");
-  }, []);
+  }, [SKU_COLUMNS_STORAGE_KEY]);
 
   const handleReorderInboundColumns = useCallback((fromId: string, toId: string) => {
     if (fromId === toId) return;
@@ -1801,7 +1807,7 @@ function InventoryViewInner() {
       return next;
     });
     notify("Đã thay đổi vị trí cột!", "success");
-  }, []);
+  }, [INBOUND_COLUMNS_STORAGE_KEY]);
 
   // Dynamic Scrollable Column Header & Cell Renderers (Follows user-customized order)
   const renderSkuHeader = useCallback((col: ColumnConfig) => {
@@ -1942,6 +1948,7 @@ function InventoryViewInner() {
     }
 
     let cellValue: any = (item as any)[cid];
+    const setting = fieldSettingsQuery.data?.settings.find((entry) => entry.entity_type === "sku" && entry.field_id === cid);
     let displayNode: React.ReactNode = safeDisplay(cellValue);
     let cellClass = "py-1.5 px-3 text-xs border-r border-slate-200";
 
@@ -2038,9 +2045,10 @@ function InventoryViewInner() {
         onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
         onSave={handleSaveInlineCell}
         onCancel={() => setInlineEditing(null)}
+        options={setting?.input_type === "select" ? setting.options : []}
       />
     );
-  }, [inlineEditing, inlineSaving, startInlineEdit, handleSaveInlineCell]);
+  }, [inlineEditing, inlineSaving, startInlineEdit, handleSaveInlineCell, fieldSettingsQuery.data]);
 
   const renderInboundHeader = useCallback((col: ColumnConfig) => {
     const isCustom = col.isCustom;
@@ -2145,6 +2153,7 @@ function InventoryViewInner() {
     }
 
     let cellValue: any = (item as any)[cid];
+    const setting = fieldSettingsQuery.data?.settings.find((entry) => entry.entity_type === "inbound" && entry.field_id === cid);
     let displayNode: React.ReactNode = safeDisplay(cellValue);
     let cellClass = "py-1.5 px-3 text-xs border-r border-slate-200";
 
@@ -2243,9 +2252,10 @@ function InventoryViewInner() {
         onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
         onSave={handleSaveInlineCell}
         onCancel={() => setInlineEditing(null)}
+        options={setting?.input_type === "select" ? setting.options : []}
       />
     );
-  }, [inlineEditing, inlineSaving, startInlineEdit, handleSaveInlineCell]);
+  }, [inlineEditing, inlineSaving, startInlineEdit, handleSaveInlineCell, fieldSettingsQuery.data]);
 
   return (
     <div className="w-full space-y-2.5">
@@ -2457,7 +2467,7 @@ function InventoryViewInner() {
               className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 focus:border-indigo-500 focus:outline-hidden cursor-pointer"
             >
               <option value="">Tất cả Loại Phôi</option>
-              {existingProductTypes.map((t) => (
+              {skuProductTypes.map((t) => (
                 <option key={t} value={t}>{t}</option>
               ))}
             </select>
@@ -3032,7 +3042,7 @@ function InventoryViewInner() {
                 <ProductTypeInput
                   value={skuFormData.product_type}
                   onChange={(val) => setSkuFormData({ ...skuFormData, product_type: val })}
-                  existingTypes={existingProductTypes}
+                  options={skuProductTypes}
                 />
 
                 {/* Mockup URL / Link phôi ảnh */}
@@ -3112,102 +3122,88 @@ function InventoryViewInner() {
                 {/* PIC MKT */}
                 <div className="space-y-1">
                   <label className="font-bold text-slate-700">PIC MKT</label>
-                  <input
-                    type="text"
+                  <OptionTextInput
                     placeholder="VD: Truong, Loan..."
                     value={skuFormData.pic_mkt}
-                    onChange={(e) => setSkuFormData({ ...skuFormData, pic_mkt: e.target.value })}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-800 focus:border-indigo-500 focus:outline-hidden"
+                    onChange={(val) => setSkuFormData({ ...skuFormData, pic_mkt: val })}
+                    options={skuOptions?.pic_mkt || []}
                   />
                 </div>
 
                 {/* Loại */}
                 <div className="space-y-1">
                   <label className="font-bold text-slate-700">Loại (FBA / FBM)</label>
-                  <select
+                  <OptionTextInput
                     value={skuFormData.loai}
-                    onChange={(e) => setSkuFormData({ ...skuFormData, loai: e.target.value })}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-800 focus:border-indigo-500 focus:outline-hidden"
-                  >
-                    <option value="">Chọn loại fulfillment</option>
-                    <option value="FBA">FBA</option>
-                    <option value="FBM">FBM</option>
-                  </select>
+                    onChange={(val) => setSkuFormData({ ...skuFormData, loai: val })}
+                    placeholder="Chọn loại fulfillment hoặc nhập mới..."
+                    options={skuOptions?.loai || []}
+                  />
                 </div>
 
                 {/* Niche */}
                 <div className="space-y-1">
                   <label className="font-bold text-slate-700">Niche</label>
-                  <input
-                    type="text"
+                  <OptionTextInput
                     placeholder="VD: Women, Men, Christmas..."
                     value={skuFormData.niche}
-                    onChange={(e) => setSkuFormData({ ...skuFormData, niche: e.target.value })}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-800 focus:border-indigo-500 focus:outline-hidden"
+                    onChange={(val) => setSkuFormData({ ...skuFormData, niche: val })}
+                    options={skuOptions?.niche || []}
                   />
                 </div>
 
                 {/* PIC Idea */}
                 <div className="space-y-1">
                   <label className="font-bold text-slate-700">PIC Idea</label>
-                  <input
-                    type="text"
+                  <OptionTextInput
                     placeholder="VD: Loan, Cường..."
                     value={skuFormData.pic_idea}
-                    onChange={(e) => setSkuFormData({ ...skuFormData, pic_idea: e.target.value })}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-800 focus:border-indigo-500 focus:outline-hidden"
+                    onChange={(val) => setSkuFormData({ ...skuFormData, pic_idea: val })}
+                    options={skuOptions?.pic_idea || []}
                   />
                 </div>
 
                 {/* Status */}
                 <div className="space-y-1">
                   <label className="font-bold text-slate-700">Trạng thái</label>
-                  <select
+                  <OptionTextInput
                     value={skuFormData.status}
-                    onChange={(e) => setSkuFormData({ ...skuFormData, status: e.target.value })}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-800 focus:border-indigo-500 focus:outline-hidden"
-                  >
-                    <option value="Active">Active</option>
-                    <option value="Phát triển">Phát triển</option>
-                    <option value="Mới update">Mới update</option>
-                    <option value="Đã update">Đã update</option>
-                    <option value="Inactive">Inactive</option>
-                  </select>
+                    onChange={(val) => setSkuFormData({ ...skuFormData, status: val })}
+                    placeholder="Chọn trạng thái hoặc nhập mới..."
+                    options={skuOptions?.status || []}
+                  />
                 </div>
 
                 {/* Tình trạng */}
                 <div className="space-y-1">
                   <label className="font-bold text-slate-700">Tình trạng phôi</label>
-                  <input
-                    type="text"
+                  <OptionTextInput
                     placeholder="VD: Đang bán, Chuẩn bị bán..."
                     value={skuFormData.tinh_trang}
-                    onChange={(e) => setSkuFormData({ ...skuFormData, tinh_trang: e.target.value })}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-800 focus:border-indigo-500 focus:outline-hidden"
+                    onChange={(val) => setSkuFormData({ ...skuFormData, tinh_trang: val })}
+                    options={skuOptions?.tinh_trang || []}
                   />
                 </div>
 
                 {/* Event */}
                 <div className="space-y-1">
                   <label className="font-bold text-slate-700">Event</label>
-                  <input
-                    type="text"
+                  <OptionTextInput
                     placeholder="VD: Christmas, Mother's Day..."
                     value={skuFormData.event}
-                    onChange={(e) => setSkuFormData({ ...skuFormData, event: e.target.value })}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-800 focus:border-indigo-500 focus:outline-hidden"
+                    onChange={(val) => setSkuFormData({ ...skuFormData, event: val })}
+                    options={skuOptions?.event || []}
                   />
                 </div>
 
                 {/* DESIGN PIC */}
                 <div className="space-y-1">
                   <label className="font-bold text-slate-700">DESIGN PIC</label>
-                  <input
-                    type="text"
+                  <OptionTextInput
                     placeholder="VD: Designer Name"
                     value={skuFormData.design_pic}
-                    onChange={(e) => setSkuFormData({ ...skuFormData, design_pic: e.target.value })}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-800 focus:border-indigo-500 focus:outline-hidden"
+                    onChange={(val) => setSkuFormData({ ...skuFormData, design_pic: val })}
+                    options={skuOptions?.design_pic || []}
                   />
                 </div>
 
@@ -3487,24 +3483,22 @@ function InventoryViewInner() {
                 {/* SUP */}
                 <div className="space-y-1">
                   <label className="font-bold text-slate-700">SUP (Nhà cung cấp)</label>
-                  <input
-                    type="text"
+                  <OptionTextInput
                     placeholder="VD: Xưởng A, Sup B"
                     value={shipmentFormData.sup}
-                    onChange={(e) => setShipmentFormData({ ...shipmentFormData, sup: e.target.value })}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-800 focus:border-indigo-500 focus:outline-hidden"
+                    onChange={(val) => setShipmentFormData({ ...shipmentFormData, sup: val })}
+                    options={inboundOptions?.sup || []}
                   />
                 </div>
 
                 {/* Line ship */}
                 <div className="space-y-1">
                   <label className="font-bold text-slate-700">Line Ship</label>
-                  <input
-                    type="text"
+                  <OptionTextInput
                     placeholder="VD: AIR, SEA FAST..."
                     value={shipmentFormData.line_ship}
-                    onChange={(e) => setShipmentFormData({ ...shipmentFormData, line_ship: e.target.value })}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-800 focus:border-indigo-500 focus:outline-hidden"
+                    onChange={(val) => setShipmentFormData({ ...shipmentFormData, line_ship: val })}
+                    options={inboundOptions?.line_ship || []}
                   />
                 </div>
 
@@ -3551,7 +3545,7 @@ function InventoryViewInner() {
                 <ProductTypeInput
                   value={shipmentFormData.product_type}
                   onChange={(val) => setShipmentFormData({ ...shipmentFormData, product_type: val })}
-                  existingTypes={existingProductTypes}
+                  options={inboundProductTypes}
                 />
 
                 {/* Ngày Request */}
@@ -3590,16 +3584,12 @@ function InventoryViewInner() {
                 {/* Status */}
                 <div className="space-y-1">
                   <label className="font-bold text-slate-700">Status</label>
-                  <select
+                  <OptionTextInput
                     value={shipmentFormData.status}
-                    onChange={(e) => setShipmentFormData({ ...shipmentFormData, status: e.target.value })}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-slate-800 focus:border-indigo-500 focus:outline-hidden"
-                  >
-                    <option value="In Transit">In Transit</option>
-                    <option value="Receiving">Receiving</option>
-                    <option value="Closed">Closed</option>
-                    <option value="Working">Working</option>
-                  </select>
+                    onChange={(val) => setShipmentFormData({ ...shipmentFormData, status: val })}
+                    placeholder="Chọn status hoặc nhập mới..."
+                    options={inboundOptions?.status || []}
+                  />
                 </div>
 
                 {/* Số lượng Amazon nhận */}
@@ -4031,6 +4021,21 @@ function InventoryViewInner() {
                 <ArrowSquareOutIcon size={14} weight="bold" />
               </a>
             </div>
+          </div>
+        </div>
+      )}
+      {fieldEditor && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/45 p-4" onClick={() => setFieldEditor(null)}>
+          <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+              <div><p className="text-sm font-black text-slate-900">Cấu hình cột</p><p className="text-xs text-slate-500">{fieldEditor.field_id}</p></div>
+              <button type="button" onClick={() => setFieldEditor(null)} className="p-1 text-slate-400 hover:text-slate-700"><XIcon size={18} /></button>
+            </div>
+            <div className="space-y-4 p-5 text-xs">
+              <label className="block font-bold text-slate-700">Tên cột<input value={fieldEditor.label} onChange={(e) => setFieldEditor({ ...fieldEditor, label: e.target.value })} className="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></label>
+              <div className="font-bold text-slate-700">Giá trị lựa chọn</div><div className="max-h-40 space-y-1 overflow-y-auto">{fieldEditor.options.map((option, index) => <div key={`${option}-${index}`} className="flex gap-2"><input value={option} onChange={(e) => setFieldEditor({ ...fieldEditor, options: fieldEditor.options.map((item, i) => i === index ? e.target.value : item) })} className="min-w-0 flex-1 rounded border border-slate-300 px-2 py-1.5" /><button type="button" onClick={() => setFieldEditor({ ...fieldEditor, options: fieldEditor.options.filter((_, i) => i !== index) })} className="text-rose-600">Xóa</button></div>)}</div><div className="flex gap-2"><input value={newFieldOption} onChange={(e) => setNewFieldOption(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && newFieldOption.trim()) { e.preventDefault(); setFieldEditor({ ...fieldEditor, options: [...fieldEditor.options, newFieldOption.trim()] }); setNewFieldOption(""); } }} placeholder="Thêm giá trị mới" className="min-w-0 flex-1 rounded border border-slate-300 px-2 py-1.5" /><button type="button" onClick={() => { if (newFieldOption.trim()) { setFieldEditor({ ...fieldEditor, options: [...fieldEditor.options, newFieldOption.trim()] }); setNewFieldOption(""); } }} className="rounded bg-slate-100 px-3 font-bold">Thêm</button></div><label className="flex items-center gap-2 font-semibold text-slate-700"><input type="checkbox" checked={fieldEditor.allow_custom_value} onChange={(e) => setFieldEditor({ ...fieldEditor, allow_custom_value: e.target.checked })} />Cho phép nhập giá trị khác</label>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-4"><button type="button" onClick={() => setFieldEditor(null)} className="rounded-lg px-3 py-2 font-bold text-slate-600">Hủy</button><button type="button" onClick={saveFieldEditor} className="rounded-lg bg-indigo-600 px-4 py-2 font-bold text-white">Lưu</button></div>
           </div>
         </div>
       )}
