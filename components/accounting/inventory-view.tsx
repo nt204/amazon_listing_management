@@ -217,6 +217,92 @@ function ProductTypeInput(props: Omit<React.ComponentProps<typeof OptionTextInpu
   );
 }
 
+export const SKU_COMBOBOX_FIELDS = new Set([
+  "product_type",
+  "pic_mkt",
+  "loai",
+  "niche",
+  "pic_idea",
+  "status",
+  "event",
+  "tinh_trang",
+  "design_pic",
+]);
+
+export const INBOUND_COMBOBOX_FIELDS = new Set([
+  "product_type",
+  "line_ship",
+  "status",
+  "trang_thai",
+]);
+
+export function isComboboxField(table: "sku" | "inbound", fieldId: string): boolean {
+  return table === "sku" ? SKU_COMBOBOX_FIELDS.has(fieldId) : INBOUND_COMBOBOX_FIELDS.has(fieldId);
+}
+
+export function isValidComboboxOption(val: unknown): boolean {
+  if (val == null) return false;
+  const s = String(val).trim();
+  if (!s) return false;
+  if (
+    s === "0" ||
+    s === "0.00" ||
+    s === "00" ||
+    s === "000" ||
+    s === "$0.00" ||
+    s === "-" ||
+    s === "—" ||
+    s === "null" ||
+    s === "undefined" ||
+    s === "#N/A" ||
+    s === "#REF!" ||
+    s === "#VALUE!" ||
+    s === "[object Object]"
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function cleanDateOnly(val: unknown): string {
+  if (val == null) return "";
+  if (typeof val === "object") {
+    if (val instanceof Date && !isNaN(val.getTime())) {
+      return val.toISOString().split("T")[0];
+    }
+    return "";
+  }
+  let s = String(val).trim();
+  if (
+    !s ||
+    s === "—" ||
+    s === "-" ||
+    s === "null" ||
+    s === "undefined" ||
+    s === "#N/A" ||
+    s === "[object Object]"
+  ) {
+    return "";
+  }
+  if (s.includes("T")) s = s.split("T")[0].trim();
+  if (s.includes(" 00:00:00")) s = s.split(" ")[0].trim();
+  s = s.replace(/(\s+|T)?\d{2}:\d{2}:\d{2}(\.\d+)?Z?/i, "").trim();
+  return s;
+}
+
+export function isDateField(field: string): boolean {
+  return [
+    "ngay_request",
+    "ngay_thanh_toan",
+    "ngay_di",
+    "ngay_den",
+    "thang_listing",
+    "thang_danh_gia",
+    "event_250th",
+    "ngay_danh_gia_sku_event",
+  ].includes(field);
+}
+
 function safeDisplay(val: unknown): string {
   if (val == null) return "—";
   if (typeof val === "object") return "—";
@@ -237,10 +323,15 @@ function safeDisplay(val: unknown): string {
   return s;
 }
 
-function getRawEditableString(val: unknown): string {
+function getRawEditableString(val: unknown, field?: string): string {
   if (val == null) return "";
-  if (typeof val === "object") return "";
-  const s = String(val).trim();
+  if (typeof val === "object") {
+    if (val instanceof Date && !isNaN(val.getTime())) {
+      return val.toISOString().split("T")[0];
+    }
+    return "";
+  }
+  let s = String(val).trim();
   if (
     !s ||
     s === "—" ||
@@ -253,6 +344,15 @@ function getRawEditableString(val: unknown): string {
     s === "undefined"
   ) {
     return "";
+  }
+  if (field && isDateField(field)) {
+    return cleanDateOnly(s);
+  }
+  if (s.includes("T") && (s.endsWith("Z") || s.includes("T00:00:00") || s.includes(".000Z"))) {
+    s = s.split("T")[0].trim();
+  }
+  if (s.includes(" 00:00:00")) {
+    s = s.split(" ")[0].trim();
   }
   return s;
 }
@@ -643,24 +743,8 @@ function StatusBadge({ status }: { status: string | null | undefined }) {
 
 function formatDate(val: string | null | undefined): string {
   if (!val) return "—";
-  if (typeof val === "object") return "—";
-  const s = String(val).trim();
-  if (
-    !s ||
-    s === "—" ||
-    s === "[object Object]" ||
-    s.includes("[object Object]") ||
-    s === "#N/A" ||
-    s === "#REF!" ||
-    s === "#VALUE!" ||
-    s === "null" ||
-    s === "undefined"
-  ) {
-    return "—";
-  }
-  if (s.includes("T")) return s.split("T")[0];
-  if (s.includes(" 00:00:00")) return s.split(" ")[0];
-  return s;
+  const s = cleanDateOnly(val);
+  return s || "—";
 }
 
 const emptySkuForm = {
@@ -1071,13 +1155,14 @@ function InventoryViewInner() {
   const [newFieldOption, setNewFieldOption] = useState("");
 
   const scanOptionsFromRows = useCallback((tab: "sku" | "inbound", fieldId: string) => {
+    if (!isComboboxField(tab, fieldId)) return [];
     const items = tab === "sku" ? allSkus : allShipments;
     const values = new Set<string>();
     for (const item of items) {
       const val = (item as any)[fieldId] ?? (item as any)?.custom_fields?.[fieldId];
       if (val != null && typeof val === "string") {
         const trimmed = val.trim();
-        if (trimmed && trimmed !== "—" && trimmed !== "-") values.add(trimmed);
+        if (isValidComboboxOption(trimmed)) values.add(trimmed);
       }
     }
     return Array.from(values).sort((a, b) => a.localeCompare(b));
@@ -1086,24 +1171,63 @@ function InventoryViewInner() {
   const handleQuickRenameColumn = useCallback((tab: "sku" | "inbound", colId: string, currentLabel: string) => {
     const saved = fieldSettingsQuery.data?.settings.find((item) => item.entity_type === tab && item.field_id === colId);
     setNewFieldOption("");
-    const scannedDb = tab === "sku" ? (fieldOptionsQuery.data?.sku as Record<string, string[]> | undefined)?.[colId] : (fieldOptionsQuery.data?.inbound as Record<string, string[]> | undefined)?.[colId];
+    const isCombo = isComboboxField(tab, colId);
+
+    if (!isCombo) {
+      setFieldEditor({
+        entity_type: tab,
+        field_id: colId,
+        label: saved?.label || currentLabel,
+        input_type: "text",
+        options: [],
+        allow_custom_value: true,
+      });
+      return;
+    }
+
+    const scannedDb = tab === "sku"
+      ? (fieldOptionsQuery.data?.sku as Record<string, string[]> | undefined)?.[colId]
+      : (fieldOptionsQuery.data?.inbound as Record<string, string[]> | undefined)?.[colId];
     const rowValues = scanOptionsFromRows(tab, colId);
 
     let initialOptions: string[] = [];
     if (saved && Array.isArray(saved.options) && saved.options.length > 0) {
-      initialOptions = [...saved.options];
+      initialOptions = saved.options.filter(isValidComboboxOption);
     } else {
-      initialOptions = [...new Set([...(scannedDb || []), ...rowValues])].filter(Boolean);
+      initialOptions = [...new Set([...(scannedDb || []), ...rowValues])].filter(isValidComboboxOption);
+      if (colId === "product_type" && initialOptions.length === 0) {
+        initialOptions = DEFAULT_PRODUCT_TYPES.filter(isValidComboboxOption);
+      }
     }
 
-    setFieldEditor(saved ? { ...saved, options: initialOptions } : { entity_type: tab, field_id: colId, label: currentLabel, input_type: "select", options: initialOptions, allow_custom_value: true });
+    setFieldEditor(saved ? { ...saved, input_type: "select", options: initialOptions } : {
+      entity_type: tab,
+      field_id: colId,
+      label: currentLabel,
+      input_type: "select",
+      options: initialOptions,
+      allow_custom_value: true,
+    });
   }, [fieldSettingsQuery.data, fieldOptionsQuery.data, scanOptionsFromRows]);
 
   const saveFieldEditor = async () => {
     if (!fieldEditor || !selectedStoreId || !fieldEditor.label.trim()) return;
-    const res = await fetch("/api/accounting/inventory/field-settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...fieldEditor, input_type: "select", store_id: selectedStoreId }) });
+    const isCombo = isComboboxField(fieldEditor.entity_type, fieldEditor.field_id);
+    const cleanedOptions = isCombo ? [...new Set(fieldEditor.options.map((o) => o.trim()).filter(isValidComboboxOption))] : [];
+    const payload = {
+      ...fieldEditor,
+      label: fieldEditor.label.trim(),
+      input_type: isCombo ? ("select" as const) : ("text" as const),
+      options: cleanedOptions,
+      store_id: selectedStoreId,
+    };
+    const res = await fetch("/api/accounting/inventory/field-settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
     if (!res.ok) { notify("Không thể lưu cấu hình cột", "error"); return; }
-    const savedSetting = { ...fieldEditor, label: fieldEditor.label.trim(), input_type: "select" as const };
+    const savedSetting = payload;
     (fieldEditor.entity_type === "sku" ? setSkuColumns : setInboundColumns)((prev) => prev.map((col) => col.id === fieldEditor.field_id ? { ...col, label: savedSetting.label } : col));
     queryClient.setQueryData(["inventory-field-settings", selectedStoreId], (current: typeof fieldSettingsQuery.data) => ({
       settings: [...(current?.settings || []).filter((item) => !(item.entity_type === savedSetting.entity_type && item.field_id === savedSetting.field_id)), savedSetting],
@@ -1135,7 +1259,7 @@ function InventoryViewInner() {
         table,
         id,
         field,
-        value: getRawEditableString(currentValue),
+        value: getRawEditableString(currentValue, field),
       });
     },
     []
@@ -1156,7 +1280,8 @@ function InventoryViewInner() {
       const table = (typeof tableArg === "string" ? tableArg : inlineEditing?.table) as "sku" | "inbound" | undefined;
       const id = idArg || inlineEditing?.id;
       const field = fieldArg || inlineEditing?.field;
-      const value = valueArg !== undefined ? valueArg : inlineEditing?.value;
+      const rawValue = valueArg !== undefined ? valueArg : inlineEditing?.value;
+      const cleanValue = isDateField(field || "") ? cleanDateOnly(rawValue) : (rawValue ?? "");
 
       if (!table || !id || !field) return;
 
@@ -1174,7 +1299,7 @@ function InventoryViewInner() {
             id,
             store_id: selectedStore.id,
             field,
-            value: value ?? "",
+            value: cleanValue,
           }),
         });
 
@@ -1283,52 +1408,58 @@ function InventoryViewInner() {
   // Options are scoped to the selected Store and include every record, not only this page.
   const productTypesFor = useCallback((entityType: "sku" | "inbound") => {
     const configured = fieldSettingsQuery.data?.settings
-      .filter((item) => item.entity_type === entityType && item.field_id === "product_type" && item.input_type === "select")
-      .flatMap((item) => item.options) || [];
-    if (configured.length) return [...new Set(configured)].sort((a, b) => a.localeCompare(b));
-    const scanned = fieldOptionsQuery.data?.[entityType]?.product_type || [];
-    return [...new Set([...scanned, ...DEFAULT_PRODUCT_TYPES])].sort((a, b) => a.localeCompare(b));
-  }, [fieldOptionsQuery.data, fieldSettingsQuery.data]);
+      .find((item) => item.entity_type === entityType && item.field_id === "product_type" && item.input_type === "select")?.options;
+    if (configured && configured.length > 0) {
+      return [...new Set(configured)].filter(isValidComboboxOption).sort((a, b) => a.localeCompare(b));
+    }
+    const scannedDb = fieldOptionsQuery.data?.[entityType]?.product_type || [];
+    const rowVals = scanOptionsFromRows(entityType, "product_type");
+    const merged = [...new Set([...scannedDb, ...rowVals])].filter(isValidComboboxOption);
+    if (merged.length > 0) return merged.sort((a, b) => a.localeCompare(b));
+    return DEFAULT_PRODUCT_TYPES.filter(isValidComboboxOption);
+  }, [fieldOptionsQuery.data, fieldSettingsQuery.data, scanOptionsFromRows]);
   const skuProductTypes = useMemo(() => productTypesFor("sku"), [productTypesFor]);
   const inboundProductTypes = useMemo(() => productTypesFor("inbound"), [productTypesFor]);
 
   const skuOptions = useMemo(() => {
     const base: Record<string, string[]> = { ...(fieldOptionsQuery.data?.sku || {}) };
     const settings = fieldSettingsQuery.data?.settings || [];
-    const allFieldIds = new Set([...Object.keys(base), ...skuColumns.map((c) => c.id)]);
     const res: Record<string, string[]> = {};
-    for (const field of allFieldIds) {
-      const dbVals = base[field] || [];
+    for (const field of SKU_COMBOBOX_FIELDS) {
+      const dbVals = (base[field] || []).filter(isValidComboboxOption);
       const rowVals = scanOptionsFromRows("sku", field);
       const setting = settings.find((item) => item.entity_type === "sku" && item.field_id === field);
       let opts = setting?.input_type === "select" && setting.options && setting.options.length > 0
-        ? setting.options
-        : [...new Set([...dbVals, ...rowVals])].filter(Boolean);
-      if (field === "product_type" && (!opts || opts.length === 0)) opts = DEFAULT_PRODUCT_TYPES;
+        ? setting.options.filter(isValidComboboxOption)
+        : [...new Set([...dbVals, ...rowVals])].filter(isValidComboboxOption);
+      if (field === "product_type") {
+        opts = skuProductTypes;
+      }
       res[field] = opts;
     }
     return res;
-  }, [fieldOptionsQuery.data, fieldSettingsQuery.data, skuColumns, scanOptionsFromRows]);
+  }, [fieldOptionsQuery.data, fieldSettingsQuery.data, scanOptionsFromRows, skuProductTypes]);
 
   const inboundOptions = useMemo(() => {
     const base: Record<string, string[]> = { ...(fieldOptionsQuery.data?.inbound || {}) };
     const settings = fieldSettingsQuery.data?.settings || [];
-    const allFieldIds = new Set([...Object.keys(base), ...inboundColumns.map((c) => c.id)]);
     const res: Record<string, string[]> = {};
-    for (const field of allFieldIds) {
-      const dbVals = base[field] || [];
+    for (const field of INBOUND_COMBOBOX_FIELDS) {
+      const dbVals = (base[field] || []).filter(isValidComboboxOption);
       const rowVals = scanOptionsFromRows("inbound", field);
       const setting = settings.find((item) => item.entity_type === "inbound" && item.field_id === field);
       let opts = setting?.input_type === "select" && setting.options && setting.options.length > 0
-        ? setting.options
-        : [...new Set([...dbVals, ...rowVals])].filter(Boolean);
-      if (field === "status" && (!opts || opts.length === 0)) opts = DEFAULT_INBOUND_STATUS;
-      if (field === "trang_thai" && (!opts || opts.length === 0)) opts = DEFAULT_INBOUND_TRANG_THAI;
-      if (field === "product_type" && (!opts || opts.length === 0)) opts = DEFAULT_PRODUCT_TYPES;
+        ? setting.options.filter(isValidComboboxOption)
+        : [...new Set([...dbVals, ...rowVals])].filter(isValidComboboxOption);
+      if (field === "status" && (!opts || opts.length === 0)) opts = DEFAULT_INBOUND_STATUS.filter(isValidComboboxOption);
+      if (field === "trang_thai" && (!opts || opts.length === 0)) opts = DEFAULT_INBOUND_TRANG_THAI.filter(isValidComboboxOption);
+      if (field === "product_type") {
+        opts = inboundProductTypes;
+      }
       res[field] = opts;
     }
     return res;
-  }, [fieldOptionsQuery.data, fieldSettingsQuery.data, inboundColumns, scanOptionsFromRows]);
+  }, [fieldOptionsQuery.data, fieldSettingsQuery.data, scanOptionsFromRows, inboundProductTypes]);
 
   useEffect(() => {
     const settings = fieldSettingsQuery.data?.settings;
@@ -2150,7 +2281,13 @@ function InventoryViewInner() {
         onChangeValue={(val) => setInlineEditing((prev) => prev ? { ...prev, value: val } : null)}
         onSave={handleSaveInlineCell}
         onCancel={() => setInlineEditing(null)}
-        options={setting?.input_type === "select" ? setting.options : (skuOptions[cid] || [])}
+        options={
+          isComboboxField("sku", cid)
+            ? (setting?.input_type === "select" && setting.options && setting.options.length > 0
+                ? setting.options.filter(isValidComboboxOption)
+                : (skuOptions[cid] || []).filter(isValidComboboxOption))
+            : []
+        }
       />
     );
   }, [inlineEditing, inlineSaving, startInlineEdit, handleSaveInlineCell, fieldSettingsQuery.data, skuOptions]);
@@ -2358,16 +2495,11 @@ function InventoryViewInner() {
         onSave={handleSaveInlineCell}
         onCancel={() => setInlineEditing(null)}
         options={
-          setting?.input_type === "select"
-            ? setting.options
-            : (inboundOptions[cid] ||
-                (cid === "trang_thai"
-                  ? DEFAULT_INBOUND_TRANG_THAI
-                  : cid === "status"
-                  ? DEFAULT_INBOUND_STATUS
-                  : cid === "product_type"
-                  ? inboundProductTypes
-                  : []))
+          isComboboxField("inbound", cid)
+            ? (setting?.input_type === "select" && setting.options && setting.options.length > 0
+                ? setting.options.filter(isValidComboboxOption)
+                : (inboundOptions[cid] || []).filter(isValidComboboxOption))
+            : []
         }
       />
     );
@@ -2711,8 +2843,21 @@ function InventoryViewInner() {
                   )}
                   {/* FROZEN 2: Product Type */}
                   {skuColMap["product_type"]?.visible !== false && (
-                    <th className="py-2 px-3 w-[155px] min-w-[155px] max-w-[155px] bg-[#f59e0b] border-r border-amber-600 sticky left-[58px] z-40 text-xs text-slate-950">
-                      {skuColMap["product_type"]?.label || "Product Type"}
+                    <th className="group/hdr py-2 px-3 w-[155px] min-w-[155px] max-w-[155px] bg-[#f59e0b] border-r border-amber-600 sticky left-[58px] z-40 text-xs text-slate-950">
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="truncate">{skuColMap["product_type"]?.label || "Product Type"}</span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleQuickRenameColumn("sku", "product_type", skuColMap["product_type"]?.label || "Product Type");
+                          }}
+                          className="opacity-0 group-hover/hdr:opacity-100 p-0.5 rounded hover:bg-amber-600/70 text-slate-950 transition cursor-pointer"
+                          title="Cấu hình danh sách Product Type"
+                        >
+                          <PencilSimpleIcon size={12} weight="bold" />
+                        </button>
+                      </div>
                     </th>
                   )}
                   {/* FROZEN 3: Mockup */}
@@ -2905,8 +3050,21 @@ function InventoryViewInner() {
                   )}
                   {/* FROZEN 2: Product Type */}
                   {inboundColMap["product_type"]?.visible !== false && (
-                    <th className="py-2 px-3 w-[155px] min-w-[155px] max-w-[155px] bg-[#f59e0b] border-r border-amber-600 sticky left-[58px] z-40 text-xs text-slate-950">
-                      {inboundColMap["product_type"]?.label || "Product Type"}
+                    <th className="group/hdr py-2 px-3 w-[155px] min-w-[155px] max-w-[155px] bg-[#f59e0b] border-r border-amber-600 sticky left-[58px] z-40 text-xs text-slate-950">
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="truncate">{inboundColMap["product_type"]?.label || "Product Type"}</span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleQuickRenameColumn("inbound", "product_type", inboundColMap["product_type"]?.label || "Product Type");
+                          }}
+                          className="opacity-0 group-hover/hdr:opacity-100 p-0.5 rounded hover:bg-amber-600/70 text-slate-950 transition cursor-pointer"
+                          title="Cấu hình danh sách Product Type"
+                        >
+                          <PencilSimpleIcon size={12} weight="bold" />
+                        </button>
+                      </div>
                     </th>
                   )}
                   {/* FROZEN 3: Mockup */}
@@ -4170,112 +4328,131 @@ function InventoryViewInner() {
                 />
               </label>
 
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-bold text-slate-700">
-                    Giá trị lựa chọn ({fieldEditor.options.length})
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const rowVals = scanOptionsFromRows(fieldEditor.entity_type, fieldEditor.field_id);
-                      const dbVals = fieldEditor.entity_type === "sku"
-                        ? (fieldOptionsQuery.data?.sku as Record<string, string[]> | undefined)?.[fieldEditor.field_id] || []
-                        : (fieldOptionsQuery.data?.inbound as Record<string, string[]> | undefined)?.[fieldEditor.field_id] || [];
-                      const merged = [...new Set([...fieldEditor.options, ...dbVals, ...rowVals])].filter(Boolean);
-                      const added = merged.length - fieldEditor.options.length;
-                      setFieldEditor({ ...fieldEditor, options: merged });
-                      if (added > 0) {
-                        notify(`Đã quét thêm ${added} giá trị mới từ bảng!`);
-                      } else {
-                        notify("Không có thêm giá trị mới nào trong bảng");
-                      }
-                    }}
-                    className="inline-flex items-center gap-1 rounded bg-indigo-50 px-2 py-1 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100 transition cursor-pointer"
-                    title="Tự động quét tất cả các dòng trong bảng để lấy giá trị hiện có"
-                  >
-                    <ArrowClockwiseIcon size={12} weight="bold" />
-                    <span>Quét giá trị từ bảng</span>
-                  </button>
-                </div>
+              {isComboboxField(fieldEditor.entity_type, fieldEditor.field_id) ? (
+                <>
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-bold text-slate-700">
+                        Giá trị lựa chọn ({fieldEditor.options.length})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const rowVals = scanOptionsFromRows(fieldEditor.entity_type, fieldEditor.field_id);
+                          const dbVals = fieldEditor.entity_type === "sku"
+                            ? (fieldOptionsQuery.data?.sku as Record<string, string[]> | undefined)?.[fieldEditor.field_id] || []
+                            : (fieldOptionsQuery.data?.inbound as Record<string, string[]> | undefined)?.[fieldEditor.field_id] || [];
+                          const merged = [...new Set([...fieldEditor.options, ...dbVals, ...rowVals])].filter(isValidComboboxOption);
+                          const added = merged.length - fieldEditor.options.length;
+                          setFieldEditor({ ...fieldEditor, options: merged });
+                          if (added > 0) {
+                            notify(`Đã quét thêm ${added} giá trị mới từ bảng!`);
+                          } else {
+                            notify("Không có thêm giá trị mới nào trong bảng");
+                          }
+                        }}
+                        className="inline-flex items-center gap-1 rounded bg-indigo-50 px-2 py-1 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100 transition cursor-pointer"
+                        title="Tự động quét tất cả các dòng trong bảng để lấy giá trị hiện có"
+                      >
+                        <ArrowClockwiseIcon size={12} weight="bold" />
+                        <span>Quét giá trị từ bảng</span>
+                      </button>
+                    </div>
 
-                {fieldEditor.options.length === 0 ? (
-                  <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3 text-center text-xs text-slate-500">
-                    Chưa có giá trị nào. Bạn có thể bấm <strong>&quot;Quét giá trị từ bảng&quot;</strong> hoặc nhập giá trị mới bên dưới.
-                  </div>
-                ) : (
-                  <div className="max-h-48 space-y-1.5 overflow-y-auto pr-1">
-                    {fieldEditor.options.map((option, index) => (
-                      <div key={`${option}-${index}`} className="flex gap-2 items-center">
-                        <input
-                          value={option}
-                          onChange={(e) =>
-                            setFieldEditor({
-                              ...fieldEditor,
-                              options: fieldEditor.options.map((item, i) => (i === index ? e.target.value : item)),
-                            })
-                          }
-                          className="min-w-0 flex-1 rounded border border-slate-300 px-2.5 py-1.5 text-xs text-slate-800 font-medium focus:border-indigo-500 focus:outline-none"
-                        />
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setFieldEditor({
-                              ...fieldEditor,
-                              options: fieldEditor.options.filter((_, i) => i !== index),
-                            })
-                          }
-                          className="text-xs font-semibold text-rose-600 hover:text-rose-800 px-2 py-1"
-                        >
-                          Xóa
-                        </button>
+                    {fieldEditor.options.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3 text-center text-xs text-slate-500">
+                        Chưa có giá trị nào. Bạn có thể bấm <strong>&quot;Quét giá trị từ bảng&quot;</strong> hoặc nhập giá trị mới bên dưới.
                       </div>
-                    ))}
+                    ) : (
+                      <div className="max-h-48 space-y-1.5 overflow-y-auto pr-1">
+                        {fieldEditor.options.map((option, index) => (
+                          <div key={`${option}-${index}`} className="flex gap-2 items-center">
+                            <input
+                              value={option}
+                              onChange={(e) =>
+                                setFieldEditor({
+                                  ...fieldEditor,
+                                  options: fieldEditor.options.map((item, i) => (i === index ? e.target.value : item)),
+                                })
+                              }
+                              className="min-w-0 flex-1 rounded border border-slate-300 px-2.5 py-1.5 text-xs text-slate-800 font-medium focus:border-indigo-500 focus:outline-none"
+                            />
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setFieldEditor({
+                                  ...fieldEditor,
+                                  options: fieldEditor.options.filter((_, i) => i !== index),
+                                })
+                              }
+                              className="text-xs font-semibold text-rose-600 hover:text-rose-800 px-2 py-1"
+                            >
+                              Xóa
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
 
-              <div className="flex gap-2 pt-1">
-                <input
-                  value={newFieldOption}
-                  onChange={(e) => setNewFieldOption(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && newFieldOption.trim()) {
-                      e.preventDefault();
-                      if (!fieldEditor.options.includes(newFieldOption.trim())) {
-                        setFieldEditor({ ...fieldEditor, options: [...fieldEditor.options, newFieldOption.trim()] });
-                      }
-                      setNewFieldOption("");
-                    }
-                  }}
-                  placeholder="Thêm giá trị mới..."
-                  className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-900 focus:border-indigo-500 focus:outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (newFieldOption.trim()) {
-                      if (!fieldEditor.options.includes(newFieldOption.trim())) {
-                        setFieldEditor({ ...fieldEditor, options: [...fieldEditor.options, newFieldOption.trim()] });
-                      }
-                      setNewFieldOption("");
-                    }
-                  }}
-                  className="rounded-lg bg-slate-100 hover:bg-slate-200 px-3 py-2 font-bold text-slate-700 transition"
-                >
-                  Thêm
-                </button>
-              </div>
+                  <div className="flex gap-2 pt-1">
+                    <input
+                      value={newFieldOption}
+                      onChange={(e) => setNewFieldOption(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          const val = newFieldOption.trim();
+                          if (!isValidComboboxOption(val)) {
+                            notify("Giá trị không hợp lệ hoặc bằng 0", "error");
+                            return;
+                          }
+                          if (!fieldEditor.options.includes(val)) {
+                            setFieldEditor({ ...fieldEditor, options: [...fieldEditor.options, val] });
+                          }
+                          setNewFieldOption("");
+                        }
+                      }}
+                      placeholder="Thêm giá trị mới..."
+                      className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-900 focus:border-indigo-500 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const val = newFieldOption.trim();
+                        if (!isValidComboboxOption(val)) {
+                          notify("Giá trị không hợp lệ hoặc bằng 0", "error");
+                          return;
+                        }
+                        if (!fieldEditor.options.includes(val)) {
+                          setFieldEditor({ ...fieldEditor, options: [...fieldEditor.options, val] });
+                        }
+                        setNewFieldOption("");
+                      }}
+                      className="rounded-lg bg-slate-100 hover:bg-slate-200 px-3 py-2 font-bold text-slate-700 transition"
+                    >
+                      Thêm
+                    </button>
+                  </div>
 
-              <label className="flex items-center gap-2 font-semibold text-slate-700 pt-1 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={fieldEditor.allow_custom_value}
-                  onChange={(e) => setFieldEditor({ ...fieldEditor, allow_custom_value: e.target.checked })}
-                  className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                />
-                Cho phép nhập giá trị khác
-              </label>
+                  <label className="flex items-center gap-2 font-semibold text-slate-700 pt-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={fieldEditor.allow_custom_value}
+                      onChange={(e) => setFieldEditor({ ...fieldEditor, allow_custom_value: e.target.checked })}
+                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    Cho phép nhập giá trị khác
+                  </label>
+                </>
+              ) : (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-xs text-slate-600">
+                  <p className="font-semibold text-slate-700">Trường dữ liệu tiêu chuẩn</p>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Cột này là trường văn bản / số, không sử dụng menu lựa chọn (combo box). Bạn có thể đổi tên hiển thị của cột ở trên.
+                  </p>
+                </div>
+              )}
             </div>
             <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-4"><button type="button" onClick={() => setFieldEditor(null)} className="rounded-lg px-3 py-2 font-bold text-slate-600">Hủy</button><button type="button" onClick={saveFieldEditor} className="rounded-lg bg-indigo-600 px-4 py-2 font-bold text-white">Lưu</button></div>
           </div>

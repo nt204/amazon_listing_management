@@ -90,9 +90,37 @@ export interface InventoryHistoryItem {
   created_at: string;
 }
 
+export function isValidOptionValue(value: unknown): boolean {
+  if (value == null) return false;
+  const s = String(value).trim();
+  return Boolean(
+    s &&
+    s !== "0" &&
+    s !== "0.00" &&
+    s !== "00" &&
+    s !== "000" &&
+    s !== "$0.00" &&
+    s !== "—" &&
+    s !== "-" &&
+    s !== "null" &&
+    s !== "undefined" &&
+    s !== "#N/A"
+  );
+}
+
+export function cleanDateOnly(val: unknown): string | null {
+  if (val == null) return null;
+  let s = String(val).trim();
+  if (!s || s === "—" || s === "-" || s === "null" || s === "undefined") return null;
+  if (s.includes("T")) s = s.split("T")[0].trim();
+  if (s.includes(" 00:00:00")) s = s.split(" ")[0].trim();
+  s = s.replace(/(\s+|T)?\d{2}:\d{2}:\d{2}(\.\d+)?Z?/i, "").trim();
+  return s || null;
+}
+
 export interface InventoryFieldOptions {
   sku: Record<"product_type" | "pic_mkt" | "loai" | "niche" | "pic_idea" | "status" | "event" | "tinh_trang" | "design_pic", string[]>;
-  inbound: Record<"product_type" | "brand" | "sup" | "line_ship" | "status" | "tinh_trang_hang_den_kho" | "trang_thai", string[]>;
+  inbound: Record<"product_type" | "line_ship" | "status" | "trang_thai", string[]>;
 }
 
 export interface InventoryFieldSetting {
@@ -112,17 +140,18 @@ export async function listInventoryFieldSettings(storeId: string): Promise<Inven
   `;
   return rows.map((row) => ({
     ...row,
-    options: Array.isArray(row.options)
+    options: (Array.isArray(row.options)
       ? row.options
       : typeof row.options === "string"
         ? JSON.parse(row.options)
-        : [],
+        : []
+    ).filter(isValidOptionValue),
   }));
 }
 
 export async function saveInventoryFieldSetting(storeId: string, setting: InventoryFieldSetting) {
   const sql = await getDatabaseClient();
-  const options = [...new Set(setting.options.map((value) => value.trim()).filter(Boolean))];
+  const options = [...new Set(setting.options.map((value) => value.trim()).filter(isValidOptionValue))];
   await sql`
     INSERT INTO accounting_inventory_field_settings (store_id, entity_type, field_id, label, input_type, options, allow_custom_value)
     VALUES (${storeId}, ${setting.entity_type}, ${setting.field_id}, ${setting.label.trim()}, ${setting.input_type}, ${sql.json(options)}, ${setting.allow_custom_value})
@@ -140,7 +169,7 @@ export async function saveInventoryFieldSetting(storeId: string, setting: Invent
 export async function listInventoryFieldOptions(storeId: string): Promise<InventoryFieldOptions> {
   const sql = await getDatabaseClient();
   const skuFields = ["product_type", "pic_mkt", "loai", "niche", "pic_idea", "status", "event", "tinh_trang", "design_pic"] as const;
-  const inboundFields = ["product_type", "brand", "sup", "line_ship", "status", "tinh_trang_hang_den_kho", "trang_thai"] as const;
+  const inboundFields = ["product_type", "line_ship", "status", "trang_thai"] as const;
 
   const getValues = async (table: "accounting_sku_master" | "accounting_inbound_shipments", field: string) => {
     const rows = await sql<{ value: string }[]>`
@@ -150,9 +179,13 @@ export async function listInventoryFieldOptions(storeId: string): Promise<Invent
         AND deleted_at IS NULL
         AND ${sql(field)} IS NOT NULL
         AND BTRIM(${sql(field)}) <> ''
+        AND BTRIM(${sql(field)}) <> '0'
+        AND BTRIM(${sql(field)}) <> '0.00'
+        AND BTRIM(${sql(field)}) <> '—'
+        AND BTRIM(${sql(field)}) <> '-'
       ORDER BY value ASC
     `;
-    return rows.map((row) => row.value);
+    return rows.map((row) => row.value).filter(isValidOptionValue);
   };
 
   // Lấy toàn bộ Product Type chuẩn từ product_cost_master để luôn có danh sách phôi hoàn chỉnh
@@ -477,9 +510,12 @@ export async function patchSkuMasterField(
     return rows[0];
   }
 
+  const dateFields = ["thang_listing", "thang_danh_gia", "event_250th", "ngay_danh_gia_sku_event"];
   const numFields = ["amazon_fee", "referral_fee_pct", "amazon_fba_fee_thay_doi", "basecost_tb"];
   const val = numFields.includes(field)
     ? trimmed === "" || trimmed == null ? null : parseFloat(trimmed)
+    : dateFields.includes(field)
+    ? cleanDateOnly(trimmed)
     : trimmed === "" || trimmed == null ? null : trimmed;
 
   const validFields = [
@@ -755,6 +791,7 @@ export async function patchInboundShipmentField(
     return rows[0];
   }
 
+  const dateFields = ["ngay_request", "ngay_thanh_toan", "ngay_di", "ngay_den"];
   const intFields = ["quantity", "amazon_received", "so_luong_amazon_nhan", "discrepancy"];
   const floatFields = ["base_cost_per_unit", "card", "tag", "shipping_fee", "hop_tui", "final_basecost", "total_basecost"];
 
@@ -763,6 +800,8 @@ export async function patchInboundShipmentField(
     val = trimmed === "" || trimmed == null ? 0 : parseInt(trimmed, 10);
   } else if (floatFields.includes(field)) {
     val = trimmed === "" || trimmed == null ? null : parseFloat(trimmed);
+  } else if (dateFields.includes(field)) {
+    val = cleanDateOnly(trimmed);
   }
 
   const validFields = [
