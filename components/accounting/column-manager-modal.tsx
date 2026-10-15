@@ -250,7 +250,7 @@ export function ColumnHeaderCell({
       <div className="flex items-center justify-between gap-1 w-full">
         {isMovable && (
           <span
-            className="opacity-0 group-hover/th:opacity-60 text-slate-900/70 mr-1 text-[11px] font-mono shrink-0 select-none cursor-grab"
+            className="hidden group-hover/th:inline-block text-slate-900/70 mr-0.5 text-[11px] font-mono shrink-0 select-none cursor-grab"
             title="Kéo cột"
           >
             ⠿

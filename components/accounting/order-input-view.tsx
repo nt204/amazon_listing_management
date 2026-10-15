@@ -1212,7 +1212,7 @@ export function OrderInputView() {
                             className="leading-tight break-words text-center font-black text-xs whitespace-normal inline-flex items-center gap-1 justify-center"
                             title={col.label}
                           >
-                            <span>{col.label}</span>
+                            <span className="line-clamp-2 break-words whitespace-normal leading-tight">{col.label}</span>
                             {columnFilters[col.id] && (
                               <span
                                 title={`Đang lọc: ${columnFilters[col.id]}`}

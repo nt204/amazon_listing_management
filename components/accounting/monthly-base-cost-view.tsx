@@ -615,7 +615,7 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
                       onColumnClick={onColumnContextMenu ? (id, event) => onColumnContextMenu(id, event.clientX, event.clientY) : undefined}
                     >
                       <div className="w-full flex items-center justify-center text-center overflow-hidden">
-                        <div className="truncate max-w-full" title={col.label}>
+                        <div className="line-clamp-2 break-words whitespace-normal leading-tight max-w-full" title={col.label}>
                           {labelContent}
                         </div>
                       </div>

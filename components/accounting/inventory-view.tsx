@@ -3507,19 +3507,23 @@ function InventoryViewInner() {
         onAutoFit={(id) => handleAutoFitColumn("sku", id)}
         onColumnClick={(id, event) => setColumnContextMenu({ table: "sku", field: id, x: event.clientX, y: event.clientY })}
       >
-        <div className={`w-full overflow-hidden ${isCenter ? "flex flex-col items-center justify-center text-center" : isRight ? "flex flex-col items-end" : ""}`}>
+        <div className={`w-full ${isCenter ? "flex flex-col items-center justify-center text-center" : isRight ? "flex flex-col items-end" : ""}`}>
           <div className="flex items-center gap-1 w-full min-w-0 justify-center">
             {isDate ? (
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); toggleDateSort("sku", col.id); }}
-                className="inline-flex items-center gap-0.5 hover:underline cursor-pointer truncate max-w-full"
+                className="inline-flex items-center gap-0.5 hover:underline cursor-pointer max-w-full justify-center"
                 title={sortDirection === "desc" ? "Đang mới nhất trước — bấm để đổi sang cũ nhất" : "Đang cũ nhất trước — bấm để đổi sang mới nhất"}
               >
-                <span className="truncate">{col.label}</span>
-                {sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />}
+                <span className="line-clamp-2 break-words whitespace-normal leading-tight text-center">{col.label}</span>
+                {sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" className="shrink-0" /> : <CaretDownIcon size={12} weight="bold" className="shrink-0" />}
               </button>
-            ) : <span className="truncate max-w-full" title={col.label}>{col.label}</span>}
+            ) : (
+              <span className="line-clamp-2 break-words whitespace-normal leading-tight text-center max-w-full" title={col.label}>
+                {col.label}
+              </span>
+            )}
             {columnFilters.sku[col.id] && (
               <span
                 className="h-2 w-2 rounded-full bg-slate-900 shrink-0 ring-1 ring-white"
@@ -3533,7 +3537,7 @@ function InventoryViewInner() {
             )}
           </div>
           {col.id === "amazon_fee" && (
-            <div className="text-[10px] font-bold opacity-90 truncate max-w-full" title="chưa có referal fee">(chưa có referal fee)</div>
+            <div className="text-[10px] font-bold opacity-90 line-clamp-2 break-words whitespace-normal leading-tight max-w-full" title="chưa có referal fee">(chưa có referal fee)</div>
           )}
         </div>
       </ColumnHeaderCell>
@@ -3787,19 +3791,23 @@ function InventoryViewInner() {
         onAutoFit={(id) => handleAutoFitColumn("inbound", id)}
         onColumnClick={(id, event) => setColumnContextMenu({ table: "inbound", field: id, x: event.clientX, y: event.clientY })}
       >
-        <div className={isCenter ? "flex flex-col items-center justify-center" : isRight ? "flex flex-col items-end" : ""}>
-          <div className="flex items-center gap-1">
+        <div className={`w-full ${isCenter ? "flex flex-col items-center justify-center text-center" : isRight ? "flex flex-col items-end" : ""}`}>
+          <div className="flex items-center gap-1 w-full min-w-0 justify-center">
             {isDate ? (
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); toggleDateSort("inbound", col.id); }}
-                className="inline-flex items-center gap-0.5 hover:underline cursor-pointer"
+                className="inline-flex items-center gap-0.5 hover:underline cursor-pointer max-w-full justify-center"
                 title={sortDirection === "desc" ? "Đang mới nhất trước — bấm để đổi sang cũ nhất" : "Đang cũ nhất trước — bấm để đổi sang mới nhất"}
               >
-                <span>{col.label}</span>
-                {sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />}
+                <span className="line-clamp-2 break-words whitespace-normal leading-tight text-center">{col.label}</span>
+                {sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" className="shrink-0" /> : <CaretDownIcon size={12} weight="bold" className="shrink-0" />}
               </button>
-            ) : <span>{col.label}</span>}
+            ) : (
+              <span className="line-clamp-2 break-words whitespace-normal leading-tight text-center max-w-full" title={col.label}>
+                {col.label}
+              </span>
+            )}
             {columnFilters.inbound[col.id] && (
               <span
                 className="h-2 w-2 rounded-full bg-slate-900 shrink-0 ring-1 ring-white"
@@ -3807,7 +3815,7 @@ function InventoryViewInner() {
               />
             )}
             {isCustom && (
-              <span className="text-[9px] px-1 rounded bg-purple-200 text-purple-900 font-bold">
+              <span className="text-[9px] px-1 rounded bg-purple-200 text-purple-900 font-bold shrink-0">
                 Custom
               </span>
             )}
@@ -4023,19 +4031,23 @@ function InventoryViewInner() {
           onAutoFit={(id) => handleAutoFitColumn("check_shipment", id)}
           onColumnClick={(id, event) => setColumnContextMenu({ table: "check_shipment", field: id, x: event.clientX, y: event.clientY })}
         >
-          <div className={isCenter ? "flex flex-col items-center justify-center" : isRight ? "flex flex-col items-end" : ""}>
-            <div className="flex items-center gap-1">
+          <div className={`w-full ${isCenter ? "flex flex-col items-center justify-center text-center" : isRight ? "flex flex-col items-end" : ""}`}>
+            <div className="flex items-center gap-1 w-full min-w-0 justify-center">
               {isDate ? (
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); toggleDateSort("check_shipment", col.id); }}
-                  className="inline-flex items-center gap-0.5 hover:underline cursor-pointer"
+                  className="inline-flex items-center gap-0.5 hover:underline cursor-pointer max-w-full justify-center"
                   title={sortDirection === "desc" ? "Đang mới nhất trước — bấm để đổi sang cũ nhất" : "Đang cũ nhất trước — bấm để đổi sang mới nhất"}
                 >
-                  <span>{col.label}</span>
-                  {sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" /> : <CaretDownIcon size={12} weight="bold" />}
+                  <span className="line-clamp-2 break-words whitespace-normal leading-tight text-center">{col.label}</span>
+                  {sortDirection === "asc" ? <CaretUpIcon size={12} weight="bold" className="shrink-0" /> : <CaretDownIcon size={12} weight="bold" className="shrink-0" />}
                 </button>
-              ) : <span>{col.label}</span>}
+              ) : (
+                <span className="line-clamp-2 break-words whitespace-normal leading-tight text-center max-w-full" title={col.label}>
+                  {col.label}
+                </span>
+              )}
               {columnFilters.check_shipment[col.id] && (
                 <span
                   className="h-2 w-2 rounded-full bg-slate-900 shrink-0 ring-1 ring-white"
@@ -4043,7 +4055,7 @@ function InventoryViewInner() {
                 />
               )}
               {isCustom && (
-                <span className="text-[9px] px-1 rounded bg-purple-200 text-purple-900 font-bold">
+                <span className="text-[9px] px-1 rounded bg-purple-200 text-purple-900 font-bold shrink-0">
                   Custom
                 </span>
               )}
@@ -5045,7 +5057,7 @@ function InventoryViewInner() {
               <thead
                 className="sticky top-0 z-30 bg-[#ff9900] text-slate-950 border-b-2 border-amber-600 shadow-xs"
               >
-                <tr className="text-xs font-semibold uppercase tracking-[0.04em] whitespace-nowrap">
+                <tr className="text-xs font-semibold uppercase tracking-[0.04em]">
                   {/* FROZEN 1: STT */}
                   {skuColMap["stt"]?.visible !== false && (() => {
                     const f = getCellFreezeProps(skuFreezeMap, "stt", true);
@@ -5078,9 +5090,9 @@ function InventoryViewInner() {
                         }}
                       >
                         <div className="flex items-center justify-between gap-1">
-                          <div className="flex items-center gap-1 truncate">
+                          <div className="flex items-center gap-1 min-w-0 flex-1">
                             {f.isFrozen && <span title="Đang khóa cố định" className="inline-flex items-center"><LockIcon size={11} weight="bold" className="text-amber-950/70 shrink-0" /></span>}
-                            <span className="truncate">{skuColMap["product_type"]?.label || "Product Type"}</span>
+                            <span className="line-clamp-2 break-words whitespace-normal leading-tight" title={skuColMap["product_type"]?.label || "Product Type"}>{skuColMap["product_type"]?.label || "Product Type"}</span>
                           </div>
                         </div>
                       </th>
@@ -5118,9 +5130,9 @@ function InventoryViewInner() {
                         }}
                       >
                         <div className="flex items-center justify-between gap-1">
-                          <div className="flex items-center gap-1 truncate">
+                          <div className="flex items-center gap-1 min-w-0 flex-1">
                             {f.isFrozen && <span title="Đang khóa cố định" className="inline-flex items-center"><LockIcon size={11} weight="bold" className="text-amber-950/70 shrink-0" /></span>}
-                            <span className="truncate">{skuColMap["sku"]?.label || "SKU"}</span>
+                            <span className="line-clamp-2 break-words whitespace-normal leading-tight" title={skuColMap["sku"]?.label || "SKU"}>{skuColMap["sku"]?.label || "SKU"}</span>
                           </div>
                         </div>
                       </th>
@@ -5324,7 +5336,7 @@ function InventoryViewInner() {
               <thead
                 className="sticky top-0 z-30 bg-[#ff9900] text-slate-950 border-b-2 border-amber-600 shadow-xs"
               >
-                <tr className="text-xs font-semibold uppercase tracking-[0.04em] whitespace-nowrap">
+                <tr className="text-xs font-semibold uppercase tracking-[0.04em]">
                   {/* FROZEN 1: STT */}
                   {inboundColMap["stt"]?.visible !== false && (() => {
                     const f = getCellFreezeProps(inboundFreezeMap, "stt", true);
@@ -5357,9 +5369,9 @@ function InventoryViewInner() {
                         }}
                       >
                         <div className="flex items-center justify-between gap-1">
-                          <div className="flex items-center gap-1 truncate">
+                          <div className="flex items-center gap-1 min-w-0 flex-1">
                             {f.isFrozen && <span title="Đang khóa cố định" className="inline-flex items-center"><LockIcon size={11} weight="bold" className="text-amber-950/70 shrink-0" /></span>}
-                            <span className="truncate">{inboundColMap["product_type"]?.label || "Product Type"}</span>
+                            <span className="line-clamp-2 break-words whitespace-normal leading-tight" title={inboundColMap["product_type"]?.label || "Product Type"}>{inboundColMap["product_type"]?.label || "Product Type"}</span>
                           </div>
                         </div>
                       </th>
@@ -5397,9 +5409,9 @@ function InventoryViewInner() {
                         }}
                       >
                         <div className="flex items-center justify-between gap-1">
-                          <div className="flex items-center gap-1 truncate">
+                          <div className="flex items-center gap-1 min-w-0 flex-1">
                             {f.isFrozen && <span title="Đang khóa cố định" className="inline-flex items-center"><LockIcon size={11} weight="bold" className="text-amber-950/70 shrink-0" /></span>}
-                            <span className="truncate">{inboundColMap["sku"]?.label || "SKU"}</span>
+                            <span className="line-clamp-2 break-words whitespace-normal leading-tight" title={inboundColMap["sku"]?.label || "SKU"}>{inboundColMap["sku"]?.label || "SKU"}</span>
                           </div>
                         </div>
                       </th>
@@ -5605,7 +5617,7 @@ function InventoryViewInner() {
                 onClick={(event) => handleHeaderClick("check_shipment", ["stt", "shipment_id", "shipment_name", ...activeScrollableCheckShipmentColumns.map((column) => column.id)], event)}
                 className="sticky top-0 z-30 bg-[#ff9900] text-slate-950 border-b-2 border-amber-600 shadow-xs"
               >
-                <tr className="text-xs font-semibold uppercase tracking-[0.04em] whitespace-nowrap">
+                <tr className="text-xs font-semibold uppercase tracking-[0.04em]">
                   {/* FROZEN 1: STT */}
                   {checkShipmentColMap["stt"]?.visible !== false && (() => {
                     const f = getCellFreezeProps(checkShipmentFreezeMap, "stt", true);
@@ -5639,9 +5651,9 @@ function InventoryViewInner() {
                         }}
                       >
                         <div className="flex items-center justify-between gap-1">
-                          <div className="flex items-center gap-1 truncate">
+                          <div className="flex items-center gap-1 min-w-0 flex-1">
                             {f.isFrozen && <span title="Đang khóa cố định" className="inline-flex items-center"><LockIcon size={11} weight="bold" className="text-amber-950/70 shrink-0" /></span>}
-                            <span className="truncate">{checkShipmentColMap["shipment_id"]?.label || "Shipment ID"}</span>
+                            <span className="line-clamp-2 break-words whitespace-normal leading-tight" title={checkShipmentColMap["shipment_id"]?.label || "Shipment ID"}>{checkShipmentColMap["shipment_id"]?.label || "Shipment ID"}</span>
                           </div>
                           <button
                             type="button"
@@ -5672,9 +5684,9 @@ function InventoryViewInner() {
                         }}
                       >
                         <div className="flex items-center justify-between gap-1">
-                          <div className="flex items-center gap-1 truncate">
+                          <div className="flex items-center gap-1 min-w-0 flex-1">
                             {f.isFrozen && <span title="Đang khóa cố định" className="inline-flex items-center"><LockIcon size={11} weight="bold" className="text-amber-950/70 shrink-0" /></span>}
-                            <span className="truncate">{checkShipmentColMap["shipment_name"]?.label || "Shipment name"}</span>
+                            <span className="line-clamp-2 break-words whitespace-normal leading-tight" title={checkShipmentColMap["shipment_name"]?.label || "Shipment name"}>{checkShipmentColMap["shipment_name"]?.label || "Shipment name"}</span>
                           </div>
                           <button
                             type="button"
