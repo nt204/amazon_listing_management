@@ -730,166 +730,94 @@ async function downloadFile04ServiceFees(page: Page, downloadDir: string, target
 }
 
 /**
- * File 05: Amazon Advertising Campaigns Report (Campaign Manager)
- * Báo cáo chi tiết hiệu suất tất cả chiến dịch quảng cáo theo ngày (Impressions, Clicks, Spend, Sales...)
- * Dựa trên luồng logic từ script Python cũ (chọn ngày, lọc Impressions > 0, chỉnh 300 kết quả và xuất CSV).
+ * File 05: Amazon Advertising Portfolios Report (Bám sát chuẩn kế toán)
+ * Báo cáo tổng hợp chi phí Ads theo từng danh mục Portfolio cho kế toán (Portfolio, Spend, Sales, ACOS...)
+ * Nội dung bắt buộc phải là Portfolios Report từ https://advertising.amazon.com/cm/portfolios
  */
 async function downloadFile05Campaigns(page: Page, downloadDir: string, targetDateStr: string): Promise<string | null> {
-  const url = "https://advertising.amazon.com/campaign-manager";
-  console.log(`  [File 05 - Campaigns] Đang truy cập ${url}...`);
+  const targetPath = path.join(downloadDir, `05_Campaigns_${targetDateStr}.csv`);
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+
+  // 1. Nếu File 01 (Portfolios) đã được tải thành công trước đó trong cùng store, tái sử dụng ngay nội dung chuẩn
+  const existingPortfolio01 = path.join(downloadDir, `01_Portfolios_${targetDateStr}.csv`);
+  if (fs.existsSync(existingPortfolio01)) {
+    try {
+      const stat = fs.statSync(existingPortfolio01);
+      if (stat.size > 200) {
+        fs.copyFileSync(existingPortfolio01, targetPath);
+        console.log(`  [File 05 - Ads Portfolios] ✅ Tái sử dụng nội dung Portfolios chuẩn từ File 01: ${path.basename(targetPath)}`);
+        return targetPath;
+      }
+    } catch {}
+  }
+
+  // 2. Nếu chưa có, truy cập trực tiếp trang Portfolios để tải đúng chuẩn kế toán
+  const url = "https://advertising.amazon.com/cm/portfolios";
+  console.log(`  [File 05 - Ads Portfolios] Đang truy cập ${url}...`);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
-  await page.waitForTimeout(4000);
+  await page.waitForTimeout(3000);
 
   if (isSignInUrl(page.url())) {
     throw new Error("Trang Amazon Advertising yêu cầu đăng nhập.");
   }
 
-  // 1. Mở bảng chọn ngày
-  console.log(`  [File 05 - Campaigns] Mở bảng chọn ngày...`);
-  const datePickerBtn = page.locator(
-    'button[id*="dateRangeFilter:openContainer"], button[aria-label="Open date range picker"], button[data-e2e-id*="dateRangeFilter"]'
-  ).first();
-  await datePickerBtn.waitFor({ state: "visible", timeout: 25000 });
+  // Chọn ngày
+  const calendarLabel = formatPortfolioCalendarLabel(targetDateStr);
+  const datePickerBtn = page.locator('button[data-e2e-id="dateRangePickerButton"]').first();
+  await datePickerBtn.waitFor({ state: "visible", timeout: 15000 });
   await datePickerBtn.click();
-  await page.waitForTimeout(1500);
-
-  // 2. Chọn ngày
-  console.log(`  [File 05 - Campaigns] Chọn ngày: ${targetDateStr}...`);
-  const targetDayBtn = page.locator(`button[data-iso-date="${targetDateStr}"]`).first();
-  if (await targetDayBtn.isVisible({ timeout: 2500 })) {
-    // Click 2 lần (start date và end date)
-    await targetDayBtn.click();
-    await page.waitForTimeout(500);
-    await targetDayBtn.click();
+  const targetDay = page.locator(`td[aria-label*="${calendarLabel}"]:not([aria-disabled="true"])`).first();
+  if (await targetDay.isVisible({ timeout: 4000 })) {
+    await targetDay.click();
   } else {
-    // Thử nút Yesterday nếu không thấy ngày trực tiếp
-    const yestBtn = page.locator('button:has-text("Yesterday")').first();
-    if (await yestBtn.isVisible({ timeout: 2000 })) {
-      await yestBtn.click();
-    } else {
-      const prevMonthBtn = page.locator('button[aria-label*="previous month" i], button[aria-label*="prev" i]').first();
-      if (await prevMonthBtn.isVisible({ timeout: 2000 })) {
-        await prevMonthBtn.click();
-        await page.waitForTimeout(1000);
-        await targetDayBtn.waitFor({ state: "visible", timeout: 5000 });
-        await targetDayBtn.click();
-        await page.waitForTimeout(500);
-        await targetDayBtn.click();
-      }
+    // Thử nút Yesterday nếu không bấm được ngày trực tiếp
+    const yest = page.locator('button:has-text("Yesterday"), button[data-e2e-id*="yesterday"]').first();
+    if (await yest.isVisible({ timeout: 2000 })) {
+      await yest.click();
     }
   }
-  await page.waitForTimeout(1000);
 
-  // 3. Nhấn Apply ngày
-  const applyDateBtn = page.locator('button:has-text("Apply"), button[data-takt-id*="dateRange-save"]').first();
-  await applyDateBtn.waitFor({ state: "visible", timeout: 10000 });
-  await applyDateBtn.click();
-  console.log(`  [File 05 - Campaigns] Đã nhấn Apply ngày. Đang chờ nạp dữ liệu bảng...`);
-  await page.waitForTimeout(6000);
+  const saveDateBtn = page.locator('#AACChromePortal button:has-text("Save")').first();
+  await saveDateBtn.waitFor({ state: "visible", timeout: 10000 });
+  await saveDateBtn.click();
+  await page.waitForTimeout(2500);
 
-  // Chờ cho bảng nạp xong dữ liệu (không còn trạng thái trống/skeleton)
+  // Chọn 300 kết quả/trang nếu có
   try {
-    await page.locator('[role="row"], tr, td').first().waitFor({ state: "visible", timeout: 15000 });
-  } catch {}
-
-  // 4. Cố gắng chỉnh số dòng/trang thành 300 nếu có dropdown pagination
-  try {
-    const paginationDropdown = page.locator('button[id*="pagination-dropdown"], [data-e2e-id*="pagination-dropdown"]').first();
-    if (await paginationDropdown.isVisible({ timeout: 3000 })) {
-      await paginationDropdown.click();
+    const dropdownBtn = page.locator('button[data-e2e-id="dropdown"]').first();
+    if (await dropdownBtn.isVisible({ timeout: 4000 })) {
+      await dropdownBtn.click();
       await page.waitForTimeout(1000);
-      const option300 = page.locator('[role="option"]:has-text("300"), button:has-text("300"), [id*="pagination-dropdown-300"]').first();
-      if (await option300.isVisible({ timeout: 2000 })) {
-        await option300.click();
-        console.log(`  [File 05 - Campaigns] Đã chọn hiển thị 300 dòng/trang.`);
-        await page.waitForTimeout(6000);
+      const opt300 = page.locator('button[data-e2e-id="dropdownItem"][value="300"]').first();
+      if (await opt300.isVisible({ timeout: 3000 })) {
+        await opt300.click();
+        await page.waitForTimeout(2000);
       }
     }
   } catch {}
 
-  // Đảm bảo thư mục lưu tồn tại
-  const targetPath = path.join(downloadDir, `05_Campaigns_${targetDateStr}.csv`);
-  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-
-  const partFiles: string[] = [];
-  let pageIndex = 1;
-  const maxPages = 4; // Tối đa 4 trang (~1200 campaign) là quá đủ cho 1 ngày chạy ad
-
-  while (pageIndex <= maxPages) {
-    console.log(`  [File 05 - Campaigns] Mở menu Export (trang ${pageIndex})...`);
-    const exportDropdown = page.locator('button[id*="udm-export-dropdown"], button[data-e2e-id*="udm-export-dropdown"], button:has-text("Export")').first();
-    await exportDropdown.waitFor({ state: "visible", timeout: 25000 });
-    await exportDropdown.click();
+  // Bỏ mọi bộ lọc/search còn sót trước khi export
+  try {
+    const resetBtn = page.locator('button[data-e2e-id="resetButton"]').first();
+    if (await resetBtn.isVisible({ timeout: 3000 })) await resetBtn.click();
+    const clearSearchBtn = page.locator('#UCM-CM-APP\\:ALL_PORTFOLIOS\\:searchInput + button').first();
+    if (await clearSearchBtn.isVisible({ timeout: 2000 })) await clearSearchBtn.click();
     await page.waitForTimeout(1500);
+  } catch {}
 
-    const downloadOption = page.locator('button[id*="export"], button:has-text("Download")').first();
-    await downloadOption.waitFor({ state: "visible", timeout: 10000 });
+  // Tìm nút Export
+  const exportBtn = page.locator('button[data-e2e-id="export"]').first();
+  await exportBtn.waitFor({ state: "visible", timeout: 15000 });
+  await page.waitForTimeout(2000);
 
-    console.log(`  [File 05 - Campaigns] Nhấn Download trang ${pageIndex}...`);
-    const [download] = await Promise.all([
-      page.waitForEvent("download", { timeout: 35000 }),
-      downloadOption.click(),
-    ]);
+  console.log(`  [File 05 - Ads Portfolios] Đang nhấn nút Export và chờ tải file...`);
+  const [download] = await Promise.all([
+    page.waitForEvent("download", { timeout: 35000 }),
+    exportBtn.click(),
+  ]);
 
-    const tempPartPath = path.join(downloadDir, `temp_05_part_${pageIndex}.csv`);
-    await download.saveAs(tempPartPath);
-    partFiles.push(tempPartPath);
-    console.log(`  [File 05 - Campaigns] Đã tải xong part ${pageIndex}.`);
-    await page.waitForTimeout(2000);
-
-    // Kiểm tra nút Next Page
-    const nextBtn = page.locator('button[id*="pagination-next"], button[aria-label*="next page" i]').first();
-    let hasNextPage = false;
-    if (await nextBtn.isVisible({ timeout: 2000 })) {
-      const isDisabled = await nextBtn.evaluate((el: HTMLElement) => {
-        return el.hasAttribute("disabled") ||
-          el.getAttribute("aria-disabled") === "true" ||
-          el.classList.contains("disabled");
-      });
-      if (!isDisabled) {
-        hasNextPage = true;
-      }
-    }
-
-    if (hasNextPage) {
-      console.log(`  [File 05 - Campaigns] Phát hiện còn trang tiếp theo, đang chuyển sang trang ${pageIndex + 1}...`);
-      await nextBtn.click();
-      pageIndex++;
-      await page.waitForTimeout(6000);
-      try {
-        await page.locator('[role="row"], tr').first().waitFor({ state: "visible", timeout: 10000 });
-      } catch {}
-    } else {
-      break;
-    }
-  }
-
-  // Gộp tất cả các part file CSV
-  if (partFiles.length === 1) {
-    fs.copyFileSync(partFiles[0], targetPath);
-    fs.unlinkSync(partFiles[0]);
-  } else if (partFiles.length > 1) {
-    console.log(`  [File 05 - Campaigns] Đang gộp ${partFiles.length} file part vào file chính...`);
-    let combinedContent = "";
-    for (let i = 0; i < partFiles.length; i++) {
-      const raw = fs.readFileSync(partFiles[i], "utf-8");
-      const lines = raw.split("\n");
-      if (i === 0) {
-        combinedContent = raw;
-      } else {
-        // Bỏ header dòng 1
-        const dataLines = lines.slice(1).join("\n");
-        if (dataLines.trim()) {
-          if (!combinedContent.endsWith("\n")) combinedContent += "\n";
-          combinedContent += dataLines;
-        }
-      }
-      fs.unlinkSync(partFiles[i]);
-    }
-    fs.writeFileSync(targetPath, combinedContent, "utf-8");
-  }
-
-  console.log(`  [File 05 - Campaigns] ✅ Tải và xử lý hoàn tất: ${path.basename(targetPath)}`);
+  await download.saveAs(targetPath);
+  console.log(`  [File 05 - Ads Portfolios] ✅ Tải thành công chuẩn Portfolios: ${path.basename(targetPath)}`);
   return targetPath;
 }
 

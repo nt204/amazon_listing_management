@@ -41,7 +41,7 @@ export type EvaluationLabel =
   | "INTERRUPTED"
   | "SUPERSEDED";
 
-export type ExpectedSource = "control_group" | "own_30d_avg";
+export type ExpectedSource = "control_group" | "own_30d_avg" | "own_exact_window";
 
 export type BaselineQuality = "HIGH" | "LOW";
 

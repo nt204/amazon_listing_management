@@ -339,6 +339,72 @@ async function readBaselineFacts(
 }
 
 /**
+ * Reads the closest complete pre-action report with the same length as the
+ * evaluation window. The report must end on the applied date or one day
+ * earlier so an older rolling report can never masquerade as the baseline.
+ */
+async function readExactPreWindowFacts(
+  storeId: string,
+  targetId: string,
+  windowDays: number,
+  appliedDate: string,
+  targetKeyword?: string,
+) {
+  if (!targetId && !targetKeyword) return null;
+  const sql = await getDatabaseClient();
+  const rows = await sql<{
+    id: string;
+    clicks: string | number;
+    spend: string | number;
+    sales: string | number;
+    orders: string | number;
+    impressions: string | number;
+    report_start_date: string;
+    report_end_date: string;
+  }[]>`
+    SELECT id::text, clicks, spend, sales, orders, impressions,
+           report_start_date::text, report_end_date::text
+    FROM ppc_performance_facts
+    WHERE store_id = ${storeId}
+      AND grain = 'TARGET'
+      AND ${targetId
+        ? sql`target_id = ${targetId}`
+        : targetKeyword
+          ? sql`lower(trim(target_expression)) = lower(trim(${targetKeyword}))`
+          : sql`false`}
+      AND (
+        (report_end_date - report_start_date) = ${windowDays}
+        OR (report_end_date - report_start_date + 1) = ${windowDays}
+      )
+      AND report_end_date <= ${appliedDate}::date
+      AND (${appliedDate}::date - report_end_date) BETWEEN 0 AND 1
+    ORDER BY report_end_date DESC, snapshot_date DESC
+    LIMIT 1
+  `;
+
+  if (rows.length === 0) return null;
+  const r = rows[0];
+  const clicks = Number(r.clicks || 0);
+  const spend = Number(r.spend || 0);
+  const sales = Number(r.sales || 0);
+  const orders = Number(r.orders || 0);
+  return {
+    clicks,
+    spend,
+    sales,
+    orders,
+    impressions: Number(r.impressions || 0),
+    acos: sales > 0 ? (spend / sales) * 100 : null,
+    days_with_data: windowDays,
+    total_days: windowDays,
+    window_start: r.report_start_date,
+    window_end: r.report_end_date,
+    source_report_ids: [r.id],
+    source_method: "EXACT_PRE_WINDOW" as const,
+  };
+}
+
+/**
  * Reads after metrics for an exact inclusive [observationStart, observationEnd] range.
  * Never uses fallback or pro-rated metrics from arbitrary periods.
  * - 3D: exact 3D report
@@ -649,13 +715,22 @@ export async function evaluatePendingActionOutcomes(options: {
     const margin = marginResolution.margin;
 
     // Read metrics from facts with fallback to context / latest reports
-    const baselineFacts = await readBaselineFacts(
+    const fallbackBaselineFacts = await readBaselineFacts(
       row.store_id,
       row.target_id,
       appliedDate,
       row.context,
       row.target_keyword
     );
+    const exactBaselineFacts = await readExactPreWindowFacts(
+      row.store_id,
+      row.target_id,
+      row.window_days,
+      appliedDate,
+      row.target_keyword,
+    );
+    const baselineFacts = exactBaselineFacts || fallbackBaselineFacts;
+    const baselineSource = exactBaselineFacts ? "EXACT_PRE_WINDOW" : "PRORATED_30D";
     const afterFacts = await readAfterFacts(
       row.store_id,
       row.target_id,
@@ -736,8 +811,8 @@ export async function evaluatePendingActionOutcomes(options: {
           ad_spend: baselineFacts.spend,
           acos: baselineFacts.acos,
           contribution: baselineFacts.sales * margin - baselineFacts.spend,
-          days_with_data: 30,
-          total_days: 30,
+          days_with_data: baselineFacts.days_with_data,
+          total_days: baselineFacts.total_days,
         }
         : undefined,
       after_metrics_summary: afterFacts
@@ -804,7 +879,11 @@ export async function evaluatePendingActionOutcomes(options: {
         sales: evalResult.baseline_metrics.ad_sales,
         acos: evalResult.baseline_metrics.acos,
         contribution: evalResult.baseline_metrics.contribution,
-        days: 30,
+        days: baselineFacts?.total_days || 30,
+        window_start: exactBaselineFacts?.window_start ?? null,
+        window_end: exactBaselineFacts?.window_end ?? null,
+        source_report_ids: exactBaselineFacts?.source_report_ids ?? [],
+        source_method: baselineSource,
       }
       : (baselineFacts
         ? {
@@ -814,7 +893,11 @@ export async function evaluatePendingActionOutcomes(options: {
           sales: baselineFacts.sales,
           acos: baselineFacts.acos,
           contribution: baselineFacts.sales * margin - baselineFacts.spend,
-          days: 30,
+          days: baselineFacts.total_days,
+          window_start: exactBaselineFacts?.window_start ?? null,
+          window_end: exactBaselineFacts?.window_end ?? null,
+          source_report_ids: exactBaselineFacts?.source_report_ids ?? [],
+          source_method: baselineSource,
         }
         : {});
 
@@ -858,6 +941,7 @@ export async function evaluatePendingActionOutcomes(options: {
       actual_contribution: evalResult.actual_contribution,
       expected_contribution: evalResult.expected_baseline?.value ?? null,
       expected_source: evalResult.expected_baseline?.source ?? null,
+      baseline_source: baselineSource,
       control_count: evalResult.expected_baseline?.control_count ?? 0,
       control_shift_w: evalResult.expected_baseline?.control_shift_w ?? 0,
     };
@@ -877,6 +961,10 @@ export async function evaluatePendingActionOutcomes(options: {
       applied_on_source: row.applied_on_source,
       margin_source: marginResolution.source,
       margin_reliable: marginResolution.reliable,
+      baseline_source: baselineSource,
+      baseline_window_start: exactBaselineFacts?.window_start ?? null,
+      baseline_window_end: exactBaselineFacts?.window_end ?? null,
+      baseline_source_report_ids: exactBaselineFacts?.source_report_ids ?? [],
       external_events_available: false,
       window_start: afterFacts?.window_start ?? observationStart,
       window_end: afterFacts?.window_end ?? observationEnd,

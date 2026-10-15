@@ -1168,20 +1168,22 @@ function InventoryViewInner() {
   const [monthlyBaseCostColumns, setMonthlyBaseCostColumns] = useState<ColumnConfig[]>(DEFAULT_MONTHLY_BASE_COST_COLUMNS);
   const [showColumnModal, setShowColumnModal] = useState(false);
 
-  const SKU_COLUMNS_STORAGE_KEY = `accounting_sku_columns_${selectedStoreId || "none"}`;
-  const INBOUND_COLUMNS_STORAGE_KEY = `accounting_inbound_columns_${selectedStoreId || "none"}`;
-  const CHECK_SHIPMENT_COLUMNS_STORAGE_KEY = `accounting_check_shipment_columns_${selectedStoreId || "none"}`;
-  const MONTHLY_BASE_COST_COLUMNS_STORAGE_KEY = `accounting_monthly_base_cost_columns_${selectedStoreId || "none"}`;
-  const FROZEN_COLUMNS_STORAGE_KEY = `accounting_frozen_columns_${selectedStoreId || "none"}`;
+  const SKU_COLUMNS_STORAGE_KEY = "accounting_sku_columns_global";
+  const INBOUND_COLUMNS_STORAGE_KEY = "accounting_inbound_columns_global";
+  const CHECK_SHIPMENT_COLUMNS_STORAGE_KEY = "accounting_check_shipment_columns_global";
+  const MONTHLY_BASE_COST_COLUMNS_STORAGE_KEY = "accounting_monthly_base_cost_columns_global";
+  const FROZEN_COLUMNS_STORAGE_KEY = "accounting_frozen_columns_global";
 
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(FROZEN_COLUMNS_STORAGE_KEY);
+      const saved =
+        localStorage.getItem(FROZEN_COLUMNS_STORAGE_KEY) ||
+        (selectedStoreId ? localStorage.getItem(`accounting_frozen_columns_${selectedStoreId}`) : null);
       if (!saved) return;
       const parsed = JSON.parse(saved);
       setFrozenThrough((current) => ({ ...current, ...parsed }));
     } catch {}
-  }, [FROZEN_COLUMNS_STORAGE_KEY]);
+  }, [FROZEN_COLUMNS_STORAGE_KEY, selectedStoreId]);
 
   const setFrozenThroughColumn = useCallback((table: "sku" | "inbound" | "check_shipment" | "monthly_base_cost", field: string) => {
     setFrozenThrough((current) => {
@@ -1284,7 +1286,9 @@ function InventoryViewInner() {
   // Load columns from localStorage (áp dụng đồng bộ tất cả store)
   useEffect(() => {
     try {
-      const skuStored = localStorage.getItem(SKU_COLUMNS_STORAGE_KEY);
+      const skuStored =
+        localStorage.getItem(SKU_COLUMNS_STORAGE_KEY) ||
+        (selectedStoreId ? localStorage.getItem(`accounting_sku_columns_${selectedStoreId}`) : null);
       if (skuStored) {
         const parsed: ColumnConfig[] = JSON.parse(skuStored);
         const defaultMap = new Map(DEFAULT_SKU_COLUMNS.map((def) => [def.id, def]));
@@ -1323,7 +1327,9 @@ function InventoryViewInner() {
         setSkuColumns(DEFAULT_SKU_COLUMNS);
       }
 
-      const inboundStored = localStorage.getItem(INBOUND_COLUMNS_STORAGE_KEY);
+      const inboundStored =
+        localStorage.getItem(INBOUND_COLUMNS_STORAGE_KEY) ||
+        (selectedStoreId ? localStorage.getItem(`accounting_inbound_columns_${selectedStoreId}`) : null);
       if (inboundStored) {
         const parsed: ColumnConfig[] = JSON.parse(inboundStored);
         const defaultMap = new Map(DEFAULT_INBOUND_COLUMNS.map((def) => [def.id, def]));
@@ -1362,7 +1368,9 @@ function InventoryViewInner() {
         setInboundColumns(DEFAULT_INBOUND_COLUMNS);
       }
 
-      const checkStored = localStorage.getItem(CHECK_SHIPMENT_COLUMNS_STORAGE_KEY);
+      const checkStored =
+        localStorage.getItem(CHECK_SHIPMENT_COLUMNS_STORAGE_KEY) ||
+        (selectedStoreId ? localStorage.getItem(`accounting_check_shipment_columns_${selectedStoreId}`) : null);
       if (checkStored) {
         const parsed: ColumnConfig[] = JSON.parse(checkStored);
         const defaultMap = new Map(DEFAULT_CHECK_SHIPMENT_COLUMNS.map((def) => [def.id, def]));
@@ -1399,7 +1407,9 @@ function InventoryViewInner() {
         setCheckShipmentColumns(DEFAULT_CHECK_SHIPMENT_COLUMNS);
       }
 
-      const monthlyStored = localStorage.getItem(MONTHLY_BASE_COST_COLUMNS_STORAGE_KEY);
+      const monthlyStored =
+        localStorage.getItem(MONTHLY_BASE_COST_COLUMNS_STORAGE_KEY) ||
+        (selectedStoreId ? localStorage.getItem(`accounting_monthly_base_cost_columns_${selectedStoreId}`) : null);
       if (monthlyStored) {
         const parsed: ColumnConfig[] = JSON.parse(monthlyStored);
         const defaultMap = new Map(DEFAULT_MONTHLY_BASE_COST_COLUMNS.map((def) => [def.id, def]));
@@ -1439,7 +1449,7 @@ function InventoryViewInner() {
     try {
       localStorage.setItem(SKU_COLUMNS_STORAGE_KEY, JSON.stringify(newCols));
     } catch {}
-    notify("Đã lưu thiết lập cột BẢNG MÃ cho Store này!", "success");
+    notify("Đã lưu thiết lập cột BẢNG MÃ cho tất cả Store!", "success");
   }, [SKU_COLUMNS_STORAGE_KEY]);
 
   const handleResetSkuColumns = useCallback(() => {
@@ -1455,7 +1465,7 @@ function InventoryViewInner() {
     try {
       localStorage.setItem(INBOUND_COLUMNS_STORAGE_KEY, JSON.stringify(newCols));
     } catch {}
-    notify("Đã lưu thiết lập cột CHI TIẾT ĐI HÀNG cho Store này!", "success");
+    notify("Đã lưu thiết lập cột CHI TIẾT ĐI HÀNG cho tất cả Store!", "success");
   }, [INBOUND_COLUMNS_STORAGE_KEY]);
 
   const handleResetInboundColumns = useCallback(() => {
@@ -1471,7 +1481,7 @@ function InventoryViewInner() {
     try {
       localStorage.setItem(CHECK_SHIPMENT_COLUMNS_STORAGE_KEY, JSON.stringify(newCols));
     } catch {}
-    notify("Đã lưu thiết lập cột CHECK SHIPMENT cho Store này!", "success");
+    notify("Đã lưu thiết lập cột CHECK SHIPMENT cho tất cả Store!", "success");
   }, [CHECK_SHIPMENT_COLUMNS_STORAGE_KEY]);
 
   const handleResetCheckShipmentColumns = useCallback(() => {
@@ -1487,7 +1497,7 @@ function InventoryViewInner() {
     try {
       localStorage.setItem(MONTHLY_BASE_COST_COLUMNS_STORAGE_KEY, JSON.stringify(newCols));
     } catch {}
-    notify("Đã lưu thiết lập cột BASE COST THÁNG cho Store này!", "success");
+    notify("Đã lưu thiết lập cột BASE COST THÁNG cho tất cả Store!", "success");
   }, [MONTHLY_BASE_COST_COLUMNS_STORAGE_KEY]);
 
   const handleResetMonthlyBaseCostColumns = useCallback(() => {

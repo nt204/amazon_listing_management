@@ -258,6 +258,69 @@ test("Test 9: Matched control shift compensates temporary baseline dip, resultin
   assert.ok(res.reason_codes.includes("WITHIN_NOISE"));
 });
 
+test("Exact 7D baseline is compared directly instead of being divided by 30", () => {
+  const input = getBaseValidInput({
+    window: 7,
+    evaluation_date: "2026-08-20",
+    baseline_metrics_summary: {
+      clicks: 20,
+      orders: 3,
+      ad_sales: 100,
+      ad_spend: 25,
+      acos: 25,
+      contribution: 10,
+      days_with_data: 7,
+      total_days: 7,
+    },
+    after_metrics_summary: {
+      clicks: 20,
+      orders: 4,
+      ad_sales: 140,
+      ad_spend: 25,
+      acos: 17.86,
+      contribution: 24,
+      days_with_data: 7,
+      total_days: 7,
+    },
+    matched_controls: [],
+  });
+
+  const res = evaluateBidDecision(input);
+
+  assert.equal(res.expected_baseline?.source, "own_exact_window");
+  assert.equal(res.expected_baseline?.value, 10);
+  assert.equal(res.reward_usd, 14);
+  assert.equal(res.validity, "VALID");
+  assert.equal(res.label, "POSITIVE");
+});
+
+test("30D baseline keeps the existing prorated behavior for a 7D window", () => {
+  const input = getBaseValidInput({
+    window: 7,
+    evaluation_date: "2026-08-20",
+    baseline_metrics_summary: {
+      ...getBaseValidInput().baseline_metrics_summary!,
+      contribution: 30,
+    },
+    after_metrics_summary: {
+      clicks: 20,
+      orders: 5,
+      ad_sales: 80,
+      ad_spend: 20,
+      acos: 25,
+      contribution: 8,
+      days_with_data: 7,
+      total_days: 7,
+    },
+    matched_controls: [],
+  });
+
+  const res = evaluateBidDecision(input);
+
+  assert.equal(res.expected_baseline?.source, "own_30d_avg");
+  assert.equal(res.expected_baseline?.value, 7);
+});
+
 // Test 10: ACoS cải thiện nhưng sales và contribution giảm quá T
 test("Test 10: ACoS improved but sales and contribution dropped significantly yields NEGATIVE", () => {
   // Baseline: Sales $300, Spend $75, Contribution $30

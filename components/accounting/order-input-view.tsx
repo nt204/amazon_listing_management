@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowClockwiseIcon,
+  ArrowCounterClockwiseIcon,
   ArrowsInLineHorizontalIcon,
   CaretDownIcon,
   CaretUpIcon,
@@ -21,9 +22,11 @@ import {
   PencilSimpleIcon,
   GearIcon,
   PlusIcon,
+  ReceiptIcon,
   ShoppingCartIcon,
   SlidersHorizontalIcon,
   TrashIcon,
+  TrendUpIcon,
   UploadSimpleIcon,
   WarningCircleIcon,
   XIcon,
@@ -37,8 +40,8 @@ import {
   ColumnManagerModal,
 } from "./column-manager-modal";
 
-const ORDER_COLUMNS_STORAGE_KEY_PREFIX = "acc_order_input_columns_";
-const ORDER_FROZEN_KEY_PREFIX = "acc_order_input_frozen_";
+const ORDER_COLUMNS_STORAGE_KEY = "acc_order_input_columns_global";
+const ORDER_FROZEN_STORAGE_KEY = "acc_order_input_frozen_global";
 
 function getColumnWidth(column?: ColumnConfig, fallback = 120): number {
   if (!column?.width) return fallback;
@@ -60,7 +63,25 @@ function formatCurrency(val: number | null | undefined, currency = "USD"): strin
   }).format(val);
 }
 
+export type ImportTab = "orders" | "ads" | "return" | "service_fee";
+
 export function OrderInputView() {
+  const [activeTab, setActiveTab] = useState<ImportTab>(() => {
+    if (typeof window !== "undefined") {
+      const saved = window.sessionStorage.getItem("accounting_import_active_tab") as ImportTab;
+      if (saved && ["orders", "ads", "return", "service_fee"].includes(saved)) {
+        return saved;
+      }
+    }
+    return "orders";
+  });
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem("accounting_import_active_tab", activeTab);
+    }
+  }, [activeTab]);
+
   const [stores, setStores] = useState<Store[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<string>(() => {
     if (typeof window !== "undefined") {
@@ -178,11 +199,12 @@ export function OrderInputView() {
     };
   }, [notify]);
 
-  // Load column configurations from localStorage per store, preserving all default columns
+  // Load column configurations from localStorage (đồng bộ tất cả store), preserving all default columns
   useEffect(() => {
-    if (!selectedStoreId) return;
     try {
-      const savedCols = localStorage.getItem(`${ORDER_COLUMNS_STORAGE_KEY_PREFIX}${selectedStoreId}`);
+      const savedCols =
+        localStorage.getItem(ORDER_COLUMNS_STORAGE_KEY) ||
+        (selectedStoreId ? localStorage.getItem(`acc_order_input_columns_${selectedStoreId}`) : null);
       if (savedCols) {
         const parsed: ColumnConfig[] = JSON.parse(savedCols);
         if (Array.isArray(parsed) && parsed.length > 0) {
@@ -221,7 +243,9 @@ export function OrderInputView() {
         setColumns(DEFAULT_ORDER_INPUT_COLUMNS);
       }
 
-      const savedFrozen = localStorage.getItem(`${ORDER_FROZEN_KEY_PREFIX}${selectedStoreId}`);
+      const savedFrozen =
+        localStorage.getItem(ORDER_FROZEN_STORAGE_KEY) ||
+        (selectedStoreId ? localStorage.getItem(`acc_order_input_frozen_${selectedStoreId}`) : null);
       if (savedFrozen) {
         setFrozenThrough(savedFrozen);
       } else {
@@ -387,16 +411,13 @@ export function OrderInputView() {
         const [moved] = updated.splice(fromIndex, 1);
         updated.splice(toIndex, 0, moved);
         try {
-          localStorage.setItem(
-            `${ORDER_COLUMNS_STORAGE_KEY_PREFIX}${selectedStoreId}`,
-            JSON.stringify(updated)
-          );
+          localStorage.setItem(ORDER_COLUMNS_STORAGE_KEY, JSON.stringify(updated));
         } catch {}
         return updated;
       });
       notify("Đã đổi vị trí cột!", "success");
     },
-    [selectedStoreId, notify]
+    [notify]
   );
 
   // Resize column
@@ -405,15 +426,12 @@ export function OrderInputView() {
       setColumns((prev) => {
         const updated = prev.map((c) => (c.id === colId ? { ...c, width: Math.max(50, width) } : c));
         try {
-          localStorage.setItem(
-            `${ORDER_COLUMNS_STORAGE_KEY_PREFIX}${selectedStoreId}`,
-            JSON.stringify(updated)
-          );
+          localStorage.setItem(ORDER_COLUMNS_STORAGE_KEY, JSON.stringify(updated));
         } catch {}
         return updated;
       });
     },
-    [selectedStoreId]
+    []
   );
 
   // Tính toán độ rộng vừa khít nội dung thực tế và tiêu đề cột (tự động thu nhỏ, giới hạn các cột quá dài)
@@ -515,16 +533,13 @@ export function OrderInputView() {
         const snugWidth = calculateAutoFitWidth(colId, targetCol.label);
         const updated = prev.map((c) => (c.id === colId ? { ...c, width: snugWidth } : c));
         try {
-          localStorage.setItem(
-            `${ORDER_COLUMNS_STORAGE_KEY_PREFIX}${selectedStoreId}`,
-            JSON.stringify(updated)
-          );
+          localStorage.setItem(ORDER_COLUMNS_STORAGE_KEY, JSON.stringify(updated));
         } catch {}
         return updated;
       });
       notify("Đã thu nhỏ cột!", "success");
     },
-    [calculateAutoFitWidth, selectedStoreId, notify]
+    [calculateAutoFitWidth, notify]
   );
 
   // Auto-fit toàn bộ các cột hiển thị để vừa khít hoàn hảo nội dung
@@ -535,41 +550,35 @@ export function OrderInputView() {
         return { ...c, width: snugWidth };
       });
       try {
-        localStorage.setItem(
-          `${ORDER_COLUMNS_STORAGE_KEY_PREFIX}${selectedStoreId}`,
-          JSON.stringify(updated)
-        );
+        localStorage.setItem(ORDER_COLUMNS_STORAGE_KEY, JSON.stringify(updated));
       } catch {}
       return updated;
     });
     notify("Đã thu nhỏ tất cả các cột!", "success");
-  }, [calculateAutoFitWidth, selectedStoreId, notify]);
+  }, [calculateAutoFitWidth, notify]);
 
   // Save Column Manager modal changes
   const handleSaveColumns = useCallback(
     (newCols: ColumnConfig[]) => {
       setColumns(newCols);
       try {
-        localStorage.setItem(
-          `${ORDER_COLUMNS_STORAGE_KEY_PREFIX}${selectedStoreId}`,
-          JSON.stringify(newCols)
-        );
+        localStorage.setItem(ORDER_COLUMNS_STORAGE_KEY, JSON.stringify(newCols));
       } catch {}
-      notify("Đã lưu cấu hình cột cho Store!", "success");
+      notify("Đã lưu cấu hình cột cho tất cả Store!", "success");
     },
-    [selectedStoreId, notify]
+    [notify]
   );
 
   // Reset columns
   const handleResetColumns = useCallback(() => {
     setColumns(DEFAULT_ORDER_INPUT_COLUMNS);
     try {
-      localStorage.removeItem(`${ORDER_COLUMNS_STORAGE_KEY_PREFIX}${selectedStoreId}`);
-      localStorage.removeItem(`${ORDER_FROZEN_KEY_PREFIX}${selectedStoreId}`);
+      localStorage.removeItem(ORDER_COLUMNS_STORAGE_KEY);
+      localStorage.removeItem(ORDER_FROZEN_STORAGE_KEY);
     } catch {}
     setFrozenThrough("amazon_order_id");
     notify("Đã đưa cấu hình cột về mặc định!", "success");
-  }, [selectedStoreId, notify]);
+  }, [notify]);
 
   // Scan existing unique values from current loaded orders
   const scanOptionsFromRows = useCallback(
@@ -664,17 +673,14 @@ export function OrderInputView() {
         return col;
       });
       try {
-        localStorage.setItem(
-          `${ORDER_COLUMNS_STORAGE_KEY_PREFIX}${selectedStoreId}`,
-          JSON.stringify(next)
-        );
+        localStorage.setItem(ORDER_COLUMNS_STORAGE_KEY, JSON.stringify(next));
       } catch {}
       return next;
     });
 
     setFieldEditor(null);
     notify(`Đã lưu cấu hình cột "${updatedLabel}"!`, "success");
-  }, [fieldEditor, selectedStoreId, notify]);
+  }, [fieldEditor, notify]);
 
   // Quick hide column
   const handleQuickHideColumn = useCallback(
@@ -682,16 +688,13 @@ export function OrderInputView() {
       setColumns((prev) => {
         const updated = prev.map((c) => (c.id === colId ? { ...c, visible: false } : c));
         try {
-          localStorage.setItem(
-            `${ORDER_COLUMNS_STORAGE_KEY_PREFIX}${selectedStoreId}`,
-            JSON.stringify(updated)
-          );
+          localStorage.setItem(ORDER_COLUMNS_STORAGE_KEY, JSON.stringify(updated));
         } catch {}
         return updated;
       });
       notify("Đã ẩn cột khỏi bảng!", "success");
     },
-    [selectedStoreId, notify]
+    [notify]
   );
 
   // Set frozen boundary
@@ -699,12 +702,12 @@ export function OrderInputView() {
     (colId: string) => {
       setFrozenThrough(colId);
       try {
-        localStorage.setItem(`${ORDER_FROZEN_KEY_PREFIX}${selectedStoreId}`, colId);
+        localStorage.setItem(ORDER_FROZEN_STORAGE_KEY, colId);
       } catch {}
       const colLabel = columns.find((c) => c.id === colId)?.label || colId;
       notify(`Đã khóa các cột đến "${colLabel}".`, "success");
     },
-    [selectedStoreId, columns, notify]
+    [columns, notify]
   );
 
   const selectedStore = stores.find((s) => s.id === selectedStoreId);
@@ -890,18 +893,18 @@ export function OrderInputView() {
         </div>
       )}
 
-      {/* HEADER SECTION: Store Selector & Summary Stats */}
-      <div className="rounded-xl border border-slate-300 bg-white p-3.5 shadow-2xs space-y-3">
+      {/* HEADER SECTION: Title, Store Selector & Action Buttons */}
+      <div className="rounded-xl border border-slate-300 bg-white p-3.5 shadow-2xs">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
           {/* Left: Title & Store Selector */}
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2 pr-3 border-r border-slate-200">
               <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-600 text-white font-black text-sm shadow-xs">
-                <ShoppingCartIcon size={16} weight="bold" />
+                <UploadSimpleIcon size={16} weight="bold" />
               </span>
               <div>
                 <h1 className="text-base font-extrabold text-slate-900 tracking-tight whitespace-nowrap">
-                  Đầu Vào Order
+                  Import
                 </h1>
               </div>
             </div>
@@ -937,100 +940,184 @@ export function OrderInputView() {
 
           {/* Right: Action Buttons */}
           <div className="flex items-center gap-2 self-end lg:self-center flex-wrap">
-            {/* Import Button */}
-            <button
-              type="button"
-              onClick={() => setShowImportModal(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition shadow-2xs cursor-pointer"
-              title="Tải lên file order (.txt, .tsv, .csv, .xlsx từ Amazon hoặc ketoan_limima)"
-            >
-              <UploadSimpleIcon size={15} weight="bold" />
-              <span>Nhập File Order</span>
-            </button>
+            {activeTab === "orders" ? (
+              <>
+                {/* Import Button */}
+                <button
+                  type="button"
+                  onClick={() => setShowImportModal(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition shadow-2xs cursor-pointer"
+                  title="Tải lên file order (.txt, .tsv, .csv, .xlsx từ Amazon hoặc ketoan_limima)"
+                >
+                  <UploadSimpleIcon size={15} weight="bold" />
+                  <span>Nhập File Order</span>
+                </button>
 
-            {/* Export Excel Button */}
-            <a
-              href={`/api/accounting/orders/export?store_id=${selectedStoreId}`}
-              download
-              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-800 hover:bg-emerald-100 transition shadow-2xs cursor-pointer"
-              title="Xuất Excel toàn bộ dữ liệu Đầu vào Order"
-            >
-              <DownloadSimpleIcon size={15} weight="bold" />
-              <span>Xuất Excel</span>
-            </a>
+                {/* Export Excel Button */}
+                <a
+                  href={`/api/accounting/orders/export?store_id=${selectedStoreId}`}
+                  download
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-800 hover:bg-emerald-100 transition shadow-2xs cursor-pointer"
+                  title="Xuất Excel toàn bộ dữ liệu Đầu vào Order"
+                >
+                  <DownloadSimpleIcon size={15} weight="bold" />
+                  <span>Xuất Excel</span>
+                </a>
 
-            {/* Reset to Excel default order */}
-            <button
-              type="button"
-              onClick={handleResetColumns}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition shadow-2xs cursor-pointer"
-              title="Đặt lại đầy đủ tất cả các cột theo đúng thứ tự file Excel gốc"
-            >
-              <ArrowClockwiseIcon size={14} weight="bold" />
-              <span>Cột chuẩn Excel</span>
-            </button>
+                {/* Reset to Excel default order */}
+                <button
+                  type="button"
+                  onClick={handleResetColumns}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition shadow-2xs cursor-pointer"
+                  title="Đặt lại đầy đủ tất cả các cột theo đúng thứ tự file Excel gốc"
+                >
+                  <ArrowClockwiseIcon size={14} weight="bold" />
+                  <span>Cột chuẩn Excel</span>
+                </button>
 
-            {/* Shrink / Compact All Columns Button */}
-            <button
-              type="button"
-              onClick={handleAutoFitAllColumns}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-bold text-amber-900 hover:bg-amber-100 transition shadow-2xs cursor-pointer"
-              title="Tự động thu nhỏ các cột ôm sát dữ liệu, giới hạn các cột dài"
-            >
-              <ArrowsInLineHorizontalIcon size={15} weight="bold" />
-              <span>Thu nhỏ cột</span>
-            </button>
+                {/* Shrink / Compact All Columns Button */}
+                <button
+                  type="button"
+                  onClick={handleAutoFitAllColumns}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-bold text-amber-900 hover:bg-amber-100 transition shadow-2xs cursor-pointer"
+                  title="Tự động thu nhỏ các cột ôm sát dữ liệu, giới hạn các cột dài"
+                >
+                  <ArrowsInLineHorizontalIcon size={15} weight="bold" />
+                  <span>Thu nhỏ cột</span>
+                </button>
 
-            {/* Column Configuration Button - Icon Only */}
-            <button
-              type="button"
-              onClick={() => setShowColumnModal(true)}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-amber-400 bg-amber-50 text-amber-950 hover:bg-amber-100 transition shadow-2xs cursor-pointer"
-              title={`Cài đặt cột ĐẦU VÀO ORDER (${visibleColumns.length}/${columns.length})`}
-            >
-              <SlidersHorizontalIcon size={16} weight="bold" className="text-amber-700" />
-            </button>
+                {/* Column Configuration Button - Icon Only */}
+                <button
+                  type="button"
+                  onClick={() => setShowColumnModal(true)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-amber-400 bg-amber-50 text-amber-950 hover:bg-amber-100 transition shadow-2xs cursor-pointer"
+                  title={`Cài đặt cột ĐẦU VÀO ORDER (${visibleColumns.length}/${columns.length})`}
+                >
+                  <SlidersHorizontalIcon size={16} weight="bold" className="text-amber-700" />
+                </button>
 
-            {/* Refresh - Icon Only */}
-            <button
-              type="button"
-              onClick={handleReload}
-              disabled={loading || syncingLatest}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 transition shadow-2xs cursor-pointer disabled:opacity-50"
-              title={syncingLatest ? "Đang nạp file Order mới nhất..." : "Làm mới: Tải lại dữ liệu và tự động nạp file Order mới nhất cho tất cả các Store"}
-            >
-              <ArrowClockwiseIcon size={16} weight="bold" className={loading || syncingLatest ? "animate-spin text-indigo-600" : ""} />
-            </button>
+                {/* Refresh - Icon Only */}
+                <button
+                  type="button"
+                  onClick={handleReload}
+                  disabled={loading || syncingLatest}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 transition shadow-2xs cursor-pointer disabled:opacity-50"
+                  title={syncingLatest ? "Đang nạp file Order mới nhất..." : "Làm mới: Tải lại dữ liệu và tự động nạp file Order mới nhất cho tất cả các Store"}
+                >
+                  <ArrowClockwiseIcon size={16} weight="bold" className={loading || syncingLatest ? "animate-spin text-indigo-600" : ""} />
+                </button>
 
-            {/* Zoom Controls */}
-            <div className="flex items-center border border-slate-300 rounded-lg overflow-hidden bg-slate-50 p-0.5 text-xs font-bold">
+                {/* Zoom Controls */}
+                <div className="flex items-center border border-slate-300 rounded-lg overflow-hidden bg-slate-50 p-0.5 text-xs font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setTableZoom((z) => Math.max(80, z - 10))}
+                    className="h-6 w-6 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 transition cursor-pointer"
+                    title="Thu nhỏ bảng (-10%)"
+                  >
+                    <MinusIcon size={13} weight="bold" />
+                  </button>
+                  <span className="px-2 font-mono text-[11px] text-slate-600 select-none min-w-[42px] text-center">
+                    {tableZoom}%
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setTableZoom((z) => Math.min(150, z + 10))}
+                    className="h-6 w-6 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 transition cursor-pointer"
+                    title="Phóng to bảng (+10%)"
+                  >
+                    <PlusIcon size={13} weight="bold" />
+                  </button>
+                </div>
+              </>
+            ) : (
               <button
                 type="button"
-                onClick={() => setTableZoom((z) => Math.max(80, z - 10))}
-                className="h-6 w-6 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 transition cursor-pointer"
-                title="Thu nhỏ bảng (-10%)"
+                onClick={() => {
+                  setToast({ type: "success", message: `Tab ${activeTab.toUpperCase()} sẽ sớm được kết nối xử lý dữ liệu.` });
+                  setTimeout(() => setToast(null), 3500);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition shadow-2xs cursor-pointer"
               >
-                <MinusIcon size={13} weight="bold" />
+                <UploadSimpleIcon size={15} weight="bold" />
+                <span>Nhập File {activeTab === "ads" ? "Ads" : activeTab === "return" ? "Return" : "Service Fee"}</span>
               </button>
-              <span className="px-2 font-mono text-[11px] text-slate-600 select-none min-w-[42px] text-center">
-                {tableZoom}%
-              </span>
-              <button
-                type="button"
-                onClick={() => setTableZoom((z) => Math.min(150, z + 10))}
-                className="h-6 w-6 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 transition cursor-pointer"
-                title="Phóng to bảng (+10%)"
-              >
-                <PlusIcon size={13} weight="bold" />
-              </button>
-            </div>
+            )}
           </div>
         </div>
+      </div>
 
-        {/* TOOLBAR: Search & Stats Summary with black text and vertical dividers */}
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2.5 pt-2 border-t border-slate-200/80">
-          {/* Left: Search input */}
-          <div className="flex items-center gap-2 flex-1 max-w-md">
+      {/* TABS BAR: Sheet tabs like Excel (tổ chức tương tự mục Inventory) */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 bg-slate-200/70 p-1.5 rounded-xl border border-slate-300 min-h-[46px]">
+        {/* Sheet Tabs like Excel */}
+        <div className="flex items-center gap-1 shrink-0 flex-wrap">
+          {/* Tab 1: Orders */}
+          <button
+            type="button"
+            onClick={() => setActiveTab("orders")}
+            className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
+              activeTab === "orders"
+                ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
+                : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
+            }`}
+          >
+            <ShoppingCartIcon size={16} weight="bold" />
+            <span>Đầu Vào Order</span>
+            <span
+              className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                activeTab === "orders" ? "bg-emerald-700 text-white" : "bg-slate-300 text-slate-700"
+              }`}
+            >
+              {totalOrders}
+            </span>
+          </button>
+
+          {/* Tab 2: Ads */}
+          <button
+            type="button"
+            onClick={() => setActiveTab("ads")}
+            className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
+              activeTab === "ads"
+                ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
+                : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
+            }`}
+          >
+            <TrendUpIcon size={16} weight="bold" />
+            <span>Ads</span>
+          </button>
+
+          {/* Tab 3: Return */}
+          <button
+            type="button"
+            onClick={() => setActiveTab("return")}
+            className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
+              activeTab === "return"
+                ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
+                : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
+            }`}
+          >
+            <ArrowCounterClockwiseIcon size={16} weight="bold" />
+            <span>Return</span>
+          </button>
+
+          {/* Tab 4: Service Fee */}
+          <button
+            type="button"
+            onClick={() => setActiveTab("service_fee")}
+            className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
+              activeTab === "service_fee"
+                ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
+                : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
+            }`}
+          >
+            <ReceiptIcon size={16} weight="bold" />
+            <span>Service Fee</span>
+          </button>
+        </div>
+
+        {/* Quick Search on the right side of the Tab bar (like Inventory) */}
+        {activeTab === "orders" ? (
+          <div className="flex items-center gap-2 min-w-[240px] max-w-sm ml-auto">
             <div className="relative w-full">
               <MagnifyingGlassIcon
                 size={14}
@@ -1038,10 +1125,10 @@ export function OrderInputView() {
               />
               <input
                 type="text"
-                placeholder="Tìm mã đơn amazon-order-id, SKU, ASIN, City, State..."
+                placeholder="Tìm mã đơn, SKU, ASIN, City..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white pl-8 pr-7 py-1.5 text-xs font-medium text-slate-800 placeholder-slate-400 outline-none transition focus:border-indigo-500 focus:ring-1 focus:ring-indigo-100"
+                className="w-full rounded-lg border border-slate-300 bg-white pl-8 pr-7 py-1 text-xs font-medium text-slate-800 placeholder-slate-400 outline-none transition focus:border-indigo-500 focus:ring-1 focus:ring-indigo-100"
               />
               {search && (
                 <button
@@ -1053,99 +1140,114 @@ export function OrderInputView() {
                 </button>
               )}
             </div>
-
-            {/* Sort Date Toggle */}
-            <button
-              type="button"
-              onClick={() => setDateSort((prev) => (prev === "desc" ? "asc" : "desc"))}
-              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-bold transition shadow-2xs whitespace-nowrap cursor-pointer ${
-                dateSort === "desc"
-                  ? "border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
-                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-              }`}
-              title="Sắp xếp theo ngày mua đơn hàng"
-            >
-              {dateSort === "desc" ? <CaretDownIcon size={14} weight="bold" /> : <CaretUpIcon size={14} weight="bold" />}
-              <span>{dateSort === "desc" ? "Mới nhất" : "Cũ nhất"}</span>
-            </button>
           </div>
+        ) : null}
+      </div>
 
-          {/* Right: Quick Stats in Black Text with Vertical Separators */}
-          <div className="flex items-center gap-2.5 flex-wrap text-xs text-slate-900 justify-end py-1">
-            <div className="flex items-center gap-1">
-              <span className="text-slate-500 font-medium">Tổng đơn:</span>
-              <span className="font-bold text-slate-950 font-mono">{stats.totalOrders.toLocaleString()}</span>
-            </div>
-            <span className="text-slate-300 select-none">|</span>
-            <div className="flex items-center gap-1">
-              <span className="text-slate-500 font-medium">Số lượng Units:</span>
-              <span className="font-bold text-slate-950 font-mono">{stats.totalUnits.toLocaleString()}</span>
-            </div>
-            <span className="text-slate-300 select-none">|</span>
-            <div className="flex items-center gap-1">
-              <span className="text-slate-500 font-medium">Doanh thu:</span>
-              <span className="font-bold text-slate-950 font-mono">{formatCurrency(stats.totalRevenue)}</span>
-            </div>
-            <span className="text-slate-300 select-none">|</span>
-            <div className="flex items-center gap-1">
-              <span className="text-slate-500 font-medium">Shipped:</span>
-              <span className="font-bold text-slate-950 font-mono">{stats.shippedCount.toLocaleString()}</span>
-            </div>
-            <span className="text-slate-300 select-none">|</span>
-            <div className="flex items-center gap-1">
-              <span className="text-slate-500 font-medium">Pending:</span>
-              <span className="font-bold text-slate-950 font-mono">{stats.pendingCount.toLocaleString()}</span>
-            </div>
-            {stats.canceledCount > 0 && (
-              <>
+      {activeTab === "orders" ? (
+        <>
+          {/* STATS & QUICK FILTER BAR */}
+          <div className="rounded-xl border border-slate-300 bg-white p-3 shadow-2xs space-y-2.5">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2.5">
+              {/* Left: Sort Date Toggle & Quick Search Info */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setDateSort((prev) => (prev === "desc" ? "asc" : "desc"))}
+                  className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-bold transition shadow-2xs whitespace-nowrap cursor-pointer ${
+                    dateSort === "desc"
+                      ? "border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                  }`}
+                  title="Sắp xếp theo ngày mua đơn hàng"
+                >
+                  {dateSort === "desc" ? <CaretDownIcon size={14} weight="bold" /> : <CaretUpIcon size={14} weight="bold" />}
+                  <span>{dateSort === "desc" ? "Mới nhất" : "Cũ nhất"}</span>
+                </button>
+
+                {search && (
+                  <span className="text-xs text-indigo-700 font-semibold bg-indigo-50 px-2 py-1 rounded-md border border-indigo-200">
+                    Kết quả tìm kiếm cho: "{search}" ({totalOrders} đơn)
+                  </span>
+                )}
+              </div>
+
+              {/* Right: Quick Stats in Black Text with Vertical Separators */}
+              <div className="flex items-center gap-2.5 flex-wrap text-xs text-slate-900 justify-end py-0.5">
+                <div className="flex items-center gap-1">
+                  <span className="text-slate-500 font-medium">Tổng đơn:</span>
+                  <span className="font-bold text-slate-950 font-mono">{stats.totalOrders.toLocaleString()}</span>
+                </div>
                 <span className="text-slate-300 select-none">|</span>
                 <div className="flex items-center gap-1">
-                  <span className="text-slate-500 font-medium">Canceled:</span>
-                  <span className="font-bold text-slate-950 font-mono">{stats.canceledCount.toLocaleString()}</span>
+                  <span className="text-slate-500 font-medium">Số lượng Units:</span>
+                  <span className="font-bold text-slate-950 font-mono">{stats.totalUnits.toLocaleString()}</span>
                 </div>
-              </>
+                <span className="text-slate-300 select-none">|</span>
+                <div className="flex items-center gap-1">
+                  <span className="text-slate-500 font-medium">Doanh thu:</span>
+                  <span className="font-bold text-slate-950 font-mono">{formatCurrency(stats.totalRevenue)}</span>
+                </div>
+                <span className="text-slate-300 select-none">|</span>
+                <div className="flex items-center gap-1">
+                  <span className="text-slate-500 font-medium">Shipped:</span>
+                  <span className="font-bold text-slate-950 font-mono">{stats.shippedCount.toLocaleString()}</span>
+                </div>
+                <span className="text-slate-300 select-none">|</span>
+                <div className="flex items-center gap-1">
+                  <span className="text-slate-500 font-medium">Pending:</span>
+                  <span className="font-bold text-slate-950 font-mono">{stats.pendingCount.toLocaleString()}</span>
+                </div>
+                {stats.canceledCount > 0 && (
+                  <>
+                    <span className="text-slate-300 select-none">|</span>
+                    <div className="flex items-center gap-1">
+                      <span className="text-slate-500 font-medium">Canceled:</span>
+                      <span className="font-bold text-slate-950 font-mono">{stats.canceledCount.toLocaleString()}</span>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* ACTIVE COLUMN FILTERS BAR (HIỂN THỊ CÁC CỘT ĐANG ĐƯỢC LỌC) */}
+            {Object.keys(columnFilters).length > 0 && (
+              <div className="flex items-center gap-2 pt-2 border-t border-slate-200/80 flex-wrap">
+                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                  <FunnelIcon size={12} weight="bold" />
+                  Đang lọc theo:
+                </span>
+                {Object.entries(columnFilters).map(([field, val]) => {
+                  const col = columns.find((c) => c.id === field);
+                  const label = col?.label || field;
+                  return (
+                    <span
+                      key={field}
+                      className="inline-flex items-center gap-1 text-xs bg-amber-50 text-amber-950 border border-amber-300 px-2 py-0.5 rounded-md font-semibold shadow-2xs"
+                    >
+                      <span className="text-slate-600 font-medium">{label}:</span>
+                      <span className="font-bold text-amber-900">{val}</span>
+                      <button
+                        type="button"
+                        onClick={() => setColumnFilter(field, "")}
+                        className="ml-1 hover:text-rose-600 rounded p-0.5 cursor-pointer"
+                        title={`Xóa lọc cột ${label}`}
+                      >
+                        <XIcon size={12} weight="bold" />
+                      </button>
+                    </span>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={clearAllFilters}
+                  className="text-[11px] font-bold text-rose-600 hover:text-rose-800 hover:underline cursor-pointer ml-1"
+                >
+                  Xóa tất cả lọc
+                </button>
+              </div>
             )}
           </div>
-        </div>
-
-        {/* ACTIVE COLUMN FILTERS BAR (HIỂN THỊ CÁC CỘT ĐANG ĐƯỢC LỌC) */}
-        {Object.keys(columnFilters).length > 0 && (
-          <div className="flex items-center gap-2 pt-2 border-t border-slate-200/80 flex-wrap">
-            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
-              <FunnelIcon size={12} weight="bold" />
-              Đang lọc theo:
-            </span>
-            {Object.entries(columnFilters).map(([field, val]) => {
-              const col = columns.find((c) => c.id === field);
-              const label = col?.label || field;
-              return (
-                <span
-                  key={field}
-                  className="inline-flex items-center gap-1 text-xs bg-amber-50 text-amber-950 border border-amber-300 px-2 py-0.5 rounded-md font-semibold shadow-2xs"
-                >
-                  <span className="text-slate-600 font-medium">{label}:</span>
-                  <span className="font-bold text-amber-900">{val}</span>
-                  <button
-                    type="button"
-                    onClick={() => setColumnFilter(field, "")}
-                    className="ml-1 hover:text-rose-600 rounded p-0.5 cursor-pointer"
-                    title={`Xóa lọc cột ${label}`}
-                  >
-                    <XIcon size={12} weight="bold" />
-                  </button>
-                </span>
-              );
-            })}
-            <button
-              type="button"
-              onClick={clearAllFilters}
-              className="text-[11px] font-bold text-rose-600 hover:text-rose-800 hover:underline cursor-pointer ml-1"
-            >
-              Xóa tất cả lọc
-            </button>
-          </div>
-        )}
-      </div>
 
       {/* SPREADSHEET TABLE */}
       <div className="rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col relative">
@@ -1380,6 +1482,122 @@ export function OrderInputView() {
           </div>
         </div>
       </div>
+    </>
+  ) : (
+        /* FUTURE IMPORT TABS: ADS, RETURN, SERVICE FEE */
+        <div className="rounded-xl border border-slate-300 bg-white p-8 shadow-2xs space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between border-b border-slate-100 pb-5 gap-4">
+            <div className="flex items-start gap-3.5">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-2xs mt-0.5">
+                {activeTab === "ads" ? (
+                  <TrendUpIcon size={24} weight="bold" />
+                ) : activeTab === "return" ? (
+                  <ArrowCounterClockwiseIcon size={24} weight="bold" />
+                ) : (
+                  <ReceiptIcon size={24} weight="bold" />
+                )}
+              </span>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg font-bold text-slate-900 tracking-tight">
+                    {activeTab === "ads"
+                      ? "Import Báo Cáo Amazon Ads"
+                      : activeTab === "return"
+                      ? "Import Dữ Liệu Return & Hoàn Tiền"
+                      : "Import Dữ Liệu Phí Dịch Vụ (Service Fee)"}
+                  </h2>
+                  <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[11px] font-bold text-amber-800 border border-amber-200">
+                    Sắp ra mắt
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-1 max-w-2xl leading-relaxed">
+                  {activeTab === "ads"
+                    ? "Nhập file báo cáo Sponsored Products, Sponsored Brands, Sponsored Display để phân bổ và đối soát chi phí quảng cáo."
+                    : activeTab === "return"
+                    ? "Nhập file đối soát hoàn tiền (Customer Returns & Refunds), phí lưu kho trả hàng và tỷ lệ trả hàng theo SKU."
+                    : "Nhập file chi phí phụ sàn Amazon (Storage Fee, Inbound Placement Service Fee, Removal Order Fee, Disposal Fee)."}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 self-start shrink-0">
+              <span className="text-xs font-semibold text-slate-500">Store:</span>
+              <span className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded-lg">
+                {stores.find((s) => s.id === selectedStoreId)?.name || "Chưa chọn"}
+              </span>
+            </div>
+          </div>
+
+          {/* Drag & Drop Upload Zone Preview */}
+          <div
+            onClick={() => {
+              setToast({ type: "success", message: `Tính năng nhập file ${activeTab.toUpperCase()} đang được kết nối.` });
+              setTimeout(() => setToast(null), 3500);
+            }}
+            className="rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50/70 p-10 text-center hover:border-indigo-400 hover:bg-indigo-50/20 transition-all cursor-pointer"
+          >
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white shadow-2xs border border-slate-200 text-indigo-600 mb-3">
+              <UploadSimpleIcon size={28} weight="bold" />
+            </div>
+            <h3 className="text-sm font-bold text-slate-800">
+              Kéo thả file báo cáo {activeTab === "ads" ? "Ads" : activeTab === "return" ? "Return" : "Service Fee"} vào đây
+            </h3>
+            <p className="text-xs text-slate-500 mt-1">
+              Hỗ trợ định dạng .xlsx, .csv, .tsv từ Amazon Seller Central
+            </p>
+            <div className="mt-4 inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-indigo-700 transition">
+              <UploadSimpleIcon size={16} weight="bold" />
+              <span>Chọn file từ máy tính</span>
+            </div>
+          </div>
+
+          {/* Anticipated Data Structure Preview */}
+          <div className="space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+              Cột dữ liệu chuẩn bị tích hợp
+            </h4>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {(activeTab === "ads"
+                ? [
+                    { name: "Campaign Name", desc: "Tên chiến dịch PPC" },
+                    { name: "Ad Group / Target", desc: "Nhóm quảng cáo & Từ khóa" },
+                    { name: "Spend / Chi phí", desc: "Chi phí quảng cáo thực tế" },
+                    { name: "Sales / 7-Day Sales", desc: "Doanh thu mang lại từ Ads" },
+                    { name: "Orders / Clicks", desc: "Số lượt click & đơn hàng" },
+                    { name: "ACOS / ROAS", desc: "Tỷ lệ chi phí trên doanh thu" },
+                    { name: "Advertised SKU", desc: "SKU được chạy quảng cáo" },
+                    { name: "Placement", desc: "Vị trí Top of Search / Product" },
+                  ]
+                : activeTab === "return"
+                ? [
+                    { name: "Order ID", desc: "Mã đơn hàng phát sinh hoàn" },
+                    { name: "Return Date", desc: "Ngày hoàn tiền / trả hàng" },
+                    { name: "SKU / ASIN", desc: "Sản phẩm bị hoàn" },
+                    { name: "Quantity", desc: "Số lượng trả về" },
+                    { name: "Refund Amount", desc: "Số tiền đã hoàn cho khách" },
+                    { name: "Reason", desc: "Lý do trả hàng (Defective...)" },
+                    { name: "Fulfillment Center", desc: "Kho FBA tiếp nhận lại" },
+                    { name: "Disposition", desc: "Sellable / Customer Damaged" },
+                  ]
+                : [
+                    { name: "Fee Type", desc: "Loại phí (Storage, Placement...)" },
+                    { name: "Amount", desc: "Số tiền tính phí" },
+                    { name: "Currency", desc: "Loại tiền tệ (USD, CAD, EUR)" },
+                    { name: "Period / Date", desc: "Kỳ tính phí theo tháng" },
+                    { name: "SKU / FNSKU", desc: "Mã hàng bị tính phụ phí" },
+                    { name: "Volume (cu ft)", desc: "Thể tích lưu kho thực tế" },
+                    { name: "Marketplace", desc: "Thị trường áp dụng phụ phí" },
+                    { name: "Description", desc: "Ghi chú chi tiết bản kê sàn" },
+                  ]
+              ).map((item, idx) => (
+                <div key={idx} className="rounded-lg border border-slate-200 bg-slate-50/60 p-2.5 space-y-1">
+                  <span className="text-xs font-bold text-slate-800 block truncate">{item.name}</span>
+                  <span className="text-[11px] text-slate-500 block leading-snug">{item.desc}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* CONTEXT MENU */}
       {columnContextMenu && (() => {
@@ -1895,3 +2113,4 @@ function OrderImportModal({
     </div>
   );
 }
+export const ImportView = OrderInputView;

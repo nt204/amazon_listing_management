@@ -128,14 +128,16 @@ export function evaluateBidDecision(input: EvaluationInput): EvaluationResult {
   }
 
   // Calculate Expected Baseline & Tolerance Threshold T
+  const baselineDays = Math.max(1, Number(baselineMetrics.total_days || 30));
+  const usesExactWindowBaseline = baselineDays === window && window < 30;
   const baselineContribution = Number(baselineMetrics.contribution || 0);
-  const baselinePerDay = baselineContribution / 30;
+  const baselinePerDay = baselineContribution / baselineDays;
   const expectedOwnW = baselinePerDay * window;
 
   const matchedControls = input.matched_controls || [];
   const controlCount = matchedControls.length;
 
-  let expectedSource: "control_group" | "own_30d_avg";
+  let expectedSource: "control_group" | "own_30d_avg" | "own_exact_window";
   let baselineQuality: "HIGH" | "LOW";
   let qualityMultiplier: number;
   let controlShiftW = 0;
@@ -157,7 +159,7 @@ export function evaluateBidDecision(input: EvaluationInput): EvaluationResult {
     );
     controlShiftW = calculateMedian(shifts);
   } else {
-    expectedSource = "own_30d_avg";
+    expectedSource = usesExactWindowBaseline ? "own_exact_window" : "own_30d_avg";
     baselineQuality = "LOW";
     qualityMultiplier = config.quality_multiplier_low;
     controlShiftW = 0;
@@ -177,7 +179,7 @@ export function evaluateBidDecision(input: EvaluationInput): EvaluationResult {
   const rewardUsd = actual !== null ? actual - expected : null;
 
   const baselineSpend = Number(baselineMetrics.ad_spend || 0);
-  const baselineSpendW = (baselineSpend / 30) * window;
+  const baselineSpendW = (baselineSpend / baselineDays) * window;
   const rewardNorm = rewardUsd !== null ? rewardUsd / Math.max(baselineSpendW, 10) : null;
 
   // Tolerance Threshold T formula:
@@ -307,13 +309,19 @@ export function evaluateBidDecision(input: EvaluationInput): EvaluationResult {
   }
 
   // 3.3 Thin baseline clicks
-  if (baselineMetrics.clicks < config.min_baseline_clicks) {
+  const requiredBaselineClicks = usesExactWindowBaseline
+    ? Math.min(config.min_baseline_clicks, config.min_clicks[window] ?? config.min_baseline_clicks)
+    : config.min_baseline_clicks;
+  if (baselineMetrics.clicks < requiredBaselineClicks) {
     inconclusiveReasons.push("THIN_BASELINE");
   }
 
   // 3.4 Thin baseline days
-  const baselineDaysCount = baselineMetrics.days_with_data ?? 30;
-  if (baselineDaysCount < config.min_baseline_days) {
+  const baselineDaysCount = baselineMetrics.days_with_data ?? baselineDays;
+  const requiredBaselineDays = usesExactWindowBaseline
+    ? Math.min(config.min_baseline_days, window)
+    : config.min_baseline_days;
+  if (baselineDaysCount < requiredBaselineDays) {
     if (!inconclusiveReasons.includes("THIN_BASELINE")) {
       inconclusiveReasons.push("THIN_BASELINE");
     }
@@ -425,7 +433,7 @@ export function evaluateBidDecision(input: EvaluationInput): EvaluationResult {
   }
 
   // Volume reason codes (Sales & Orders)
-  const salesRateBaseline = baselineMetrics.ad_sales / 30;
+  const salesRateBaseline = baselineMetrics.ad_sales / baselineDays;
   const salesRateAfter = validAfterMetrics.ad_sales / window;
   if (salesRateAfter >= salesRateBaseline * config.sales_preserved_ratio) {
     reasonCodes.push("SALES_PRESERVED");
@@ -433,7 +441,7 @@ export function evaluateBidDecision(input: EvaluationInput): EvaluationResult {
     reasonCodes.push("SALES_DROPPED");
   }
 
-  const ordersRateBaseline = baselineMetrics.orders / 30;
+  const ordersRateBaseline = baselineMetrics.orders / baselineDays;
   const ordersRateAfter = validAfterMetrics.orders / window;
   if (ordersRateAfter >= ordersRateBaseline * config.orders_preserved_ratio) {
     reasonCodes.push("ORDERS_PRESERVED");

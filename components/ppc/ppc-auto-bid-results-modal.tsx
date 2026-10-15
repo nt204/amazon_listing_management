@@ -9,12 +9,9 @@ import {
   WarningCircle,
   XCircle,
   Clock,
-  TrendUp,
-  TrendDown,
   Sparkle,
   ArrowRight,
   ArrowDown,
-  Lightbulb,
   Target,
   CircleNotch,
   Prohibit,
@@ -30,6 +27,7 @@ export interface WindowDetail {
   observation_start: string;
   observation_end: string;
   maturity_date: string | null;
+  baseline: Record<string, any>;
   observed: Record<string, any>;
   comparison: {
     reward_usd?: number | null;
@@ -125,6 +123,175 @@ export function formatPercent(val: number | string | null | undefined, showPlus 
   return `${sign}${num.toFixed(1)}%`;
 }
 
+// Tính số ngày đã trôi qua kể từ khi áp dụng chỉnh bid
+export function getDaysElapsed(item: { action_timestamp?: string | null; applied_on?: string | null }): number {
+  const ts = item.action_timestamp || item.applied_on;
+  if (!ts) return 0;
+  const t = new Date(ts).getTime();
+  if (isNaN(t) || t === 0) return 0;
+  const now = Date.now();
+  const diffDays = Math.floor((now - t) / (1000 * 60 * 60 * 24));
+  return Math.max(0, diffDays);
+}
+
+// Đánh giá trạng thái từng mốc (3D, 7D, 14D, 30D) thống nhất, gọn gàng, đúng chuẩn
+export function getWindowEvaluation(
+  windowDetail: WindowDetail | null | undefined,
+  windowDays: 3 | 7 | 14 | 30,
+  daysElapsed: number
+): {
+  label: "Win" | "Loss" | "Bình thường" | "Đang chờ" | "Chưa có" | "Chưa đủ dữ liệu" | "Bị ngắt";
+  color: string;
+  tip: string;
+  isPending: boolean;
+} {
+  // 1. Kiểm tra xem có bị hành động đổi bid mới đè lên không
+  const isInterrupted =
+    windowDetail?.status === "INTERRUPTED" ||
+    windowDetail?.evidence_quality?.validity === "INTERRUPTED" ||
+    windowDetail?.evidence_quality?.validity === "SUPERSEDED";
+  if (isInterrupted) {
+    return {
+      label: "Bị ngắt",
+      color: "text-slate-500 bg-slate-100 border-slate-200",
+      tip: `Đã có lần chỉnh bid mới can thiệp trước khi hoàn tất ${windowDays}D`,
+      isPending: false,
+    };
+  }
+
+  // 2. Kiểm tra nếu chưa đủ số ngày trôi qua kể từ khi chỉnh bid
+  if (daysElapsed < windowDays) {
+    return {
+      label: "Đang chờ",
+      color: "text-sky-700 bg-sky-50 border-sky-200",
+      tip: `Đang trong chu kỳ theo dõi ${windowDays}D (${daysElapsed}/${windowDays} ngày)`,
+      isPending: true,
+    };
+  }
+
+  // 3. Nếu đã đủ ngày nhưng chưa có bản ghi hoặc chưa có dữ liệu observed
+  const hasObserved = Boolean(
+    windowDetail?.observed &&
+    (windowDetail.observed.clicks !== undefined ||
+      windowDetail.observed.spend !== undefined ||
+      windowDetail.observed.orders !== undefined)
+  );
+
+  if (!windowDetail || !hasObserved) {
+    return {
+      label: "Chưa có",
+      color: "text-slate-500 bg-slate-50 border-slate-200",
+      tip: `Chưa có báo cáo đối soát sau chỉnh đủ ${windowDays} ngày`,
+      isPending: false,
+    };
+  }
+
+  // 4. Kiểm tra thiếu dữ liệu (inconclusive / low traffic)
+  if (
+    windowDetail.status === "INSUFFICIENT_DATA" ||
+    windowDetail.evidence_quality?.validity === "INCONCLUSIVE" ||
+    windowDetail.outcome_label === "INCONCLUSIVE"
+  ) {
+    return {
+      label: "Chưa đủ dữ liệu",
+      color: "text-amber-700 bg-amber-50 border-amber-200",
+      tip: `Số lượng click hoặc đơn chưa đủ ngưỡng thống kê để kết luận ${windowDays}D`,
+      isPending: false,
+    };
+  }
+
+  // 5. Kết luận Win / Loss / Bình thường
+  if (windowDetail.outcome_label === "POSITIVE") {
+    return {
+      label: "Win",
+      color: "text-emerald-700 bg-emerald-50 border-emerald-300 font-bold",
+      tip: `Hiệu quả quảng cáo cải thiện tích cực sau ${windowDays}D`,
+      isPending: false,
+    };
+  }
+
+  if (windowDetail.outcome_label === "NEGATIVE") {
+    return {
+      label: "Loss",
+      color: "text-rose-700 bg-rose-50 border-rose-300 font-bold",
+      tip: `Hiệu quả quảng cáo giảm sút sau ${windowDays}D`,
+      isPending: false,
+    };
+  }
+
+  if (windowDetail.outcome_label === "NEUTRAL") {
+    return {
+      label: "Bình thường",
+      color: "text-slate-700 bg-slate-100 border-slate-200 font-medium",
+      tip: `Biến động trong ngưỡng bình thường sau ${windowDays}D`,
+      isPending: false,
+    };
+  }
+
+  // Fallback dựa trên reward_usd
+  const reward = windowDetail.comparison?.reward_usd;
+  if (reward != null) {
+    if (reward > 0) {
+      return {
+        label: "Win",
+        color: "text-emerald-700 bg-emerald-50 border-emerald-300 font-bold",
+        tip: `Reward dương (+$${reward.toFixed(1)})`,
+        isPending: false,
+      };
+    }
+    if (reward < 0) {
+      return {
+        label: "Loss",
+        color: "text-rose-700 bg-rose-50 border-rose-300 font-bold",
+        tip: `Reward âm (-$${Math.abs(reward).toFixed(1)})`,
+        isPending: false,
+      };
+    }
+  }
+
+  return {
+    label: "Bình thường",
+    color: "text-slate-700 bg-slate-100 border-slate-200 font-medium",
+    tip: `Kết quả theo dõi ${windowDays}D ổn định`,
+    isPending: false,
+  };
+}
+
+// Kết luận tổng thể mốc cao nhất có kết quả rõ ràng (ví dụ: Win 7D, Loss 3D)
+export function getOverallStatus(item: BidOutcomeActionItem, daysElapsed: number) {
+  const eval30 = getWindowEvaluation(item.d30, 30, daysElapsed);
+  const eval14 = getWindowEvaluation(item.d14, 14, daysElapsed);
+  const eval7 = getWindowEvaluation(item.d7, 7, daysElapsed);
+  const eval3 = getWindowEvaluation(item.d3, 3, daysElapsed);
+
+  // Thứ tự ưu tiên mốc đã có kết luận rõ ràng (Win/Loss): 30D -> 14D -> 7D -> 3D
+  for (const [days, ev] of [[30, eval30], [14, eval14], [7, eval7], [3, eval3]] as const) {
+    if (ev.label === "Win") {
+      return { badge: `Win ${days}D`, color: "text-emerald-800 bg-emerald-50 border-emerald-200" };
+    }
+    if (ev.label === "Loss") {
+      return { badge: `Loss ${days}D`, color: "text-rose-800 bg-rose-50 border-rose-200" };
+    }
+  }
+
+  for (const [days, ev] of [[30, eval30], [14, eval14], [7, eval7], [3, eval3]] as const) {
+    if (ev.label === "Bình thường") {
+      return { badge: `Hòa ${days}D`, color: "text-slate-700 bg-slate-100 border-slate-200" };
+    }
+  }
+
+  if ([eval3, eval7, eval14, eval30].some((e) => e.label === "Bị ngắt")) {
+    return { badge: "Bị ngắt", color: "text-slate-500 bg-slate-100 border-slate-200" };
+  }
+
+  if ([eval3, eval7, eval14, eval30].some((e) => e.label === "Đang chờ")) {
+    const nextWaiting = [3, 7, 14, 30].find((d) => daysElapsed < d) || 3;
+    return { badge: `Đang chờ ${nextWaiting}D`, color: "text-sky-700 bg-sky-50 border-sky-200" };
+  }
+
+  return { badge: "Chưa có", color: "text-slate-500 bg-slate-100 border-slate-200" };
+}
+
 export function PpcAutoBidResultsModal({
   isOpen,
   onClose,
@@ -190,17 +357,6 @@ export function PpcAutoBidResultsModal({
     }
   };
 
-  // Tính số ngày đã trôi qua kể từ khi áp dụng chỉnh bid
-  const getDaysElapsed = useCallback((item: BidOutcomeActionItem) => {
-    const ts = item.action_timestamp || item.applied_on;
-    if (!ts) return 0;
-    const t = new Date(ts).getTime();
-    if (isNaN(t) || t === 0) return 0;
-    const now = Date.now();
-    const diffDays = Math.floor((now - t) / (1000 * 60 * 60 * 24));
-    return Math.max(0, diffDays);
-  }, []);
-
   // Xác định chặng hiện tại của target
   const getItemStage = useCallback((item: BidOutcomeActionItem): "3D" | "7D" | "14D" | "30D" | "COMPLETED" | "INTERRUPTED" => {
     const isInterrupted =
@@ -226,138 +382,7 @@ export function PpcAutoBidResultsModal({
     if (days <= 14) return "14D";
     if (days <= 30) return "30D";
     return "COMPLETED";
-  }, [getDaysElapsed]);
-
-  // Helper cho trạng thái 3D
-  const get3dStatus = useCallback((item: BidOutcomeActionItem) => {
-    const days = getDaysElapsed(item);
-    const d3 = item.d3;
-    if (!d3 && days < 3) return { badge: "Đang chạy", color: "text-indigo-700 bg-indigo-50 border-indigo-200", tip: "Đang theo dõi 3d đầu", isPending: false };
-    if (!d3) return { badge: "—", color: "text-slate-300 font-mono", tip: "Chưa có dữ liệu 3d", isPending: true };
-
-    const isInterrupted = d3.status === "INTERRUPTED" || d3.evidence_quality?.validity === "INTERRUPTED";
-    if (isInterrupted) {
-      return { badge: "Đã ngắt", color: "text-slate-500 bg-slate-100 border-slate-200", tip: "Đã có lần chỉnh bid mới đè lên", isPending: false };
-    }
-
-    const obs = d3.observed || {};
-    const bSpendDay = item.baseline?.spend ? Number(item.baseline.spend) / 30 : 0;
-    const obsSpend = Number(obs.spend || 0);
-    const obsClicks = Number(obs.clicks || 0);
-
-    if (bSpendDay > 1 && obsSpend / 3 > bSpendDay * 2.2) {
-      return { badge: "Spend tăng cao", color: "text-amber-800 bg-amber-50 border-amber-300 font-bold", tip: `Spend $${(obsSpend / 3).toFixed(1)}/d so với mức cũ $${bSpendDay.toFixed(1)}/d`, isPending: false };
-    }
-
-    if (obsClicks === 0 && days >= 3) {
-      return { badge: "Mất click", color: "text-rose-800 bg-rose-50 border-rose-300 font-bold", tip: "Không có click nào trong 3d qua", isPending: false };
-    }
-
-    if (days < 3) {
-      return { badge: "Đang chạy", color: "text-indigo-700 bg-indigo-50 border-indigo-200", tip: "Đang theo dõi 3d đầu", isPending: false };
-    }
-
-    return { badge: "Ổn định", color: "text-emerald-800 bg-emerald-50 border-emerald-300", tip: "Chi tiêu và traffic trong ngưỡng an toàn", isPending: false };
-  }, [getDaysElapsed]);
-
-  // Helper cho trạng thái 7D
-  const get7dStatus = useCallback((item: BidOutcomeActionItem) => {
-    const days = getDaysElapsed(item);
-    if (days < 3) {
-      return { badge: "—", color: "text-slate-300 font-mono", tip: "Chưa tới mốc 7d", isPending: true };
-    }
-
-    const d7 = item.d7;
-    const isInterrupted = d7?.status === "INTERRUPTED" || d7?.evidence_quality?.validity === "INTERRUPTED";
-    if (isInterrupted) {
-      return { badge: "Đã ngắt", color: "text-slate-500 bg-slate-100 border-slate-200", tip: "Đã chỉnh bid mới trước khi xong 7D", isPending: false };
-    }
-
-    if (days >= 3 && days < 7) {
-      return { badge: "Đang chạy", color: "text-sky-700 bg-sky-50 border-sky-200", tip: "Đang trong chu kỳ 7d", isPending: false };
-    }
-
-    if (d7?.outcome_label === "POSITIVE") {
-      return { badge: "Tốt", color: "text-emerald-800 bg-emerald-50 border-emerald-300 font-bold", tip: "Xu hướng cải thiện", isPending: false };
-    }
-    if (d7?.outcome_label === "NEGATIVE") {
-      return { badge: "Kém", color: "text-rose-800 bg-rose-50 border-rose-300 font-bold", tip: "Xu hướng kém hiệu quả", isPending: false };
-    }
-    if (d7?.outcome_label === "NEUTRAL") {
-      return { badge: "Bình thường", color: "text-slate-700 bg-slate-50 border-slate-200", tip: "Biến động trong mức cho phép", isPending: false };
-    }
-
-    return { badge: "Ổn định", color: "text-slate-700 bg-slate-50 border-slate-200", tip: "Đã qua chặng 7d", isPending: false };
-  }, [getDaysElapsed]);
-
-  // Helper cho trạng thái 14D
-  const get14dStatus = useCallback((item: BidOutcomeActionItem) => {
-    const days = getDaysElapsed(item);
-    if (days < 7) {
-      return { badge: "—", color: "text-slate-300 font-mono", tip: "Chưa tới mốc 14d", isPending: true };
-    }
-
-    const d14 = item.d14;
-    const isInterrupted = d14?.status === "INTERRUPTED" || d14?.evidence_quality?.validity === "INTERRUPTED";
-    if (isInterrupted) {
-      return { badge: "Đã ngắt", color: "text-slate-500 bg-slate-100 border-slate-200", tip: "Bị đè bởi đợt chỉnh bid tiếp theo", isPending: false };
-    }
-
-    if (days >= 7 && days < 14) {
-      return { badge: "Đang chạy", color: "text-violet-700 bg-violet-50 border-violet-200", tip: "Đang đợi đủ thời gian attribution chuẩn 14D", isPending: false };
-    }
-
-    if (d14?.outcome_label === "POSITIVE") {
-      return { badge: "Win", color: "text-emerald-900 bg-emerald-100 border-emerald-300 font-bold", tip: "Thành công rõ rệt", isPending: false };
-    }
-    if (d14?.outcome_label === "NEGATIVE") {
-      return { badge: "Loss", color: "text-rose-900 bg-rose-100 border-rose-300 font-bold", tip: "Kém hiệu quả", isPending: false };
-    }
-    if (d14?.outcome_label === "NEUTRAL") {
-      return { badge: "Hòa", color: "text-amber-800 bg-amber-50 border-amber-200 font-bold", tip: "Hòa vốn so với baseline", isPending: false };
-    }
-
-    return { badge: "Ổn định", color: "text-slate-700 bg-slate-50 border-slate-200", tip: "Đã qua chặng 14d", isPending: false };
-  }, [getDaysElapsed]);
-
-  // Helper cho trạng thái 30D
-  const get30dStatus = useCallback((item: BidOutcomeActionItem) => {
-    const days = getDaysElapsed(item);
-    if (days < 14) {
-      return { badge: "—", color: "text-slate-300 font-mono", tip: "Chưa tới mốc 30d", isPending: true };
-    }
-
-    const d30 = item.d30;
-    const isInterrupted = d30?.status === "INTERRUPTED" || d30?.evidence_quality?.validity === "INTERRUPTED";
-    if (isInterrupted) {
-      return { badge: "Đã ngắt", color: "text-slate-500 bg-slate-100 border-slate-200", tip: "Đã dừng do có bid mới đè lên", isPending: false };
-    }
-
-    const reward = d30?.comparison?.reward_usd;
-    if (reward != null) {
-      const num = Number(reward);
-      if (num > 0) {
-        return { badge: formatCurrencyUsd(num, true), color: "text-emerald-950 bg-emerald-100 border-emerald-300 font-bold", tip: `Net profit: +$${num.toFixed(1)}`, isPending: false };
-      }
-      if (num < 0) {
-        return { badge: formatCurrencyUsd(num), color: "text-rose-950 bg-rose-100 border-rose-300 font-bold", tip: `Net profit: -$${Math.abs(num).toFixed(1)}`, isPending: false };
-      }
-      return { badge: "Hòa", color: "text-slate-700 bg-slate-100 border-slate-200", tip: "Net profit không đổi", isPending: false };
-    }
-
-    if (days >= 14 && days <= 30) {
-      return { badge: "Đang chạy", color: "text-amber-800 bg-amber-50 border-amber-200", tip: "Đang theo dõi 30d", isPending: false };
-    }
-
-    if (d30?.outcome_label === "POSITIVE") {
-      return { badge: "Win", color: "text-emerald-900 bg-emerald-100 border-emerald-300 font-bold", tip: "Đóng góp tích cực dài hạn", isPending: false };
-    }
-    if (d30?.outcome_label === "NEGATIVE") {
-      return { badge: "Loss", color: "text-rose-900 bg-rose-100 border-rose-300 font-bold", tip: "Kém hiệu quả dài hạn", isPending: false };
-    }
-
-    return { badge: "Đã xong", color: "text-slate-700 bg-slate-100 border-slate-200", tip: "Hoàn tất chu kỳ 30d", isPending: false };
-  }, [getDaysElapsed]);
+  }, []);
 
   // Lấy bản ghi mới nhất cho mỗi Target (Toàn bộ trước khi áp dụng bộ lọc Stage/Status)
   const allLatestTargetItems = useMemo(() => {
@@ -402,10 +427,11 @@ export function PpcAutoBidResultsModal({
   // Số lượng cảnh báo 3D
   const warningCount = useMemo(() => {
     return allLatestTargetItems.filter((item) => {
-      const st3 = get3dStatus(item);
-      return st3.badge.includes("Spend") || st3.badge.includes("click");
+      const days = getDaysElapsed(item);
+      const ev3 = getWindowEvaluation(item.d3, 3, days);
+      return ev3.label === "Loss";
     }).length;
-  }, [allLatestTargetItems, get3dStatus]);
+  }, [allLatestTargetItems, getDaysElapsed, getWindowEvaluation]);
 
   // Lọc items theo cả Chặng (Stage) và Kết quả (Status)
   const visibleTargetItems = useMemo(() => {
@@ -423,14 +449,15 @@ export function PpcAutoBidResultsModal({
         if (statusFilter === "LOSS") return label === "NEGATIVE";
         if (statusFilter === "NEUTRAL") return label === "NEUTRAL";
         if (statusFilter === "WARNING_3D") {
-          const d3Status = get3dStatus(item);
-          return d3Status.badge.includes("Spend") || d3Status.badge.includes("click");
+          const days = getDaysElapsed(item);
+          const ev3 = getWindowEvaluation(item.d3, 3, days);
+          return ev3.label === "Loss";
         }
       }
 
       return true;
     });
-  }, [allLatestTargetItems, stageFilter, statusFilter, getItemStage, get3dStatus]);
+  }, [allLatestTargetItems, stageFilter, statusFilter, getItemStage, getDaysElapsed, getWindowEvaluation]);
 
   // Gom theo Chiến dịch cho các target đang hiển thị
   const campaignGroups = useMemo(() => {
@@ -474,12 +501,15 @@ export function PpcAutoBidResultsModal({
       let campWin = 0;
 
       for (const item of cItems) {
-        const label = item.d30?.outcome_label || item.d14?.outcome_label || item.d7?.outcome_label;
-        if (label === "POSITIVE") campWin++;
-        else if (label === "NEGATIVE") campLoss++;
+        const days = getDaysElapsed(item);
+        const ev3 = getWindowEvaluation(item.d3, 3, days);
+        const ev7 = getWindowEvaluation(item.d7, 7, days);
+        const ev14 = getWindowEvaluation(item.d14, 14, days);
+        const ev30 = getWindowEvaluation(item.d30, 30, days);
 
-        const st3 = get3dStatus(item);
-        if (st3.badge.includes("Spend") || st3.badge.includes("click")) campWarning3d++;
+        if ([ev30, ev14, ev7, ev3].some((e) => e.label === "Win")) campWin++;
+        if ([ev30, ev14, ev7, ev3].some((e) => e.label === "Loss")) campLoss++;
+        if (ev3.label === "Loss") campWarning3d++;
       }
 
       const latestActionDate = first?.applied_on || (first?.action_timestamp ? new Date(first.action_timestamp).toISOString().split("T")[0] : "");
@@ -499,7 +529,7 @@ export function PpcAutoBidResultsModal({
         },
       };
     });
-  }, [visibleTargetItems, get3dStatus]);
+  }, [visibleTargetItems, getDaysElapsed, getWindowEvaluation]);
 
   // Mặc định luôn THU GỌN; chỉ tự động mở khi người dùng gõ tìm kiếm keyword
   useEffect(() => {
@@ -533,37 +563,19 @@ export function PpcAutoBidResultsModal({
     setExpandedCampaigns({});
   };
 
-  // Render từng dòng Target (Gọn gàng, sạch sẽ, không icon thừa)
+  // Render từng dòng Target (Gọn gàng, sạch sẽ, chuẩn 4 mốc 3D/7D/14D/30D)
   const renderTargetRow = (item: BidOutcomeActionItem) => {
-    const stage = getItemStage(item);
     const days = getDaysElapsed(item);
-    const st3 = get3dStatus(item);
-    const st7 = get7dStatus(item);
-    const st14 = get14dStatus(item);
-    const st30 = get30dStatus(item);
+    const ev3 = getWindowEvaluation(item.d3, 3, days);
+    const ev7 = getWindowEvaluation(item.d7, 7, days);
+    const ev14 = getWindowEvaluation(item.d14, 14, days);
+    const ev30 = getWindowEvaluation(item.d30, 30, days);
+    const overall = getOverallStatus(item, days);
 
-    const deltaPct = item.applied_delta_pct || 0;
+    const oldBid = Number(item.old_value || 0);
+    const newBid = Number(item.final_value || item.system_suggested_value || 0);
+    const deltaPct = item.applied_delta_pct || (oldBid > 0 ? ((newBid - oldBid) / oldBid) * 100 : 0);
     const isIncrease = deltaPct > 0;
-
-    // Badge chặng hiện tại
-    const renderStageBadge = () => {
-      if (stage === "INTERRUPTED") {
-        return <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-500 border border-slate-200">Đã ngắt</span>;
-      }
-      if (stage === "COMPLETED") {
-        return <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">Đã xong</span>;
-      }
-      if (stage === "3D") {
-        return <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">3D (ngày {Math.min(days, 3)}/3)</span>;
-      }
-      if (stage === "7D") {
-        return <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-sky-50 text-sky-700 border border-sky-200">7D (ngày {Math.min(days, 7)}/7)</span>;
-      }
-      if (stage === "14D") {
-        return <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-violet-50 text-violet-700 border border-violet-200">14D (ngày {Math.min(days, 14)}/14)</span>;
-      }
-      return <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">30D (ngày {Math.min(days, 30)}/30)</span>;
-    };
 
     return (
       <tr
@@ -573,10 +585,15 @@ export function PpcAutoBidResultsModal({
       >
         {/* TARGET / KEYWORD */}
         <td className="py-2.5 px-4">
-          <div className="font-bold text-slate-900 group-hover:text-indigo-700 transition">
-            {item.target_keyword || "—"}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-bold text-slate-900 group-hover:text-indigo-700 transition">
+              {item.target_keyword || "—"}
+            </span>
+            <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold border ${overall.color}`}>
+              {overall.badge}
+            </span>
           </div>
-          <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-medium mt-0.5">
+          <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-medium mt-1">
             {item.match_type && (
               <span className="rounded bg-slate-100 px-1.5 py-0.2 text-slate-600 font-bold uppercase">
                 {item.match_type}
@@ -590,9 +607,7 @@ export function PpcAutoBidResultsModal({
             {item.applied_on && (
               <>
                 <span>•</span>
-                <span className="text-slate-400">
-                  {item.applied_on}
-                </span>
+                <span className="text-slate-400">{item.applied_on}</span>
               </>
             )}
           </div>
@@ -600,11 +615,11 @@ export function PpcAutoBidResultsModal({
 
         {/* BID CHANGE */}
         <td className="py-2.5 px-3">
-          <div className="flex items-center gap-1.5 font-bold font-mono text-slate-800">
-            <span className="text-slate-400">${Number(item.old_value || 0).toFixed(2)}</span>
+          <div className="flex items-center gap-1.5 font-bold font-mono text-slate-800 text-xs">
+            <span className="text-slate-400">${oldBid.toFixed(2)}</span>
             <ArrowRight size={12} className="text-slate-300" weight="bold" />
             <span className={isIncrease ? "text-emerald-700 font-extrabold" : "text-rose-700 font-extrabold"}>
-              ${Number(item.final_value || item.system_suggested_value || 0).toFixed(2)}
+              ${newBid.toFixed(2)}
             </span>
           </div>
           <div className="text-[10px] font-bold mt-0.5">
@@ -614,65 +629,44 @@ export function PpcAutoBidResultsModal({
           </div>
         </td>
 
-        {/* CHẶNG HIỆN TẠI */}
-        <td className="py-2.5 px-3 text-center">
-          {renderStageBadge()}
-        </td>
-
         {/* 3D STATUS */}
         <td className="py-2.5 px-2 text-center">
-          {st3.isPending ? (
-            <span className="text-slate-300 font-mono text-xs select-none">—</span>
-          ) : (
-            <span
-              title={st3.tip}
-              className={`inline-block px-2.5 py-0.5 rounded-md text-[11px] border transition ${st3.color}`}
-            >
-              {st3.badge}
-            </span>
-          )}
+          <span
+            title={ev3.tip}
+            className={`inline-block px-2.5 py-0.5 rounded-md text-[11px] border transition ${ev3.color}`}
+          >
+            {ev3.label}
+          </span>
         </td>
 
         {/* 7D STATUS */}
         <td className="py-2.5 px-2 text-center">
-          {st7.isPending ? (
-            <span className="text-slate-300 font-mono text-xs select-none">—</span>
-          ) : (
-            <span
-              title={st7.tip}
-              className={`inline-block px-2.5 py-0.5 rounded-md text-[11px] border transition ${st7.color}`}
-            >
-              {st7.badge}
-            </span>
-          )}
+          <span
+            title={ev7.tip}
+            className={`inline-block px-2.5 py-0.5 rounded-md text-[11px] border transition ${ev7.color}`}
+          >
+            {ev7.label}
+          </span>
         </td>
 
         {/* 14D STATUS */}
         <td className="py-2.5 px-2 text-center">
-          {st14.isPending ? (
-            <span className="text-slate-300 font-mono text-xs select-none">—</span>
-          ) : (
-            <span
-              title={st14.tip}
-              className={`inline-block px-2.5 py-0.5 rounded-md text-[11px] border transition ${st14.color}`}
-            >
-              {st14.badge}
-            </span>
-          )}
+          <span
+            title={ev14.tip}
+            className={`inline-block px-2.5 py-0.5 rounded-md text-[11px] border transition ${ev14.color}`}
+          >
+            {ev14.label}
+          </span>
         </td>
 
         {/* 30D STATUS */}
         <td className="py-2.5 px-2 text-center">
-          {st30.isPending ? (
-            <span className="text-slate-300 font-mono text-xs select-none">—</span>
-          ) : (
-            <span
-              title={st30.tip}
-              className={`inline-block px-2.5 py-0.5 rounded-md text-[11px] border transition ${st30.color}`}
-            >
-              {st30.badge}
-            </span>
-          )}
+          <span
+            title={ev30.tip}
+            className={`inline-block px-2.5 py-0.5 rounded-md text-[11px] border transition ${ev30.color}`}
+          >
+            {ev30.label}
+          </span>
         </td>
 
         {/* ACTION BUTTON */}
@@ -683,7 +677,7 @@ export function PpcAutoBidResultsModal({
               e.stopPropagation();
               setSelectedAction(item);
             }}
-            className="rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-700 hover:bg-indigo-600 hover:text-white transition cursor-pointer"
+            className="rounded-lg bg-slate-100 px-3 py-1 text-[11px] font-bold text-slate-700 hover:bg-indigo-600 hover:text-white transition cursor-pointer"
           >
             Chi tiết
           </button>
@@ -1012,7 +1006,6 @@ export function PpcAutoBidResultsModal({
                             <tr className="border-b border-slate-200 bg-slate-50/70 text-[10px] font-bold uppercase tracking-wider text-slate-500">
                               <th className="py-2.5 px-4">Target / Từ Khóa</th>
                               <th className="py-2.5 px-3">Đổi Bid</th>
-                              <th className="py-2.5 px-3 text-center">Chặng Hiện Tại</th>
                               <th className="py-2.5 px-2 text-center">3D</th>
                               <th className="py-2.5 px-2 text-center">7D</th>
                               <th className="py-2.5 px-2 text-center">14D</th>
@@ -1055,612 +1048,397 @@ export function PpcAutoBidResultsModal({
   );
 }
 
-// POPUP HỖ TRỢ QUYẾT ĐỊNH: THIẾT KẾ ĐƠN GIẢN, TRỰC QUAN THEO MOCKUP
-function ActionDecisionSupportModal({
+export type DetailWindowDays = 3 | 7 | 14 | 30;
+
+function computeDateRanges(
+  appliedDateStr: string,
+  windowDays: number,
+  baseline: Record<string, any>,
+  observed: Record<string, any>
+) {
+  const formatDate = (dateStr: string) => {
+    if (!dateStr || typeof dateStr !== "string") return "";
+    const [y, m, d] = dateStr.slice(0, 10).split("-");
+    return y && m && d ? `${d}/${m}` : dateStr;
+  };
+
+  const addDays = (baseIso: string, days: number) => {
+    try {
+      const [y, m, d] = baseIso.slice(0, 10).split("-").map(Number);
+      const dt = new Date(Date.UTC(y, m - 1, d));
+      dt.setUTCDate(dt.getUTCDate() + days);
+      return dt.toISOString().slice(0, 10);
+    } catch {
+      return baseIso;
+    }
+  };
+
+  const cleanApplied = (appliedDateStr || new Date().toISOString().slice(0, 10)).slice(0, 10);
+
+  // Trước: [applied - windowDays, applied - 1]
+  const beforeStart = baseline.window_start || addDays(cleanApplied, -windowDays);
+  const beforeEnd = baseline.window_end || addDays(cleanApplied, -1);
+  const beforeRange = `${formatDate(beforeStart)} – ${formatDate(beforeEnd)}`;
+
+  // Sau: [applied + 1, applied + windowDays]
+  const afterStart = observed.window_start || addDays(cleanApplied, 1);
+  const afterEnd = observed.window_end || addDays(cleanApplied, windowDays);
+  const afterRange = `${formatDate(afterStart)} – ${formatDate(afterEnd)}`;
+
+  return { beforeRange, afterRange };
+}
+
+export function ActionDecisionSupportModal({
   action,
   onClose,
 }: {
   action: BidOutcomeActionItem;
   onClose: () => void;
 }) {
-  // Ưu tiên đọc baseline từ action hoặc fallback sang d7/d3/d14
-  const b =
-    action.baseline && Object.keys(action.baseline).length > 0 && (action.baseline.spend !== undefined || action.baseline.clicks !== undefined)
-      ? action.baseline
-      : (action.d7 as any)?.baseline && Object.keys((action.d7 as any).baseline).length > 0
-      ? (action.d7 as any).baseline
-      : (action.d3 as any)?.baseline && Object.keys((action.d3 as any).baseline).length > 0
-      ? (action.d3 as any).baseline
-      : (action.d14 as any)?.baseline && Object.keys((action.d14 as any).baseline).length > 0
-      ? (action.d14 as any).baseline
-      : action.baseline || {};
+  const windows: Record<DetailWindowDays, WindowDetail | null> = {
+    3: action.d3,
+    7: action.d7,
+    14: action.d14,
+    30: action.d30,
+  };
+  const hasObservedData = (window: WindowDetail | null) => Boolean(
+    window && (window.observed?.spend !== undefined || window.observed?.clicks !== undefined || window.observed?.orders !== undefined)
+  );
+  const initialWindow: DetailWindowDays = hasObservedData(action.d30)
+    ? 30
+    : hasObservedData(action.d14)
+      ? 14
+      : hasObservedData(action.d7)
+        ? 7
+        : 3;
+  const [selectedWindowDays, setSelectedWindowDays] = useState<DetailWindowDays>(initialWindow);
+  const window = windows[selectedWindowDays];
+  const baseline = window?.baseline && Object.keys(window.baseline).length > 0
+    ? window.baseline
+    : action.baseline || {};
+  const observed = window?.observed || {};
+  const baselineDays = Math.max(1, Number(baseline.days || 30));
+  const isExactBaseline = baseline.source_method === "EXACT_PRE_WINDOW";
+  const baselineScale = isExactBaseline ? 1 : selectedWindowDays / baselineDays;
+  const hasBaseline = baseline.spend !== undefined || baseline.clicks !== undefined || baseline.orders !== undefined;
+  const hasObserved = observed.spend !== undefined || observed.clicks !== undefined || observed.orders !== undefined;
 
+  // Margin tính contribution: ưu tiên từ SKU/context, mặc định 30% như đề xuất
+  const marginPct = Number((baseline as any)?.margin || (action as any)?.context?.economics?.break_even_acos || 0.30);
+
+  const beforeSpend = hasBaseline ? Number(baseline.spend || 0) * baselineScale : null;
+  const beforeClicks = hasBaseline ? Math.round(Number(baseline.clicks || 0) * baselineScale) : null;
+  const beforeOrders = hasBaseline ? Math.round(Number(baseline.orders || 0) * baselineScale) : null;
+  const beforeSales = hasBaseline ? Number(baseline.sales || 0) * baselineScale : null;
+  const beforeContribution = hasBaseline
+    ? (baseline.contribution !== undefined ? Number(baseline.contribution) * baselineScale : (beforeSales != null && beforeSpend != null ? beforeSales * marginPct - beforeSpend : null))
+    : null;
+
+  const afterSpend = hasObserved ? Number(observed.spend || 0) : null;
+  const afterClicks = hasObserved ? Math.round(Number(observed.clicks || 0)) : null;
+  const afterOrders = hasObserved ? Math.round(Number(observed.orders || 0)) : null;
+  const afterSales = hasObserved ? Number(observed.sales || 0) : null;
+  const afterContribution = hasObserved
+    ? (observed.contribution !== undefined ? Number(observed.contribution) : (afterSales != null && afterSpend != null ? afterSales * marginPct - afterSpend : null))
+    : null;
+
+  const beforeAcos = beforeSales != null && beforeSales > 0 && beforeSpend != null
+    ? (beforeSpend / beforeSales) * 100
+    : null;
+  const afterAcos = afterSales != null && afterSales > 0 && afterSpend != null
+    ? (afterSpend / afterSales) * 100
+    : null;
+
+  const { beforeRange, afterRange } = computeDateRanges(
+    action.applied_on || action.action_timestamp || "",
+    selectedWindowDays,
+    baseline,
+    observed
+  );
+
+  const getStatus = (detail: WindowDetail | null, days: DetailWindowDays) => {
+    if (!detail) return { label: "Chưa có", color: "text-slate-600 bg-slate-100 border-slate-200" };
+    if (detail.status === "INTERRUPTED" || detail.evidence_quality?.validity === "INTERRUPTED" || detail.evidence_quality?.validity === "SUPERSEDED") {
+      return { label: "Bị ngắt", color: "text-slate-500 bg-slate-100 border-slate-200" };
+    }
+    if (!hasObservedData(detail)) {
+      return { label: "Đang chờ", color: "text-sky-700 bg-sky-50 border-sky-200" };
+    }
+    if (detail.outcome_label === "POSITIVE") return { label: "Win", color: "text-emerald-700 bg-emerald-50 border-emerald-300" };
+    if (detail.outcome_label === "NEGATIVE") return { label: "Loss", color: "text-rose-700 bg-rose-50 border-rose-300" };
+    if (detail.outcome_label === "NEUTRAL") return { label: "Bình thường", color: "text-slate-700 bg-slate-100 border-slate-200" };
+    if (detail.outcome_label === "INCONCLUSIVE" || detail.status === "INSUFFICIENT_DATA") {
+      return { label: "Chưa đủ dữ liệu", color: "text-amber-700 bg-amber-50 border-amber-200" };
+    }
+    return { label: "Đang chờ", color: "text-sky-700 bg-sky-50 border-sky-200" };
+  };
+
+  const selectedStatus = getStatus(window, selectedWindowDays);
+  const reward = window?.comparison?.reward_usd;
   const oldBid = Number(action.old_value || 0);
   const newBid = Number(action.final_value || action.system_suggested_value || 0);
-  const deltaPct = action.applied_delta_pct || 0;
+  const deltaPct = action.applied_delta_pct || (oldBid > 0 ? ((newBid - oldBid) / oldBid) * 100 : 0);
 
-  // Baseline 30D normalized to daily average
-  const bDays = Number(b.days || 30) || 30;
-  const bClicks = Number(b.clicks || 0);
-  const bOrders = Number(b.orders || 0);
-  const bSpend = Number(b.spend || 0);
-  const bSales = Number(b.sales || 0);
-  const bClicksDaily = bClicks / bDays;
-  const bOrdersDaily = bOrders / bDays;
-  const bSpendDaily = bSpend / bDays;
-  const bSalesDaily = bSales / bDays;
-  const bAcos = bSales > 0 ? (bSpend / bSales) * 100 : null;
-  const bProfit = Number(b.contribution ?? (bSales * 0.35 - bSpend));
-  const bProfitDaily = bProfit / bDays;
-
-  // Windows data
-  const w3 = action.d3;
-  const w7 = action.d7;
-  const w14 = action.d14;
-  const w30 = action.d30;
-
-  // Day difference from applied_on
-  const appliedDate = action.applied_on ? new Date(action.applied_on) : new Date();
-  const today = new Date();
-  const daysElapsed = Math.max(0, Math.floor((today.getTime() - appliedDate.getTime()) / (1000 * 60 * 60 * 24)));
-
-  const formatShortDate = (dStr?: string | null) => {
-    if (!dStr) return "";
-    const parts = dStr.split("-");
-    if (parts.length === 3) {
-      return `${parts[2]}/${parts[1]}`;
-    }
-    return dStr;
+  const percentChange = (oldVal: number | null, newVal: number | null) => {
+    if (oldVal == null || newVal == null) return null;
+    if (oldVal === 0) return newVal === 0 ? 0 : null;
+    return ((newVal - oldVal) / Math.abs(oldVal)) * 100;
   };
+  const formatNumber = (value: number | null) => value == null ? "—" : String(value);
 
-  const getWindowDateRange = (w: WindowDetail | null, windowDays: number) => {
-    if (w?.observation_start && w?.observation_end) {
-      const inclusiveEnd = new Date(`${w.observation_end}T00:00:00Z`);
-      inclusiveEnd.setUTCDate(inclusiveEnd.getUTCDate() - 1);
-      return `${formatShortDate(w.observation_start)} → ${formatShortDate(inclusiveEnd.toISOString().slice(0, 10))}`;
-    }
-    if (action.applied_on) {
-      try {
-        const start = new Date(`${action.applied_on}T00:00:00Z`);
-        start.setUTCDate(start.getUTCDate() + 1);
-        const end = new Date(start);
-        end.setUTCDate(end.getUTCDate() + windowDays - 1);
-        const fmt = (d: Date) => `${String(d.getUTCDate()).padStart(2, "0")}/${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
-        return `${fmt(start)} → ${fmt(end)}`;
-      } catch {
-        return "";
-      }
-    }
-    return "";
-  };
-
-  const baselineDateRange = useMemo(() => {
-    if (!action.applied_on) return "";
-    try {
-      const applied = new Date(action.applied_on);
-      const start = new Date(applied);
-      start.setDate(start.getDate() - 30);
-      const end = new Date(applied);
-      end.setDate(end.getDate() - 1);
-      const fmt = (d: Date) => `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
-      return `${fmt(start)} → ${fmt(end)}`;
-    } catch {
-      return "";
-    }
-  }, [action.applied_on]);
-
-  // Helper to extract and compute window stats
-  const parseWindow = (w: WindowDetail | null, windowDays: number) => {
-    const dateRangeText = getWindowDateRange(w, windowDays);
-
-    if (!w) {
-      return {
-        isAvailable: false,
-        windowDays,
-        dateRangeText,
-        statusText: daysElapsed < windowDays ? "Đang theo dõi" : "Chưa có dữ liệu",
-        clicks: null,
-        clicksDaily: null,
-        clicksDeltaPct: null,
-        orders: null,
-        ordersDaily: null,
-        ordersDeltaPct: null,
-        spend: null,
-        spendDaily: null,
-        spendDeltaPct: null,
-        sales: null,
-        salesDaily: null,
-        salesDeltaPct: null,
-        acos: null,
-        acosDeltaPt: null,
-        profit: null,
-        profitDaily: null,
-        profitDeltaPct: null,
-        profitDeltaUsd: null,
-      };
-    }
-
-    const isInterrupted = w.status === "INTERRUPTED" || w.evidence_quality?.validity === "INTERRUPTED";
-    if (isInterrupted) {
-      return {
-        isAvailable: false,
-        windowDays,
-        dateRangeText,
-        statusText: "Đã ngắt",
-        clicks: null,
-        clicksDaily: null,
-        clicksDeltaPct: null,
-        orders: null,
-        ordersDaily: null,
-        ordersDeltaPct: null,
-        spend: null,
-        spendDaily: null,
-        spendDeltaPct: null,
-        sales: null,
-        salesDaily: null,
-        salesDeltaPct: null,
-        acos: null,
-        acosDeltaPt: null,
-        profit: null,
-        profitDaily: null,
-        profitDeltaPct: null,
-        profitDeltaUsd: null,
-      };
-    }
-
-    const obs = w.observed || {};
-    const hasData = obs.spend !== undefined && obs.spend !== null;
-
-    if (!hasData) {
-      return {
-        isAvailable: false,
-        windowDays,
-        dateRangeText,
-        statusText: daysElapsed < windowDays ? "Đang theo dõi" : "Chưa có dữ liệu",
-        clicks: null,
-        clicksDaily: null,
-        clicksDeltaPct: null,
-        orders: null,
-        ordersDaily: null,
-        ordersDeltaPct: null,
-        spend: null,
-        spendDaily: null,
-        spendDeltaPct: null,
-        sales: null,
-        salesDaily: null,
-        salesDeltaPct: null,
-        acos: null,
-        acosDeltaPt: null,
-        profit: null,
-        profitDaily: null,
-        profitDeltaPct: null,
-        profitDeltaUsd: null,
-      };
-    }
-
-    const clicks = Number(obs.clicks || 0);
-    const orders = Number(obs.orders || 0);
-    const spend = Number(obs.spend || 0);
-    const sales = Number(obs.sales || 0);
-    const acos = sales > 0 ? (spend / sales) * 100 : null;
-    const profit = obs.contribution != null ? Number(obs.contribution) : (sales * 0.35 - spend);
-
-    const clicksDaily = clicks / windowDays;
-    const ordersDaily = orders / windowDays;
-    const spendDaily = spend / windowDays;
-    const salesDaily = sales / windowDays;
-    const profitDaily = profit / windowDays;
-
-    const clicksDeltaPct = bClicksDaily > 0 ? ((clicksDaily - bClicksDaily) / bClicksDaily) * 100 : (clicksDaily > 0 ? 100 : 0);
-    const ordersDeltaPct = bOrdersDaily > 0 ? ((ordersDaily - bOrdersDaily) / bOrdersDaily) * 100 : (ordersDaily > 0 ? 100 : 0);
-    const spendDeltaPct = bSpendDaily > 0 ? ((spendDaily - bSpendDaily) / bSpendDaily) * 100 : (spendDaily > 0 ? 100 : 0);
-    const salesDeltaPct = bSalesDaily > 0 ? ((salesDaily - bSalesDaily) / bSalesDaily) * 100 : (salesDaily > 0 ? 100 : 0);
-    const acosDeltaPt = acos != null && bAcos != null ? acos - bAcos : null;
-    const profitDeltaPct = bProfitDaily !== 0 ? ((profitDaily - bProfitDaily) / Math.abs(bProfitDaily)) * 100 : (profitDaily > 0 ? 100 : -100);
-    const profitDeltaUsd = profit - (bProfitDaily * windowDays);
-
-    return {
-      isAvailable: true,
-      windowDays,
-      dateRangeText,
-      statusText: w.outcome_label || "Đã có số liệu",
-      clicks,
-      clicksDaily,
-      clicksDeltaPct,
-      orders,
-      ordersDaily,
-      ordersDeltaPct,
-      spend,
-      spendDaily,
-      spendDeltaPct,
-      sales,
-      salesDaily,
-      salesDeltaPct,
-      acos,
-      acosDeltaPt,
-      profit,
-      profitDaily,
-      profitDeltaPct,
-      profitDeltaUsd,
-    };
-  };
-
-  const m3 = parseWindow(w3, 3);
-  const m7 = parseWindow(w7, 7);
-  const m14 = parseWindow(w14, 14);
-  const m30 = parseWindow(w30, 30);
-
-  // Active evaluation window (prefer latest available: 14D -> 7D -> 3D -> 30D)
-  const activeWin = m14.isAvailable ? m14 : (m7.isAvailable ? m7 : (m3.isAvailable ? m3 : (m30.isAvailable ? m30 : m7)));
-
-  // Render metric cell helper (Value + Daily + Delta %)
-  const renderMetricCell = (
-    win: ReturnType<typeof parseWindow>,
-    metricKey: "clicks" | "orders" | "spend" | "sales",
-    isGoodPositive = true,
-    isCurrency = false
-  ) => {
-    if (!win.isAvailable) {
-      return (
-        <td className="py-3 px-3 text-center text-slate-300 font-bold border-r border-slate-100 last:border-r-0">
-          —
-        </td>
-      );
-    }
-    const val = win[metricKey];
-    const daily = win[`${metricKey}Daily` as keyof typeof win] as number | null;
-    const delta = win[`${metricKey}DeltaPct` as keyof typeof win] as number | null;
-
-    const isGoodDelta = delta != null && (delta === 0 ? null : delta > 0 === isGoodPositive);
-    const deltaColor =
-      delta == null || delta === 0
-        ? "text-slate-400"
-        : isGoodDelta
-        ? "text-emerald-600"
-        : "text-rose-500";
-
-    return (
-      <td className="py-3 px-3 border-r border-slate-100 last:border-r-0">
-        <div className="flex items-center justify-between px-2">
-          <div>
-            <span className="font-bold text-slate-900">
-              {isCurrency ? formatCurrencyUsd(val) : (val ?? 0)}
-            </span>
-            <span className="text-slate-400 text-[11px] ml-1">
-              ({isCurrency ? formatCurrencyUsd(daily) : (daily ?? 0).toFixed(2)}/d)
-            </span>
-          </div>
-          {delta != null && (
-            <span className={`font-bold ${deltaColor}`}>
-              {delta > 0 ? "+" : ""}
-              {delta.toFixed(1)}%
-            </span>
-          )}
-        </div>
-      </td>
-    );
-  };
-
-  // Render ACOS cell helper
-  const renderAcosCell = (win: ReturnType<typeof parseWindow>) => {
-    if (!win.isAvailable || win.acos == null) {
-      return (
-        <td className="py-3 px-3 text-center text-slate-300 font-bold border-r border-slate-100 last:border-r-0">
-          —
-        </td>
-      );
-    }
-    const isGoodDelta = win.acosDeltaPt != null && win.acosDeltaPt <= 0;
-    const color =
-      win.acosDeltaPt == null
-        ? "text-slate-400"
-        : isGoodDelta
-        ? "text-emerald-600"
-        : "text-rose-500";
-
-    return (
-      <td className="py-3 px-3 border-r border-slate-100 last:border-r-0">
-        <div className="flex items-center justify-between px-2">
-          <span className="font-bold text-slate-900">{win.acos.toFixed(1)}%</span>
-          {win.acosDeltaPt != null && (
-            <span className={`font-bold ${color}`}>
-              {win.acosDeltaPt <= 0 ? "" : "+"}
-              {win.acosDeltaPt.toFixed(1)}pt
-            </span>
-          )}
-        </div>
-      </td>
-    );
-  };
+  const rows = [
+    {
+      label: "Spend",
+      before: beforeSpend == null ? "—" : `$${beforeSpend.toFixed(2)}`,
+      after: afterSpend == null ? "—" : `$${afterSpend.toFixed(2)}`,
+      delta: percentChange(beforeSpend, afterSpend),
+      isAcosOrContrib: false,
+      lowerIsBetter: true,
+      suffix: "%",
+    },
+    {
+      label: "Clicks",
+      before: formatNumber(beforeClicks),
+      after: formatNumber(afterClicks),
+      delta: percentChange(beforeClicks, afterClicks),
+      isAcosOrContrib: false,
+      lowerIsBetter: false,
+      suffix: "%",
+    },
+    {
+      label: "Orders",
+      before: formatNumber(beforeOrders),
+      after: formatNumber(afterOrders),
+      delta: percentChange(beforeOrders, afterOrders),
+      isAcosOrContrib: false,
+      lowerIsBetter: false,
+      suffix: "%",
+    },
+    {
+      label: "Sales",
+      before: beforeSales == null ? "—" : `$${beforeSales.toFixed(2)}`,
+      after: afterSales == null ? "—" : `$${afterSales.toFixed(2)}`,
+      delta: percentChange(beforeSales, afterSales),
+      isAcosOrContrib: false,
+      lowerIsBetter: false,
+      suffix: "%",
+    },
+    {
+      label: "ACoS",
+      before: beforeAcos == null ? "—" : `${beforeAcos.toFixed(1)}%`,
+      after: afterAcos == null ? "—" : `${afterAcos.toFixed(1)}%`,
+      delta: beforeAcos != null && afterAcos != null ? afterAcos - beforeAcos : null,
+      isAcosOrContrib: true,
+      lowerIsBetter: true,
+      suffix: " điểm %",
+    },
+    {
+      label: "Contribution",
+      before: beforeContribution == null ? "—" : `$${beforeContribution.toFixed(2)}`,
+      after: afterContribution == null ? "—" : `$${afterContribution.toFixed(2)}`,
+      delta: beforeContribution != null && afterContribution != null ? afterContribution - beforeContribution : null,
+      isAcosOrContrib: true,
+      isUsdDelta: true,
+      lowerIsBetter: false,
+      suffix: " USD",
+    },
+  ];
 
   return (
-    <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs animate-in fade-in duration-100">
-      <div className="w-full max-w-5xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl space-y-4 max-h-[95vh] overflow-y-auto thin-scrollbar">
-        {/* HEADER SECTION */}
-        <div className="flex items-start justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="rounded bg-indigo-50 px-2 py-0.5 text-xs font-bold text-indigo-600">
-                Kết quả chỉnh Bid
-              </span>
-              <span className="text-xs text-slate-400 font-medium">
-                Ngày chỉnh: {action.applied_on || "—"} ({daysElapsed}d trước)
-              </span>
-            </div>
-            <h3 className="text-2xl font-black text-slate-900 mt-1">
+    <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs animate-in fade-in duration-150">
+      <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-slate-200 bg-white shadow-2xl thin-scrollbar">
+        {/* MODAL HEADER */}
+        <div className="flex items-start justify-between border-b border-slate-200 px-6 py-4 bg-slate-50/80">
+          <div className="min-w-0">
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+              So Sánh Hiệu Quả Trước – Sau Chỉnh Bid
+            </span>
+            <h3 className="mt-1 truncate text-base font-black text-slate-900">
               {action.target_keyword}
             </h3>
-            <p className="text-[11px] text-slate-400 font-medium mt-0.5">
-              SKU: {action.sku || "—"} | Campaign: {action.campaign_name || "—"} | Ad Group: AG01
-            </p>
-          </div>
-
-          <div className="flex items-start gap-4">
-            {/* BID BEFORE / AFTER BOX */}
-            <div className="flex items-center gap-4 rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-2">
-              <div>
-                <div className="text-[11px] text-slate-400 font-medium">Bid trước</div>
-                <div className="text-sm font-black text-slate-900">${oldBid.toFixed(2)}</div>
-              </div>
-              <span className="text-slate-400 font-bold">→</span>
-              <div>
-                <div className="text-[11px] text-slate-400 font-medium">Bid sau</div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-sm font-black text-indigo-600">${newBid.toFixed(2)}</span>
-                  <span className={`text-xs font-bold ${deltaPct >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
-                    ({deltaPct >= 0 ? "+" : ""}{deltaPct.toFixed(1)}%)
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* CLOSE BUTTON */}
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition cursor-pointer"
-            >
-              <X size={20} weight="bold" />
-            </button>
-          </div>
-        </div>
-
-        {/* =========================================================================
-            4 METRIC SUMMARY CARDS (Clicks, Orders, Sales, Profit)
-            ========================================================================= */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between px-1">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-bold text-slate-800">
-                Hiệu quả hiện tại
+            <div className="mt-1 flex items-center gap-2 text-xs font-mono">
+              <span className="font-bold text-slate-800">
+                Bid ${oldBid.toFixed(2)} → ${newBid.toFixed(2)}
               </span>
-              <span className="rounded-md bg-indigo-50 border border-indigo-100 px-2 py-0.5 text-xs font-bold text-indigo-700">
-                {formatShortDate(action.applied_on)} → Nay ({daysElapsed}d qua)
+              <span className={`font-bold ${deltaPct >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                ({deltaPct >= 0 ? "+" : ""}{deltaPct.toFixed(1)}%)
               </span>
-            </div>
-            <span className="text-[11px] text-slate-400 font-medium">
-              Đối chiếu với tốc độ trung bình 30d trước
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {/* CLICKS */}
-            <div className="rounded-2xl border border-slate-200/80 bg-slate-50/60 p-3 shadow-2xs">
-              <div className="text-[11px] text-slate-500 font-medium">Clicks hiện tại</div>
-              <div className="flex items-baseline gap-1.5 mt-0.5">
-                <span className="text-xl font-black text-slate-900">
-                  {activeWin.isAvailable && activeWin.clicks != null ? activeWin.clicks : "—"}
+              {action.applied_on && (
+                <span className="text-slate-400 font-sans text-[11px]">
+                  • Ngày chỉnh: {action.applied_on}
                 </span>
-                {activeWin.clicksDeltaPct != null && (
-                  <span className={`text-xs font-bold ${
-                    (activeWin.clicksDeltaPct ?? 0) >= 0 ? "text-emerald-600" : "text-rose-500"
-                  }`}>
-                    {activeWin.clicksDeltaPct >= 0 ? "+" : ""}{Math.round(activeWin.clicksDeltaPct)}%
-                  </span>
-                )}
-              </div>
-              <div className={`w-full h-1 rounded-full mt-2 ${
-                (activeWin.clicksDeltaPct ?? 0) >= 0 ? "bg-emerald-500" : "bg-rose-500"
-              }`} />
-            </div>
-
-            {/* ORDERS */}
-            <div className="rounded-2xl border border-slate-200/80 bg-slate-50/60 p-3 shadow-2xs">
-              <div className="text-[11px] text-slate-500 font-medium">Orders hiện tại</div>
-              <div className="flex items-baseline gap-1.5 mt-0.5">
-                <span className="text-xl font-black text-slate-900">
-                  {activeWin.isAvailable && activeWin.orders != null ? activeWin.orders : "—"}
-                </span>
-                {activeWin.ordersDeltaPct != null && (
-                  <span className={`text-xs font-bold ${
-                    (activeWin.ordersDeltaPct ?? 0) >= 0 ? "text-emerald-600" : "text-rose-500"
-                  }`}>
-                    {activeWin.ordersDeltaPct >= 0 ? "+" : ""}{Math.round(activeWin.ordersDeltaPct)}%
-                  </span>
-                )}
-              </div>
-              <div className={`w-full h-1 rounded-full mt-2 ${
-                (activeWin.ordersDeltaPct ?? 0) >= 0 ? "bg-emerald-500" : "bg-rose-500"
-              }`} />
-            </div>
-
-            {/* SALES */}
-            <div className="rounded-2xl border border-slate-200/80 bg-slate-50/60 p-3 shadow-2xs">
-              <div className="text-[11px] text-slate-500 font-medium">Sales hiện tại</div>
-              <div className="flex items-baseline gap-1.5 mt-0.5">
-                <span className="text-xl font-black text-slate-900">
-                  {activeWin.isAvailable && activeWin.sales != null ? formatCurrencyUsd(activeWin.sales) : "—"}
-                </span>
-                {activeWin.salesDeltaPct != null && (
-                  <span className={`text-xs font-bold ${
-                    (activeWin.salesDeltaPct ?? 0) >= 0 ? "text-emerald-600" : "text-rose-500"
-                  }`}>
-                    {activeWin.salesDeltaPct >= 0 ? "+" : ""}{Math.round(activeWin.salesDeltaPct)}%
-                  </span>
-                )}
-              </div>
-              <div className={`w-full h-1 rounded-full mt-2 ${
-                (activeWin.salesDeltaPct ?? 0) >= 0 ? "bg-emerald-500" : "bg-rose-500"
-              }`} />
+              )}
             </div>
           </div>
-        </div>
-
-        {/* =========================================================================
-            BẢNG ĐỐI CHIẾU SỐ LIỆU CHI TIẾT
-            ========================================================================= */}
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-2xs thin-scrollbar">
-          <table className="w-full text-left text-xs border-collapse min-w-[780px]">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-bold text-slate-700">
-                <th className="py-2.5 px-3.5 w-24 text-slate-800">Chỉ số</th>
-                <th className="py-2.5 px-3 text-center border-r border-slate-100 min-w-[130px]">
-                  <div>Baseline</div>
-                  <div className="text-[10px] font-normal text-slate-400 whitespace-nowrap">
-                    {baselineDateRange ? `30d (${baselineDateRange})` : "30d trước"}
-                  </div>
-                </th>
-                <th className="py-2.5 px-3 text-center border-r border-slate-100 min-w-[130px]">
-                  <div className="flex items-center justify-center gap-1 font-bold text-slate-800">
-                    {m3.isAvailable && ((m3.ordersDeltaPct ?? 0) >= 0 && (m3.salesDeltaPct ?? 0) >= 0) ? (
-                      <TrendUp size={14} weight="bold" className="text-emerald-600" />
-                    ) : (
-                      <TrendDown size={14} weight="bold" className="text-rose-500" />
-                    )}
-                    <span>3d</span>
-                  </div>
-                  {m3.dateRangeText && (
-                    <div className="text-[10px] font-normal text-slate-400 mt-0.5 whitespace-nowrap">
-                      {m3.dateRangeText}
-                    </div>
-                  )}
-                </th>
-                <th className="py-2.5 px-3 text-center border-r border-slate-100 min-w-[130px]">
-                  <div className="flex items-center justify-center gap-1 font-bold text-slate-800">
-                    {m7.isAvailable && ((m7.ordersDeltaPct ?? 0) >= 0 && (m7.salesDeltaPct ?? 0) >= 0) ? (
-                      <TrendUp size={14} weight="bold" className="text-emerald-600" />
-                    ) : (
-                      <TrendDown size={14} weight="bold" className="text-rose-500" />
-                    )}
-                    <span>7d</span>
-                  </div>
-                  {m7.dateRangeText && (
-                    <div className="text-[10px] font-normal text-slate-400 mt-0.5 whitespace-nowrap">
-                      {m7.dateRangeText}
-                    </div>
-                  )}
-                </th>
-                <th className="py-2.5 px-3 text-center border-r border-slate-100 min-w-[130px]">
-                  <div className="font-bold text-slate-700">14d</div>
-                  {m14.dateRangeText && (
-                    <div className="text-[10px] font-normal text-slate-400 mt-0.5 whitespace-nowrap">
-                      {m14.dateRangeText}
-                    </div>
-                  )}
-                </th>
-                <th className="py-2.5 px-3 text-center min-w-[130px]">
-                  <div className="font-bold text-slate-700">30d</div>
-                  {m30.dateRangeText && (
-                    <div className="text-[10px] font-normal text-slate-400 mt-0.5 whitespace-nowrap">
-                      {m30.dateRangeText}
-                    </div>
-                  )}
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-xs font-medium">
-              {/* CLICKS */}
-              <tr>
-                <td className="py-3 px-4 font-bold text-slate-800">Clicks</td>
-                <td className="py-3 px-3 text-center border-r border-slate-100">
-                  <span className="font-bold text-slate-900">{bClicks}</span>
-                  <span className="text-slate-400 text-[11px] ml-1">({bClicksDaily.toFixed(2)}/d)</span>
-                </td>
-                {renderMetricCell(m3, "clicks", true)}
-                {renderMetricCell(m7, "clicks", true)}
-                {renderMetricCell(m14, "clicks", true)}
-                {renderMetricCell(m30, "clicks", true)}
-              </tr>
-
-              {/* ORDERS */}
-              <tr>
-                <td className="py-3 px-4 font-bold text-slate-800">Orders</td>
-                <td className="py-3 px-3 text-center border-r border-slate-100">
-                  <span className="font-bold text-slate-900">{bOrders}</span>
-                  <span className="text-slate-400 text-[11px] ml-1">({bOrdersDaily.toFixed(2)}/d)</span>
-                </td>
-                {renderMetricCell(m3, "orders", true)}
-                {renderMetricCell(m7, "orders", true)}
-                {renderMetricCell(m14, "orders", true)}
-                {renderMetricCell(m30, "orders", true)}
-              </tr>
-
-              {/* SPEND */}
-              <tr>
-                <td className="py-3 px-4 font-bold text-slate-800">Spend</td>
-                <td className="py-3 px-3 text-center border-r border-slate-100">
-                  <span className="font-bold text-slate-900">${bSpend.toFixed(1)}</span>
-                  <span className="text-slate-400 text-[11px] ml-1">(${bSpendDaily.toFixed(2)}/d)</span>
-                </td>
-                {renderMetricCell(m3, "spend", false, true)}
-                {renderMetricCell(m7, "spend", false, true)}
-                {renderMetricCell(m14, "spend", false, true)}
-                {renderMetricCell(m30, "spend", false, true)}
-              </tr>
-
-              {/* SALES */}
-              <tr>
-                <td className="py-3 px-4 font-bold text-slate-800">Sales</td>
-                <td className="py-3 px-3 text-center border-r border-slate-100">
-                  <span className="font-bold text-slate-900">${bSales.toFixed(1)}</span>
-                  <span className="text-slate-400 text-[11px] ml-1">(${bSalesDaily.toFixed(2)}/d)</span>
-                </td>
-                {renderMetricCell(m3, "sales", true, true)}
-                {renderMetricCell(m7, "sales", true, true)}
-                {renderMetricCell(m14, "sales", true, true)}
-                {renderMetricCell(m30, "sales", true, true)}
-              </tr>
-
-              {/* ACOS */}
-              <tr>
-                <td className="py-3 px-4 font-bold text-slate-800">ACOS</td>
-                <td className="py-3 px-3 text-center border-r border-slate-100">
-                  <span className="font-bold text-slate-900">{bAcos != null ? `${bAcos.toFixed(1)}%` : "—"}</span>
-                </td>
-                {renderAcosCell(m3)}
-                {renderAcosCell(m7)}
-                {renderAcosCell(m14)}
-                {renderAcosCell(m30)}
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        {/* =========================================================================
-            BOTTOM: ĐỀ XUẤT & NÚT ĐÓNG
-            ========================================================================= */}
-        <div className="flex items-center justify-between pt-2">
-          {/* RECOMMENDATION */}
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full bg-amber-400 text-white flex items-center justify-center shrink-0 shadow-xs">
-              <Lightbulb size={20} weight="fill" />
-            </div>
-            <div>
-              <div className="text-xs font-bold text-slate-800">Đề xuất</div>
-              <div className="text-xs font-black text-slate-900 mt-0.5">
-                Chưa cho thấy hiệu quả. Nên giữ bid hiện tại hoặc giảm bid.
-              </div>
-            </div>
-          </div>
-
-          {/* CLOSE BUTTON */}
           <button
             type="button"
             onClick={onClose}
-            className="rounded-xl bg-slate-900 px-7 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-slate-800 transition cursor-pointer"
+            className="rounded-xl p-2 text-slate-400 hover:bg-slate-200 hover:text-slate-700 transition cursor-pointer"
           >
-            Đóng
+            <X size={18} weight="bold" />
           </button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          {/* TABS 3D, 7D, 14D, 30D */}
+          <div className="grid grid-cols-4 gap-1 rounded-xl bg-slate-100 p-1">
+            {([3, 7, 14, 30] as DetailWindowDays[]).map((days) => {
+              const st = getStatus(windows[days], days);
+              const isSelected = selectedWindowDays === days;
+              return (
+                <button
+                  key={days}
+                  type="button"
+                  onClick={() => setSelectedWindowDays(days)}
+                  className={`flex flex-col items-center justify-center py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+                    isSelected ? "bg-white text-slate-900 shadow-xs" : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  <span className="text-xs font-black">{days}D</span>
+                  <span className={`text-[10px] font-bold mt-0.5 px-1.5 py-0.2 rounded border ${st.color}`}>
+                    {st.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* 2 KHỐI SO SÁNH THỜI GIAN TRƯỚC - SAU */}
+          <div className="grid grid-cols-2 gap-3">
+            {/* THẺ TRƯỚC */}
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3.5">
+              <span className="text-[11px] font-bold text-slate-500 block">
+                Trước chỉnh bid · {selectedWindowDays} ngày
+              </span>
+              <div className="text-base font-black text-slate-900 mt-1 font-mono">
+                {beforeRange || "—"}
+              </div>
+              <div className="text-xs text-slate-500 mt-1 font-mono">
+                Bid: <b className="text-slate-800">${oldBid.toFixed(2)}</b>
+              </div>
+            </div>
+
+            {/* THẺ SAU */}
+            <div className="rounded-2xl border border-indigo-100 bg-indigo-50/40 p-3.5">
+              <span className="text-[11px] font-bold text-indigo-700 block">
+                Sau chỉnh bid · {selectedWindowDays} ngày
+              </span>
+              <div className="text-base font-black text-indigo-950 mt-1 font-mono">
+                {afterRange || "—"}
+              </div>
+              <div className="text-xs text-indigo-700 mt-1 font-mono">
+                Bid: <b className="text-indigo-900">${newBid.toFixed(2)}</b>
+              </div>
+            </div>
+          </div>
+
+          {/* NGUỒN DỮ LIỆU */}
+          <div className="text-[11px] text-slate-500 flex items-center justify-between px-1">
+            <span>
+              {isExactBaseline ? (
+                <span className="text-emerald-700 font-semibold">
+                  ✓ Dữ liệu đối soát cùng khoảng thời gian ({selectedWindowDays} ngày trước ↔ {selectedWindowDays} ngày sau)
+                </span>
+              ) : (
+                <span className="text-amber-700 font-medium">
+                  ⚠️ Dữ liệu trước quy đổi từ Baseline 30D (Dự phòng)
+                </span>
+              )}
+            </span>
+            <span className="text-slate-400">
+              Contribution Margin: <b>{Math.round(marginPct * 100)}%</b>
+            </span>
+          </div>
+
+          {/* BẢNG SO SÁNH 6 CHỈ SỐ */}
+          <div className="overflow-hidden rounded-2xl border border-slate-200">
+            <table className="w-full text-xs">
+              <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 text-[11px] font-bold uppercase">
+                <tr>
+                  <th className="py-2.5 px-4 text-left">Chỉ Số</th>
+                  <th className="py-2.5 px-4 text-right">Trước</th>
+                  <th className="py-2.5 px-4 text-right">Sau</th>
+                  <th className="py-2.5 px-4 text-right">Thay Đổi</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {rows.map((row) => {
+                  let deltaText = "—";
+                  let deltaColor = "text-slate-500";
+
+                  if (row.delta != null) {
+                    const isPositive = row.delta > 0;
+                    const isZero = row.delta === 0;
+
+                    if (row.isUsdDelta) {
+                      deltaText = `${isPositive ? "+" : ""}$${Math.abs(row.delta).toFixed(2)}`;
+                    } else if (row.isAcosOrContrib) {
+                      deltaText = `${isPositive ? "+" : "−"}${Math.abs(row.delta).toFixed(1)}${row.suffix}`;
+                    } else {
+                      deltaText = `${isPositive ? "+" : ""}${row.delta.toFixed(1)}${row.suffix}`;
+                    }
+
+                    if (isZero) {
+                      deltaColor = "text-slate-500";
+                    } else if (row.lowerIsBetter) {
+                      deltaColor = row.delta < 0 ? "text-emerald-700" : "text-rose-700";
+                    } else {
+                      deltaColor = row.delta > 0 ? "text-emerald-700" : "text-rose-700";
+                    }
+                  }
+
+                  return (
+                    <tr key={row.label} className="hover:bg-slate-50/60 transition">
+                      <td className="py-2.5 px-4 font-bold text-slate-800">{row.label}</td>
+                      <td className="py-2.5 px-4 text-right font-mono font-semibold text-slate-600">
+                        {row.before}
+                      </td>
+                      <td className="py-2.5 px-4 text-right font-mono font-bold text-slate-900">
+                        {row.after}
+                      </td>
+                      <td className={`py-2.5 px-4 text-right font-mono font-black ${deltaColor}`}>
+                        {deltaText}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {!hasObserved && (
+            <div className="rounded-xl bg-amber-50/80 border border-amber-200 px-3.5 py-2 text-xs text-amber-800 font-medium">
+              Chưa có báo cáo sau chỉnh bid đủ {selectedWindowDays} ngày. Kết quả sẽ được đối soát tự động khi sync báo cáo mới.
+            </div>
+          )}
+
+          {/* TÓM TẮT KẾT LUẬN & REWARD */}
+          <div className="flex items-center justify-between rounded-2xl bg-slate-50 border border-slate-200 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-600">Kết luận {selectedWindowDays}D:</span>
+              <span className={`px-2.5 py-0.5 rounded-md text-xs font-black border ${selectedStatus.color}`}>
+                {selectedStatus.label}
+              </span>
+            </div>
+            {reward != null && (
+              <div className="flex items-center gap-1.5 text-xs font-mono">
+                <span className="text-slate-500 font-sans font-medium">Reward:</span>
+                <span className={`font-black ${reward >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                  {formatCurrencyUsd(reward, true)}
+                </span>
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-end pt-1">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl bg-slate-900 px-5 py-2 text-xs font-bold text-white hover:bg-slate-800 transition cursor-pointer"
+            >
+              Đóng
+            </button>
+          </div>
         </div>
       </div>
     </div>

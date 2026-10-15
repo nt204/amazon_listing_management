@@ -16,6 +16,7 @@ import {
   StorefrontIcon,
   PackageIcon,
   ShoppingCartIcon,
+  UploadSimpleIcon,
   WalletIcon,
   TrendUpIcon,
   ChatCircleDotsIcon,
@@ -96,6 +97,7 @@ export function ListingWorkspace({
     | "inventory"
     | "files"
     | "orders"
+    | "import"
     | "financials"
     | "reports"
     | "admin"
@@ -275,6 +277,7 @@ export function ListingWorkspace({
         "inventory",
         "files",
         "orders",
+        "import",
         "financials",
         "reports",
         "admin",
@@ -839,24 +842,24 @@ export function ListingWorkspace({
                       </div>
                     </button>
 
-                    {/* 4. Orders */}
+                    {/* 4. Import (formerly Orders) */}
                     <button
                       type="button"
                       onClick={() => selectAccountingSection("orders")}
-                      className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "orders"
+                      className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "orders" || accountingSection === "import"
                           ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
                           : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                         }`}
                     >
-                      <ShoppingCartIcon
+                      <UploadSimpleIcon
                         size={17}
-                        weight={accountingSection === "orders" ? "fill" : "duotone"}
-                        className={`shrink-0 mt-0.5 ${accountingSection === "orders" ? "text-indigo-600" : "text-slate-400"
+                        weight={accountingSection === "orders" || accountingSection === "import" ? "bold" : "regular"}
+                        className={`shrink-0 mt-0.5 ${accountingSection === "orders" || accountingSection === "import" ? "text-indigo-600" : "text-slate-400"
                           }`}
                       />
                       <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                        <span className="text-xs font-bold text-slate-800">Orders</span>
-                        <span className="text-[10.5px] font-normal text-slate-400 leading-snug break-words">Đơn hàng, hoàn tiền, hủy đơn</span>
+                        <span className="text-xs font-bold text-slate-800">Import</span>
+                        <span className="text-[10.5px] font-normal text-slate-400 leading-snug break-words">Orders, Ads, Return, Service Fee</span>
                       </div>
                     </button>
 
@@ -1057,8 +1060,8 @@ export function ListingWorkspace({
                         ? "Accounting - Overview & Dashboard"
                         : accountingSection === "inventory"
                           ? "Accounting - Quản Lý Inventory"
-                          : accountingSection === "orders"
-                            ? "Accounting - Quản Lý Orders"
+                          : accountingSection === "orders" || accountingSection === "import"
+                            ? "Accounting - Quản Lý Import Dữ Liệu"
                             : accountingSection === "financials" ||
                               accountingSection === "revenue" ||
                               accountingSection === "costs" ||

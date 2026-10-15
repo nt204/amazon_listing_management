@@ -71,7 +71,7 @@ export function detectFileType(fileName: string): { code: string; label: string;
     return { code: "04_SERVICE_FEES", label: "04. Phí dịch vụ Service Fees", isIngestable: false };
   }
   if (lower.includes("05_campaigns") || lower.includes("campaign")) {
-    return { code: "05_CAMPAIGNS", label: "05. Chiến dịch Campaigns Ads", isIngestable: false };
+    return { code: "05_CAMPAIGNS", label: "05. Chi phí Ads (Portfolios)", isIngestable: false };
   }
   if (lower.includes("06_fbainventory") || lower.includes("fbainventory") || lower.includes("fba inventory")) {
     return { code: "06_FBA_INVENTORY", label: "06. Tồn kho FBA Inventory", isIngestable: true };

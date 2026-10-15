@@ -103,6 +103,7 @@ export async function GET(request: Request) {
         observation_end: r.observation_end,
         maturity_date: r.maturity_date,
         observed: r.observed || {},
+        baseline: r.baseline || {},
         comparison: r.comparison || {},
         evidence_quality: r.evidence_quality || {},
         evaluated_at: r.evaluated_at,

@@ -21,7 +21,8 @@ export type AccountingModuleKey =
   | "amazon_fees"
   | "ads"
   | "pnl"
-  | "settlements";
+  | "settlements"
+  | "import";
 
 export type FinancialsTabKey = "revenue" | "costs" | "amazon_fees" | "ads";
 export type ReportsTabKey = "pnl" | "settlements";
@@ -100,8 +101,13 @@ const MODULE_DEFINITIONS: Record<
   },
   orders: {
     number: 4,
-    name: "Orders",
-    description: "Nhập và đối soát đơn hàng, hoàn tiền, hủy đơn và trạng thái vòng đời đơn hàng.",
+    name: "Import",
+    description: "Nhập và đối soát đơn hàng, ads, hoàn tiền và chi phí dịch vụ.",
+  },
+  import: {
+    number: 4,
+    name: "Import",
+    description: "Nhập và đối soát đơn hàng, ads, hoàn tiền và chi phí dịch vụ.",
   },
   admin: {
     number: 7,
@@ -177,8 +183,8 @@ export function AccountingWorkspace({
     return <InventoryView />;
   }
 
-  // Section 4: Orders (Đầu Vào Order & Đối Soát Đơn Hàng)
-  if (effectiveSection === "orders") {
+  // Section 4: Import (Đầu Vào Order, Ads, Return, Service Fee)
+  if (effectiveSection === "orders" || effectiveSection === "import") {
     return <OrderInputView />;
   }
 
