@@ -35,6 +35,8 @@ body {
   letter-spacing: -0.01em;
 }
 
+/* Quy chuẩn kích thước hiển thị cho toàn bộ sheet Accounting:
+   Tỷ lệ vừa vặn chuẩn Excel (100% tương đương 90% thông thường) */
 .font-accounting-system {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", "Noto Sans", "Liberation Sans", Arial, sans-serif,
@@ -57,20 +59,21 @@ body {
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji" !important;
 }
 
-/* Quy chuẩn toàn bộ dữ liệu ô (data cells) cho toàn bộ sheet/cột Accounting từ giờ về sau */
+/* Quy chuẩn toàn bộ dữ liệu ô (data cells) cho toàn bộ sheet/cột Accounting:
+   Cỡ chữ 12px (tỷ lệ 90% vừa mắt, số liệu thẳng hàng, gọn gàng, không bị to quá) */
 .font-accounting-system table td,
 .font-accounting-system table td input,
 .font-accounting-system table td select,
 .font-accounting-system table td textarea {
-  font-size: 13px !important;
+  font-size: 12px !important;
   color: #0f172a;
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
 }
 
-/* Ngoại trừ header tiêu đề cột: giữ phong cách in hoa, đậm nét */
+/* Tiêu đề cột: 11.5px, in hoa, đậm nét */
 .font-accounting-system table th {
-  font-size: 12px;
+  font-size: 11.5px !important;
   font-weight: 700;
   letter-spacing: 0.04em;
   color: #020617;
