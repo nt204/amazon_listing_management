@@ -2991,6 +2991,7 @@ export function parseAmazonShipmentNameAndId(raw: string): {
  * Đồng bộ dữ liệu từ CHECK SHIPMENT AMAZON sang CHI TIẾT ĐI HÀNG:
  * - units_located -> so_luong_amazon_nhan (KHÔNG map đè vào amazon_received)
  * - status -> status và tinh_trang_hang_den_kho
+ * - created_date (cột Created của Check Shipment) -> ngay_di (cột Ngày đi của Đi Hàng)
  * - discrepancy -> (quantity - units_located)
  */
 export async function syncCheckShipmentsToInbound(
@@ -3011,6 +3012,10 @@ export async function syncCheckShipmentsToInbound(
       so_luong_amazon_nhan = c.units_located,
       status = c.status,
       tinh_trang_hang_den_kho = c.status,
+      ngay_di = CASE
+        WHEN c.created_date IS NOT NULL AND TRIM(c.created_date) != '' THEN c.created_date
+        ELSE s.ngay_di
+      END,
       discrepancy = COALESCE(s.quantity, 0) - COALESCE(c.units_located, 0),
       last_changed_by = ${changedBy},
       updated_at = NOW()
@@ -3018,7 +3023,8 @@ export async function syncCheckShipmentsToInbound(
       SELECT DISTINCT ON (LOWER(TRIM(shipment_id)))
         LOWER(TRIM(shipment_id)) AS matched_shipment_id,
         units_located,
-        status
+        status,
+        created_date
       FROM accounting_amazon_check_shipments
       WHERE store_id = ${storeId}
         AND deleted_at IS NULL
@@ -3034,6 +3040,7 @@ export async function syncCheckShipmentsToInbound(
         s.so_luong_amazon_nhan IS DISTINCT FROM c.units_located OR
         s.status IS DISTINCT FROM c.status OR
         s.tinh_trang_hang_den_kho IS DISTINCT FROM c.status OR
+        (c.created_date IS NOT NULL AND TRIM(c.created_date) != '' AND s.ngay_di IS DISTINCT FROM c.created_date) OR
         s.discrepancy IS DISTINCT FROM (COALESCE(s.quantity, 0) - COALESCE(c.units_located, 0))
       )
     RETURNING s.id
