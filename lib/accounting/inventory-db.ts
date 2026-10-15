@@ -2989,7 +2989,7 @@ export function parseAmazonShipmentNameAndId(raw: string): {
 
 /**
  * Đồng bộ dữ liệu từ CHECK SHIPMENT AMAZON sang CHI TIẾT ĐI HÀNG:
- * - units_located -> so_luong_amazon_nhan và amazon_received
+ * - units_located -> so_luong_amazon_nhan (KHÔNG map đè vào amazon_received)
  * - status -> status và tinh_trang_hang_den_kho
  * - discrepancy -> (quantity - units_located)
  */
@@ -3009,7 +3009,6 @@ export async function syncCheckShipmentsToInbound(
     UPDATE accounting_inbound_shipments s
     SET
       so_luong_amazon_nhan = c.units_located,
-      amazon_received = c.units_located,
       status = c.status,
       tinh_trang_hang_den_kho = c.status,
       discrepancy = COALESCE(s.quantity, 0) - COALESCE(c.units_located, 0),
@@ -3033,7 +3032,6 @@ export async function syncCheckShipmentsToInbound(
       ${idFilter}
       AND (
         s.so_luong_amazon_nhan IS DISTINCT FROM c.units_located OR
-        s.amazon_received IS DISTINCT FROM c.units_located OR
         s.status IS DISTINCT FROM c.status OR
         s.tinh_trang_hang_den_kho IS DISTINCT FROM c.status OR
         s.discrepancy IS DISTINCT FROM (COALESCE(s.quantity, 0) - COALESCE(c.units_located, 0))
