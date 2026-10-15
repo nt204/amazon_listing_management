@@ -777,29 +777,29 @@ export function OrderInputView() {
   const renderCellContent = (item: OrderItem, colId: string, rowIndex: number) => {
     switch (colId) {
       case "stt":
-        return <span className="font-mono text-xs text-slate-600 font-normal">{(page - 1) * limit + rowIndex + 1}</span>;
+        return <span className="text-[13px] text-slate-700 font-medium tabular-nums">{(page - 1) * limit + rowIndex + 1}</span>;
       case "date":
-        return <span className="font-normal text-xs text-slate-900 whitespace-nowrap">{item.date || "—"}</span>;
+        return <span className="font-normal text-[13px] text-slate-900 whitespace-nowrap tabular-nums">{item.date || "—"}</span>;
       case "amazon_order_id":
         return (
           <span
-            className="font-mono text-xs font-normal text-indigo-700 hover:underline cursor-pointer select-all"
+            className="text-[13px] font-medium text-indigo-700 hover:underline cursor-pointer select-all"
             title="Click đúp để sao chép mã đơn"
           >
             {item.amazon_order_id}
           </span>
         );
       case "merchant_order_id":
-        return <span className="font-mono text-xs text-slate-900">{item.merchant_order_id || "—"}</span>;
+        return <span className="text-[13px] text-slate-900 font-normal">{item.merchant_order_id || "—"}</span>;
       case "purchase_date":
         return (
-          <span className="text-xs text-slate-900 font-mono whitespace-nowrap">
+          <span className="text-[13px] text-slate-900 whitespace-nowrap tabular-nums">
             {item.purchase_date ? item.purchase_date.replace("T", " ").replace("+00:00", "") : "—"}
           </span>
         );
       case "last_updated_date":
         return (
-          <span className="text-xs text-slate-900 font-mono whitespace-nowrap">
+          <span className="text-[13px] text-slate-900 whitespace-nowrap tabular-nums">
             {item.last_updated_date ? item.last_updated_date.replace("T", " ").replace("+00:00", "") : "—"}
           </span>
         );
@@ -822,7 +822,7 @@ export function OrderInputView() {
       case "fulfillment_channel":
         return (
           <span
-            className={`font-medium text-xs ${
+            className={`font-semibold text-[13px] ${
               item.fulfillment_channel === "Amazon" ? "text-indigo-800" : "text-amber-800"
             }`}
           >
@@ -830,13 +830,13 @@ export function OrderInputView() {
           </span>
         );
       case "sales_channel":
-        return <span className="text-slate-900 font-normal text-xs">{item.sales_channel || "—"}</span>;
+        return <span className="text-slate-900 font-normal text-[13px]">{item.sales_channel || "—"}</span>;
       case "ship_service_level":
-        return <span className="text-slate-800 text-xs">{item.ship_service_level || "—"}</span>;
+        return <span className="text-slate-800 text-[13px]">{item.ship_service_level || "—"}</span>;
       case "product_name":
         return (
           <span
-            className="text-slate-900 text-xs whitespace-normal break-words leading-snug block select-text"
+            className="text-slate-900 text-[13px] whitespace-normal break-words leading-snug block select-text"
             title={item.product_name || ""}
           >
             {item.product_name || "—"}
@@ -844,7 +844,7 @@ export function OrderInputView() {
         );
       case "sku":
         return (
-          <span className="font-mono font-normal text-slate-950 text-xs select-all" title={item.sku}>
+          <span className="font-medium text-slate-950 text-[13px] select-all" title={item.sku}>
             {item.sku || "—"}
           </span>
         );
@@ -854,76 +854,76 @@ export function OrderInputView() {
             href={`https://www.amazon.com/dp/${item.asin}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="font-mono text-xs font-normal text-indigo-700 hover:underline"
+            className="text-[13px] font-medium text-indigo-700 hover:underline"
           >
             {item.asin || "—"}
           </a>
         );
       case "item_status":
-        return <span className="text-xs font-normal text-slate-900">{item.item_status || "—"}</span>;
+        return <span className="text-[13px] font-normal text-slate-900">{item.item_status || "—"}</span>;
       case "quantity":
-        return <span className="font-normal text-xs text-slate-950 font-mono">{item.quantity}</span>;
+        return <span className="font-normal text-[13px] text-slate-950 tabular-nums">{item.quantity}</span>;
       case "currency":
-        return <span className="text-[11px] text-slate-700 font-medium uppercase">{item.currency || "USD"}</span>;
+        return <span className="text-xs text-slate-700 font-medium uppercase">{item.currency || "USD"}</span>;
       case "item_price":
         return (
-          <span className="font-normal text-xs font-mono text-emerald-800">
+          <span className="font-medium text-[13px] tabular-nums text-emerald-800">
             {item.item_price != null ? `$${item.item_price.toFixed(2)}` : "—"}
           </span>
         );
       case "item_tax":
         return (
-          <span className="text-slate-900 text-xs font-mono">
+          <span className="text-slate-900 text-[13px] tabular-nums">
             {item.item_tax != null ? `$${item.item_tax.toFixed(2)}` : "—"}
           </span>
         );
       case "shipping_price":
         return (
-          <span className="text-slate-900 text-xs font-mono">
+          <span className="text-slate-900 text-[13px] tabular-nums">
             {item.shipping_price != null ? `$${item.shipping_price.toFixed(2)}` : "—"}
           </span>
         );
       case "shipping_tax":
         return (
-          <span className="text-slate-900 text-xs font-mono">
+          <span className="text-slate-900 text-[13px] tabular-nums">
             {item.shipping_tax != null ? `$${item.shipping_tax.toFixed(2)}` : "—"}
           </span>
         );
       case "gift_wrap_price":
         return (
-          <span className="text-slate-900 text-xs font-mono">
+          <span className="text-slate-900 text-[13px] tabular-nums">
             {item.gift_wrap_price != null ? `$${item.gift_wrap_price.toFixed(2)}` : "—"}
           </span>
         );
       case "gift_wrap_tax":
         return (
-          <span className="text-slate-900 text-xs font-mono">
+          <span className="text-slate-900 text-[13px] tabular-nums">
             {item.gift_wrap_tax != null ? `$${item.gift_wrap_tax.toFixed(2)}` : "—"}
           </span>
         );
       case "item_promotion_discount":
         return (
-          <span className="text-rose-700 font-normal text-xs font-mono">
+          <span className="text-rose-700 font-normal text-[13px] tabular-nums">
             {item.item_promotion_discount != null ? `-$${Math.abs(item.item_promotion_discount).toFixed(2)}` : "—"}
           </span>
         );
       case "ship_promotion_discount":
         return (
-          <span className="text-rose-700 font-normal text-xs font-mono">
+          <span className="text-rose-700 font-normal text-[13px] tabular-nums">
             {item.ship_promotion_discount != null ? `-$${Math.abs(item.ship_promotion_discount).toFixed(2)}` : "—"}
           </span>
         );
       case "ship_city":
-        return <span className="text-slate-900 text-xs">{item.ship_city || "—"}</span>;
+        return <span className="text-slate-900 text-[13px]">{item.ship_city || "—"}</span>;
       case "ship_state":
-        return <span className="font-normal text-slate-900 text-xs">{item.ship_state || "—"}</span>;
+        return <span className="font-normal text-slate-900 text-[13px]">{item.ship_state || "—"}</span>;
       case "ship_postal_code":
-        return <span className="font-mono text-slate-900 text-xs">{item.ship_postal_code || "—"}</span>;
+        return <span className="text-slate-900 text-[13px] tabular-nums">{item.ship_postal_code || "—"}</span>;
       case "ship_country":
-        return <span className="font-normal text-slate-900 text-xs">{item.ship_country || "—"}</span>;
+        return <span className="font-normal text-slate-900 text-[13px]">{item.ship_country || "—"}</span>;
       case "is_business_order":
         return item.is_business_order ? (
-          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-950 border border-purple-300">
+          <span className="px-1.5 py-0.5 rounded text-[11px] font-bold bg-purple-100 text-purple-950 border border-purple-300">
             B2B
           </span>
         ) : (
@@ -931,7 +931,7 @@ export function OrderInputView() {
         );
       default: {
         const val = (item as any)[colId];
-        return <span className="text-slate-900 text-xs">{val != null ? String(val) : "—"}</span>;
+        return <span className="text-slate-900 text-[13px]">{val != null ? String(val) : "—"}</span>;
       }
     }
   };
@@ -1635,7 +1635,7 @@ export function OrderInputView() {
                   orders.map((item, rowIndex) => (
                     <tr
                       key={item.id}
-                      className="group h-[32px] min-h-[32px] bg-white even:bg-[#f8fafc] hover:bg-[#fef9c3] transition-colors [&>td]:border-b [&>td]:border-slate-200"
+                      className="group h-[34px] min-h-[34px] bg-white even:bg-[#f8fafc] hover:bg-[#fef9c3] transition-colors [&>td]:border-b [&>td]:border-slate-200"
                     >
                       {visibleColumns.map((col) => {
                         const f = getCellFreezeProps(col.id, false);
@@ -1651,7 +1651,7 @@ export function OrderInputView() {
                           <td
                             key={col.id}
                             style={f.style}
-                            className={`py-1 px-2.5 text-[12.5px] text-slate-900 border-r border-slate-200 transition-colors leading-tight ${alignClass} ${
+                            className={`py-1.5 px-2.5 text-[13px] text-slate-900 border-r border-slate-200 transition-colors leading-tight ${alignClass} ${
                               isWrapCol ? "whitespace-normal break-words" : "whitespace-nowrap"
                             } ${f.className}`}
                           >

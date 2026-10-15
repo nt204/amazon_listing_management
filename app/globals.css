@@ -39,7 +39,44 @@ body {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", "Noto Sans", "Liberation Sans", Arial, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  font-feature-settings: "tnum" 1, "cv02" 1, "cv03" 1, "cv04" 1, "cv11" 1;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color: #0f172a;
 }
+
+.font-accounting-system table,
+.font-accounting-system th,
+.font-accounting-system td,
+.font-accounting-system input,
+.font-accounting-system select,
+.font-accounting-system button {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", "Noto Sans", "Liberation Sans", Arial, sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji" !important;
+}
+
+/* Quy chuẩn toàn bộ dữ liệu ô (data cells) cho toàn bộ sheet/cột Accounting từ giờ về sau */
+.font-accounting-system table td,
+.font-accounting-system table td input,
+.font-accounting-system table td select,
+.font-accounting-system table td textarea {
+  font-size: 13px !important;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Ngoại trừ header tiêu đề cột: giữ phong cách in hoa, đậm nét */
+.font-accounting-system table th {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #020617;
+}
+
+
 
 button,
 input,

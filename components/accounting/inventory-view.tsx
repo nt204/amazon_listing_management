@@ -184,7 +184,7 @@ function EntityBadge({ value }: { value: string | null | undefined }) {
     return <span className="text-slate-400 font-normal">—</span>;
   }
   return (
-    <span className="text-slate-800 font-normal text-xs whitespace-nowrap">
+    <span className="text-slate-900 font-normal text-[13px] whitespace-nowrap">
       {clean}
     </span>
   );
@@ -207,7 +207,7 @@ function ProductTypeBadge({ type }: { type: string | null | undefined }) {
     return <span className="text-slate-400 font-normal">—</span>;
   }
   return (
-    <span className="text-slate-800 font-normal text-xs whitespace-nowrap">
+    <span className="text-slate-900 font-normal text-[13px] whitespace-nowrap">
       {clean}
     </span>
   );
@@ -725,7 +725,7 @@ const EditableCell = memo(
                   }
                 }}
                 onBlur={commitSave}
-                className={`h-full w-full rounded border border-emerald-500 bg-white px-2 ${hasOptions ? "pr-6" : ""} text-xs font-normal text-slate-950 focus:outline-none ${inputAlignClass}`}
+                className={`h-full w-full rounded border border-emerald-500 bg-white px-2 ${hasOptions ? "pr-6" : ""} text-[13px] font-normal text-slate-950 focus:outline-none ${inputAlignClass}`}
               />
               {hasOptions && (
                 <div className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400">
@@ -744,7 +744,7 @@ const EditableCell = memo(
                         setLocalVal(option);
                         onSave(table, id, field, option);
                       }}
-                      className="block w-full whitespace-nowrap rounded px-2.5 py-1.5 text-left text-xs font-semibold text-slate-800 hover:bg-indigo-50 hover:text-indigo-700"
+                      className="block w-full whitespace-nowrap rounded px-2.5 py-1.5 text-left text-[13px] font-medium text-slate-900 hover:bg-indigo-50 hover:text-indigo-700"
                     >
                       {option}
                     </button>
@@ -963,7 +963,7 @@ function StatusBadge({ status }: { status: string | null | undefined }) {
     return <span className="text-slate-400 font-normal">—</span>;
   }
   return (
-    <span className="text-slate-800 font-normal text-xs whitespace-nowrap">
+    <span className="text-slate-900 font-normal text-[13px] whitespace-nowrap">
       {s}
     </span>
   );
@@ -2588,23 +2588,26 @@ function InventoryViewInner() {
       const setting = fieldSettingsQuery.data?.settings.find(
         (s) => s.entity_type === table && s.field_id === fieldId
       );
+      // 1. Cột có cấu hình giá trị lựa chọn riêng trong "Cấu hình cột"
       if (setting && Array.isArray(setting.options) && setting.options.length > 0) {
         return setting.options.filter(isValidComboboxOption);
       }
-      if (setting && Array.isArray(setting.options) && setting.options.length === 0) {
+      // 2. Cột có cấu hình nhưng không có giá trị lựa chọn (0 giá trị) hoặc là loại text thường => Tuyệt đối không tạo combobox
+      if (setting && (setting.input_type === "text" || (Array.isArray(setting.options) && setting.options.length === 0))) {
         return [];
       }
+      // 3. Nếu không thuộc danh sách cột combobox mặc định (như shipment_name, shipment_id, sku, note...) => Không tạo combobox
+      if (!isComboboxField(table, fieldId)) {
+        return [];
+      }
+      // 4. Cột combobox mặc định (status, product_type, sup, line_ship, trang_thai, brand, ship_to)
       const opts = table === "sku" ? skuOptions[fieldId] : table === "inbound" ? inboundOptions[fieldId] : (checkShipmentOptions as any)[fieldId];
       if (opts && opts.length > 0) {
         return opts.filter(isValidComboboxOption);
       }
-      const rowVals = scanOptionsFromRows(table, fieldId);
-      if (rowVals.length > 0) {
-        return rowVals.filter(isValidComboboxOption);
-      }
       return [];
     },
-    [fieldSettingsQuery.data, skuOptions, inboundOptions, checkShipmentOptions, scanOptionsFromRows]
+    [fieldSettingsQuery.data, skuOptions, inboundOptions, checkShipmentOptions]
   );
 
   useEffect(() => {
@@ -3666,25 +3669,25 @@ function InventoryViewInner() {
     let cellValue: any = (item as any)[cid];
     const setting = fieldSettingsQuery.data?.settings.find((entry) => entry.entity_type === "sku" && entry.field_id === cid);
     let displayNode: React.ReactNode = safeDisplay(cellValue);
-    let cellClass = "py-1 px-2.5 text-xs border-r border-slate-200";
+    let cellClass = "py-1.5 px-2.5 text-[13px] text-slate-900 border-r border-slate-200";
 
     switch (cid) {
       case "brand":
-        displayNode = <span className="font-normal text-slate-800">{safeDisplay(item.brand)}</span>;
+        displayNode = <span className="font-normal text-[13px] text-slate-900">{safeDisplay(item.brand)}</span>;
         break;
       case "asin":
-        cellClass = "py-1 px-2.5 text-xs font-mono font-normal text-slate-900 border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] font-normal text-slate-900 border-r border-slate-200";
         break;
       case "fnsku":
-        cellClass = "py-1 px-2.5 text-xs font-mono font-normal text-slate-800 border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] font-normal text-slate-900 border-r border-slate-200";
         break;
       case "amazon_fee":
         displayNode = item.amazon_fee != null ? `$${item.amazon_fee.toFixed(2)}` : "—";
-        cellClass = "py-1 px-2.5 text-xs text-center font-mono font-normal text-slate-900 border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] text-center font-normal tabular-nums text-slate-900 border-r border-slate-200";
         break;
       case "referral_fee_pct":
         displayNode = item.referral_fee_pct != null ? `${(item.referral_fee_pct * 100).toFixed(0)}%` : "—";
-        cellClass = "py-1 px-2.5 text-xs text-center font-mono font-normal text-slate-900 border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] text-center font-normal tabular-nums text-slate-900 border-r border-slate-200";
         break;
       case "pic_mkt":
         displayNode = <EntityBadge value={item.pic_mkt} />;
@@ -3712,37 +3715,37 @@ function InventoryViewInner() {
         break;
       case "thang_listing":
         displayNode = safeDisplay(formatMonth(item.thang_listing));
-        cellClass = "py-1 px-2.5 text-xs text-slate-800 font-mono font-normal border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] text-slate-900 font-normal tabular-nums border-r border-slate-200";
         break;
       case "thang_danh_gia":
         displayNode = safeDisplay(formatMonth(item.thang_danh_gia));
-        cellClass = "py-1 px-2.5 text-xs text-slate-800 font-mono font-normal border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] text-slate-900 font-normal tabular-nums border-r border-slate-200";
         break;
       case "event_250th":
         displayNode = safeDisplay(formatDate(item.event_250th));
-        cellClass = "py-1 px-2.5 text-xs text-slate-800 font-mono font-normal border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] text-slate-900 font-normal tabular-nums border-r border-slate-200";
         break;
       case "ngay_danh_gia_sku_event":
         displayNode = safeDisplay(formatDate(item.ngay_danh_gia_sku_event));
-        cellClass = "py-1 px-2.5 text-xs text-slate-800 font-mono font-normal border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] text-slate-900 font-normal tabular-nums border-r border-slate-200";
         break;
       case "amazon_fba_fee_thay_doi":
         displayNode = item.amazon_fba_fee_thay_doi != null ? `$${item.amazon_fba_fee_thay_doi.toFixed(2)}` : "—";
-        cellClass = "py-1 px-2.5 text-xs text-right font-mono font-normal text-slate-900 border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] text-right font-normal tabular-nums text-slate-900 border-r border-slate-200";
         break;
       case "basecost_tb":
         displayNode = item.basecost_tb != null ? `$${item.basecost_tb.toFixed(2)}` : "—";
-        cellClass = "py-1 px-2.5 text-xs text-right font-mono font-normal text-slate-900 border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] text-right font-normal tabular-nums text-slate-900 border-r border-slate-200";
         break;
       case "brand_entity_id":
       case "creative_asins_video":
       case "creative_asins_collection":
       case "video_media_ids":
       case "brand_logo_asset_id":
-        cellClass = "py-1 px-2.5 text-xs font-mono font-normal text-slate-700 border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] font-normal text-slate-900 border-r border-slate-200";
         break;
       case "creative_headline":
-        cellClass = "py-1 px-2.5 text-xs text-slate-900 font-normal border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] text-slate-900 font-normal border-r border-slate-200";
         break;
     }
 
@@ -3915,11 +3918,11 @@ function InventoryViewInner() {
     let cellValue: any = (item as any)[cid];
     const setting = fieldSettingsQuery.data?.settings.find((entry) => entry.entity_type === "inbound" && entry.field_id === cid);
     let displayNode: React.ReactNode = safeDisplay(cellValue);
-    let cellClass = "py-1 px-2.5 text-[12.5px] border-r border-slate-200";
+    let cellClass = "py-1.5 px-2.5 text-[13px] text-slate-900 border-r border-slate-200";
 
     switch (cid) {
       case "brand":
-        displayNode = <span className="font-semibold text-slate-800">{safeDisplay(item.brand)}</span>;
+        displayNode = <span className="font-normal text-[13px] text-slate-900">{safeDisplay(item.brand)}</span>;
         break;
       case "sup":
         displayNode = <EntityBadge value={item.sup} />;
@@ -3929,46 +3932,46 @@ function InventoryViewInner() {
       case "ngay_di":
       case "ngay_den":
         displayNode = safeDisplay(formatDate(cellValue));
-        cellClass = "py-1 px-2.5 text-xs text-slate-800 font-mono font-normal border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] text-slate-900 font-normal tabular-nums border-r border-slate-200";
         break;
       case "quantity":
         displayNode = item.quantity?.toLocaleString() || 0;
-        cellClass = "py-1 px-2.5 text-xs text-right font-mono font-normal text-slate-950 border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] text-right font-normal tabular-nums text-slate-950 border-r border-slate-200";
         break;
       case "line_ship":
         displayNode = <EntityBadge value={item.line_ship} />;
-        cellClass = "py-1 px-2.5 text-xs text-center border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] text-center border-r border-slate-200";
         break;
       case "base_cost_per_unit":
         displayNode = item.base_cost_per_unit != null ? `$${item.base_cost_per_unit.toFixed(2)}` : "—";
-        cellClass = "py-1 px-2.5 text-xs text-right font-mono font-normal text-slate-900 border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] text-right font-normal tabular-nums text-slate-900 border-r border-slate-200";
         break;
       case "card":
       case "tag":
       case "shipping_fee":
       case "hop_tui":
         displayNode = cellValue != null ? `$${cellValue.toFixed(2)}` : "—";
-        cellClass = "py-1 px-2.5 text-xs text-right font-mono text-slate-800 border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] text-right font-normal tabular-nums text-slate-900 border-r border-slate-200";
         break;
       case "final_basecost":
         displayNode = item.final_basecost != null ? `$${item.final_basecost.toFixed(2)}` : "—";
-        cellClass = "py-1 px-2.5 text-xs text-right font-mono font-normal text-slate-900 border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] text-right font-medium tabular-nums text-slate-950 border-r border-slate-200";
         break;
       case "total_basecost":
         displayNode = item.total_basecost != null ? `$${item.total_basecost.toLocaleString()}` : "—";
-        cellClass = "py-1 px-2.5 text-xs text-right font-mono font-normal text-indigo-900 border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] text-right font-semibold tabular-nums text-indigo-900 border-r border-slate-200";
         break;
       case "ten_lo_hang":
         displayNode = safeDisplay(item.ten_lo_hang);
-        cellClass = "py-1 px-2.5 text-xs font-normal text-slate-900 border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] font-normal text-slate-900 border-r border-slate-200";
         break;
       case "shipment_id":
         displayNode = safeDisplay(item.shipment_id);
-        cellClass = "py-1 px-2.5 text-xs font-mono font-normal text-slate-800 border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] font-normal text-slate-900 border-r border-slate-200";
         break;
       case "amazon_received":
         displayNode = item.amazon_received?.toLocaleString() || "—";
-        cellClass = "py-1 px-2.5 text-xs text-right font-mono font-normal text-slate-900 border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] text-right font-normal tabular-nums text-slate-900 border-r border-slate-200";
         break;
       case "tinh_trang_hang_den_kho":
         displayNode = <EntityBadge value={item.tinh_trang_hang_den_kho} />;
@@ -3978,19 +3981,19 @@ function InventoryViewInner() {
         break;
       case "so_luong_amazon_nhan":
         displayNode = item.so_luong_amazon_nhan?.toLocaleString() || "—";
-        cellClass = "py-1 px-2.5 text-xs text-right font-mono font-normal text-emerald-700 border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] text-right font-medium tabular-nums text-emerald-800 border-r border-slate-200";
         break;
       case "discrepancy":
         displayNode = item.discrepancy ? (
-          <span className="font-mono font-normal text-rose-600">{item.discrepancy}</span>
+          <span className="font-normal tabular-nums text-rose-600">{item.discrepancy}</span>
         ) : (
-          <span className="text-slate-400 font-mono font-normal">0</span>
+          <span className="text-slate-400 font-normal tabular-nums">0</span>
         );
-        cellClass = "py-1 px-2.5 text-xs text-center border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] text-center border-r border-slate-200";
         break;
       case "note":
         displayNode = safeDisplay(item.note);
-        cellClass = "py-1 px-2.5 text-[12.5px] text-slate-800 border-r border-slate-200";
+        cellClass = "py-1.5 px-2.5 text-[13px] text-slate-900 border-r border-slate-200";
         break;
       case "trang_thai":
         displayNode = <EntityBadge value={item.trang_thai} />;
@@ -4157,53 +4160,53 @@ function InventoryViewInner() {
 
       let cellValue: any = (item as any)[cid];
       let displayNode: React.ReactNode = safeDisplay(cellValue);
-      let cellClass = "py-1 px-2.5 text-[12.5px] border-r border-slate-200";
+      let cellClass = "py-1.5 px-2.5 text-[13px] text-slate-900 border-r border-slate-200";
 
       switch (cid) {
         case "brand":
           displayNode = <EntityBadge value={item.brand} />;
-          cellClass = "py-1 px-2.5 text-[12.5px] text-center border-r border-slate-200";
+          cellClass = "py-1.5 px-2.5 text-[13px] text-center border-r border-slate-200";
           break;
         case "ngay_update":
         case "created_date":
         case "last_updated_date":
           displayNode = safeDisplay(formatDate(cellValue));
-          cellClass = "py-1 px-2.5 text-xs text-slate-800 font-mono font-normal border-r border-slate-200 text-center";
+          cellClass = "py-1.5 px-2.5 text-[13px] text-slate-900 font-normal tabular-nums border-r border-slate-200 text-center";
           break;
         case "ship_to":
           displayNode = <EntityBadge value={item.ship_to} />;
-          cellClass = "py-1 px-2.5 text-xs text-center border-r border-slate-200";
+          cellClass = "py-1.5 px-2.5 text-[13px] text-center border-r border-slate-200";
           break;
         case "skus_count":
           displayNode = item.skus_count != null ? item.skus_count.toLocaleString() : "—";
-          cellClass = "py-1 px-2.5 text-xs text-right font-mono font-normal text-slate-900 border-r border-slate-200";
+          cellClass = "py-1.5 px-2.5 text-[13px] text-right font-normal tabular-nums text-slate-900 border-r border-slate-200";
           break;
         case "units_expected":
           displayNode = item.units_expected != null ? item.units_expected.toLocaleString() : "—";
-          cellClass = "py-1 px-2.5 text-xs text-right font-mono font-normal text-slate-950 border-r border-slate-200";
+          cellClass = "py-1.5 px-2.5 text-[13px] text-right font-normal tabular-nums text-slate-950 border-r border-slate-200";
           break;
         case "units_located":
           displayNode = item.units_located != null ? item.units_located.toLocaleString() : "—";
-          cellClass = "py-1 px-2.5 text-xs text-right font-mono font-normal text-emerald-700 border-r border-slate-200";
+          cellClass = "py-1.5 px-2.5 text-[13px] text-right font-normal tabular-nums text-emerald-800 border-r border-slate-200";
           break;
         case "discrepancy": {
           const disc = item.discrepancy ?? (item.units_located != null && item.units_expected != null ? item.units_located - item.units_expected : 0);
           if (disc === 0) {
-            displayNode = <span className="text-slate-400 font-mono font-normal">0</span>;
+            displayNode = <span className="text-slate-400 font-normal tabular-nums">0</span>;
           } else if (disc < 0) {
             displayNode = (
-              <span className="font-mono font-normal text-rose-600">
+              <span className="font-normal tabular-nums text-rose-600">
                 {disc}
               </span>
             );
           } else {
             displayNode = (
-              <span className="font-mono font-normal text-emerald-600">
+              <span className="font-normal tabular-nums text-emerald-600">
                 +{disc}
               </span>
             );
           }
-          cellClass = "py-1 px-2.5 text-xs text-center border-r border-slate-200";
+          cellClass = "py-1.5 px-2.5 text-[13px] text-center border-r border-slate-200";
           break;
         }
         case "status":
@@ -4249,9 +4252,11 @@ function InventoryViewInner() {
 
   const contextFilterOptions =
     columnContextMenu && columnContextMenu.table !== "monthly_base_cost"
-      // A manually configured list is also a valid filter source. If it is empty,
-      // getColumnOptions falls back to values actually present in the table.
-      ? getColumnOptions(columnContextMenu.table, columnContextMenu.field)
+      ? (() => {
+          const opts = getColumnOptions(columnContextMenu.table, columnContextMenu.field);
+          if (opts.length > 0) return opts;
+          return scanOptionsFromRows(columnContextMenu.table, columnContextMenu.field).filter(isValidComboboxOption);
+        })()
       : [];
 
   return (
@@ -5193,7 +5198,7 @@ function InventoryViewInner() {
                     return (
                       <tr
                         key={item.id}
-                        className="group h-[32px] min-h-[32px] bg-white even:bg-[#f8fafc] hover:bg-amber-50/60 transition-colors whitespace-nowrap [&>td]:border-b [&>td]:border-slate-200"
+                        className="group h-[34px] min-h-[34px] bg-white even:bg-[#f8fafc] hover:bg-amber-50/60 transition-colors whitespace-nowrap [&>td]:border-b [&>td]:border-slate-200"
                       >
                           {/* FROZEN 1: STT with Pencil Button aligned */}
                           {skuColMap["stt"]?.visible !== false && (() => {
@@ -5201,10 +5206,10 @@ function InventoryViewInner() {
                             return (
                               <td
                                 style={f.style}
-                                className={`py-1 px-1 text-center font-mono text-xs font-normal text-slate-700 ${f.className}`}
+                                className={`py-1.5 px-1 text-center text-[13px] font-medium text-slate-700 ${f.className}`}
                               >
                                 <div className="flex items-center justify-between gap-1 w-full px-1">
-                                  <span className="w-5 text-center font-mono font-normal text-slate-600">{stt}</span>
+                                  <span className="w-5 text-center text-[13px] font-medium text-slate-700 tabular-nums">{stt}</span>
                                   <button
                                     type="button"
                                     onClick={() => handleOpenEditSku(item)}
@@ -5229,7 +5234,7 @@ function InventoryViewInner() {
                                 value={item.product_type}
                                 display={<ProductTypeBadge type={item.product_type} />}
                                 style={f.style}
-                                className={`py-1.5 px-3 text-xs ${f.className}`}
+                                className={`py-1.5 px-3 text-[13px] ${f.className}`}
                                 inlineEditing={inlineEditing}
                                 inlineSaving={inlineSaving}
                                 onStartEdit={startInlineEdit}
@@ -5268,12 +5273,12 @@ function InventoryViewInner() {
                                 field="sku"
                                 value={item.sku}
                                 display={
-                                  <span className="font-mono font-normal text-slate-900 text-xs">
+                                  <span className="font-medium text-slate-950 text-[13px]">
                                     {item.sku}
                                   </span>
                                 }
                                 style={f.style}
-                                className={`py-1.5 px-3 text-xs ${f.className}`}
+                                className={`py-1.5 px-3 text-[13px] ${f.className}`}
                                 inlineEditing={inlineEditing}
                                 inlineSaving={inlineSaving}
                                 onStartEdit={startInlineEdit}
@@ -5472,7 +5477,7 @@ function InventoryViewInner() {
                     return (
                       <tr
                         key={item.id}
-                        className="group h-[32px] min-h-[32px] bg-white even:bg-[#f8fafc] hover:bg-amber-50/60 transition-colors whitespace-nowrap [&>td]:border-b [&>td]:border-slate-200"
+                        className="group h-[34px] min-h-[34px] bg-white even:bg-[#f8fafc] hover:bg-amber-50/60 transition-colors whitespace-nowrap [&>td]:border-b [&>td]:border-slate-200"
                       >
                           {/* FROZEN 1: STT with Pencil Button aligned */}
                           {inboundColMap["stt"]?.visible !== false && (() => {
@@ -5480,10 +5485,10 @@ function InventoryViewInner() {
                             return (
                               <td
                                 style={f.style}
-                                className={`py-1 px-1 text-center font-mono text-xs font-normal text-slate-700 ${f.className}`}
+                                className={`py-1.5 px-1 text-center text-[13px] font-medium text-slate-700 ${f.className}`}
                               >
                                 <div className="flex items-center justify-between gap-1 w-full px-1">
-                                  <span className="w-5 text-center font-mono font-normal text-slate-600">{stt}</span>
+                                  <span className="w-5 text-center text-[13px] font-medium text-slate-700 tabular-nums">{stt}</span>
                                   <button
                                     type="button"
                                     onClick={() => handleOpenEditShipment(item)}
@@ -5508,7 +5513,7 @@ function InventoryViewInner() {
                                 value={item.product_type}
                                 display={<ProductTypeBadge type={item.product_type} />}
                                 style={f.style}
-                                className={`py-1.5 px-3 text-xs ${f.className}`}
+                                className={`py-1.5 px-3 text-[13px] ${f.className}`}
                                 inlineEditing={inlineEditing}
                                 inlineSaving={inlineSaving}
                                 onStartEdit={startInlineEdit}
@@ -5547,12 +5552,12 @@ function InventoryViewInner() {
                                 field="sku"
                                 value={item.sku}
                                 display={
-                                  <span className="font-mono font-normal text-slate-900 text-xs">
+                                  <span className="font-medium text-slate-950 text-[13px]">
                                     {item.sku}
                                   </span>
                                 }
                                 style={f.style}
-                                className={`py-1.5 px-3 text-xs ${f.className}`}
+                                className={`py-1.5 px-3 text-[13px] ${f.className}`}
                                 inlineEditing={inlineEditing}
                                 inlineSaving={inlineSaving}
                                 onStartEdit={startInlineEdit}
@@ -5758,7 +5763,7 @@ function InventoryViewInner() {
                     return (
                       <tr
                         key={item.id}
-                        className="group h-[32px] min-h-[32px] bg-white even:bg-[#f8fafc] hover:bg-amber-50/60 transition-colors whitespace-nowrap [&>td]:border-b [&>td]:border-slate-200"
+                        className="group h-[34px] min-h-[34px] bg-white even:bg-[#f8fafc] hover:bg-amber-50/60 transition-colors whitespace-nowrap [&>td]:border-b [&>td]:border-slate-200"
                       >
                         {/* FROZEN 1: STT with Pencil Button aligned */}
                         {checkShipmentColMap["stt"]?.visible !== false && (() => {
@@ -5766,10 +5771,10 @@ function InventoryViewInner() {
                           return (
                             <td
                               style={f.style}
-                              className={`py-1 px-1 text-center font-mono text-xs font-normal text-slate-700 ${f.className}`}
+                              className={`py-1.5 px-1 text-center text-[13px] font-medium text-slate-700 ${f.className}`}
                             >
                               <div className="flex items-center justify-between gap-1 w-full px-1">
-                                <span className="w-5 text-center font-mono font-normal text-slate-600">{stt}</span>
+                                <span className="w-5 text-center text-[13px] font-medium text-slate-700 tabular-nums">{stt}</span>
                                 <button
                                   type="button"
                                   onClick={() => handleOpenEditCheckShipment(item)}
@@ -5793,12 +5798,12 @@ function InventoryViewInner() {
                               field="shipment_id"
                               value={item.shipment_id}
                               display={
-                                <span className="font-mono font-normal text-slate-900 text-xs">
+                                <span className="font-medium text-slate-900 text-[13px]">
                                   {item.shipment_id || "—"}
                                 </span>
                               }
                               style={f.style}
-                              className={`py-1.5 px-3 text-xs text-center ${f.className}`}
+                              className={`py-1.5 px-3 text-[13px] text-center ${f.className}`}
                               inlineEditing={inlineEditing}
                               inlineSaving={inlineSaving}
                               onStartEdit={startInlineEdit}
@@ -5820,12 +5825,12 @@ function InventoryViewInner() {
                               field="shipment_name"
                               value={item.shipment_name}
                               display={
-                                <span className="font-semibold text-slate-900">
+                                <span className="font-semibold text-slate-900 text-[13px]">
                                   {safeDisplay(item.shipment_name)}
                                 </span>
                               }
                               style={f.style}
-                              className={`py-1.5 px-3 text-xs ${f.className}`}
+                              className={`py-1.5 px-3 text-[13px] ${f.className}`}
                               inlineEditing={inlineEditing}
                               inlineSaving={inlineSaving}
                               onStartEdit={startInlineEdit}

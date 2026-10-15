@@ -742,7 +742,7 @@ export function AdsInputView({
         );
       case "date":
         return (
-          <span className="font-normal text-xs text-slate-900 whitespace-nowrap">
+          <span className="font-normal text-[13px] text-slate-900 whitespace-nowrap tabular-nums">
             {item.date || "—"}
           </span>
         );
@@ -753,7 +753,7 @@ export function AdsInputView({
               setEditingCell({ id: item.id, field: "portfolio" });
               setEditingValue(item.portfolio || "");
             }}
-            className="font-mono text-xs font-normal text-indigo-700 hover:underline cursor-pointer select-all truncate block"
+            className="text-[13px] font-medium text-indigo-700 hover:underline cursor-pointer select-all truncate block"
             title={`${item.portfolio} (Nhấp đúp để sửa)`}
           >
             {item.portfolio}
@@ -766,7 +766,7 @@ export function AdsInputView({
               setEditingCell({ id: item.id, field: "sku" });
               setEditingValue(item.sku || "");
             }}
-            className="font-mono text-xs font-normal text-slate-900 truncate block cursor-pointer"
+            className="text-[13px] font-medium text-slate-950 truncate block cursor-pointer select-all"
             title={`${item.sku || "—"} (Nhấp đúp để sửa)`}
           >
             {item.sku || "—"}
@@ -777,7 +777,7 @@ export function AdsInputView({
         const isPaused = item.status?.toLowerCase().includes("paused");
         return (
           <span
-            className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-normal ${
+            className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
               isEnabled
                 ? "bg-amber-100 text-amber-950 border border-amber-300"
                 : isPaused
@@ -791,73 +791,73 @@ export function AdsInputView({
       }
       case "budget_type":
         return (
-          <span className="text-xs font-normal text-slate-900">
+          <span className="text-[13px] font-normal text-slate-900">
             {item.budget_type || "—"}
           </span>
         );
       case "budget":
         return (
-          <span className="font-mono text-xs font-normal text-slate-900">
+          <span className="text-[13px] font-normal text-slate-900 tabular-nums">
             {item.budget > 0 ? formatCurrency(item.budget) : "No Cap"}
           </span>
         );
       case "impressions":
         return (
-          <span className="font-mono text-xs font-normal text-slate-900">
+          <span className="text-[13px] font-normal text-slate-900 tabular-nums">
             {formatNumber(item.impressions)}
           </span>
         );
       case "clicks":
         return (
-          <span className="font-mono text-xs font-normal text-slate-950">
+          <span className="text-[13px] font-normal text-slate-950 tabular-nums">
             {formatNumber(item.clicks)}
           </span>
         );
       case "ctr":
         return (
-          <span className="font-mono text-xs font-normal text-slate-900">
+          <span className="text-[13px] font-normal text-slate-900 tabular-nums">
             {(item.ctr * 100).toFixed(2)}%
           </span>
         );
       case "spend":
         return (
-          <span className="font-mono text-xs font-normal text-rose-700">
+          <span className="text-[13px] font-normal text-rose-700 tabular-nums">
             {formatCurrency(item.spend)}
           </span>
         );
       case "cpc":
         return (
-          <span className="font-mono text-xs font-normal text-slate-900">
+          <span className="text-[13px] font-normal text-slate-900 tabular-nums">
             {formatCurrency(item.cpc)}
           </span>
         );
       case "orders":
         return (
-          <span className="font-mono text-xs font-normal text-slate-900">
+          <span className="text-[13px] font-normal text-slate-900 tabular-nums">
             {formatNumber(item.orders)}
           </span>
         );
       case "sales":
         return (
-          <span className="font-mono text-xs font-normal text-emerald-700">
+          <span className="text-[13px] font-medium text-emerald-700 tabular-nums">
             {formatCurrency(item.sales)}
           </span>
         );
       case "acos":
         return (
-          <span className="font-mono text-xs font-normal text-amber-800">
+          <span className="text-[13px] font-medium text-amber-800 tabular-nums">
             {(item.acos * 100).toFixed(1)}%
           </span>
         );
       case "roas":
         return (
-          <span className="font-mono text-xs font-normal text-emerald-700">
+          <span className="text-[13px] font-medium text-emerald-700 tabular-nums">
             {item.roas.toFixed(2)}
           </span>
         );
       case "thue_10":
         return (
-          <span className="font-mono text-xs font-normal text-amber-900">
+          <span className="text-[13px] font-normal text-amber-900 tabular-nums">
             {formatCurrency(item.thue_10)}
           </span>
         );
@@ -868,7 +868,7 @@ export function AdsInputView({
               setEditingCell({ id: item.id, field: "loai" });
               setEditingValue(item.loai || "");
             }}
-            className="text-xs font-normal text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded cursor-pointer"
+            className="text-[13px] font-normal text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded cursor-pointer"
           >
             {item.loai || "FBA"}
           </span>
@@ -880,17 +880,17 @@ export function AdsInputView({
               setEditingCell({ id: item.id, field: "mkt_pic" });
               setEditingValue(item.mkt_pic || "");
             }}
-            className="text-xs font-normal text-indigo-700 cursor-pointer"
+            className="text-[13px] font-medium text-indigo-700 cursor-pointer"
           >
             {item.mkt_pic || "—"}
           </span>
         );
       case "tuan":
-        return <span className="text-xs font-mono text-slate-600">{item.tuan || "—"}</span>;
+        return <span className="text-[13px] text-slate-700 tabular-nums">{item.tuan || "—"}</span>;
       case "thang":
-        return <span className="text-xs font-mono text-slate-600">{item.thang || "—"}</span>;
+        return <span className="text-[13px] text-slate-700 tabular-nums">{item.thang || "—"}</span>;
       case "quy":
-        return <span className="text-xs font-mono text-slate-600">{item.quy || "—"}</span>;
+        return <span className="text-[13px] text-slate-700 tabular-nums">{item.quy || "—"}</span>;
       case "trang_thai":
         return (
           <span
@@ -898,7 +898,7 @@ export function AdsInputView({
               setEditingCell({ id: item.id, field: "trang_thai" });
               setEditingValue(item.trang_thai || "");
             }}
-            className="text-xs text-slate-600 cursor-pointer"
+            className="text-[13px] text-slate-700 cursor-pointer"
           >
             {item.trang_thai || "—"}
           </span>
@@ -906,7 +906,7 @@ export function AdsInputView({
       default: {
         const raw = (item as any)[colId];
         return (
-          <span className="text-xs text-slate-700">
+          <span className="text-[13px] text-slate-900">
             {raw != null && raw !== "" ? String(raw) : "—"}
           </span>
         );
@@ -1078,7 +1078,7 @@ export function AdsInputView({
                   ads.map((item, rowIndex) => (
                     <tr
                       key={item.id}
-                      className="group h-[32px] min-h-[32px] transition-colors hover:bg-amber-50/50 even:bg-slate-50/60 [&>td]:border-b [&>td]:border-slate-200"
+                      className="group h-[34px] min-h-[34px] transition-colors hover:bg-amber-50/50 even:bg-slate-50/60 [&>td]:border-b [&>td]:border-slate-200"
                     >
                       {visibleColumns.map((col) => {
                         const f = getCellFreezeProps(col.id, false);
@@ -1093,7 +1093,7 @@ export function AdsInputView({
                           <td
                             key={col.id}
                             style={f.style}
-                            className={`py-1 px-2.5 text-[12.5px] text-slate-900 border-r border-slate-200 ${alignClass} ${f.className} overflow-hidden text-ellipsis whitespace-nowrap`}
+                            className={`py-1.5 px-2.5 text-[13px] text-slate-900 border-r border-slate-200 ${alignClass} ${f.className} overflow-hidden text-ellipsis whitespace-nowrap`}
                           >
                             {renderCellContent(item, col.id, rowIndex)}
                           </td>

@@ -784,10 +784,10 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
                                 setEditingCell({ sku: r.sku, field: "reference_hang_ton" });
                                 setEditValue(String(referenceOpeningQty));
                               }}
-                              className={`px-2 py-1 text-center font-medium text-[12.5px] ${
+                              className={`px-2 py-1 text-center font-medium text-[13px] tabular-nums ${
                                 f.isFrozen
-                                  ? f.className + " !bg-[#fffdf0] dark:!bg-[#2e1d05] text-slate-800 dark:text-slate-200"
-                                  : "border-r border-amber-200/60 dark:border-amber-900/40 bg-[#fffdf0] dark:bg-amber-950/20 text-slate-800 dark:text-slate-200"
+                                  ? f.className + " !bg-[#fffdf0] dark:!bg-[#2e1d05] text-slate-900 dark:text-slate-100"
+                                  : "border-r border-amber-200/60 dark:border-amber-900/40 bg-[#fffdf0] dark:bg-amber-950/20 text-slate-900 dark:text-slate-100"
                               }`}
                               title={`Tồn đầu ${referenceMonthLabel}. Nhấp đúp để sửa.`}
                             >
@@ -804,7 +804,7 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
                                     if (e.key === "Escape") setEditingCell(null);
                                   }}
                                   onBlur={handleSaveCell}
-                                  className="w-16 px-1 py-0.5 text-xs text-center border border-blue-500 rounded bg-white dark:bg-slate-800"
+                                  className="w-16 px-1 py-0.5 text-[13px] text-center border border-blue-500 rounded bg-white dark:bg-slate-800"
                                 />
                               ) : (
                                 <button
@@ -828,7 +828,7 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
                             <td
                               key={cid}
                               style={f.style}
-                              className={`px-2 py-1 text-center font-semibold text-slate-900 dark:text-slate-100 text-[12.5px] ${
+                              className={`px-2 py-1 text-center font-semibold text-slate-950 dark:text-slate-100 text-[13px] tabular-nums ${
                                 f.isFrozen
                                   ? f.className + " !bg-[#fffdf0] dark:!bg-[#2e1d05]"
                                   : "border-r border-amber-200/60 dark:border-amber-900/40 bg-[#fffdf0] dark:bg-amber-950/20"
@@ -883,15 +883,15 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
                                   setBreakdownData({ row: r, month: m, cell });
                                 }
                               }}
-                              className={`px-2 py-1 text-center relative group transition-colors text-[12.5px] ${
+                              className={`px-2 py-1 text-center relative group transition-colors text-[13px] tabular-nums ${
                                 f.isFrozen ? f.className : "border-r border-slate-200 dark:border-slate-800"
                               } ${
                                 isFuture
                                   ? "bg-slate-50/70 dark:bg-slate-900/30 text-slate-400 dark:text-slate-600 cursor-default"
                                   : "cursor-pointer " +
                                     (cell?.is_overridden
-                                      ? "bg-amber-50/50 dark:bg-amber-950/20 font-bold text-amber-700 dark:text-amber-300"
-                                      : "hover:bg-blue-50/60 dark:hover:bg-blue-950/20 text-slate-800 dark:text-slate-200 font-medium")
+                                      ? "bg-amber-50/50 dark:bg-amber-950/20 font-bold text-amber-800 dark:text-amber-300"
+                                      : "hover:bg-blue-50/60 dark:hover:bg-blue-950/20 text-slate-900 dark:text-slate-100 font-medium")
                               }`}
                               title={
                                 isFuture

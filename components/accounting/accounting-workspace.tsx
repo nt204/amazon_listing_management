@@ -175,22 +175,38 @@ export function AccountingWorkspace({
 
   // Section 2: Stores (Existing Full UI)
   if (effectiveSection === "stores") {
-    return <StoreManagementView />;
+    return (
+      <div className="font-accounting-system h-full w-full text-slate-900 bg-slate-50">
+        <StoreManagementView />
+      </div>
+    );
   }
 
   // Section 3: Inventory (Full Multi-Store UI with SKU Master & Inbound Shipments)
   if (effectiveSection === "inventory") {
-    return <InventoryView />;
+    return (
+      <div className="font-accounting-system h-full w-full text-slate-900 bg-slate-50">
+        <InventoryView />
+      </div>
+    );
   }
 
   // Section 4: Import (Đầu Vào Order, Ads, Return, Service Fee)
   if (effectiveSection === "orders" || effectiveSection === "import") {
-    return <OrderInputView />;
+    return (
+      <div className="font-accounting-system h-full w-full text-slate-900 bg-slate-50">
+        <OrderInputView />
+      </div>
+    );
   }
 
   // Section 7: System Admin & Quản lý file Kế toán theo Ngày & Store
   if (effectiveSection === "admin" || effectiveSection === "files") {
-    return <AccountingFileManager />;
+    return (
+      <div className="font-accounting-system h-full w-full text-slate-900 bg-slate-50">
+        <AccountingFileManager />
+      </div>
+    );
   }
 
   // Section 5: Financials with Horizontal Tabs

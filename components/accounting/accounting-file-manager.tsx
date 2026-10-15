@@ -457,13 +457,13 @@ export function AccountingFileManager() {
                         {/* Files Table của Store - Tối giản gọn gàng */}
                         {isStoreExpanded && (
                         <div className="overflow-x-auto rounded-lg border border-slate-200/80 animate-in fade-in duration-150">
-                          <table className="w-full text-left text-xs text-slate-700">
-                            <thead className="bg-slate-50 border-b border-slate-200 text-[11px] font-semibold text-slate-500">
+                          <table className="w-full text-left text-[13px] text-slate-900">
+                            <thead className="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-800 uppercase tracking-wide">
                               <tr>
-                                <th className="px-3.5 py-2">Tên file</th>
-                                <th className="px-3.5 py-2 text-right w-36">Cập nhật lúc</th>
-                                <th className="px-3.5 py-2 text-right w-24">Dung lượng</th>
-                                <th className="px-3.5 py-2 text-right w-20">Thao tác</th>
+                                <th className="px-3.5 py-2.5">Tên file</th>
+                                <th className="px-3.5 py-2.5 text-right w-36">Cập nhật lúc</th>
+                                <th className="px-3.5 py-2.5 text-right w-28">Dung lượng</th>
+                                <th className="px-3.5 py-2.5 text-right w-24">Thao tác</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 bg-white">
@@ -472,19 +472,19 @@ export function AccountingFileManager() {
                                 return (
                                   <tr key={file.id} className="hover:bg-slate-50/70 transition-colors">
                                     {/* Tên file */}
-                                    <td className="px-3.5 py-2 font-mono text-[11.5px] text-slate-800 break-all">
+                                    <td className="px-3.5 py-2.5 text-[13px] font-medium text-slate-900 break-all">
                                       <div className="flex items-center gap-2">
-                                        <FileCsv size={15} weight="duotone" className="text-slate-400 shrink-0" />
+                                        <FileCsv size={16} weight="duotone" className="text-slate-500 shrink-0" />
                                         <span>{file.fileName}</span>
                                       </div>
                                     </td>
 
                                     {/* Cập nhật lúc */}
-                                    <td className="px-3.5 py-2 whitespace-nowrap text-right font-mono text-slate-500 text-[11px]">
+                                    <td className="px-3.5 py-2.5 whitespace-nowrap text-right text-[13px] text-slate-800 tabular-nums">
                                       {fileTime ? (
                                         <span>
-                                          <strong className="text-slate-700 font-semibold">{fileTime.time}</strong>{" "}
-                                          <span className="text-slate-400">{fileTime.date}</span>
+                                          <strong className="text-slate-900 font-semibold">{fileTime.time}</strong>{" "}
+                                          <span className="text-slate-500">{fileTime.date}</span>
                                         </span>
                                       ) : (
                                         "--"
@@ -492,16 +492,16 @@ export function AccountingFileManager() {
                                     </td>
 
                                     {/* Dung lượng */}
-                                    <td className="px-3.5 py-2 whitespace-nowrap text-right font-medium text-slate-500 text-xs">
+                                    <td className="px-3.5 py-2.5 whitespace-nowrap text-right font-medium text-slate-800 text-[13px] tabular-nums">
                                       {formatBytes(file.sizeBytes)}
                                     </td>
 
                                     {/* Thao tác: Nút Tải về */}
-                                    <td className="px-3.5 py-2 whitespace-nowrap text-right">
+                                    <td className="px-3.5 py-2.5 whitespace-nowrap text-right">
                                       <button
                                         type="button"
                                         onClick={() => handleDownload(file)}
-                                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-[11px] transition cursor-pointer"
+                                        className="inline-flex items-center gap-1 px-3 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold text-xs transition cursor-pointer"
                                         title="Tải file về máy"
                                       >
                                         <DownloadSimple size={12} weight="bold" />
