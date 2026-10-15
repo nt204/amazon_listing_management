@@ -421,10 +421,15 @@ export function OrderInputView() {
     (colId: string, isHeader = false) => {
       const freeze = freezeMap[colId];
       if (!freeze?.isFrozen) {
+        const width = freeze?.width || 120;
         return {
           isFrozen: false,
           isBoundary: false,
-          style: undefined,
+          style: {
+            width,
+            minWidth: width,
+            maxWidth: width,
+          } as React.CSSProperties,
           className: isHeader
             ? "bg-[#ff9900] text-slate-950 border-r border-amber-600"
             : "border-r border-slate-200 group-even:bg-slate-50/60 group-hover:bg-amber-50/40",
@@ -1652,10 +1657,12 @@ export function OrderInputView() {
                             key={col.id}
                             style={f.style}
                             className={`py-1.5 px-2.5 text-[13px] text-slate-900 border-r border-slate-200 transition-colors leading-tight ${alignClass} ${
-                              isWrapCol ? "whitespace-normal break-words" : "whitespace-nowrap"
+                              isWrapCol ? "whitespace-normal break-words" : "whitespace-nowrap overflow-hidden text-ellipsis"
                             } ${f.className}`}
                           >
-                            {renderCellContent(item, col.id, rowIndex)}
+                            <div className={isWrapCol ? "w-full" : "truncate w-full min-w-0"}>
+                              {renderCellContent(item, col.id, rowIndex)}
+                            </div>
                           </td>
                         );
                       })}

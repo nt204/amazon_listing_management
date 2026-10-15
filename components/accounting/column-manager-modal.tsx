@@ -37,8 +37,8 @@ export const DEFAULT_SKU_COLUMNS: ColumnConfig[] = [
   { id: "stt", label: "STT", defaultLabel: "STT", visible: true, isFrozen: true, align: "center", width: "w-[58px]" },
   { id: "product_type", label: "Product Type", defaultLabel: "Product Type", visible: true, isFrozen: true, width: "w-[155px]" },
   { id: "mockup", label: "Mockup", defaultLabel: "Mockup", visible: true, isFrozen: true, align: "center", width: "w-[76px]" },
-  { id: "sku", label: "SKU", defaultLabel: "SKU", visible: true, isFrozen: true, width: "w-[160px]" },
-  { id: "brand", label: "Brand", defaultLabel: "Brand", visible: true, width: 130 },
+  { id: "sku", label: "SKU", defaultLabel: "SKU", visible: true, isFrozen: true, width: 185 },
+  { id: "brand", label: "Brand", defaultLabel: "Brand", visible: true, width: 140 },
   { id: "asin", label: "ASIN", defaultLabel: "ASIN", visible: true, width: 140 },
   { id: "fnsku", label: "FNSKU", defaultLabel: "FNSKU", visible: true, width: 140 },
   { id: "amazon_fee", label: "AMAZON FEE", defaultLabel: "AMAZON FEE", visible: true, align: "center", width: 120 },
@@ -51,7 +51,7 @@ export const DEFAULT_SKU_COLUMNS: ColumnConfig[] = [
   { id: "event", label: "Event", defaultLabel: "Event", visible: true, width: 130 },
   { id: "tinh_trang", label: "Tình trạng", defaultLabel: "Tình trạng", visible: true, width: 120 },
   { id: "design_pic", label: "DESIGN PIC", defaultLabel: "DESIGN PIC", visible: true, width: 120 },
-  { id: "mockup_url", label: "Mockup url", defaultLabel: "Mockup url", visible: true, width: 110 },
+  { id: "mockup_url", label: "Mockup url", defaultLabel: "Mockup url", visible: true, width: 120 },
   { id: "thang_listing", label: "Tháng listing", defaultLabel: "Tháng listing", visible: true, width: 130 },
   { id: "thang_danh_gia", label: "Tháng đánh giá", defaultLabel: "Tháng đánh giá", visible: true, width: 130 },
   { id: "event_250th", label: "Event 250th", defaultLabel: "Event 250th", visible: true, width: 130 },
@@ -62,17 +62,17 @@ export const DEFAULT_SKU_COLUMNS: ColumnConfig[] = [
   { id: "creative_asins_video", label: "Creative ASINs (Video)", defaultLabel: "Creative ASINs (Video)", visible: true, width: 160 },
   { id: "creative_asins_collection", label: "Creative ASINs (Collection)", defaultLabel: "Creative ASINs (Collection)", visible: true, width: 170 },
   { id: "video_media_ids", label: "Video Media IDs", defaultLabel: "Video Media IDs", visible: true, width: 150 },
-  { id: "creative_headline", label: "Creative Headline", defaultLabel: "Creative Headline", visible: true, width: 180 },
-  { id: "brand_logo_asset_id", label: "Brand Logo Asset ID", defaultLabel: "Brand Logo Asset ID", visible: true, width: 150 },
-  { id: "landing_page_url", label: "Landing Page URL", defaultLabel: "Landing Page URL", visible: true, width: 130 },
+  { id: "creative_headline", label: "Creative Headline", defaultLabel: "Creative Headline", visible: true, width: 250 },
+  { id: "brand_logo_asset_id", label: "Brand Logo Asset ID", defaultLabel: "Brand Logo Asset ID", visible: true, width: 200 },
+  { id: "landing_page_url", label: "Landing Page URL", defaultLabel: "Landing Page URL", visible: true, width: 160 },
 ];
 
 export const DEFAULT_INBOUND_COLUMNS: ColumnConfig[] = [
   { id: "stt", label: "STT", defaultLabel: "STT", visible: true, isFrozen: true, align: "center", width: "w-[58px]" },
   { id: "product_type", label: "Product Type", defaultLabel: "Product Type", visible: true, isFrozen: true, width: "w-[155px]" },
   { id: "mockup", label: "Mockup", defaultLabel: "Mockup", visible: true, isFrozen: true, align: "center", width: "w-[76px]" },
-  { id: "sku", label: "SKU", defaultLabel: "SKU", visible: true, isFrozen: true, width: "w-[160px]" },
-  { id: "brand", label: "BRAND", defaultLabel: "BRAND", visible: true, width: 130 },
+  { id: "sku", label: "SKU", defaultLabel: "SKU", visible: true, isFrozen: true, width: 185 },
+  { id: "brand", label: "BRAND", defaultLabel: "BRAND", visible: true, width: 140 },
   { id: "sup", label: "SUP", defaultLabel: "SUP", visible: true, width: 110 },
   { id: "ngay_request", label: "Ngày request", defaultLabel: "Ngày request", visible: true, width: 120 },
   { id: "quantity", label: "Quantity", defaultLabel: "Quantity", visible: true, align: "right", width: 110 },
@@ -318,11 +318,13 @@ export function ColumnHeaderCell({
             const header = event.currentTarget.parentElement;
             if (!header) return;
             const startX = event.clientX;
-            const startWidth = header.getBoundingClientRect().width;
+            const startWidth = header.offsetWidth || header.getBoundingClientRect().width;
+            const zoom = (header.getBoundingClientRect().width / (header.offsetWidth || 1)) || 1;
             const pointerId = event.pointerId;
             event.currentTarget.setPointerCapture(pointerId);
             const onMove = (moveEvent: PointerEvent) => {
-              onResize(col.id, Math.max(50, Math.min(520, Math.round(startWidth + moveEvent.clientX - startX))));
+              const delta = (moveEvent.clientX - startX) / zoom;
+              onResize(col.id, Math.max(50, Math.min(650, Math.round(startWidth + delta))));
             };
             const onEnd = () => {
               window.removeEventListener("pointermove", onMove);

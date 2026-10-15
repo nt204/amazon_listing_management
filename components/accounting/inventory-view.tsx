@@ -676,12 +676,23 @@ const EditableCell = memo(
           ...(isEditing ? { zIndex: 90 } : {}),
         }}
         className={`group/cell relative cursor-pointer select-none transition-colors hover:bg-amber-100/60 ${className} ${
-          isEditing ? "!z-[90] overflow-visible" : ""
+          isEditing ? "!z-[90] overflow-visible" : "overflow-hidden"
         }`}
       >
         {/* Ghost in-flow content maintains EXACT column width and height - ZERO SHIFT */}
-        <div className={`w-full h-full flex items-center ${alignClass} ${isEditing ? "invisible pointer-events-none select-none opacity-0" : ""}`}>
-          {display}
+        <div className={`w-full h-full flex items-center min-w-0 ${alignClass} ${isEditing ? "invisible pointer-events-none select-none opacity-0" : ""}`}>
+          <div
+            className="truncate w-full min-w-0"
+            title={
+              typeof display === "string"
+                ? display
+                : typeof value === "string"
+                ? value
+                : undefined
+            }
+          >
+            {display}
+          </div>
         </div>
 
         {/* Quick edit button on hover (1-click edit) */}
@@ -2274,19 +2285,20 @@ function InventoryViewInner() {
 
       // Giới hạn trần tối đa theo từng cột để dữ liệu gọn gàng không bị khoảng trống quá lớn
       const caps: Record<string, number> = {
-        product_type: 160,
-        sku: 155,
-        brand: 120,
-        asin: 125,
-        fnsku: 130,
-        shipment_id: 155,
-        shipment_name: 240,
-        ten_lo_hang: 200,
-        note: 200,
-        creative_headline: 220,
-        landing_page_url: 140,
-        mockup_url: 130,
-        tinh_trang_hang_den_kho: 160,
+        product_type: 220,
+        sku: 200,
+        brand: 145,
+        asin: 145,
+        fnsku: 145,
+        shipment_id: 170,
+        shipment_name: 260,
+        ten_lo_hang: 220,
+        note: 220,
+        creative_headline: 260,
+        brand_logo_asset_id: 220,
+        landing_page_url: 160,
+        mockup_url: 140,
+        tinh_trang_hang_den_kho: 170,
         basecost_tb: 120,
         final_basecost: 110,
         total_basecost: 120,
@@ -3628,40 +3640,44 @@ function InventoryViewInner() {
 
     if (cid === "mockup_url") {
       return (
-        <td key={col.id} style={f.style} className={`py-1 px-2.5 text-[12.5px] ${f.className || "border-r border-slate-200"}`}>
-          {item.mockup_url ? (
-            <a
-              href={item.mockup_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 rounded bg-indigo-50 px-2 py-0.5 text-xs font-bold text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition"
-            >
-              <ArrowSquareOutIcon size={14} weight="bold" />
-              <span>Mở link</span>
-            </a>
-          ) : (
-            "—"
-          )}
+        <td key={col.id} style={f.style} className={`py-1 px-2.5 text-[12.5px] overflow-hidden ${f.className || "border-r border-slate-200"}`}>
+          <div className="truncate w-full min-w-0">
+            {item.mockup_url ? (
+              <a
+                href={item.mockup_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded bg-indigo-50 px-2 py-0.5 text-xs font-bold text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition"
+              >
+                <ArrowSquareOutIcon size={14} weight="bold" />
+                <span>Mở link</span>
+              </a>
+            ) : (
+              "—"
+            )}
+          </div>
         </td>
       );
     }
 
     if (cid === "landing_page_url") {
       return (
-        <td key={col.id} style={f.style} className={`py-1 px-2.5 text-[12.5px] ${f.className || "border-r border-slate-200"}`}>
-          {item.landing_page_url ? (
-            <a
-              href={item.landing_page_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700 border border-slate-300 hover:bg-slate-200 transition"
-            >
-              <ArrowSquareOutIcon size={14} weight="bold" />
-              <span>Landing Page</span>
-            </a>
-          ) : (
-            "—"
-          )}
+        <td key={col.id} style={f.style} className={`py-1 px-2.5 text-[12.5px] overflow-hidden ${f.className || "border-r border-slate-200"}`}>
+          <div className="truncate w-full min-w-0">
+            {item.landing_page_url ? (
+              <a
+                href={item.landing_page_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700 border border-slate-300 hover:bg-slate-200 transition"
+              >
+                <ArrowSquareOutIcon size={14} weight="bold" />
+                <span>Landing Page</span>
+              </a>
+            ) : (
+              "—"
+            )}
+          </div>
         </td>
       );
     }
@@ -5090,89 +5106,7 @@ function InventoryViewInner() {
                 className="sticky top-0 z-30 bg-[#ff9900] text-slate-950 border-b-2 border-amber-600 shadow-xs"
               >
                 <tr className="text-xs font-semibold uppercase tracking-[0.04em]">
-                  {/* FROZEN 1: STT */}
-                  {skuColMap["stt"]?.visible !== false && (() => {
-                    const f = getCellFreezeProps(skuFreezeMap, "stt", true);
-                    return (
-                      <th
-                        style={f.style}
-                        className={`py-2 px-1 text-center w-[58px] min-w-[58px] max-w-[58px] text-xs font-bold text-slate-950 cursor-pointer hover:brightness-105 ${f.className}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setColumnContextMenu({ table: "sku", field: "stt", x: e.clientX, y: e.clientY });
-                        }}
-                      >
-                        <div className="flex items-center justify-center gap-0.5">
-                          {f.isFrozen && <span title="Đang khóa cố định" className="inline-flex items-center"><LockIcon size={11} weight="bold" className="text-amber-950/70 shrink-0" /></span>}
-                          <span>{skuColMap["stt"]?.label || "STT"}</span>
-                        </div>
-                      </th>
-                    );
-                  })()}
-                  {/* FROZEN 2: Product Type */}
-                  {skuColMap["product_type"]?.visible !== false && (() => {
-                    const f = getCellFreezeProps(skuFreezeMap, "product_type", true);
-                    return (
-                      <th
-                        style={f.style}
-                        className={`py-2 px-3 text-xs text-slate-950 cursor-pointer hover:brightness-105 ${f.className}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setColumnContextMenu({ table: "sku", field: "product_type", x: e.clientX, y: e.clientY });
-                        }}
-                      >
-                        <div className="flex items-center justify-between gap-1">
-                          <div className="flex items-center gap-1 min-w-0 flex-1">
-                            {f.isFrozen && <span title="Đang khóa cố định" className="inline-flex items-center"><LockIcon size={11} weight="bold" className="text-amber-950/70 shrink-0" /></span>}
-                            <span className="line-clamp-2 break-words whitespace-normal leading-tight" title={skuColMap["product_type"]?.label || "Product Type"}>{skuColMap["product_type"]?.label || "Product Type"}</span>
-                          </div>
-                        </div>
-                      </th>
-                    );
-                  })()}
-                  {/* FROZEN 3: Mockup */}
-                  {skuColMap["mockup"]?.visible !== false && (() => {
-                    const f = getCellFreezeProps(skuFreezeMap, "mockup", true);
-                    return (
-                      <th
-                        style={f.style}
-                        className={`py-2 px-1 text-center text-xs text-slate-950 cursor-pointer hover:brightness-105 ${f.className}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setColumnContextMenu({ table: "sku", field: "mockup", x: e.clientX, y: e.clientY });
-                        }}
-                      >
-                        <div className="flex items-center justify-center gap-0.5">
-                          {f.isFrozen && <span title="Đang khóa cố định" className="inline-flex items-center"><LockIcon size={11} weight="bold" className="text-amber-950/70 shrink-0" /></span>}
-                          <span>{skuColMap["mockup"]?.label || "Mockup"}</span>
-                        </div>
-                      </th>
-                    );
-                  })()}
-                  {/* FROZEN 4: SKU */}
-                  {skuColMap["sku"]?.visible !== false && (() => {
-                    const f = getCellFreezeProps(skuFreezeMap, "sku", true);
-                    return (
-                      <th
-                        style={f.style}
-                        className={`py-2 px-3 text-xs text-slate-950 cursor-pointer hover:brightness-105 ${f.className}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setColumnContextMenu({ table: "sku", field: "sku", x: e.clientX, y: e.clientY });
-                        }}
-                      >
-                        <div className="flex items-center justify-between gap-1">
-                          <div className="flex items-center gap-1 min-w-0 flex-1">
-                            {f.isFrozen && <span title="Đang khóa cố định" className="inline-flex items-center"><LockIcon size={11} weight="bold" className="text-amber-950/70 shrink-0" /></span>}
-                            <span className="line-clamp-2 break-words whitespace-normal leading-tight" title={skuColMap["sku"]?.label || "SKU"}>{skuColMap["sku"]?.label || "SKU"}</span>
-                          </div>
-                        </div>
-                      </th>
-                    );
-                  })()}
-
-                  {/* SCROLLABLE DYNAMIC COLUMNS (IN USER-DEFINED ORDER) */}
-                  {activeScrollableSkuColumns.map((col) => renderSkuHeader(col))}
+                  {orderedVisibleSkuColumns.map((col) => renderSkuHeader(col))}
 
                   <th className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-900 font-bold">Thao tác</th>
                 </tr>
@@ -5369,89 +5303,7 @@ function InventoryViewInner() {
                 className="sticky top-0 z-30 bg-[#ff9900] text-slate-950 border-b-2 border-amber-600 shadow-xs"
               >
                 <tr className="text-xs font-semibold uppercase tracking-[0.04em]">
-                  {/* FROZEN 1: STT */}
-                  {inboundColMap["stt"]?.visible !== false && (() => {
-                    const f = getCellFreezeProps(inboundFreezeMap, "stt", true);
-                    return (
-                      <th
-                        style={f.style}
-                        className={`py-2 px-1 text-center w-[58px] min-w-[58px] max-w-[58px] text-xs font-bold text-slate-950 cursor-pointer hover:brightness-105 ${f.className}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setColumnContextMenu({ table: "inbound", field: "stt", x: e.clientX, y: e.clientY });
-                        }}
-                      >
-                        <div className="flex items-center justify-center gap-0.5">
-                          {f.isFrozen && <span title="Đang khóa cố định" className="inline-flex items-center"><LockIcon size={11} weight="bold" className="text-amber-950/70 shrink-0" /></span>}
-                          <span>{inboundColMap["stt"]?.label || "STT"}</span>
-                        </div>
-                      </th>
-                    );
-                  })()}
-                  {/* FROZEN 2: Product Type */}
-                  {inboundColMap["product_type"]?.visible !== false && (() => {
-                    const f = getCellFreezeProps(inboundFreezeMap, "product_type", true);
-                    return (
-                      <th
-                        style={f.style}
-                        className={`py-2 px-3 text-xs text-slate-950 cursor-pointer hover:brightness-105 ${f.className}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setColumnContextMenu({ table: "inbound", field: "product_type", x: e.clientX, y: e.clientY });
-                        }}
-                      >
-                        <div className="flex items-center justify-between gap-1">
-                          <div className="flex items-center gap-1 min-w-0 flex-1">
-                            {f.isFrozen && <span title="Đang khóa cố định" className="inline-flex items-center"><LockIcon size={11} weight="bold" className="text-amber-950/70 shrink-0" /></span>}
-                            <span className="line-clamp-2 break-words whitespace-normal leading-tight" title={inboundColMap["product_type"]?.label || "Product Type"}>{inboundColMap["product_type"]?.label || "Product Type"}</span>
-                          </div>
-                        </div>
-                      </th>
-                    );
-                  })()}
-                  {/* FROZEN 3: Mockup */}
-                  {inboundColMap["mockup"]?.visible !== false && (() => {
-                    const f = getCellFreezeProps(inboundFreezeMap, "mockup", true);
-                    return (
-                      <th
-                        style={f.style}
-                        className={`py-2 px-1 text-center text-xs text-slate-950 cursor-pointer hover:brightness-105 ${f.className}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setColumnContextMenu({ table: "inbound", field: "mockup", x: e.clientX, y: e.clientY });
-                        }}
-                      >
-                        <div className="flex items-center justify-center gap-0.5">
-                          {f.isFrozen && <span title="Đang khóa cố định" className="inline-flex items-center"><LockIcon size={11} weight="bold" className="text-amber-950/70 shrink-0" /></span>}
-                          <span>{inboundColMap["mockup"]?.label || "Mockup"}</span>
-                        </div>
-                      </th>
-                    );
-                  })()}
-                  {/* FROZEN 4: SKU */}
-                  {inboundColMap["sku"]?.visible !== false && (() => {
-                    const f = getCellFreezeProps(inboundFreezeMap, "sku", true);
-                    return (
-                      <th
-                        style={f.style}
-                        className={`py-2 px-3 text-xs text-slate-950 cursor-pointer hover:brightness-105 ${f.className}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setColumnContextMenu({ table: "inbound", field: "sku", x: e.clientX, y: e.clientY });
-                        }}
-                      >
-                        <div className="flex items-center justify-between gap-1">
-                          <div className="flex items-center gap-1 min-w-0 flex-1">
-                            {f.isFrozen && <span title="Đang khóa cố định" className="inline-flex items-center"><LockIcon size={11} weight="bold" className="text-amber-950/70 shrink-0" /></span>}
-                            <span className="line-clamp-2 break-words whitespace-normal leading-tight" title={inboundColMap["sku"]?.label || "SKU"}>{inboundColMap["sku"]?.label || "SKU"}</span>
-                          </div>
-                        </div>
-                      </th>
-                    );
-                  })()}
-
-                  {/* SCROLLABLE DYNAMIC COLUMNS (IN USER-DEFINED ORDER) */}
-                  {activeScrollableInboundColumns.map((col) => renderInboundHeader(col))}
+                  {orderedVisibleInboundColumns.map((col) => renderInboundHeader(col))}
 
                   <th className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-900 font-bold">Thao tác</th>
                 </tr>
@@ -5650,94 +5502,7 @@ function InventoryViewInner() {
                 className="sticky top-0 z-30 bg-[#ff9900] text-slate-950 border-b-2 border-amber-600 shadow-xs"
               >
                 <tr className="text-xs font-semibold uppercase tracking-[0.04em]">
-                  {/* FROZEN 1: STT */}
-                  {checkShipmentColMap["stt"]?.visible !== false && (() => {
-                    const f = getCellFreezeProps(checkShipmentFreezeMap, "stt", true);
-                    return (
-                      <th
-                        style={f.style}
-                        className={`py-2 px-1 text-center w-[58px] min-w-[58px] max-w-[58px] text-xs font-bold text-slate-950 cursor-pointer hover:brightness-105 ${f.className}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setColumnContextMenu({ table: "check_shipment", field: "stt", x: e.clientX, y: e.clientY });
-                        }}
-                      >
-                        <div className="flex items-center justify-center gap-0.5">
-                          {f.isFrozen && <span title="Đang khóa cố định" className="inline-flex items-center"><LockIcon size={11} weight="bold" className="text-amber-950/70 shrink-0" /></span>}
-                          <span>{checkShipmentColMap["stt"]?.label || "STT"}</span>
-                        </div>
-                      </th>
-                    );
-                  })()}
-
-                  {/* FROZEN 2: Shipment ID */}
-                  {checkShipmentColMap["shipment_id"]?.visible !== false && (() => {
-                    const f = getCellFreezeProps(checkShipmentFreezeMap, "shipment_id", true);
-                    return (
-                      <th
-                        style={f.style}
-                        className={`group/hdr py-2 px-3 text-xs text-slate-950 cursor-pointer hover:brightness-105 ${f.className}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setColumnContextMenu({ table: "check_shipment", field: "shipment_id", x: e.clientX, y: e.clientY });
-                        }}
-                      >
-                        <div className="flex items-center justify-between gap-1">
-                          <div className="flex items-center gap-1 min-w-0 flex-1">
-                            {f.isFrozen && <span title="Đang khóa cố định" className="inline-flex items-center"><LockIcon size={11} weight="bold" className="text-amber-950/70 shrink-0" /></span>}
-                            <span className="line-clamp-2 break-words whitespace-normal leading-tight" title={checkShipmentColMap["shipment_id"]?.label || "Shipment ID"}>{checkShipmentColMap["shipment_id"]?.label || "Shipment ID"}</span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleQuickRenameColumn("check_shipment", "shipment_id", checkShipmentColMap["shipment_id"]?.label || "Shipment ID");
-                            }}
-                            className="opacity-0 group-hover/hdr:opacity-100 p-0.5 rounded hover:bg-amber-600/70 text-slate-950 transition cursor-pointer"
-                            title="Đổi tên cột Shipment ID"
-                          >
-                            <PencilSimpleIcon size={12} weight="bold" />
-                          </button>
-                        </div>
-                      </th>
-                    );
-                  })()}
-
-                  {/* FROZEN 3: Shipment Name */}
-                  {checkShipmentColMap["shipment_name"]?.visible !== false && (() => {
-                    const f = getCellFreezeProps(checkShipmentFreezeMap, "shipment_name", true);
-                    return (
-                      <th
-                        style={f.style}
-                        className={`group/hdr py-2 px-3 text-xs text-slate-950 cursor-pointer hover:brightness-105 ${f.className}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setColumnContextMenu({ table: "check_shipment", field: "shipment_name", x: e.clientX, y: e.clientY });
-                        }}
-                      >
-                        <div className="flex items-center justify-between gap-1">
-                          <div className="flex items-center gap-1 min-w-0 flex-1">
-                            {f.isFrozen && <span title="Đang khóa cố định" className="inline-flex items-center"><LockIcon size={11} weight="bold" className="text-amber-950/70 shrink-0" /></span>}
-                            <span className="line-clamp-2 break-words whitespace-normal leading-tight" title={checkShipmentColMap["shipment_name"]?.label || "Shipment name"}>{checkShipmentColMap["shipment_name"]?.label || "Shipment name"}</span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleQuickRenameColumn("check_shipment", "shipment_name", checkShipmentColMap["shipment_name"]?.label || "Shipment name");
-                            }}
-                            className="opacity-0 group-hover/hdr:opacity-100 p-0.5 rounded hover:bg-amber-600/70 text-slate-950 transition cursor-pointer"
-                            title="Đổi tên cột Shipment name"
-                          >
-                            <PencilSimpleIcon size={12} weight="bold" />
-                          </button>
-                        </div>
-                      </th>
-                    );
-                  })()}
-
-                  {/* SCROLLABLE DYNAMIC COLUMNS (IN USER-DEFINED ORDER) */}
-                  {activeScrollableCheckShipmentColumns.map((col) => renderCheckShipmentHeader(col))}
+                  {orderedVisibleCheckShipmentColumns.map((col) => renderCheckShipmentHeader(col))}
 
                   <th className="py-2 px-3 text-xs text-center bg-[#ff9900] text-slate-900 font-bold">Thao tác</th>
                 </tr>

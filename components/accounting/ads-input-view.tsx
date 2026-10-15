@@ -574,10 +574,15 @@ export function AdsInputView({
     (colId: string, isHeader = false) => {
       const freeze = freezeMap[colId];
       if (!freeze?.isFrozen) {
+        const width = freeze?.width || 120;
         return {
           isFrozen: false,
           isBoundary: false,
-          style: undefined,
+          style: {
+            width,
+            minWidth: width,
+            maxWidth: width,
+          } as React.CSSProperties,
           className: isHeader
             ? "bg-[#ff9900] text-slate-950 border-r border-amber-600"
             : "border-r border-slate-200 group-even:bg-slate-50/60 group-hover:bg-amber-50/40",
@@ -1089,13 +1094,16 @@ export function AdsInputView({
                             ? "text-right"
                             : "text-left";
 
+                        const cellVal = (item as any)[col.id];
                         return (
                           <td
                             key={col.id}
                             style={f.style}
                             className={`py-1.5 px-2.5 text-[13px] text-slate-900 border-r border-slate-200 ${alignClass} ${f.className} overflow-hidden text-ellipsis whitespace-nowrap`}
                           >
-                            {renderCellContent(item, col.id, rowIndex)}
+                            <div className="truncate w-full min-w-0" title={typeof cellVal === "string" ? cellVal : undefined}>
+                              {renderCellContent(item, col.id, rowIndex)}
+                            </div>
                           </td>
                         );
                       })}
