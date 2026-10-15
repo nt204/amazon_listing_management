@@ -742,7 +742,7 @@ export function AdsInputView({
         );
       case "date":
         return (
-          <span className="font-normal text-xs text-slate-800 whitespace-nowrap">
+          <span className="font-normal text-xs text-slate-900 whitespace-nowrap">
             {item.date || "—"}
           </span>
         );
@@ -766,7 +766,7 @@ export function AdsInputView({
               setEditingCell({ id: item.id, field: "sku" });
               setEditingValue(item.sku || "");
             }}
-            className="font-mono text-xs font-normal text-slate-800 truncate block cursor-pointer"
+            className="font-mono text-xs font-normal text-slate-900 truncate block cursor-pointer"
             title={`${item.sku || "—"} (Nhấp đúp để sửa)`}
           >
             {item.sku || "—"}
@@ -779,10 +779,10 @@ export function AdsInputView({
           <span
             className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-normal ${
               isEnabled
-                ? "bg-amber-100 text-amber-900 border border-amber-300"
+                ? "bg-amber-100 text-amber-950 border border-amber-300"
                 : isPaused
-                ? "bg-rose-100 text-rose-800 border border-rose-300"
-                : "bg-slate-100 text-slate-700 border border-slate-300"
+                ? "bg-rose-100 text-rose-950 border border-rose-300"
+                : "bg-slate-100 text-slate-900 border border-slate-300"
             }`}
           >
             {item.status ? item.status.replace("PORTFOLIO_STATUS_", "") : "—"}
@@ -791,31 +791,31 @@ export function AdsInputView({
       }
       case "budget_type":
         return (
-          <span className="text-xs font-normal text-slate-600">
+          <span className="text-xs font-normal text-slate-900">
             {item.budget_type || "—"}
           </span>
         );
       case "budget":
         return (
-          <span className="font-mono text-xs font-normal text-slate-700">
+          <span className="font-mono text-xs font-normal text-slate-900">
             {item.budget > 0 ? formatCurrency(item.budget) : "No Cap"}
           </span>
         );
       case "impressions":
         return (
-          <span className="font-mono text-xs font-normal text-slate-700">
+          <span className="font-mono text-xs font-normal text-slate-900">
             {formatNumber(item.impressions)}
           </span>
         );
       case "clicks":
         return (
-          <span className="font-mono text-xs font-normal text-slate-800">
+          <span className="font-mono text-xs font-normal text-slate-950">
             {formatNumber(item.clicks)}
           </span>
         );
       case "ctr":
         return (
-          <span className="font-mono text-xs font-normal text-slate-700">
+          <span className="font-mono text-xs font-normal text-slate-900">
             {(item.ctr * 100).toFixed(2)}%
           </span>
         );
@@ -827,7 +827,7 @@ export function AdsInputView({
         );
       case "cpc":
         return (
-          <span className="font-mono text-xs font-normal text-slate-700">
+          <span className="font-mono text-xs font-normal text-slate-900">
             {formatCurrency(item.cpc)}
           </span>
         );
@@ -1093,7 +1093,7 @@ export function AdsInputView({
                           <td
                             key={col.id}
                             style={f.style}
-                            className={`py-1 px-2.5 text-[12.5px] text-slate-800 border-r border-slate-200 ${alignClass} ${f.className} overflow-hidden text-ellipsis whitespace-nowrap`}
+                            className={`py-1 px-2.5 text-[12.5px] text-slate-900 border-r border-slate-200 ${alignClass} ${f.className} overflow-hidden text-ellipsis whitespace-nowrap`}
                           >
                             {renderCellContent(item, col.id, rowIndex)}
                           </td>
