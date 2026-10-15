@@ -3,11 +3,14 @@ import { authorize, routeErrorResponse } from "@/lib/api-guard";
 import {
   importSkuMasterFromWorkbook,
   importInboundShipmentsFromWorkbook,
+  importCheckShipmentsFromWorkbook,
+  importCheckShipmentsFromCsv,
+  importMonthlyBaseCostFromWorkbook,
   processAndSaveImportTemplate,
 } from "@/lib/accounting/inventory-db";
 import { getStoreById } from "@/lib/accounting/accounting-db";
 
-export const maxDuration = 120; // Cho phép đủ thời gian cho file Excel lớn
+export const maxDuration = 120; // Cho phép đủ thời gian cho file Excel/CSV lớn
 
 export async function POST(request: Request) {
   try {
@@ -31,7 +34,7 @@ export async function POST(request: Request) {
     }
 
     if (!file) {
-      return Response.json({ error: "Vui lòng chọn file Excel" }, { status: 400 });
+      return Response.json({ error: "Vui lòng chọn file" }, { status: 400 });
     }
 
     const store = await getStoreById(storeId);
@@ -39,18 +42,61 @@ export async function POST(request: Request) {
       return Response.json({ error: "Không tìm thấy Store" }, { status: 404 });
     }
 
+    const fileName = (file.name || "").toLowerCase();
+    const isCsv =
+      fileName.endsWith(".csv") ||
+      file.type.includes("csv") ||
+      file.type.includes("text/plain");
+
+    if (isCsv) {
+      const text = await file.text();
+      if (type === "check_shipment") {
+        const result = await importCheckShipmentsFromCsv(storeId, text);
+        return Response.json({
+          success: true,
+          type: "check_shipment",
+          store_name: store.name,
+          count: result.count,
+          created_count: result.createdCount,
+          updated_count: result.updatedCount,
+          cascade_updated_count: result.cascadeUpdatedCount,
+          errors: result.errors.slice(0, 20),
+          total_errors: result.errors.length,
+        });
+      }
+      return Response.json(
+        { error: "Định dạng file CSV hiện tại áp dụng cho bảng CHECK SHIPMENT AMAZON." },
+        { status: 400 },
+      );
+    }
+
     const workbook = new ExcelJS.Workbook();
     const buffer = Buffer.from(await file.arrayBuffer());
     await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
 
-    // Cách 1: Tự động lưu bộ khung template của file gốc cho Store
+    // Lưu template cho store
     await processAndSaveImportTemplate(
       storeId,
-      type === "inbound" ? "inbound" : "sku",
+      type === "inbound" ? "inbound" : type === "check_shipment" ? "check_shipment" : "sku",
       file.name,
       buffer,
       workbook,
     );
+
+    if (type === "check_shipment") {
+      const result = await importCheckShipmentsFromWorkbook(storeId, workbook);
+      return Response.json({
+        success: true,
+        type: "check_shipment",
+        store_name: store.name,
+        count: result.count,
+        created_count: result.createdCount,
+        updated_count: result.updatedCount,
+        cascade_updated_count: result.cascadeUpdatedCount,
+        errors: result.errors.slice(0, 20),
+        total_errors: result.errors.length,
+      });
+    }
 
     if (type === "inbound") {
       const result = await importInboundShipmentsFromWorkbook(storeId, workbook);
@@ -59,6 +105,21 @@ export async function POST(request: Request) {
         type: "inbound",
         store_name: store.name,
         count: result.count,
+        errors: result.errors.slice(0, 20),
+        total_errors: result.errors.length,
+      });
+    }
+
+    if (type === "monthly_base_cost") {
+      const year = parseInt((formData.get("year") as string) || "2026", 10) || 2026;
+      const result = await importMonthlyBaseCostFromWorkbook(storeId, workbook, year);
+      return Response.json({
+        success: true,
+        type: "monthly_base_cost",
+        store_name: store.name,
+        count: result.count,
+        updated_initial_count: result.updatedInitialCount,
+        overridden_month_count: result.overriddenMonthCount,
         errors: result.errors.slice(0, 20),
         total_errors: result.errors.length,
       });

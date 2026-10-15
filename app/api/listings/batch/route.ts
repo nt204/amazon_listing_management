@@ -11,7 +11,7 @@ import {
 import { batchListingSchema } from "@/lib/schemas";
 import { prepareListingImagesForAi } from "@/lib/image-processing";
 import type { ListingInput, StoredListing } from "@/lib/types";
-import { ApiError, authorize, dataScope, enforceRateLimit, idempotencyKey, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
+import { authorize, dataScope, enforceRateLimit, idempotencyKey, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
 import type { DataScope } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -50,10 +50,6 @@ export async function POST(request: Request) {
     claimed = true;
     const activeScope = scope;
     const parsed = batchListingSchema.parse(await readJsonBody(request));
-    const maxSyncItems = Math.min(10, Math.max(1, Number(process.env.MAX_SYNC_BATCH_ITEMS || 4)));
-    if (parsed.items.length > maxSyncItems) {
-      throw new ApiError(`A synchronous batch supports at most ${maxSyncItems} items. Split larger imports into chunks.`, 400);
-    }
     const items = actor.ruleProfile
       ? parsed.items.map((item) => ({
           ...item,

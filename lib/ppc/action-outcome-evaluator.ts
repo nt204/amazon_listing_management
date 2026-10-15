@@ -1,6 +1,7 @@
 import { getDatabaseClient } from "@/lib/db";
 import {
   evaluateBidDecision,
+  getDefaultConfig,
   type EvaluationInput,
   type EvaluationResult,
   type MatchedControlSample,
@@ -203,8 +204,8 @@ export async function seedPendingOutcomesFromActions(options: { limit?: number }
 
     for (const windowDays of [3, 7, 14, 30]) {
       const obsStart = addDaysToIso(appliedOn, 1);
-      // Amazon report dates are inclusive, so N days end at start + (N - 1).
-      const obsEnd = addDaysToIso(obsStart, windowDays - 1);
+      // Amazon report cycles for N days span [start, start + windowDays] (e.g. 3 days: 09/10 -> 12/10).
+      const obsEnd = addDaysToIso(obsStart, windowDays);
       const maturity = addDaysToIso(obsEnd, attributionDays);
 
       await sql`
@@ -365,9 +366,9 @@ async function readAfterFacts(
   const sql = await getDatabaseClient();
 
   // 1. Match report for windowDays:
-  // - Either exact observationStart -> observationEnd
+  // - Either exact observationStart -> observationEnd (or observationStart -> observationEnd - 1)
   // - Or Amazon Ads standard report cycle: report_start_date is between appliedDate and observationStart,
-  //   duration is exactly windowDays, and report_end_date <= today.
+  //   duration is exactly windowDays (diff = windowDays or diff + 1 = windowDays), and report_end_date <= today.
   const rows = await sql<{
     id?: string;
     clicks: string | number;
@@ -379,23 +380,36 @@ async function readAfterFacts(
     report_start_date: string;
     report_end_date: string;
   }[]>`
-    SELECT id::text, clicks, spend, sales, orders, impressions, (report_end_date - report_start_date + 1)::int as days,
+    SELECT id::text, clicks, spend, sales, orders, impressions,
+           COALESCE(NULLIF((report_end_date - report_start_date)::int, 0), (report_end_date - report_start_date + 1)::int) as days,
            report_start_date::text, report_end_date::text
     FROM ppc_performance_facts
     WHERE store_id = ${storeId}
       AND grain = 'TARGET'
       AND (target_id = ${targetId} OR (${targetKeyword ? sql`lower(trim(target_expression)) = lower(trim(${targetKeyword}))` : sql`false`}))
       AND (
-        (report_start_date = ${observationStart}::date AND report_end_date = ${observationEnd}::date)
+        (
+          report_start_date = ${observationStart}::date
+          AND (
+            report_end_date = ${observationEnd}::date
+            OR report_end_date = ${addDaysToIso(observationStart, windowDays - 1)}::date
+          )
+        )
         OR
         (
           report_start_date > ${appliedDate}::date
           AND report_start_date <= ${observationStart}::date
-          AND (report_end_date - report_start_date + 1) = ${windowDays}
+          AND (
+            (report_end_date - report_start_date) = ${windowDays}
+            OR (report_end_date - report_start_date + 1) = ${windowDays}
+          )
           AND report_end_date <= ${today}::date
         )
       )
-      AND (report_end_date - report_start_date + 1) = ${windowDays}
+      AND (
+        (report_end_date - report_start_date) = ${windowDays}
+        OR (report_end_date - report_start_date + 1) = ${windowDays}
+      )
     ORDER BY report_end_date DESC, snapshot_date DESC
     LIMIT 1
   `;
@@ -425,7 +439,10 @@ async function readAfterFacts(
         AND (target_id = ${targetId} OR (${targetKeyword ? sql`lower(trim(target_expression)) = lower(trim(${targetKeyword}))` : sql`false`}))
         AND report_start_date > ${appliedDate}::date
         AND report_end_date <= ${today}::date
-        AND (report_end_date - report_start_date + 1) = 7
+        AND (
+          (report_end_date - report_start_date) = 7
+          OR (report_end_date - report_start_date + 1) = 7
+        )
       ORDER BY report_start_date, report_end_date, snapshot_date DESC;
     `;
 
@@ -522,19 +539,22 @@ async function queryMatchedControls(
 
     for (const ctrlTargetId of candidateIds.slice(0, 7)) {
       const ctrlFacts = await sql<{
-        window_days: number;
+        days_diff: number;
+        days_inc: number;
         spend: string | number;
         sales: string | number;
       }[]>`
-        SELECT (report_end_date - report_start_date + 1)::int as window_days, spend, sales
+        SELECT (report_end_date - report_start_date)::int as days_diff,
+               (report_end_date - report_start_date + 1)::int as days_inc,
+               spend, sales
         FROM ppc_performance_facts
         WHERE store_id = ${storeId}
           AND target_id = ${ctrlTargetId}
           AND grain = 'TARGET'
-        LIMIT 4;
+        LIMIT 10;
       `;
-      const c30 = ctrlFacts.find((f) => f.window_days === 30);
-      const cW = ctrlFacts.find((f) => f.window_days === windowDays);
+      const c30 = ctrlFacts.find((f) => f.days_diff === 30 || f.days_inc === 30);
+      const cW = ctrlFacts.find((f) => f.days_diff === windowDays || f.days_inc === windowDays);
       if (c30 && cW) {
         const bSales = Number(c30.sales || 0);
         const bSpend = Number(c30.spend || 0);
@@ -620,9 +640,9 @@ export async function evaluatePendingActionOutcomes(options: {
 
   for (const row of rows) {
     const appliedDate = row.applied_on.slice(0, 10);
-    // Recalculate canonical inclusive ranges so legacy rows are normalized.
+    // Canonical ranges matching Amazon report cycles: [applied + 1, applied + 1 + windowDays]
     const observationStart = addDaysToIso(appliedDate, 1);
-    const observationEnd = addDaysToIso(observationStart, row.window_days - 1);
+    const observationEnd = addDaysToIso(observationStart, row.window_days);
     const attributionDays = (row.campaign_type || "").toUpperCase().startsWith("SB") ? 14 : 7;
     const maturityDate = addDaysToIso(observationEnd, attributionDays);
     const marginResolution = await resolveMarginForAction(row.store_id, row.sku, row.context);
@@ -695,6 +715,12 @@ export async function evaluatePendingActionOutcomes(options: {
       },
       window: row.window_days,
       evaluation_date: today,
+      // Keep the pure evaluator's maturity decision identical to the dates
+      // persisted in ppc_action_outcomes (SP/SD: 7 days, SB: 14 days).
+      config: {
+        ...getDefaultConfig(),
+        attribution_buffer_days: attributionDays,
+      },
       matched_controls: matchedControls,
       other_bid_actions: otherActions.map((o) => ({
         action_id: o.id,

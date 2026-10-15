@@ -162,3 +162,9 @@ button:disabled {
     animation-duration: 0.01ms !important;
   }
 }
+/* The original frozen-column divider is hidden only while a user moves the
+   lock boundary to another column. The runtime boundary supplies the new line. */
+table.freeze-boundary-moved th::after,
+table.freeze-boundary-moved td::after {
+  display: none !important;
+}

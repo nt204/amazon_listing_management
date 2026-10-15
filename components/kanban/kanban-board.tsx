@@ -1,0 +1,1021 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+export type UrgencyLevel = "low" | "medium" | "high" | "urgent";
+export type CardStatus = "todo" | "in_progress" | "done";
+
+export interface KanbanCardItem {
+  id: string;
+  title: string;
+  description: string;
+  urgency: UrgencyLevel;
+  status: CardStatus;
+  images: string[];
+  authorName: string;
+  position: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface KanbanBoardProps {
+  currentUser?: {
+    displayName?: string;
+    email?: string;
+  };
+}
+
+const COLUMNS: { id: CardStatus; title: string; hintBadgeClass: string }[] = [
+  {
+    id: "todo",
+    title: "Ý kiến",
+    hintBadgeClass: "bg-slate-100 text-slate-700 border-slate-200",
+  },
+  {
+    id: "in_progress",
+    title: "Đang sửa",
+    hintBadgeClass: "bg-blue-50 text-blue-700 border-blue-200",
+  },
+  {
+    id: "done",
+    title: "Đã sửa",
+    hintBadgeClass: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  },
+];
+
+const URGENCY_CONFIG: Record<UrgencyLevel, { label: string; badgeClass: string; borderClass: string }> = {
+  urgent: {
+    label: "Khẩn cấp",
+    badgeClass: "bg-red-50 text-red-700 border-red-200 font-bold",
+    borderClass: "border-l-4 border-l-red-500",
+  },
+  high: {
+    label: "Cao",
+    badgeClass: "bg-amber-50 text-amber-700 border-amber-200 font-semibold",
+    borderClass: "border-l-4 border-l-amber-500",
+  },
+  medium: {
+    label: "Trung bình",
+    badgeClass: "bg-sky-50 text-sky-700 border-sky-200 font-medium",
+    borderClass: "border-l-4 border-l-sky-500",
+  },
+  low: {
+    label: "Thấp",
+    badgeClass: "bg-slate-100 text-slate-600 border-slate-200 font-medium",
+    borderClass: "border-l-4 border-l-slate-400",
+  },
+};
+
+// Helper: compress image file to Base64
+async function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const result = e.target?.result as string;
+      if (!result) return reject(new Error("Không thể đọc file"));
+
+      // If file is image, compress using canvas to keep payload reasonable
+      const img = new Image();
+      img.onload = () => {
+        const maxWidth = 1600;
+        const maxHeight = 1600;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxWidth || height > maxHeight) {
+          if (width > height) {
+            height = Math.round((height * maxWidth) / width);
+            width = maxWidth;
+          } else {
+            width = Math.round((width * maxHeight) / height);
+            height = maxHeight;
+          }
+        }
+
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          return resolve(result);
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        const compressed = canvas.toDataURL("image/jpeg", 0.82);
+        resolve(compressed);
+      };
+      img.onerror = () => resolve(result);
+      img.src = result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function formatDate(iso: string) {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString("vi-VN", {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+export function KanbanBoard({ currentUser }: KanbanBoardProps) {
+  const [cards, setCards] = useState<KanbanCardItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [urgencyFilter, setUrgencyFilter] = useState<UrgencyLevel | "all">("all");
+
+  // Drag and Drop state
+  const [draggedCardId, setDraggedCardId] = useState<string | null>(null);
+  const [dragOverColumn, setDragOverColumn] = useState<CardStatus | null>(null);
+
+  // Modal create/edit state
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingCard, setEditingCard] = useState<KanbanCardItem | null>(null);
+  const [formTitle, setFormTitle] = useState("");
+  const [formDescription, setFormDescription] = useState("");
+  const [formUrgency, setFormUrgency] = useState<UrgencyLevel>("medium");
+  const [formStatus, setFormStatus] = useState<CardStatus>("todo");
+  const [formAuthor, setFormAuthor] = useState("");
+  const [formImages, setFormImages] = useState<string[]>([]);
+  const [formSubmitting, setFormSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  // Detail & Preview image modals
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [selectedCardForDetail, setSelectedCardForDetail] = useState<KanbanCardItem | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Load cards from API
+  const fetchCards = useCallback(async () => {
+    try {
+      const res = await fetch("/api/kanban", { cache: "no-store" });
+      if (!res.ok) throw new Error("Lỗi khi tải dữ liệu");
+      const data = (await res.json()) as { cards?: KanbanCardItem[] };
+      setCards(data.cards || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchCards();
+  }, [fetchCards]);
+
+  // Báo cho Sidebar cập nhật số lượng badge đỏ ngay khi thẻ thay đổi
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("kanban-count-updated"));
+    }
+  }, [cards]);
+
+  // Open modal for creating new note
+  const handleOpenCreateModal = (defaultStatus: CardStatus = "todo") => {
+    setEditingCard(null);
+    setFormTitle("");
+    setFormDescription("");
+    setFormUrgency("medium");
+    setFormStatus(defaultStatus);
+    setFormAuthor(currentUser?.displayName || "");
+    setFormImages([]);
+    setFormError(null);
+    setIsModalOpen(true);
+  };
+
+  // Open modal for editing card
+  const handleOpenEditModal = (card: KanbanCardItem) => {
+    setEditingCard(card);
+    setFormTitle(card.title);
+    setFormDescription(card.description);
+    setFormUrgency(card.urgency);
+    setFormStatus(card.status);
+    setFormAuthor(card.authorName);
+    setFormImages(card.images || []);
+    setFormError(null);
+    setIsModalOpen(true);
+    if (selectedCardForDetail?.id === card.id) {
+      setSelectedCardForDetail(null);
+    }
+  };
+
+  // Handle image upload from file selector
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    try {
+      const newImages: string[] = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (file.type.startsWith("image/")) {
+          const b64 = await fileToBase64(file);
+          newImages.push(b64);
+        }
+      }
+      setFormImages((prev) => [...prev, ...newImages]);
+    } catch {
+      setFormError("Không thể tải lên ảnh này. Vui lòng thử lại.");
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  // Handle paste image from clipboard in form
+  const handleFormPaste = async (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) {
+          try {
+            const b64 = await fileToBase64(file);
+            setFormImages((prev) => [...prev, b64]);
+          } catch {
+            // ignore
+          }
+        }
+      }
+    }
+  };
+
+  const handleRemoveImage = (indexToRemove: number) => {
+    setFormImages((prev) => prev.filter((_, idx) => idx !== indexToRemove));
+  };
+
+  // Save card (Create or Update)
+  const handleSubmitForm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formTitle.trim()) {
+      setFormError("Vui lòng nhập tên lỗi.");
+      return;
+    }
+
+    setFormSubmitting(true);
+    setFormError(null);
+
+    try {
+      if (editingCard) {
+        // Update
+        const res = await fetch(`/api/kanban/${editingCard.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: formTitle.trim(),
+            description: formDescription.trim(),
+            urgency: formUrgency,
+            status: formStatus,
+            authorName: formAuthor.trim(),
+            images: formImages,
+          }),
+        });
+        if (!res.ok) throw new Error("Không thể cập nhật thẻ");
+        const data = (await res.json()) as { card: KanbanCardItem };
+        setCards((prev) => prev.map((c) => (c.id === data.card.id ? data.card : c)));
+      } else {
+        // Create
+        const res = await fetch("/api/kanban", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: formTitle.trim(),
+            description: formDescription.trim(),
+            urgency: formUrgency,
+            status: formStatus,
+            authorName: formAuthor.trim(),
+            images: formImages,
+          }),
+        });
+        if (!res.ok) throw new Error("Không thể tạo thẻ mới");
+        const data = (await res.json()) as { card: KanbanCardItem };
+        setCards((prev) => [data.card, ...prev]);
+      }
+      setIsModalOpen(false);
+    } catch (err: unknown) {
+      setFormError(err instanceof Error ? err.message : "Đã xảy ra lỗi.");
+    } finally {
+      setFormSubmitting(false);
+    }
+  };
+
+  // Delete card
+  const handleDeleteCard = async (id: string) => {
+    if (!confirm("Bạn có chắc chắn muốn xóa thẻ này?")) return;
+    try {
+      const res = await fetch(`/api/kanban/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Không thể xóa thẻ");
+      setCards((prev) => prev.filter((c) => c.id !== id));
+      if (selectedCardForDetail?.id === id) {
+        setSelectedCardForDetail(null);
+      }
+    } catch {
+      alert("Lỗi khi xóa thẻ.");
+    }
+  };
+
+  // Move card status (API + Optimistic Update)
+  const moveCardToStatus = async (cardId: string, newStatus: CardStatus) => {
+    const cardToMove = cards.find((c) => c.id === cardId);
+    if (!cardToMove || cardToMove.status === newStatus) return;
+
+    // Optimistic UI update
+    setCards((prev) =>
+      prev.map((c) => (c.id === cardId ? { ...c, status: newStatus } : c)),
+    );
+
+    try {
+      const res = await fetch(`/api/kanban/${cardId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (!res.ok) throw new Error("Không thể di chuyển");
+    } catch {
+      // Revert if error
+      void fetchCards();
+    }
+  };
+
+  // Drag and Drop handlers
+  const handleDragStart = (e: React.DragEvent, cardId: string) => {
+    setDraggedCardId(cardId);
+    e.dataTransfer.setData("text/plain", cardId);
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDragOverColumn = (e: React.DragEvent, columnId: CardStatus) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (dragOverColumn !== columnId) {
+      setDragOverColumn(columnId);
+    }
+  };
+
+  const handleDragLeaveColumn = (e: React.DragEvent, columnId: CardStatus) => {
+    // Only reset if leaving the column itself
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    if (dragOverColumn === columnId) {
+      setDragOverColumn(null);
+    }
+  };
+
+  const handleDropOnColumn = (e: React.DragEvent, targetColumnId: CardStatus) => {
+    e.preventDefault();
+    setDragOverColumn(null);
+    const cardId = draggedCardId || e.dataTransfer.getData("text/plain");
+    if (!cardId) return;
+
+    setDraggedCardId(null);
+    void moveCardToStatus(cardId, targetColumnId);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedCardId(null);
+    setDragOverColumn(null);
+  };
+
+  // Filtered cards
+  const filteredCards = useMemo(() => {
+    return cards.filter((card) => {
+      if (urgencyFilter !== "all" && card.urgency !== urgencyFilter) {
+        return false;
+      }
+      if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase().trim();
+        const inTitle = card.title.toLowerCase().includes(query);
+        const inDesc = card.description.toLowerCase().includes(query);
+        const inAuthor = card.authorName.toLowerCase().includes(query);
+        if (!inTitle && !inDesc && !inAuthor) return false;
+      }
+      return true;
+    });
+  }, [cards, urgencyFilter, searchQuery]);
+
+  return (
+    <div className="font-accounting-system flex h-full w-full flex-col bg-slate-50 text-slate-900 overflow-hidden select-none">
+      {/* TOP CONTROLS BAR */}
+      <div className="shrink-0 border-b border-slate-200 bg-white px-6 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <h2 className="text-base font-black tracking-tight text-slate-900">
+              Bảng Kanban Góp Ý &amp; Báo Lỗi
+            </h2>
+            <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-bold text-slate-600">
+              {cards.length} thẻ
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Search Box */}
+            <input
+              type="text"
+              placeholder="Tìm theo tên lỗi, mô tả..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="h-9 w-56 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:outline-hidden"
+            />
+
+            {/* Filter by Urgency */}
+            <div className="flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => setUrgencyFilter("all")}
+                className={`rounded-md px-2.5 py-1 transition cursor-pointer ${
+                  urgencyFilter === "all"
+                    ? "bg-white text-slate-900 shadow-xs font-bold"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                Tất cả
+              </button>
+              <button
+                type="button"
+                onClick={() => setUrgencyFilter("urgent")}
+                className={`rounded-md px-2.5 py-1 transition cursor-pointer ${
+                  urgencyFilter === "urgent"
+                    ? "bg-red-500 text-white font-bold"
+                    : "text-red-700 hover:bg-red-50"
+                }`}
+              >
+                Khẩn cấp
+              </button>
+              <button
+                type="button"
+                onClick={() => setUrgencyFilter("high")}
+                className={`rounded-md px-2.5 py-1 transition cursor-pointer ${
+                  urgencyFilter === "high"
+                    ? "bg-amber-500 text-white font-bold"
+                    : "text-amber-700 hover:bg-amber-50"
+                }`}
+              >
+                Cao
+              </button>
+              <button
+                type="button"
+                onClick={() => setUrgencyFilter("medium")}
+                className={`rounded-md px-2.5 py-1 transition cursor-pointer ${
+                  urgencyFilter === "medium"
+                    ? "bg-sky-500 text-white font-bold"
+                    : "text-sky-700 hover:bg-sky-50"
+                }`}
+              >
+                Trung bình
+              </button>
+              <button
+                type="button"
+                onClick={() => setUrgencyFilter("low")}
+                className={`rounded-md px-2.5 py-1 transition cursor-pointer ${
+                  urgencyFilter === "low"
+                    ? "bg-slate-500 text-white font-bold"
+                    : "text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                Thấp
+              </button>
+            </div>
+
+            {/* Create Card Button */}
+            <button
+              type="button"
+              onClick={() => handleOpenCreateModal("todo")}
+              className="h-9 rounded-lg bg-indigo-600 px-4 text-xs font-bold text-white shadow-xs hover:bg-indigo-700 transition cursor-pointer"
+            >
+              + Thêm ý kiến
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* KANBAN BOARD COLUMNS AREA */}
+      <div className="flex-1 overflow-x-auto p-6">
+        <div className="grid h-full min-w-[960px] grid-cols-3 gap-5">
+          {COLUMNS.map((column) => {
+            const columnCards = filteredCards.filter((c) => c.status === column.id);
+            const isTarget = dragOverColumn === column.id;
+
+            return (
+              <div
+                key={column.id}
+                onDragOver={(e) => handleDragOverColumn(e, column.id)}
+                onDragLeave={(e) => handleDragLeaveColumn(e, column.id)}
+                onDrop={(e) => handleDropOnColumn(e, column.id)}
+                className={`flex h-full flex-col rounded-xl border bg-slate-100/90 transition-all duration-150 ${
+                  isTarget
+                    ? "border-indigo-400 bg-indigo-50/50 ring-2 ring-indigo-300"
+                    : "border-slate-200/80"
+                }`}
+              >
+                {/* COLUMN HEADER */}
+                <div className="flex items-center justify-between border-b border-slate-200/80 px-4 py-3 bg-white/70 rounded-t-xl">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-extrabold text-slate-800">
+                      {column.title}
+                    </h3>
+                    <span
+                      className={`rounded-full border px-2 py-0.5 text-xs font-bold ${column.hintBadgeClass}`}
+                    >
+                      {columnCards.length}
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleOpenCreateModal(column.id)}
+                    className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                  >
+                    + Thêm
+                  </button>
+                </div>
+
+                {/* CARDS LIST CONTAINER */}
+                <div className="flex-1 overflow-y-auto p-3 space-y-3 thin-scrollbar">
+                  {loading ? (
+                    <div className="py-8 text-center text-xs text-slate-400">
+                      Đang tải dữ liệu...
+                    </div>
+                  ) : columnCards.length === 0 ? (
+                    <div className="flex h-32 items-center justify-center rounded-lg border-2 border-dashed border-slate-200 p-4 text-center text-xs text-slate-400">
+                      {isTarget ? "Thả thẻ vào đây" : "Chưa có thẻ nào"}
+                    </div>
+                  ) : (
+                    columnCards.map((card) => {
+                      const urgencyInfo = URGENCY_CONFIG[card.urgency];
+                      const isDragging = draggedCardId === card.id;
+
+                      return (
+                        <div
+                          key={card.id}
+                          draggable
+                          onDragStart={(e) => handleDragStart(e, card.id)}
+                          onDragEnd={handleDragEnd}
+                          onClick={() => setSelectedCardForDetail(card)}
+                          className={`group cursor-grab active:cursor-grabbing rounded-lg border border-slate-200 bg-white p-3.5 shadow-2xs transition-all hover:border-slate-300 hover:shadow-xs ${
+                            urgencyInfo.borderClass
+                          } ${isDragging ? "opacity-40 scale-95" : "opacity-100"}`}
+                        >
+                          {/* CARD TOP: Urgency Badge + Date */}
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <span
+                              className={`rounded border px-2 py-0.5 text-[11px] ${urgencyInfo.badgeClass}`}
+                            >
+                              {urgencyInfo.label}
+                            </span>
+                            <span className="text-[11px] text-slate-400 font-mono">
+                              {formatDate(card.createdAt)}
+                            </span>
+                          </div>
+
+                          {/* CARD TITLE */}
+                          <h4 className="text-xs font-bold text-slate-900 leading-snug">
+                            {card.title}
+                          </h4>
+
+                          {/* CARD DESCRIPTION */}
+                          {card.description && (
+                            <p className="mt-1 text-[11px] text-slate-600 line-clamp-3 leading-relaxed whitespace-pre-line">
+                              {card.description}
+                            </p>
+                          )}
+
+                          {/* IMAGE THUMBNAILS (if any) */}
+                          {card.images && card.images.length > 0 && (
+                            <div className="mt-2.5 flex flex-wrap gap-1.5">
+                              {card.images.slice(0, 3).map((imgUrl, imgIdx) => (
+                                <button
+                                  key={imgIdx}
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setPreviewImage(imgUrl);
+                                  }}
+                                  className="relative h-12 w-12 overflow-hidden rounded border border-slate-200 bg-slate-100 hover:opacity-90 cursor-zoom-in"
+                                >
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={imgUrl}
+                                    alt="Ảnh đính kèm"
+                                    className="h-full w-full object-cover"
+                                  />
+                                </button>
+                              ))}
+                              {card.images.length > 3 && (
+                                <div className="flex h-12 w-12 items-center justify-center rounded border border-slate-200 bg-slate-50 text-[11px] font-bold text-slate-500">
+                                  +{card.images.length - 3}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* CARD FOOTER: Author + Column Shift Actions */}
+                          <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-2 text-[11px]">
+                            <span className="text-slate-500 font-medium truncate max-w-[110px]">
+                              {card.authorName || "Ẩn danh"}
+                            </span>
+
+                            {/* Quick column mover buttons */}
+                            <div
+                              className="flex items-center gap-1"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {column.id !== "todo" && (
+                                <button
+                                  type="button"
+                                  title="Chuyển về Ý kiến"
+                                  onClick={() => moveCardToStatus(card.id, "todo")}
+                                  className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer"
+                                >
+                                  ← Ý kiến
+                                </button>
+                              )}
+                              {column.id !== "in_progress" && (
+                                <button
+                                  type="button"
+                                  title="Chuyển sang Đang sửa"
+                                  onClick={() => moveCardToStatus(card.id, "in_progress")}
+                                  className="rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700 hover:bg-blue-100 cursor-pointer"
+                                >
+                                  Đang sửa
+                                </button>
+                              )}
+                              {column.id !== "done" && (
+                                <button
+                                  type="button"
+                                  title="Chuyển sang Đã sửa"
+                                  onClick={() => moveCardToStatus(card.id, "done")}
+                                  className="rounded border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100 cursor-pointer"
+                                >
+                                  Đã sửa →
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* CREATE / EDIT MODAL */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
+          <div
+            className="w-full max-w-lg rounded-xl border border-slate-200 bg-white shadow-xl animate-in fade-in zoom-in-95 duration-150"
+            onPaste={handleFormPaste}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3.5 bg-slate-50/50 rounded-t-xl">
+              <h3 className="text-sm font-extrabold text-slate-900">
+                {editingCard ? "Chỉnh sửa thẻ" : "Thêm ý kiến / Báo lỗi mới"}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsModalOpen(false)}
+                className="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs font-semibold text-slate-500 hover:bg-slate-100 cursor-pointer"
+              >
+                Đóng
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitForm} className="p-5 space-y-4">
+              {formError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+                  {formError}
+                </div>
+              )}
+
+              {/* Tên lỗi */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Tên lỗi <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ví dụ: Lỗi không lưu được từ khóa, Hiển thị sai giá..."
+                  value={formTitle}
+                  onChange={(e) => setFormTitle(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-hidden"
+                />
+              </div>
+
+              {/* Mức độ cấp thiết */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Mức độ cấp thiết
+                </label>
+                <div className="grid grid-cols-4 gap-2">
+                  {(
+                    [
+                      { id: "urgent", label: "Khẩn cấp", activeClass: "bg-red-500 text-white border-red-600 font-bold" },
+                      { id: "high", label: "Cao", activeClass: "bg-amber-500 text-white border-amber-600 font-bold" },
+                      { id: "medium", label: "Trung bình", activeClass: "bg-sky-500 text-white border-sky-600 font-bold" },
+                      { id: "low", label: "Thấp", activeClass: "bg-slate-600 text-white border-slate-700 font-bold" },
+                    ] as const
+                  ).map((lvl) => (
+                    <button
+                      key={lvl.id}
+                      type="button"
+                      onClick={() => setFormUrgency(lvl.id)}
+                      className={`rounded-lg border py-2 text-xs text-center transition cursor-pointer ${
+                        formUrgency === lvl.id
+                          ? lvl.activeClass
+                          : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                      }`}
+                    >
+                      {lvl.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Cột trạng thái */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Trạng thái
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {COLUMNS.map((col) => (
+                    <button
+                      key={col.id}
+                      type="button"
+                      onClick={() => setFormStatus(col.id)}
+                      className={`rounded-lg border py-1.5 text-xs text-center transition cursor-pointer ${
+                        formStatus === col.id
+                          ? "border-indigo-600 bg-indigo-50 text-indigo-700 font-bold"
+                          : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
+                      }`}
+                    >
+                      {col.title}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Mô tả chi tiết */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Mô tả chi tiết
+                </label>
+                <textarea
+                  rows={4}
+                  placeholder="Mô tả cụ thể các bước gây lỗi, nội dung mong muốn sửa đổi..."
+                  value={formDescription}
+                  onChange={(e) => setFormDescription(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white p-3 text-xs text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-hidden"
+                />
+              </div>
+
+              {/* Kèm ảnh */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-bold text-slate-700">
+                    Ảnh đính kèm
+                  </label>
+                  <span className="text-[11px] text-slate-400">
+                    Có thể dán (Ctrl+V) ảnh chụp màn hình trực tiếp
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={handleFileChange}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                  >
+                    + Chọn file ảnh từ máy
+                  </button>
+
+                  {formImages.map((imgUrl, idx) => (
+                    <div
+                      key={idx}
+                      className="group relative h-14 w-14 overflow-hidden rounded-md border border-slate-200 bg-slate-100"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={imgUrl}
+                        alt="Đính kèm"
+                        className="h-full w-full object-cover"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveImage(idx)}
+                        className="absolute top-0 right-0 rounded-bl bg-red-600 px-1 py-0.5 text-[9px] font-bold text-white hover:bg-red-700 cursor-pointer"
+                      >
+                        Xóa
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Tên người note */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Người ghi chú
+                </label>
+                <input
+                  type="text"
+                  placeholder="Tên của bạn..."
+                  value={formAuthor}
+                  onChange={(e) => setFormAuthor(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-hidden"
+                />
+              </div>
+
+              {/* FOOTER BUTTONS */}
+              <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setIsModalOpen(false)}
+                  className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  disabled={formSubmitting}
+                  className="rounded-lg bg-indigo-600 px-5 py-2 text-xs font-bold text-white shadow-xs hover:bg-indigo-700 transition cursor-pointer disabled:opacity-50"
+                >
+                  {formSubmitting ? "Đang lưu..." : editingCard ? "Lưu thay đổi" : "Tạo thẻ"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* CARD DETAIL VIEW MODAL */}
+      {selectedCardForDetail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
+          <div className="w-full max-w-xl rounded-xl border border-slate-200 bg-white shadow-xl animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3.5 bg-slate-50/50 rounded-t-xl">
+              <div className="flex items-center gap-2">
+                <span
+                  className={`rounded border px-2 py-0.5 text-xs ${
+                    URGENCY_CONFIG[selectedCardForDetail.urgency].badgeClass
+                  }`}
+                >
+                  {URGENCY_CONFIG[selectedCardForDetail.urgency].label}
+                </span>
+                <span className="text-xs text-slate-500 font-mono">
+                  {formatDate(selectedCardForDetail.createdAt)}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedCardForDetail(null)}
+                className="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs font-semibold text-slate-500 hover:bg-slate-100 cursor-pointer"
+              >
+                Đóng
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+              <div>
+                <h3 className="text-base font-extrabold text-slate-900">
+                  {selectedCardForDetail.title}
+                </h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  Người tạo:{" "}
+                  <span className="font-semibold text-slate-700">
+                    {selectedCardForDetail.authorName || "Ẩn danh"}
+                  </span>
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-slate-100 bg-slate-50/60 p-4">
+                <h4 className="text-xs font-bold text-slate-700 mb-2">Mô tả chi tiết</h4>
+                <p className="text-xs text-slate-800 whitespace-pre-line leading-relaxed">
+                  {selectedCardForDetail.description || "Không có mô tả chi tiết."}
+                </p>
+              </div>
+
+              {selectedCardForDetail.images && selectedCardForDetail.images.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-bold text-slate-700 mb-2">Ảnh đính kèm</h4>
+                  <div className="grid grid-cols-3 gap-2">
+                    {selectedCardForDetail.images.map((imgUrl, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => setPreviewImage(imgUrl)}
+                        className="overflow-hidden rounded-lg border border-slate-200 bg-slate-100 hover:opacity-90 cursor-zoom-in"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={imgUrl}
+                          alt="Ảnh đính kèm"
+                          className="h-28 w-full object-cover"
+                        />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Status switcher in modal */}
+              <div className="border-t border-slate-100 pt-4">
+                <label className="block text-xs font-bold text-slate-700 mb-2">
+                  Trạng thái hiện tại
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {COLUMNS.map((col) => (
+                    <button
+                      key={col.id}
+                      type="button"
+                      onClick={() => {
+                        void moveCardToStatus(selectedCardForDetail.id, col.id);
+                        setSelectedCardForDetail((prev) =>
+                          prev ? { ...prev, status: col.id } : null,
+                        );
+                      }}
+                      className={`rounded-lg border py-2 text-xs text-center transition cursor-pointer ${
+                        selectedCardForDetail.status === col.id
+                          ? "border-indigo-600 bg-indigo-50 text-indigo-700 font-bold"
+                          : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
+                      }`}
+                    >
+                      {col.title}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* ACTIONS */}
+              <div className="flex items-center justify-between border-t border-slate-100 pt-4">
+                <button
+                  type="button"
+                  onClick={() => handleDeleteCard(selectedCardForDetail.id)}
+                  className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-100 cursor-pointer"
+                >
+                  Xóa thẻ
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleOpenEditModal(selectedCardForDetail)}
+                  className="rounded-lg border border-slate-300 bg-white px-4 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                >
+                  Chỉnh sửa
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* FULL IMAGE PREVIEW MODAL */}
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/80 backdrop-blur-xs p-4 cursor-zoom-out"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div
+            className="relative max-h-[90vh] max-w-[90vw] overflow-hidden rounded-xl border border-slate-700 bg-slate-900 p-2 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-end p-1 mb-1">
+              <button
+                type="button"
+                onClick={() => setPreviewImage(null)}
+                className="rounded border border-slate-600 bg-slate-800 px-3 py-1 text-xs font-bold text-white hover:bg-slate-700 cursor-pointer"
+              >
+                Đóng ảnh
+              </button>
+            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={previewImage}
+              alt="Phóng to ảnh"
+              className="max-h-[80vh] max-w-full rounded object-contain"
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

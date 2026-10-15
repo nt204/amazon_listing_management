@@ -27,6 +27,8 @@ import {
   WarningCircleIcon,
   XIcon,
   CheckIcon,
+  ArchiveIcon,
+  ClockCounterClockwiseIcon,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
@@ -140,9 +142,23 @@ export function TrelloBoardView({
   const [reviewCards, setReviewCards] = useState<TrelloCard[]>([]);
   const [listingCards, setListingCards] = useState<TrelloCard[]>([]);
   const [selectedCardIds, setSelectedCardIds] = useState<Set<string>>(new Set());
+  const [selectedListingCardIds, setSelectedListingCardIds] = useState<Set<string>>(new Set());
+
+  const toggleSelectListingCard = (cardId: string) => {
+    setSelectedListingCardIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(cardId)) {
+        next.delete(cardId);
+      } else {
+        next.add(cardId);
+      }
+      return next;
+    });
+  };
 
   const [loading, setLoading] = useState(false);
   const [batchProcessing, setBatchProcessing] = useState(false);
+  const [submittingBatch, setSubmittingBatch] = useState(false);
   const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
   const [processingCardIds, setProcessingCardIds] = useState<Set<string>>(new Set());
   const [cardProcessProgress, setCardProcessProgress] = useState<Record<string, CardProcessProgress>>({});
@@ -159,17 +175,182 @@ export function TrelloBoardView({
   const [inspectListing, setInspectListing] = useState<(StoredListing & { trelloCardId?: string }) | null>(null);
   const [copied, setCopied] = useState(false);
 
+  // Batch history and batch-file downloads
+  interface BatchHistoryItem {
+    id: string;
+    createdAt: string;
+    total: number;
+    successCount: number;
+    shopName: string;
+    templateName: string;
+    skus: string[];
+    cardIds: string[];
+    shopId?: string;
+    templateId?: string;
+  }
+
+  const [batchHistory, setBatchHistory] = useState<BatchHistoryItem[]>([]);
+  const [mounted, setMounted] = useState(false);
+
+  const fetchBatchHistory = useCallback(async () => {
+    try {
+      const res = await fetch("/api/trello/batch-jobs", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data.history)) {
+        setBatchHistory(data.history);
+      }
+    } catch (err) {
+      console.warn("Could not fetch batch history from server:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    setMounted(true);
+    void fetchBatchHistory();
+
+    const handleUpdate = () => {
+      void fetchBatchHistory();
+    };
+    window.addEventListener("batch-job-updated", handleUpdate);
+    return () => window.removeEventListener("batch-job-updated", handleUpdate);
+  }, [fetchBatchHistory]);
+
+  const [showBatchHistoryModal, setShowBatchHistoryModal] = useState(false);
+  const [downloadingZipBatchId, setDownloadingZipBatchId] = useState<string | null>(null);
+  const [downloadingExcelBatchId, setDownloadingExcelBatchId] = useState<string | null>(null);
+
+  const saveBatchHistoryRecord = (item: Omit<BatchHistoryItem, "id" | "createdAt">) => {
+    const record: BatchHistoryItem = {
+      ...item,
+      id: `batch-${Date.now()}`,
+      createdAt: new Date().toISOString(),
+    };
+    setBatchHistory((prev) => {
+      const next = [record, ...prev].slice(0, 30);
+      try {
+        localStorage.setItem("trello_batch_listing_history", JSON.stringify(next));
+      } catch (err) {
+        console.warn("Could not save batch history:", err);
+      }
+      return next;
+    });
+    return record;
+  };
+
+  const clearBatchHistory = () => {
+    if (!confirm("Bạn có chắc chắn muốn xóa toàn bộ lịch sử các batch đã chạy không?")) return;
+    setBatchHistory([]);
+    try {
+      localStorage.removeItem("trello_batch_listing_history");
+    } catch {}
+  };
+
+  const downloadBatchZip = async (
+    cardIds: string[],
+    batchId?: string,
+    batchShopId = shopId,
+    batchTemplateId = templateId,
+  ) => {
+    if (cardIds.length === 0) return;
+    const downloadKey = batchId || "active-batch";
+    setDownloadingZipBatchId(downloadKey);
+    try {
+      const res = await fetch("/api/trello/batch-zip", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cardIds,
+          shopId: batchShopId || undefined,
+          templateId: batchTemplateId || undefined,
+          batchId,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Không thể tải file ZIP cho batch này.");
+      }
+
+      const blob = await res.blob();
+      const disposition = res.headers.get("content-disposition") || "";
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      const fileName = match ? match[1] : `batch-listings-${Date.now()}.zip`;
+
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(blobUrl);
+
+      setSuccessMsg(`Đã tải xuống thành công file ZIP: ${fileName}`);
+    } catch (err) {
+      console.error("Lỗi tải batch ZIP:", err);
+      setError(err instanceof Error ? err.message : "Đã xảy ra lỗi khi tạo file ZIP cho batch.");
+    } finally {
+      setDownloadingZipBatchId(null);
+    }
+  };
+
+  const downloadBatchExcel = async (
+    cardIds: string[],
+    batchId: string,
+    batchShopId = shopId,
+    batchTemplateId = templateId,
+  ) => {
+    if (cardIds.length === 0) return;
+    if (!batchShopId || !batchTemplateId) {
+      setError("Lịch sử batch cũ chưa lưu Shop/Template. Hãy chọn lại đúng Shop và Template trước khi tải file tổng hợp.");
+      return;
+    }
+    setDownloadingExcelBatchId(batchId);
+    try {
+      const res = await fetch("/api/trello/batch-excel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cardIds, shopId: batchShopId, templateId: batchTemplateId, batchId }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Không thể tạo file Excel tổng hợp cho batch này.");
+      }
+
+      const blob = await res.blob();
+      const disposition = res.headers.get("content-disposition") || "";
+      const match = disposition.match(/filename="?([^";]+)"?/);
+      const fileName = match ? match[1] : `batch-${batchId}-combined.xlsx`;
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(blobUrl);
+      const exportedCount = res.headers.get("x-listings-count") || cardIds.length;
+      setSuccessMsg(`Đã tải file Excel tổng hợp ${exportedCount} SKU: ${fileName}`);
+    } catch (err) {
+      console.error("Lỗi tải Excel tổng hợp:", err);
+      setError(err instanceof Error ? err.message : "Đã xảy ra lỗi khi tạo file Excel tổng hợp.");
+    } finally {
+      setDownloadingExcelBatchId(null);
+    }
+  };
+
   const [openDropdown, setOpenDropdown] = useState<"model" | "brand" | "template" | null>(null);
   const AI_MODEL_OPTIONS = useMemo(() => [
+    { value: "gemini-3.5-flash-lite-cheapkey", label: "Gemini 3.5 Flash-Lite", tag: "Mặc định (CheapKey AI)", icon: "💸" },
     { value: "gemini-3.6-flash", label: "Gemini 3.6 Flash", tag: "Chất lượng cao", icon: "⚡" },
-    { value: "gemini-3.5-flash-lite-cheapkey", label: "Gemini 3.5 Flash-Lite", tag: "CheapKey AI", icon: "💸" },
     { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash", tag: "Cân bằng", icon: "⚡" },
     { value: "gpt-4o", label: "GPT-4o", tag: "Chất lượng cao", icon: "🤖" },
-    { value: "gpt-5.6-luna", label: "GPT-5.6 Luna", tag: "Mặc định (CheapKey AI)", icon: "💸" },
+    { value: "gpt-5.6-luna", label: "GPT-5.6 Luna", tag: "CheapKey AI", icon: "💸" },
     { value: "gemini-3.7-flash-cheapkey", label: "Gemini 3.7 Flash", tag: "CheapKey AI", icon: "💸" },
   ], []);
 
-  const [selectedModel, setSelectedModel] = useState("gpt-5.6-luna");
+  const [selectedModel, setSelectedModel] = useState("gemini-3.5-flash-lite-cheapkey");
 
   // View Layout, Sort, Search, Filter & Pagination states
   const [reviewLayout, setReviewLayout] = useState<"cards" | "compact">("compact");
@@ -277,6 +458,14 @@ export function TrelloBoardView({
     const start = (listingPage - 1) * listingPageSize;
     return displayListingCards.slice(start, start + listingPageSize);
   }, [displayListingCards, listingPage, listingPageSize]);
+
+  const toggleSelectAllListingCards = () => {
+    if (selectedListingCardIds.size === paginatedListingCards.length) {
+      setSelectedListingCardIds(new Set());
+    } else {
+      setSelectedListingCardIds(new Set(paginatedListingCards.map((c) => c.id)));
+    }
+  };
 
   useEffect(() => {
     if (!destinationTemplates.length) {
@@ -912,60 +1101,62 @@ export function TrelloBoardView({
 
   const processBatchListings = async () => {
     if (selectedCardIds.size === 0) return;
+    if (!brandProfileId || !selectedBrandName) {
+      setError("Hãy chọn Brand trước khi tạo listing.");
+      return;
+    }
+    if (!shopId || !templateId) {
+      setError(`Hãy tải blank template của ${selectedBrandName} trước khi tạo listing.`);
+      return;
+    }
+
     const cardsToProcess = reviewCards.filter((c) => selectedCardIds.has(c.id));
-    const batchAbortController = new AbortController();
-    batchAbortControllerRef.current?.abort();
-    batchAbortControllerRef.current = batchAbortController;
-    setBatchProcessing(true);
-    setBatchProgress({ current: 0, total: cardsToProcess.length });
+    if (cardsToProcess.length === 0) return;
+
+    setSubmittingBatch(true);
     setError("");
     setSuccessMsg("");
 
-    let successCount = 0;
-    let completedCount = 0;
-    let cancelledCount = 0;
-    let postProcessWarningCount = 0;
-    const batchErrors: string[] = [];
-    await runWithConcurrency(cardsToProcess, 2, async (card) => {
-      if (batchAbortController.signal.aborted) {
-        cancelledCount += 1;
-        completedCount += 1;
-        setBatchProgress({ current: completedCount, total: cardsToProcess.length });
-        return;
-      }
-      try {
-        const completed = await runCardListing(card, false);
-        successCount += 1;
-        if (!completed.attachment) postProcessWarningCount += 1;
-      } catch (err) {
-        if ((err instanceof DOMException && err.name === "AbortError") || batchAbortController.signal.aborted) {
-          cancelledCount += 1;
-        } else {
-          console.error(`Lỗi tạo batch cho card ${card.id}:`, err);
-          batchErrors.push(`${card.parsed?.sku || card.name}: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      } finally {
-        completedCount += 1;
-        setBatchProgress({ current: completedCount, total: cardsToProcess.length });
-      }
-    });
+    try {
+      const res = await fetch("/api/trello/batch-jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cards: cardsToProcess.map((c) => ({ id: c.id, name: c.name })),
+          cardIds: cardsToProcess.map((c) => c.id),
+          shopId,
+          shopName: selectedShopName || "Shop",
+          templateId,
+          templateName: destinationTemplates.find((t) => t.id === templateId)?.name || "Template",
+          brandProfileId: brandProfileId || undefined,
+          brandName: selectedBrandName || undefined,
+          marketplace,
+          model: selectedModel,
+          concurrency: 2,
+        }),
+      });
 
-    if (batchAbortControllerRef.current === batchAbortController) {
-      batchAbortControllerRef.current = null;
+      const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; batchId?: string };
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Không thể khởi tạo batch listing.");
+      }
+
+      // Xóa selection để người dùng tiếp tục làm việc
+      setSelectedCardIds(new Set());
+      setSuccessMsg(
+        `🚀 Đã khởi tạo Batch Listing (${cardsToProcess.length} thẻ) chạy ngầm trên server! Bạn có thể thoải mái chuyển sang các tab khác (Accounting, PPC...) hoặc đóng tab, thanh tiến độ ở trên cùng sẽ cập nhật tự động.`
+      );
+
+      // Kích hoạt thanh GlobalListingBatchBar ngay lập tức
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("batch-job-updated"));
+      }
+    } catch (err) {
+      console.error("Lỗi khởi tạo batch job:", err);
+      setError(err instanceof Error ? err.message : "Lỗi khởi tạo batch job.");
+    } finally {
+      setSubmittingBatch(false);
     }
-    setBatchProcessing(false);
-    if (successCount > 0) {
-      setSuccessMsg(postProcessWarningCount > 0
-        ? `Đã tạo ${successCount}/${cardsToProcess.length} listing; ${postProcessWarningCount} thẻ cần kiểm tra lại Excel hoặc Trello.`
-        : `Đã tạo ${successCount}/${cardsToProcess.length} listing và đính kèm đầy đủ file Excel lên Trello.`);
-    }
-    if (batchErrors.length > 0) {
-      setError(`Lỗi khi tạo Listing: ${batchErrors.join("; ")}`);
-    }
-    if (cancelledCount > 0) {
-      setSuccessMsg(`Đã ngắt ${cancelledCount} Listing trong Batch; hoàn tất ${successCount}/${cardsToProcess.length} thẻ.`);
-    }
-    await loadCards(boardId);
   };
 
   const cancelBatchListings = () => {
@@ -1370,6 +1561,25 @@ export function TrelloBoardView({
                 })()}
               </div>
 
+              {/* Batch History & ZIP Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  void fetchBatchHistory();
+                  setShowBatchHistoryModal(true);
+                }}
+                className="flex items-center gap-2 rounded-2xl border border-slate-200/80 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-slate-300 transition duration-150 cursor-pointer"
+                title="Xem lịch sử các đợt chạy Batch Listing & Tải file ZIP trọn gói"
+              >
+                <ClockCounterClockwiseIcon className="h-4 w-4 text-emerald-600" weight="bold" />
+                <span>Lịch Sử Batch</span>
+                {mounted && batchHistory.length > 0 && (
+                  <span className="flex h-5 min-w-[20px] px-1 items-center justify-center rounded-full bg-emerald-100 text-[10px] font-black text-emerald-800">
+                    {batchHistory.length}
+                  </span>
+                )}
+              </button>
+
               {/* Refresh / Reload Cards Button */}
               <button
                 type="button"
@@ -1587,7 +1797,7 @@ export function TrelloBoardView({
               <button
                 type="button"
                 onClick={cancelBatchListings}
-                className="flex items-center gap-1.5 rounded-lg bg-red-500 px-4 py-2 text-xs font-bold text-white shadow hover:bg-red-400 transition"
+                className="flex items-center gap-1.5 rounded-lg bg-red-500 px-4 py-2 text-xs font-bold text-white shadow hover:bg-red-400 transition cursor-pointer"
               >
                 <XIcon className="h-4 w-4" weight="bold" />
                 <span>Ngắt Batch</span>
@@ -1595,12 +1805,16 @@ export function TrelloBoardView({
             ) : (
               <button
                 onClick={processBatchListings}
-                disabled={!shopId || !templateId}
+                disabled={!shopId || !templateId || submittingBatch}
                 title={!shopId || !templateId ? "Hãy chọn shop và blank template trước" : undefined}
-                className="flex items-center gap-1.5 rounded-lg bg-amber-400 px-4 py-2 text-xs font-bold text-slate-900 shadow hover:bg-amber-300 transition"
+                className="flex items-center gap-1.5 rounded-lg bg-amber-400 px-4 py-2 text-xs font-bold text-slate-900 shadow hover:bg-amber-300 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <LightningIcon className="h-4 w-4 fill-current" />
-                <span>Batch Tạo Listing Cho {selectedCardIds.size} Thẻ Đã Chọn</span>
+                <LightningIcon className={`h-4 w-4 fill-current ${submittingBatch ? "animate-spin" : ""}`} />
+                <span>
+                  {submittingBatch
+                    ? "Đang gửi tác vụ chạy nền..."
+                    : `Batch Tạo Listing Cho ${selectedCardIds.size} Thẻ (Chạy nền Server)`}
+                </span>
               </button>
             )}
           </div>
@@ -2225,6 +2439,24 @@ export function TrelloBoardView({
                   )}
                 </div>
 
+                {/* Download Batch ZIP for Selected Done Cards */}
+                {selectedListingCardIds.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => downloadBatchZip(Array.from(selectedListingCardIds), undefined, shopId, templateId)}
+                    disabled={Boolean(downloadingZipBatchId)}
+                    className="flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 text-xs font-black shadow-xs transition cursor-pointer disabled:opacity-50"
+                    title={`Tải file ZIP gồm ${selectedListingCardIds.size} file Excel đã chọn`}
+                  >
+                    {downloadingZipBatchId ? (
+                      <SpinnerIcon className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <ArchiveIcon className="h-3.5 w-3.5" weight="bold" />
+                    )}
+                    <span>Tải ZIP ({selectedListingCardIds.size})</span>
+                  </button>
+                )}
+
                 {/* Filter Popover */}
                 <div className="relative">
                   <button
@@ -2280,6 +2512,32 @@ export function TrelloBoardView({
               </div>
             </div>
 
+            {/* Quick Actions Bar for Listing Column: Select All */}
+            {paginatedListingCards.length > 0 && (
+              <div className="mb-2.5 flex items-center justify-between px-1 text-xs text-slate-500">
+                <label className="flex items-center gap-1.5 cursor-pointer hover:text-slate-800">
+                  <input
+                    type="checkbox"
+                    checked={paginatedListingCards.length > 0 && selectedListingCardIds.size === paginatedListingCards.length}
+                    onChange={toggleSelectAllListingCards}
+                    className="h-3.5 w-3.5 rounded accent-emerald-600 cursor-pointer"
+                  />
+                  <span className="font-semibold text-[11px]">
+                    {selectedListingCardIds.size === paginatedListingCards.length ? "Bỏ chọn tất cả trang này" : `Chọn tất cả (${paginatedListingCards.length} thẻ)`}
+                  </span>
+                </label>
+                {selectedListingCardIds.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedListingCardIds(new Set())}
+                    className="text-[11px] font-semibold text-slate-400 hover:text-rose-600 underline"
+                  >
+                    Bỏ chọn ({selectedListingCardIds.size})
+                  </button>
+                )}
+              </div>
+            )}
+
             {/* Cards List */}
             <div className="flex-1 overflow-y-auto space-y-3 pr-1 thin-scrollbar">
               {paginatedListingCards.length === 0 ? (
@@ -2310,16 +2568,23 @@ export function TrelloBoardView({
                     Boolean(a.mimeType && (a.mimeType.includes("spreadsheet") || a.mimeType.includes("excel") || a.mimeType.includes("csv")))
                   );
                   const latestExcel = excelAttachments.length > 0 ? excelAttachments[excelAttachments.length - 1] : null;
+                  const isListingSelected = selectedListingCardIds.has(card.id);
 
                   return (
                     <div
                       key={card.id}
-                      className="group rounded-xl border border-slate-200 bg-white p-3 shadow-2xs hover:shadow-xs hover:border-emerald-300 transition flex items-center justify-between gap-3"
+                      className={`group rounded-xl border p-3 shadow-2xs hover:shadow-xs transition flex items-center justify-between gap-3 ${
+                        isListingSelected
+                          ? "border-emerald-500 bg-emerald-50/40 ring-2 ring-emerald-400/30"
+                          : "border-slate-200 bg-white hover:border-emerald-300"
+                      }`}
                     >
                       {/* Left Side: Checkbox + Thumbnail + SKU + Timestamp + Title */}
                       <div className="flex items-center gap-3 min-w-0 flex-1">
                         <input
                           type="checkbox"
+                          checked={isListingSelected}
+                          onChange={() => toggleSelectListingCard(card.id)}
                           className="h-4 w-4 rounded accent-emerald-600 shrink-0 cursor-pointer"
                         />
 
@@ -2874,6 +3139,167 @@ export function TrelloBoardView({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Batch History & Download Files Modal */}
+      {showBatchHistoryModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl border border-slate-200 flex flex-col max-h-[85vh] overflow-hidden animate-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 bg-slate-50">
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-xs">
+                  <ArchiveIcon size={20} weight="bold" />
+                </span>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">Lịch Sử Batch Listing & Tải File</h3>
+                  <p className="text-xs text-slate-500 font-medium">
+                    Tải ZIP các file lẻ hoặc một file Excel tổng hợp toàn bộ SKU của batch
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {batchHistory.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={clearBatchHistory}
+                    className="text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 px-2.5 py-1.5 rounded-lg font-bold transition cursor-pointer"
+                  >
+                    Xóa lịch sử
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowBatchHistoryModal(false)}
+                  className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-200 hover:text-slate-700 transition cursor-pointer"
+                >
+                  <XIcon size={18} />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body: History List */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-3.5 thin-scrollbar">
+              {batchHistory.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 text-center text-slate-400">
+                  <div className="h-14 w-14 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-300 mb-3">
+                    <ClockCounterClockwiseIcon size={32} weight="duotone" />
+                  </div>
+                  <p className="text-sm font-bold text-slate-700">Chưa có đợt chạy Batch nào trong lịch sử</p>
+                  <p className="text-xs text-slate-400 max-w-sm mt-1">
+                    Khi bạn chọn các thẻ và nhấn <strong>Batch Tạo Listing</strong>, hệ thống sẽ lưu file lẻ trên Trello và cho phép tải ZIP hoặc Excel tổng hợp tại đây.
+                  </p>
+                </div>
+              ) : (
+                batchHistory.map((batch, index) => {
+                  const dateStr = new Date(batch.createdAt).toLocaleString("vi-VN", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    day: "2-digit",
+                    month: "2-digit",
+                    year: "numeric",
+                  });
+                  const isDownloadingThis = downloadingZipBatchId === batch.id;
+                  const isDownloadingExcel = downloadingExcelBatchId === batch.id;
+
+                  return (
+                    <div
+                      key={batch.id}
+                      className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs hover:shadow-xs hover:border-emerald-300 transition flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4"
+                    >
+                      <div className="min-w-0 flex-1 space-y-1.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="rounded-md bg-emerald-50 px-2.5 py-0.5 text-xs font-black text-emerald-800 border border-emerald-200">
+                            Batch #{batchHistory.length - index}
+                          </span>
+                          <span className="text-xs text-slate-400 font-semibold">• {dateStr}</span>
+                          <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-700">
+                            {batch.shopName}
+                          </span>
+                        </div>
+
+                        <div className="text-xs font-semibold text-slate-800">
+                          Thành công <span className="font-bold text-emerald-600">{batch.successCount}</span> / {batch.total} thẻ
+                        </div>
+
+                        {/* List of SKUs */}
+                        <div className="flex flex-wrap gap-1">
+                          {batch.skus.slice(0, 8).map((sku, sIdx) => (
+                            <span
+                              key={sIdx}
+                              className="font-mono text-[10px] font-bold bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded border border-slate-200"
+                            >
+                              {sku}
+                            </span>
+                          ))}
+                          {batch.skus.length > 8 && (
+                            <span className="text-[10px] text-slate-400 font-bold self-center">
+                              +{batch.skus.length - 8} thẻ khác
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Batch download actions */}
+                      <div className="shrink-0 flex flex-col items-stretch gap-2">
+                        <button
+                          type="button"
+                          onClick={() => downloadBatchExcel(
+                            batch.cardIds,
+                            batch.id,
+                            batch.shopId || shopId,
+                            batch.templateId || templateId,
+                          )}
+                          disabled={Boolean(downloadingExcelBatchId || downloadingZipBatchId)}
+                          className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 text-xs font-black shadow-xs transition cursor-pointer disabled:opacity-50"
+                        >
+                          {isDownloadingExcel ? (
+                            <SpinnerIcon className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <FileXlsIcon className="h-4 w-4" weight="bold" />
+                          )}
+                          <span>{isDownloadingExcel ? "Đang tạo Excel..." : "Tải Excel Tổng Hợp"}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => downloadBatchZip(
+                            batch.cardIds,
+                            batch.id,
+                            batch.shopId || shopId,
+                            batch.templateId || templateId,
+                          )}
+                          disabled={Boolean(downloadingZipBatchId || downloadingExcelBatchId)}
+                          className="flex items-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 text-xs font-black shadow-xs transition cursor-pointer disabled:opacity-50"
+                        >
+                          {isDownloadingThis ? (
+                            <SpinnerIcon className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <ArchiveIcon className="h-4 w-4" weight="bold" />
+                          )}
+                          <span>{isDownloadingThis ? "Đang nén ZIP..." : "Tải 1 File ZIP"}</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="border-t border-slate-100 px-6 py-3.5 bg-slate-50 flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-500">
+                Lưu tối đa 30 đợt chạy Batch gần nhất
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowBatchHistoryModal(false)}
+                className="rounded-xl border border-slate-300 bg-white px-4 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 transition cursor-pointer"
+              >
+                Đóng
+              </button>
+            </div>
           </div>
         </div>
       )}

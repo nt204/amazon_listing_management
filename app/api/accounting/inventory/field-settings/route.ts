@@ -3,9 +3,13 @@ import { authorize, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
 import { listInventoryFieldSettings, saveInventoryFieldSetting } from "@/lib/accounting/inventory-db";
 
 const schema = z.object({
-  store_id: z.string().uuid(), entity_type: z.enum(["sku", "inbound"]), field_id: z.string().min(1),
-  label: z.string().trim().min(1), input_type: z.enum(["text", "select"]),
-  options: z.array(z.string()).max(200), allow_custom_value: z.boolean(),
+  store_id: z.string().uuid(),
+  entity_type: z.enum(["sku", "inbound", "check_shipment", "orders"]),
+  field_id: z.string().min(1),
+  label: z.string().trim().min(1),
+  input_type: z.enum(["text", "select"]),
+  options: z.array(z.string()).max(200),
+  allow_custom_value: z.boolean(),
 });
 
 export async function GET(request: Request) {

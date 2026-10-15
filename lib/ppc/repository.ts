@@ -1886,6 +1886,32 @@ export async function refreshPpcSnapshotSummary(
         activated_at = NOW();
     `;
 
+    // 7. Purge superseded summaries for this store & coverage to prevent disk bloat
+    await tx`
+      DELETE FROM ppc_campaign_summary
+      WHERE store_id = ${storeId}
+        AND coverage_days = ${coverageDays}
+        AND snapshot_id != ${snapshotId};
+    `;
+    await tx`
+      DELETE FROM ppc_sku_summary
+      WHERE store_id = ${storeId}
+        AND coverage_days = ${coverageDays}
+        AND snapshot_id != ${snapshotId};
+    `;
+    await tx`
+      DELETE FROM ppc_target_breakdown_summary
+      WHERE store_id = ${storeId}
+        AND coverage_days = ${coverageDays}
+        AND snapshot_id != ${snapshotId};
+    `;
+    await tx`
+      DELETE FROM ppc_snapshot_summary
+      WHERE store_id = ${storeId}
+        AND coverage_days = ${coverageDays}
+        AND snapshot_id != ${snapshotId};
+    `;
+
     return { snapshotId, coverageDays };
   };
 

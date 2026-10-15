@@ -3,11 +3,14 @@
 import { useState, useEffect } from "react";
 import { StoreManagementView } from "./store-management-view";
 import { InventoryView } from "./inventory-view";
+import { AccountingFileManager } from "./accounting-file-manager";
+import { OrderInputView } from "./order-input-view";
 
 export type AccountingModuleKey =
   | "overview"
   | "stores"
   | "inventory"
+  | "files"
   | "orders"
   | "financials"
   | "reports"
@@ -172,6 +175,16 @@ export function AccountingWorkspace({
   // Section 3: Inventory (Full Multi-Store UI with SKU Master & Inbound Shipments)
   if (effectiveSection === "inventory") {
     return <InventoryView />;
+  }
+
+  // Section 4: Orders (Đầu Vào Order & Đối Soát Đơn Hàng)
+  if (effectiveSection === "orders") {
+    return <OrderInputView />;
+  }
+
+  // Section 7: System Admin & Quản lý file Kế toán theo Ngày & Store
+  if (effectiveSection === "admin" || effectiveSection === "files") {
+    return <AccountingFileManager />;
   }
 
   // Section 5: Financials with Horizontal Tabs

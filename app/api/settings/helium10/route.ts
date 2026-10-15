@@ -52,16 +52,37 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     await authorize(request, "write");
-    const body = (await readJsonBody(request)) as { cookies?: string };
+    const body = (await readJsonBody(request)) as { cookies?: string; action?: string };
 
-    if (!body?.cookies || typeof body.cookies !== "string") {
+    let cookiesToSave = body?.cookies;
+
+    if (body?.action === "load_default_file") {
+      const { readFileSync, existsSync } = await import("node:fs");
+      const { join } = await import("node:path");
+      const fallbackPath = join(process.cwd(), "config", "helium10-cookies.json");
+      if (existsSync(fallbackPath)) {
+        const raw = readFileSync(fallbackPath, "utf8");
+        if (raw.trim()) {
+          cookiesToSave = raw.trim();
+        }
+      }
+
+      if (!cookiesToSave) {
+        return NextResponse.json(
+          { error: "Không tìm thấy file Cookie Helium 10 Diamond trên hệ thống." },
+          { status: 404 },
+        );
+      }
+    }
+
+    if (!cookiesToSave || typeof cookiesToSave !== "string") {
       return NextResponse.json(
-        { error: "Vui lòng cung cấp chuỗi Cookie Helium 10 hợp lệ." },
+        { error: "Vui lòng cung cấp nội dung hoặc file Cookie Helium 10 hợp lệ." },
         { status: 400 },
       );
     }
 
-    const updatedConfig = await saveHelium10PlaywrightCookies(body.cookies);
+    const updatedConfig = await saveHelium10PlaywrightCookies(cookiesToSave);
     return NextResponse.json({
       success: true,
       status: updatedConfig.status,

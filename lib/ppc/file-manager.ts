@@ -875,6 +875,8 @@ export interface CleanupOldFactsResult {
 export async function cleanupOldZeroMetricFacts(): Promise<CleanupOldFactsResult> {
   try {
     const sql = await getDatabaseClient();
+
+    // 1. Dọn dẹp facts rác 0-metrics của các snapshot ngày cũ (an toàn 100%)
     const result = await sql<{ count: string }[]>`
       WITH latest_snapshot AS (
         SELECT MAX(snapshot_date) AS max_date FROM ppc_performance_facts
@@ -886,11 +888,20 @@ export async function cleanupOldZeroMetricFacts(): Promise<CleanupOldFactsResult
           AND p.clicks = 0
           AND p.impressions = 0
           AND p.sales = 0
-          AND p.grain = 'TARGET'
-          AND NOT EXISTS (
-            SELECT 1 FROM ppc_actions a
-            WHERE a.store_id = p.store_id
-              AND a.target_id = p.target_id
+          AND (
+            p.grain IN ('PLACEMENT', 'PRODUCT', 'AD_GROUP')
+            OR (
+              p.grain = 'TARGET'
+              AND NOT EXISTS (
+                SELECT 1 FROM ppc_actions a
+                WHERE a.store_id = p.store_id
+                  AND a.target_id = p.target_id
+              )
+            )
+            OR (
+              p.grain = 'CAMPAIGN'
+              AND lower(COALESCE(NULLIF(p.campaign_state, ''), NULLIF(p.state, ''), 'paused')) != 'enabled'
+            )
           )
         RETURNING 1
       )
@@ -898,9 +909,41 @@ export async function cleanupOldZeroMetricFacts(): Promise<CleanupOldFactsResult
     `;
     const deletedFactsCount = Number(result[0]?.count || 0);
 
-    if (deletedFactsCount > 0) {
+    // 2. Tự động purge các snapshot cũ mồ côi không còn active trong các bảng summary
+    const sumResult = await sql<{ count: string }[]>`
+      WITH deleted_camp AS (
+        DELETE FROM ppc_campaign_summary
+        WHERE snapshot_id NOT IN (SELECT snapshot_id FROM ppc_active_snapshots)
+        RETURNING 1
+      ),
+      deleted_sku AS (
+        DELETE FROM ppc_sku_summary
+        WHERE snapshot_id NOT IN (SELECT snapshot_id FROM ppc_active_snapshots)
+        RETURNING 1
+      ),
+      deleted_tb AS (
+        DELETE FROM ppc_target_breakdown_summary
+        WHERE snapshot_id NOT IN (SELECT snapshot_id FROM ppc_active_snapshots)
+        RETURNING 1
+      ),
+      deleted_snap AS (
+        DELETE FROM ppc_snapshot_summary
+        WHERE snapshot_id NOT IN (SELECT snapshot_id FROM ppc_active_snapshots)
+        RETURNING 1
+      )
+      SELECT (
+        (SELECT count(*) FROM deleted_camp) +
+        (SELECT count(*) FROM deleted_sku) +
+        (SELECT count(*) FROM deleted_tb) +
+        (SELECT count(*) FROM deleted_snap)
+      )::text as count;
+    `;
+    const deletedSummaryCount = Number(sumResult[0]?.count || 0);
+
+    if (deletedFactsCount > 0 || deletedSummaryCount > 0) {
       try {
         await sql`VACUUM (PARALLEL 0, ANALYZE) ppc_performance_facts`;
+        await sql`VACUUM (PARALLEL 0, ANALYZE) ppc_campaign_summary`;
       } catch (vacuumErr) {
         console.warn("[File Manager] Không thể chạy VACUUM ANALYZE tự động:", vacuumErr);
       }

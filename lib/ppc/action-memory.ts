@@ -243,16 +243,19 @@ export async function saveActionContextsBestEffort(inputs: ActionContextInput[])
     ));
     const sourceRows = targetIds.length > 0
       ? await sql<SourceReportRow[]>`
-          SELECT DISTINCT ON (store_id, target_id, report_end_date - report_start_date + 1)
+          SELECT DISTINCT ON (store_id, target_id, CASE WHEN (report_end_date - report_start_date)::int IN (7, 30) THEN (report_end_date - report_start_date)::int ELSE (report_end_date - report_start_date + 1)::int END)
             store_id, target_id, report_start_date::text, report_end_date::text,
             report_granularity,
-            (report_end_date - report_start_date + 1)::int AS window_days,
+            CASE WHEN (report_end_date - report_start_date)::int IN (7, 30) THEN (report_end_date - report_start_date)::int ELSE (report_end_date - report_start_date + 1)::int END AS window_days,
             snapshot_date::text, impressions, clicks, spend, sales, orders, units
           FROM ppc_performance_facts
           WHERE grain = 'TARGET'
             AND target_id = ANY(${targetIds})
-            AND (report_end_date - report_start_date + 1) IN (7, 30)
-          ORDER BY store_id, target_id, (report_end_date - report_start_date + 1),
+            AND (
+              (report_end_date - report_start_date)::int IN (7, 30)
+              OR (report_end_date - report_start_date + 1)::int IN (7, 30)
+            )
+          ORDER BY store_id, target_id, CASE WHEN (report_end_date - report_start_date)::int IN (7, 30) THEN (report_end_date - report_start_date)::int ELSE (report_end_date - report_start_date + 1)::int END,
                    snapshot_date DESC, report_end_date DESC
         `
       : [];

@@ -18,10 +18,13 @@ import {
   ShoppingCartIcon,
   WalletIcon,
   TrendUpIcon,
+  ChatCircleDotsIcon,
+  FolderSimpleIcon,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { AccountMenu } from "@/components/account-menu";
+import { GlobalListingBatchBar } from "@/components/global-listing-batch-bar";
 import type { RequestActor } from "@/lib/auth";
 import type { BrandProfile } from "@/lib/types";
 
@@ -51,6 +54,10 @@ const AccountingWorkspace = dynamic(
   () => import("@/components/accounting/accounting-workspace").then((module) => module.AccountingWorkspace),
   { loading: ViewLoading },
 );
+const KanbanBoard = dynamic(
+  () => import("@/components/kanban/kanban-board").then((module) => module.KanbanBoard),
+  { loading: ViewLoading },
+);
 
 interface SystemGuideItem {
   id: string;
@@ -67,7 +74,7 @@ interface ListingWorkspaceProps {
   initialView?: WorkspaceView;
 }
 
-type WorkspaceView = "listing" | "mockups" | "sellersprite" | "ppc" | "accounting";
+type WorkspaceView = "listing" | "mockups" | "sellersprite" | "ppc" | "accounting" | "kanban";
 
 export function ListingWorkspace({
   initialBrands = [],
@@ -75,7 +82,7 @@ export function ListingWorkspace({
   initialView = "listing",
 }: ListingWorkspaceProps) {
   const allowedFeatureSet = useMemo(
-    () => new Set<WorkspaceView>((actor?.allowedFeatures as WorkspaceView[] | undefined) ?? ["listing", "mockups", "sellersprite", "ppc", "accounting"]),
+    () => new Set<WorkspaceView>([...((actor?.allowedFeatures as WorkspaceView[] | undefined) ?? ["listing", "mockups", "sellersprite", "ppc", "accounting"]), "kanban"]),
     [actor?.allowedFeatures],
   );
   const hasTrelloAccess = allowedFeatureSet.has("listing") || allowedFeatureSet.has("mockups");
@@ -87,6 +94,7 @@ export function ListingWorkspace({
     | "overview"
     | "stores"
     | "inventory"
+    | "files"
     | "orders"
     | "financials"
     | "reports"
@@ -105,7 +113,7 @@ export function ListingWorkspace({
   const [accountingSubTab, setAccountingSubTab] = useState<string | undefined>(undefined);
   const sidebarTab = activeView === "mockups" ? "mockups" : "trello";
   const viewMode =
-    activeView === "sellersprite" || activeView === "ppc" || activeView === "accounting"
+    activeView === "sellersprite" || activeView === "ppc" || activeView === "accounting" || activeView === "kanban"
       ? activeView
       : "trello";
   const [showTrelloConfigModal, setShowTrelloConfigModal] = useState(false);
@@ -114,6 +122,37 @@ export function ListingWorkspace({
   const [loadingGuides, setLoadingGuides] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [kanbanPendingCount, setKanbanPendingCount] = useState<number>(0);
+
+  const fetchKanbanCount = useCallback(async () => {
+    try {
+      const res = await fetch("/api/kanban", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data.cards)) {
+        // Đếm số lượng góp ý / báo lỗi chưa xử lý xong (chưa chuyển sang done)
+        const pending = data.cards.filter((c: any) => c.status !== "done").length;
+        setKanbanPendingCount(pending);
+      }
+    } catch {
+      // Bỏ qua lỗi mạng nền
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchKanbanCount();
+    const timer = setInterval(() => {
+      void fetchKanbanCount();
+    }, 30000); // Tự động làm mới mỗi 30s
+    const handleUpdate = () => {
+      void fetchKanbanCount();
+    };
+    window.addEventListener("kanban-count-updated", handleUpdate);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("kanban-count-updated", handleUpdate);
+    };
+  }, [fetchKanbanCount]);
 
   const notify = useCallback((message: string) => {
     setToast(message);
@@ -227,13 +266,14 @@ export function ListingWorkspace({
       const savedTab = localStorage.getItem("nce_ppc_last_tab") as PpcDashboardTab | null;
 
       const effectiveView = urlView || savedView;
-      const validViews: WorkspaceView[] = ["listing", "mockups", "sellersprite", "ppc", "accounting"];
+      const validViews: WorkspaceView[] = ["listing", "mockups", "sellersprite", "ppc", "accounting", "kanban"];
       const validPpcSections: PpcSection[] = ["dashboard", "negative_keyword", "sale_kw", "auto_bid", "phoi", "rules"];
       const validDashboardTabs: PpcDashboardTab[] = ["overview", "campaigns", "targets", "search_terms", "skus", "st_campaigns"];
       const validAccountingSections: AccountingSection[] = [
         "overview",
         "stores",
         "inventory",
+        "files",
         "orders",
         "financials",
         "reports",
@@ -330,6 +370,53 @@ export function ListingWorkspace({
     return () => window.clearTimeout(timer);
   }, [hasTrelloAccess, refreshBrands]);
 
+  // Theo dõi thông báo chấm đỏ khi có batch hoàn tất cho riêng tài khoản hiện tại
+  const [hasUnreadBatch, setHasUnreadBatch] = useState(false);
+  const userBatchSeenKey = `trello_batch_last_seen_${actor?.userId || "anon"}`;
+
+  const checkUnreadBatch = useCallback(async () => {
+    try {
+      const res = await fetch("/api/trello/batch-jobs/active", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!Array.isArray(data.activeBatches)) return;
+
+      const lastSeenStr = localStorage.getItem(userBatchSeenKey);
+      const lastSeenTime = lastSeenStr ? Number(lastSeenStr) : 0;
+
+      const hasNewCompleted = data.activeBatches.some((b: any) => {
+        if (b.status !== "completed" && b.status !== "failed") return false;
+        const batchTime = new Date(b.completed_at || b.updated_at).getTime();
+        return batchTime > lastSeenTime;
+      });
+
+      setHasUnreadBatch(hasNewCompleted);
+    } catch {}
+  }, [userBatchSeenKey]);
+
+  useEffect(() => {
+    void checkUnreadBatch();
+    const interval = setInterval(() => {
+      void checkUnreadBatch();
+    }, 6000);
+
+    const handleBatchUpdate = () => {
+      void checkUnreadBatch();
+    };
+    window.addEventListener("batch-job-updated", handleBatchUpdate);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("batch-job-updated", handleBatchUpdate);
+    };
+  }, [checkUnreadBatch]);
+
+  const markBatchAsRead = useCallback(() => {
+    try {
+      localStorage.setItem(userBatchSeenKey, Date.now().toString());
+    } catch {}
+    setHasUnreadBatch(false);
+  }, [userBatchSeenKey]);
+
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-slate-50 text-slate-800 font-sans">
       {/* LEFT SIDEBAR NAVIGATION */}
@@ -353,18 +440,31 @@ export function ListingWorkspace({
             {(actor?.allowedFeatures?.includes("listing") ?? true) && (
               <button
                 type="button"
-                onClick={() => selectView("listing")}
-                className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${sidebarTab === "trello" && viewMode === "trello"
+                onClick={() => {
+                  selectView("listing");
+                  markBatchAsRead();
+                }}
+                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
+                  sidebarTab === "trello" && viewMode === "trello"
                     ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                     : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                  }`}
+                }`}
               >
-                <KanbanIcon
-                  size={17}
-                  className={sidebarTab === "trello" && viewMode === "trello" ? "text-indigo-600" : "text-slate-400"}
-                  weight="duotone"
-                />
-                <span>Listing</span>
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <KanbanIcon
+                    size={17}
+                    className={sidebarTab === "trello" && viewMode === "trello" ? "text-indigo-600" : "text-slate-400"}
+                    weight="duotone"
+                  />
+                  <span>Listing</span>
+                </div>
+                {/* Chấm đỏ thông báo khi có Batch chạy xong */}
+                {hasUnreadBatch && (
+                  <span className="relative flex h-2.5 w-2.5 shrink-0" title="Có Batch Listing vừa hoàn tất!">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500 ring-2 ring-white"></span>
+                  </span>
+                )}
               </button>
             )}
 
@@ -839,23 +939,57 @@ export function ListingWorkspace({
                     <button
                       type="button"
                       onClick={() => selectAccountingSection("admin")}
-                      className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "admin"
+                      className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "admin" || accountingSection === "files"
                           ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
                           : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                         }`}
                     >
                       <GearIcon
                         size={17}
-                        weight={accountingSection === "admin" ? "fill" : "duotone"}
-                        className={`shrink-0 ${accountingSection === "admin" ? "text-indigo-600" : "text-slate-400"
+                        weight={accountingSection === "admin" || accountingSection === "files" ? "fill" : "duotone"}
+                        className={`shrink-0 mt-0.5 ${accountingSection === "admin" || accountingSection === "files" ? "text-indigo-600" : "text-slate-400"
                           }`}
                       />
-                      <span className="text-xs font-bold text-slate-800">System Admin</span>
+                      <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                        <span className="text-xs font-bold text-slate-800">System Admin</span>
+                        <span className="text-[10.5px] font-normal text-slate-400 leading-snug break-words">Quản lý file tải về & hệ thống</span>
+                      </div>
                     </button>
                   </div>
                 )}
               </div>
             )}
+
+            {/* Divider */}
+            <div className="my-2 border-t border-slate-100" />
+
+            {/* Kanban Feedback Tab */}
+            <button
+              type="button"
+              onClick={() => selectView("kanban")}
+              className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
+                activeView === "kanban"
+                  ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
+                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+              }`}
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <ChatCircleDotsIcon
+                  size={17}
+                  weight={activeView === "kanban" ? "fill" : "duotone"}
+                  className={activeView === "kanban" ? "text-indigo-600" : "text-slate-400"}
+                />
+                <span className="truncate">Kanban Góp ý &amp; Báo lỗi</span>
+              </div>
+              {kanbanPendingCount > 0 && (
+                <span
+                  className="ml-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-black text-white shadow-xs leading-none shrink-0 animate-in fade-in zoom-in-75 duration-150"
+                  title={`${kanbanPendingCount} góp ý / báo lỗi chưa xử lý`}
+                >
+                  {kanbanPendingCount > 99 ? "99+" : kanbanPendingCount}
+                </span>
+              )}
+            </button>
           </nav>
         </div>
 
@@ -1000,9 +1134,16 @@ export function ListingWorkspace({
           </div>
         ) : null}
 
+        {/* BATCH LISTING RUNNER - CHỈ HIỂN THỊ KHI Ở TAB LISTING ĐỂ KHÔNG RỐI MẮT Ở CÁC MỤC KHÁC */}
+        {viewMode === "trello" && sidebarTab === "trello" && <GlobalListingBatchBar />}
+
         {/* VIEW MODE CONTENT */}
         <div className="flex-1 min-h-0 overflow-hidden">
-          {viewMode === "sellersprite" ? (
+          {viewMode === "kanban" ? (
+            <div className="font-accounting-system h-full w-full overflow-hidden bg-slate-50">
+              <KanbanBoard currentUser={actor ? { displayName: actor.displayName, email: actor.email } : undefined} />
+            </div>
+          ) : viewMode === "sellersprite" ? (
             <div className="h-full w-full overflow-y-auto p-6 bg-slate-50 thin-scrollbar">
               <SellerSpriteKeywordMiner
                 onImportKeywords={() => {

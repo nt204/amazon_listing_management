@@ -93,7 +93,7 @@ function listingResponseSchema(input: ListingInput) {
 }
 
 const systemInstruction = `Create clear Amazon listing copy from the supplied product input.
-Operator facts, supplied product-image OCR, and directly visible product attributes are the source of truth. Use raw images to identify product form, design/theme, intended setting, visible hardware, and clearly readable specification text. Numeric specifications and non-visible claims require operator data, OCR, or clearly readable image text.
+Operator facts, card description notes, supplied product-image OCR, and directly visible attributes in product mockup images are the sole source of truth. Observe the attached mockup images closely to identify the true physical product form, visible artwork, printed quotes/graphics, and display hardware. NEVER invent or guess numerical measurements (dimensions, oz, count), weight, unstated materials, or unverified claims.
 Competitor data is light inspiration for search intent, strengths, and gaps. Never copy its wording, brand, ASIN, or unsupported product claims.
 Use natural English Title Case in titles: capitalize important words, but keep articles, conjunctions, and short prepositions lowercase. Write visible artwork wording in readable Title Case without quotation marks.
 Return only the requested JSON.`;
@@ -179,7 +179,8 @@ function buildPrompt(
 
 Requirements:
 - Title: follow this slot order: [BRAND] [CORE PRODUCT TYPE], [THEME/DESIGN] [PRIMARY SEARCH INTENT] [RECIPIENT], [KEY ATTRIBUTE/USE] [FEATURE], [SIZE/COUNT]. Keep supported slots in this order. Do not output brackets or plus signs.
-- Use the exact supplied brand. CORE PRODUCT TYPE must clearly identify what the item physically is in specific shopper-facing language; operator.product_type_hint is a category hint, not wording that must be copied.
+- Use the exact supplied brand.
+- CORE PRODUCT TYPE: Accurately identify what the item physically is by examining the attached product mockup images, the card title, and description facts (e.g., Slate Plaque, Ceramic Mug, Pop-Up Card, Wall Art Plaque, Throw Blanket, Wooden Sign, Acrylic Night Light, etc.). Do NOT assume or force any fixed product category. Identify the exact physical product form.
 - PRIMARY SEARCH INTENT must contain operator.main_keyword using the same words in the same order; letter casing may change for natural Title Case. This is required in every title. A distinct relevant measured or related keyword may supplement the main keyword but must never replace it.
 - Relevance outranks search volume. Never use a keyword that changes the product type, placement, recipient, or use. Gift intent must not replace the core product type.
 - RECIPIENT must be a specific target person or relationship (e.g. "for Mom", "for Men", "for Teachers") ONLY when explicitly supported by input data. NEVER write generic filler phrases like "for buyers", "for gift buyers", "for shoppers", "for customers", or "for recipient". If no specific target recipient is specified, omit the recipient slot completely.
@@ -189,12 +190,30 @@ Requirements:
 - Return the final polished title yourself. The server only cleans spacing and enforces the hard length limit.
 - Bullets: write exactly 5 detailed, information-rich Amazon bullets of about ${policy.bulletTargetMin}-${Math.min(policy.bulletTargetMax, policy.bulletMax)} characters each, as plain text in this exact format: BENEFIT-LED HEADER IN CAPS: Natural sentence.
 - Build each bullet as hook or key benefit + verified feature + customer benefit + relevant use case. Add relevant keywords naturally without keyword stuffing.
-- Cover these angles in order: primary message or benefit; design or style; verified size, material, capacity, or other useful detail; ease of use, care, or display; recipient and gift occasion.
-- If an angle lacks verified evidence, replace it with another supported benefit. Keep every bullet distinct. Do not use numbering, bullet symbols, brackets, Markdown, emojis, price or shipping information, seller details, promotions, guarantees, refunds, or calls to action.
+- Cover these angles flexibly based on verified product facts:
+  1. Primary benefit & aesthetic appeal (visual hook, core emotional or functional value).
+  2. Design, artwork & craftsmanship (details clearly visible on mockups or stated in notes).
+  3. Physical specifications (material, size, structure — strictly as verified from description/images).
+  4. Versatility, placement & care (where and how to display, use, wear, or care for the item).
+  5. Occasion & gifting (thoughtful gift idea for relevant recipients or celebrations).
+  * If the product is customizable/personalized (e.g. operator.product_facts.personalization is provided, or title/mockup indicates custom photo/name), dedicate one bullet to the personalization process (e.g. EASY CUSTOMIZATION or PERSONALIZED KEEPSAKE: Click "Customize Now" to upload your custom photo, family name, or special date to create a one-of-a-kind treasure). If the product is standard (non-custom), do NOT include "Customize Now".
+  * If any specific angle lacks verified evidence, replace it with another verified benefit or use case. Keep every bullet distinct.
+- Do not use numbering, bullet symbols, brackets, Markdown, emojis, price or shipping information, seller details, promotions, guarantees, refunds, or calls to action.
 - Description: ${input.configuration.generate_description ? `about ${policy.descriptionTargetMin}-${policy.descriptionTargetMax} characters` : "empty string"}; create a detailed product narrative that opens with the primary purpose, then explains supported design, physical details, use context, audience, and occasions in natural paragraphs. Expand on the product instead of repeating the five bullets sentence-for-sentence. Do not include promotional, pricing, shipping, contact, or seller information.
-- Generic keywords: ${input.configuration.generate_search_terms ? `return one space-separated string in generic_keywords within ${policy.searchTermsMaxBytes} bytes, prioritizing relevant synonyms, alternate shopper wording, audience, and occasion terms not already well covered in visible copy` : "return an empty generic_keywords string"}; no punctuation, brands, competitor names, ASINs, filler, subjective claims, or duplicate words.
-- Use operator data and OCR that clearly belongs to the product. Ignore OCR noise and do not complete missing text.
-- Numbers, material, package contents, manufacturing method, weight, care, personalization, origin, safety, and performance may be stated only when the exact detail appears in operator data, supplied OCR, or clearly readable product-image text, never from a competitor or visual inference.
+- Keyword Integration:
+  * Actively weave relevant search phrases and keywords from operator.keyword_candidates and operator.preferred_backend_keywords into the title, bullets, and description where they naturally describe the product's verified theme, use, recipient, or setting. Do NOT keyword-stuff; weave them in naturally.
+- Generic keywords (backend search terms): ${input.configuration.generate_search_terms ? `return one space-separated string in generic_keywords within ${policy.searchTermsMaxBytes} bytes, prioritizing unused high-value terms from operator.preferred_backend_keywords and operator.keyword_candidates that are not already heavily covered in the visible copy, followed by relevant synonyms, audience, and occasion terms` : "return an empty generic_keywords string"}; no punctuation, brands, competitor names, ASINs, filler, subjective claims, or duplicate words.
+- Language Handling (Bilingual Understanding):
+  * The operator description, notes, and labels may be written in Vietnamese, English, or a mix of both (e.g. "Chất liệu: Đá tự nhiên", "Kích thước: 15x20cm", "Người nhận: Mẹ, Vợ", "Dịp: Kỷ niệm ngày cưới", "Đặc điểm: Cắt vát viền thủ công").
+  * Accurately understand and translate all product facts, materials, dimensions, recipient relationships, occasions, and features from Vietnamese or English text into natural, professional English.
+  * Always output 100% fluent, idiomatic English for all fields (title, bullet_points, description, generic_keywords).
+- STRICT NO-FABRICATION RULE for physical specs:
+  * Closely inspect the attached product mockup images together with operator.product_facts and the full card description (operator.product_facts.additional_notes).
+  * Never invent or guess numerical measurements (e.g. inches, cm, oz, count), weight, material composition, or color names.
+  * Material & Dimensions: State specific dimensions or technical materials ONLY IF explicitly provided in operator.product_facts (size_capacity, material) or clearly readable from text/labels on the mockup images or in the card description. If dimensions or materials are not explicitly stated, describe only the visible aesthetic form (e.g. tabletop display, heart-shaped design, wall plaque) and completely omit the [SIZE/COUNT] slot from the title.
+  * Color: Mention color only if clearly visible in the product mockup images or explicitly stated in operator data.
+  * Artwork & Text: Accurately observe visible artwork, printed graphics, or quotes on the product mockup images (supported by OCR text) to describe the visual theme without inventing unprinted wording.
+  * Customization: If the card description or title indicates personalized/customizable items (e.g. custom photo, name, date), explain the personalization clearly without inventing options not supported by the product.
 - Do not add unsupported quality adjectives such as premium, high-quality, durable, genuine, sturdy, or heavy.
 - Generate the copy and search vocabulary yourself. Use competitor information only to understand context, useful choices, and gaps; do not copy it.
 - Before returning JSON, silently verify the product type, factual support, title length and characters, distinct bullet content, and backend-term relevance. When choosing between shorter and longer copy, prefer the longer version only when every added phrase contributes verified product information, a customer benefit, useful context, recipient or occasion intent, or relevant search vocabulary.

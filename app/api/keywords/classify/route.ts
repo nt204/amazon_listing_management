@@ -54,8 +54,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ classifications: [] });
     }
 
-    // Limit to max 500 keywords to stay safe with token limits
-    const validKeywords = rawKeywords.slice(0, 500);
+    // Limit to max 1000 keywords
+    const validKeywords = rawKeywords.slice(0, 1000);
 
     const endpoint = `${competitorConfig.ai.baseUrl.replace(/\/+$/, "")}/chat/completions`;
     const model = competitorConfig.ai.model || "gemini-2.5-flash";
@@ -73,7 +73,20 @@ KEYWORDS TO CLASSIFY:
 ${batch.map((k) => `${k.id}. ${k.keyword}`).join("\n")}
 
 Respond ONLY with a valid JSON array of objects with keys: id (number), relevance (0-100), type ("PRODUCT" | "GIFT" | "EVENT" | "AUDIENCE" | "WRONG_PRODUCT"), negative (boolean).
-Mark negative: true if the keyword clearly refers to a different product type (e.g. blanket, shirt, jacket when target is tumbler, or rival brands like stanley/yeti if not applicable).`;
+
+STRICT CLASSIFICATION RULES:
+1. SUB-CATEGORY & FORM FACTOR MISMATCH:
+   - You MUST differentiate apparel and product form factors strictly!
+   - If target is a "jacket" / "coat" (sleeved outerwear): keywords for "vest" / "waistcoat" (sleeveless), "shirt", "dress", "pants", "boots", "hat" are DIFFERENT apparel items. You MUST classify them as type: "WRONG_PRODUCT", negative: true, relevance: <= 35.
+   - If target is a "vest": keywords for "jacket", "hoodie", "cardigan" -> type: "WRONG_PRODUCT", negative: true, relevance: <= 35.
+   - If target is a "tumbler": keywords for "mug", "straw", "water bottle", "backpack" -> type: "WRONG_PRODUCT", negative: true, relevance: <= 35.
+2. RELEVANCE SCORING:
+   - 90-100: Exact same product type matching core themes (e.g. target "cow girl jacket" -> "cowgirl jacket", "girls western jacket", "cow print coat").
+   - 75-89: Direct variations, synonyms, or close thematic attributes of the EXACT SAME product type.
+   - 50-74: Broad gift, event or audience searches where target product can legitimately be bought (e.g. "cowgirl gifts", "western costume for girls").
+   - 0-49: Wrong product type, unrelated items, or sub-category mismatch -> MUST have negative: true.
+3. COMPETITOR BRANDS:
+   - If keyword specifies a competitor brand not owned by target, mark negative: true.`;
 
       const response = await fetch(endpoint, {
         method: "POST",
@@ -87,7 +100,7 @@ Mark negative: true if the keyword clearly refers to a different product type (e
             {
               role: "system",
               content:
-                "You are an expert Amazon PPC Semantic Classifier. Evaluate keyword relevance to the target product. Output strictly a JSON array without explanations or markdown formatting.",
+                "You are an expert Amazon PPC Semantic Classifier. Evaluate keyword relevance to the target product with strict product sub-category enforcement. Output strictly a JSON array without explanations or markdown formatting.",
             },
             {
               role: "user",
@@ -114,14 +127,21 @@ Mark negative: true if the keyword clearly refers to a different product type (e
         for (const item of parsed) {
           const original = batch.find((k) => k.id === item.id);
           if (original) {
+            const rawType = ["PRODUCT", "GIFT", "EVENT", "AUDIENCE", "WRONG_PRODUCT"].includes(item.type)
+              ? item.type
+              : "PRODUCT";
+            const isNegative = Boolean(item.negative) || rawType === "WRONG_PRODUCT";
+            let rel = typeof item.relevance === "number" ? Math.max(0, Math.min(100, Math.round(item.relevance))) : 70;
+            if (isNegative && rel > 45) {
+              rel = 35;
+            }
+
             allResults.push({
               id: item.id,
               keyword: original.keyword,
-              relevance: typeof item.relevance === "number" ? Math.max(0, Math.min(100, Math.round(item.relevance))) : 70,
-              type: ["PRODUCT", "GIFT", "EVENT", "AUDIENCE", "WRONG_PRODUCT"].includes(item.type)
-                ? item.type
-                : "PRODUCT",
-              negative: Boolean(item.negative),
+              relevance: rel,
+              type: rawType,
+              negative: isNegative,
             });
           }
         }

@@ -15,7 +15,7 @@ interface InventoryHistoryDrawerProps {
   onClose: () => void;
   storeId: string;
   storeName?: string;
-  entityType?: "sku" | "inbound";
+  entityType?: "sku" | "inbound" | "check_shipment" | "monthly_base_cost";
   entityId?: string;
   entityTitle?: string;
   onRestored?: () => void;
@@ -75,6 +75,27 @@ const FIELD_LABELS: Record<string, string> = {
   discrepancy: "Chênh lệch (Discrepancy)",
   note: "Ghi chú",
   trang_thai: "Trạng thái lô hàng",
+  // Check Shipment fields
+  ngay_update: "Ngày update",
+  shipment_name: "Shipment Name",
+  created_date: "Created",
+  last_updated_date: "Last Updated",
+  ship_to: "Ship To",
+  skus_count: "Số loại SKU",
+  units_expected: "Units Expected",
+  units_located: "Units Located",
+  // Monthly Base Cost fields
+  period: "Kỳ/Tháng",
+  sl_ton_dau_ky: "SL tồn đầu kỳ",
+  basecost_dau_ky: "Đơn giá tồn ($)",
+  gtri_ton_dau_ky: "Giá trị tồn ($)",
+  sl_nhap: "SL nhập tháng",
+  gtri_nhap: "Giá trị nhập ($)",
+  don_gia_nhap_tb: "Đơn giá nhập TB ($)",
+  tong_sl_kha_dung: "Tổng SL khả dụng",
+  tong_gtri_kha_dung: "Tổng giá trị ($)",
+  basecost_thang: "Basecost tháng ($)",
+  calculation_rule: "Nguyên tắc tính",
 };
 
 function formatHistoryDate(dateStr: string): string {
@@ -121,9 +142,16 @@ export function InventoryHistoryDrawer({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [restoringId, setRestoringId] = useState<string | null>(null);
-  const [activeFilter, setActiveFilter] = useState<"all" | "sku" | "inbound">(
-    entityType || "all"
+  const [activeFilter, setActiveFilter] = useState<"all" | "sku" | "inbound" | "check_shipment" | "monthly_base_cost">(
+    (entityType as any) || "all"
   );
+
+  // Khi mở drawer hoặc đổi tab/entityType từ bên ngoài, tự động chuyển bộ lọc theo tab đó
+  useEffect(() => {
+    if (isOpen) {
+      setActiveFilter((entityType as any) || "all");
+    }
+  }, [isOpen, entityType]);
 
   useEffect(() => {
     if (!isOpen || !storeId) return;
@@ -188,10 +216,15 @@ export function InventoryHistoryDrawer({
       if (!res.ok) throw new Error(data.error || "Không thể khôi phục phiên bản.");
 
       onRestored?.();
-      // Refetch history
+      // Refetch history với bộ lọc hiện tại
+      const effectiveType = entityId
+        ? entityType
+        : activeFilter !== "all"
+        ? activeFilter
+        : undefined;
       const params = new URLSearchParams({ store_id: storeId });
       if (entityId) params.append("entity_id", entityId);
-      if (entityType) params.append("entity_type", entityType);
+      if (effectiveType) params.append("entity_type", effectiveType);
       const refetchRes = await fetch(`/api/accounting/inventory/history?${params}`);
       if (refetchRes.ok) {
         const refetchData = await refetchRes.json();
@@ -231,7 +264,7 @@ export function InventoryHistoryDrawer({
                   Store: <strong className="text-indigo-700">{storeName || "Hiện tại"}</strong>
                   {entityTitle && (
                     <span className="ml-1.5 font-mono text-slate-700">
-                      • {entityType === "sku" ? "SKU" : "Lô hàng"}: <strong>{entityTitle}</strong>
+                      • {entityType === "sku" ? "SKU" : entityType === "check_shipment" ? "Shipment" : "Lô hàng"}: <strong>{entityTitle}</strong>
                     </span>
                   )}
                 </p>
@@ -283,6 +316,28 @@ export function InventoryHistoryDrawer({
               >
                 Chi Tiết Đi Hàng
               </button>
+              <button
+                type="button"
+                onClick={() => setActiveFilter("check_shipment")}
+                className={`px-2.5 py-1 rounded-md font-semibold transition cursor-pointer ${
+                  activeFilter === "check_shipment"
+                    ? "bg-indigo-600 text-white shadow-2xs"
+                    : "text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                Check Shipment
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveFilter("monthly_base_cost")}
+                className={`px-2.5 py-1 rounded-md font-semibold transition cursor-pointer ${
+                  activeFilter === "monthly_base_cost"
+                    ? "bg-indigo-600 text-white shadow-2xs"
+                    : "text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                Base Cost Tháng
+              </button>
             </div>
           )}
 
@@ -315,6 +370,10 @@ export function InventoryHistoryDrawer({
                   const itemLabel = String(
                     afterObj.sku ||
                     beforeObj.sku ||
+                    afterObj.shipment_name ||
+                    beforeObj.shipment_name ||
+                    afterObj.shipment_id ||
+                    beforeObj.shipment_id ||
                     afterObj.ten_lo_hang ||
                     beforeObj.ten_lo_hang ||
                     "Bản ghi"
@@ -338,7 +397,14 @@ export function InventoryHistoryDrawer({
                                 {actionMeta.label}
                               </span>
                               <span className="font-mono text-xs font-bold text-slate-900">
-                                {item.entity_type === "sku" ? "SKU" : "Lô hàng"}: {itemLabel}
+                                {item.entity_type === "sku"
+                                  ? "SKU"
+                                  : item.entity_type === "check_shipment"
+                                  ? "Shipment"
+                                  : item.entity_type === "monthly_base_cost"
+                                  ? "Basecost Tháng"
+                                  : "Lô hàng"}
+                                : {itemLabel}
                               </span>
                             </div>
                             <p className="text-[11px] text-slate-400 mt-0.5">
@@ -368,20 +434,28 @@ export function InventoryHistoryDrawer({
                             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
                               Chi tiết thay đổi ({diffEntries.length} trường):
                             </p>
-                            {diffEntries.map(([field, { oldVal, newVal }]) => (
-                              <div key={field} className="flex items-baseline gap-1 text-[11px] font-mono leading-tight">
-                                <span className="text-slate-500 shrink-0 font-sans font-bold">
-                                  {FIELD_LABELS[field] || field}:
-                                </span>
-                                <span className="line-through text-rose-500 bg-rose-50 px-1 rounded truncate max-w-[140px]" title={String(oldVal)}>
-                                  {oldVal === null || oldVal === undefined || oldVal === "" ? "—" : String(oldVal)}
-                                </span>
-                                <span className="text-slate-400">➔</span>
-                                <span className="text-emerald-700 font-bold bg-emerald-50 px-1 rounded truncate max-w-[140px]" title={String(newVal)}>
-                                  {newVal === null || newVal === undefined || newVal === "" ? "—" : String(newVal)}
-                                </span>
-                              </div>
-                            ))}
+                            {diffEntries.map(([field, { oldVal, newVal }]) => {
+                              const displayOld = (field === "thang_listing" || field === "thang_danh_gia") && oldVal
+                                ? (String(oldVal).match(/^(\d{4})[-/](\d{1,2})/)?.[0] || String(oldVal))
+                                : (oldVal === null || oldVal === undefined || oldVal === "" ? "—" : String(oldVal));
+                              const displayNew = (field === "thang_listing" || field === "thang_danh_gia") && newVal
+                                ? (String(newVal).match(/^(\d{4})[-/](\d{1,2})/)?.[0] || String(newVal))
+                                : (newVal === null || newVal === undefined || newVal === "" ? "—" : String(newVal));
+                              return (
+                                <div key={field} className="flex items-baseline gap-1 text-[11px] font-mono leading-tight">
+                                  <span className="text-slate-500 shrink-0 font-sans font-bold">
+                                    {FIELD_LABELS[field] || field}:
+                                  </span>
+                                  <span className="line-through text-rose-500 bg-rose-50 px-1 rounded truncate max-w-[140px]" title={displayOld}>
+                                    {displayOld}
+                                  </span>
+                                  <span className="text-slate-400">➔</span>
+                                  <span className="text-emerald-700 font-bold bg-emerald-50 px-1 rounded truncate max-w-[140px]" title={displayNew}>
+                                    {displayNew}
+                                  </span>
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
 

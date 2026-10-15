@@ -674,6 +674,8 @@ async function startLoop() {
     }
   };
 
+  let consecutivePollErrors = 0;
+
   const poll = async () => {
     await checkDailySchedule().catch(() => {});
     if (isProcessing) return;
@@ -687,10 +689,12 @@ async function startLoop() {
       if (!bulkRes.ok) {
         const body = await bulkRes.text().catch(() => "");
         reportPollError(`Bulk queue trả HTTP ${bulkRes.status}: ${body.slice(0, 500) || bulkRes.statusText}`);
+        consecutivePollErrors++;
         return;
       }
       const bulkData = await bulkRes.json();
       if (bulkData.hasJob && bulkData.job) {
+        consecutivePollErrors = 0;
         isProcessing = true;
         try {
           await processBulkUploadJob(bulkData.job as RemoteBulkUploadJob);
@@ -707,10 +711,12 @@ async function startLoop() {
       if (!res.ok) {
         const body = await res.text().catch(() => "");
         reportPollError(`Server trả HTTP ${res.status}: ${body.slice(0, 500) || res.statusText}`);
+        consecutivePollErrors++;
         return;
       }
 
       const data = await res.json();
+      consecutivePollErrors = 0;
       if (lastPollError) {
         console.log("[Worker Poll] Kết nối server đã phục hồi.");
         lastPollError = "";
@@ -725,8 +731,24 @@ async function startLoop() {
         }
       }
     } catch (error) {
+      consecutivePollErrors++;
       reportPollError(`Không kết nối được server: ${error instanceof Error ? error.message : String(error)}`);
+      if (consecutivePollErrors >= 15) {
+        console.error(`[Worker Poll] ${consecutivePollErrors} chu kỳ kết nối lỗi liên tiếp. Tự thoát để launchd khởi động lại worker.`);
+        process.exit(1);
+      }
     } finally {
+      // Memory Guard: Đặt ở finally đảm bảo LUÔN LUÔN được kiểm tra khi worker rảnh rỗi,
+      // kể cả sau khi vừa xong bulk upload, job crawl hay sau các vòng lặp polling.
+      if (!isProcessing) {
+        const mem = process.memoryUsage();
+        const heapMb = Math.round(mem.heapUsed / 1024 / 1024);
+        const rssMb = Math.round(mem.rss / 1024 / 1024);
+        if (heapMb > 500 || rssMb > 800) {
+          console.log(`[Worker Memory Guard] Bộ nhớ vượt ngưỡng an toàn (Heap: ${heapMb}MB, RSS: ${rssMb}MB). Tự restart qua launchd để giải phóng RAM triệt để.`);
+          process.exit(0);
+        }
+      }
       setTimeout(() => void poll(), POLL_INTERVAL_MS);
     }
   };

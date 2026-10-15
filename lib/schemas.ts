@@ -185,7 +185,7 @@ export const reviewInstructionSchema = z.object({
 });
 
 export const workflowStatusSchema = z.object({ status: z.enum(["Review"]) });
-export const batchListingSchema = z.object({ items: z.array(listingInputSchema).min(1).max(10) });
+export const batchListingSchema = z.object({ items: z.array(listingInputSchema).min(1) });
 export const brandProfileSchema = z.object({
   name: cleanedString.min(1, "Hãy nhập tên brand.").max(120),
   guidelines: cleanedString.max(10_000),

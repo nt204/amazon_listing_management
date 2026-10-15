@@ -35,7 +35,7 @@ export async function POST(request: Request) {
     const productTitle = String(body.productTitle || "").trim();
     const marketplace = body.marketplace || "US";
     const tool = body.tool || "helium10"; // Default: Helium 10
-    const limit = Math.min(500, Math.max(10, body.limit || 200));
+    const limit = Math.min(1000, Math.max(10, body.limit || 500));
 
     if (asins.length === 0) {
       return NextResponse.json(

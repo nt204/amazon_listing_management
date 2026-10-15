@@ -16,11 +16,11 @@ export async function POST(request: Request) {
     const rawWeights = body?.weights as Partial<CandidateScoreWeights> | undefined;
     const weights = rawWeights
       ? {
-          relevance: Number(rawWeights.relevance),
-          revenue: Number(rawWeights.revenue),
-          sales: Number(rawWeights.sales),
-          bsr: Number(rawWeights.bsr),
-        }
+        relevance: Number(rawWeights.relevance),
+        revenue: Number(rawWeights.revenue),
+        sales: Number(rawWeights.sales),
+        bsr: Number(rawWeights.bsr),
+      }
       : undefined;
     if (weights) {
       const values = Object.values(weights);
@@ -102,7 +102,7 @@ export async function POST(request: Request) {
 
     const validPrices = candidates.map((c) => c.priceNum).filter((p): p is number => typeof p === "number" && p > 0);
     const avgPrice = validPrices.length > 0 ? Number((validPrices.reduce((a, b) => a + b, 0) / validPrices.length).toFixed(2)) : 0;
- 
+
     const validReviews = candidates.map((c) => c.reviewCount).filter((r) => r > 0);
     const avgReviews = validReviews.length > 0 ? Math.round(validReviews.reduce((a, b) => a + b, 0) / validReviews.length) : 0;
 

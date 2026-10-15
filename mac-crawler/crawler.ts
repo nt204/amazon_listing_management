@@ -394,6 +394,25 @@ export async function startAdsPowerProfile(profileId: string): Promise<string> {
     if (startData.data?.ws?.puppeteer) {
       return startData.data.ws.puppeteer;
     }
+    if (startData.code === 0 && (!startData.data?.debug_port && !startData.data?.ws?.puppeteer)) {
+      console.warn(`[AdsPower API] Profile ${profileId} trả về success nhưng debug_port rỗng (tiến trình cũ bị treo). Đang dọn dẹp và thử lại...`);
+      try {
+        const { execSync } = await import("node:child_process");
+        execSync(`pkill -9 -f "${profileId}" || true`, { stdio: "ignore" });
+        execSync(`pkill -9 -f SunBrowser || true`, { stdio: "ignore" });
+      } catch {}
+      await new Promise((r) => setTimeout(r, 2000));
+      const retryRes = await fetch(`${ADSPOWER_API_URL}/api/v1/browser/start?user_id=${profileId}&open_tabs=1`);
+      const retryData = (await retryRes.json()) as any;
+      if (retryData.code === 0 && retryData.data?.debug_port) {
+        console.log(`[AdsPower] Mở lại thành công profile ${profileId} sau khi dọn dẹp! CDP Port: ${retryData.data.debug_port}`);
+        await new Promise((r) => setTimeout(r, 2000));
+        return `http://127.0.0.1:${retryData.data.debug_port}`;
+      }
+      if (retryData.data?.ws?.puppeteer) {
+        return retryData.data.ws.puppeteer;
+      }
+    }
     const apiMsg = startData.msg || `code ${startData.code}`;
     console.warn(`[AdsPower API] Profile ${profileId} bị từ chối: ${apiMsg}`);
     throw new Error(`AdsPower API từ chối mở profile ${profileId}: ${apiMsg}`);
@@ -465,6 +484,10 @@ export async function stopAdsPowerProfile(profileId: string): Promise<void> {
     console.log(`[AdsPower] Đang đóng profile ${profileId} để giải phóng RAM cho Mac mini...`);
     await fetch(`${ADSPOWER_API_URL}/api/v1/browser/stop?user_id=${profileId}`);
     await new Promise((r) => setTimeout(r, 1500));
+    try {
+      const { execSync } = await import("node:child_process");
+      execSync(`pkill -9 -f "${profileId}" || true`, { stdio: "ignore" });
+    } catch {}
     console.log(`[AdsPower] => ĐÃ ĐÓNG HOÀN TOÀN PROFILE ${profileId}!`);
   } catch (err) {
     console.warn(`[AdsPower] Không đóng được profile ${profileId}: ${(err as Error).message}`);
@@ -1823,6 +1846,21 @@ export async function validateDownloadedBatch(files: DownloadedFileInfo[]): Prom
 
 function quarantineInvalidFile(error: unknown, tasks: ReportTaskState[], storeRootDir: string, storeName?: string): void {
   const message = (error as Error).message || "";
+  if (/download error summary|error summary/i.test(message)) {
+    for (const task of tasks) {
+      if ((!storeName || task.store === storeName) && task.status !== "UPLOADED" && task.status !== "VALIDATED") {
+        if ((task.amazonRequestId && message.includes(task.amazonRequestId)) || task.lastError?.includes("error summary")) {
+          console.warn(`[BULK] Hủy amazonRequestId hỏng cho task ${task.id} (${task.amazonRequestId}) để tạo lại request mới trên Amazon.`);
+          task.amazonRequestId = null;
+          task.status = "NOT_STARTED";
+          task.localPath = null;
+          task.sizeBytes = 0;
+          task.sha256 = null;
+        }
+      }
+    }
+  }
+
   const match = message.match(/^VALIDATION_FAILED:([^:]+):/);
   if (!match) return;
   const fileName = match[1];
@@ -1836,7 +1874,8 @@ function quarantineInvalidFile(error: unknown, tasks: ReportTaskState[], storeRo
   task.localPath = null;
   task.sizeBytes = 0;
   task.sha256 = null;
-  task.status = task.amazonRequestId ? "DOWNLOADABLE" : "NOT_STARTED";
+  task.amazonRequestId = null;
+  task.status = "NOT_STARTED";
 }
 
 // ============================================================================
@@ -2162,7 +2201,11 @@ export async function crawlStore(
     const activeTask = tasks.find((task) => task.store === store.store_name && !["DOWNLOADED", "VALIDATED", "UPLOADED"].includes(task.status));
     if (activeTask) {
       activeTask.lastError = (error as Error).message;
-      if (activeTask.status !== "AMAZON_PROCESSING" && activeTask.status !== "FAILED") {
+      const isErrorSummary = /download error summary|error summary/i.test((error as Error).message);
+      if (isErrorSummary) {
+        activeTask.amazonRequestId = null;
+        activeTask.status = "NOT_STARTED";
+      } else if (activeTask.status !== "AMAZON_PROCESSING" && activeTask.status !== "FAILED") {
         activeTask.status = "RETRY_WAIT";
       }
       activeTask.nextRetryAt = new Date(Date.now() + 10 * 60_000).toISOString();

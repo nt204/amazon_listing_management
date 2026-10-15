@@ -6,6 +6,7 @@ import { isTemplateReady } from "@/lib/amazon-template-catalog";
 import { createAmazonTemplate } from "@/lib/excel-automation";
 import { getLatestListingForTrelloCard, getListing, getListingTemplate } from "@/lib/db";
 import { resolveListingTemplateForBrand } from "@/lib/listing-template-resolver";
+import { publicRequestOrigin, publishTrelloListingImages } from "@/lib/amazon-listing-image-publisher";
 import {
   fetchTrelloCardDetail,
   parseTrelloCardTitle,
@@ -70,10 +71,19 @@ export async function GET(request: Request) {
           throw new ApiError("Không tìm thấy nội dung listing đã lưu cho thẻ này. Hãy tạo listing lại một lần.", 404);
         }
         const imageAttachments = selectTrelloListingImageAttachments(card);
+        const publicImageUrls = await publishTrelloListingImages({
+          scope,
+          cardId: card.id,
+          attachments: imageAttachments,
+          apiKey,
+          token,
+          publicOrigin: publicRequestOrigin(request),
+          signal: request.signal,
+        });
         const listingContent = stored.current_listing || stored.result.listing;
         templateItem = {
           sku,
-          image_urls: imageAttachments.map((a) => a.url),
+          image_urls: publicImageUrls,
           brand: stored.input.brand || "",
           brand_profile_id: stored.input.brand_profile_id || undefined,
           listing: {
@@ -87,7 +97,11 @@ export async function GET(request: Request) {
         excelFileName = `${sku.toLowerCase()}-amazon-listing.xlsx`;
       } catch (trelloErr) {
         if (trelloErr instanceof ApiError) throw trelloErr;
-        console.warn("Could not resolve the saved Trello listing:", trelloErr);
+        console.warn("Could not publish the private Trello images:", trelloErr);
+        throw new ApiError(
+          `Không thể xuất bản ảnh Trello private cho Amazon: ${trelloErr instanceof Error ? trelloErr.message : "không rõ lỗi"}`,
+          502,
+        );
       }
     }
 
@@ -107,9 +121,20 @@ export async function GET(request: Request) {
               const { apiKey, token } = getTrelloServerCredentials();
               const card = await fetchTrelloCardDetail(stored.source_trello_card_id, apiKey, token);
               const imageAttachments = selectTrelloListingImageAttachments(card);
-              imageUrls = imageAttachments.map((a) => a.url);
-            } catch {
-              // fallback below
+              imageUrls = await publishTrelloListingImages({
+                scope,
+                cardId: card.id,
+                attachments: imageAttachments,
+                apiKey,
+                token,
+                publicOrigin: publicRequestOrigin(request),
+                signal: request.signal,
+              });
+            } catch (error) {
+              throw new ApiError(
+                `Không thể xuất bản ảnh Trello private cho Amazon: ${error instanceof Error ? error.message : "không rõ lỗi"}`,
+                502,
+              );
             }
           }
 

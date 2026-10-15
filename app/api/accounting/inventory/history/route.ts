@@ -10,7 +10,7 @@ const restoreSchema = z
   .object({
     store_id: z.string().uuid("Invalid Store ID"),
     history_id: z.string().uuid().optional(),
-    entity_type: z.enum(["sku", "inbound"]).optional(),
+    entity_type: z.enum(["sku", "inbound", "check_shipment"]).optional(),
     entity_id: z.string().uuid().optional(),
   })
   .refine(
@@ -28,7 +28,9 @@ export async function GET(request: Request) {
     const entityId = searchParams.get("entity_id") || undefined;
     const entityTypeParam = searchParams.get("entity_type");
     const entityType =
-      entityTypeParam === "sku" || entityTypeParam === "inbound"
+      entityTypeParam === "sku" ||
+      entityTypeParam === "inbound" ||
+      entityTypeParam === "check_shipment"
         ? entityTypeParam
         : undefined;
 

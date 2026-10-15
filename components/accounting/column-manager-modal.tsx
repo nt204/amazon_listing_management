@@ -26,8 +26,11 @@ export interface ColumnConfig {
   isCustom?: boolean;
   isFrozen?: boolean;
   type?: "text" | "number" | "date";
-  width?: string;
+  /** Width in pixels. Older saved values may still be Tailwind width classes. */
+  width?: number | string;
   align?: "left" | "center" | "right";
+  options?: string[];
+  allow_custom_value?: boolean;
 }
 
 export const DEFAULT_SKU_COLUMNS: ColumnConfig[] = [
@@ -35,33 +38,33 @@ export const DEFAULT_SKU_COLUMNS: ColumnConfig[] = [
   { id: "product_type", label: "Product Type", defaultLabel: "Product Type", visible: true, isFrozen: true, width: "w-[155px]" },
   { id: "mockup", label: "Mockup", defaultLabel: "Mockup", visible: true, isFrozen: true, align: "center", width: "w-[76px]" },
   { id: "sku", label: "SKU", defaultLabel: "SKU", visible: true, isFrozen: true, width: "w-[160px]" },
-  { id: "brand", label: "Brand", defaultLabel: "Brand", visible: true },
-  { id: "asin", label: "ASIN", defaultLabel: "ASIN", visible: true },
-  { id: "fnsku", label: "FNSKU", defaultLabel: "FNSKU", visible: true },
-  { id: "amazon_fee", label: "AMAZON FEE", defaultLabel: "AMAZON FEE", visible: true, align: "center" },
-  { id: "referral_fee_pct", label: "% Referal", defaultLabel: "% Referal", visible: true, align: "center" },
-  { id: "pic_mkt", label: "PIC MKT", defaultLabel: "PIC MKT", visible: true },
-  { id: "loai", label: "Loại", defaultLabel: "Loại", visible: true },
-  { id: "niche", label: "Niche", defaultLabel: "Niche", visible: true },
-  { id: "pic_idea", label: "PIC Idea", defaultLabel: "PIC Idea", visible: true },
-  { id: "status", label: "Trạng thái", defaultLabel: "Trạng thái", visible: true },
-  { id: "event", label: "Event", defaultLabel: "Event", visible: true },
-  { id: "tinh_trang", label: "Tình trạng", defaultLabel: "Tình trạng", visible: true },
-  { id: "design_pic", label: "DESIGN PIC", defaultLabel: "DESIGN PIC", visible: true },
-  { id: "mockup_url", label: "Mockup url", defaultLabel: "Mockup url", visible: true },
-  { id: "thang_listing", label: "Tháng listing", defaultLabel: "Tháng listing", visible: true },
-  { id: "thang_danh_gia", label: "Tháng đánh giá", defaultLabel: "Tháng đánh giá", visible: true },
-  { id: "event_250th", label: "Event 250th", defaultLabel: "Event 250th", visible: true },
-  { id: "ngay_danh_gia_sku_event", label: "Ngày đánh giá SKU Event", defaultLabel: "Ngày đánh giá SKU Event", visible: true },
-  { id: "amazon_fba_fee_thay_doi", label: "Amazon FBA Fee thay đổi", defaultLabel: "Amazon FBA Fee thay đổi", visible: true, align: "right" },
-  { id: "basecost_tb", label: "Basecost trung bình", defaultLabel: "Basecost trung bình", visible: true, align: "right" },
-  { id: "brand_entity_id", label: "Brand Entity ID", defaultLabel: "Brand Entity ID", visible: true },
-  { id: "creative_asins_video", label: "Creative ASINs (Video)", defaultLabel: "Creative ASINs (Video)", visible: true },
-  { id: "creative_asins_collection", label: "Creative ASINs (Collection)", defaultLabel: "Creative ASINs (Collection)", visible: true },
-  { id: "video_media_ids", label: "Video Media IDs", defaultLabel: "Video Media IDs", visible: true },
-  { id: "creative_headline", label: "Creative Headline", defaultLabel: "Creative Headline", visible: true },
-  { id: "brand_logo_asset_id", label: "Brand Logo Asset ID", defaultLabel: "Brand Logo Asset ID", visible: true },
-  { id: "landing_page_url", label: "Landing Page URL", defaultLabel: "Landing Page URL", visible: true },
+  { id: "brand", label: "Brand", defaultLabel: "Brand", visible: true, width: 130 },
+  { id: "asin", label: "ASIN", defaultLabel: "ASIN", visible: true, width: 140 },
+  { id: "fnsku", label: "FNSKU", defaultLabel: "FNSKU", visible: true, width: 140 },
+  { id: "amazon_fee", label: "AMAZON FEE", defaultLabel: "AMAZON FEE", visible: true, align: "center", width: 120 },
+  { id: "referral_fee_pct", label: "% Referal", defaultLabel: "% Referal", visible: true, align: "center", width: 110 },
+  { id: "pic_mkt", label: "PIC MKT", defaultLabel: "PIC MKT", visible: true, width: 110 },
+  { id: "loai", label: "Loại", defaultLabel: "Loại", visible: true, width: 120 },
+  { id: "niche", label: "Niche", defaultLabel: "Niche", visible: true, width: 130 },
+  { id: "pic_idea", label: "PIC Idea", defaultLabel: "PIC Idea", visible: true, width: 110 },
+  { id: "status", label: "Trạng thái", defaultLabel: "Trạng thái", visible: true, width: 120 },
+  { id: "event", label: "Event", defaultLabel: "Event", visible: true, width: 130 },
+  { id: "tinh_trang", label: "Tình trạng", defaultLabel: "Tình trạng", visible: true, width: 120 },
+  { id: "design_pic", label: "DESIGN PIC", defaultLabel: "DESIGN PIC", visible: true, width: 120 },
+  { id: "mockup_url", label: "Mockup url", defaultLabel: "Mockup url", visible: true, width: 110 },
+  { id: "thang_listing", label: "Tháng listing", defaultLabel: "Tháng listing", visible: true, width: 130 },
+  { id: "thang_danh_gia", label: "Tháng đánh giá", defaultLabel: "Tháng đánh giá", visible: true, width: 130 },
+  { id: "event_250th", label: "Event 250th", defaultLabel: "Event 250th", visible: true, width: 130 },
+  { id: "ngay_danh_gia_sku_event", label: "Ngày đánh giá SKU Event", defaultLabel: "Ngày đánh giá SKU Event", visible: true, width: 170 },
+  { id: "amazon_fba_fee_thay_doi", label: "Amazon FBA Fee thay đổi", defaultLabel: "Amazon FBA Fee thay đổi", visible: true, align: "right", width: 160 },
+  { id: "basecost_tb", label: "Basecost trung bình", defaultLabel: "Basecost trung bình", visible: true, align: "right", width: 150 },
+  { id: "brand_entity_id", label: "Brand Entity ID", defaultLabel: "Brand Entity ID", visible: true, width: 140 },
+  { id: "creative_asins_video", label: "Creative ASINs (Video)", defaultLabel: "Creative ASINs (Video)", visible: true, width: 160 },
+  { id: "creative_asins_collection", label: "Creative ASINs (Collection)", defaultLabel: "Creative ASINs (Collection)", visible: true, width: 170 },
+  { id: "video_media_ids", label: "Video Media IDs", defaultLabel: "Video Media IDs", visible: true, width: 150 },
+  { id: "creative_headline", label: "Creative Headline", defaultLabel: "Creative Headline", visible: true, width: 180 },
+  { id: "brand_logo_asset_id", label: "Brand Logo Asset ID", defaultLabel: "Brand Logo Asset ID", visible: true, width: 150 },
+  { id: "landing_page_url", label: "Landing Page URL", defaultLabel: "Landing Page URL", visible: true, width: 130 },
 ];
 
 export const DEFAULT_INBOUND_COLUMNS: ColumnConfig[] = [
@@ -69,36 +72,117 @@ export const DEFAULT_INBOUND_COLUMNS: ColumnConfig[] = [
   { id: "product_type", label: "Product Type", defaultLabel: "Product Type", visible: true, isFrozen: true, width: "w-[155px]" },
   { id: "mockup", label: "Mockup", defaultLabel: "Mockup", visible: true, isFrozen: true, align: "center", width: "w-[76px]" },
   { id: "sku", label: "SKU", defaultLabel: "SKU", visible: true, isFrozen: true, width: "w-[160px]" },
-  { id: "brand", label: "BRAND", defaultLabel: "BRAND", visible: true },
-  { id: "sup", label: "SUP", defaultLabel: "SUP", visible: true },
-  { id: "ngay_request", label: "Ngày request", defaultLabel: "Ngày request", visible: true },
-  { id: "quantity", label: "Quantity", defaultLabel: "Quantity", visible: true, align: "right" },
-  { id: "line_ship", label: "Line ship", defaultLabel: "Line ship", visible: true, align: "center" },
-  { id: "base_cost_per_unit", label: "Base Cost /Unit", defaultLabel: "Base Cost /Unit", visible: true, align: "right" },
-  { id: "card", label: "Card", defaultLabel: "Card", visible: true, align: "right" },
-  { id: "tag", label: "Tag", defaultLabel: "Tag", visible: true, align: "right" },
-  { id: "shipping_fee", label: "Shipping fee", defaultLabel: "Shipping fee", visible: true, align: "right" },
-  { id: "hop_tui", label: "Hộp/túi", defaultLabel: "Hộp/túi", visible: true, align: "right" },
-  { id: "final_basecost", label: "Final Basecost", defaultLabel: "Final Basecost", visible: true, align: "right" },
-  { id: "total_basecost", label: "Total Basecost", defaultLabel: "Total Basecost", visible: true, align: "right" },
-  { id: "ngay_thanh_toan", label: "Ngày thanh toán", defaultLabel: "Ngày thanh toán", visible: true },
-  { id: "ten_lo_hang", label: "Tên lô hàng", defaultLabel: "Tên lô hàng", visible: true },
-  { id: "shipment_id", label: "Shipment ID", defaultLabel: "Shipment ID", visible: true },
-  { id: "ngay_di", label: "Ngày đi", defaultLabel: "Ngày đi", visible: true },
-  { id: "ngay_den", label: "Ngày đến", defaultLabel: "Ngày đến", visible: true },
-  { id: "amazon_received", label: "Amazon Received", defaultLabel: "Amazon Received", visible: true, align: "right" },
-  { id: "tinh_trang_hang_den_kho", label: "Tình trạng hàng đến kho", defaultLabel: "Tình trạng hàng đến kho", visible: true },
-  { id: "status", label: "Status", defaultLabel: "Status", visible: true },
-  { id: "so_luong_amazon_nhan", label: "Số lượng Amazon nhận", defaultLabel: "Số lượng Amazon nhận", visible: true, align: "right" },
-  { id: "discrepancy", label: "Discrepancy", defaultLabel: "Discrepancy", visible: true, align: "center" },
-  { id: "note", label: "Note", defaultLabel: "Note", visible: true },
-  { id: "trang_thai", label: "Trạng thái", defaultLabel: "Trạng thái", visible: true },
+  { id: "brand", label: "BRAND", defaultLabel: "BRAND", visible: true, width: 130 },
+  { id: "sup", label: "SUP", defaultLabel: "SUP", visible: true, width: 110 },
+  { id: "ngay_request", label: "Ngày request", defaultLabel: "Ngày request", visible: true, width: 120 },
+  { id: "quantity", label: "Quantity", defaultLabel: "Quantity", visible: true, align: "right", width: 110 },
+  { id: "line_ship", label: "Line ship", defaultLabel: "Line ship", visible: true, align: "center", width: 110 },
+  { id: "base_cost_per_unit", label: "Base Cost /Unit", defaultLabel: "Base Cost /Unit", visible: true, align: "right", width: 130 },
+  { id: "card", label: "Card", defaultLabel: "Card", visible: true, align: "right", width: 100 },
+  { id: "tag", label: "Tag", defaultLabel: "Tag", visible: true, align: "right", width: 100 },
+  { id: "shipping_fee", label: "Shipping fee", defaultLabel: "Shipping fee", visible: true, align: "right", width: 120 },
+  { id: "hop_tui", label: "Hộp/túi", defaultLabel: "Hộp/túi", visible: true, align: "right", width: 100 },
+  { id: "final_basecost", label: "Final Basecost", defaultLabel: "Final Basecost", visible: true, align: "right", width: 130 },
+  { id: "total_basecost", label: "Total Basecost", defaultLabel: "Total Basecost", visible: true, align: "right", width: 135 },
+  { id: "ngay_thanh_toan", label: "Ngày thanh toán", defaultLabel: "Ngày thanh toán", visible: true, width: 130 },
+  { id: "ten_lo_hang", label: "Tên lô hàng", defaultLabel: "Tên lô hàng", visible: true, width: 180 },
+  { id: "shipment_id", label: "Shipment ID", defaultLabel: "Shipment ID", visible: true, width: 150 },
+  { id: "ngay_di", label: "Ngày đi", defaultLabel: "Ngày đi", visible: true, width: 120 },
+  { id: "ngay_den", label: "Ngày đến", defaultLabel: "Ngày đến", visible: true, width: 120 },
+  { id: "amazon_received", label: "Amazon Received", defaultLabel: "Amazon Received", visible: true, align: "right", width: 130 },
+  { id: "tinh_trang_hang_den_kho", label: "Tình trạng hàng đến kho", defaultLabel: "Tình trạng hàng đến kho", visible: true, width: 150 },
+  { id: "status", label: "Status", defaultLabel: "Status", visible: true, width: 120 },
+  { id: "so_luong_amazon_nhan", label: "Số lượng Amazon nhận", defaultLabel: "Số lượng Amazon nhận", visible: true, align: "right", width: 150 },
+  { id: "discrepancy", label: "Discrepancy", defaultLabel: "Discrepancy", visible: true, align: "center", width: 110 },
+  { id: "note", label: "Note", defaultLabel: "Note", visible: true, width: 160 },
+  { id: "trang_thai", label: "Trạng thái", defaultLabel: "Trạng thái", visible: true, width: 120 },
+];
+
+export const DEFAULT_CHECK_SHIPMENT_COLUMNS: ColumnConfig[] = [
+  { id: "stt", label: "STT", defaultLabel: "STT", visible: true, isFrozen: true, align: "center", width: "w-[58px]" },
+  { id: "shipment_id", label: "Shipment ID", defaultLabel: "Shipment ID", visible: true, isFrozen: true, align: "center", width: "w-[160px]" },
+  { id: "shipment_name", label: "Shipment name", defaultLabel: "Shipment name", visible: true, isFrozen: true, width: "w-[260px]" },
+  { id: "brand", label: "Brand", defaultLabel: "Brand", visible: true, align: "center", width: "w-[120px]" },
+  { id: "ngay_update", label: "Ngày update", defaultLabel: "Ngày update", visible: true, align: "center", width: "w-[120px]" },
+  { id: "created_date", label: "Created", defaultLabel: "Created", visible: true, align: "center", width: "w-[130px]" },
+  { id: "last_updated_date", label: "Last updated", defaultLabel: "Last updated", visible: true, align: "center", width: "w-[130px]" },
+  { id: "ship_to", label: "Ship to", defaultLabel: "Ship to", visible: true, align: "center", width: "w-[100px]" },
+  { id: "skus_count", label: "SKUs", defaultLabel: "SKUs", visible: true, align: "right", width: "w-[90px]" },
+  { id: "units_expected", label: "Units expected", defaultLabel: "Units expected", visible: true, align: "right", width: "w-[130px]" },
+  { id: "units_located", label: "Units located", defaultLabel: "Units located", visible: true, align: "right", width: "w-[130px]" },
+  { id: "status", label: "Status", defaultLabel: "Status", visible: true, align: "center", width: "w-[120px]" },
+];
+
+export const DEFAULT_MONTHLY_BASE_COST_COLUMNS: ColumnConfig[] = [
+  { id: "product_type", label: "Product Type", defaultLabel: "Product Type", visible: true, isFrozen: true, align: "center", width: 140 },
+  { id: "mockup", label: "Mockup", defaultLabel: "Mockup", visible: true, isFrozen: true, align: "center", width: 64 },
+  { id: "sku", label: "SKU", defaultLabel: "SKU", visible: true, isFrozen: true, width: 150 },
+  { id: "asin", label: "ASIN", defaultLabel: "ASIN", visible: true, isFrozen: true, align: "center", width: 130 },
+  { id: "reference_hang_ton", label: "Hàng tồn đầu tháng", defaultLabel: "Hàng tồn đầu tháng", visible: true, align: "center", width: 95 },
+  { id: "reference_gia_von", label: "Trung bình giá đầu tháng", defaultLabel: "Trung bình giá đầu tháng", visible: true, align: "right", width: 110 },
+  { id: "sparkline", label: "Biến động basecost", defaultLabel: "Biến động basecost", visible: true, align: "center", width: 125 },
+  { id: "month_1", label: "Basecost tháng 1", defaultLabel: "Basecost tháng 1", visible: true, align: "right", width: 75 },
+  { id: "month_2", label: "Basecost tháng 2", defaultLabel: "Basecost tháng 2", visible: true, align: "right", width: 75 },
+  { id: "month_3", label: "Basecost tháng 3", defaultLabel: "Basecost tháng 3", visible: true, align: "right", width: 75 },
+  { id: "month_4", label: "Basecost tháng 4", defaultLabel: "Basecost tháng 4", visible: true, align: "right", width: 75 },
+  { id: "month_5", label: "Basecost tháng 5", defaultLabel: "Basecost tháng 5", visible: true, align: "right", width: 75 },
+  { id: "month_6", label: "Basecost tháng 6", defaultLabel: "Basecost tháng 6", visible: true, align: "right", width: 75 },
+  { id: "month_7", label: "Basecost tháng 7", defaultLabel: "Basecost tháng 7", visible: true, align: "right", width: 75 },
+  { id: "month_8", label: "Basecost tháng 8", defaultLabel: "Basecost tháng 8", visible: true, align: "right", width: 75 },
+  { id: "month_9", label: "Basecost tháng 9", defaultLabel: "Basecost tháng 9", visible: true, align: "right", width: 75 },
+  { id: "month_10", label: "Basecost tháng 10", defaultLabel: "Basecost tháng 10", visible: true, align: "right", width: 75 },
+  { id: "month_11", label: "Basecost tháng 11", defaultLabel: "Basecost tháng 11", visible: true, align: "right", width: 75 },
+  { id: "month_12", label: "Basecost tháng 12", defaultLabel: "Basecost tháng 12", visible: true, align: "right", width: 75 },
+];
+
+export const DEFAULT_ORDER_INPUT_COLUMNS: ColumnConfig[] = [
+  { id: "stt", label: "STT", defaultLabel: "STT", visible: true, isFrozen: true, align: "center", width: 52 },
+  { id: "date", label: "Date", defaultLabel: "Date", visible: true, isFrozen: true, align: "center", width: 95 },
+  { id: "amazon_order_id", label: "amazon-order-id", defaultLabel: "amazon-order-id", visible: true, isFrozen: true, width: 160 },
+  { id: "merchant_order_id", label: "merchant-order-id", defaultLabel: "merchant-order-id", visible: true, width: 160 },
+  { id: "purchase_date", label: "purchase-date", defaultLabel: "purchase-date", visible: true, width: 145 },
+  { id: "last_updated_date", label: "last-updated-date", defaultLabel: "last-updated-date", visible: true, width: 145 },
+  { id: "order_status", label: "order-status", defaultLabel: "order-status", visible: true, align: "center", width: 105 },
+  { id: "fulfillment_channel", label: "fulfillment-channel", defaultLabel: "fulfillment-channel", visible: true, align: "center", width: 115 },
+  { id: "sales_channel", label: "sales-channel", defaultLabel: "sales-channel", visible: true, width: 110 },
+  { id: "order_channel", label: "order-channel", defaultLabel: "order-channel", visible: true, width: 105 },
+  { id: "url", label: "url", defaultLabel: "url", visible: true, width: 120 },
+  { id: "ship_service_level", label: "ship-service-level", defaultLabel: "ship-service-level", visible: true, width: 115 },
+  { id: "product_name", label: "product-name", defaultLabel: "product-name", visible: true, width: 320 },
+  { id: "sku", label: "SKU", defaultLabel: "SKU", visible: true, width: 135 },
+  { id: "asin", label: "asin", defaultLabel: "asin", visible: true, width: 110 },
+  { id: "item_status", label: "item-status", defaultLabel: "item-status", visible: true, align: "center", width: 100 },
+  { id: "quantity", label: "quantity", defaultLabel: "quantity", visible: true, align: "right", width: 68 },
+  { id: "currency", label: "currency", defaultLabel: "currency", visible: true, align: "center", width: 68 },
+  { id: "item_price", label: "item-price", defaultLabel: "item-price", visible: true, align: "right", width: 88 },
+  { id: "item_tax", label: "item-tax", defaultLabel: "item-tax", visible: true, align: "right", width: 80 },
+  { id: "shipping_price", label: "shipping-price", defaultLabel: "shipping-price", visible: true, align: "right", width: 92 },
+  { id: "shipping_tax", label: "shipping-tax", defaultLabel: "shipping-tax", visible: true, align: "right", width: 88 },
+  { id: "gift_wrap_price", label: "gift-wrap-price", defaultLabel: "gift-wrap-price", visible: true, align: "right", width: 92 },
+  { id: "gift_wrap_tax", label: "gift-wrap-tax", defaultLabel: "gift-wrap-tax", visible: true, align: "right", width: 88 },
+  { id: "item_promotion_discount", label: "item-promotion-discount", defaultLabel: "item-promotion-discount", visible: true, align: "right", width: 115 },
+  { id: "ship_promotion_discount", label: "ship-promotion-discount", defaultLabel: "ship-promotion-discount", visible: true, align: "right", width: 115 },
+  { id: "ship_city", label: "ship-city", defaultLabel: "ship-city", visible: true, width: 125 },
+  { id: "ship_state", label: "ship-state", defaultLabel: "ship-state", visible: true, align: "center", width: 75 },
+  { id: "ship_postal_code", label: "ship-postal-code", defaultLabel: "ship-postal-code", visible: true, width: 105 },
+  { id: "ship_country", label: "ship-country", defaultLabel: "ship-country", visible: true, align: "center", width: 68 },
+  { id: "promotion_ids", label: "promotion-ids", defaultLabel: "promotion-ids", visible: true, width: 130 },
+  { id: "is_business_order", label: "is-business-order", defaultLabel: "is-business-order", visible: true, align: "center", width: 85 },
+  { id: "purchase_order_number", label: "purchase-order-number", defaultLabel: "purchase-order-number", visible: true, width: 140 },
+  { id: "price_designation", label: "price-designation", defaultLabel: "price-designation", visible: true, width: 110 },
+  { id: "customized_url", label: "customized-url", defaultLabel: "customized-url", visible: true, width: 120 },
+  { id: "customized_page", label: "customized-page", defaultLabel: "customized-page", visible: true, width: 120 },
+  { id: "signature_confirmation_recommended", label: "signature-confirmation-recommended", defaultLabel: "signature-confirmation-recommended", visible: true, align: "center", width: 130 },
+  { id: "order_item_id", label: "order-item-id", defaultLabel: "order-item-id", visible: true, width: 130 },
 ];
 
 export function ColumnHeaderCell({
   col,
   children,
   className = "",
+  style,
+  isFrozen = false,
+  isBoundary = false,
   draggable = false,
   isDragging = false,
   isDragOver = false,
@@ -107,12 +191,16 @@ export function ColumnHeaderCell({
   onDragLeave,
   onDrop,
   onDragEnd,
-  onQuickHide,
-  onQuickRename,
+  onResize,
+  onAutoFit,
+  onColumnClick,
 }: {
   col?: ColumnConfig;
   children: React.ReactNode;
   className?: string;
+  style?: React.CSSProperties;
+  isFrozen?: boolean;
+  isBoundary?: boolean;
   draggable?: boolean;
   isDragging?: boolean;
   isDragOver?: boolean;
@@ -121,10 +209,11 @@ export function ColumnHeaderCell({
   onDragLeave?: (e: React.DragEvent<HTMLTableCellElement>) => void;
   onDrop?: (e: React.DragEvent<HTMLTableCellElement>) => void;
   onDragEnd?: (e: React.DragEvent<HTMLTableCellElement>) => void;
-  onQuickHide?: (id: string) => void;
-  onQuickRename?: (id: string, currentLabel: string) => void;
+  onResize?: (id: string, width: number) => void;
+  onAutoFit?: (id: string) => void;
+  onColumnClick?: (id: string, event: React.MouseEvent<HTMLTableCellElement>) => void;
 }) {
-  const isMovable = !!(col && !col.isFrozen && draggable);
+  const isMovable = !!(col && !col.isFrozen && !isFrozen && draggable);
 
   return (
     <th
@@ -134,9 +223,22 @@ export function ColumnHeaderCell({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
       onDragEnd={onDragEnd}
+      style={{
+        ...style,
+        ...(isFrozen ? { position: "sticky", zIndex: 40 } : {}),
+      }}
+      onClick={(event) => {
+        if (!col || !onColumnClick) return;
+        if ((event.target as HTMLElement).closest("button, select, input, a")) return;
+        onColumnClick(col.id, event);
+      }}
       title={isMovable ? "Kéo thả tiêu đề cột này để đổi vị trí trực tiếp trên bảng" : undefined}
-      className={`group/th relative select-none transition-all ${
-        isMovable ? "cursor-grab active:cursor-grabbing hover:brightness-105" : ""
+      className={`group/th select-none transition-all ${
+        isFrozen ? "bg-[#f59e0b] text-slate-950" : ""
+      } ${
+        isBoundary ? "border-r-2 !border-r-amber-900" : ""
+      } ${
+        isMovable ? "cursor-grab active:cursor-grabbing hover:brightness-105" : onColumnClick ? "cursor-pointer hover:brightness-105" : ""
       } ${
         isDragging
           ? "opacity-30 bg-amber-700/80 !border-dashed !border-amber-900"
@@ -154,38 +256,51 @@ export function ColumnHeaderCell({
             ⠿
           </span>
         )}
-        <div className="flex-1 min-w-0">{children}</div>
-        {col && (
-          <div className="hidden group-hover/th:flex items-center gap-0.5 ml-1 shrink-0">
-            {onQuickRename && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onQuickRename(col.id, col.label);
-                }}
-                className="p-0.5 rounded text-slate-900/60 hover:text-slate-950 hover:bg-black/10 transition cursor-pointer"
-                title="Đổi tên cột"
-              >
-                <PencilSimpleIcon size={12} weight="bold" />
-              </button>
-            )}
-            {!col.isFrozen && onQuickHide && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onQuickHide(col.id);
-                }}
-                className="p-0.5 rounded text-slate-900/60 hover:text-red-900 hover:bg-black/10 transition cursor-pointer"
-                title="Ẩn cột này khỏi bảng"
-              >
-                <EyeSlashIcon size={12} weight="bold" />
-              </button>
-            )}
-          </div>
+        {isFrozen && (
+          <span title="Cột này đang được khóa cố định" className="inline-flex items-center">
+            <LockIcon
+              size={11}
+              weight="bold"
+              className="text-amber-950/70 shrink-0 mr-0.5"
+            />
+          </span>
         )}
+        <div className="flex-1 min-w-0">{children}</div>
       </div>
+      {col && onResize && (
+        <button
+          type="button"
+          aria-label={`Đổi độ rộng cột ${col.label}`}
+          title="Kéo để chỉnh độ rộng. Nhấp đúp để thu nhỏ cột."
+          onDoubleClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onAutoFit?.(col.id);
+          }}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const header = event.currentTarget.parentElement;
+            if (!header) return;
+            const startX = event.clientX;
+            const startWidth = header.getBoundingClientRect().width;
+            const pointerId = event.pointerId;
+            event.currentTarget.setPointerCapture(pointerId);
+            const onMove = (moveEvent: PointerEvent) => {
+              onResize(col.id, Math.max(50, Math.min(520, Math.round(startWidth + moveEvent.clientX - startX))));
+            };
+            const onEnd = () => {
+              window.removeEventListener("pointermove", onMove);
+              window.removeEventListener("pointerup", onEnd);
+              window.removeEventListener("pointercancel", onEnd);
+            };
+            window.addEventListener("pointermove", onMove);
+            window.addEventListener("pointerup", onEnd);
+            window.addEventListener("pointercancel", onEnd);
+          }}
+          className="absolute right-0 top-0 z-20 h-full w-2 translate-x-1/2 cursor-col-resize touch-none border-l-2 border-amber-900/70 bg-amber-100/30 opacity-100 transition-colors hover:bg-amber-900/35 focus:bg-amber-900/35"
+        />
+      )}
     </th>
   );
 }

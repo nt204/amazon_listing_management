@@ -3,14 +3,19 @@ import { AccessStatusScreen } from "@/components/access-status-screen";
 import { ListingWorkspace } from "@/components/listing-workspace";
 import { resolveActorFromHeaders } from "@/lib/auth-server";
 
-type WorkspaceView = "listing" | "mockups" | "sellersprite" | "ppc" | "accounting";
+type WorkspaceView = "listing" | "mockups" | "sellersprite" | "ppc" | "accounting" | "kanban";
 
 function resolveAllowedView(
   candidateView: string | string[] | undefined,
   allowedFeatures: string[] = ["listing", "mockups", "sellersprite", "ppc", "accounting"],
 ): WorkspaceView | null {
   const candidate = (Array.isArray(candidateView) ? candidateView[0] : candidateView) as WorkspaceView;
-  const validViews: WorkspaceView[] = ["listing", "mockups", "sellersprite", "ppc", "accounting"];
+  const validViews: WorkspaceView[] = ["listing", "mockups", "sellersprite", "ppc", "accounting", "kanban"];
+
+  // Cho phép view kanban cho tất cả người dùng
+  if (candidate === "kanban") {
+    return "kanban";
+  }
 
   // Nếu người dùng chọn một view hợp lệ và có quyền, cho phép
   if (candidate && validViews.includes(candidate) && allowedFeatures.includes(candidate)) {

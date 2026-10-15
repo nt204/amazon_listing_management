@@ -1127,10 +1127,10 @@ export async function saveGeneratedListing(
     await sql.begin(async (transaction) => {
       await transaction`
       INSERT INTO listings (
-        id, team_id, internal_name, product_type, marketplace, status, model_used,
+        id, team_id, actor_id, internal_name, product_type, marketplace, status, model_used,
         input_json, result_json, current_listing_json, source_trello_card_id
       ) VALUES (
-        ${result.request_id}, ${scope.teamId}, ${input.internal_name}, ${input.product_type},
+        ${result.request_id}, ${scope.teamId}, ${scope.actorId}, ${input.internal_name}, ${input.product_type},
         ${input.marketplace}, ${status}, ${result.model_used}, ${transaction.json(toJson(storedInput))},
         ${transaction.json(toJson(result))}, ${transaction.json(toJson(result.listing))},
         ${options.sourceTrelloCardId || null}
@@ -1201,7 +1201,7 @@ export async function listListings(scope: DataScope, limit = 30): Promise<Listin
       created_at::text,
       updated_at::text
     FROM listings
-    WHERE team_id = ${scope.teamId}
+    WHERE team_id = ${scope.teamId} AND actor_id = ${scope.actorId}
     ORDER BY updated_at DESC
     LIMIT ${limit}
   `;
@@ -1226,7 +1226,7 @@ export async function getListing(scope: DataScope, id: string): Promise<StoredLi
       created_at::text,
       updated_at::text
     FROM listings
-    WHERE id = ${id} AND team_id = ${scope.teamId}
+    WHERE id = ${id} AND team_id = ${scope.teamId} AND actor_id = ${scope.actorId}
     LIMIT 1
   `;
   if (!rows[0]) return null;
@@ -1288,7 +1288,7 @@ export async function getLatestListingForTrelloCard(
   const rows = await sql<{ id: string }[]>`
     SELECT id::text
     FROM listings
-    WHERE team_id = ${scope.teamId}
+    WHERE team_id = ${scope.teamId} AND actor_id = ${scope.actorId}
       AND (
         source_trello_card_id = ${cardId}
         OR (
@@ -1423,7 +1423,7 @@ export async function updateListingContent(
           result_json = ${sql.json(toJson(result))},
           current_listing_json = ${sql.json(toJson(listing))},
           updated_at = NOW()
-        WHERE id = ${id} AND team_id = ${scope.teamId}
+        WHERE id = ${id} AND team_id = ${scope.teamId} AND actor_id = ${scope.actorId}
         RETURNING id::text
       `
     : await sql<{ id: string }[]>`
@@ -1433,7 +1433,7 @@ export async function updateListingContent(
           result_json = ${sql.json(toJson(result))},
           current_listing_json = ${sql.json(toJson(listing))},
           updated_at = NOW()
-        WHERE id = ${id} AND team_id = ${scope.teamId}
+        WHERE id = ${id} AND team_id = ${scope.teamId} AND actor_id = ${scope.actorId}
         RETURNING id::text
       `;
   if (!changed.length) return null;
@@ -1457,7 +1457,7 @@ export async function setListingStatus(scope: DataScope, id: string, status: Lis
   >`
     UPDATE listings
     SET status = ${status}, updated_at = NOW()
-    WHERE id = ${id} AND team_id = ${scope.teamId} AND status = 'Draft'
+    WHERE id = ${id} AND team_id = ${scope.teamId} AND actor_id = ${scope.actorId} AND status = 'Draft'
     RETURNING id::text, current_listing_json, result_json
   `;
   if (!changed.length) return null;
@@ -1491,7 +1491,7 @@ export async function setListingStatusWithValidation(
       input_json = ${sql.json(toJson(storedInputReferences(input, id)))},
       result_json = ${sql.json(toJson(result))},
       updated_at = NOW()
-    WHERE id = ${id} AND team_id = ${scope.teamId}
+    WHERE id = ${id} AND team_id = ${scope.teamId} AND actor_id = ${scope.actorId}
       AND (${expectedStatus} = '' OR status = ${expectedStatus})
     RETURNING id::text, current_listing_json
   `;
@@ -1593,7 +1593,7 @@ export async function getWorkflowMetrics(scope: DataScope): Promise<WorkflowMetr
         WHERE COALESCE(jsonb_array_length(result_json->'content_quality'->'unused_facts'), 0) > 0
       )::int AS missing_facts
     FROM listings
-    WHERE team_id = ${scope.teamId}
+    WHERE team_id = ${scope.teamId} AND actor_id = ${scope.actorId}
   `;
   return rows[0] || {
     total: 0,

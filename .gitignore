@@ -17,3 +17,4 @@ mac-crawler/scratch/
 __pycache__/
 *.pyc
 .agents/
+config/helium10-cookies.json

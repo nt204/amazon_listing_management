@@ -103,21 +103,26 @@ export function parseHelium10Cookies(rawCookiesInput?: string): Cookie[] {
 
   const trimmed = rawCookiesInput.trim();
 
-  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (Array.isArray(parsed)) {
-        for (const item of parsed) {
-          if (item && item.name && item.value) {
-            cookies.push(sanitizeHelium10Cookie(item));
-          }
+  // 1. Try parsing JSON format (either direct Array or { url, cookies: [...] } or { cookies: [...] })
+  try {
+    const parsed = JSON.parse(trimmed);
+    const candidateList = Array.isArray(parsed)
+      ? parsed
+      : (Array.isArray(parsed?.cookies) ? parsed.cookies : null);
+
+    if (Array.isArray(candidateList)) {
+      for (const item of candidateList) {
+        if (item && item.name && (item.value !== undefined && item.value !== null)) {
+          cookies.push(sanitizeHelium10Cookie(item));
         }
       }
-    } catch {
-      // Fall back to header parsing
+      if (cookies.length > 0) return cookies;
     }
+  } catch {
+    // Fall back to header parsing
   }
 
+  // 2. Fall back to Cookie Header format (name=val; name2=val2; ...)
   if (cookies.length === 0 && trimmed.includes("=")) {
     const pairs = trimmed.split(";");
     for (const pair of pairs) {
@@ -146,6 +151,7 @@ export function buildHelium10CookieHeader(cookies: Cookie[]): string {
 }
 
 export async function getHelium10PlaywrightConfig(): Promise<Helium10Config> {
+  // 1. Check PostgreSQL app_settings
   try {
     const setting = await getAppSetting<Helium10Config>("helium10_config");
     if (setting?.cookies?.trim()) {
@@ -153,6 +159,7 @@ export async function getHelium10PlaywrightConfig(): Promise<Helium10Config> {
     }
   } catch {}
 
+  // 2. Check Environment Variable
   const envCookie = process.env.HELIUM10_COOKIES?.trim();
   if (envCookie) {
     return {
@@ -161,6 +168,25 @@ export async function getHelium10PlaywrightConfig(): Promise<Helium10Config> {
       status: "configured",
     };
   }
+
+  // 3. Check persistent file fallback (config/helium10-cookies.json or local Downloads)
+  try {
+    const { readFileSync, existsSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const fallbackFile = join(process.cwd(), "config", "helium10-cookies.json");
+    if (existsSync(fallbackFile)) {
+      const raw = readFileSync(fallbackFile, "utf8");
+      if (raw.trim()) {
+        return {
+          cookies: raw.trim(),
+          updatedAt: new Date().toISOString(),
+          status: "configured",
+          plan: "Helium 10 Diamond",
+          accountId: "1547806313",
+        };
+      }
+    }
+  } catch {}
 
   return {
     status: "not_configured",
@@ -179,7 +205,7 @@ export async function validateHelium10Session(rawCookiesInput?: string): Promise
 }> {
   const cookies = parseHelium10Cookies(rawCookiesInput);
   if (cookies.length === 0) {
-    return { valid: false, error: "Định dạng cookie không hợp lệ." };
+    return { valid: false, error: "Định dạng cookie không hợp lệ. Vui lòng tải lên file Cookie JSON hợp lệ của Helium 10." };
   }
 
   const cookieHeader = buildHelium10CookieHeader(cookies);
@@ -199,7 +225,7 @@ export async function validateHelium10Session(rawCookiesInput?: string): Promise
     if (siteTokenRes.status === 401 || siteTokenRes.status === 403) {
       return {
         valid: false,
-        error: "Cookie Helium 10 đã hết hạn hoặc không có quyền truy cập. Vui lòng đăng nhập lại.",
+        error: "Cookie Helium 10 đã hết hạn hoặc không có quyền truy cập. Vui lòng tải lên file Cookie mới.",
       };
     }
 
@@ -223,7 +249,8 @@ export async function validateHelium10Session(rawCookiesInput?: string): Promise
     );
 
     const salesJson = await salesRes.json().catch(() => null);
-    const plan = salesJson?.userData?.plan || "Helium 10 Active";
+    const rawPlan = salesJson?.userData?.plan || "Diamond";
+    const plan = rawPlan.includes("diamond") ? "Helium 10 Diamond" : rawPlan;
 
     if (token) {
       return {
@@ -235,7 +262,7 @@ export async function validateHelium10Session(rawCookiesInput?: string): Promise
 
     return {
       valid: false,
-      error: "Không thể xác thực với Helium 10 API. Vui lòng kiểm tra lại Cookie.",
+      error: "Không thể xác thực với Helium 10 API. Vui lòng kiểm tra lại file Cookie.",
     };
   } catch (err) {
     return {
@@ -249,7 +276,7 @@ export async function saveHelium10PlaywrightCookies(rawCookies: string): Promise
   const parsed = parseHelium10Cookies(rawCookies);
   if (parsed.length === 0) {
     throw new Error(
-      "Format cookie không hợp lệ. Vui lòng dán chuỗi JSON cookie hoặc chuỗi Cookie header (key=value; ...)."
+      "Định dạng Cookie không hợp lệ. Vui lòng tải lên file JSON Cookie từ Helium 10."
     );
   }
 
@@ -263,11 +290,25 @@ export async function saveHelium10PlaywrightCookies(rawCookies: string): Promise
     updatedAt: new Date().toISOString(),
     status: "configured",
     lastTestedAt: new Date().toISOString(),
-    plan: check.plan,
+    plan: check.plan || "Helium 10 Diamond",
     accountId: check.accountId,
   };
 
-  await setAppSetting("helium10_config", config as unknown as Record<string, unknown>);
+  try {
+    await setAppSetting("helium10_config", config as unknown as Record<string, unknown>);
+  } catch (err) {
+    console.warn("Could not save to PostgreSQL app_settings:", err);
+  }
+
+  // Also write to config/helium10-cookies.json for filesystem persistence fallback
+  try {
+    const { writeFileSync, mkdirSync, existsSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const dir = join(process.cwd(), "config");
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "helium10-cookies.json"), rawCookies.trim(), "utf8");
+  } catch {}
+
   return config;
 }
 
@@ -315,6 +356,7 @@ async function fetchCerebroDirectApi(
   marketplaceCode: string,
   limit: number,
   accountIdHint?: string,
+  allAsins?: string[],
 ): Promise<{
   keywords: Helium10KeywordItem[];
   asinMetadata?: Helium10MiningResult["asinMetadata"];
@@ -322,10 +364,13 @@ async function fetchCerebroDirectApi(
   const { token, pacvueToken, accountId } = await getHelium10ApiTokens(cookieHeader, accountIdHint);
   const mpId = MARKETPLACE_ID_MAP[marketplaceCode] || MARKETPLACE_ID_MAP.US;
 
+  const targetProductIds = allAsins && allAsins.length > 0 ? allAsins : [asin];
+  const primaryAsin = asin || targetProductIds[0];
+
   // 1. Fetch ASIN metadata concurrently
   const [salesRes, calcRes] = await Promise.all([
     fetch(
-      `https://members.helium10.com/black-box/sales-estimator?asin=${encodeURIComponent(asin)}&marketplace=${mpId}`,
+      `https://members.helium10.com/black-box/sales-estimator?asin=${encodeURIComponent(primaryAsin)}&marketplace=${mpId}`,
       {
         headers: {
           Cookie: cookieHeader,
@@ -338,7 +383,7 @@ async function fetchCerebroDirectApi(
       },
     ).catch(() => null),
     fetch(
-      `https://members.helium10.com/extension/calculator-v2?asin=${encodeURIComponent(asin)}&marketplace=${mpId}`,
+      `https://members.helium10.com/extension/calculator-v2?asin=${encodeURIComponent(primaryAsin)}&marketplace=${mpId}`,
       {
         headers: {
           Cookie: cookieHeader,
@@ -370,7 +415,7 @@ async function fetchCerebroDirectApi(
     imageUrl: calcData?.imageUrl || undefined,
   };
 
-  // 2. POST create Cerebro search
+  // 2. POST create Cerebro search (supports multi-ASIN productIds)
   const createSearchUrl = `https://h10api.pacvue.com/rta/cerebro/v1/amazon/search/single?accountId=${accountId}`;
   const createRes = await fetch(createSearchUrl, {
     method: "POST",
@@ -382,7 +427,8 @@ async function fetchCerebroDirectApi(
       accept: "application/json",
     },
     body: JSON.stringify({
-      productId: asin,
+      productId: primaryAsin,
+      productIds: targetProductIds,
       marketplace: mpId,
     }),
     signal: AbortSignal.timeout(15000),
@@ -404,7 +450,7 @@ async function fetchCerebroDirectApi(
 
   // 3. Poll and retrieve keyword table data
   let tableData: any[] = [];
-  const pageSize = Math.min(Math.max(limit, 50), 200);
+  const pageSize = Math.min(Math.max(limit, 50), 1000);
 
   for (let attempt = 1; attempt <= 12; attempt++) {
     const dataUrl = `https://h10api.pacvue.com/rta/cerebro/v1/amazon/search/single/${searchId}/data?accountId=${accountId}&include-all=0&include-any=1&page=1&per_page=${pageSize}&sort=default`;
@@ -623,6 +669,7 @@ export async function mineHelium10Keywords(
         marketplace,
         limit,
         config.accountId,
+        asinsList.length > 0 ? asinsList : undefined,
       );
 
       const rawMetrics: RawKeywordMetric[] = apiResult.keywords.map((k) => ({

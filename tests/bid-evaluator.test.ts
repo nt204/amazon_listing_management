@@ -523,6 +523,87 @@ test("Test 19: D7 and D14 scale T proportionally with Baseline_Spend_W", () => {
   assert.notEqual(resD7.T, resD14.T);
 });
 
+test("D3 excludes the action day and evaluates on the half-open end boundary", () => {
+  const base = getBaseValidInput({
+    decision: {
+      ...getBaseValidInput().decision,
+      applied_at: "2026-10-08",
+    },
+    window: 3,
+    evaluation_date: "2026-10-12",
+    config: createConfig({ attribution_buffer_days: 7 }),
+  });
+
+  const result = evaluateBidDecision(base);
+
+  assert.equal(result.status, "PROVISIONAL");
+  assert.equal(result.validity, "VALID");
+});
+
+test("D3 remains pending until its half-open end boundary", () => {
+  const result = evaluateBidDecision(getBaseValidInput({
+    decision: {
+      ...getBaseValidInput().decision,
+      applied_at: "2026-10-08",
+    },
+    window: 3,
+    evaluation_date: "2026-10-11",
+    config: createConfig({ attribution_buffer_days: 7 }),
+  }));
+
+  assert.equal(result.status, "PENDING");
+  assert.equal(result.label, null);
+});
+
+test("D3 uses the same attribution maturity boundary as the persisted outcome", () => {
+  const input = getBaseValidInput({
+    decision: {
+      ...getBaseValidInput().decision,
+      applied_at: "2026-10-08",
+    },
+    window: 3,
+    config: createConfig({ attribution_buffer_days: 7 }),
+  });
+
+  assert.equal(
+    evaluateBidDecision({ ...input, evaluation_date: "2026-10-18" }).status,
+    "PROVISIONAL"
+  );
+  assert.equal(
+    evaluateBidDecision({ ...input, evaluation_date: "2026-10-19" }).status,
+    "EVALUATED"
+  );
+});
+
+test("D3 interruption boundaries exclude the action day and report end", () => {
+  const base = getBaseValidInput({
+    decision: {
+      ...getBaseValidInput().decision,
+      applied_at: "2026-10-08",
+    },
+    window: 3,
+    evaluation_date: "2026-10-12",
+    config: createConfig({ attribution_buffer_days: 7 }),
+  });
+
+  const onActionDay = evaluateBidDecision({
+    ...base,
+    other_bid_actions: [{ target_id: "TGT-001", applied_at: "2026-10-08", applied_bid: 0.7 }],
+  });
+  const insideWindow = evaluateBidDecision({
+    ...base,
+    other_bid_actions: [{ target_id: "TGT-001", applied_at: "2026-10-11", applied_bid: 0.7 }],
+  });
+  const onEndBoundary = evaluateBidDecision({
+    ...base,
+    other_bid_actions: [{ target_id: "TGT-001", applied_at: "2026-10-12", applied_bid: 0.7 }],
+  });
+
+  assert.notEqual(onActionDay.validity, "INTERRUPTED");
+  assert.equal(insideWindow.validity, "INTERRUPTED");
+  assert.notEqual(onEndBoundary.validity, "INTERRUPTED");
+});
+
 // Test 20: Đổi config (tăng T_min) rồi gắn nhãn lại
 test("Test 20: Batch re-labeling with increased T_min shifts label to NEUTRAL, increments label_version, preserves old data", () => {
   // Input where reward is +$5, baseline spend = $20 -> with default config T = max(3, 2) = $3 -> POSITIVE

@@ -416,6 +416,13 @@ function stripTrelloListMarker(value: string) {
 const genericKeywordLabelPattern = String.raw`(?:generic|backend)\s*(?:keywords?|search\s*terms?)|search\s*(?:terms?|keywords?)|từ\s*(?:khóa|khoá)(?:\s*(?:chung|tìm\s*kiếm))?|tu\s*khoa(?:\s*(?:chung|tim\s*kiem))?`;
 const sizeLabelPattern = String.raw`(?:(?:product|item)?\s*(?:size|dimensions?|measurements?)|kích\s*(?:thước(?:\s*(?:3\s*chiều|sản\s*phẩm))?|cỡ)|kich\s*(?:thuoc(?:\s*(?:3\s*chieu|san\s*pham))?|co)|số\s*đo|so\s*do|dung\s*tích|dung\s*tich|capacity|volume)(?:\s*\([^\r\n)]{1,50}\))?`;
 const materialLabelPattern = String.raw`materials?|material\s*types?|material\s*composition|outer\s*materials?|construction\s*materials?|fabric\s*materials?|chất\s*liệu|chat\s*lieu|vật\s*liệu|vat\s*lieu|thành\s*phần\s*chất\s*liệu|thanh\s*phan\s*chat\s*lieu`;
+const colorLabelPattern = String.raw`colors?|colours?|màu(?:\s*sắc)?|mau(?:\s*sac)?`;
+const packageLabelPattern = String.raw`package(?:\s*contents?)?|includes?|bao\s*gồm|bao\s*gom|bộ\s*sản\s*phẩm|bo\s*san\s*pham|phụ\s*kiện|accessories`;
+const personalizationLabelPattern = String.raw`personaliz(?:ation|ed)|customiz(?:ation|ed)|custom|tùy\s*biến|tuy\s*bien|cá\s*nhân\s*hóa|ca\s*nhan\s*hoa`;
+const recipientLabelPattern = String.raw`recipients?|target\s*(?:customers?|audience)|gift\s*(?:for|to)|người\s*nhận|nguoi\s*nhan|dành\s*cho|danh\s*cho|đối\s*tượng|doi\s*tuong|quà\s*(?:tặng)?\s*cho|qua\s*(?:tang)?\s*cho`;
+const occasionLabelPattern = String.raw`occasions?|holidays?|events?|dịp(?:\s*lễ)?|dip(?:\s*le)?|ngày\s*lễ|ngay\s*le|sự\s*kiện|su\s*kien`;
+const featuresLabelPattern = String.raw`features?|highlights?|key\s*features?|đặc\s*điểm(?:\s*nổi\s*bật)?|dac\s*diem(?:\s*noi\s*bat)?|tính\s*năng|tinh\s*nang|ưu\s*điểm|uu\s*diem`;
+const careLabelPattern = String.raw`care(?:\s*instructions?)?|maintenance|cleaning|bảo\s*quản|bao\s*quan|vệ\s*sinh|ve\s*sinh|hướng\s*dẫn\s*bảo\s*quản|huong\s*dan\s*bao\s*quan`;
 
 function isTrelloDescriptionLabel(value: string) {
   return /^[\p{L}\p{N}][\p{L}\p{M}\p{N}\s_()/&+.\-]{1,79}(?:\s*[:=]|\s+-\s+)/u.test(value);
@@ -522,9 +529,30 @@ export function parseTrelloListingDescription(rawDesc: string) {
     ? ""
     : rawExplicitSize;
   const genericKeywords = trelloGenericKeywordPhrases(rawDesc);
+  const color = labeledDescriptionValue(rawDesc, colorLabelPattern);
+  const packageContents = labeledDescriptionValue(rawDesc, packageLabelPattern);
+  const personalization = labeledDescriptionValue(rawDesc, personalizationLabelPattern);
+  const recipient = labeledDescriptionValue(rawDesc, recipientLabelPattern);
+  const rawOccasion = labeledDescriptionValue(rawDesc, occasionLabelPattern);
+  const occasions = rawOccasion
+    ? rawOccasion.split(/[,;|\n]+/).map((s) => s.trim()).filter(Boolean)
+    : [];
+  const rawFeatures = labeledDescriptionValue(rawDesc, featuresLabelPattern);
+  const features = rawFeatures
+    ? rawFeatures.split(/[,;|\n]+/).map((s) => s.trim()).filter(Boolean)
+    : [];
+  const care = labeledDescriptionValue(rawDesc, careLabelPattern);
+
   return {
     material: materialDescriptionValue(rawDesc),
     sizeCapacity: dimensions.formatted || explicitSize,
+    color: color || "",
+    packageContents: packageContents || "",
+    personalization: personalization || "",
+    recipient: recipient || "",
+    occasions,
+    features,
+    care: care || "",
     genericKeywords,
     formattedGenericKeywords: formatRawTrelloKeywords(rawDesc),
   };
@@ -543,9 +571,9 @@ export function buildTrelloAiProductInformation(
     size_capacity: description.sizeCapacity,
     color: "",
     package_contents: "",
-    features: [],
-    personalization: "",
-    care_instructions: "",
+    features: description.features,
+    personalization: description.personalization,
+    care_instructions: description.care,
     country_of_origin: "",
   };
 }

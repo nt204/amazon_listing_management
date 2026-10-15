@@ -135,7 +135,8 @@ export function PpcAutoBidResultsModal({
   const [loading, setLoading] = useState(false);
   const [evaluating, setEvaluating] = useState(false);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"ALL" | "WIN" | "NEUTRAL" | "LOSS" | "WARNING_3D" | "OBSERVING" | "INTERRUPTED">("ALL");
+  const [stageFilter, setStageFilter] = useState<"ALL" | "3D" | "7D" | "14D" | "30D" | "COMPLETED" | "INTERRUPTED">("ALL");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | "WIN" | "NEUTRAL" | "LOSS" | "WARNING_3D">("ALL");
   const [selectedAction, setSelectedAction] = useState<BidOutcomeActionItem | null>(null);
 
   // Quản lý đóng/mở từng chiến dịch (mặc định đóng toàn bộ)
@@ -189,14 +190,54 @@ export function PpcAutoBidResultsModal({
     }
   };
 
+  // Tính số ngày đã trôi qua kể từ khi áp dụng chỉnh bid
+  const getDaysElapsed = useCallback((item: BidOutcomeActionItem) => {
+    const ts = item.action_timestamp || item.applied_on;
+    if (!ts) return 0;
+    const t = new Date(ts).getTime();
+    if (isNaN(t) || t === 0) return 0;
+    const now = Date.now();
+    const diffDays = Math.floor((now - t) / (1000 * 60 * 60 * 24));
+    return Math.max(0, diffDays);
+  }, []);
+
+  // Xác định chặng hiện tại của target
+  const getItemStage = useCallback((item: BidOutcomeActionItem): "3D" | "7D" | "14D" | "30D" | "COMPLETED" | "INTERRUPTED" => {
+    const isInterrupted =
+      item.d3?.status === "INTERRUPTED" ||
+      item.d7?.status === "INTERRUPTED" ||
+      item.d14?.status === "INTERRUPTED" ||
+      item.d30?.status === "INTERRUPTED" ||
+      item.d3?.evidence_quality?.validity === "INTERRUPTED" ||
+      item.d7?.evidence_quality?.validity === "INTERRUPTED" ||
+      item.d14?.evidence_quality?.validity === "INTERRUPTED" ||
+      item.d30?.evidence_quality?.validity === "INTERRUPTED";
+
+    if (isInterrupted) return "INTERRUPTED";
+
+    if (item.d30 && item.d30.status === "MATURE") return "COMPLETED";
+    if (item.d14 && item.d14.status === "MATURE") return "30D";
+    if (item.d7 && item.d7.status === "MATURE") return "14D";
+    if (item.d3 && item.d3.status === "MATURE") return "7D";
+
+    const days = getDaysElapsed(item);
+    if (days <= 3) return "3D";
+    if (days <= 7) return "7D";
+    if (days <= 14) return "14D";
+    if (days <= 30) return "30D";
+    return "COMPLETED";
+  }, [getDaysElapsed]);
+
   // Helper cho trạng thái 3D
-  const get3dStatus = (item: BidOutcomeActionItem) => {
+  const get3dStatus = useCallback((item: BidOutcomeActionItem) => {
+    const days = getDaysElapsed(item);
     const d3 = item.d3;
-    if (!d3) return { badge: "⏳ Chưa ghi nhận", color: "text-slate-400 bg-slate-50 border-slate-200", tip: "Đang chờ đồng bộ dữ liệu mốc 3d" };
+    if (!d3 && days < 3) return { badge: "Đang chạy", color: "text-indigo-700 bg-indigo-50 border-indigo-200", tip: "Đang theo dõi 3d đầu", isPending: false };
+    if (!d3) return { badge: "—", color: "text-slate-300 font-mono", tip: "Chưa có dữ liệu 3d", isPending: true };
 
     const isInterrupted = d3.status === "INTERRUPTED" || d3.evidence_quality?.validity === "INTERRUPTED";
     if (isInterrupted) {
-      return { badge: "⛔ Đã ngắt", color: "text-slate-500 bg-slate-100 border-slate-300", tip: "Đã có lần chỉnh bid mới đè lên" };
+      return { badge: "Đã ngắt", color: "text-slate-500 bg-slate-100 border-slate-200", tip: "Đã có lần chỉnh bid mới đè lên", isPending: false };
     }
 
     const obs = d3.observed || {};
@@ -205,153 +246,122 @@ export function PpcAutoBidResultsModal({
     const obsClicks = Number(obs.clicks || 0);
 
     if (bSpendDay > 1 && obsSpend / 3 > bSpendDay * 2.2) {
-      return { badge: "⚠️ Spend tăng nhanh", color: "text-amber-800 bg-amber-50 border-amber-300 font-bold", tip: `Spend $${(obsSpend / 3).toFixed(1)}/d so với mức cũ $${bSpendDay.toFixed(1)}/d` };
+      return { badge: "Spend tăng cao", color: "text-amber-800 bg-amber-50 border-amber-300 font-bold", tip: `Spend $${(obsSpend / 3).toFixed(1)}/d so với mức cũ $${bSpendDay.toFixed(1)}/d`, isPending: false };
     }
 
-    if (obsClicks === 0 && d3.status !== "OBSERVING") {
-      return { badge: "⚠️ Mất traffic (0 click)", color: "text-rose-800 bg-rose-50 border-rose-300 font-bold", tip: "Không có click nào trong 3d qua" };
+    if (obsClicks === 0 && days >= 3) {
+      return { badge: "Mất click", color: "text-rose-800 bg-rose-50 border-rose-300 font-bold", tip: "Không có click nào trong 3d qua", isPending: false };
     }
 
-    if (d3.status === "OBSERVING") {
-      return { badge: "⏳ Đang theo dõi", color: "text-indigo-700 bg-indigo-50 border-indigo-200", tip: "Đang thu thập dữ liệu 3d đầu" };
+    if (days < 3) {
+      return { badge: "Đang chạy", color: "text-indigo-700 bg-indigo-50 border-indigo-200", tip: "Đang theo dõi 3d đầu", isPending: false };
     }
 
-    return { badge: "✅ Ổn định", color: "text-emerald-800 bg-emerald-50 border-emerald-300", tip: "Tốc độ chi tiêu và traffic trong ngưỡng an toàn" };
-  };
+    return { badge: "Ổn định", color: "text-emerald-800 bg-emerald-50 border-emerald-300", tip: "Chi tiêu và traffic trong ngưỡng an toàn", isPending: false };
+  }, [getDaysElapsed]);
 
   // Helper cho trạng thái 7D
-  const get7dStatus = (item: BidOutcomeActionItem) => {
+  const get7dStatus = useCallback((item: BidOutcomeActionItem) => {
+    const days = getDaysElapsed(item);
+    if (days < 3) {
+      return { badge: "—", color: "text-slate-300 font-mono", tip: "Chưa tới mốc 7d", isPending: true };
+    }
+
     const d7 = item.d7;
-    if (!d7) return { badge: "⏳ Chưa tới hạn", color: "text-slate-400 bg-slate-50 border-slate-200", tip: "Chưa tới mốc 7d" };
-
-    const isInterrupted = d7.status === "INTERRUPTED" || d7.evidence_quality?.validity === "INTERRUPTED";
+    const isInterrupted = d7?.status === "INTERRUPTED" || d7?.evidence_quality?.validity === "INTERRUPTED";
     if (isInterrupted) {
-      return { badge: "⛔ Đã ngắt", color: "text-slate-500 bg-slate-100 border-slate-300", tip: "Đã chỉnh bid mới trước khi xong 7D" };
+      return { badge: "Đã ngắt", color: "text-slate-500 bg-slate-100 border-slate-200", tip: "Đã chỉnh bid mới trước khi xong 7D", isPending: false };
     }
 
-    if (d7.status === "OBSERVING") {
-      return { badge: "⏳ Đang theo dõi", color: "text-indigo-700 bg-indigo-50 border-indigo-200", tip: "Chưa hoàn tất chu kỳ 7d" };
+    if (days >= 3 && days < 7) {
+      return { badge: "Đang chạy", color: "text-sky-700 bg-sky-50 border-sky-200", tip: "Đang trong chu kỳ 7d", isPending: false };
     }
 
-    if (d7.outcome_label === "POSITIVE") {
-      return { badge: "🟢 Xu hướng tốt", color: "text-emerald-800 bg-emerald-50 border-emerald-300 font-bold", tip: "ACOS hoặc đơn hàng có tín hiệu cải thiện" };
+    if (d7?.outcome_label === "POSITIVE") {
+      return { badge: "Tốt", color: "text-emerald-800 bg-emerald-50 border-emerald-300 font-bold", tip: "Xu hướng cải thiện", isPending: false };
     }
-    if (d7.outcome_label === "NEGATIVE") {
-      return { badge: "🔴 Xu hướng xấu", color: "text-rose-800 bg-rose-50 border-rose-300 font-bold", tip: "Chi phí tăng hoặc hiệu quả thấp hơn kỳ vọng" };
+    if (d7?.outcome_label === "NEGATIVE") {
+      return { badge: "Kém", color: "text-rose-800 bg-rose-50 border-rose-300 font-bold", tip: "Xu hướng kém hiệu quả", isPending: false };
     }
-    if (d7.outcome_label === "NEUTRAL") {
-      return { badge: "🟡 Cải thiện nhẹ", color: "text-amber-800 bg-amber-50 border-amber-300", tip: "Hiệu quả giữ nguyên, trong mức biến động cho phép" };
-    }
-    if (d7.status === "INSUFFICIENT_DATA" || d7.evidence_quality?.validity === "INCONCLUSIVE") {
-      return { badge: "⚪ Chưa đủ số liệu", color: "text-slate-600 bg-slate-100 border-slate-200", tip: "Số lượng click hoặc đơn còn quá ít để kết luận" };
+    if (d7?.outcome_label === "NEUTRAL") {
+      return { badge: "Bình thường", color: "text-slate-700 bg-slate-50 border-slate-200", tip: "Biến động trong mức cho phép", isPending: false };
     }
 
-    return { badge: "⏳ Đang theo dõi", color: "text-indigo-700 bg-indigo-50 border-indigo-200", tip: "Đang thu thập số liệu" };
-  };
+    return { badge: "Ổn định", color: "text-slate-700 bg-slate-50 border-slate-200", tip: "Đã qua chặng 7d", isPending: false };
+  }, [getDaysElapsed]);
 
   // Helper cho trạng thái 14D
-  const get14dStatus = (item: BidOutcomeActionItem) => {
+  const get14dStatus = useCallback((item: BidOutcomeActionItem) => {
+    const days = getDaysElapsed(item);
+    if (days < 7) {
+      return { badge: "—", color: "text-slate-300 font-mono", tip: "Chưa tới mốc 14d", isPending: true };
+    }
+
     const d14 = item.d14;
-    if (!d14) return { badge: "⏳ Chưa tới hạn", color: "text-slate-400 bg-slate-50 border-slate-200", tip: "Chưa đủ 14d kể từ khi chỉnh bid" };
-
-    const isInterrupted = d14.status === "INTERRUPTED" || d14.evidence_quality?.validity === "INTERRUPTED";
+    const isInterrupted = d14?.status === "INTERRUPTED" || d14?.evidence_quality?.validity === "INTERRUPTED";
     if (isInterrupted) {
-      return { badge: "⛔ Đã ngắt", color: "text-slate-500 bg-slate-100 border-slate-300", tip: "Bị đè bởi đợt chỉnh bid tiếp theo" };
+      return { badge: "Đã ngắt", color: "text-slate-500 bg-slate-100 border-slate-200", tip: "Bị đè bởi đợt chỉnh bid tiếp theo", isPending: false };
     }
 
-    if (d14.status === "OBSERVING") {
-      return { badge: "⏳ Đang chạy", color: "text-indigo-700 bg-indigo-50 border-indigo-200", tip: `Đang đợi đủ thời gian attribution chuẩn (tới ${d14.observation_end || "14D"})` };
+    if (days >= 7 && days < 14) {
+      return { badge: "Đang chạy", color: "text-violet-700 bg-violet-50 border-violet-200", tip: "Đang đợi đủ thời gian attribution chuẩn 14D", isPending: false };
     }
 
-    if (d14.outcome_label === "POSITIVE") {
-      return { badge: "🟢 WIN", color: "text-emerald-900 bg-emerald-100 border-emerald-400 font-black", tip: "Lần chỉnh thành công, mang lại hiệu quả rõ rệt" };
+    if (d14?.outcome_label === "POSITIVE") {
+      return { badge: "Win", color: "text-emerald-900 bg-emerald-100 border-emerald-300 font-bold", tip: "Thành công rõ rệt", isPending: false };
     }
-    if (d14.outcome_label === "NEGATIVE") {
-      return { badge: "🔴 LOSS", color: "text-rose-900 bg-rose-100 border-rose-400 font-black", tip: "Lần chỉnh không hiệu quả, nên xem xét điều chỉnh lại" };
+    if (d14?.outcome_label === "NEGATIVE") {
+      return { badge: "Loss", color: "text-rose-900 bg-rose-100 border-rose-300 font-bold", tip: "Kém hiệu quả", isPending: false };
     }
-    if (d14.outcome_label === "NEUTRAL") {
-      return { badge: "🟡 NEUTRAL", color: "text-amber-900 bg-amber-100 border-amber-300 font-bold", tip: "Kết quả hòa vốn so với baseline" };
-    }
-    if (d14.status === "INSUFFICIENT_DATA" || d14.evidence_quality?.validity === "INCONCLUSIVE") {
-      return { badge: "⚪ Chưa đủ số liệu", color: "text-slate-600 bg-slate-100 border-slate-200", tip: "Lượng click hoặc đơn chưa đủ mẫu để kết luận" };
+    if (d14?.outcome_label === "NEUTRAL") {
+      return { badge: "Hòa", color: "text-amber-800 bg-amber-50 border-amber-200 font-bold", tip: "Hòa vốn so với baseline", isPending: false };
     }
 
-    return { badge: "⏳ Đang chạy", color: "text-indigo-700 bg-indigo-50 border-indigo-200", tip: "Đang tích lũy dữ liệu" };
-  };
+    return { badge: "Ổn định", color: "text-slate-700 bg-slate-50 border-slate-200", tip: "Đã qua chặng 14d", isPending: false };
+  }, [getDaysElapsed]);
 
   // Helper cho trạng thái 30D
-  const get30dStatus = (item: BidOutcomeActionItem) => {
+  const get30dStatus = useCallback((item: BidOutcomeActionItem) => {
+    const days = getDaysElapsed(item);
+    if (days < 14) {
+      return { badge: "—", color: "text-slate-300 font-mono", tip: "Chưa tới mốc 30d", isPending: true };
+    }
+
     const d30 = item.d30;
-    if (!d30) return { badge: "⏳ Chưa tới hạn", color: "text-slate-400 bg-slate-50 border-slate-200", tip: "Chưa đủ 30d kể từ khi chỉnh bid" };
-
-    const isInterrupted = d30.status === "INTERRUPTED" || d30.evidence_quality?.validity === "INTERRUPTED";
+    const isInterrupted = d30?.status === "INTERRUPTED" || d30?.evidence_quality?.validity === "INTERRUPTED";
     if (isInterrupted) {
-      return { badge: "⛔ Đã ngắt", color: "text-slate-500 bg-slate-100 border-slate-300", tip: "Đã dừng đánh giá dài hạn do có bid mới đè lên" };
+      return { badge: "Đã ngắt", color: "text-slate-500 bg-slate-100 border-slate-200", tip: "Đã dừng do có bid mới đè lên", isPending: false };
     }
 
-    if (d30.status === "OBSERVING") {
-      return { badge: "⏳ Đang chạy", color: "text-indigo-700 bg-indigo-50 border-indigo-200", tip: `Đang hoàn tất chu kỳ dài hạn 30d (tới ${d30.observation_end || "30D"})` };
-    }
-
-    const reward = d30.comparison?.reward_usd;
+    const reward = d30?.comparison?.reward_usd;
     if (reward != null) {
       const num = Number(reward);
       if (num > 0) {
-        return { badge: `🟢 ${formatCurrencyUsd(num, true)}`, color: "text-emerald-950 bg-emerald-100/90 border-emerald-400 font-black", tip: `Tăng thêm ${formatCurrencyUsd(num)} Net Profit` };
+        return { badge: formatCurrencyUsd(num, true), color: "text-emerald-950 bg-emerald-100 border-emerald-300 font-bold", tip: `Net profit: +$${num.toFixed(1)}`, isPending: false };
       }
       if (num < 0) {
-        return { badge: `🔴 ${formatCurrencyUsd(num)}`, color: "text-rose-950 bg-rose-100/90 border-rose-400 font-black", tip: `Giảm ${formatCurrencyUsd(num)} Net Profit` };
+        return { badge: formatCurrencyUsd(num), color: "text-rose-950 bg-rose-100 border-rose-300 font-bold", tip: `Net profit: -$${Math.abs(num).toFixed(1)}`, isPending: false };
       }
-      return { badge: "🟡 Hòa vốn", color: "text-slate-700 bg-slate-100 border-slate-300", tip: "Net Profit không đổi đáng kể" };
+      return { badge: "Hòa", color: "text-slate-700 bg-slate-100 border-slate-200", tip: "Net profit không đổi", isPending: false };
     }
 
-    if (d30.outcome_label === "POSITIVE") {
-      return { badge: "🟢 WIN", color: "text-emerald-900 bg-emerald-100 border-emerald-400 font-black", tip: "Đóng góp tích cực dài hạn" };
-    }
-    if (d30.outcome_label === "NEGATIVE") {
-      return { badge: "🔴 LOSS", color: "text-rose-900 bg-rose-100 border-rose-400 font-black", tip: "Kém hiệu quả dài hạn" };
-    }
-    if (d30.status === "INSUFFICIENT_DATA" || d30.evidence_quality?.validity === "INCONCLUSIVE") {
-      return { badge: "⚪ Chưa đủ số liệu", color: "text-slate-600 bg-slate-100 border-slate-200", tip: "Lượng click hoặc đơn chưa đủ mẫu thống kê" };
+    if (days >= 14 && days <= 30) {
+      return { badge: "Đang chạy", color: "text-amber-800 bg-amber-50 border-amber-200", tip: "Đang theo dõi 30d", isPending: false };
     }
 
-    return { badge: "⏳ Đang chạy", color: "text-indigo-700 bg-indigo-50 border-indigo-200", tip: "Đang tích lũy dữ liệu" };
-  };
+    if (d30?.outcome_label === "POSITIVE") {
+      return { badge: "Win", color: "text-emerald-900 bg-emerald-100 border-emerald-300 font-bold", tip: "Đóng góp tích cực dài hạn", isPending: false };
+    }
+    if (d30?.outcome_label === "NEGATIVE") {
+      return { badge: "Loss", color: "text-rose-900 bg-rose-100 border-rose-300 font-bold", tip: "Kém hiệu quả dài hạn", isPending: false };
+    }
 
-  // Filtered items
-  const filteredItems = useMemo(() => {
-    return items.filter((item) => {
-      if (statusFilter === "ALL") return true;
-      const primary = item.d30 || item.d14 || item.d7 || item.d3;
-      const label = item.d30?.outcome_label || item.d14?.outcome_label || item.d7?.outcome_label;
+    return { badge: "Đã xong", color: "text-slate-700 bg-slate-100 border-slate-200", tip: "Hoàn tất chu kỳ 30d", isPending: false };
+  }, [getDaysElapsed]);
 
-      const isInterrupted =
-        item.d30?.status === "INTERRUPTED" ||
-        item.d14?.status === "INTERRUPTED" ||
-        item.d7?.status === "INTERRUPTED" ||
-        item.d30?.evidence_quality?.validity === "INTERRUPTED" ||
-        item.d14?.evidence_quality?.validity === "INTERRUPTED" ||
-        item.d7?.evidence_quality?.validity === "INTERRUPTED";
-
-      if (statusFilter === "INTERRUPTED") return isInterrupted;
-      if (statusFilter === "WIN") return label === "POSITIVE";
-      if (statusFilter === "LOSS") return label === "NEGATIVE";
-      if (statusFilter === "NEUTRAL") return label === "NEUTRAL";
-      if (statusFilter === "WARNING_3D") {
-        const d3Status = get3dStatus(item);
-        return d3Status.badge.includes("Spend") || d3Status.badge.includes("traffic");
-      }
-      if (statusFilter === "OBSERVING") {
-        return primary?.status === "OBSERVING" && !isInterrupted;
-      }
-      return true;
-    });
-  }, [items, statusFilter]);
-
-  // CHỈ LẤY BẢN GHI MỚI NHẤT CHO MỖI TARGET (Sắp xếp thời gian giảm dần, loại bỏ các lần bị đè)
-  const latestTargetItems = useMemo(() => {
-    // Sắp xếp đảm bảo bản ghi có thời gian/ngày chỉnh mới nhất luôn đứng trước
-    const sorted = [...filteredItems].sort((a, b) => {
+  // Lấy bản ghi mới nhất cho mỗi Target (Toàn bộ trước khi áp dụng bộ lọc Stage/Status)
+  const allLatestTargetItems = useMemo(() => {
+    const sorted = [...items].sort((a, b) => {
       const timeA = new Date(a.action_timestamp || a.applied_on || 0).getTime();
       const timeB = new Date(b.action_timestamp || b.applied_on || 0).getTime();
       return timeB - timeA;
@@ -369,13 +379,64 @@ export function PpcAutoBidResultsModal({
     }
 
     return result;
-  }, [filteredItems]);
+  }, [items]);
 
-  // Cấu trúc nhóm Chiến dịch (chứa các targets mới nhất)
+  // Đếm số lượng targets theo từng chặng
+  const stageCounts = useMemo(() => {
+    const counts = {
+      ALL: allLatestTargetItems.length,
+      "3D": 0,
+      "7D": 0,
+      "14D": 0,
+      "30D": 0,
+      COMPLETED: 0,
+      INTERRUPTED: 0,
+    };
+    for (const item of allLatestTargetItems) {
+      const st = getItemStage(item);
+      counts[st] = (counts[st] || 0) + 1;
+    }
+    return counts;
+  }, [allLatestTargetItems, getItemStage]);
+
+  // Số lượng cảnh báo 3D
+  const warningCount = useMemo(() => {
+    return allLatestTargetItems.filter((item) => {
+      const st3 = get3dStatus(item);
+      return st3.badge.includes("Spend") || st3.badge.includes("click");
+    }).length;
+  }, [allLatestTargetItems, get3dStatus]);
+
+  // Lọc items theo cả Chặng (Stage) và Kết quả (Status)
+  const visibleTargetItems = useMemo(() => {
+    return allLatestTargetItems.filter((item) => {
+      // 1. Lọc theo chặng
+      if (stageFilter !== "ALL") {
+        const st = getItemStage(item);
+        if (st !== stageFilter) return false;
+      }
+
+      // 2. Lọc theo kết quả
+      if (statusFilter !== "ALL") {
+        const label = item.d30?.outcome_label || item.d14?.outcome_label || item.d7?.outcome_label;
+        if (statusFilter === "WIN") return label === "POSITIVE";
+        if (statusFilter === "LOSS") return label === "NEGATIVE";
+        if (statusFilter === "NEUTRAL") return label === "NEUTRAL";
+        if (statusFilter === "WARNING_3D") {
+          const d3Status = get3dStatus(item);
+          return d3Status.badge.includes("Spend") || d3Status.badge.includes("click");
+        }
+      }
+
+      return true;
+    });
+  }, [allLatestTargetItems, stageFilter, statusFilter, getItemStage, get3dStatus]);
+
+  // Gom theo Chiến dịch cho các target đang hiển thị
   const campaignGroups = useMemo(() => {
     const campMap = new Map<string, BidOutcomeActionItem[]>();
 
-    for (const item of latestTargetItems) {
+    for (const item of visibleTargetItems) {
       const cKey = item.campaign_id || item.campaign_name || "unknown";
       if (!campMap.has(cKey)) {
         campMap.set(cKey, []);
@@ -386,6 +447,14 @@ export function PpcAutoBidResultsModal({
     const sortedCampKeys = Array.from(campMap.keys()).sort((a, b) => {
       const itemsA = campMap.get(a)!;
       const itemsB = campMap.get(b)!;
+      const maxTimeA = Math.max(...itemsA.map((it) => new Date(it.action_timestamp || it.applied_on || 0).getTime()));
+      const maxTimeB = Math.max(...itemsB.map((it) => new Date(it.action_timestamp || it.applied_on || 0).getTime()));
+      if (maxTimeB !== maxTimeA) {
+        return maxTimeB - maxTimeA;
+      }
+      if (itemsB.length !== itemsA.length) {
+        return itemsB.length - itemsA.length;
+      }
       const nameA = itemsA[0]?.campaign_name || a;
       const nameB = itemsB[0]?.campaign_name || b;
       return nameA.localeCompare(nameB);
@@ -393,20 +462,27 @@ export function PpcAutoBidResultsModal({
 
     return sortedCampKeys.map((cKey) => {
       const cItems = campMap.get(cKey)!;
+      cItems.sort((a, b) => {
+        const timeA = new Date(a.action_timestamp || a.applied_on || 0).getTime();
+        const timeB = new Date(b.action_timestamp || b.applied_on || 0).getTime();
+        return timeB - timeA;
+      });
       const first = cItems[0];
 
-      let warning3d = 0;
-      let loss = 0;
-      let win = 0;
+      let campWarning3d = 0;
+      let campLoss = 0;
+      let campWin = 0;
 
       for (const item of cItems) {
         const label = item.d30?.outcome_label || item.d14?.outcome_label || item.d7?.outcome_label;
-        if (label === "POSITIVE") win++;
-        else if (label === "NEGATIVE") loss++;
+        if (label === "POSITIVE") campWin++;
+        else if (label === "NEGATIVE") campLoss++;
 
         const st3 = get3dStatus(item);
-        if (st3.badge.includes("Spend") || st3.badge.includes("traffic")) warning3d++;
+        if (st3.badge.includes("Spend") || st3.badge.includes("click")) campWarning3d++;
       }
+
+      const latestActionDate = first?.applied_on || (first?.action_timestamp ? new Date(first.action_timestamp).toISOString().split("T")[0] : "");
 
       return {
         campaignId: first?.campaign_id || cKey,
@@ -414,19 +490,20 @@ export function PpcAutoBidResultsModal({
         campaignType: first?.campaign_type || "SP",
         sku: first?.sku || "",
         items: cItems,
+        latestActionDate,
         stats: {
           total: cItems.length,
-          warning3d,
-          loss,
-          win,
+          warning3d: campWarning3d,
+          loss: campLoss,
+          win: campWin,
         },
       };
     });
-  }, [latestTargetItems]);
+  }, [visibleTargetItems, get3dStatus]);
 
-  // Mặc định ĐÓNG TOÀN BỘ; chỉ tự động mở khi có tìm kiếm hoặc lọc trạng thái
+  // Mặc định luôn THU GỌN; chỉ tự động mở khi người dùng gõ tìm kiếm keyword
   useEffect(() => {
-    if (search.trim() || statusFilter !== "ALL") {
+    if (search.trim()) {
       const all: Record<string, boolean> = {};
       for (const c of campaignGroups) {
         all[c.campaignId] = true;
@@ -435,7 +512,7 @@ export function PpcAutoBidResultsModal({
     } else {
       setExpandedCampaigns({});
     }
-  }, [search, statusFilter]);
+  }, [search]);
 
   const toggleCampaign = (campaignId: string) => {
     setExpandedCampaigns((prev) => ({
@@ -456,8 +533,10 @@ export function PpcAutoBidResultsModal({
     setExpandedCampaigns({});
   };
 
-  // Render từng dòng Target/Từ khóa (Gọn gàng, sạch sẽ)
+  // Render từng dòng Target (Gọn gàng, sạch sẽ, không icon thừa)
   const renderTargetRow = (item: BidOutcomeActionItem) => {
+    const stage = getItemStage(item);
+    const days = getDaysElapsed(item);
     const st3 = get3dStatus(item);
     const st7 = get7dStatus(item);
     const st14 = get14dStatus(item);
@@ -466,18 +545,38 @@ export function PpcAutoBidResultsModal({
     const deltaPct = item.applied_delta_pct || 0;
     const isIncrease = deltaPct > 0;
 
+    // Badge chặng hiện tại
+    const renderStageBadge = () => {
+      if (stage === "INTERRUPTED") {
+        return <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-500 border border-slate-200">Đã ngắt</span>;
+      }
+      if (stage === "COMPLETED") {
+        return <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">Đã xong</span>;
+      }
+      if (stage === "3D") {
+        return <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">3D (ngày {Math.min(days, 3)}/3)</span>;
+      }
+      if (stage === "7D") {
+        return <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-sky-50 text-sky-700 border border-sky-200">7D (ngày {Math.min(days, 7)}/7)</span>;
+      }
+      if (stage === "14D") {
+        return <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-violet-50 text-violet-700 border border-violet-200">14D (ngày {Math.min(days, 14)}/14)</span>;
+      }
+      return <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">30D (ngày {Math.min(days, 30)}/30)</span>;
+    };
+
     return (
       <tr
         key={item.action_id}
         onClick={() => setSelectedAction(item)}
-        className="hover:bg-indigo-50/40 transition cursor-pointer group"
+        className="hover:bg-indigo-50/30 transition cursor-pointer group"
       >
         {/* TARGET / KEYWORD */}
         <td className="py-2.5 px-4">
           <div className="font-bold text-slate-900 group-hover:text-indigo-700 transition">
             {item.target_keyword || "—"}
           </div>
-          <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-semibold mt-0.5">
+          <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-medium mt-0.5">
             {item.match_type && (
               <span className="rounded bg-slate-100 px-1.5 py-0.2 text-slate-600 font-bold uppercase">
                 {item.match_type}
@@ -515,44 +614,65 @@ export function PpcAutoBidResultsModal({
           </div>
         </td>
 
+        {/* CHẶNG HIỆN TẠI */}
+        <td className="py-2.5 px-3 text-center">
+          {renderStageBadge()}
+        </td>
+
         {/* 3D STATUS */}
         <td className="py-2.5 px-2 text-center">
-          <span
-            title={st3.tip}
-            className={`inline-block px-2.5 py-1 rounded-lg text-[11px] border transition ${st3.color}`}
-          >
-            {st3.badge}
-          </span>
+          {st3.isPending ? (
+            <span className="text-slate-300 font-mono text-xs select-none">—</span>
+          ) : (
+            <span
+              title={st3.tip}
+              className={`inline-block px-2.5 py-0.5 rounded-md text-[11px] border transition ${st3.color}`}
+            >
+              {st3.badge}
+            </span>
+          )}
         </td>
 
         {/* 7D STATUS */}
         <td className="py-2.5 px-2 text-center">
-          <span
-            title={st7.tip}
-            className={`inline-block px-2.5 py-1 rounded-lg text-[11px] border transition ${st7.color}`}
-          >
-            {st7.badge}
-          </span>
+          {st7.isPending ? (
+            <span className="text-slate-300 font-mono text-xs select-none">—</span>
+          ) : (
+            <span
+              title={st7.tip}
+              className={`inline-block px-2.5 py-0.5 rounded-md text-[11px] border transition ${st7.color}`}
+            >
+              {st7.badge}
+            </span>
+          )}
         </td>
 
         {/* 14D STATUS */}
         <td className="py-2.5 px-2 text-center">
-          <span
-            title={st14.tip}
-            className={`inline-block px-2.5 py-1 rounded-lg text-[11px] border transition ${st14.color}`}
-          >
-            {st14.badge}
-          </span>
+          {st14.isPending ? (
+            <span className="text-slate-300 font-mono text-xs select-none">—</span>
+          ) : (
+            <span
+              title={st14.tip}
+              className={`inline-block px-2.5 py-0.5 rounded-md text-[11px] border transition ${st14.color}`}
+            >
+              {st14.badge}
+            </span>
+          )}
         </td>
 
         {/* 30D STATUS */}
         <td className="py-2.5 px-2 text-center">
-          <span
-            title={st30.tip}
-            className={`inline-block px-2.5 py-1 rounded-lg text-[11px] border transition ${st30.color}`}
-          >
-            {st30.badge}
-          </span>
+          {st30.isPending ? (
+            <span className="text-slate-300 font-mono text-xs select-none">—</span>
+          ) : (
+            <span
+              title={st30.tip}
+              className={`inline-block px-2.5 py-0.5 rounded-md text-[11px] border transition ${st30.color}`}
+            >
+              {st30.badge}
+            </span>
+          )}
         </td>
 
         {/* ACTION BUTTON */}
@@ -563,7 +683,7 @@ export function PpcAutoBidResultsModal({
               e.stopPropagation();
               setSelectedAction(item);
             }}
-            className="rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-700 hover:bg-indigo-600 hover:text-white transition shadow-2xs cursor-pointer"
+            className="rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-700 hover:bg-indigo-600 hover:text-white transition cursor-pointer"
           >
             Chi tiết
           </button>
@@ -577,7 +697,7 @@ export function PpcAutoBidResultsModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs animate-in fade-in duration-150">
       <div className="flex h-[92vh] w-full max-w-6xl flex-col rounded-3xl border border-slate-200 bg-white shadow-2xl overflow-hidden">
-        {/* HEADER: GRAIN RÕ RÀNG (LẦN CHỈNH & TARGET) */}
+        {/* HEADER */}
         <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-slate-50/80">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-md shadow-indigo-600/20">
@@ -590,7 +710,7 @@ export function PpcAutoBidResultsModal({
                   {selectedStore || "Tất cả Store"}
                 </span>
                 <span className="text-xs font-bold text-slate-500">
-                  ({summary?.total || 0} lần chỉnh bid · {summary?.uniqueTargets || 0} targets)
+                  ({summary?.total || 0} lần chỉnh · {allLatestTargetItems.length} targets)
                 </span>
               </div>
             </div>
@@ -617,149 +737,189 @@ export function PpcAutoBidResultsModal({
           </div>
         </div>
 
-        {/* SUMMARY CARDS (ĐỒNG BỘ 100% CÙNG GRAIN ACTION-LEVEL) */}
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-2.5 px-6 py-3.5 border-b border-slate-100 bg-slate-50/40">
-          <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-2xs">
+        {/* SUMMARY CARDS CHIA THEO CHẶNG (BẤM ĐỂ LỌC NGAY) */}
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-2.5 px-6 py-2.5 border-b border-slate-100 bg-slate-50/50">
+          <button
+            type="button"
+            onClick={() => setStageFilter("ALL")}
+            className={`text-left rounded-xl border px-3 py-2 transition cursor-pointer ${
+              stageFilter === "ALL" ? "border-indigo-500 bg-indigo-50/40 ring-1 ring-indigo-500" : "border-slate-200 bg-white hover:border-slate-300"
+            }`}
+          >
             <span className="text-[11px] font-bold text-slate-500 block">Tổng Lần Chỉnh</span>
             <div className="flex items-baseline gap-1 mt-0.5">
-              <span className="text-lg font-black text-slate-900">{summary?.total || 0}</span>
+              <span className="text-base font-black text-slate-900">{summary?.total || items.length}</span>
               <span className="text-[10px] text-slate-400 font-semibold">lần</span>
             </div>
-          </div>
+          </button>
 
-          <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-3 shadow-2xs">
-            <span className="text-[11px] font-bold text-emerald-800 flex items-center gap-1">
-              <CheckCircle size={13} weight="fill" className="text-emerald-600" />
-              <span>Thắng (Win)</span>
-            </span>
+          <button
+            type="button"
+            onClick={() => setStageFilter("3D")}
+            className={`text-left rounded-xl border px-3 py-2 transition cursor-pointer ${
+              stageFilter === "3D" ? "border-amber-500 bg-amber-50/50 ring-1 ring-amber-500" : "border-slate-200 bg-white hover:border-slate-300"
+            }`}
+          >
+            <span className="text-[11px] font-bold text-slate-600 block">Chặng 3D (0-3 ngày)</span>
             <div className="flex items-baseline gap-1 mt-0.5">
-              <span className="text-lg font-black text-emerald-700">{summary?.positive || 0}</span>
-              {summary?.winRate != null && (
-                <span className="text-[10px] font-black text-emerald-600 ml-1">({summary.winRate.toFixed(0)}%)</span>
-              )}
+              <span className="text-base font-black text-slate-900">{stageCounts["3D"]}</span>
+              <span className="text-[10px] text-slate-400 font-semibold">targets</span>
             </div>
-          </div>
+          </button>
 
-          <div className="rounded-2xl border border-rose-200 bg-rose-50/60 p-3 shadow-2xs">
-            <span className="text-[11px] font-bold text-rose-800 flex items-center gap-1">
-              <XCircle size={13} weight="fill" className="text-rose-600" />
-              <span>Kém / Cần sửa</span>
-            </span>
+          <button
+            type="button"
+            onClick={() => setStageFilter("7D")}
+            className={`text-left rounded-xl border px-3 py-2 transition cursor-pointer ${
+              stageFilter === "7D" ? "border-sky-500 bg-sky-50/50 ring-1 ring-sky-500" : "border-slate-200 bg-white hover:border-slate-300"
+            }`}
+          >
+            <span className="text-[11px] font-bold text-slate-600 block">Chặng 7D (4-7 ngày)</span>
             <div className="flex items-baseline gap-1 mt-0.5">
-              <span className="text-lg font-black text-rose-700">{summary?.negative || 0}</span>
-              <span className="text-[10px] text-rose-600">lần</span>
+              <span className="text-base font-black text-slate-900">{stageCounts["7D"]}</span>
+              <span className="text-[10px] text-slate-400 font-semibold">targets</span>
             </div>
-          </div>
+          </button>
 
-          <div className="rounded-2xl border border-amber-300 bg-amber-100/50 p-3 shadow-2xs">
-            <span className="text-[11px] font-bold text-amber-900 flex items-center gap-1">
-              <WarningCircle size={13} weight="fill" className="text-amber-600" />
-              <span>Cảnh báo 3D</span>
-            </span>
+          <button
+            type="button"
+            onClick={() => setStageFilter("14D")}
+            className={`text-left rounded-xl border px-3 py-2 transition cursor-pointer ${
+              stageFilter === "14D" ? "border-violet-500 bg-violet-50/50 ring-1 ring-violet-500" : "border-slate-200 bg-white hover:border-slate-300"
+            }`}
+          >
+            <span className="text-[11px] font-bold text-slate-600 block">Chặng 14D (8-14 ngày)</span>
             <div className="flex items-baseline gap-1 mt-0.5">
-              <span className="text-lg font-black text-amber-900">{summary?.warning3d || 0}</span>
-              <span className="text-[10px] text-amber-800">mục</span>
+              <span className="text-base font-black text-slate-900">{stageCounts["14D"]}</span>
+              <span className="text-[10px] text-slate-400 font-semibold">targets</span>
             </div>
-          </div>
+          </button>
 
-          <div className="rounded-2xl border border-slate-300 bg-slate-100/70 p-3 shadow-2xs">
-            <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1">
-              <Prohibit size={13} weight="bold" className="text-slate-500" />
-              <span>Bị ngắt (Đè)</span>
-            </span>
+          <button
+            type="button"
+            onClick={() => setStageFilter("30D")}
+            className={`text-left rounded-xl border px-3 py-2 transition cursor-pointer ${
+              stageFilter === "30D" ? "border-emerald-500 bg-emerald-50/50 ring-1 ring-emerald-500" : "border-slate-200 bg-white hover:border-slate-300"
+            }`}
+          >
+            <span className="text-[11px] font-bold text-slate-600 block">Chặng 30D & Đã Xong</span>
             <div className="flex items-baseline gap-1 mt-0.5">
-              <span className="text-lg font-black text-slate-800">{summary?.interrupted || 0}</span>
-              <span className="text-[10px] text-slate-500">lần</span>
+              <span className="text-base font-black text-slate-900">{stageCounts["30D"] + stageCounts.COMPLETED}</span>
+              <span className="text-[10px] text-slate-400 font-semibold">targets</span>
             </div>
-          </div>
+          </button>
 
-          <div className="rounded-2xl border border-indigo-200 bg-indigo-50/60 p-3 shadow-2xs">
-            <span className="text-[11px] font-bold text-indigo-800 flex items-center gap-1">
-              <TrendUp size={13} weight="bold" className="text-indigo-600" />
-              <span>Net Profit</span>
-            </span>
+          <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+            <span className="text-[11px] font-bold text-slate-600 block">Net Profit</span>
             <div className="flex items-baseline gap-1 mt-0.5">
-              <span className={`text-lg font-black ${(summary?.totalRewardUsd || 0) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+              <span className={`text-base font-black ${(summary?.totalRewardUsd || 0) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
                 {formatCurrencyUsd(summary?.totalRewardUsd || 0, true)}
               </span>
             </div>
           </div>
         </div>
 
-        {/* TOOLBAR: CÁC TAB LỌC ĐẾM CHUẨN XÁC THEO SUMMARY */}
-        <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-2.5 border-b border-slate-200 bg-white">
+        {/* TOOLBAR: GỌN GÀNG, ĐẸP MẮT */}
+        <div className="flex flex-wrap items-center justify-between gap-2.5 px-6 py-2 border-b border-slate-200 bg-white">
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative">
-              <MagnifyingGlass size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <MagnifyingGlass size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
                 placeholder="Tìm Keyword, ASIN, SKU..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-64 rounded-xl border border-slate-200 pl-8 pr-3 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600/20 shadow-2xs"
+                className="w-48 rounded-lg border border-slate-200 pl-8 pr-2.5 py-1 text-xs text-slate-800 placeholder-slate-400 focus:border-indigo-600 focus:outline-none"
               />
             </div>
 
-            <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-0.5 text-xs font-bold text-slate-600 flex-wrap">
+            {/* CÁC TAB CHIA MỤC THEO CHẶNG */}
+            <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 p-0.5 text-xs font-bold text-slate-600 flex-wrap">
+              {[
+                { id: "ALL", label: "Tất cả", count: stageCounts.ALL },
+                { id: "3D", label: "3D", count: stageCounts["3D"] },
+                { id: "7D", label: "7D", count: stageCounts["7D"] },
+                { id: "14D", label: "14D", count: stageCounts["14D"] },
+                { id: "30D", label: "30D", count: stageCounts["30D"] },
+                { id: "COMPLETED", label: "Đã xong", count: stageCounts.COMPLETED },
+                { id: "INTERRUPTED", label: "Bị ngắt", count: stageCounts.INTERRUPTED },
+              ].map((tab) => {
+                const isActive = stageFilter === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setStageFilter(tab.id as any)}
+                    className={`rounded-md px-2 py-1 text-[11px] transition cursor-pointer flex items-center gap-1 ${
+                      isActive
+                        ? "bg-white text-slate-900 shadow-2xs font-extrabold"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    <span>{tab.label}</span>
+                    <span
+                      className={`rounded px-1 text-[10px] font-bold ${
+                        isActive ? "bg-indigo-100 text-indigo-700" : "bg-slate-200/80 text-slate-500"
+                      }`}
+                    >
+                      {tab.count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* BỘ LỌC KẾT QUẢ PHỤ */}
+            <div className="flex items-center gap-0.5 rounded-lg bg-slate-50 border border-slate-200 p-0.5 text-xs">
               <button
                 type="button"
                 onClick={() => setStatusFilter("ALL")}
-                className={`rounded-lg px-2.5 py-1 text-[11px] transition cursor-pointer ${statusFilter === "ALL" ? "bg-white text-slate-900 shadow-2xs font-extrabold" : "hover:text-slate-900"
-                  }`}
+                className={`rounded px-2 py-0.5 text-[11px] font-bold transition cursor-pointer ${
+                  statusFilter === "ALL" ? "bg-slate-800 text-white" : "text-slate-600 hover:text-slate-900"
+                }`}
               >
-                Tất cả ({summary?.total || items.length})
+                Tất cả
               </button>
               <button
                 type="button"
                 onClick={() => setStatusFilter("WIN")}
-                className={`rounded-lg px-2.5 py-1 text-[11px] transition cursor-pointer ${statusFilter === "WIN" ? "bg-emerald-600 text-white shadow-2xs font-extrabold" : "text-emerald-700 hover:text-emerald-900"
-                  }`}
+                className={`rounded px-2 py-0.5 text-[11px] font-bold transition cursor-pointer ${
+                  statusFilter === "WIN" ? "bg-emerald-600 text-white" : "text-emerald-700 hover:bg-emerald-50"
+                }`}
               >
-                🟢 Win ({summary?.positive || 0})
+                Win ({summary?.positive || 0})
               </button>
               <button
                 type="button"
                 onClick={() => setStatusFilter("LOSS")}
-                className={`rounded-lg px-2.5 py-1 text-[11px] transition cursor-pointer ${statusFilter === "LOSS" ? "bg-rose-600 text-white shadow-2xs font-extrabold" : "text-rose-700 hover:text-rose-900"
-                  }`}
+                className={`rounded px-2 py-0.5 text-[11px] font-bold transition cursor-pointer ${
+                  statusFilter === "LOSS" ? "bg-rose-600 text-white" : "text-rose-700 hover:bg-rose-50"
+                }`}
               >
-                🔴 Cần sửa ({summary?.negative || 0})
+                Cần sửa ({summary?.negative || 0})
               </button>
-              <button
-                type="button"
-                onClick={() => setStatusFilter("WARNING_3D")}
-                className={`rounded-lg px-2.5 py-1 text-[11px] transition cursor-pointer ${statusFilter === "WARNING_3D" ? "bg-amber-500 text-white shadow-2xs font-extrabold" : "text-amber-800 hover:text-amber-950"
+              {warningCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter("WARNING_3D")}
+                  className={`rounded px-2 py-0.5 text-[11px] font-bold transition cursor-pointer ${
+                    statusFilter === "WARNING_3D" ? "bg-amber-500 text-white" : "text-amber-800 hover:bg-amber-50"
                   }`}
-              >
-                ⚠️ Cảnh báo 3D ({summary?.warning3d || 0})
-              </button>
-              <button
-                type="button"
-                onClick={() => setStatusFilter("INTERRUPTED")}
-                className={`rounded-lg px-2.5 py-1 text-[11px] transition cursor-pointer ${statusFilter === "INTERRUPTED" ? "bg-slate-700 text-white shadow-2xs font-extrabold" : "text-slate-700 hover:text-slate-950"
-                  }`}
-              >
-                ⛔ Bị ngắt ({summary?.interrupted || 0})
-              </button>
-              <button
-                type="button"
-                onClick={() => setStatusFilter("OBSERVING")}
-                className={`rounded-lg px-2.5 py-1 text-[11px] transition cursor-pointer ${statusFilter === "OBSERVING" ? "bg-indigo-600 text-white shadow-2xs font-extrabold" : "text-indigo-700 hover:text-indigo-900"
-                  }`}
-              >
-                ⏳ Đang chạy ({summary?.observing || 0})
-              </button>
+                >
+                  Cảnh báo ({warningCount})
+                </button>
+              )}
             </div>
           </div>
 
-          {/* EXPAND CONTROLS: ĐƠN GIẢN, GỌN GÀNG */}
+          {/* EXPAND CONTROLS */}
           <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={handleExpandAll}
               className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-bold text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition shadow-2xs cursor-pointer"
             >
-              Mở tất cả
+              Mở tất cả ({campaignGroups.length})
             </button>
             <button
               type="button"
@@ -771,39 +931,36 @@ export function PpcAutoBidResultsModal({
           </div>
         </div>
 
-        {/* MAIN BODY: DANH SÁCH CHIẾN DỊCH (GOM THEO CHIẾN DỊCH, CHỈ LẤY TARGET MỚI NHẤT) */}
+        {/* MAIN BODY: DANH SÁCH CHIẾN DỊCH */}
         <div className="flex-1 overflow-y-auto px-6 py-4 thin-scrollbar">
           {loading ? (
             <div className="flex h-64 flex-col items-center justify-center gap-2 text-slate-400">
               <CircleNotch size={28} className="animate-spin text-indigo-600" />
               <span className="text-xs font-bold">Đang tải kết quả theo dõi bid...</span>
             </div>
-          ) : campaignGroups.length === 0 ? (
+          ) : visibleTargetItems.length === 0 ? (
             <div className="flex h-64 flex-col items-center justify-center gap-2 text-slate-400">
               <Clock size={36} className="text-slate-300" weight="duotone" />
-              <span className="text-sm font-bold text-slate-600">Chưa có dữ liệu chỉnh bid trong bộ lọc này</span>
-              <p className="text-xs text-slate-400 max-w-sm text-center">
-                Sau khi áp dụng chỉnh bid từ Auto Bid lên Amazon, hệ thống sẽ tự động ghi nhận và theo dõi tại đây.
-              </p>
+              <span className="text-sm font-bold text-slate-600">Không có target nào trong mục này</span>
             </div>
           ) : (
             <div className="space-y-2.5">
               {campaignGroups.map((camp) => {
-                const isOpen = expandedCampaigns[camp.campaignId] ?? false;
+                const isCampOpen = expandedCampaigns[camp.campaignId] ?? false;
 
                 return (
                   <div
                     key={camp.campaignId}
                     className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-2xs transition"
                   >
-                    {/* HEADER CHIẾN DỊCH: 1 DÒNG GỌN GÀNG, KHÔNG RƯỜM RÀ */}
+                    {/* HEADER CHIẾN DỊCH */}
                     <div
                       onClick={() => toggleCampaign(camp.campaignId)}
                       className="flex items-center justify-between gap-3 px-4 py-2.5 bg-slate-50/90 hover:bg-slate-100/70 transition cursor-pointer select-none"
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         <div className="text-slate-400 hover:text-slate-700 shrink-0">
-                          {isOpen ? (
+                          {isCampOpen ? (
                             <CaretDown size={13} weight="bold" />
                           ) : (
                             <CaretRight size={13} weight="bold" />
@@ -826,30 +983,36 @@ export function PpcAutoBidResultsModal({
 
                       {/* SỐ LƯỢNG VÀ BADGE CẢNH BÁO */}
                       <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-xs font-semibold text-slate-500">
+                        {camp.latestActionDate && (
+                          <span className="text-[10px] text-slate-400 bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono">
+                            {camp.latestActionDate}
+                          </span>
+                        )}
+                        <span className="text-xs font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full">
                           {camp.stats.total} targets
                         </span>
                         {camp.stats.warning3d > 0 && (
                           <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 border border-amber-200">
-                            ⚠️ {camp.stats.warning3d}
+                            {camp.stats.warning3d} cảnh báo
                           </span>
                         )}
                         {camp.stats.loss > 0 && (
                           <span className="rounded-md bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700 border border-rose-200">
-                            🔴 {camp.stats.loss}
+                            {camp.stats.loss} cần sửa
                           </span>
                         )}
                       </div>
                     </div>
 
                     {/* BẢNG TARGETS KHI MỞ */}
-                    {isOpen && (
+                    {isCampOpen && (
                       <div className="border-t border-slate-200 overflow-x-auto">
                         <table className="w-full text-left text-xs border-collapse">
                           <thead>
-                            <tr className="border-b border-slate-200 bg-slate-50/60 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                            <tr className="border-b border-slate-200 bg-slate-50/70 text-[10px] font-bold uppercase tracking-wider text-slate-500">
                               <th className="py-2.5 px-4">Target / Từ Khóa</th>
-                              <th className="py-2.5 px-3">Lần Chỉnh Bid</th>
+                              <th className="py-2.5 px-3">Đổi Bid</th>
+                              <th className="py-2.5 px-3 text-center">Chặng Hiện Tại</th>
                               <th className="py-2.5 px-2 text-center">3D</th>
                               <th className="py-2.5 px-2 text-center">7D</th>
                               <th className="py-2.5 px-2 text-center">14D</th>
@@ -873,7 +1036,7 @@ export function PpcAutoBidResultsModal({
         {/* FOOTER INFO BAR */}
         <div className="flex items-center justify-between border-t border-slate-200 px-6 py-2.5 bg-slate-50 text-[11px] text-slate-500 font-medium">
           <div>
-            <span>Hiển thị <strong>{latestTargetItems.length}</strong> targets · <strong>{campaignGroups.length}</strong> chiến dịch (Lần chỉnh mới nhất)</span>
+            <span>Hiển thị <strong>{visibleTargetItems.length}</strong> targets · <strong>{campaignGroups.length}</strong> chiến dịch</span>
           </div>
           <div>
             <span className="text-slate-400">Tổng toàn bộ: {summary?.total || items.length} lần chỉnh</span>

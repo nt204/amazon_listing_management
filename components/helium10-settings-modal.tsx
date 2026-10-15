@@ -1,17 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   Gear,
   CheckCircle,
   WarningCircle,
   X,
   Key,
-  Info,
   CloudCheck,
-  Lightning,
-  Desktop,
   ArrowClockwise,
+  UploadSimple,
 } from "@phosphor-icons/react";
 
 interface Helium10SettingsModalProps {
@@ -31,10 +29,15 @@ export function Helium10SettingsModal({
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<"configured" | "not_configured" | "expired">("not_configured");
   const [plan, setPlan] = useState<string | null>(null);
+  const [accountId, setAccountId] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"cookie" | "local_browser">("cookie");
+  const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
+  const [cookieCountDetected, setCookieCountDetected] = useState<number | null>(null);
+  const [showManualInput, setShowManualInput] = useState(false);
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -50,10 +53,11 @@ export function Helium10SettingsModal({
         const data = await res.json();
         setStatus(data.status || "not_configured");
         setPlan(data.plan || null);
+        setAccountId(data.accountId || null);
         setUpdatedAt(data.updatedAt || null);
       }
     } catch {
-      setErrorMsg("Không thể tải trạng thái Cookie Helium 10.");
+      setErrorMsg("Không thể tải trạng thái Helium 10.");
     } finally {
       setLoading(false);
     }
@@ -68,8 +72,9 @@ export function Helium10SettingsModal({
       const data = await res.json();
       if (data.valid) {
         setStatus("configured");
-        setPlan(data.plan || "Helium 10 Active");
-        setSuccessMsg(`Kết nối Helium 10 thành công! Gói cước: ${data.plan || "Active"}`);
+        setPlan(data.plan || "Helium 10 Diamond");
+        if (data.accountId) setAccountId(data.accountId);
+        setSuccessMsg(`Kết nối thành công! Gói: ${data.plan || "Diamond"}`);
       } else {
         setStatus("expired");
         setErrorMsg(data.error || "Cookie đã hết hạn hoặc không hợp lệ.");
@@ -81,9 +86,40 @@ export function Helium10SettingsModal({
     }
   };
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setSelectedFileName(file.name);
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = String(event.target?.result || "").trim();
+        setCookieInput(text);
+
+        try {
+          const parsed = JSON.parse(text);
+          const list = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.cookies) ? parsed.cookies : []);
+          setCookieCountDetected(list.length);
+        } catch {
+          setCookieCountDetected(null);
+        }
+      } catch {
+        setErrorMsg("Không thể đọc nội dung file JSON.");
+      }
+    };
+    reader.onerror = () => {
+      setErrorMsg("Lỗi khi đọc file.");
+    };
+    reader.readAsText(file);
+  };
+
   const handleSave = async () => {
     if (!cookieInput.trim()) {
-      setErrorMsg("Vui lòng nhập hoặc dán chuỗi Cookie Helium 10.");
+      setErrorMsg("Vui lòng tải lên file Cookie JSON của Helium 10.");
       return;
     }
 
@@ -103,11 +139,14 @@ export function Helium10SettingsModal({
         throw new Error(data.error || "Lỗi khi lưu Cookie.");
       }
 
-      setSuccessMsg("Lưu Cookie Helium 10 thành công! Kết nối API Cerebro & Magnet hoạt động tốt.");
+      setSuccessMsg("Lưu Cookie Helium 10 thành công!");
       setStatus("configured");
       if (data.plan) setPlan(data.plan);
+      if (data.accountId) setAccountId(data.accountId);
       setUpdatedAt(new Date().toISOString());
       setCookieInput("");
+      setSelectedFileName(null);
+      setCookieCountDetected(null);
       if (onSaved) onSaved();
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : "Đã xảy ra lỗi.");
@@ -120,19 +159,14 @@ export function Helium10SettingsModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
-      <div className="relative w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl text-slate-800 flex flex-col max-h-[90vh] overflow-y-auto">
+      <div className="relative w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl text-slate-800 flex flex-col max-h-[90vh] overflow-y-auto">
         {/* Header */}
-        <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+        <div className="flex items-center justify-between pb-3.5 border-b border-slate-100">
           <div className="flex items-center gap-2.5">
-            <div className="p-2.5 rounded-xl bg-sky-50 text-sky-600 border border-sky-100">
-              <Gear size={22} weight="bold" />
+            <div className="p-2 rounded-xl bg-sky-50 text-sky-600 border border-sky-100">
+              <Gear size={20} weight="bold" />
             </div>
-            <div>
-              <h3 className="text-base font-extrabold text-slate-900">Cấu hình Helium 10 (Server-Ready)</h3>
-              <p className="text-xs text-slate-500 font-medium">
-                Kết nối Direct REST API đào Cerebro &amp; Magnet siêu tốc
-              </p>
-            </div>
+            <h3 className="text-base font-extrabold text-slate-900">Cấu hình Helium 10</h3>
           </div>
           <button
             onClick={onClose}
@@ -142,41 +176,35 @@ export function Helium10SettingsModal({
           </button>
         </div>
 
-        {/* Server-Ready Architecture Callout */}
-        <div className="mt-4 p-3 rounded-xl bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200/80 flex items-start gap-2.5">
-          <CloudCheck size={20} weight="fill" className="text-emerald-600 shrink-0 mt-0.5" />
-          <div className="text-xs space-y-0.5">
-            <p className="font-extrabold text-emerald-900">Kiến trúc sẵn sàng cho Server / VPS / Docker</p>
-            <p className="text-emerald-800 text-[11px] leading-relaxed">
-              Hệ thống sử dụng <strong>Direct HTTP API</strong> kết hợp Cookie lưu trong PostgreSQL. Khi deploy lên remote VPS, server không cần cài đặt Google Chrome/màn hình GUI mà vẫn đào dữ liệu chính xác 100% trong 2 giây!
-            </p>
-          </div>
-        </div>
-
-        {/* Status Badge */}
-        <div className="mt-3 flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200">
-          <div className="flex items-center gap-2">
-            <Key size={18} className="text-slate-500" />
-            <span className="text-xs font-bold text-slate-700">Trạng thái API:</span>
+        {/* Status Badge Card */}
+        <div className="mt-4 flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200">
+          <div className="space-y-0.5">
+            <div className="flex items-center gap-2">
+              <Key size={16} className="text-slate-500" />
+              <span className="text-xs font-bold text-slate-700">Trạng thái:</span>
+            </div>
+            {accountId && (
+              <p className="text-[11px] text-slate-500 font-medium pl-6">
+                Account ID: <span className="text-slate-800 font-mono font-bold">{accountId}</span>
+              </p>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
             {loading ? (
               <span className="text-xs text-slate-500 font-medium">Đang kiểm tra...</span>
             ) : status === "configured" ? (
-              <div className="flex items-center gap-2">
-                {plan && (
-                  <span className="px-2 py-0.5 rounded-md bg-sky-100 text-sky-800 text-[11px] font-bold">
-                    {plan}
-                  </span>
-                )}
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+              <div className="flex items-center gap-1.5">
+                <span className="px-2 py-0.5 rounded-md bg-sky-100 text-sky-800 text-[11px] font-bold">
+                  {plan || "Diamond"}
+                </span>
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                   <CheckCircle size={14} weight="fill" /> Đang hoạt động
                 </span>
               </div>
             ) : (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                <WarningCircle size={14} weight="fill" /> Chưa có Cookie hợp lệ
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                <WarningCircle size={14} weight="fill" /> Chưa cấu hình
               </span>
             )}
 
@@ -194,168 +222,96 @@ export function Helium10SettingsModal({
         </div>
 
         {updatedAt && (
-          <p className="mt-1 text-[11px] text-slate-500 text-right font-medium">
-            Lần cập nhật cuối: {new Date(updatedAt).toLocaleString("vi-VN")}
+          <p className="mt-1 text-[11px] text-slate-400 text-right font-medium">
+            Cập nhật: {new Date(updatedAt).toLocaleString("vi-VN")}
           </p>
         )}
 
-        {/* Tab Navigation */}
-        <div className="mt-4 flex border-b border-slate-200 text-xs font-bold">
-          <button
-            type="button"
-            onClick={() => setActiveTab("cookie")}
-            className={`pb-2 px-3 border-b-2 transition cursor-pointer flex items-center gap-1.5 ${
-              activeTab === "cookie"
-                ? "border-sky-600 text-sky-600 font-extrabold"
-                : "border-transparent text-slate-500 hover:text-slate-800"
-            }`}
-          >
-            <CloudCheck size={16} />
-            <span>1. Dán Cookie (Dành cho Server &amp; Mọi môi trường)</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("local_browser")}
-            className={`pb-2 px-3 border-b-2 transition cursor-pointer flex items-center gap-1.5 ${
-              activeTab === "local_browser"
-                ? "border-sky-600 text-sky-600 font-extrabold"
-                : "border-transparent text-slate-500 hover:text-slate-800"
-            }`}
-          >
-            <Desktop size={16} />
-            <span>2. Tự Động Đăng Nhập (Chỉ Localhost)</span>
-          </button>
-        </div>
+        {/* Primary Action: File Upload Box */}
+        <div className="mt-4 space-y-3">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json,application/json"
+            onChange={handleFileChange}
+            className="hidden"
+          />
 
-        {/* Tab Content */}
-        <div className="py-4 space-y-4">
-          {activeTab === "cookie" ? (
-            <>
-              {/* Instructions */}
-              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-800 text-xs space-y-2">
-                <div className="flex items-center gap-1.5 font-bold text-slate-700">
-                  <Info size={16} className="text-sky-600" />
-                  <span>Cách đồng bộ Cookie lên Server (Chỉ cần làm 1 lần, dùng được 30-90 ngày):</span>
-                </div>
-                <ol className="list-decimal list-inside space-y-1 text-slate-600 text-[11px] font-medium leading-relaxed pl-1">
-                  <li>
-                    Đăng nhập tài khoản Helium 10 trên trình duyệt cá nhân tại{" "}
-                    <strong className="text-slate-800">members.helium10.com</strong>.
-                  </li>
-                  <li>
-                    Mở tiện ích <strong className="text-slate-800">Cookie-Editor</strong> (hoặc copy Header trong F12 Network) bấm{" "}
-                    <strong className="text-sky-700">Export JSON</strong>.
-                  </li>
-                  <li>
-                    Dán vào ô bên dưới rồi bấm <strong className="text-sky-700">&quot;Lưu Vào Server&quot;</strong>. Hệ thống sẽ lưu vào Database Postgres để mọi người dùng đều dùng được.
-                  </li>
-                </ol>
-              </div>
+          <div
+            onClick={() => fileInputRef.current?.click()}
+            className="border-2 border-dashed border-slate-300 hover:border-sky-500 bg-slate-50/70 hover:bg-sky-50/40 p-6 rounded-2xl flex flex-col items-center justify-center text-center cursor-pointer transition group"
+          >
+            <div className="p-3 rounded-full bg-white text-sky-600 shadow-xs border border-slate-200 group-hover:border-sky-300 group-hover:scale-105 transition">
+              <UploadSimple size={24} weight="bold" />
+            </div>
+            <p className="mt-2.5 text-xs font-bold text-slate-800">
+              {selectedFileName ? selectedFileName : "Bấm vào đây để chọn file Cookie JSON"}
+            </p>
 
-              {/* Textarea */}
-              <div className="space-y-1.5">
-                <label className="block text-xs font-bold text-slate-700">
-                  Cookie JSON hoặc Chuỗi Header String:
-                </label>
+            {cookieCountDetected !== null && (
+              <span className="mt-2 inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-emerald-100 text-emerald-800 text-[11px] font-bold">
+                <CheckCircle size={12} weight="fill" /> Đã nhận diện {cookieCountDetected} cookie
+              </span>
+            )}
+          </div>
+
+          {/* Optional Collapsible Manual Paste */}
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={() => setShowManualInput(!showManualInput)}
+              className="text-[11px] font-bold text-slate-400 hover:text-slate-700 flex items-center gap-1 cursor-pointer"
+            >
+              <span>{showManualInput ? "▲ Thu gọn nhập thủ công" : "▼ Hoặc dán chuỗi JSON thủ công"}</span>
+            </button>
+
+            {showManualInput && (
+              <div className="mt-2 space-y-1.5 animate-in fade-in duration-150">
                 <textarea
-                  rows={5}
+                  rows={4}
                   value={cookieInput}
                   onChange={(e) => setCookieInput(e.target.value)}
-                  placeholder='Dán JSON cookie (dạng [{"name":"...", "value":"..."}]) hoặc chuỗi Header (key=value; ...) tại đây...'
+                  placeholder='Dán nội dung JSON cookie tại đây...'
                   className="w-full rounded-xl border border-slate-300 bg-slate-50 p-3 text-xs font-mono text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-sky-600 focus:ring-1 focus:ring-sky-600 outline-none transition"
                 />
               </div>
-            </>
-          ) : (
-            <div className="p-4 rounded-xl bg-sky-50/70 border border-sky-200/90 space-y-3">
-              <div className="flex items-start gap-2.5">
-                <Desktop size={20} className="text-sky-600 shrink-0 mt-0.5" />
-                <div className="text-xs space-y-1">
-                  <h4 className="font-black text-slate-900">
-                    Trợ lý đăng nhập tự động trên máy cá nhân
-                  </h4>
-                  <p className="text-slate-600 text-[11px] leading-relaxed">
-                    Tính năng này sẽ khởi chạy một cửa sổ Google Chrome trên máy tính của bạn, tự động điền tài khoản, mật khẩu và sinh mã xác thực 2FA TOTP. Bạn chỉ cần giải captcha nếu có, hệ thống sẽ tự động bắt Cookie và lưu vào database.
-                  </p>
-                  <p className="text-[11px] text-amber-700 font-bold bg-amber-50 p-2 rounded-lg border border-amber-200">
-                    ⚠️ Lưu ý: Tính năng này chỉ hoạt động khi chạy trên máy tính cá nhân Mac/Windows. Không hoạt động trên máy chủ VPS Linux (vì server không có màn hình desktop).
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between pt-2 border-t border-sky-200/60">
-                <div className="text-[11px] text-slate-600">
-                  Tài khoản: <strong className="text-slate-800">haonguyen36928@gmail.com</strong>
-                </div>
-                <button
-                  type="button"
-                  disabled={loading || saving}
-                  onClick={async () => {
-                    setSaving(true);
-                    setErrorMsg(null);
-                    setSuccessMsg(null);
-                    try {
-                      const res = await fetch("/api/settings/helium10/auto-login", { method: "POST" });
-                      const data = await res.json();
-                      if (!res.ok) throw new Error(data.error || "Không thể tự động đăng nhập.");
-                      setSuccessMsg("Đăng nhập Helium 10 thành công! Đã lưu Cookie vào Server.");
-                      await fetchStatus();
-                      if (onSaved) onSaved();
-                    } catch (err) {
-                      setErrorMsg(err instanceof Error ? err.message : "Lỗi khi tự động đăng nhập.");
-                    } finally {
-                      setSaving(false);
-                    }
-                  }}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold transition shadow-xs cursor-pointer disabled:opacity-50"
-                >
-                  <Lightning size={16} weight="fill" />
-                  {saving ? "Đang mở Chrome..." : "Mở Chrome Đăng Nhập"}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Feedback Messages */}
-          {errorMsg && (
-            <div className="flex items-center gap-2 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium">
-              <WarningCircle size={16} weight="fill" className="shrink-0" />
-              <span>{errorMsg}</span>
-            </div>
-          )}
-
-          {successMsg && (
-            <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-medium">
-              <CheckCircle size={16} weight="fill" className="shrink-0" />
-              <span>{successMsg}</span>
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-          <div className="text-[11px] text-slate-400 font-medium">
-            Helium 10 Cerebro &amp; Magnet Engine v2.0
-          </div>
-          <div className="flex items-center gap-2.5">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-bold hover:bg-slate-50 transition cursor-pointer"
-            >
-              Đóng
-            </button>
-            {activeTab === "cookie" && (
-              <button
-                type="button"
-                disabled={saving || !cookieInput.trim()}
-                onClick={handleSave}
-                className="px-5 py-2 rounded-xl bg-sky-600 text-white text-xs font-bold shadow-md shadow-sky-600/20 hover:bg-sky-700 disabled:opacity-50 transition cursor-pointer"
-              >
-                {saving ? "Đang lưu..." : "Lưu Vào Server"}
-              </button>
             )}
           </div>
+        </div>
+
+        {/* Feedback Messages */}
+        {errorMsg && (
+          <div className="mt-3 flex items-center gap-2 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium">
+            <WarningCircle size={16} weight="fill" className="shrink-0" />
+            <span>{errorMsg}</span>
+          </div>
+        )}
+
+        {successMsg && (
+          <div className="mt-3 flex items-center gap-2 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-medium">
+            <CheckCircle size={16} weight="fill" className="shrink-0" />
+            <span>{successMsg}</span>
+          </div>
+        )}
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2.5 pt-4 mt-4 border-t border-slate-100">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-bold hover:bg-slate-50 transition cursor-pointer"
+          >
+            Đóng
+          </button>
+          <button
+            type="button"
+            disabled={saving || (!cookieInput.trim() && !selectedFileName)}
+            onClick={() => void handleSave()}
+            className="px-5 py-2 rounded-xl bg-sky-600 text-white text-xs font-bold shadow-md shadow-sky-600/20 hover:bg-sky-700 disabled:opacity-50 transition cursor-pointer flex items-center gap-1.5"
+          >
+            <CloudCheck size={16} />
+            <span>{saving ? "Đang lưu..." : "Lưu Vào Hệ Thống"}</span>
+          </button>
         </div>
       </div>
     </div>

@@ -142,10 +142,9 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
   // Stage 2 Data: Reverse ASINs & Volume Filter (SV < 20 excluded by default)
   const [selectedTool, setSelectedTool] = useState<"sellersprite" | "helium10" | "auto">("helium10");
   const [h10SettingsOpen, setH10SettingsOpen] = useState(false);
-  const [autoLoggingIn, setAutoLoggingIn] = useState(false);
-  const [autoLoginSuccessMsg, setAutoLoginSuccessMsg] = useState<string | null>(null);
   const [stage2Keywords, setStage2Keywords] = useState<UnifiedReverseKeywordItem[]>([]);
   const [stage2Warning, setStage2Warning] = useState<string | null>(null);
+  const [stage2FetchLimit, setStage2FetchLimit] = useState<number>(500);
   const [stage2VolumeThreshold, setStage2VolumeThreshold] = useState<number>(20);
   const [stage2VolumeOperator, setStage2VolumeOperator] = useState<"<" | "<=" | ">=" | ">" | "all">(">");
 
@@ -165,7 +164,7 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
   const [classifiedKeywords, setClassifiedKeywords] = useState<SemanticClassifiedKeyword[]>([]);
   const [classifying, setClassifying] = useState(false);
   const [stage3Tab, setStage3Tab] = useState<"all" | "PRODUCT" | "GIFT" | "EVENT" | "AUDIENCE" | "NEGATIVE">("all");
-  const [stage3MinRelevance, setStage3MinRelevance] = useState<number>(60);
+  const [stage3MinRelevance, setStage3MinRelevance] = useState<number>(80);
   const [stage3SearchText, setStage3SearchText] = useState("");
   const [selectedKeywords, setSelectedKeywords] = useState<Set<string>>(new Set());
 
@@ -409,7 +408,7 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
           productTitle: productTitle.trim(),
           tool: selectedTool,
           marketplace: "US",
-          limit: 300,
+          limit: stage2FetchLimit,
         }),
       });
 
@@ -443,8 +442,8 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
     setErrorMsg(null);
 
     try {
-      // Map to batch payload with unique id
-      const payloadKeywords = list.slice(0, 300).map((k, idx) => ({
+      // Map to batch payload with unique id (up to 1000)
+      const payloadKeywords = list.slice(0, 1000).map((k, idx) => ({
         id: idx + 1,
         keyword: k.keyword,
         search_volume: k.search_volume,
@@ -756,23 +755,6 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
     }
   };
 
-  const handleAutoLoginHelium10 = async () => {
-    setAutoLoggingIn(true);
-    setErrorMsg(null);
-    setAutoLoginSuccessMsg(null);
-    try {
-      const res = await fetch("/api/settings/helium10/auto-login", { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Không thể tự động đăng nhập Helium 10.");
-      setAutoLoginSuccessMsg("Đăng nhập Helium 10 thành công! Đã tự động cập nhật Cookie phiên làm việc.");
-      setTimeout(() => setAutoLoginSuccessMsg(null), 6000);
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Lỗi khi tự động đăng nhập.");
-    } finally {
-      setAutoLoggingIn(false);
-    }
-  };
-
   return (
     <div className="w-full space-y-4 text-slate-800 font-sans max-w-7xl mx-auto pb-10">
       {/* Top Header & Product Input Card */}
@@ -791,11 +773,10 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
               <button
                 type="button"
                 onClick={() => setSelectedTool("helium10")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition cursor-pointer ${
-                  selectedTool === "helium10"
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition cursor-pointer ${selectedTool === "helium10"
                     ? "bg-white text-sky-700 shadow-2xs border border-sky-200"
                     : "text-slate-600 hover:text-slate-900"
-                }`}
+                  }`}
               >
                 <span className="h-2 w-2 rounded-full bg-sky-500 ring-2 ring-sky-200" />
                 <span>Helium 10 (Mặc định)</span>
@@ -803,11 +784,10 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
               <button
                 type="button"
                 onClick={() => setSelectedTool("sellersprite")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition cursor-pointer ${
-                  selectedTool === "sellersprite"
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition cursor-pointer ${selectedTool === "sellersprite"
                     ? "bg-white text-amber-700 shadow-2xs border border-amber-200"
                     : "text-slate-600 hover:text-slate-900"
-                }`}
+                  }`}
               >
                 <span className="h-2 w-2 rounded-full bg-amber-500 ring-2 ring-amber-200" />
                 <span>Seller Sprite</span>
@@ -818,23 +798,18 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
           <div className="flex items-center gap-2">
             {selectedTool === "helium10" ? (
               <>
-                <button
-                  type="button"
-                  disabled={autoLoggingIn}
-                  onClick={() => void handleAutoLoginHelium10()}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-sky-200 bg-sky-50 hover:bg-sky-100 text-xs font-bold text-sky-700 transition cursor-pointer shadow-2xs disabled:opacity-50"
-                  title="Tự động mở Chrome đăng nhập và tự điền mã 2FA Google Authenticator"
-                >
-                  <ArrowsClockwise size={14} className={autoLoggingIn ? "animate-spin text-sky-600" : "text-sky-600"} />
-                  <span>{autoLoggingIn ? "Đang đăng nhập..." : "⚡ Đăng nhập H10 tự động"}</span>
-                </button>
+                <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-sky-50 text-sky-700 border border-sky-200">
+                  <Sparkle size={13} weight="fill" className="text-sky-600" />
+                  <span>Diamond API</span>
+                </span>
                 <button
                   type="button"
                   onClick={() => setH10SettingsOpen(true)}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-700 transition cursor-pointer"
+                  title="Cấu hình hoặc nạp file cookie Helium 10 Diamond"
                 >
                   <Gear size={15} className="text-slate-500" />
-                  <span>Cài đặt Cookie H10</span>
+                  <span>Cài đặt H10</span>
                 </button>
               </>
             ) : (
@@ -849,13 +824,6 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
             )}
           </div>
         </div>
-
-        {autoLoginSuccessMsg && (
-          <div className="mt-3 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2 font-bold shadow-2xs">
-            <CheckCircle size={16} weight="fill" className="text-emerald-600 shrink-0" />
-            <span>{autoLoginSuccessMsg}</span>
-          </div>
-        )}
 
         {/* Input Bar */}
         <div className="pt-3 space-y-2">
@@ -922,20 +890,18 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
         <button
           type="button"
           onClick={() => setCurrentStage(1)}
-          className={`flex items-center gap-2.5 px-3 py-2 rounded-xl text-left transition cursor-pointer ${
-            currentStage === 1
+          className={`flex items-center gap-2.5 px-3 py-2 rounded-xl text-left transition cursor-pointer ${currentStage === 1
               ? "bg-white text-indigo-700 shadow-xs border border-indigo-100"
               : "text-slate-600 hover:bg-white/60"
-          }`}
+            }`}
         >
           <div
-            className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-black shrink-0 ${
-              stage1Result
+            className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-black shrink-0 ${stage1Result
                 ? "bg-emerald-100 text-emerald-700"
                 : currentStage === 1
-                ? "bg-indigo-600 text-white"
-                : "bg-slate-200 text-slate-600"
-            }`}
+                  ? "bg-indigo-600 text-white"
+                  : "bg-slate-200 text-slate-600"
+              }`}
           >
             {stage1Result ? <Check size={12} weight="bold" /> : "1"}
           </div>
@@ -953,20 +919,18 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
         <button
           type="button"
           onClick={() => setCurrentStage(2)}
-          className={`flex items-center gap-2.5 px-3 py-2 rounded-xl text-left transition cursor-pointer ${
-            currentStage === 2
+          className={`flex items-center gap-2.5 px-3 py-2 rounded-xl text-left transition cursor-pointer ${currentStage === 2
               ? "bg-white text-indigo-700 shadow-xs border border-indigo-100"
               : "text-slate-600 hover:bg-white/60"
-          }`}
+            }`}
         >
           <div
-            className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-black shrink-0 ${
-              stage2Keywords.length > 0
+            className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-black shrink-0 ${stage2Keywords.length > 0
                 ? "bg-emerald-100 text-emerald-700"
                 : currentStage === 2
-                ? "bg-indigo-600 text-white"
-                : "bg-slate-200 text-slate-600"
-            }`}
+                  ? "bg-indigo-600 text-white"
+                  : "bg-slate-200 text-slate-600"
+              }`}
           >
             {stage2Keywords.length > 0 ? <Check size={12} weight="bold" /> : "2"}
           </div>
@@ -984,20 +948,18 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
         <button
           type="button"
           onClick={() => setCurrentStage(3)}
-          className={`flex items-center gap-2.5 px-3 py-2 rounded-xl text-left transition cursor-pointer ${
-            currentStage === 3
+          className={`flex items-center gap-2.5 px-3 py-2 rounded-xl text-left transition cursor-pointer ${currentStage === 3
               ? "bg-white text-indigo-700 shadow-xs border border-indigo-100"
               : "text-slate-600 hover:bg-white/60"
-          }`}
+            }`}
         >
           <div
-            className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-black shrink-0 ${
-              classifiedKeywords.length > 0
+            className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-black shrink-0 ${classifiedKeywords.length > 0
                 ? "bg-emerald-100 text-emerald-700"
                 : currentStage === 3
-                ? "bg-indigo-600 text-white"
-                : "bg-slate-200 text-slate-600"
-            }`}
+                  ? "bg-indigo-600 text-white"
+                  : "bg-slate-200 text-slate-600"
+              }`}
           >
             {classifiedKeywords.length > 0 ? <Check size={12} weight="bold" /> : "3"}
           </div>
@@ -1015,20 +977,18 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
         <button
           type="button"
           onClick={() => setCurrentStage(4)}
-          className={`flex items-center gap-2.5 px-3 py-2 rounded-xl text-left transition cursor-pointer ${
-            currentStage === 4
+          className={`flex items-center gap-2.5 px-3 py-2 rounded-xl text-left transition cursor-pointer ${currentStage === 4
               ? "bg-white text-indigo-700 shadow-xs border border-indigo-100"
               : "text-slate-600 hover:bg-white/60"
-          }`}
+            }`}
         >
           <div
-            className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-black shrink-0 ${
-              keywordParts.length > 0
+            className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-black shrink-0 ${keywordParts.length > 0
                 ? "bg-emerald-100 text-emerald-700"
                 : currentStage === 4
-                ? "bg-indigo-600 text-white"
-                : "bg-slate-200 text-slate-600"
-            }`}
+                  ? "bg-indigo-600 text-white"
+                  : "bg-slate-200 text-slate-600"
+              }`}
           >
             {keywordParts.length > 0 ? <Check size={12} weight="bold" /> : "4"}
           </div>
@@ -1104,50 +1064,50 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
               {showWeightSettings ? "Ẩn" : "Điều chỉnh"}
             </button>
             {showWeightSettings && (<>
-            {([
-              ["relevance", "Liên quan AI"],
-              ["revenue", "Doanh thu"],
-              ["sales", "Đơn bán"],
-              ["bsr", "BSR"],
-            ] as const).map(([key, label]) => (
-              <label key={key} className="space-y-1">
-                <span className="block text-[10.5px] font-bold text-slate-500">{label}</span>
-                <div className="flex items-center gap-1">
-                  <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    step={5}
-                    value={Math.round(scoreWeights[key] * 100)}
-                    onChange={(event) => updateScoreWeight(key, Number(event.target.value))}
-                    className="w-16 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-right text-xs font-bold text-slate-800 outline-none focus:border-indigo-400"
-                  />
-                  <span className="text-xs font-bold text-slate-400">%</span>
-                </div>
-              </label>
-            ))}
-            <div className="text-xs font-extrabold text-slate-700 pb-1.5">
-              Tổng {Math.round(Object.values(scoreWeights).reduce((sum, value) => sum + value, 0) * 100)}%
-            </div>
-            <button
-              type="button"
-              disabled={savingWeights || Math.abs(Object.values(scoreWeights).reduce((sum, value) => sum + value, 0) - 1) > 0.001}
-              onClick={() => void saveScoreWeights(scoreWeights)}
-              className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-extrabold text-white transition hover:bg-indigo-700 disabled:opacity-40"
-            >
-              {savingWeights ? "Đang lưu..." : "Lưu"}
-            </button>
-            <button
-              type="button"
-              disabled={savingWeights}
-              onClick={() => {
-                setScoreWeights(DEFAULT_SCORE_WEIGHTS);
-                void saveScoreWeights(DEFAULT_SCORE_WEIGHTS);
-              }}
-              className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:bg-slate-100 disabled:opacity-40"
-            >
-              Reset mặc định
-            </button>
+              {([
+                ["relevance", "Liên quan AI"],
+                ["revenue", "Doanh thu"],
+                ["sales", "Đơn bán"],
+                ["bsr", "BSR"],
+              ] as const).map(([key, label]) => (
+                <label key={key} className="space-y-1">
+                  <span className="block text-[10.5px] font-bold text-slate-500">{label}</span>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={5}
+                      value={Math.round(scoreWeights[key] * 100)}
+                      onChange={(event) => updateScoreWeight(key, Number(event.target.value))}
+                      className="w-16 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-right text-xs font-bold text-slate-800 outline-none focus:border-indigo-400"
+                    />
+                    <span className="text-xs font-bold text-slate-400">%</span>
+                  </div>
+                </label>
+              ))}
+              <div className="text-xs font-extrabold text-slate-700 pb-1.5">
+                Tổng {Math.round(Object.values(scoreWeights).reduce((sum, value) => sum + value, 0) * 100)}%
+              </div>
+              <button
+                type="button"
+                disabled={savingWeights || Math.abs(Object.values(scoreWeights).reduce((sum, value) => sum + value, 0) - 1) > 0.001}
+                onClick={() => void saveScoreWeights(scoreWeights)}
+                className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-extrabold text-white transition hover:bg-indigo-700 disabled:opacity-40"
+              >
+                {savingWeights ? "Đang lưu..." : "Lưu"}
+              </button>
+              <button
+                type="button"
+                disabled={savingWeights}
+                onClick={() => {
+                  setScoreWeights(DEFAULT_SCORE_WEIGHTS);
+                  void saveScoreWeights(DEFAULT_SCORE_WEIGHTS);
+                }}
+                className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:bg-slate-100 disabled:opacity-40"
+              >
+                Reset mặc định
+              </button>
             </>)}
           </div>
 
@@ -1192,12 +1152,12 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
                         stage1LoadingStep === 1
                           ? "25%"
                           : stage1LoadingStep === 2
-                          ? "50%"
-                          : stage1LoadingStep === 3
-                          ? "75%"
-                          : stage1LoadingStep === 4
-                          ? "92%"
-                          : "15%",
+                            ? "50%"
+                            : stage1LoadingStep === 3
+                              ? "75%"
+                              : stage1LoadingStep === 4
+                                ? "92%"
+                                : "15%",
                     }}
                   />
                 </div>
@@ -1216,13 +1176,12 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
                   return (
                     <div
                       key={s.step}
-                      className={`p-3 rounded-xl border transition-all ${
-                        isCurrent
+                      className={`p-3 rounded-xl border transition-all ${isCurrent
                           ? "bg-white border-indigo-300 shadow-xs ring-2 ring-indigo-100"
                           : isDone
-                          ? "bg-emerald-50/60 border-emerald-200 text-slate-700"
-                          : "bg-slate-50/70 border-slate-200/80 text-slate-400"
-                      }`}
+                            ? "bg-emerald-50/60 border-emerald-200 text-slate-700"
+                            : "bg-slate-50/70 border-slate-200/80 text-slate-400"
+                        }`}
                     >
                       <div className="flex items-center gap-1.5 mb-1">
                         {isDone ? (
@@ -1233,9 +1192,8 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
                           <div className="w-2 h-2 rounded-full bg-slate-300 shrink-0" />
                         )}
                         <span
-                          className={`text-xs font-bold ${
-                            isCurrent ? "text-indigo-900" : isDone ? "text-emerald-900" : "text-slate-500"
-                          }`}
+                          className={`text-xs font-bold ${isCurrent ? "text-indigo-900" : isDone ? "text-emerald-900" : "text-slate-500"
+                            }`}
                         >
                           {s.title}
                         </span>
@@ -1310,17 +1268,15 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
                 <button
                   type="button"
                   onClick={() => setStage1Tab("selected")}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                    stage1Tab === "selected"
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${stage1Tab === "selected"
                       ? "bg-white text-indigo-700 shadow-xs"
                       : "text-slate-600 hover:text-slate-900"
-                  }`}
+                    }`}
                 >
                   <span>Top 10 Được Chọn</span>
                   <span
-                    className={`px-1.5 py-0.2 rounded-full text-[10.5px] font-black ${
-                      stage1Tab === "selected" ? "bg-indigo-50 text-indigo-700" : "bg-slate-200 text-slate-600"
-                    }`}
+                    className={`px-1.5 py-0.2 rounded-full text-[10.5px] font-black ${stage1Tab === "selected" ? "bg-indigo-50 text-indigo-700" : "bg-slate-200 text-slate-600"
+                      }`}
                   >
                     {stage1Result.candidates.length}
                   </span>
@@ -1330,17 +1286,15 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
                   <button
                     type="button"
                     onClick={() => setStage1Tab("all")}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                      stage1Tab === "all"
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${stage1Tab === "all"
                         ? "bg-white text-indigo-700 shadow-xs"
                         : "text-slate-600 hover:text-slate-900"
-                    }`}
+                      }`}
                   >
                     <span>Tất Cả Đã Chấm Điểm</span>
                     <span
-                      className={`px-1.5 py-0.2 rounded-full text-[10.5px] font-black ${
-                        stage1Tab === "all" ? "bg-indigo-50 text-indigo-700" : "bg-slate-200 text-slate-600"
-                      }`}
+                      className={`px-1.5 py-0.2 rounded-full text-[10.5px] font-black ${stage1Tab === "all" ? "bg-indigo-50 text-indigo-700" : "bg-slate-200 text-slate-600"
+                        }`}
                     >
                       {stage1Result.allCandidates.length}
                     </span>
@@ -1351,17 +1305,15 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
                   <button
                     type="button"
                     onClick={() => setStage1Tab("rejected")}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                      stage1Tab === "rejected"
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${stage1Tab === "rejected"
                         ? "bg-white text-rose-700 shadow-xs"
                         : "text-slate-600 hover:text-slate-900"
-                    }`}
+                      }`}
                   >
                     <span>Bị Loại</span>
                     <span
-                      className={`px-1.5 py-0.2 rounded-full text-[10.5px] font-black ${
-                        stage1Tab === "rejected" ? "bg-rose-50 text-rose-700" : "bg-slate-200 text-slate-600"
-                      }`}
+                      className={`px-1.5 py-0.2 rounded-full text-[10.5px] font-black ${stage1Tab === "rejected" ? "bg-rose-50 text-rose-700" : "bg-slate-200 text-slate-600"
+                        }`}
                     >
                       {stage1Result.rejected.length}
                     </span>
@@ -1373,11 +1325,10 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
                 <button
                   type="button"
                   onClick={() => setShowScoreDetails((prev) => !prev)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition cursor-pointer ${
-                    showScoreDetails
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition cursor-pointer ${showScoreDetails
                       ? "border-indigo-300 bg-indigo-50 text-indigo-700"
                       : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                  }`}
+                    }`}
                 >
                   <span>{showScoreDetails ? "Ẩn Chi Tiết Điểm" : "Hiện Điểm Chi Tiết (AI, Doanh Thu, BSR)"}</span>
                 </button>
@@ -1521,9 +1472,8 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
                       <tr
                         key={item.asin}
                         onClick={() => toggleAsin(item.asin)}
-                        className={`cursor-pointer transition hover:bg-indigo-50/30 ${
-                          isSelected ? "bg-indigo-50/50" : ""
-                        }`}
+                        className={`cursor-pointer transition hover:bg-indigo-50/30 ${isSelected ? "bg-indigo-50/50" : ""
+                          }`}
                       >
                         <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
                           <input
@@ -1611,13 +1561,12 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
                         <td className="p-3 text-right font-mono text-xs">
                           {item.finalScore !== null && item.finalScore !== undefined ? (
                             <span
-                              className={`inline-flex items-center justify-center min-w-[46px] px-2.5 py-1 rounded-lg font-mono font-black text-xs shadow-xs ${
-                                item.finalScore >= 80
+                              className={`inline-flex items-center justify-center min-w-[46px] px-2.5 py-1 rounded-lg font-mono font-black text-xs shadow-xs ${item.finalScore >= 80
                                   ? "bg-indigo-600 text-white shadow-indigo-100"
                                   : item.finalScore >= 65
-                                  ? "bg-indigo-50 text-indigo-700 border border-indigo-200"
-                                  : "bg-slate-100 text-slate-700 border border-slate-200"
-                              }`}
+                                    ? "bg-indigo-50 text-indigo-700 border border-indigo-200"
+                                    : "bg-slate-100 text-slate-700 border border-slate-200"
+                                }`}
                               title={`Điểm tổng hợp: ${item.finalScore.toFixed(1)} / 100\n• Độ tương đồng AI (50%): ${item.aiScore ?? 0}%\n• Doanh thu (30%)\n• Đơn bán (10%)\n• Thứ hạng BSR (10%)${item.aiReason ? `\n• Nhận định AI: ${item.aiReason}` : ""}`}
                             >
                               {item.finalScore.toFixed(1)}
@@ -1709,6 +1658,17 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
                 <option value="auto">Nguồn: Tự động</option>
                 <option value="sellersprite">SellerSprite</option>
                 <option value="helium10">Helium 10</option>
+              </select>
+
+              <select
+                value={stage2FetchLimit}
+                onChange={(e) => setStage2FetchLimit(Number(e.target.value))}
+                className="px-2 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-bold text-slate-700 outline-none whitespace-nowrap"
+                title="Số lượng từ khóa tối đa lấy về"
+              >
+                <option value={200}>200 từ</option>
+                <option value={500}>500 từ</option>
+                <option value={1000}>1000 từ</option>
               </select>
 
               <button
@@ -2027,66 +1987,60 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
                 <button
                   type="button"
                   onClick={() => setStage3Tab("all")}
-                  className={`px-3 py-1 rounded-lg text-xs font-black transition cursor-pointer ${
-                    stage3Tab === "all"
+                  className={`px-3 py-1 rounded-lg text-xs font-black transition cursor-pointer ${stage3Tab === "all"
                       ? "bg-indigo-600 text-white shadow-2xs"
                       : "bg-slate-100 hover:bg-slate-200 text-slate-700"
-                  }`}
+                    }`}
                 >
                   Tất Cả ({classifiedKeywords.length})
                 </button>
                 <button
                   type="button"
                   onClick={() => setStage3Tab("PRODUCT")}
-                  className={`px-3 py-1 rounded-lg text-xs font-black transition cursor-pointer ${
-                    stage3Tab === "PRODUCT"
+                  className={`px-3 py-1 rounded-lg text-xs font-black transition cursor-pointer ${stage3Tab === "PRODUCT"
                       ? "bg-blue-600 text-white shadow-2xs"
                       : "bg-blue-50 hover:bg-blue-100 text-blue-700"
-                  }`}
+                    }`}
                 >
                   Sản Phẩm ({classifiedKeywords.filter((k) => k.type === "PRODUCT" && !k.negative).length})
                 </button>
                 <button
                   type="button"
                   onClick={() => setStage3Tab("GIFT")}
-                  className={`px-3 py-1 rounded-lg text-xs font-black transition cursor-pointer ${
-                    stage3Tab === "GIFT"
+                  className={`px-3 py-1 rounded-lg text-xs font-black transition cursor-pointer ${stage3Tab === "GIFT"
                       ? "bg-emerald-600 text-white shadow-2xs"
                       : "bg-emerald-50 hover:bg-emerald-100 text-emerald-700"
-                  }`}
+                    }`}
                 >
                   Quà Tặng / Gift ({classifiedKeywords.filter((k) => k.type === "GIFT" && !k.negative).length})
                 </button>
                 <button
                   type="button"
                   onClick={() => setStage3Tab("EVENT")}
-                  className={`px-3 py-1 rounded-lg text-xs font-black transition cursor-pointer ${
-                    stage3Tab === "EVENT"
+                  className={`px-3 py-1 rounded-lg text-xs font-black transition cursor-pointer ${stage3Tab === "EVENT"
                       ? "bg-amber-600 text-white shadow-2xs"
                       : "bg-amber-50 hover:bg-amber-100 text-amber-700"
-                  }`}
+                    }`}
                 >
                   Sự Kiện / Event ({classifiedKeywords.filter((k) => k.type === "EVENT" && !k.negative).length})
                 </button>
                 <button
                   type="button"
                   onClick={() => setStage3Tab("AUDIENCE")}
-                  className={`px-3 py-1 rounded-lg text-xs font-black transition cursor-pointer ${
-                    stage3Tab === "AUDIENCE"
+                  className={`px-3 py-1 rounded-lg text-xs font-black transition cursor-pointer ${stage3Tab === "AUDIENCE"
                       ? "bg-purple-600 text-white shadow-2xs"
                       : "bg-purple-50 hover:bg-purple-100 text-purple-700"
-                  }`}
+                    }`}
                 >
                   Đối Tượng ({classifiedKeywords.filter((k) => k.type === "AUDIENCE" && !k.negative).length})
                 </button>
                 <button
                   type="button"
                   onClick={() => setStage3Tab("NEGATIVE")}
-                  className={`px-3 py-1 rounded-lg text-xs font-black transition cursor-pointer ml-auto ${
-                    stage3Tab === "NEGATIVE"
+                  className={`px-3 py-1 rounded-lg text-xs font-black transition cursor-pointer ml-auto ${stage3Tab === "NEGATIVE"
                       ? "bg-rose-600 text-white shadow-2xs"
                       : "bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200"
-                  }`}
+                    }`}
                 >
                   <Prohibit size={13} className="inline mr-1" weight="bold" />
                   Negative Candidates ({negativeCandidates.length})
@@ -2105,11 +2059,10 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
                           key={score}
                           type="button"
                           onClick={() => setStage3MinRelevance(score)}
-                          className={`px-2 py-0.5 rounded text-xs font-black transition cursor-pointer ${
-                            stage3MinRelevance === score
+                          className={`px-2 py-0.5 rounded text-xs font-black transition cursor-pointer ${stage3MinRelevance === score
                               ? "bg-indigo-600 text-white shadow-2xs"
                               : "bg-slate-100 hover:bg-slate-200 text-slate-700"
-                          }`}
+                            }`}
                         >
                           {score === 0 ? "Tất cả" : `≥ ${score}%`}
                         </button>
@@ -2201,9 +2154,8 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
                           else next.add(item.keyword);
                           setSelectedKeywords(next);
                         }}
-                        className={`cursor-pointer transition hover:bg-slate-50 group ${
-                          isNeg ? "bg-rose-50/20" : isSelected ? "bg-indigo-50/30" : ""
-                        }`}
+                        className={`cursor-pointer transition hover:bg-slate-50 group ${isNeg ? "bg-rose-50/20" : isSelected ? "bg-indigo-50/30" : ""
+                          }`}
                       >
                         <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
                           <input
@@ -2243,30 +2195,28 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
                         </td>
                         <td className="p-3 text-center">
                           <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider ${
-                              item.type === "PRODUCT"
+                            className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider ${item.type === "PRODUCT"
                                 ? "bg-blue-50 text-blue-700 border border-blue-200"
                                 : item.type === "GIFT"
-                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                : item.type === "EVENT"
-                                ? "bg-amber-50 text-amber-700 border border-amber-200"
-                                : item.type === "AUDIENCE"
-                                ? "bg-purple-50 text-purple-700 border border-purple-200"
-                                : "bg-rose-50 text-rose-700 border border-rose-200"
-                            }`}
+                                  ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                  : item.type === "EVENT"
+                                    ? "bg-amber-50 text-amber-700 border border-amber-200"
+                                    : item.type === "AUDIENCE"
+                                      ? "bg-purple-50 text-purple-700 border border-purple-200"
+                                      : "bg-rose-50 text-rose-700 border border-rose-200"
+                              }`}
                           >
                             {item.type}
                           </span>
                         </td>
                         <td className="p-3 text-right font-mono">
                           <span
-                            className={`font-black ${
-                              item.relevance >= 80
+                            className={`font-black ${item.relevance >= 80
                                 ? "text-emerald-700"
                                 : item.relevance >= 60
-                                ? "text-indigo-700"
-                                : "text-slate-400"
-                            }`}
+                                  ? "text-indigo-700"
+                                  : "text-slate-400"
+                              }`}
                           >
                             {item.relevance}%
                           </span>
@@ -2421,11 +2371,10 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
             <button
               type="button"
               onClick={() => setStage4ActivePart("negative")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition cursor-pointer ${
-                stage4ActivePart === "negative"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition cursor-pointer ${stage4ActivePart === "negative"
                   ? "bg-rose-600 text-white shadow-2xs"
                   : "bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200"
-              }`}
+                }`}
             >
               <Prohibit size={14} weight="bold" />
               <span>Negative Candidates ({negativeCandidates.length})</span>
@@ -2437,11 +2386,10 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
                 key={part.partNumber}
                 type="button"
                 onClick={() => setStage4ActivePart(part.partNumber)}
-                className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-black transition cursor-pointer ${
-                  stage4ActivePart === part.partNumber
+                className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-black transition cursor-pointer ${stage4ActivePart === part.partNumber
                     ? "bg-white text-indigo-700 shadow-2xs border border-indigo-200 font-black"
                     : "text-slate-600 hover:bg-white/60"
-                }`}
+                  }`}
               >
                 <span>{part.name}</span>
                 <span className="text-[10px] text-slate-400 font-semibold">
@@ -2601,15 +2549,14 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
                             </td>
                             <td className="p-3 text-center">
                               <span
-                                className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider ${
-                                  item.type === "PRODUCT"
+                                className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider ${item.type === "PRODUCT"
                                     ? "bg-blue-50 text-blue-700 border border-blue-200"
                                     : item.type === "GIFT"
-                                    ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                    : item.type === "EVENT"
-                                    ? "bg-amber-50 text-amber-700 border border-amber-200"
-                                    : "bg-purple-50 text-purple-700 border border-purple-200"
-                                }`}
+                                      ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                      : item.type === "EVENT"
+                                        ? "bg-amber-50 text-amber-700 border border-amber-200"
+                                        : "bg-purple-50 text-purple-700 border border-purple-200"
+                                  }`}
                               >
                                 {item.type}
                               </span>

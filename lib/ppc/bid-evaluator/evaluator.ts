@@ -114,11 +114,13 @@ export function evaluateBidDecision(input: EvaluationInput): EvaluationResult {
       );
     }
   } else if (input.daily_metrics && input.daily_metrics.length > 0) {
-    const afterStartDate = appliedDate;
-    const afterEndDate = addDays(appliedDate, window - 1);
+    // The action day is contaminated by the previous bid. Observe the next N
+    // complete days using the half-open range [applied + 1, applied + 1 + N).
+    const observationStartDate = addDays(appliedDate, 1);
+    const observationEndExclusive = addDays(observationStartDate, window);
     const afterDaily = input.daily_metrics.filter((m) => {
       const d = parseDateOnly(m.date);
-      return d >= afterStartDate && d <= afterEndDate;
+      return d >= observationStartDate && d < observationEndExclusive;
     });
     if (afterDaily.length > 0) {
       afterMetrics = aggregateDailyMetrics(afterDaily, margin, window);
@@ -187,11 +189,9 @@ export function evaluateBidDecision(input: EvaluationInput): EvaluationResult {
   const T = Math.max(config.t_min, spendPart, expectedPart) * qualityMultiplier;
 
   // 2. Immediate Interruption check: If another action on the same target interrupted this window
-  const windowEndDate = addDays(appliedDate, window - 1);
-  const maturityDate = addDays(
-    appliedDate,
-    window + config.attribution_buffer_days
-  );
+  const observationStartDate = addDays(appliedDate, 1);
+  const observationEndExclusive = addDays(observationStartDate, window);
+  const maturityDate = addDays(observationEndExclusive, config.attribution_buffer_days);
 
   let isInterruptedByAction = false;
   let endCleanObservation: string | null = null;
@@ -201,8 +201,9 @@ export function evaluateBidDecision(input: EvaluationInput): EvaluationResult {
     for (const action of input.other_bid_actions) {
       if (action.target_id === decision.target_id) {
         const actionDate = parseDateOnly(action.applied_at);
-        // An action B interrupts this window if action B occurred during its observation period
-        if (actionDate > appliedDate && actionDate <= windowEndDate) {
+        // An action B interrupts only when it occurs inside the clean,
+        // half-open observation range. The applied day and end boundary are excluded.
+        if (actionDate >= observationStartDate && actionDate < observationEndExclusive) {
           isInterruptedByAction = true;
           endCleanObservation = actionDate;
           interruptingActionId = action.action_id || null;
@@ -243,7 +244,7 @@ export function evaluateBidDecision(input: EvaluationInput): EvaluationResult {
 
   // 3. Window observation completion & Attribution maturity check
   // If the observation window has not ended yet, or after metrics are not available:
-  if (diffDays(evaluationDate, windowEndDate) > 0 || !hasAfterData) {
+  if (evaluationDate < observationEndExclusive || !hasAfterData) {
     return {
       decision_id: decision.decision_id,
       window,
@@ -344,13 +345,13 @@ export function evaluateBidDecision(input: EvaluationInput): EvaluationResult {
     };
   }
 
-  // 4. CONFOUNDED check (External events in evaluation window [appliedDate, windowEndDate])
+  // 4. CONFOUNDED check in the clean half-open observation range.
   const confoundFlags: ConfoundFlag[] = [];
 
   if (input.external_events && input.external_events.length > 0) {
     for (const event of input.external_events) {
       const eventDate = parseDateOnly(event.date);
-      if (eventDate >= appliedDate && eventDate <= windowEndDate) {
+      if (eventDate >= observationStartDate && eventDate < observationEndExclusive) {
         if (!confoundFlags.includes(event.type)) {
           confoundFlags.push(event.type);
         }
