@@ -276,12 +276,14 @@ export function evaluateBidDecision(input: EvaluationInput): EvaluationResult {
   const isMature = diffDays(evaluationDate, maturityDate) <= 0;
   const evaluationStatus: EvaluationStatus = isMature ? "EVALUATED" : "PROVISIONAL";
 
-  // 3. INCONCLUSIVE check (data sufficiency or signal too small)
+  // 3. Data completeness check. Low traffic is a confidence warning, not a
+  // reason to hide the result: a complete zero-click window is still data.
   const inconclusiveReasons: ReasonCode[] = [];
+  const confidenceWarnings: ReasonCode[] = [];
 
-  // 3.1 Bid delta too small
+  // A tiny bid change makes attribution weak, but Reward can still be shown.
   if (Math.abs(appliedDeltaPct) < config.min_effective_bid_delta) {
-    inconclusiveReasons.push("BID_CHANGE_TOO_SMALL");
+    confidenceWarnings.push("BID_CHANGE_TOO_SMALL");
   }
 
   if (!afterMetrics) {
@@ -296,8 +298,8 @@ export function evaluateBidDecision(input: EvaluationInput): EvaluationResult {
       afterMetrics.clicks < requiredClicks &&
       afterMetrics.orders < config.min_orders_alt
     ) {
-      inconclusiveReasons.push("LOW_CLICKS");
-      inconclusiveReasons.push("LOW_ORDERS");
+      confidenceWarnings.push("LOW_CLICKS");
+      confidenceWarnings.push("LOW_ORDERS");
     }
 
     // 3.5 Missing data coverage in after window
@@ -308,12 +310,12 @@ export function evaluateBidDecision(input: EvaluationInput): EvaluationResult {
     }
   }
 
-  // 3.3 Thin baseline clicks
+  // Sparse baseline traffic lowers confidence but does not mean missing data.
   const requiredBaselineClicks = usesExactWindowBaseline
     ? Math.min(config.min_baseline_clicks, config.min_clicks[window] ?? config.min_baseline_clicks)
     : config.min_baseline_clicks;
   if (baselineMetrics.clicks < requiredBaselineClicks) {
-    inconclusiveReasons.push("THIN_BASELINE");
+    confidenceWarnings.push("THIN_BASELINE");
   }
 
   // 3.4 Thin baseline days
@@ -322,9 +324,8 @@ export function evaluateBidDecision(input: EvaluationInput): EvaluationResult {
     ? Math.min(config.min_baseline_days, window)
     : config.min_baseline_days;
   if (baselineDaysCount < requiredBaselineDays) {
-    if (!inconclusiveReasons.includes("THIN_BASELINE")) {
-      inconclusiveReasons.push("THIN_BASELINE");
-    }
+    confidenceWarnings.push("THIN_BASELINE");
+    inconclusiveReasons.push("MISSING_DATA");
   }
 
   if (inconclusiveReasons.length > 0) {
@@ -338,7 +339,7 @@ export function evaluateBidDecision(input: EvaluationInput): EvaluationResult {
       label: "INCONCLUSIVE",
       validity: "INCONCLUSIVE",
       confound_flags: [],
-      reason_codes: inconclusiveReasons,
+      reason_codes: Array.from(new Set([...inconclusiveReasons, ...confidenceWarnings])),
       expected_baseline: expectedBaselineObj,
       baseline_quality: baselineQuality,
       actual_contribution: actual,
@@ -399,7 +400,21 @@ export function evaluateBidDecision(input: EvaluationInput): EvaluationResult {
 
   // Determine Label
   let label: "POSITIVE" | "NEGATIVE" | "NEUTRAL";
-  if (validRewardUsd > T) {
+  const hasNoActivity =
+    validAfterMetrics.clicks === 0 &&
+    validAfterMetrics.orders === 0 &&
+    validAfterMetrics.ad_spend === 0 &&
+    validAfterMetrics.ad_sales === 0;
+  const spentWithoutOrders =
+    validAfterMetrics.clicks > 0 &&
+    validAfterMetrics.orders === 0 &&
+    validAfterMetrics.ad_spend > 0;
+
+  if (hasNoActivity) {
+    label = "NEUTRAL";
+  } else if (spentWithoutOrders && validRewardUsd < 0) {
+    label = "NEGATIVE";
+  } else if (validRewardUsd > T) {
     label = "POSITIVE";
   } else if (validRewardUsd < -T) {
     label = "NEGATIVE";
@@ -408,7 +423,7 @@ export function evaluateBidDecision(input: EvaluationInput): EvaluationResult {
   }
 
   // Generate Reason Codes
-  const reasonCodes: ReasonCode[] = [];
+  const reasonCodes: ReasonCode[] = [...confidenceWarnings];
 
   // Profit reason code
   if (label === "POSITIVE") {
@@ -454,6 +469,7 @@ export function evaluateBidDecision(input: EvaluationInput): EvaluationResult {
     isMature &&
     ["POSITIVE", "NEUTRAL", "NEGATIVE"].includes(label) &&
     config.learning_windows.includes(window) &&
+    confidenceWarnings.length === 0 &&
     !decision.is_control &&
     ["APPLY_AI", "APPLY_RULE", "EDIT"].includes(decision.user_action);
 

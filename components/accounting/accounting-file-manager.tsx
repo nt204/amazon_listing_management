@@ -25,6 +25,20 @@ function formatBytes(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 }
 
+function formatLastUpdated(isoString?: string): { date: string; time: string; full: string } | null {
+  if (!isoString) return null;
+  try {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return null;
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const dateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const timeStr = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    return { date: dateStr, time: timeStr, full: `${dateStr} ${timeStr}` };
+  } catch {
+    return null;
+  }
+}
+
 
 interface StoreGroup {
   storeName: string;
@@ -285,8 +299,15 @@ export function AccountingFileManager() {
               <CalendarBlank size={18} weight="duotone" />
             </div>
             <div>
-              <div className="text-[11px] font-medium text-slate-500">Ngày mới nhất</div>
-              <div className="text-base font-bold text-slate-900">{stats.latestDate || "--"}</div>
+              <div className="text-[11px] font-medium text-slate-500">File mới nhất</div>
+              <div className="flex flex-wrap items-baseline gap-1.5">
+                <span className="text-base font-bold text-slate-900">{stats.latestDate || "--"}</span>
+                {formatLastUpdated(stats.latestModified)?.time && (
+                  <span className="text-xs font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/80 font-mono">
+                    {formatLastUpdated(stats.latestModified)?.time}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -440,40 +461,56 @@ export function AccountingFileManager() {
                             <thead className="bg-slate-50 border-b border-slate-200 text-[11px] font-semibold text-slate-500">
                               <tr>
                                 <th className="px-3.5 py-2">Tên file</th>
-                                <th className="px-3.5 py-2 text-right w-28">Dung lượng</th>
-                                <th className="px-3.5 py-2 text-right w-24">Thao tác</th>
+                                <th className="px-3.5 py-2 text-right w-36">Cập nhật lúc</th>
+                                <th className="px-3.5 py-2 text-right w-24">Dung lượng</th>
+                                <th className="px-3.5 py-2 text-right w-20">Thao tác</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 bg-white">
-                              {storeGroup.files.map((file) => (
-                                <tr key={file.id} className="hover:bg-slate-50/70 transition-colors">
-                                  {/* Tên file */}
-                                  <td className="px-3.5 py-2 font-mono text-[11.5px] text-slate-800 break-all">
-                                    <div className="flex items-center gap-2">
-                                      <FileCsv size={15} weight="duotone" className="text-slate-400 shrink-0" />
-                                      <span>{file.fileName}</span>
-                                    </div>
-                                  </td>
+                              {storeGroup.files.map((file) => {
+                                const fileTime = formatLastUpdated(file.lastModified);
+                                return (
+                                  <tr key={file.id} className="hover:bg-slate-50/70 transition-colors">
+                                    {/* Tên file */}
+                                    <td className="px-3.5 py-2 font-mono text-[11.5px] text-slate-800 break-all">
+                                      <div className="flex items-center gap-2">
+                                        <FileCsv size={15} weight="duotone" className="text-slate-400 shrink-0" />
+                                        <span>{file.fileName}</span>
+                                      </div>
+                                    </td>
 
-                                  {/* Dung lượng */}
-                                  <td className="px-3.5 py-2 whitespace-nowrap text-right font-medium text-slate-500 text-xs">
-                                    {formatBytes(file.sizeBytes)}
-                                  </td>
+                                    {/* Cập nhật lúc */}
+                                    <td className="px-3.5 py-2 whitespace-nowrap text-right font-mono text-slate-500 text-[11px]">
+                                      {fileTime ? (
+                                        <span>
+                                          <strong className="text-slate-700 font-semibold">{fileTime.time}</strong>{" "}
+                                          <span className="text-slate-400">{fileTime.date}</span>
+                                        </span>
+                                      ) : (
+                                        "--"
+                                      )}
+                                    </td>
 
-                                  {/* Thao tác: Nút Tải về */}
-                                  <td className="px-3.5 py-2 whitespace-nowrap text-right">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDownload(file)}
-                                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-[11px] transition cursor-pointer"
-                                      title="Tải file về máy"
-                                    >
-                                      <DownloadSimple size={12} weight="bold" />
-                                      Tải về
-                                    </button>
-                                  </td>
-                                </tr>
-                              ))}
+                                    {/* Dung lượng */}
+                                    <td className="px-3.5 py-2 whitespace-nowrap text-right font-medium text-slate-500 text-xs">
+                                      {formatBytes(file.sizeBytes)}
+                                    </td>
+
+                                    {/* Thao tác: Nút Tải về */}
+                                    <td className="px-3.5 py-2 whitespace-nowrap text-right">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDownload(file)}
+                                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-[11px] transition cursor-pointer"
+                                        title="Tải file về máy"
+                                      >
+                                        <DownloadSimple size={12} weight="bold" />
+                                        Tải về
+                                      </button>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
                             </tbody>
                           </table>
                         </div>

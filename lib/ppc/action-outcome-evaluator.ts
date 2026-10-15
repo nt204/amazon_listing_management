@@ -204,8 +204,8 @@ export async function seedPendingOutcomesFromActions(options: { limit?: number }
 
     for (const windowDays of [3, 7, 14, 30]) {
       const obsStart = addDaysToIso(appliedOn, 1);
-      // Amazon report cycles for N days span [start, start + windowDays] (e.g. 3 days: 09/10 -> 12/10).
-      const obsEnd = addDaysToIso(obsStart, windowDays);
+      // Inclusive N-day range. Example: 3D after 08/10 is 09/10 -> 11/10.
+      const obsEnd = addDaysToIso(obsStart, windowDays - 1);
       const maturity = addDaysToIso(obsEnd, attributionDays);
 
       await sql`
@@ -388,6 +388,9 @@ async function readExactPreWindowFacts(
   const spend = Number(r.spend || 0);
   const sales = Number(r.sales || 0);
   const orders = Number(r.orders || 0);
+  const normalizedWindowEnd = addDaysToIso(r.report_start_date, windowDays) === r.report_end_date
+    ? addDaysToIso(r.report_end_date, -1)
+    : r.report_end_date;
   return {
     clicks,
     spend,
@@ -398,7 +401,7 @@ async function readExactPreWindowFacts(
     days_with_data: windowDays,
     total_days: windowDays,
     window_start: r.report_start_date,
-    window_end: r.report_end_date,
+    window_end: normalizedWindowEnd,
     source_report_ids: [r.id],
     source_method: "EXACT_PRE_WINDOW" as const,
   };
@@ -546,6 +549,9 @@ async function readAfterFacts(
   const sales = Number(r.sales || 0);
   const orders = Number(r.orders || 0);
   const daysWithData = Number(r.days || windowDays);
+  const normalizedWindowEnd = addDaysToIso(r.report_start_date, windowDays) === r.report_end_date
+    ? observationEnd
+    : r.report_end_date;
   return {
     clicks,
     spend,
@@ -555,7 +561,7 @@ async function readAfterFacts(
     days_with_data: daysWithData,
     total_days: windowDays,
     window_start: r.report_start_date || observationStart,
-    window_end: r.report_end_date || observationEnd,
+    window_end: normalizedWindowEnd || observationEnd,
     source_report_ids: r.id ? [String(r.id)] : [],
     completeness: (daysWithData >= windowDays ? "FULL" : "PARTIAL") as "FULL" | "PARTIAL",
     source_method: "EXACT_WINDOW_REPORT" as const,
@@ -706,9 +712,9 @@ export async function evaluatePendingActionOutcomes(options: {
 
   for (const row of rows) {
     const appliedDate = row.applied_on.slice(0, 10);
-    // Canonical ranges matching Amazon report cycles: [applied + 1, applied + 1 + windowDays]
+    // Canonical inclusive range: [applied + 1, applied + windowDays].
     const observationStart = addDaysToIso(appliedDate, 1);
-    const observationEnd = addDaysToIso(observationStart, row.window_days);
+    const observationEnd = addDaysToIso(observationStart, row.window_days - 1);
     const attributionDays = (row.campaign_type || "").toUpperCase().startsWith("SB") ? 14 : 7;
     const maturityDate = addDaysToIso(observationEnd, attributionDays);
     const marginResolution = await resolveMarginForAction(row.store_id, row.sku, row.context);
@@ -879,6 +885,8 @@ export async function evaluatePendingActionOutcomes(options: {
         sales: evalResult.baseline_metrics.ad_sales,
         acos: evalResult.baseline_metrics.acos,
         contribution: evalResult.baseline_metrics.contribution,
+        margin,
+        margin_source: marginResolution.source,
         days: baselineFacts?.total_days || 30,
         window_start: exactBaselineFacts?.window_start ?? null,
         window_end: exactBaselineFacts?.window_end ?? null,
@@ -893,6 +901,8 @@ export async function evaluatePendingActionOutcomes(options: {
           sales: baselineFacts.sales,
           acos: baselineFacts.acos,
           contribution: baselineFacts.sales * margin - baselineFacts.spend,
+          margin,
+          margin_source: marginResolution.source,
           days: baselineFacts.total_days,
           window_start: exactBaselineFacts?.window_start ?? null,
           window_end: exactBaselineFacts?.window_end ?? null,

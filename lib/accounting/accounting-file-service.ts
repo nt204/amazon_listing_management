@@ -12,6 +12,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { listStores } from "./accounting-db";
 import { importCheckShipmentsFromCsv } from "./inventory-db";
 import { parseOrdersBuffer, batchUpsertOrders } from "./orders-db";
+import { parseAdsBuffer, batchUpsertAds } from "./ads-db";
 
 export interface ManagedAccountingFile {
   id: string;
@@ -34,6 +35,7 @@ export interface AccountingFileStats {
   storesCount: number;
   datesCount: number;
   latestDate: string;
+  latestModified?: string;
 }
 
 function getR2Client() {
@@ -59,7 +61,7 @@ function getR2Client() {
 export function detectFileType(fileName: string): { code: string; label: string; isIngestable: boolean } {
   const lower = fileName.toLowerCase();
   if (lower.includes("01_portfolios") || lower.includes("portfolio")) {
-    return { code: "01_PORTFOLIOS", label: "01. Danh mục Portfolios", isIngestable: false };
+    return { code: "01_PORTFOLIOS", label: "01. Danh mục Portfolios", isIngestable: true };
   }
   if (lower.includes("02_allorders") || lower.includes("allorders") || lower.includes("all orders")) {
     return { code: "02_ALL_ORDERS", label: "02. Đơn hàng All Orders", isIngestable: true };
@@ -71,7 +73,7 @@ export function detectFileType(fileName: string): { code: string; label: string;
     return { code: "04_SERVICE_FEES", label: "04. Phí dịch vụ Service Fees", isIngestable: false };
   }
   if (lower.includes("05_campaigns") || lower.includes("campaign")) {
-    return { code: "05_CAMPAIGNS", label: "05. Chi phí Ads (Portfolios)", isIngestable: false };
+    return { code: "05_CAMPAIGNS", label: "05. Chi phí Ads (Portfolios)", isIngestable: true };
   }
   if (lower.includes("06_fbainventory") || lower.includes("fbainventory") || lower.includes("fba inventory")) {
     return { code: "06_FBA_INVENTORY", label: "06. Tồn kho FBA Inventory", isIngestable: true };
@@ -214,6 +216,13 @@ export async function listManagedAccountingFiles(options?: {
 
   const totalBytes = allFiles.reduce((acc, f) => acc + f.sizeBytes, 0);
 
+  let latestModified = "";
+  for (const f of allFiles) {
+    if (f.lastModified && (!latestModified || f.lastModified > latestModified)) {
+      latestModified = f.lastModified;
+    }
+  }
+
   return {
     files: allFiles,
     stats: {
@@ -222,6 +231,7 @@ export async function listManagedAccountingFiles(options?: {
       storesCount: availableStores.length,
       datesCount: availableDates.length,
       latestDate: availableDates[0] || "",
+      latestModified,
     },
     availableStores,
     availableDates,
@@ -320,6 +330,19 @@ export async function ingestAccountingFile(r2Key: string, storeName: string): Pr
     };
   }
 
+  if (typeInfo.code === "05_CAMPAIGNS" || typeInfo.code === "01_PORTFOLIOS") {
+    const adsRows = await parseAdsBuffer(buffer, fileName, targetStore.id);
+    const result = await batchUpsertAds(targetStore.id, adsRows);
+    return {
+      success: true,
+      type: typeInfo.code,
+      message: `Đã nạp thành công ${result.count} dòng chi phí Ads vào hệ thống!`,
+      count: result.count,
+      createdCount: result.createdCount,
+      updatedCount: result.updatedCount,
+    };
+  }
+
   throw new Error(`Loại file '${typeInfo.label}' chưa hỗ trợ tự động nạp dữ liệu.`);
 }
 
@@ -328,7 +351,7 @@ export async function ingestAccountingFile(r2Key: string, storeName: string): Pr
  * và nạp dữ liệu vào database cho TẤT CẢ các Store trong hệ thống.
  */
 export async function syncLatestFilesForAllStores(
-  fileTypeCode: "07_SHIPMENTS" | "02_ALL_ORDERS"
+  fileTypeCode: "07_SHIPMENTS" | "02_ALL_ORDERS" | "05_CAMPAIGNS" | "01_PORTFOLIOS"
 ): Promise<{
   success: boolean;
   fileTypeCode: string;

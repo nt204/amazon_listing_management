@@ -667,7 +667,7 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
                   return (
                     <tr
                       key={r.sku}
-                      className="group hover:bg-slate-50/90 dark:hover:bg-slate-850/60 transition-colors h-11"
+                      className="group hover:bg-slate-50/90 dark:hover:bg-slate-850/60 transition-colors h-[32px] min-h-[32px] [&>td]:border-b [&>td]:border-slate-200"
                     >
                       {activeColumns.map((col) => {
                         const f = getCellFreezeProps(col.id, false);
@@ -678,14 +678,14 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
                             <td
                               key={cid}
                               style={f.style}
-                              className={`px-3 py-1.5 text-center font-medium truncate ${
+                              className={`px-2.5 py-1 text-center font-medium text-[12.5px] truncate ${
                                 f.isFrozen
                                   ? f.className
                                   : "border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 group-hover:bg-slate-50 dark:group-hover:bg-slate-800 text-slate-700 dark:text-slate-300"
                               }`}
                             >
                               {r.product_type ? (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                                <span className="inline-flex items-center rounded px-2.5 py-0.5 text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200/80 shadow-2xs whitespace-nowrap">
                                   {r.product_type}
                                 </span>
                               ) : (
@@ -737,7 +737,7 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
                             <td
                               key={cid}
                               style={f.style}
-                              className={`px-3 py-1.5 font-mono font-bold tracking-tight whitespace-nowrap truncate ${
+                              className={`px-2.5 py-1 font-mono font-normal tracking-tight whitespace-nowrap text-xs truncate ${
                                 f.isFrozen
                                   ? f.className
                                   : "border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 group-hover:bg-slate-50 dark:group-hover:bg-slate-800 text-slate-900 dark:text-slate-100"
@@ -753,7 +753,7 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
                             <td
                               key={cid}
                               style={f.style}
-                              className={`px-3 py-1.5 font-mono font-medium text-center whitespace-nowrap truncate ${
+                              className={`px-2.5 py-1 font-mono font-normal text-center whitespace-nowrap text-xs truncate ${
                                 f.isFrozen
                                   ? f.className
                                   : "border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 group-hover:bg-slate-50 dark:group-hover:bg-slate-800 text-slate-800 dark:text-slate-200"
@@ -784,7 +784,7 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
                                 setEditingCell({ sku: r.sku, field: "reference_hang_ton" });
                                 setEditValue(String(referenceOpeningQty));
                               }}
-                              className={`px-2 py-1.5 text-center font-medium ${
+                              className={`px-2 py-1 text-center font-medium text-[12.5px] ${
                                 f.isFrozen
                                   ? f.className + " !bg-[#fffdf0] dark:!bg-[#2e1d05] text-slate-800 dark:text-slate-200"
                                   : "border-r border-amber-200/60 dark:border-amber-900/40 bg-[#fffdf0] dark:bg-amber-950/20 text-slate-800 dark:text-slate-200"
@@ -828,7 +828,7 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
                             <td
                               key={cid}
                               style={f.style}
-                              className={`px-2 py-1.5 text-center font-semibold text-slate-900 dark:text-slate-100 ${
+                              className={`px-2 py-1 text-center font-semibold text-slate-900 dark:text-slate-100 text-[12.5px] ${
                                 f.isFrozen
                                   ? f.className + " !bg-[#fffdf0] dark:!bg-[#2e1d05]"
                                   : "border-r border-amber-200/60 dark:border-amber-900/40 bg-[#fffdf0] dark:bg-amber-950/20"
@@ -845,7 +845,7 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
                             <td
                               key={cid}
                               style={f.style}
-                              className={`px-1 py-1 text-center ${
+                              className={`px-1 py-0.5 text-center ${
                                 f.isFrozen
                                   ? f.className + " !bg-[#fffdf0] dark:!bg-[#2e1d05]"
                                   : "border-r border-amber-200/60 dark:border-amber-900/40 bg-[#fffdf0] dark:bg-amber-950/20"
@@ -883,7 +883,7 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
                                   setBreakdownData({ row: r, month: m, cell });
                                 }
                               }}
-                              className={`px-2 py-1.5 text-center relative group transition-colors ${
+                              className={`px-2 py-1 text-center relative group transition-colors text-[12.5px] ${
                                 f.isFrozen ? f.className : "border-r border-slate-200 dark:border-slate-800"
                               } ${
                                 isFuture

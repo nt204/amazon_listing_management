@@ -176,6 +176,41 @@ export const DEFAULT_ORDER_INPUT_COLUMNS: ColumnConfig[] = [
   { id: "order_item_id", label: "order-item-id", defaultLabel: "order-item-id", visible: true, width: 130 },
 ];
 
+export const DEFAULT_ADS_INPUT_COLUMNS: ColumnConfig[] = [
+  { id: "stt", label: "STT", defaultLabel: "STT", visible: true, isFrozen: true, align: "center", width: 52 },
+  { id: "date", label: "Date", defaultLabel: "Date", visible: true, isFrozen: true, align: "center", width: 95 },
+  { id: "portfolio", label: "Portfolio", defaultLabel: "Portfolio", visible: true, isFrozen: true, width: 280 },
+  { id: "sku", label: "SKU", defaultLabel: "SKU", visible: true, isFrozen: true, width: 140 },
+  { id: "status", label: "Status", defaultLabel: "Status", visible: true, align: "center", width: 130 },
+  { id: "budget_type", label: "Budget type", defaultLabel: "Budget type", visible: true, align: "center", width: 110 },
+  { id: "budget", label: "Budget(USD)", defaultLabel: "Budget(USD)", visible: true, align: "right", width: 105 },
+  { id: "budget_start", label: "Budget start", defaultLabel: "Budget start", visible: false, width: 110 },
+  { id: "budget_end", label: "Budget end", defaultLabel: "Budget end", visible: false, width: 110 },
+  { id: "campaign_count", label: "Campaign count", defaultLabel: "Campaign count", visible: false, align: "right", width: 120 },
+  { id: "impressions", label: "Impressions", defaultLabel: "Impressions", visible: true, align: "right", width: 105 },
+  { id: "clicks", label: "Clicks", defaultLabel: "Clicks", visible: true, align: "right", width: 85 },
+  { id: "ctr", label: "CTR", defaultLabel: "CTR", visible: true, align: "right", width: 85 },
+  { id: "spend", label: "Spend(USD)", defaultLabel: "Spend(USD)", visible: true, align: "right", width: 105 },
+  { id: "cpc", label: "CPC(USD)", defaultLabel: "CPC(USD)", visible: true, align: "right", width: 90 },
+  { id: "orders", label: "Orders", defaultLabel: "Orders", visible: true, align: "right", width: 85 },
+  { id: "sales", label: "Sales(USD)", defaultLabel: "Sales(USD)", visible: true, align: "right", width: 105 },
+  { id: "acos", label: "ACOS", defaultLabel: "ACOS", visible: true, align: "right", width: 85 },
+  { id: "roas", label: "ROAS", defaultLabel: "ROAS", visible: true, align: "right", width: 85 },
+  { id: "ntb_orders", label: "NTB orders", defaultLabel: "NTB orders", visible: false, align: "right", width: 100 },
+  { id: "pct_orders_ntb", label: "% of orders NTB", defaultLabel: "% of orders NTB", visible: false, align: "right", width: 115 },
+  { id: "ntb_sales", label: "NTB sales(USD)", defaultLabel: "NTB sales(USD)", visible: false, align: "right", width: 115 },
+  { id: "pct_sales_ntb", label: "% of sales NTB", defaultLabel: "% of sales NTB", visible: false, align: "right", width: 115 },
+  { id: "viewable_impressions", label: "Viewable impressions", defaultLabel: "Viewable impressions", visible: false, align: "right", width: 135 },
+  { id: "vcpm", label: "VCPM(USD)", defaultLabel: "VCPM(USD)", visible: false, align: "right", width: 100 },
+  { id: "loai", label: "Loại", defaultLabel: "Loại", visible: true, align: "center", width: 85 },
+  { id: "mkt_pic", label: "MKT PIC", defaultLabel: "MKT PIC", visible: true, width: 105 },
+  { id: "tuan", label: "TUẦN", defaultLabel: "TUẦN", visible: true, align: "center", width: 75 },
+  { id: "thang", label: "THÁNG", defaultLabel: "THÁNG", visible: true, align: "center", width: 75 },
+  { id: "quy", label: "Quý", defaultLabel: "Quý", visible: true, align: "center", width: 70 },
+  { id: "thue_10", label: "Thuế 10%", defaultLabel: "Thuế 10%", visible: true, align: "right", width: 100 },
+  { id: "trang_thai", label: "Trạng thái", defaultLabel: "Trạng thái", visible: true, align: "center", width: 115 },
+];
+
 export function ColumnHeaderCell({
   col,
   children,
@@ -298,7 +333,7 @@ export function ColumnHeaderCell({
             window.addEventListener("pointerup", onEnd);
             window.addEventListener("pointercancel", onEnd);
           }}
-          className="absolute right-0 top-0 z-20 h-full w-2 translate-x-1/2 cursor-col-resize touch-none border-l-2 border-amber-900/70 bg-amber-100/30 opacity-100 transition-colors hover:bg-amber-900/35 focus:bg-amber-900/35"
+          className="absolute right-0 top-0 z-20 h-full w-2 translate-x-1/2 cursor-col-resize touch-none transition-colors hover:bg-amber-900/30 focus:bg-amber-900/30"
         />
       )}
     </th>

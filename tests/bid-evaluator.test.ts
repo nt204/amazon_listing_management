@@ -116,7 +116,7 @@ test("Test 3: 7 controls uses control_group, quality LOW, multiplier 1.25", () =
 });
 
 // Test 4: 2 orders, 20 clicks sau action (D30)
-test("Test 4: 2 orders and 20 clicks in D30 yields INCONCLUSIVE (LOW_CLICKS, LOW_ORDERS)", () => {
+test("Test 4: low traffic still yields a result with confidence warnings", () => {
   const input = getBaseValidInput({
     after_metrics_summary: {
       clicks: 20,
@@ -132,15 +132,15 @@ test("Test 4: 2 orders and 20 clicks in D30 yields INCONCLUSIVE (LOW_CLICKS, LOW
 
   const res = evaluateBidDecision(input);
 
-  assert.equal(res.label, "INCONCLUSIVE");
-  assert.equal(res.validity, "INCONCLUSIVE");
+  assert.equal(res.label, "NEGATIVE");
+  assert.equal(res.validity, "VALID");
   assert.equal(res.eligible_for_learning, false);
   assert.ok(res.reason_codes.includes("LOW_CLICKS"));
   assert.ok(res.reason_codes.includes("LOW_ORDERS"));
 });
 
 // Test 5: Đổi bid chỉ 1%
-test("Test 5: Bid change only 1% yields INCONCLUSIVE (BID_CHANGE_TOO_SMALL)", () => {
+test("Test 5: a small bid change still yields a result but is not learnable", () => {
   const input = getBaseValidInput({
     decision: {
       ...getBaseValidInput().decision,
@@ -151,10 +151,60 @@ test("Test 5: Bid change only 1% yields INCONCLUSIVE (BID_CHANGE_TOO_SMALL)", ()
 
   const res = evaluateBidDecision(input);
 
-  assert.equal(res.label, "INCONCLUSIVE");
-  assert.equal(res.validity, "INCONCLUSIVE");
+  assert.equal(res.label, "POSITIVE");
+  assert.equal(res.validity, "VALID");
   assert.ok(res.reason_codes.includes("BID_CHANGE_TOO_SMALL"));
   assert.equal(res.eligible_for_learning, false);
+});
+
+test("A complete zero-activity window is NEUTRAL, not missing data", () => {
+  const input = getBaseValidInput({
+    after_metrics_summary: {
+      clicks: 0,
+      orders: 0,
+      ad_sales: 0,
+      ad_spend: 0,
+      acos: null,
+      contribution: 0,
+      days_with_data: 30,
+      total_days: 30,
+    },
+  });
+
+  const res = evaluateBidDecision(input);
+  assert.equal(res.label, "NEUTRAL");
+  assert.equal(res.validity, "VALID");
+});
+
+test("Clicks and spend without orders is NEGATIVE even when loss is below tolerance", () => {
+  const input = getBaseValidInput({
+    matched_controls: [],
+    baseline_metrics_summary: {
+      clicks: 40,
+      orders: 0,
+      ad_sales: 0,
+      ad_spend: 0,
+      acos: null,
+      contribution: 0,
+      days_with_data: 30,
+      total_days: 30,
+    },
+    after_metrics_summary: {
+      clicks: 1,
+      orders: 0,
+      ad_sales: 0,
+      ad_spend: 0.56,
+      acos: null,
+      contribution: -0.56,
+      days_with_data: 30,
+      total_days: 30,
+    },
+  });
+
+  const res = evaluateBidDecision(input);
+  assert.equal(res.label, "NEGATIVE");
+  assert.equal(res.validity, "VALID");
+  assert.equal(res.reward_usd, -0.56);
 });
 
 // Test 6: Baseline chỉ có 15 ngày dữ liệu

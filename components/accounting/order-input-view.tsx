@@ -39,6 +39,7 @@ import {
   ColumnHeaderCell,
   ColumnManagerModal,
 } from "./column-manager-modal";
+import { AdsInputView } from "./ads-input-view";
 
 const ORDER_COLUMNS_STORAGE_KEY = "acc_order_input_columns_global";
 const ORDER_FROZEN_STORAGE_KEY = "acc_order_input_frozen_global";
@@ -61,6 +62,11 @@ function formatCurrency(val: number | null | undefined, currency = "USD"): strin
     style: "currency",
     currency: currency || "USD",
   }).format(val);
+}
+
+function formatNumber(val: number | null | undefined): string {
+  if (val == null || isNaN(val)) return "0";
+  return new Intl.NumberFormat("en-US").format(val);
 }
 
 export type ImportTab = "orders" | "ads" | "return" | "service_fee";
@@ -103,6 +109,17 @@ export function OrderInputView() {
   });
   const [loading, setLoading] = useState(false);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
+  const [totalAds, setTotalAds] = useState(0);
+
+  useEffect(() => {
+    if (!selectedStoreId) return;
+    fetch(`/api/accounting/ads?store_id=${selectedStoreId}&limit=1`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d && typeof d.total === "number") setTotalAds(d.total);
+      })
+      .catch(() => {});
+  }, [selectedStoreId]);
 
   // Pagination & Filtering
   const [page, setPage] = useState(1);
@@ -134,6 +151,29 @@ export function OrderInputView() {
   const [frozenThrough, setFrozenThrough] = useState<string>("amazon_order_id");
   const [showColumnModal, setShowColumnModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
+
+  // Ads Tab State & Action Signals
+  const [adsSearch, setAdsSearch] = useState("");
+  const [adsDateSort, setAdsDateSort] = useState<"asc" | "desc">("desc");
+  const [adsStartDate, setAdsStartDate] = useState("");
+  const [adsEndDate, setAdsEndDate] = useState("");
+  const [adsStats, setAdsStats] = useState({
+    totalRows: 0,
+    totalSpend: 0,
+    totalSales: 0,
+    totalClicks: 0,
+    totalOrders: 0,
+    totalImpressions: 0,
+    avgCpc: 0,
+    avgAcos: 0,
+    avgRoas: 0,
+    totalThue10: 0,
+  });
+  const [showAdsImportModal, setShowAdsImportModal] = useState(false);
+  const [showAdsColumnModal, setShowAdsColumnModal] = useState(false);
+  const [resetAdsColumnsSignal, setResetAdsColumnsSignal] = useState(0);
+  const [autoFitAdsColumnsSignal, setAutoFitAdsColumnsSignal] = useState(0);
+  const [reloadAdsSignal, setReloadAdsSignal] = useState(0);
 
   // Context Menu
   const [columnContextMenu, setColumnContextMenu] = useState<{
@@ -327,9 +367,29 @@ export function OrderInputView() {
 
   const handleStoreChange = (id: string) => {
     setSelectedStoreId(id);
-    localStorage.setItem("acc_selected_store_id", id);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("acc_selected_store_id", id);
+      window.dispatchEvent(new CustomEvent("acc_store_changed", { detail: id }));
+    }
     setPage(1);
   };
+
+  // Sync with store selection when changed from Inventory or other tabs
+  useEffect(() => {
+    const handleSyncStore = (e: any) => {
+      const newStoreId = e.detail || (typeof window !== "undefined" ? localStorage.getItem("acc_selected_store_id") : null);
+      if (newStoreId && newStoreId !== selectedStoreId && stores.some((s) => s.id === newStoreId)) {
+        setSelectedStoreId(newStoreId);
+        setPage(1);
+      }
+    };
+    window.addEventListener("acc_store_changed", handleSyncStore);
+    window.addEventListener("storage", handleSyncStore);
+    return () => {
+      window.removeEventListener("acc_store_changed", handleSyncStore);
+      window.removeEventListener("storage", handleSyncStore);
+    };
+  }, [selectedStoreId, stores]);
 
   // Visible and Frozen Columns Map
   const visibleColumns = useMemo(() => columns.filter((c) => c.visible), [columns]);
@@ -717,13 +777,13 @@ export function OrderInputView() {
   const renderCellContent = (item: OrderItem, colId: string, rowIndex: number) => {
     switch (colId) {
       case "stt":
-        return <span className="font-mono text-xs text-slate-500 font-semibold">{(page - 1) * limit + rowIndex + 1}</span>;
+        return <span className="font-mono text-xs text-slate-500 font-normal">{(page - 1) * limit + rowIndex + 1}</span>;
       case "date":
-        return <span className="font-semibold text-xs text-slate-800 whitespace-nowrap">{item.date || "—"}</span>;
+        return <span className="font-normal text-xs text-slate-800 whitespace-nowrap">{item.date || "—"}</span>;
       case "amazon_order_id":
         return (
           <span
-            className="font-mono text-xs font-bold text-indigo-700 hover:underline cursor-pointer select-all"
+            className="font-mono text-xs font-normal text-indigo-700 hover:underline cursor-pointer select-all"
             title="Click đúp để sao chép mã đơn"
           >
             {item.amazon_order_id}
@@ -754,7 +814,7 @@ export function OrderInputView() {
             ? "bg-rose-100 text-rose-950 border-rose-300"
             : "bg-slate-100 text-slate-800 border-slate-300";
         return (
-          <span className={`inline-block px-2 py-0.5 rounded text-xs font-bold border shadow-2xs ${badgeColor}`}>
+          <span className={`inline-block px-2 py-0.5 rounded text-xs font-normal border shadow-2xs ${badgeColor}`}>
             {item.order_status || "—"}
           </span>
         );
@@ -762,7 +822,7 @@ export function OrderInputView() {
       case "fulfillment_channel":
         return (
           <span
-            className={`font-semibold text-xs ${
+            className={`font-normal text-xs ${
               item.fulfillment_channel === "Amazon" ? "text-indigo-700" : "text-amber-700"
             }`}
           >
@@ -770,7 +830,7 @@ export function OrderInputView() {
           </span>
         );
       case "sales_channel":
-        return <span className="text-slate-800 font-medium text-xs">{item.sales_channel || "—"}</span>;
+        return <span className="text-slate-800 font-normal text-xs">{item.sales_channel || "—"}</span>;
       case "ship_service_level":
         return <span className="text-slate-600 text-xs">{item.ship_service_level || "—"}</span>;
       case "product_name":
@@ -784,11 +844,8 @@ export function OrderInputView() {
         );
       case "sku":
         return (
-          <span
-            className="font-mono font-semibold text-slate-950 bg-slate-100 px-2 py-0.5 rounded-md text-xs border border-slate-300 select-all"
-            title={item.sku}
-          >
-            {item.sku}
+          <span className="font-mono font-normal text-slate-900 text-xs select-all" title={item.sku}>
+            {item.sku || "—"}
           </span>
         );
       case "asin":
@@ -797,20 +854,20 @@ export function OrderInputView() {
             href={`https://www.amazon.com/dp/${item.asin}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="font-mono text-xs font-bold text-indigo-600 hover:underline"
+            className="font-mono text-xs font-normal text-indigo-600 hover:underline"
           >
             {item.asin || "—"}
           </a>
         );
       case "item_status":
-        return <span className="text-xs font-semibold text-slate-700">{item.item_status || "—"}</span>;
+        return <span className="text-xs font-normal text-slate-700">{item.item_status || "—"}</span>;
       case "quantity":
-        return <span className="font-bold text-xs text-slate-900 font-mono">{item.quantity}</span>;
+        return <span className="font-normal text-xs text-slate-900 font-mono">{item.quantity}</span>;
       case "currency":
-        return <span className="text-[10px] text-slate-500 font-bold uppercase">{item.currency || "USD"}</span>;
+        return <span className="text-[10px] text-slate-500 font-normal uppercase">{item.currency || "USD"}</span>;
       case "item_price":
         return (
-          <span className="font-bold text-xs font-mono text-emerald-700">
+          <span className="font-normal text-xs font-mono text-emerald-700">
             {item.item_price != null ? `$${item.item_price.toFixed(2)}` : "—"}
           </span>
         );
@@ -846,27 +903,27 @@ export function OrderInputView() {
         );
       case "item_promotion_discount":
         return (
-          <span className="text-rose-600 font-medium text-xs font-mono">
+          <span className="text-rose-600 font-normal text-xs font-mono">
             {item.item_promotion_discount != null ? `-$${Math.abs(item.item_promotion_discount).toFixed(2)}` : "—"}
           </span>
         );
       case "ship_promotion_discount":
         return (
-          <span className="text-rose-600 font-medium text-xs font-mono">
+          <span className="text-rose-600 font-normal text-xs font-mono">
             {item.ship_promotion_discount != null ? `-$${Math.abs(item.ship_promotion_discount).toFixed(2)}` : "—"}
           </span>
         );
       case "ship_city":
         return <span className="text-slate-700 text-xs">{item.ship_city || "—"}</span>;
       case "ship_state":
-        return <span className="font-bold text-slate-800 text-xs">{item.ship_state || "—"}</span>;
+        return <span className="font-normal text-slate-800 text-xs">{item.ship_state || "—"}</span>;
       case "ship_postal_code":
         return <span className="font-mono text-slate-600 text-xs">{item.ship_postal_code || "—"}</span>;
       case "ship_country":
-        return <span className="font-semibold text-slate-800 text-xs">{item.ship_country || "—"}</span>;
+        return <span className="font-normal text-slate-800 text-xs">{item.ship_country || "—"}</span>;
       case "is_business_order":
         return item.is_business_order ? (
-          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-900 border border-purple-200">
+          <span className="px-1.5 py-0.5 rounded text-[10px] font-normal bg-purple-100 text-purple-900 border border-purple-200">
             B2B
           </span>
         ) : (
@@ -975,17 +1032,6 @@ export function OrderInputView() {
                   <span>Cột chuẩn Excel</span>
                 </button>
 
-                {/* Shrink / Compact All Columns Button */}
-                <button
-                  type="button"
-                  onClick={handleAutoFitAllColumns}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-bold text-amber-900 hover:bg-amber-100 transition shadow-2xs cursor-pointer"
-                  title="Tự động thu nhỏ các cột ôm sát dữ liệu, giới hạn các cột dài"
-                >
-                  <ArrowsInLineHorizontalIcon size={15} weight="bold" />
-                  <span>Thu nhỏ cột</span>
-                </button>
-
                 {/* Column Configuration Button - Icon Only */}
                 <button
                   type="button"
@@ -1006,29 +1052,61 @@ export function OrderInputView() {
                 >
                   <ArrowClockwiseIcon size={16} weight="bold" className={loading || syncingLatest ? "animate-spin text-indigo-600" : ""} />
                 </button>
+              </>
+            ) : activeTab === "ads" ? (
+              <>
+                {/* Import Ads Button */}
+                <button
+                  type="button"
+                  onClick={() => setShowAdsImportModal(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition shadow-2xs cursor-pointer"
+                  title="Tải lên file báo cáo chi phí Ads (File 05 từ Amazon hoặc ketoan_limima sheet ADS)"
+                >
+                  <UploadSimpleIcon size={15} weight="bold" />
+                  <span>Nhập File Ads</span>
+                </button>
 
-                {/* Zoom Controls */}
-                <div className="flex items-center border border-slate-300 rounded-lg overflow-hidden bg-slate-50 p-0.5 text-xs font-bold">
-                  <button
-                    type="button"
-                    onClick={() => setTableZoom((z) => Math.max(80, z - 10))}
-                    className="h-6 w-6 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 transition cursor-pointer"
-                    title="Thu nhỏ bảng (-10%)"
-                  >
-                    <MinusIcon size={13} weight="bold" />
-                  </button>
-                  <span className="px-2 font-mono text-[11px] text-slate-600 select-none min-w-[42px] text-center">
-                    {tableZoom}%
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setTableZoom((z) => Math.min(150, z + 10))}
-                    className="h-6 w-6 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 transition cursor-pointer"
-                    title="Phóng to bảng (+10%)"
-                  >
-                    <PlusIcon size={13} weight="bold" />
-                  </button>
-                </div>
+                {/* Export Excel Button */}
+                <a
+                  href={`/api/accounting/ads/export?store_id=${selectedStoreId}`}
+                  download
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-800 hover:bg-emerald-100 transition shadow-2xs cursor-pointer"
+                  title="Xuất Excel toàn bộ dữ liệu Chi phí Ads (chuẩn 31 cột kế toán)"
+                >
+                  <DownloadSimpleIcon size={15} weight="bold" />
+                  <span>Xuất Excel</span>
+                </a>
+
+                {/* Reset to Excel default order */}
+                <button
+                  type="button"
+                  onClick={() => setResetAdsColumnsSignal((s) => s + 1)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition shadow-2xs cursor-pointer"
+                  title="Đặt lại đầy đủ tất cả các cột theo đúng thứ tự file Excel sheet ADS"
+                >
+                  <ArrowClockwiseIcon size={14} weight="bold" />
+                  <span>Cột chuẩn Excel</span>
+                </button>
+
+                {/* Column Configuration Button - Icon Only */}
+                <button
+                  type="button"
+                  onClick={() => setShowAdsColumnModal(true)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-amber-400 bg-amber-50 text-amber-950 hover:bg-amber-100 transition shadow-2xs cursor-pointer"
+                  title="Cài đặt cột ADS"
+                >
+                  <SlidersHorizontalIcon size={16} weight="bold" className="text-amber-700" />
+                </button>
+
+                {/* Refresh - Icon Only */}
+                <button
+                  type="button"
+                  onClick={() => setReloadAdsSignal((s) => s + 1)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 transition shadow-2xs cursor-pointer"
+                  title="Làm mới: Tải lại và đồng bộ file 05 Ads mới nhất cho các Store"
+                >
+                  <ArrowClockwiseIcon size={16} weight="bold" className="text-indigo-600" />
+                </button>
               </>
             ) : (
               <button
@@ -1040,105 +1118,351 @@ export function OrderInputView() {
                 className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition shadow-2xs cursor-pointer"
               >
                 <UploadSimpleIcon size={15} weight="bold" />
-                <span>Nhập File {activeTab === "ads" ? "Ads" : activeTab === "return" ? "Return" : "Service Fee"}</span>
+                <span>Nhập File {activeTab === "return" ? "Return" : "Service Fee"}</span>
               </button>
             )}
           </div>
         </div>
       </div>
 
-      {/* TABS BAR: Sheet tabs like Excel (tổ chức tương tự mục Inventory) */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 bg-slate-200/70 p-1.5 rounded-xl border border-slate-300 min-h-[46px]">
-        {/* Sheet Tabs like Excel */}
-        <div className="flex items-center gap-1 shrink-0 flex-wrap">
-          {/* Tab 1: Orders */}
-          <button
-            type="button"
-            onClick={() => setActiveTab("orders")}
-            className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
-              activeTab === "orders"
-                ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
-                : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
-            }`}
-          >
-            <ShoppingCartIcon size={16} weight="bold" />
-            <span>Đầu Vào Order</span>
-            <span
-              className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
-                activeTab === "orders" ? "bg-emerald-700 text-white" : "bg-slate-300 text-slate-700"
+      {/* TABS, FILTERS & STATS UNIFIED BAR */}
+      <div className="bg-slate-200/70 p-2 rounded-xl border border-slate-300 flex flex-col gap-1.5 shadow-2xs">
+        {/* Row 1: Sheet Tabs on Left, Sort + Date + Search on Right */}
+        <div className="flex flex-wrap items-center justify-between gap-2 min-h-[36px]">
+          {/* Sheet Tabs */}
+          <div className="flex items-center gap-1 shrink-0">
+            {/* Tab 1: Orders */}
+            <button
+              type="button"
+              onClick={() => setActiveTab("orders")}
+              className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
+                activeTab === "orders"
+                  ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
+                  : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
               }`}
             >
-              {totalOrders}
-            </span>
-          </button>
+              <ShoppingCartIcon size={16} weight="bold" />
+              <span>Đầu Vào Order</span>
+              <span
+                className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                  activeTab === "orders" ? "bg-emerald-700 text-white" : "bg-slate-300 text-slate-700"
+                }`}
+              >
+                {totalOrders}
+              </span>
+            </button>
 
-          {/* Tab 2: Ads */}
-          <button
-            type="button"
-            onClick={() => setActiveTab("ads")}
-            className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
-              activeTab === "ads"
-                ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
-                : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
-            }`}
-          >
-            <TrendUpIcon size={16} weight="bold" />
-            <span>Ads</span>
-          </button>
+            {/* Tab 2: Ads */}
+            <button
+              type="button"
+              onClick={() => setActiveTab("ads")}
+              className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
+                activeTab === "ads"
+                  ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
+                  : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
+              }`}
+            >
+              <TrendUpIcon size={16} weight="bold" />
+              <span>Ads</span>
+              {totalAds > 0 && (
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                    activeTab === "ads" ? "bg-emerald-700 text-white" : "bg-slate-300 text-slate-700"
+                  }`}
+                >
+                  {totalAds}
+                </span>
+              )}
+            </button>
 
-          {/* Tab 3: Return */}
-          <button
-            type="button"
-            onClick={() => setActiveTab("return")}
-            className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
-              activeTab === "return"
-                ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
-                : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
-            }`}
-          >
-            <ArrowCounterClockwiseIcon size={16} weight="bold" />
-            <span>Return</span>
-          </button>
+            {/* Tab 3: Return */}
+            <button
+              type="button"
+              onClick={() => setActiveTab("return")}
+              className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
+                activeTab === "return"
+                  ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
+                  : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
+              }`}
+            >
+              <ArrowCounterClockwiseIcon size={16} weight="bold" />
+              <span>Return</span>
+            </button>
 
-          {/* Tab 4: Service Fee */}
-          <button
-            type="button"
-            onClick={() => setActiveTab("service_fee")}
-            className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
-              activeTab === "service_fee"
-                ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
-                : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
-            }`}
-          >
-            <ReceiptIcon size={16} weight="bold" />
-            <span>Service Fee</span>
-          </button>
-        </div>
+            {/* Tab 4: Service Fee */}
+            <button
+              type="button"
+              onClick={() => setActiveTab("service_fee")}
+              className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
+                activeTab === "service_fee"
+                  ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
+                  : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
+              }`}
+            >
+              <ReceiptIcon size={16} weight="bold" />
+              <span>Service Fee</span>
+            </button>
+          </div>
 
-        {/* Quick Search on the right side of the Tab bar (like Inventory) */}
-        {activeTab === "orders" ? (
-          <div className="flex items-center gap-2 min-w-[240px] max-w-sm ml-auto">
-            <div className="relative w-full">
-              <MagnifyingGlassIcon
-                size={14}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-              />
-              <input
-                type="text"
-                placeholder="Tìm mã đơn, SKU, ASIN, City..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white pl-8 pr-7 py-1 text-xs font-medium text-slate-800 placeholder-slate-400 outline-none transition focus:border-indigo-500 focus:ring-1 focus:ring-indigo-100"
-              />
-              {search && (
+          {/* Right Side Controls */}
+          {activeTab === "orders" ? (
+            <div className="flex items-center gap-1.5 flex-wrap justify-end ml-auto">
+              {/* Divider */}
+              <div className="h-5 w-px bg-slate-300 select-none hidden md:block" />
+
+              {/* Sort Date Toggle */}
+              <button
+                type="button"
+                onClick={() => setDateSort((prev) => (prev === "desc" ? "asc" : "desc"))}
+                className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-bold transition shadow-2xs whitespace-nowrap cursor-pointer ${
+                  dateSort === "desc"
+                    ? "border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                    : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                }`}
+                title="Sắp xếp theo ngày mua đơn hàng"
+              >
+                {dateSort === "desc" ? <CaretDownIcon size={13} weight="bold" /> : <CaretUpIcon size={13} weight="bold" />}
+                <span>{dateSort === "desc" ? "Mới nhất" : "Cũ nhất"}</span>
+              </button>
+
+              {/* Quick Search Input */}
+              <div className="relative w-40 sm:w-56 focus-within:!w-64 transition-all duration-200">
+                <MagnifyingGlassIcon
+                  size={13}
+                  className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"
+                />
+                <input
+                  type="text"
+                  placeholder="Tìm mã đơn, SKU, City..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white pl-7 pr-6 py-1 text-xs font-medium text-slate-800 placeholder-slate-400 outline-none transition focus:border-indigo-500 focus:ring-1 focus:ring-indigo-100 shadow-2xs"
+                />
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => setSearch("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    <XIcon size={11} />
+                  </button>
+                )}
+              </div>
+
+              {/* Zoom Controls (+ / -) */}
+              <div className="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-300 shadow-2xs">
                 <button
                   type="button"
-                  onClick={() => setSearch("")}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  onClick={() => setTableZoom((z) => Math.max(60, z - 10))}
+                  className="h-6 w-6 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 hover:shadow-2xs active:scale-95 transition cursor-pointer"
+                  title="Thu nhỏ bảng (-10%)"
                 >
-                  <XIcon size={12} />
+                  <MinusIcon size={13} weight="bold" />
                 </button>
-              )}
+                <button
+                  type="button"
+                  onClick={() => setTableZoom(100)}
+                  className="px-1.5 py-0.5 text-[11px] font-mono font-bold text-slate-700 hover:text-indigo-600 cursor-pointer"
+                  title="Đặt lại cỡ 100%"
+                >
+                  {tableZoom}%
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTableZoom((z) => Math.min(150, z + 10))}
+                  className="h-6 w-6 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 hover:shadow-2xs active:scale-95 transition cursor-pointer"
+                  title="Phóng to bảng (+10%)"
+                >
+                  <PlusIcon size={13} weight="bold" />
+                </button>
+              </div>
+            </div>
+          ) : activeTab === "ads" ? (
+            <div className="flex items-center gap-1.5 flex-wrap justify-end ml-auto">
+              {/* Divider */}
+              <div className="h-5 w-px bg-slate-300 select-none hidden md:block" />
+
+              {/* Sort Date Toggle */}
+              <button
+                type="button"
+                onClick={() => setAdsDateSort((prev) => (prev === "desc" ? "asc" : "desc"))}
+                className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-bold transition shadow-2xs whitespace-nowrap cursor-pointer ${
+                  adsDateSort === "desc"
+                    ? "border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                    : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                }`}
+                title="Sắp xếp theo ngày báo cáo Ads"
+              >
+                {adsDateSort === "desc" ? <CaretDownIcon size={13} weight="bold" /> : <CaretUpIcon size={13} weight="bold" />}
+                <span>{adsDateSort === "desc" ? "Mới nhất" : "Cũ nhất"}</span>
+              </button>
+
+              {/* Date range picker (Ads) */}
+              <div className="flex items-center gap-1 bg-white border border-slate-300 rounded-lg px-2 py-0.5 text-xs shadow-2xs">
+                <span className="text-[11px] font-semibold text-slate-500">Từ:</span>
+                <input
+                  type="date"
+                  value={adsStartDate}
+                  onChange={(e) => setAdsStartDate(e.target.value)}
+                  className="bg-transparent text-xs text-slate-700 font-medium focus:outline-hidden cursor-pointer w-[105px]"
+                />
+                <span className="text-[11px] font-semibold text-slate-500">Đến:</span>
+                <input
+                  type="date"
+                  value={adsEndDate}
+                  onChange={(e) => setAdsEndDate(e.target.value)}
+                  className="bg-transparent text-xs text-slate-700 font-medium focus:outline-hidden cursor-pointer w-[105px]"
+                />
+                {(adsStartDate || adsEndDate) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdsStartDate("");
+                      setAdsEndDate("");
+                    }}
+                    className="text-slate-400 hover:text-rose-600 ml-0.5 cursor-pointer"
+                    title="Xoá lọc ngày"
+                  >
+                    <XIcon size={12} weight="bold" />
+                  </button>
+                )}
+              </div>
+
+              {/* Quick Search Input (Ads) */}
+              <div className="relative w-40 sm:w-48 focus-within:!w-64 transition-all duration-200">
+                <MagnifyingGlassIcon
+                  size={13}
+                  className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"
+                />
+                <input
+                  type="text"
+                  placeholder="Tìm Portfolio, SKU, PIC..."
+                  value={adsSearch}
+                  onChange={(e) => setAdsSearch(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white pl-7 pr-6 py-1 text-xs font-medium text-slate-800 placeholder-slate-400 outline-none transition focus:border-indigo-500 focus:ring-1 focus:ring-indigo-100 shadow-2xs"
+                />
+                {adsSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setAdsSearch("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    <XIcon size={11} />
+                  </button>
+                )}
+              </div>
+
+              {/* Zoom Controls (+ / -) */}
+              <div className="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-300 shadow-2xs">
+                <button
+                  type="button"
+                  onClick={() => setTableZoom((z) => Math.max(60, z - 10))}
+                  className="h-6 w-6 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 hover:shadow-2xs active:scale-95 transition cursor-pointer"
+                  title="Thu nhỏ bảng (-10%)"
+                >
+                  <MinusIcon size={13} weight="bold" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTableZoom(100)}
+                  className="px-1.5 py-0.5 text-[11px] font-mono font-bold text-slate-700 hover:text-indigo-600 cursor-pointer"
+                  title="Đặt lại cỡ 100%"
+                >
+                  {tableZoom}%
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTableZoom((z) => Math.min(150, z + 10))}
+                  className="h-6 w-6 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 hover:shadow-2xs active:scale-95 transition cursor-pointer"
+                  title="Phóng to bảng (+10%)"
+                >
+                  <PlusIcon size={13} weight="bold" />
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        {/* ĐƯỜNG KẺ NGĂN CÁCH 2 DÒNG NHƯ Ở BÊN INVENTORY */}
+        <div className="w-full border-t border-slate-300/80" />
+
+        {/* Row 2: Evaluation Stats */}
+        {activeTab === "orders" ? (
+          <div className="flex items-center gap-2 flex-wrap text-xs text-slate-900 justify-end py-0.5 ml-auto">
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-medium">Orders:</span>
+              <span className="font-bold text-slate-950 font-mono">{stats.totalOrders.toLocaleString()}</span>
+            </div>
+            <span className="text-slate-400 select-none">|</span>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-medium">Units:</span>
+              <span className="font-bold text-slate-950 font-mono">{stats.totalUnits.toLocaleString()}</span>
+            </div>
+            <span className="text-slate-400 select-none">|</span>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-medium">Sales:</span>
+              <span className="font-bold text-emerald-700 font-mono">{formatCurrency(stats.totalRevenue)}</span>
+            </div>
+            <span className="text-slate-400 select-none">|</span>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-medium">Shipped:</span>
+              <span className="font-bold text-slate-950 font-mono">{stats.shippedCount.toLocaleString()}</span>
+            </div>
+            <span className="text-slate-400 select-none">|</span>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-medium">Pending:</span>
+              <span className="font-bold text-slate-950 font-mono">{stats.pendingCount.toLocaleString()}</span>
+            </div>
+            {stats.canceledCount > 0 && (
+              <>
+                <span className="text-slate-400 select-none">|</span>
+                <div className="flex items-center gap-1">
+                  <span className="text-slate-500 font-medium">Canceled:</span>
+                  <span className="font-bold text-slate-950 font-mono">{stats.canceledCount.toLocaleString()}</span>
+                </div>
+              </>
+            )}
+          </div>
+        ) : activeTab === "ads" ? (
+          <div className="flex items-center gap-2 flex-wrap text-xs text-slate-900 justify-end py-0.5 ml-auto">
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-medium">Total:</span>
+              <span className="font-bold text-slate-950 font-mono">{adsStats.totalRows.toLocaleString()}</span>
+            </div>
+            <span className="text-slate-400 select-none">|</span>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-medium">Spend:</span>
+              <span className="font-bold text-rose-700 font-mono">{formatCurrency(adsStats.totalSpend)}</span>
+            </div>
+            <span className="text-slate-400 select-none">|</span>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-medium">Tax 10%:</span>
+              <span className="font-bold text-amber-900 font-mono">{formatCurrency(adsStats.totalThue10)}</span>
+            </div>
+            <span className="text-slate-400 select-none">|</span>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-medium">Sales:</span>
+              <span className="font-bold text-emerald-700 font-mono">{formatCurrency(adsStats.totalSales)}</span>
+            </div>
+            <span className="text-slate-400 select-none">|</span>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-medium">Clicks:</span>
+              <span className="font-bold text-slate-950 font-mono">{formatNumber(adsStats.totalClicks)}</span>
+            </div>
+            <span className="text-slate-400 select-none">|</span>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-medium">Orders:</span>
+              <span className="font-bold text-slate-950 font-mono">{formatNumber(adsStats.totalOrders)}</span>
+            </div>
+            <span className="text-slate-400 select-none">|</span>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-medium">ACOS:</span>
+              <span className="font-bold text-amber-800 font-mono">{adsStats.avgAcos.toFixed(1)}%</span>
+            </div>
+            <span className="text-slate-400 select-none">|</span>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-medium">ROAS:</span>
+              <span className="font-bold text-emerald-700 font-mono">{adsStats.avgRoas.toFixed(2)}</span>
             </div>
           </div>
         ) : null}
@@ -1146,108 +1470,43 @@ export function OrderInputView() {
 
       {activeTab === "orders" ? (
         <>
-          {/* STATS & QUICK FILTER BAR */}
-          <div className="rounded-xl border border-slate-300 bg-white p-3 shadow-2xs space-y-2.5">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2.5">
-              {/* Left: Sort Date Toggle & Quick Search Info */}
-              <div className="flex items-center gap-2 flex-wrap">
-                <button
-                  type="button"
-                  onClick={() => setDateSort((prev) => (prev === "desc" ? "asc" : "desc"))}
-                  className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-bold transition shadow-2xs whitespace-nowrap cursor-pointer ${
-                    dateSort === "desc"
-                      ? "border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
-                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-                  }`}
-                  title="Sắp xếp theo ngày mua đơn hàng"
-                >
-                  {dateSort === "desc" ? <CaretDownIcon size={14} weight="bold" /> : <CaretUpIcon size={14} weight="bold" />}
-                  <span>{dateSort === "desc" ? "Mới nhất" : "Cũ nhất"}</span>
-                </button>
-
-                {search && (
-                  <span className="text-xs text-indigo-700 font-semibold bg-indigo-50 px-2 py-1 rounded-md border border-indigo-200">
-                    Kết quả tìm kiếm cho: "{search}" ({totalOrders} đơn)
-                  </span>
-                )}
-              </div>
-
-              {/* Right: Quick Stats in Black Text with Vertical Separators */}
-              <div className="flex items-center gap-2.5 flex-wrap text-xs text-slate-900 justify-end py-0.5">
-                <div className="flex items-center gap-1">
-                  <span className="text-slate-500 font-medium">Tổng đơn:</span>
-                  <span className="font-bold text-slate-950 font-mono">{stats.totalOrders.toLocaleString()}</span>
-                </div>
-                <span className="text-slate-300 select-none">|</span>
-                <div className="flex items-center gap-1">
-                  <span className="text-slate-500 font-medium">Số lượng Units:</span>
-                  <span className="font-bold text-slate-950 font-mono">{stats.totalUnits.toLocaleString()}</span>
-                </div>
-                <span className="text-slate-300 select-none">|</span>
-                <div className="flex items-center gap-1">
-                  <span className="text-slate-500 font-medium">Doanh thu:</span>
-                  <span className="font-bold text-slate-950 font-mono">{formatCurrency(stats.totalRevenue)}</span>
-                </div>
-                <span className="text-slate-300 select-none">|</span>
-                <div className="flex items-center gap-1">
-                  <span className="text-slate-500 font-medium">Shipped:</span>
-                  <span className="font-bold text-slate-950 font-mono">{stats.shippedCount.toLocaleString()}</span>
-                </div>
-                <span className="text-slate-300 select-none">|</span>
-                <div className="flex items-center gap-1">
-                  <span className="text-slate-500 font-medium">Pending:</span>
-                  <span className="font-bold text-slate-950 font-mono">{stats.pendingCount.toLocaleString()}</span>
-                </div>
-                {stats.canceledCount > 0 && (
-                  <>
-                    <span className="text-slate-300 select-none">|</span>
-                    <div className="flex items-center gap-1">
-                      <span className="text-slate-500 font-medium">Canceled:</span>
-                      <span className="font-bold text-slate-950 font-mono">{stats.canceledCount.toLocaleString()}</span>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* ACTIVE COLUMN FILTERS BAR (HIỂN THỊ CÁC CỘT ĐANG ĐƯỢC LỌC) */}
-            {Object.keys(columnFilters).length > 0 && (
-              <div className="flex items-center gap-2 pt-2 border-t border-slate-200/80 flex-wrap">
-                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
-                  <FunnelIcon size={12} weight="bold" />
-                  Đang lọc theo:
-                </span>
-                {Object.entries(columnFilters).map(([field, val]) => {
-                  const col = columns.find((c) => c.id === field);
-                  const label = col?.label || field;
-                  return (
-                    <span
-                      key={field}
-                      className="inline-flex items-center gap-1 text-xs bg-amber-50 text-amber-950 border border-amber-300 px-2 py-0.5 rounded-md font-semibold shadow-2xs"
+          {/* ACTIVE COLUMN FILTERS BAR (Chỉ hiện khi có lọc) */}
+          {Object.keys(columnFilters).length > 0 && (
+            <div className="flex items-center gap-2 p-2 bg-amber-50/60 border border-amber-200 rounded-xl flex-wrap text-xs">
+              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                <FunnelIcon size={12} weight="bold" />
+                Đang lọc theo:
+              </span>
+              {Object.entries(columnFilters).map(([field, val]) => {
+                const col = columns.find((c) => c.id === field);
+                const label = col?.label || field;
+                return (
+                  <span
+                    key={field}
+                    className="inline-flex items-center gap-1 text-xs bg-white text-amber-950 border border-amber-300 px-2 py-0.5 rounded-md font-semibold shadow-2xs"
+                  >
+                    <span className="text-slate-600 font-medium">{label}:</span>
+                    <span className="font-bold text-amber-900">{val}</span>
+                    <button
+                      type="button"
+                      onClick={() => setColumnFilter(field, "")}
+                      className="ml-1 hover:text-rose-600 rounded p-0.5 cursor-pointer"
+                      title={`Xóa lọc cột ${label}`}
                     >
-                      <span className="text-slate-600 font-medium">{label}:</span>
-                      <span className="font-bold text-amber-900">{val}</span>
-                      <button
-                        type="button"
-                        onClick={() => setColumnFilter(field, "")}
-                        className="ml-1 hover:text-rose-600 rounded p-0.5 cursor-pointer"
-                        title={`Xóa lọc cột ${label}`}
-                      >
-                        <XIcon size={12} weight="bold" />
-                      </button>
-                    </span>
-                  );
-                })}
-                <button
-                  type="button"
-                  onClick={clearAllFilters}
-                  className="text-[11px] font-bold text-rose-600 hover:text-rose-800 hover:underline cursor-pointer ml-1"
-                >
-                  Xóa tất cả lọc
-                </button>
-              </div>
-            )}
-          </div>
+                      <XIcon size={12} weight="bold" />
+                    </button>
+                  </span>
+                );
+              })}
+              <button
+                type="button"
+                onClick={clearAllFilters}
+                className="text-[11px] font-bold text-rose-600 hover:text-rose-800 hover:underline cursor-pointer ml-1"
+              >
+                Xóa tất cả lọc
+              </button>
+            </div>
+          )}
 
       {/* SPREADSHEET TABLE */}
       <div className="rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col relative">
@@ -1278,7 +1537,7 @@ export function OrderInputView() {
                         isFrozen={f.isFrozen}
                         isBoundary={f.isBoundary}
                         style={f.style}
-                        className={`py-1.5 px-2 text-xs bg-[#ff9900] text-slate-950 font-black border-r border-amber-600/60 leading-tight select-none ${f.className}`}
+                        className={`py-1.5 px-2 text-xs bg-[#ff9900] text-slate-900 font-bold border-r border-amber-600/60 leading-tight select-none ${f.className}`}
                         draggable={!col.isFrozen}
                         isDragging={headerDragId === col.id}
                         isDragOver={headerDragOverId === col.id}
@@ -1311,7 +1570,7 @@ export function OrderInputView() {
                       >
                         <div className="flex items-center justify-center w-full min-h-[32px] relative group/title px-1">
                           <span
-                            className="leading-tight break-words text-center font-black text-xs whitespace-normal inline-flex items-center gap-1 justify-center"
+                            className="leading-tight break-words text-center font-bold text-slate-900 text-xs whitespace-normal inline-flex items-center gap-1 justify-center"
                             title={col.label}
                           >
                             <span className="line-clamp-2 break-words whitespace-normal leading-tight">{col.label}</span>
@@ -1376,7 +1635,7 @@ export function OrderInputView() {
                   orders.map((item, rowIndex) => (
                     <tr
                       key={item.id}
-                      className="group min-h-[46px] bg-white even:bg-[#f8fafc] hover:bg-[#fef9c3] transition-colors [&>td]:border-b [&>td]:border-slate-200"
+                      className="group h-[32px] min-h-[32px] bg-white even:bg-[#f8fafc] hover:bg-[#fef9c3] transition-colors [&>td]:border-b [&>td]:border-slate-200"
                     >
                       {visibleColumns.map((col) => {
                         const f = getCellFreezeProps(col.id, false);
@@ -1392,7 +1651,7 @@ export function OrderInputView() {
                           <td
                             key={col.id}
                             style={f.style}
-                            className={`py-1.5 px-2.5 text-xs border-r border-slate-200 transition-colors leading-tight ${alignClass} ${
+                            className={`py-1 px-2.5 text-[12.5px] text-slate-800 border-r border-slate-200 transition-colors leading-tight ${alignClass} ${
                               isWrapCol ? "whitespace-normal break-words" : "whitespace-nowrap"
                             } ${f.className}`}
                           >
@@ -1483,15 +1742,38 @@ export function OrderInputView() {
         </div>
       </div>
     </>
+  ) : activeTab === "ads" ? (
+    <AdsInputView
+      stores={stores}
+      selectedStoreId={selectedStoreId}
+      onStoreChange={handleStoreChange}
+      search={adsSearch}
+      setSearch={setAdsSearch}
+      dateSort={adsDateSort}
+      setDateSort={setAdsDateSort}
+      startDate={adsStartDate}
+      setStartDate={setAdsStartDate}
+      endDate={adsEndDate}
+      setEndDate={setAdsEndDate}
+      onStatsChange={setAdsStats}
+      tableZoom={tableZoom}
+      showImportModal={showAdsImportModal}
+      setShowImportModal={setShowAdsImportModal}
+      showColumnModal={showAdsColumnModal}
+      setShowColumnModal={setShowAdsColumnModal}
+      resetColumnsSignal={resetAdsColumnsSignal}
+      autoFitColumnsSignal={autoFitAdsColumnsSignal}
+      reloadSignal={reloadAdsSignal}
+      onTotalAdsChange={setTotalAds}
+      notify={notify}
+    />
   ) : (
-        /* FUTURE IMPORT TABS: ADS, RETURN, SERVICE FEE */
+        /* FUTURE IMPORT TABS: RETURN, SERVICE FEE */
         <div className="rounded-xl border border-slate-300 bg-white p-8 shadow-2xs space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-start justify-between border-b border-slate-100 pb-5 gap-4">
             <div className="flex items-start gap-3.5">
               <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-2xs mt-0.5">
-                {activeTab === "ads" ? (
-                  <TrendUpIcon size={24} weight="bold" />
-                ) : activeTab === "return" ? (
+                {activeTab === "return" ? (
                   <ArrowCounterClockwiseIcon size={24} weight="bold" />
                 ) : (
                   <ReceiptIcon size={24} weight="bold" />
@@ -1500,9 +1782,7 @@ export function OrderInputView() {
               <div>
                 <div className="flex items-center gap-2">
                   <h2 className="text-lg font-bold text-slate-900 tracking-tight">
-                    {activeTab === "ads"
-                      ? "Import Báo Cáo Amazon Ads"
-                      : activeTab === "return"
+                    {activeTab === "return"
                       ? "Import Dữ Liệu Return & Hoàn Tiền"
                       : "Import Dữ Liệu Phí Dịch Vụ (Service Fee)"}
                   </h2>
@@ -1511,9 +1791,7 @@ export function OrderInputView() {
                   </span>
                 </div>
                 <p className="text-xs text-slate-500 mt-1 max-w-2xl leading-relaxed">
-                  {activeTab === "ads"
-                    ? "Nhập file báo cáo Sponsored Products, Sponsored Brands, Sponsored Display để phân bổ và đối soát chi phí quảng cáo."
-                    : activeTab === "return"
+                  {activeTab === "return"
                     ? "Nhập file đối soát hoàn tiền (Customer Returns & Refunds), phí lưu kho trả hàng và tỷ lệ trả hàng theo SKU."
                     : "Nhập file chi phí phụ sàn Amazon (Storage Fee, Inbound Placement Service Fee, Removal Order Fee, Disposal Fee)."}
                 </p>
@@ -1539,7 +1817,7 @@ export function OrderInputView() {
               <UploadSimpleIcon size={28} weight="bold" />
             </div>
             <h3 className="text-sm font-bold text-slate-800">
-              Kéo thả file báo cáo {activeTab === "ads" ? "Ads" : activeTab === "return" ? "Return" : "Service Fee"} vào đây
+              Kéo thả file báo cáo {activeTab === "return" ? "Return" : "Service Fee"} vào đây
             </h3>
             <p className="text-xs text-slate-500 mt-1">
               Hỗ trợ định dạng .xlsx, .csv, .tsv từ Amazon Seller Central
@@ -1556,18 +1834,7 @@ export function OrderInputView() {
               Cột dữ liệu chuẩn bị tích hợp
             </h4>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {(activeTab === "ads"
-                ? [
-                    { name: "Campaign Name", desc: "Tên chiến dịch PPC" },
-                    { name: "Ad Group / Target", desc: "Nhóm quảng cáo & Từ khóa" },
-                    { name: "Spend / Chi phí", desc: "Chi phí quảng cáo thực tế" },
-                    { name: "Sales / 7-Day Sales", desc: "Doanh thu mang lại từ Ads" },
-                    { name: "Orders / Clicks", desc: "Số lượt click & đơn hàng" },
-                    { name: "ACOS / ROAS", desc: "Tỷ lệ chi phí trên doanh thu" },
-                    { name: "Advertised SKU", desc: "SKU được chạy quảng cáo" },
-                    { name: "Placement", desc: "Vị trí Top of Search / Product" },
-                  ]
-                : activeTab === "return"
+              {(activeTab === "return"
                 ? [
                     { name: "Order ID", desc: "Mã đơn hàng phát sinh hoàn" },
                     { name: "Return Date", desc: "Ngày hoàn tiền / trả hàng" },

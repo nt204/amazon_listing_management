@@ -1072,6 +1072,43 @@ export async function parseAndIngestOrderFile(filePath: string, store: StoreTarg
   return data.processed || 0;
 }
 
+export async function parseAndIngestAdsFile(filePath: string, store: StoreTarget): Promise<number> {
+  const webAppUrl = process.env.WEB_APP_URL || "https://ncehub.net";
+  const authToken = process.env.WEB_APP_AUTH_TOKEN?.trim();
+  if (!fs.existsSync(filePath) || fs.statSync(filePath).size === 0) return 0;
+  if (!authToken) throw new Error("Thiếu WEB_APP_AUTH_TOKEN; không thể nạp Ads.");
+
+  const storeId = await resolveVerifiedStoreId(store);
+
+  console.log(`  [Ingest - Ads] Đang đọc file: ${path.basename(filePath)} → ${store.store_name} (${storeId})...`);
+  const fileBuffer = fs.readFileSync(filePath);
+  const isXlsx = filePath.endsWith(".xlsx");
+
+  const formData = new FormData();
+  const blob = new Blob([fileBuffer], {
+    type: isXlsx
+      ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      : "text/csv",
+  });
+  formData.append("file", blob, path.basename(filePath));
+  formData.append("store_id", storeId);
+
+  const res = await fetch(`${webAppUrl.replace(/\/$/, "")}/api/accounting/ads/import`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${authToken}` },
+    body: formData,
+  });
+  const responseText = await res.text();
+  if (!res.ok) {
+    throw new Error(`API import Ads lỗi HTTP ${res.status}: ${responseText.slice(0, 500)}`);
+  }
+  const data = JSON.parse(responseText) as {
+    success?: boolean; processed?: number; totalParsed?: number; message?: string;
+  };
+  console.log(`  [Ingest - Ads] ✅ ${store.store_name}: nạp thành công ${data.processed || 0} / ${data.totalParsed || 0} dòng chi phí Ads.`);
+  return data.processed || 0;
+}
+
 // ============================================================================
 // HÀM CHÍNH: CRAWL KẾ TOÁN CHO TỪNG STORE
 // ============================================================================
@@ -1179,6 +1216,16 @@ export async function crawlAccountingForStore(
         label: "File 05 - Campaigns",
         filePrefix: "05_Campaigns_",
         download: () => downloadFile05Campaigns(page, storeDownloadDir, targetDateStr),
+        afterSuccess: async () => {
+          const campaignsPath = result.files.file05_campaigns;
+          if (campaignsPath) {
+            try {
+              await parseAndIngestAdsFile(campaignsPath, store);
+            } catch (err: any) {
+              console.warn(`  ⚠️ [File 05 - Campaigns] Tạm thời chưa nạp tự động vào Web App (${err?.message}). File đã tải an toàn trên máy.`);
+            }
+          }
+        },
       },
       {
         key: "file06_inventory",

@@ -6,17 +6,23 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({}));
     const type = body.type as string;
 
-    if (type !== "07_SHIPMENTS" && type !== "02_ALL_ORDERS") {
+    const allowedTypes = ["07_SHIPMENTS", "02_ALL_ORDERS", "05_CAMPAIGNS", "01_PORTFOLIOS"];
+    if (!allowedTypes.includes(type)) {
       return NextResponse.json(
-        { error: "type không hợp lệ. Chỉ chấp nhận '07_SHIPMENTS' hoặc '02_ALL_ORDERS'." },
+        { error: `type không hợp lệ. Chỉ chấp nhận: ${allowedTypes.join(", ")}` },
         { status: 400 }
       );
     }
 
-    const result = await syncLatestFilesForAllStores(type);
+    const result = await syncLatestFilesForAllStores(type as any);
 
-    const typeLabel = type === "07_SHIPMENTS" ? "Check Shipment" : "Đầu vào Order";
-    const message = `Đã tự động nạp file ${typeLabel} mới nhất cho ${result.totalStores} Store (tổng ${result.totalIngested} dòng/đơn).`;
+    const typeLabel =
+      type === "07_SHIPMENTS"
+        ? "Check Shipment"
+        : type === "02_ALL_ORDERS"
+        ? "Đầu vào Order"
+        : "Báo cáo Ads";
+    const message = `Đã tự động nạp file ${typeLabel} mới nhất cho ${result.totalStores} Store (tổng ${result.totalIngested} dòng dữ liệu).`;
 
     return NextResponse.json({
       ...result,

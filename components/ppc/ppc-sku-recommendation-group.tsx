@@ -864,48 +864,42 @@ export function PpcSkuRecommendationGroupView({
         </div>
       )}
       {/* Top Filter Area: Search, Phôi & Summary */}
-      <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2.5">
+      <div className="bg-white p-3 rounded-xl border border-slate-200/90 shadow-2xs space-y-2.5">
+        {/* Row 1: Controls, Metrics & Auto Bid Button */}
+        <div className="flex flex-wrap items-center justify-between gap-2.5">
+          {/* Left: Search, Phôi, Window Toggle */}
+          <div className="flex flex-wrap items-center gap-2">
             {/* Search Box */}
             <div className="relative">
               <MagnifyingGlass
                 size={14}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"
               />
               <input
                 type="text"
-                placeholder="Tìm theo SKU hoặc ASIN..."
+                placeholder="Tìm SKU hoặc ASIN..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-8 pr-7 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600/20 w-60 shadow-2xs"
+                className="pl-7.5 pr-6 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600/20 w-48 shadow-2xs"
               />
               {searchTerm && (
                 <button
                   type="button"
                   onClick={() => setSearchTerm("")}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
                 >
                   <X size={12} weight="bold" />
                 </button>
               )}
             </div>
 
-            {isLoading && (
-              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-bold animate-pulse shadow-2xs">
-                <CircleNotch size={14} className="animate-spin text-indigo-600 shrink-0" />
-                <span>Đang phân tích đề xuất {selectedStore === "ALL" ? "tất cả store" : selectedStore}...</span>
-              </div>
-            )}
-
             {/* Dynamic Phôi Dropdown */}
-            <div className="flex items-center gap-1.5 text-xs text-slate-600 font-semibold bg-white px-2.5 py-1.5 rounded-lg border border-slate-200 shadow-2xs">
-              <Tag size={14} className="text-slate-400" />
-              <span className="text-slate-500">Phôi:</span>
+            <div className="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 shadow-2xs">
+              <Tag size={13} className="text-slate-400 shrink-0" />
               <select
                 value={selectedPhôi}
                 onChange={(e) => setSelectedPhôi(e.target.value)}
-                className="bg-transparent border-none text-xs text-slate-800 font-bold focus:outline-none cursor-pointer pr-1"
+                className="bg-transparent border-none text-xs text-slate-800 font-semibold focus:outline-none cursor-pointer pr-1"
               >
                 <option value="ALL">Tất cả Phôi ({groups.length})</option>
                 {phôiOptions.map((p) => (
@@ -914,6 +908,31 @@ export function PpcSkuRecommendationGroupView({
                   </option>
                 ))}
               </select>
+            </div>
+
+            {/* 7D / 30D Window Selector */}
+            <div className="flex items-center rounded-lg border border-slate-200 bg-slate-100 p-0.5 text-xs shadow-2xs" role="group" aria-label="Chọn kỳ dữ liệu chỉnh bid">
+              {([7, 30] as const).map((days) => {
+                const isSelected = recommendationWindowDays === days;
+                const isLoaded = loadedRecommendationWindowDays === days;
+                return (
+                  <button
+                    key={days}
+                    type="button"
+                    onClick={() => onRecommendationWindowChange(days)}
+                    disabled={isLoading || isSelected}
+                    aria-pressed={isSelected}
+                    className={`rounded px-2.5 py-1 text-xs font-bold transition-all ${
+                      isSelected
+                        ? "bg-white text-indigo-700 shadow-2xs font-extrabold cursor-default"
+                        : "text-slate-600 hover:text-slate-900 cursor-pointer"
+                    } disabled:opacity-100`}
+                    title={`Kỳ dữ liệu ${days} ngày`}
+                  >
+                    {isLoading && isSelected && !isLoaded ? "…" : `${days}D`}
+                  </button>
+                );
+              })}
             </div>
 
             {/* Reset Filter Button */}
@@ -925,131 +944,114 @@ export function PpcSkuRecommendationGroupView({
                   setSelectedPhôi("ALL");
                   setQuickFilter("ALL");
                 }}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-600 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 transition cursor-pointer shadow-2xs"
-                title="Xóa toàn bộ bộ lọc"
+                className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-semibold text-slate-500 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 transition cursor-pointer shadow-2xs"
+                title="Đặt lại bộ lọc"
               >
-                <X size={13} weight="bold" />
+                <X size={12} weight="bold" />
                 <span>Đặt lại</span>
               </button>
             )}
 
-            {/* Nút Kết Quả Auto Bid (Hộp thoại theo dõi hiệu quả chỉnh bid) */}
+            {isLoading && (
+              <div className="flex items-center gap-1 text-indigo-600 text-xs font-medium animate-pulse">
+                <CircleNotch size={13} className="animate-spin shrink-0" />
+                <span>Đang tải...</span>
+              </div>
+            )}
+          </div>
+
+          {/* Right: Aggregates & Action Button */}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 text-xs text-slate-600 font-medium bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200/90 shadow-2xs">
+              <span>
+                <strong className="text-slate-900 font-semibold">{filteredGroups.length}</strong>/{groups.length} SKU
+              </span>
+              <span className="text-slate-300">•</span>
+              <span>
+                <strong className="text-indigo-700 font-semibold">{filteredRecommendationsCount}</strong> đề xuất
+              </span>
+              <span className="text-slate-300">•</span>
+              <span>
+                Spend: <strong className="text-slate-900 font-mono font-semibold">${filteredAggregates.spend.toFixed(0)}</strong>
+              </span>
+              <span className="text-slate-300">•</span>
+              <span>
+                Sales: <strong className="text-emerald-700 font-mono font-semibold">${filteredAggregates.sales.toFixed(0)}</strong>
+              </span>
+            </div>
+
+            {/* Nút Kết Quả Auto Bid */}
             <button
               type="button"
               onClick={() => setShowOutcomesModal(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black text-white bg-blue-700 hover:bg-blue-800 border border-blue-800 transition cursor-pointer shadow-2xs"
-              title="Xem theo dõi kết quả sau mỗi lần chỉnh bid (3D, 7D, 14D, 30D)"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 border border-indigo-700 transition cursor-pointer shadow-2xs shrink-0"
+              title="Theo dõi kết quả sau chỉnh bid (3D, 7D, 14D, 30D)"
             >
-              <Target size={14} weight="bold" className="text-blue-100" />
+              <Target size={14} weight="bold" className="text-indigo-100" />
               <span>Kết quả Auto Bid</span>
             </button>
           </div>
-
-          {/* Counts & Aggregates Badge */}
-          <div className="flex items-center gap-3">
-            <div
-              className="flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 py-1 pl-2.5 pr-1 text-[11px] font-black text-indigo-700"
-              aria-label="Kỳ dữ liệu dùng để tính đề xuất chỉnh bid"
-            >
-              <span className="whitespace-nowrap">
-                Dữ liệu chỉnh bid{isLoading ? ` · Đang tải ${recommendationWindowDays}D` : ""}
-              </span>
-              <div className="flex items-center rounded-md border border-indigo-200 bg-white p-0.5" role="group" aria-label="Chọn kỳ dữ liệu chỉnh bid">
-                {([7, 30] as const).map((days) => {
-                  const isSelected = recommendationWindowDays === days;
-                  const isLoaded = loadedRecommendationWindowDays === days;
-                  return (
-                    <button
-                      key={days}
-                      type="button"
-                      onClick={() => onRecommendationWindowChange(days)}
-                      disabled={isLoading || isSelected}
-                      aria-pressed={isSelected}
-                      className={`min-w-9 rounded px-2 py-1 text-[11px] font-black transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1 ${isSelected
-                          ? `bg-indigo-600 text-white shadow-2xs ${isLoading ? "cursor-wait" : "cursor-default"}`
-                          : "text-slate-600 hover:bg-indigo-50 hover:text-indigo-700 active:scale-[0.98]"
-                        } disabled:opacity-100`}
-                      title={`Dùng dữ liệu ${days} ngày để tính đề xuất chỉnh bid`}
-                    >
-                      {isLoading && isSelected && !isLoaded ? "…" : `${days}D`}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            <div className="flex items-center gap-2 text-xs text-slate-600 font-medium bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs">
-              <span>
-                Hiển thị <strong className="text-slate-900 font-bold">{filteredGroups.length}</strong>/{groups.length} SKU
-              </span>
-              <span className="text-slate-300">•</span>
-              <span>
-                <strong className="text-indigo-700 font-bold">{filteredRecommendationsCount}</strong> đề xuất
-              </span>
-              <span className="text-slate-300">•</span>
-              <span>
-                Spend: <strong className="text-slate-900 font-mono font-bold">${filteredAggregates.spend.toFixed(0)}</strong>
-              </span>
-              <span className="text-slate-300">•</span>
-              <span>
-                Sales: <strong className="text-emerald-700 font-mono font-bold">${filteredAggregates.sales.toFixed(0)}</strong>
-              </span>
-            </div>
-          </div>
         </div>
 
-        {/* Quick Filter Chips (BỘ LỌC NHANH - TINH TẾ, GỌN GÀNG, 1 HÀNG) */}
-        <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-200/70">
-          <span className="text-[11px] font-black uppercase text-slate-400 tracking-wider flex items-center gap-1 mr-0.5">
-            <Funnel size={12} weight="bold" className="text-indigo-600" />
+        {/* Row 2: Quick Filter Chips (Gọn gàng, tối giản chú thích) */}
+        <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-100">
+          <span className="text-[11px] font-bold uppercase text-slate-400 tracking-wider flex items-center gap-1 mr-1">
+            <Funnel size={12} weight="bold" className="text-slate-500" />
             <span>Lọc:</span>
           </span>
 
-          {/* All */}
+          {/* Tất cả */}
           <button
             type="button"
             onClick={() => setQuickFilter("ALL")}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${quickFilter === "ALL"
-                ? "bg-indigo-50 text-indigo-700 border-indigo-300 ring-1 ring-indigo-200 shadow-2xs font-extrabold"
-                : "bg-slate-100/90 text-slate-700 hover:bg-slate-200/80 border-slate-200"
-              }`}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+              quickFilter === "ALL"
+                ? "bg-slate-900 text-white border-slate-900 shadow-2xs"
+                : "bg-white text-slate-700 hover:bg-slate-50 border-slate-200/80"
+            }`}
           >
             <span>Tất cả</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${quickFilter === "ALL" ? "bg-indigo-100 text-indigo-800" : "bg-white text-slate-700 shadow-2xs border border-slate-200/60"
-              }`}>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+              quickFilter === "ALL" ? "bg-slate-700 text-slate-100" : "bg-slate-100 text-slate-600"
+            }`}>
               {filterCounts.all}
             </span>
           </button>
 
-          {/* Increase */}
+          {/* Tăng Bid */}
           <button
             type="button"
             onClick={() => setQuickFilter(quickFilter === "INCREASE" ? "ALL" : "INCREASE")}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${quickFilter === "INCREASE"
-                ? "bg-emerald-100 text-emerald-900 border-emerald-400 ring-1 ring-emerald-300 shadow-2xs font-extrabold"
-                : "bg-emerald-50/70 text-emerald-800 hover:bg-emerald-100/80 border-emerald-200/80"
-              }`}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+              quickFilter === "INCREASE"
+                ? "bg-emerald-700 text-white border-emerald-700 shadow-2xs"
+                : "bg-white text-slate-700 hover:bg-emerald-50/50 hover:text-emerald-800 border-slate-200/80"
+            }`}
           >
-            <ArrowUpRight size={12} weight="bold" className="text-emerald-600" />
+            <ArrowUpRight size={13} weight="bold" className={quickFilter === "INCREASE" ? "text-white" : "text-emerald-600"} />
             <span>Tăng Bid</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${quickFilter === "INCREASE" ? "bg-emerald-200 text-emerald-950" : "bg-white text-emerald-900 shadow-2xs border border-emerald-200/60"
-              }`}>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+              quickFilter === "INCREASE" ? "bg-emerald-800 text-emerald-100" : "bg-emerald-50 text-emerald-700"
+            }`}>
               {filterCounts.increase}
             </span>
           </button>
 
-          {/* Decrease */}
+          {/* Giảm Bid */}
           <button
             type="button"
             onClick={() => setQuickFilter(quickFilter === "DECREASE" ? "ALL" : "DECREASE")}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${quickFilter === "DECREASE"
-                ? "bg-rose-100 text-rose-900 border-rose-400 ring-1 ring-rose-300 shadow-2xs font-extrabold"
-                : "bg-rose-50/70 text-rose-800 hover:bg-rose-100/80 border-rose-200/80"
-              }`}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+              quickFilter === "DECREASE"
+                ? "bg-rose-700 text-white border-rose-700 shadow-2xs"
+                : "bg-white text-slate-700 hover:bg-rose-50/50 hover:text-rose-800 border-slate-200/80"
+            }`}
           >
-            <ArrowDownRight size={12} weight="bold" className="text-rose-600" />
+            <ArrowDownRight size={13} weight="bold" className={quickFilter === "DECREASE" ? "text-white" : "text-rose-600"} />
             <span>Giảm Bid</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${quickFilter === "DECREASE" ? "bg-rose-200 text-rose-950" : "bg-white text-rose-900 shadow-2xs border border-rose-200/60"
-              }`}>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+              quickFilter === "DECREASE" ? "bg-rose-800 text-rose-100" : "bg-rose-50 text-rose-700"
+            }`}>
               {filterCounts.decrease}
             </span>
           </button>
@@ -1058,105 +1060,112 @@ export function PpcSkuRecommendationGroupView({
           <button
             type="button"
             onClick={() => setQuickFilter(quickFilter === "PAUSE" ? "ALL" : "PAUSE")}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${quickFilter === "PAUSE"
-                ? "bg-amber-100 text-amber-950 border-amber-400 ring-1 ring-amber-300 shadow-2xs font-extrabold"
-                : "bg-amber-50/70 text-amber-900 hover:bg-amber-100/80 border-amber-200/80"
-              }`}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+              quickFilter === "PAUSE"
+                ? "bg-amber-700 text-white border-amber-700 shadow-2xs"
+                : "bg-white text-slate-700 hover:bg-amber-50/50 hover:text-amber-800 border-slate-200/80"
+            }`}
           >
-            <Pause size={12} weight="bold" className="text-amber-600" />
+            <Pause size={13} weight="bold" className={quickFilter === "PAUSE" ? "text-white" : "text-amber-600"} />
             <span>Pause</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${quickFilter === "PAUSE" ? "bg-amber-200 text-amber-950" : "bg-white text-amber-950 shadow-2xs border border-amber-200/60"
-              }`}>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+              quickFilter === "PAUSE" ? "bg-amber-800 text-amber-100" : "bg-amber-50 text-amber-700"
+            }`}>
               {filterCounts.pause}
             </span>
           </button>
 
-          {/* Bleeding: ACoS > BE ACoS */}
+          {/* Lỗ ACoS */}
           <button
             type="button"
             onClick={() => setQuickFilter(quickFilter === "BLEEDING" ? "ALL" : "BLEEDING")}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${quickFilter === "BLEEDING"
-                ? "bg-red-100 text-red-950 border-red-400 ring-1 ring-red-300 shadow-2xs font-extrabold"
-                : "bg-red-50/70 text-red-800 hover:bg-red-100/80 border-red-200/80"
-              }`}
-            title="Các SKU có ACoS vượt ngưỡng hòa vốn (đang chạy lỗ)"
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+              quickFilter === "BLEEDING"
+                ? "bg-red-700 text-white border-red-700 shadow-2xs"
+                : "bg-white text-slate-700 hover:bg-red-50/50 hover:text-red-800 border-slate-200/80"
+            }`}
           >
-            <WarningCircle size={12} weight="bold" className="text-red-600" />
-            <span>Lỗ (ACoS cao)</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${quickFilter === "BLEEDING" ? "bg-red-200 text-red-950" : "bg-white text-red-950 shadow-2xs border border-red-200/60"
-              }`}>
+            <WarningCircle size={13} weight="bold" className={quickFilter === "BLEEDING" ? "text-white" : "text-red-600"} />
+            <span>Lỗ ACoS</span>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+              quickFilter === "BLEEDING" ? "bg-red-800 text-red-100" : "bg-red-50 text-red-700"
+            }`}>
               {filterCounts.bleeding}
             </span>
           </button>
 
-          {/* Profitable: ACoS <= BE ACoS */}
+          {/* ACoS Tốt */}
           <button
             type="button"
             onClick={() => setQuickFilter(quickFilter === "PROFITABLE" ? "ALL" : "PROFITABLE")}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${quickFilter === "PROFITABLE"
-                ? "bg-teal-100 text-teal-950 border-teal-400 ring-1 ring-teal-300 shadow-2xs font-extrabold"
-                : "bg-teal-50/70 text-teal-800 hover:bg-teal-100/80 border-teal-200/80"
-              }`}
-            title="Các SKU có ACoS thấp hơn hoặc bằng mức hòa vốn (đang có lãi)"
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+              quickFilter === "PROFITABLE"
+                ? "bg-teal-700 text-white border-teal-700 shadow-2xs"
+                : "bg-white text-slate-700 hover:bg-teal-50/50 hover:text-teal-800 border-slate-200/80"
+            }`}
           >
-            <CheckCircle size={12} weight="bold" className="text-teal-600" />
+            <CheckCircle size={13} weight="bold" className={quickFilter === "PROFITABLE" ? "text-white" : "text-teal-600"} />
             <span>ACoS Tốt</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${quickFilter === "PROFITABLE" ? "bg-teal-200 text-teal-950" : "bg-white text-teal-950 shadow-2xs border border-teal-200/60"
-              }`}>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+              quickFilter === "PROFITABLE" ? "bg-teal-800 text-teal-100" : "bg-teal-50 text-teal-700"
+            }`}>
               {filterCounts.profitable}
             </span>
           </button>
 
-          {/* Zero Spend: Chưa cắn tiền */}
+          {/* Chưa cắn tiền */}
           <button
             type="button"
             onClick={() => setQuickFilter(quickFilter === "ZERO_SPEND" ? "ALL" : "ZERO_SPEND")}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${quickFilter === "ZERO_SPEND"
-                ? "bg-sky-100 text-sky-950 border-sky-400 ring-1 ring-sky-300 shadow-2xs font-extrabold"
-                : "bg-sky-50/70 text-sky-800 hover:bg-sky-100/80 border-sky-200/80"
-              }`}
-            title="Các SKU chưa phát sinh chi phí quảng cáo (Spend = $0)"
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+              quickFilter === "ZERO_SPEND"
+                ? "bg-sky-700 text-white border-sky-700 shadow-2xs"
+                : "bg-white text-slate-700 hover:bg-sky-50/50 hover:text-sky-800 border-slate-200/80"
+            }`}
           >
-            <Clock size={12} weight="bold" className="text-sky-600" />
+            <Clock size={13} weight="bold" className={quickFilter === "ZERO_SPEND" ? "text-white" : "text-sky-600"} />
             <span>Chưa cắn tiền</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${quickFilter === "ZERO_SPEND" ? "bg-sky-200 text-sky-950" : "bg-white text-sky-950 shadow-2xs border border-sky-200/60"
-              }`}>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+              quickFilter === "ZERO_SPEND" ? "bg-sky-800 text-sky-100" : "bg-sky-50 text-sky-700"
+            }`}>
               {filterCounts.zeroSpend}
             </span>
           </button>
 
-          {/* Zero Sales: Tiêu tiền chưa ra đơn */}
+          {/* Chưa ra đơn */}
           <button
             type="button"
             onClick={() => setQuickFilter(quickFilter === "ZERO_SALES" ? "ALL" : "ZERO_SALES")}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${quickFilter === "ZERO_SALES"
-                ? "bg-purple-100 text-purple-950 border-purple-400 ring-1 ring-purple-300 shadow-2xs font-extrabold"
-                : "bg-purple-50/70 text-purple-800 hover:bg-purple-100/80 border-purple-200/80"
-              }`}
-            title="Các SKU đã tiêu tiền nhưng chưa ra đơn hàng nào"
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+              quickFilter === "ZERO_SALES"
+                ? "bg-violet-700 text-white border-violet-700 shadow-2xs"
+                : "bg-white text-slate-700 hover:bg-violet-50/50 hover:text-violet-800 border-slate-200/80"
+            }`}
           >
-            <Fire size={12} weight="bold" className="text-purple-600" />
+            <Fire size={13} weight="bold" className={quickFilter === "ZERO_SALES" ? "text-white" : "text-violet-600"} />
             <span>Chưa ra đơn</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${quickFilter === "ZERO_SALES" ? "bg-purple-200 text-purple-950" : "bg-white text-purple-950 shadow-2xs border border-purple-200/60"
-              }`}>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+              quickFilter === "ZERO_SALES" ? "bg-violet-800 text-violet-100" : "bg-violet-50 text-violet-700"
+            }`}>
               {filterCounts.zeroSales}
             </span>
           </button>
 
-          {/* Prefix Error: Lỗi Prefix */}
+          {/* Lỗi Prefix */}
           <button
             type="button"
             onClick={() => setQuickFilter(quickFilter === "PREFIX_ERROR" ? "ALL" : "PREFIX_ERROR")}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer border ${quickFilter === "PREFIX_ERROR"
-                ? "bg-rose-100 text-rose-950 border-rose-400 ring-1 ring-rose-300 shadow-2xs font-extrabold"
-                : "bg-rose-50/70 text-rose-800 hover:bg-rose-100/80 border-rose-200/80"
-              }`}
-            title="Các SKU chưa nhận diện được phôi (Lỗi Prefix) cần cấu hình tiền tố SKU"
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+              quickFilter === "PREFIX_ERROR"
+                ? "bg-rose-700 text-white border-rose-700 shadow-2xs"
+                : "bg-white text-slate-700 hover:bg-rose-50/50 hover:text-rose-800 border-slate-200/80"
+            }`}
           >
-            <WarningCircle size={12} weight="bold" className="text-rose-600" />
+            <WarningCircle size={13} weight="bold" className={quickFilter === "PREFIX_ERROR" ? "text-white" : "text-rose-600"} />
             <span>Lỗi Prefix</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${quickFilter === "PREFIX_ERROR" ? "bg-rose-200 text-rose-950" : "bg-white text-rose-950 shadow-2xs border border-rose-200/60"
-              }`}>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+              quickFilter === "PREFIX_ERROR" ? "bg-rose-800 text-rose-100" : "bg-rose-50 text-rose-700"
+            }`}>
               {filterCounts.prefixError}
             </span>
           </button>

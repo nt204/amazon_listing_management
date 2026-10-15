@@ -179,23 +179,49 @@ export function getWindowEvaluation(
 
   if (!windowDetail || !hasObserved) {
     return {
-      label: "Chưa có",
-      color: "text-slate-500 bg-slate-50 border-slate-200",
-      tip: `Chưa có báo cáo đối soát sau chỉnh đủ ${windowDays} ngày`,
-      isPending: false,
+      label: "Đang chờ",
+      color: "text-sky-700 bg-sky-50 border-sky-200",
+      tip: `Đang chờ báo cáo đối soát đủ ${windowDays} ngày`,
+      isPending: true,
     };
   }
 
-  // 4. Kiểm tra thiếu dữ liệu (inconclusive / low traffic)
+  // Dữ liệu cũ có thể mang nhãn INCONCLUSIVE chỉ vì ít click. Nếu đã có đủ
+  // metrics và Reward thì vẫn kết luận; lượng mẫu chỉ ảnh hưởng độ tin cậy.
   if (
     windowDetail.status === "INSUFFICIENT_DATA" ||
     windowDetail.evidence_quality?.validity === "INCONCLUSIVE" ||
     windowDetail.outcome_label === "INCONCLUSIVE"
   ) {
+    const reward = windowDetail.comparison?.reward_usd;
+    if (typeof reward === "number") {
+      if (reward > 0) {
+        return {
+          label: "Win",
+          color: "text-emerald-700 bg-emerald-50 border-emerald-300 font-bold",
+          tip: `Reward dương sau ${windowDays}D · độ tin cậy thấp`,
+          isPending: false,
+        };
+      }
+      if (reward < 0) {
+        return {
+          label: "Loss",
+          color: "text-rose-700 bg-rose-50 border-rose-300 font-bold",
+          tip: `Reward âm sau ${windowDays}D · độ tin cậy thấp`,
+          isPending: false,
+        };
+      }
+      return {
+        label: "Bình thường",
+        color: "text-slate-700 bg-slate-100 border-slate-200",
+        tip: `Reward không đổi sau ${windowDays}D · độ tin cậy thấp`,
+        isPending: false,
+      };
+    }
     return {
       label: "Chưa đủ dữ liệu",
       color: "text-amber-700 bg-amber-50 border-amber-200",
-      tip: `Số lượng click hoặc đơn chưa đủ ngưỡng thống kê để kết luận ${windowDays}D`,
+      tip: `Báo cáo ${windowDays}D chưa đồng bộ đủ ngày`,
       isPending: false,
     };
   }
@@ -423,15 +449,6 @@ export function PpcAutoBidResultsModal({
     }
     return counts;
   }, [allLatestTargetItems, getItemStage]);
-
-  // Số lượng cảnh báo 3D
-  const warningCount = useMemo(() => {
-    return allLatestTargetItems.filter((item) => {
-      const days = getDaysElapsed(item);
-      const ev3 = getWindowEvaluation(item.d3, 3, days);
-      return ev3.label === "Loss";
-    }).length;
-  }, [allLatestTargetItems, getDaysElapsed, getWindowEvaluation]);
 
   // Lọc items theo cả Chặng (Stage) và Kết quả (Status)
   const visibleTargetItems = useMemo(() => {
@@ -706,6 +723,9 @@ export function PpcAutoBidResultsModal({
                 <span className="text-xs font-bold text-slate-500">
                   ({summary?.total || 0} lần chỉnh · {allLatestTargetItems.length} targets)
                 </span>
+                <span className={`rounded-md px-2 py-0.5 text-xs font-black ${(summary?.totalRewardUsd || 0) >= 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+                  Reward {formatCurrencyUsd(summary?.totalRewardUsd || 0, true)}
+                </span>
               </div>
             </div>
           </div>
@@ -728,88 +748,6 @@ export function PpcAutoBidResultsModal({
             >
               <X size={20} weight="bold" />
             </button>
-          </div>
-        </div>
-
-        {/* SUMMARY CARDS CHIA THEO CHẶNG (BẤM ĐỂ LỌC NGAY) */}
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-2.5 px-6 py-2.5 border-b border-slate-100 bg-slate-50/50">
-          <button
-            type="button"
-            onClick={() => setStageFilter("ALL")}
-            className={`text-left rounded-xl border px-3 py-2 transition cursor-pointer ${
-              stageFilter === "ALL" ? "border-indigo-500 bg-indigo-50/40 ring-1 ring-indigo-500" : "border-slate-200 bg-white hover:border-slate-300"
-            }`}
-          >
-            <span className="text-[11px] font-bold text-slate-500 block">Tổng Lần Chỉnh</span>
-            <div className="flex items-baseline gap-1 mt-0.5">
-              <span className="text-base font-black text-slate-900">{summary?.total || items.length}</span>
-              <span className="text-[10px] text-slate-400 font-semibold">lần</span>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setStageFilter("3D")}
-            className={`text-left rounded-xl border px-3 py-2 transition cursor-pointer ${
-              stageFilter === "3D" ? "border-amber-500 bg-amber-50/50 ring-1 ring-amber-500" : "border-slate-200 bg-white hover:border-slate-300"
-            }`}
-          >
-            <span className="text-[11px] font-bold text-slate-600 block">Chặng 3D (0-3 ngày)</span>
-            <div className="flex items-baseline gap-1 mt-0.5">
-              <span className="text-base font-black text-slate-900">{stageCounts["3D"]}</span>
-              <span className="text-[10px] text-slate-400 font-semibold">targets</span>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setStageFilter("7D")}
-            className={`text-left rounded-xl border px-3 py-2 transition cursor-pointer ${
-              stageFilter === "7D" ? "border-sky-500 bg-sky-50/50 ring-1 ring-sky-500" : "border-slate-200 bg-white hover:border-slate-300"
-            }`}
-          >
-            <span className="text-[11px] font-bold text-slate-600 block">Chặng 7D (4-7 ngày)</span>
-            <div className="flex items-baseline gap-1 mt-0.5">
-              <span className="text-base font-black text-slate-900">{stageCounts["7D"]}</span>
-              <span className="text-[10px] text-slate-400 font-semibold">targets</span>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setStageFilter("14D")}
-            className={`text-left rounded-xl border px-3 py-2 transition cursor-pointer ${
-              stageFilter === "14D" ? "border-violet-500 bg-violet-50/50 ring-1 ring-violet-500" : "border-slate-200 bg-white hover:border-slate-300"
-            }`}
-          >
-            <span className="text-[11px] font-bold text-slate-600 block">Chặng 14D (8-14 ngày)</span>
-            <div className="flex items-baseline gap-1 mt-0.5">
-              <span className="text-base font-black text-slate-900">{stageCounts["14D"]}</span>
-              <span className="text-[10px] text-slate-400 font-semibold">targets</span>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setStageFilter("30D")}
-            className={`text-left rounded-xl border px-3 py-2 transition cursor-pointer ${
-              stageFilter === "30D" ? "border-emerald-500 bg-emerald-50/50 ring-1 ring-emerald-500" : "border-slate-200 bg-white hover:border-slate-300"
-            }`}
-          >
-            <span className="text-[11px] font-bold text-slate-600 block">Chặng 30D & Đã Xong</span>
-            <div className="flex items-baseline gap-1 mt-0.5">
-              <span className="text-base font-black text-slate-900">{stageCounts["30D"] + stageCounts.COMPLETED}</span>
-              <span className="text-[10px] text-slate-400 font-semibold">targets</span>
-            </div>
-          </button>
-
-          <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
-            <span className="text-[11px] font-bold text-slate-600 block">Net Profit</span>
-            <div className="flex items-baseline gap-1 mt-0.5">
-              <span className={`text-base font-black ${(summary?.totalRewardUsd || 0) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
-                {formatCurrencyUsd(summary?.totalRewardUsd || 0, true)}
-              </span>
-            </div>
           </div>
         </div>
 
@@ -892,17 +830,6 @@ export function PpcAutoBidResultsModal({
               >
                 Cần sửa ({summary?.negative || 0})
               </button>
-              {warningCount > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setStatusFilter("WARNING_3D")}
-                  className={`rounded px-2 py-0.5 text-[11px] font-bold transition cursor-pointer ${
-                    statusFilter === "WARNING_3D" ? "bg-amber-500 text-white" : "text-amber-800 hover:bg-amber-50"
-                  }`}
-                >
-                  Cảnh báo ({warningCount})
-                </button>
-              )}
             </div>
           </div>
 
@@ -1123,8 +1050,11 @@ export function ActionDecisionSupportModal({
   const hasBaseline = baseline.spend !== undefined || baseline.clicks !== undefined || baseline.orders !== undefined;
   const hasObserved = observed.spend !== undefined || observed.clicks !== undefined || observed.orders !== undefined;
 
-  // Margin tính contribution: ưu tiên từ SKU/context, mặc định 30% như đề xuất
-  const marginPct = Number((baseline as any)?.margin || (action as any)?.context?.economics?.break_even_acos || 0.30);
+  // BE ACoS chính là biên đóng góp trước quảng cáo. Evaluator lưu giá trị
+  // đã chuẩn hóa (0.3 = 30%) cùng nguồn lấy từ economics của SKU.
+  const rawMargin = Number((baseline as any)?.margin || (action as any)?.context?.economics?.break_even_acos || 0.35);
+  const marginPct = rawMargin > 1 ? rawMargin / 100 : rawMargin;
+  const marginSource = String((baseline as any)?.margin_source || "LEGACY_FALLBACK");
 
   const beforeSpend = hasBaseline ? Number(baseline.spend || 0) * baselineScale : null;
   const beforeClicks = hasBaseline ? Math.round(Number(baseline.clicks || 0) * baselineScale) : null;
@@ -1168,6 +1098,12 @@ export function ActionDecisionSupportModal({
     if (detail.outcome_label === "NEGATIVE") return { label: "Loss", color: "text-rose-700 bg-rose-50 border-rose-300" };
     if (detail.outcome_label === "NEUTRAL") return { label: "Bình thường", color: "text-slate-700 bg-slate-100 border-slate-200" };
     if (detail.outcome_label === "INCONCLUSIVE" || detail.status === "INSUFFICIENT_DATA") {
+      const reward = detail.comparison?.reward_usd;
+      if (typeof reward === "number") {
+        if (reward > 0) return { label: "Win", color: "text-emerald-700 bg-emerald-50 border-emerald-300" };
+        if (reward < 0) return { label: "Loss", color: "text-rose-700 bg-rose-50 border-rose-300" };
+        return { label: "Bình thường", color: "text-slate-700 bg-slate-100 border-slate-200" };
+      }
       return { label: "Chưa đủ dữ liệu", color: "text-amber-700 bg-amber-50 border-amber-200" };
     }
     return { label: "Đang chờ", color: "text-sky-700 bg-sky-50 border-sky-200" };
@@ -1189,8 +1125,8 @@ export function ActionDecisionSupportModal({
   const rows = [
     {
       label: "Spend",
-      before: beforeSpend == null ? "—" : `$${beforeSpend.toFixed(2)}`,
-      after: afterSpend == null ? "—" : `$${afterSpend.toFixed(2)}`,
+      before: formatCurrencyUsd(beforeSpend, false, 2),
+      after: formatCurrencyUsd(afterSpend, false, 2),
       delta: percentChange(beforeSpend, afterSpend),
       isAcosOrContrib: false,
       lowerIsBetter: true,
@@ -1216,8 +1152,8 @@ export function ActionDecisionSupportModal({
     },
     {
       label: "Sales",
-      before: beforeSales == null ? "—" : `$${beforeSales.toFixed(2)}`,
-      after: afterSales == null ? "—" : `$${afterSales.toFixed(2)}`,
+      before: formatCurrencyUsd(beforeSales, false, 2),
+      after: formatCurrencyUsd(afterSales, false, 2),
       delta: percentChange(beforeSales, afterSales),
       isAcosOrContrib: false,
       lowerIsBetter: false,
@@ -1234,8 +1170,8 @@ export function ActionDecisionSupportModal({
     },
     {
       label: "Contribution",
-      before: beforeContribution == null ? "—" : `$${beforeContribution.toFixed(2)}`,
-      after: afterContribution == null ? "—" : `$${afterContribution.toFixed(2)}`,
+      before: formatCurrencyUsd(beforeContribution, false, 2),
+      after: formatCurrencyUsd(afterContribution, false, 2),
       delta: beforeContribution != null && afterContribution != null ? afterContribution - beforeContribution : null,
       isAcosOrContrib: true,
       isUsdDelta: true,
@@ -1345,8 +1281,9 @@ export function ActionDecisionSupportModal({
                 </span>
               )}
             </span>
-            <span className="text-slate-400">
-              Contribution Margin: <b>{Math.round(marginPct * 100)}%</b>
+            <span className={marginSource === "LEGACY_FALLBACK" ? "text-amber-600" : "text-slate-500"}>
+              BE ACoS: <b>{Math.round(marginPct * 100)}%</b>
+              {marginSource === "LEGACY_FALLBACK" ? " (mặc định)" : ""}
             </span>
           </div>
 
@@ -1371,7 +1308,7 @@ export function ActionDecisionSupportModal({
                     const isZero = row.delta === 0;
 
                     if (row.isUsdDelta) {
-                      deltaText = `${isPositive ? "+" : ""}$${Math.abs(row.delta).toFixed(2)}`;
+                      deltaText = formatCurrencyUsd(row.delta, true, 2);
                     } else if (row.isAcosOrContrib) {
                       deltaText = `${isPositive ? "+" : "−"}${Math.abs(row.delta).toFixed(1)}${row.suffix}`;
                     } else {
