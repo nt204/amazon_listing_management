@@ -329,7 +329,16 @@ function findExistingValidReportFile(dir: string, prefix: string, targetDateStr:
     if (f.startsWith(prefix) && f.includes(targetDateStr) && !f.endsWith(".part") && !f.endsWith(".crdownload")) {
       const full = path.join(dir, f);
       try {
-        if (fs.statSync(full).size > 0) return full;
+        if (fs.statSync(full).size > 0) {
+          // Bắt buộc File 05 phải chứa header chuẩn của Portfolios, loại bỏ hoàn toàn file cũ cào nhầm Campaign Manager
+          if (prefix.startsWith("05_Campaigns")) {
+            const head = fs.readFileSync(full, "utf-8").slice(0, 300);
+            if (head.includes("Campaign name") && !head.includes("Portfolio")) {
+              return null;
+            }
+          }
+          return full;
+        }
       } catch {}
     }
   }
