@@ -154,7 +154,7 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
       storeName,
       year: propYear,
       search: propSearch = "",
-      tableZoom = 100,
+      tableZoom = 90,
       onYearChange,
       onSyncingChange,
       notify,

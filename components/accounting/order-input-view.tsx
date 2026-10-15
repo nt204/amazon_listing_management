@@ -137,7 +137,7 @@ export function OrderInputView() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [dateSort, setDateSort] = useState<"asc" | "desc">("desc");
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
-  const [tableZoom, setTableZoom] = useState(100);
+  const [tableZoom, setTableZoom] = useState(90);
 
   // Toast
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);

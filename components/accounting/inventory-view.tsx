@@ -2024,8 +2024,8 @@ function InventoryViewInner() {
   const [selectedSkuDetail, setSelectedSkuDetail] = useState<SkuMasterItem | null>(null);
   const [selectedShipmentDetail, setSelectedShipmentDetail] = useState<InboundShipmentItem | null>(null);
 
-  // Dynamic table zoom (+/- scale controls)
-  const [tableZoom, setTableZoom] = useState<number>(100);
+  // Dynamic table zoom (+/- scale controls) - Default 90% as requested by user
+  const [tableZoom, setTableZoom] = useState<number>(90);
 
   // Inline cell editing
   const [inlineEditing, setInlineEditing] = useState<{

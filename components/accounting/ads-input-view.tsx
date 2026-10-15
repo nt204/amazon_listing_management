@@ -86,7 +86,7 @@ export function AdsInputView({
   onStoreChange,
   search: externalSearch,
   setSearch: setExternalSearch,
-  tableZoom = 100,
+  tableZoom = 90,
   showImportModal: externalShowImportModal,
   setShowImportModal: setExternalShowImportModal,
   showColumnModal: externalShowColumnModal,
