@@ -94,7 +94,20 @@ process.stdout.write(target.toISOString().slice(0, 10));
 fi
 
 # 3. Thực thi pipeline tải file kế toán bằng Playwright
-"$TSX_BIN" "$SCRIPT_DIR/accounting_crawler.ts" "$@"
+CRAWLER_ARGS=()
+HAS_DATE=false
+for arg in "$@"; do
+  case "$arg" in
+    --date=*) HAS_DATE=true ;;
+  esac
+  CRAWLER_ARGS+=("$arg")
+done
+if [ "$HAS_DATE" = false ]; then
+  CRAWLER_ARGS+=("--date=$ACCOUNTING_RUN_DATE")
+fi
+
+echo "[Pipeline] Khởi chạy crawler cho ngày chốt sổ: $ACCOUNTING_RUN_DATE"
+"$TSX_BIN" "$SCRIPT_DIR/accounting_crawler.ts" "${CRAWLER_ARGS[@]}"
 
 # 4. Tự động đồng bộ file kế toán lên Cloudflare R2 để hiển thị trên Web Dashboard
 if [ -f "$SCRIPT_DIR/upload_accounting_r2.ts" ]; then
