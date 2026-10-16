@@ -29,8 +29,17 @@ cleanup() {
   if [ -n "$CAFFEINATE_PID" ]; then
     kill "$CAFFEINATE_PID" 2>/dev/null || true
   fi
+  # Giải phóng RAM hệ thống sau khi hoàn tất
+  if command -v sudo >/dev/null 2>&1; then
+    sudo -n purge 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT INT TERM
+
+# Giải phóng RAM trước khi khởi động phiên tải mới
+if command -v sudo >/dev/null 2>&1; then
+  sudo -n purge 2>/dev/null && echo "[RAM GUARD] Đã purge giải phóng RAM trước khi chạy." || true
+fi
 
 # 2. PATH & Node environment
 export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:$PATH"
