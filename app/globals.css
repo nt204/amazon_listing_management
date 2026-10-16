@@ -53,7 +53,9 @@ body {
 .font-accounting-system td,
 .font-accounting-system input,
 .font-accounting-system select,
-.font-accounting-system button {
+.font-accounting-system textarea,
+.font-accounting-system button,
+.font-accounting-system .font-sans {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", "Noto Sans", "Liberation Sans", Arial, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji" !important;
