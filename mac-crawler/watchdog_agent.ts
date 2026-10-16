@@ -679,11 +679,12 @@ export function startTelegramListener(): void {
   const { token, baseUrl, chatId } = getTelegramConfig();
 
   const pollUpdates = async () => {
+    let nextDelay = 4000;
     try {
       const url = `${baseUrl}/bot${token}/getUpdates?offset=${lastUpdateId + 1}&timeout=5`;
       const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
       if (!response.ok) {
-        setTimeout(pollUpdates, 5000);
+        nextDelay = 10000;
         return;
       }
 
@@ -761,9 +762,10 @@ export function startTelegramListener(): void {
         }
       }
     } catch {
-      // Giữ polling ổn định
+      // Giữ polling ổn định khi lỗi mạng
+      nextDelay = 10000;
     } finally {
-      setTimeout(pollUpdates, 4000);
+      setTimeout(pollUpdates, nextDelay);
     }
   };
 

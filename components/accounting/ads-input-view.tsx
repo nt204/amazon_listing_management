@@ -25,6 +25,7 @@ import {
   DEFAULT_ADS_INPUT_COLUMNS,
   ColumnHeaderCell,
   ColumnManagerModal,
+  createTextWidthMeasurer,
 } from "./column-manager-modal";
 
 export const ADS_COLUMNS_STORAGE_KEY = "acc_ads_input_columns_global";
@@ -241,6 +242,45 @@ export function AdsInputView({
     return "sku";
   });
 
+  // Đồng bộ cấu hình cột Ads khi chuyển Store
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(ADS_COLUMNS_STORAGE_KEY);
+      if (saved) {
+        const parsed: ColumnConfig[] = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const defaultMap = new Map(DEFAULT_ADS_INPUT_COLUMNS.map((c) => [c.id, c]));
+          const merged: ColumnConfig[] = [];
+          const seen = new Set<string>();
+
+          for (const col of parsed) {
+            const def = defaultMap.get(col.id);
+            if (def) {
+              merged.push({
+                ...def,
+                ...col,
+                width: col.width ?? def.width,
+                label: col.label || def.label,
+              });
+              seen.add(col.id);
+            }
+          }
+          for (const def of DEFAULT_ADS_INPUT_COLUMNS) {
+            if (!seen.has(def.id)) merged.push(def);
+          }
+          setColumns(merged);
+        }
+      } else {
+        setColumns(DEFAULT_ADS_INPUT_COLUMNS);
+      }
+
+      const savedFrozen = localStorage.getItem(ADS_FROZEN_STORAGE_KEY);
+      if (savedFrozen) setFrozenThrough(savedFrozen);
+    } catch (err) {
+      console.warn("Failed to reload ads columns on store change:", err);
+    }
+  }, [selectedStoreId]);
+
   // Debounce search input
   useEffect(() => {
     const handler = setTimeout(() => {
@@ -418,13 +458,9 @@ export function AdsInputView({
   // Auto-fit calculations
   const calculateAutoFitWidth = useCallback(
     (colId: string, label: string): number => {
-      if (colId === "stt") return 52;
-      if (colId === "date") return 95;
-      if (colId === "tuan" || colId === "thang" || colId === "quy") return 75;
-
-      let maxContentChars = 0;
-      const sample = ads.slice(0, 150);
-      for (const item of sample) {
+      const measureText = createTextWidthMeasurer();
+      let maxContentWidth = 0;
+      for (const item of ads) {
         const val = (item as any)[colId];
         if (val != null) {
           let str = "";
@@ -433,75 +469,18 @@ export function AdsInputView({
           } else {
             str = String(val).trim();
           }
-          if (str.length > maxContentChars) {
-            maxContentChars = str.length;
-          }
+          maxContentWidth = Math.max(maxContentWidth, measureText(str));
         }
       }
 
-      const isMono = [
-        "portfolio",
-        "sku",
-        "date",
-        "spend",
-        "sales",
-        "budget",
-        "thue_10",
-        "cpc",
-        "acos",
-        "roas",
-        "clicks",
-        "orders",
-        "impressions",
-      ].includes(colId);
-      const charWidth = isMono ? 7.6 : 7.2;
-      const contentWidth =
-        maxContentChars > 0 ? Math.round(maxContentChars * charWidth + 24) : 0;
+      const contentWidth = maxContentWidth > 0 ? Math.ceil(maxContentWidth + 30) : 0;
 
       const labelWords = (label || colId).split(/[-_ ]+/).filter(Boolean);
       const longestWordLength =
         labelWords.length > 0 ? Math.max(...labelWords.map((w) => w.length)) : 5;
       const headerWidth = Math.round(longestWordLength * 8.2 + 26);
 
-      let targetWidth = Math.max(contentWidth, headerWidth);
-
-      const caps: Record<string, number> = {
-        stt: 52,
-        date: 95,
-        portfolio: 280,
-        sku: 140,
-        status: 120,
-        budget_type: 110,
-        budget: 95,
-        budget_start: 100,
-        budget_end: 100,
-        campaign_count: 110,
-        impressions: 100,
-        clicks: 80,
-        ctr: 80,
-        spend: 95,
-        cpc: 85,
-        orders: 80,
-        sales: 95,
-        acos: 80,
-        roas: 80,
-        ntb_orders: 95,
-        pct_orders_ntb: 105,
-        ntb_sales: 105,
-        pct_sales_ntb: 105,
-        viewable_impressions: 125,
-        vcpm: 90,
-        loai: 80,
-        mkt_pic: 100,
-        tuan: 75,
-        thang: 75,
-        quy: 70,
-        thue_10: 95,
-        trang_thai: 110,
-      };
-
-      const maxCap = caps[colId] || 160;
-      targetWidth = Math.min(targetWidth, maxCap);
+      const targetWidth = Math.max(contentWidth, headerWidth);
 
       return Math.max(54, targetWidth);
     },

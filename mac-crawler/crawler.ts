@@ -3,6 +3,7 @@ import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import ExcelJS from "exceljs";
 import {
@@ -706,11 +707,127 @@ async function detectActualBulkWorkbookAdType(filePath: string): Promise<"SP" | 
   return null;
 }
 
+function base32Decode(base32: string): Buffer {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  const clean = base32.replace(/[\s=-]/g, "").toUpperCase();
+  let bits = "";
+  for (let i = 0; i < clean.length; i++) {
+    const val = alphabet.indexOf(clean[i]);
+    if (val === -1) continue;
+    bits += val.toString(2).padStart(5, "0");
+  }
+  const bytes: number[] = [];
+  for (let i = 0; i + 8 <= bits.length; i += 8) {
+    bytes.push(parseInt(bits.substr(i, 8), 2));
+  }
+  return Buffer.from(bytes);
+}
+
+function generateTOTP(secret: string, timeStep = 30): string {
+  const key = base32Decode(secret);
+  const epoch = Math.floor(Date.now() / 1000);
+  const time = Math.floor(epoch / timeStep);
+  const timeBuffer = Buffer.alloc(8);
+  timeBuffer.writeBigInt64BE(BigInt(time));
+  const hmac = crypto.createHmac("sha1", key).update(timeBuffer).digest();
+  const offset = hmac[hmac.length - 1] & 0x0f;
+  const binary =
+    ((hmac[offset] & 0x7f) << 24) |
+    ((hmac[offset + 1] & 0xff) << 16) |
+    ((hmac[offset + 2] & 0xff) << 8) |
+    (hmac[offset + 3] & 0xff);
+  const otp = binary % 1000000;
+  return otp.toString().padStart(6, "0");
+}
+
+export async function ensureAmazonSession(page: Page, storeName: string): Promise<void> {
+  const currentUrl = page.url();
+  if (!currentUrl.includes("/signin") && !currentUrl.includes("/ap/signin")) {
+    return;
+  }
+
+  // Tự động điền cho BOZSPACER theo thông tin xác thực được cấp
+  if (storeName.toUpperCase() === "BOZSPACER") {
+    console.log(`[BOZSPACER] 🔐 Phát hiện trang đăng nhập Amazon (${currentUrl}). Tiến hành tự động điền mật khẩu...`);
+
+    const email = process.env.BOZSPACER_AMAZON_EMAIL || "jennie662quynhnhunce@gmail.com";
+    const password = process.env.BOZSPACER_AMAZON_PASSWORD || "";
+    const secret = process.env.BOZSPACER_AMAZON_2FA_SECRET || "";
+
+    if (!password) {
+      throw new Error(`[BOZSPACER] Chưa cấu hình BOZSPACER_AMAZON_PASSWORD trong config.env.`);
+    }
+
+    // Kiểm tra ô email nếu chưa chọn sẵn
+    const emailField = await page.$("#ap_email");
+    if (emailField && (await emailField.isVisible())) {
+      console.log(`[BOZSPACER] Điền email: ${email}...`);
+      await emailField.fill(email);
+      const continueBtn = await page.$("#continue");
+      if (continueBtn) await continueBtn.click();
+      await page.waitForTimeout(2000);
+    }
+
+    // Kiểm tra ô mật khẩu
+    const pwdField = await page.waitForSelector("#ap_password", { timeout: 10000 }).catch(() => null);
+    if (pwdField) {
+      console.log(`[BOZSPACER] Điền mật khẩu cho Bozspacer...`);
+      await pwdField.fill(password);
+      const rememberCheckbox = await page.$('input[name="rememberMe"]');
+      if (rememberCheckbox) await rememberCheckbox.check().catch(() => {});
+      const submitBtn = await page.$("#signInSubmit");
+      if (submitBtn) {
+        console.log(`[BOZSPACER] Click Đăng nhập...`);
+        await Promise.all([
+          page.waitForNavigation({ timeout: 25000 }).catch(() => null),
+          submitBtn.click(),
+        ]);
+      }
+    }
+
+    await page.waitForTimeout(3000);
+
+    // Kiểm tra màn hình 2FA OTP
+    const otpField = await page.waitForSelector("#auth-mfa-otpcode", { timeout: 10000 }).catch(() => null);
+    if (otpField) {
+      if (!secret) {
+        throw new Error(`[BOZSPACER] Yêu cầu OTP 2FA nhưng chưa cấu hình BOZSPACER_AMAZON_2FA_SECRET trong config.env.`);
+      }
+      console.log(`[BOZSPACER] 🔑 Phát hiện màn hình Two-Step Verification OTP. Đang tự động sinh mã TOTP...`);
+      const otp = generateTOTP(secret);
+      console.log(`[BOZSPACER] Mã OTP tạo được: ${otp}. Đang submit...`);
+      await otpField.fill(otp);
+
+      const mfaRemember = await page.$("#auth-mfa-remember-device");
+      if (mfaRemember) await mfaRemember.check().catch(() => {});
+
+      const mfaSubmit = await page.$("#auth-signin-button");
+      if (mfaSubmit) {
+        await Promise.all([
+          page.waitForNavigation({ timeout: 25000 }).catch(() => null),
+          mfaSubmit.click(),
+        ]);
+      }
+    }
+
+    await page.waitForTimeout(4000);
+    const afterUrl = page.url();
+    if (afterUrl.includes("/signin") || afterUrl.includes("/ap/signin")) {
+      throw new Error(`[BOZSPACER] Đăng nhập tự động không thành công. URL hiện tại: ${afterUrl}`);
+    }
+    console.log(`[BOZSPACER] ✅ Đăng nhập thành công! URL hiện tại: ${afterUrl}`);
+    return;
+  }
+
+  throw new Error(`Profile AdsPower chưa đăng nhập Amazon Seller (URL: ${currentUrl}). Vui lòng đăng nhập trước.`);
+}
+
 async function triggerBulkExport(
   bulkPage: Page,
   entityParam: string,
   adType: "SP" | "SB",
   days: 3 | 7 | 30,
+  storeName?: string,
 ): Promise<string> {
   const bulkUrl = `https://advertising.amazon.com/bulk-operations${entityParam}`;
 
@@ -719,10 +836,7 @@ async function triggerBulkExport(
     await bulkPage.waitForTimeout(2500);
   }
 
-  const currentUrl = bulkPage.url();
-  if (currentUrl.includes("/signin") || currentUrl.includes("/ap/signin")) {
-    throw new Error(`Profile AdsPower chưa đăng nhập Amazon Seller (URL: ${currentUrl}). Vui lòng đăng nhập trước.`);
-  }
+  await ensureAmazonSession(bulkPage, storeName || "");
 
   // 1. Mở modal Download campaigns nếu chưa mở
   let isModalOpen = await bulkPage.$(
@@ -1154,7 +1268,7 @@ export async function createAndDownloadAllBulkReports(
     console.log(`\n[BULK PHA 1] [${i + 1}/${tasks.length}] Kích hoạt tạo Bulk ${task.adType} ${task.days} Days...`);
     if (onProgress) await onProgress(`[${storeName}] Kích hoạt Bulk ${task.adType} ${task.days}d`, 20 + i * 5);
 
-    task.requestId = await triggerBulkExport(bulkPage, entityParam, task.adType, task.days);
+    task.requestId = await triggerBulkExport(bulkPage, entityParam, task.adType, task.days, storeName);
     const checkpointTask = checkpointTasks?.find((item) => (!item.store || item.store === storeName) && item.type === `BULK_${task.adType}` && item.days === task.days);
     if (checkpointTask) {
       checkpointTask.amazonRequestId = task.requestId;
@@ -2038,6 +2152,8 @@ export async function crawlStore(
       }
     } catch { }
   });
+
+  await ensureAmazonSession(page, store.store_name);
 
   try {
     const entityId = page.url().match(/entityId=([A-Z0-9]+)/)?.[1] || "";

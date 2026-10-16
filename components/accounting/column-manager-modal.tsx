@@ -211,6 +211,48 @@ export const DEFAULT_ADS_INPUT_COLUMNS: ColumnConfig[] = [
   { id: "trang_thai", label: "Trạng thái", defaultLabel: "Trạng thái", visible: true, align: "center", width: 115 },
 ];
 
+export const DEFAULT_RETURN_INPUT_COLUMNS: ColumnConfig[] = [
+  { id: "stt", label: "STT", defaultLabel: "STT", visible: true, isFrozen: true, align: "center", width: 52 },
+  { id: "date", label: "Date", defaultLabel: "Date", visible: true, isFrozen: true, align: "center", width: 95 },
+  { id: "order_id", label: "Order ID", defaultLabel: "Order ID", visible: true, isFrozen: true, width: 175 },
+  { id: "sku", label: "SKU", defaultLabel: "SKU", visible: true, isFrozen: true, width: 140 },
+  { id: "loai", label: "Loại", defaultLabel: "Loại", visible: true, align: "center", width: 85 },
+  { id: "pic", label: "PIC", defaultLabel: "PIC", visible: true, width: 105 },
+  { id: "basecost", label: "Basecost", defaultLabel: "Basecost", visible: true, align: "right", width: 100 },
+  { id: "transaction_status", label: "Transaction Status", defaultLabel: "Transaction Status", visible: true, align: "center", width: 135 },
+  { id: "transaction_type", label: "Transaction type", defaultLabel: "Transaction type", visible: true, align: "center", width: 125 },
+  { id: "product_details", label: "Product Details", defaultLabel: "Product Details", visible: true, width: 280 },
+  { id: "total_product_charges", label: "Total product charges", defaultLabel: "Total product charges", visible: true, align: "right", width: 145 },
+  { id: "total_promotional_rebates", label: "Total promotional rebates", defaultLabel: "Total promotional rebates", visible: true, align: "right", width: 155 },
+  { id: "amazon_fees", label: "Amazon fees", defaultLabel: "Amazon fees", visible: true, align: "right", width: 110 },
+  { id: "other", label: "Other", defaultLabel: "Other", visible: true, align: "right", width: 95 },
+  { id: "total", label: "Total (USD)", defaultLabel: "Total (USD)", visible: true, align: "right", width: 110 },
+  { id: "return_sau_basecost", label: "Return sau khi trừ basecost", defaultLabel: "Return sau khi trừ basecost", visible: true, align: "right", width: 165 },
+  { id: "tuan", label: "TUẦN", defaultLabel: "TUẦN", visible: true, align: "center", width: 75 },
+  { id: "thang", label: "THÁNG", defaultLabel: "THÁNG", visible: true, align: "center", width: 75 },
+  { id: "quy", label: "Quý", defaultLabel: "Quý", visible: true, align: "center", width: 70 },
+  { id: "trang_thai", label: "Trạng thái", defaultLabel: "Trạng thái", visible: true, align: "center", width: 115 },
+];
+
+export const DEFAULT_SERVICE_FEE_INPUT_COLUMNS: ColumnConfig[] = [
+  { id: "stt", label: "STT", defaultLabel: "STT", visible: true, isFrozen: true, align: "center", width: 52 },
+  { id: "thang", label: "THÁNG", defaultLabel: "THÁNG", visible: true, isFrozen: true, align: "center", width: 75 },
+  { id: "date", label: "Date", defaultLabel: "Date", visible: true, isFrozen: true, align: "center", width: 95 },
+  { id: "transaction_type", label: "Transaction type", defaultLabel: "Transaction type", visible: true, isFrozen: true, align: "center", width: 130 },
+  { id: "order_id", label: "Order ID", defaultLabel: "Order ID", visible: true, width: 200 },
+  { id: "product_details", label: "Product Details", defaultLabel: "Product Details", visible: true, width: 280 },
+  { id: "transaction_status", label: "Transaction Status", defaultLabel: "Transaction Status", visible: true, align: "center", width: 135 },
+  { id: "total_product_charges", label: "Total product charges", defaultLabel: "Total product charges", visible: true, align: "right", width: 145 },
+  { id: "total_promotional_rebates", label: "Total promotional rebates", defaultLabel: "Total promotional rebates", visible: true, align: "right", width: 155 },
+  { id: "amazon_fees", label: "Amazon fees", defaultLabel: "Amazon fees", visible: true, align: "right", width: 115 },
+  { id: "other", label: "Other", defaultLabel: "Other", visible: true, align: "right", width: 105 },
+  { id: "total", label: "Total (USD)", defaultLabel: "Total (USD)", visible: true, align: "right", width: 115 },
+  { id: "store_name", label: "Store", defaultLabel: "Store", visible: true, align: "center", width: 110 },
+  { id: "tuan", label: "TUẦN", defaultLabel: "TUẦN", visible: true, align: "center", width: 75 },
+  { id: "quy", label: "Quý", defaultLabel: "Quý", visible: true, align: "center", width: 70 },
+];
+
+
 export function ColumnHeaderCell({
   col,
   children,
@@ -268,7 +310,7 @@ export function ColumnHeaderCell({
         onColumnClick(col.id, event);
       }}
       title={isMovable ? "Kéo thả tiêu đề cột này để đổi vị trí trực tiếp trên bảng" : undefined}
-      className={`group/th select-none transition-all ${
+      className={`relative group/th select-none transition-all ${
         isFrozen ? "bg-[#f59e0b] text-slate-950" : ""
       } ${
         isBoundary ? "border-r-2 !border-r-amber-900" : ""
@@ -340,6 +382,15 @@ export function ColumnHeaderCell({
       )}
     </th>
   );
+}
+
+/** Tạo hàm đo độ rộng thật của text trong trình duyệt để auto-fit không cắt dữ liệu. */
+export function createTextWidthMeasurer(font = "500 13px ui-sans-serif, system-ui, sans-serif") {
+  if (typeof document === "undefined") return (value: string) => value.length * 8;
+  const context = document.createElement("canvas").getContext("2d");
+  if (!context) return (value: string) => value.length * 8;
+  context.font = font;
+  return (value: string) => context.measureText(value).width;
 }
 
 interface ColumnManagerModalProps {

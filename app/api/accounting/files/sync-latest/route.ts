@@ -6,7 +6,14 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({}));
     const type = body.type as string;
 
-    const allowedTypes = ["07_SHIPMENTS", "02_ALL_ORDERS", "05_CAMPAIGNS", "01_PORTFOLIOS"];
+    const allowedTypes = [
+      "07_SHIPMENTS",
+      "02_ALL_ORDERS",
+      "05_CAMPAIGNS",
+      "01_PORTFOLIOS",
+      "03_RETURNS",
+      "04_SERVICE_FEES",
+    ];
     if (!allowedTypes.includes(type)) {
       return NextResponse.json(
         { error: `type không hợp lệ. Chỉ chấp nhận: ${allowedTypes.join(", ")}` },
@@ -21,6 +28,10 @@ export async function POST(request: NextRequest) {
         ? "Check Shipment"
         : type === "02_ALL_ORDERS"
         ? "Đầu vào Order"
+        : type === "03_RETURNS"
+        ? "Dữ liệu Return"
+        : type === "04_SERVICE_FEES"
+        ? "Dữ liệu Service Fee"
         : "Báo cáo Ads";
     const message = `Đã tự động nạp file ${typeLabel} mới nhất cho ${result.totalStores} Store (tổng ${result.totalIngested} dòng dữ liệu).`;
 

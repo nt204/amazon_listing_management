@@ -208,3 +208,9 @@ table.freeze-boundary-moved th::after,
 table.freeze-boundary-moved td::after {
   display: none !important;
 }
+
+/* High-performance table row rendering for large inventory tables */
+tr.inventory-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 34px;
+}

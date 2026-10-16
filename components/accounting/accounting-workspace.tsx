@@ -1,10 +1,35 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { StoreManagementView } from "./store-management-view";
-import { InventoryView } from "./inventory-view";
-import { AccountingFileManager } from "./accounting-file-manager";
-import { OrderInputView } from "./order-input-view";
+import dynamic from "next/dynamic";
+
+function AccountingSectionLoading() {
+  return (
+    <div className="grid h-full min-h-[420px] place-items-center bg-slate-50" role="status" aria-label="Đang tải mục Accounting">
+      <div className="text-center">
+        <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-indigo-100 border-t-indigo-600" />
+        <p className="mt-3 text-xs font-bold text-slate-500">Đang tải dữ liệu…</p>
+      </div>
+    </div>
+  );
+}
+
+const StoreManagementView = dynamic(
+  () => import("./store-management-view").then((module) => module.StoreManagementView),
+  { loading: AccountingSectionLoading },
+);
+const InventoryView = dynamic(
+  () => import("./inventory-view").then((module) => module.InventoryView),
+  { loading: AccountingSectionLoading },
+);
+const AccountingFileManager = dynamic(
+  () => import("./accounting-file-manager").then((module) => module.AccountingFileManager),
+  { loading: AccountingSectionLoading },
+);
+const OrderInputView = dynamic(
+  () => import("./order-input-view").then((module) => module.OrderInputView),
+  { loading: AccountingSectionLoading },
+);
 
 export type AccountingModuleKey =
   | "overview"

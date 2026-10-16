@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from "react";
+import dynamic from "next/dynamic";
 import {
   ArrowClockwiseIcon,
   ArrowCounterClockwiseIcon,
@@ -38,8 +39,31 @@ import {
   DEFAULT_ORDER_INPUT_COLUMNS,
   ColumnHeaderCell,
   ColumnManagerModal,
+  createTextWidthMeasurer,
 } from "./column-manager-modal";
-import { AdsInputView } from "./ads-input-view";
+import type { ReturnStats } from "@/lib/accounting/returns-db";
+import type { ServiceFeeStats } from "@/lib/accounting/service-fees-db";
+
+const ImportTabLoading = () => (
+  <div className="grid min-h-[420px] place-items-center rounded-xl border border-slate-200 bg-white" role="status">
+    <div className="text-center">
+      <div className="mx-auto h-7 w-7 animate-spin rounded-full border-4 border-indigo-100 border-t-indigo-600" />
+      <p className="mt-2 text-xs font-bold text-slate-500">Đang tải bảng dữ liệu…</p>
+    </div>
+  </div>
+);
+const AdsInputView = dynamic(
+  () => import("./ads-input-view").then((module) => module.AdsInputView),
+  { loading: ImportTabLoading },
+);
+const ReturnInputView = dynamic(
+  () => import("./return-input-view").then((module) => module.ReturnInputView),
+  { loading: ImportTabLoading },
+);
+const ServiceFeeInputView = dynamic(
+  () => import("./service-fee-input-view").then((module) => module.ServiceFeeInputView),
+  { loading: ImportTabLoading },
+);
 
 const ORDER_COLUMNS_STORAGE_KEY = "acc_order_input_columns_global";
 const ORDER_FROZEN_STORAGE_KEY = "acc_order_input_frozen_global";
@@ -88,6 +112,21 @@ export function OrderInputView() {
     }
   }, [activeTab]);
 
+  // Keep visited tabs in DOM with CSS hidden for instant 0ms tab switching
+  const [visitedTabs, setVisitedTabs] = useState<Record<ImportTab, boolean>>(() => ({
+    orders: activeTab === "orders",
+    ads: activeTab === "ads",
+    return: activeTab === "return",
+    service_fee: activeTab === "service_fee",
+  }));
+
+  const handleTabChange = useCallback((tab: ImportTab) => {
+    setVisitedTabs((prev) => (prev[tab] ? prev : { ...prev, [tab]: true }));
+    startTransition(() => {
+      setActiveTab(tab);
+    });
+  }, []);
+
   const [stores, setStores] = useState<Store[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<string>(() => {
     if (typeof window !== "undefined") {
@@ -110,6 +149,8 @@ export function OrderInputView() {
   const [loading, setLoading] = useState(false);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [totalAds, setTotalAds] = useState(0);
+  const [totalReturns, setTotalReturns] = useState(0);
+  const [totalServiceFees, setTotalServiceFees] = useState(0);
 
   useEffect(() => {
     if (!selectedStoreId) return;
@@ -117,6 +158,20 @@ export function OrderInputView() {
       .then((r) => r.json())
       .then((d) => {
         if (d && typeof d.total === "number") setTotalAds(d.total);
+      })
+      .catch(() => {});
+
+    fetch(`/api/accounting/returns?store_id=${selectedStoreId}&limit=1`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d && typeof d.totalRows === "number") setTotalReturns(d.totalRows);
+      })
+      .catch(() => {});
+
+    fetch(`/api/accounting/service-fees?store_id=${selectedStoreId}&limit=1`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d && typeof d.totalRows === "number") setTotalServiceFees(d.totalRows);
       })
       .catch(() => {});
   }, [selectedStoreId]);
@@ -136,6 +191,8 @@ export function OrderInputView() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [dateSort, setDateSort] = useState<"asc" | "desc">("desc");
+  const [orderStartDate, setOrderStartDate] = useState("");
+  const [orderEndDate, setOrderEndDate] = useState("");
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
   const [tableZoom, setTableZoom] = useState(90);
 
@@ -174,6 +231,48 @@ export function OrderInputView() {
   const [resetAdsColumnsSignal, setResetAdsColumnsSignal] = useState(0);
   const [autoFitAdsColumnsSignal, setAutoFitAdsColumnsSignal] = useState(0);
   const [reloadAdsSignal, setReloadAdsSignal] = useState(0);
+
+  // Return Tab State & Action Signals
+  const [returnSearch, setReturnSearch] = useState("");
+  const [returnDateSort, setReturnDateSort] = useState<"asc" | "desc">("desc");
+  const [returnStartDate, setReturnStartDate] = useState("");
+  const [returnEndDate, setReturnEndDate] = useState("");
+  const [returnStats, setReturnStats] = useState<ReturnStats>({
+    totalRows: 0,
+    totalAmount: 0,
+    totalProductCharges: 0,
+    totalPromotionalRebates: 0,
+    totalAmazonFees: 0,
+    totalOther: 0,
+    totalBasecost: 0,
+    totalReturnSauBasecost: 0,
+    uniqueOrders: 0,
+    uniqueSkus: 0,
+  });
+  const [showReturnImportModal, setShowReturnImportModal] = useState(false);
+  const [showReturnColumnModal, setShowReturnColumnModal] = useState(false);
+  const [resetReturnColumnsSignal, setResetReturnColumnsSignal] = useState(0);
+  const [reloadReturnSignal, setReloadReturnSignal] = useState(0);
+
+  // Service Fee Tab State & Action Signals
+  const [serviceFeeSearch, setServiceFeeSearch] = useState("");
+  const [serviceFeeDateSort, setServiceFeeDateSort] = useState<"asc" | "desc">("desc");
+  const [serviceFeeStartDate, setServiceFeeStartDate] = useState("");
+  const [serviceFeeEndDate, setServiceFeeEndDate] = useState("");
+  const [serviceFeeStats, setServiceFeeStats] = useState<ServiceFeeStats>({
+    totalRows: 0,
+    totalAmount: 0,
+    totalProductCharges: 0,
+    totalPromotionalRebates: 0,
+    totalAmazonFees: 0,
+    totalOther: 0,
+    uniqueFeeTypes: 0,
+    uniqueOrders: 0,
+  });
+  const [showServiceFeeImportModal, setShowServiceFeeImportModal] = useState(false);
+  const [showServiceFeeColumnModal, setShowServiceFeeColumnModal] = useState(false);
+  const [resetServiceFeeColumnsSignal, setResetServiceFeeColumnsSignal] = useState(0);
+  const [reloadServiceFeeSignal, setReloadServiceFeeSignal] = useState(0);
 
   // Context Menu
   const [columnContextMenu, setColumnContextMenu] = useState<{
@@ -242,9 +341,7 @@ export function OrderInputView() {
   // Load column configurations from localStorage (đồng bộ tất cả store), preserving all default columns
   useEffect(() => {
     try {
-      const savedCols =
-        localStorage.getItem(ORDER_COLUMNS_STORAGE_KEY) ||
-        (selectedStoreId ? localStorage.getItem(`acc_order_input_columns_${selectedStoreId}`) : null);
+      const savedCols = localStorage.getItem(ORDER_COLUMNS_STORAGE_KEY);
       if (savedCols) {
         const parsed: ColumnConfig[] = JSON.parse(savedCols);
         if (Array.isArray(parsed) && parsed.length > 0) {
@@ -255,15 +352,10 @@ export function OrderInputView() {
           for (const col of parsed) {
             const def = defaultMap.get(col.id);
             if (def) {
-              // Nếu width lưu trong localStorage bị quá to so với def.width mặc định mới, dùng def.width gọn gàng hơn
-              let width = col.width ?? def.width;
-              if (typeof width === "number" && typeof def.width === "number" && width > def.width) {
-                width = def.width;
-              }
               merged.push({
                 ...def,
                 ...col,
-                width,
+                width: col.width ?? def.width,
                 label: col.label || def.label,
               });
               seen.add(col.id);
@@ -283,9 +375,7 @@ export function OrderInputView() {
         setColumns(DEFAULT_ORDER_INPUT_COLUMNS);
       }
 
-      const savedFrozen =
-        localStorage.getItem(ORDER_FROZEN_STORAGE_KEY) ||
-        (selectedStoreId ? localStorage.getItem(`acc_order_input_frozen_${selectedStoreId}`) : null);
+      const savedFrozen = localStorage.getItem(ORDER_FROZEN_STORAGE_KEY);
       if (savedFrozen) {
         setFrozenThrough(savedFrozen);
       } else {
@@ -304,6 +394,8 @@ export function OrderInputView() {
       params.set("page", String(page));
       params.set("limit", String(limit));
       params.set("dateSort", dateSort);
+      if (orderStartDate) params.set("startDate", orderStartDate);
+      if (orderEndDate) params.set("endDate", orderEndDate);
       if (debouncedSearch) params.set("search", debouncedSearch);
 
       for (const [key, val] of Object.entries(columnFilters)) {
@@ -325,7 +417,7 @@ export function OrderInputView() {
       setLoading(false);
       setIsInitialLoad(false);
     }
-  }, [selectedStoreId, page, limit, dateSort, debouncedSearch, columnFilters, notify]);
+  }, [selectedStoreId, page, limit, dateSort, orderStartDate, orderEndDate, debouncedSearch, columnFilters, notify]);
 
   const [syncingLatest, setSyncingLatest] = useState(false);
 
@@ -499,20 +591,15 @@ export function OrderInputView() {
     []
   );
 
-  // Tính toán độ rộng vừa khít nội dung thực tế và tiêu đề cột (tự động thu nhỏ, giới hạn các cột quá dài)
+  // Tính toán độ rộng vừa khít nội dung thực tế và tiêu đề cột.
   const calculateAutoFitWidth = useCallback(
     (colId: string, label: string): number => {
-      // 1. Ngoại lệ đặc biệt: Cột quá dài được giới hạn (product_name)
-      if (colId === "product_name") return 300;
-      if (colId === "stt") return 52;
-      if (colId === "quantity" || colId === "currency" || colId === "ship_country") return 66;
-      if (colId === "ship_state") return 72;
-      if (colId === "is_business_order") return 82;
-
-      // 2. Quét dữ liệu thực tế của các dòng đang nạp (tối đa 150 dòng)
-      let maxContentChars = 0;
-      const sample = orders.slice(0, 150);
-      for (const item of sample) {
+      // Quét toàn bộ dữ liệu đang nạp để cột luôn bao trọn giá trị dài nhất.
+      // Đo đúng pixel theo font hiển thị, thay vì nhân số ký tự. Cách nhân ký tự
+      // thường thiếu độ rộng với mã Amazon có chữ số, dấu gạch nối và font-medium.
+      const measureText = createTextWidthMeasurer();
+      let maxContentWidth = 0;
+      for (const item of orders) {
         const val = (item as any)[colId];
         if (val != null) {
           let str = "";
@@ -524,65 +611,20 @@ export function OrderInputView() {
               str = str.replace("T", " ").replace("+00:00", "").trim();
             }
           }
-          if (str.length > maxContentChars) {
-            maxContentChars = str.length;
-          }
+          const measuredWidth = measureText(str);
+          maxContentWidth = Math.max(maxContentWidth, measuredWidth);
         }
       }
 
-      // Hệ số pixel/ký tự cho font-mono (id, date, code) vs font thường
-      const isMono =
-        colId.includes("id") ||
-        colId.includes("sku") ||
-        colId.includes("asin") ||
-        colId.includes("date") ||
-        colId.includes("price") ||
-        colId.includes("tax") ||
-        colId.includes("discount");
-      const charWidth = isMono ? 7.6 : 7.2;
-      const contentWidth = maxContentChars > 0 ? Math.round(maxContentChars * charWidth + 24) : 0;
+      // px-2.5 ở ô + viền + khoảng an toàn để không kích hoạt text-ellipsis.
+      const contentWidth = maxContentWidth > 0 ? Math.ceil(maxContentWidth + 30) : 0;
 
       // Chiều rộng tối thiểu để tiêu đề không bị cắt chữ quá nhỏ (cho phép ngắt dòng theo dấu gạch ngang)
       const labelWords = (label || colId).split(/[-_ ]+/).filter(Boolean);
       const longestWordLength = labelWords.length > 0 ? Math.max(...labelWords.map((w) => w.length)) : 5;
       const headerWidth = Math.round(longestWordLength * 8.2 + 26);
 
-      let targetWidth = Math.max(contentWidth, headerWidth);
-
-      // 3. Giới hạn trần tối đa (cap) cho từng nhóm cột để không bao giờ bị thừa khoảng trống
-      const caps: Record<string, number> = {
-        amazon_order_id: 160,
-        merchant_order_id: 160,
-        order_item_id: 140,
-        purchase_date: 145,
-        last_updated_date: 145,
-        sku: 140,
-        asin: 110,
-        order_status: 100,
-        fulfillment_channel: 110,
-        sales_channel: 110,
-        ship_service_level: 115,
-        item_status: 95,
-        item_price: 88,
-        item_tax: 80,
-        shipping_price: 90,
-        shipping_tax: 80,
-        gift_wrap_price: 90,
-        gift_wrap_tax: 80,
-        item_promotion_discount: 110,
-        ship_promotion_discount: 110,
-        ship_city: 130,
-        ship_postal_code: 105,
-        promotion_ids: 130,
-        purchase_order_number: 140,
-        price_designation: 105,
-        customized_url: 120,
-        customized_page: 120,
-        signature_confirmation_recommended: 130,
-      };
-
-      const maxCap = caps[colId] || 160;
-      targetWidth = Math.min(targetWidth, maxCap);
+      const targetWidth = Math.max(contentWidth, headerWidth);
 
       return Math.max(54, targetWidth);
     },
@@ -841,7 +883,7 @@ export function OrderInputView() {
       case "product_name":
         return (
           <span
-            className="text-slate-900 text-[13px] whitespace-normal break-words leading-snug block select-text"
+            className="text-slate-900 text-[13px] truncate block select-text"
             title={item.product_name || ""}
           >
             {item.product_name || "—"}
@@ -1113,18 +1155,116 @@ export function OrderInputView() {
                   <ArrowClockwiseIcon size={16} weight="bold" className="text-indigo-600" />
                 </button>
               </>
+            ) : activeTab === "return" ? (
+              <>
+                {/* Import Return Button */}
+                <button
+                  type="button"
+                  onClick={() => setShowReturnImportModal(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition shadow-2xs cursor-pointer"
+                  title="Tải lên file báo cáo hoàn tiền Return (File 03 từ Amazon hoặc sheet RETURN từ ketoan_limima)"
+                >
+                  <UploadSimpleIcon size={15} weight="bold" />
+                  <span>Nhập File Return</span>
+                </button>
+
+                {/* Export Excel Button */}
+                <a
+                  href={`/api/accounting/returns/export?store_id=${selectedStoreId}`}
+                  download
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-800 hover:bg-emerald-100 transition shadow-2xs cursor-pointer"
+                  title="Xuất Excel toàn bộ dữ liệu Return & Hoàn tiền"
+                >
+                  <DownloadSimpleIcon size={15} weight="bold" />
+                  <span>Xuất Excel</span>
+                </a>
+
+                {/* Reset to Excel default order */}
+                <button
+                  type="button"
+                  onClick={() => setResetReturnColumnsSignal((s) => s + 1)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition shadow-2xs cursor-pointer"
+                  title="Đặt lại đầy đủ tất cả các cột theo đúng thứ tự file Excel sheet RETURN"
+                >
+                  <ArrowClockwiseIcon size={14} weight="bold" />
+                  <span>Cột chuẩn Excel</span>
+                </button>
+
+                {/* Column Configuration Button - Icon Only */}
+                <button
+                  type="button"
+                  onClick={() => setShowReturnColumnModal(true)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-amber-400 bg-amber-50 text-amber-950 hover:bg-amber-100 transition shadow-2xs cursor-pointer"
+                  title="Cài đặt cột RETURN"
+                >
+                  <SlidersHorizontalIcon size={16} weight="bold" className="text-amber-700" />
+                </button>
+
+                {/* Refresh - Icon Only */}
+                <button
+                  type="button"
+                  onClick={() => setReloadReturnSignal((s) => s + 1)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 transition shadow-2xs cursor-pointer"
+                  title="Làm mới: Tải lại dữ liệu Return mới nhất cho Store"
+                >
+                  <ArrowClockwiseIcon size={16} weight="bold" className="text-indigo-600" />
+                </button>
+              </>
             ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  setToast({ type: "success", message: `Tab ${activeTab.toUpperCase()} sẽ sớm được kết nối xử lý dữ liệu.` });
-                  setTimeout(() => setToast(null), 3500);
-                }}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition shadow-2xs cursor-pointer"
-              >
-                <UploadSimpleIcon size={15} weight="bold" />
-                <span>Nhập File {activeTab === "return" ? "Return" : "Service Fee"}</span>
-              </button>
+              <>
+                {/* Import Service Fee Button */}
+                <button
+                  type="button"
+                  onClick={() => setShowServiceFeeImportModal(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition shadow-2xs cursor-pointer"
+                  title="Tải lên file chi phí phụ sàn Amazon (File 04 từ Amazon hoặc sheet Service Fees từ ketoan_limima)"
+                >
+                  <UploadSimpleIcon size={15} weight="bold" />
+                  <span>Nhập File Service Fee</span>
+                </button>
+
+                {/* Export Excel Button */}
+                <a
+                  href={`/api/accounting/service-fees/export?store_id=${selectedStoreId}`}
+                  download
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-800 hover:bg-emerald-100 transition shadow-2xs cursor-pointer"
+                  title="Xuất Excel toàn bộ dữ liệu Service Fees"
+                >
+                  <DownloadSimpleIcon size={15} weight="bold" />
+                  <span>Xuất Excel</span>
+                </a>
+
+                {/* Reset to Excel default order */}
+                <button
+                  type="button"
+                  onClick={() => setResetServiceFeeColumnsSignal((s) => s + 1)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition shadow-2xs cursor-pointer"
+                  title="Đặt lại đầy đủ tất cả các cột theo đúng thứ tự file Excel sheet Service Fees"
+                >
+                  <ArrowClockwiseIcon size={14} weight="bold" />
+                  <span>Cột chuẩn Excel</span>
+                </button>
+
+                {/* Column Configuration Button - Icon Only */}
+                <button
+                  type="button"
+                  onClick={() => setShowServiceFeeColumnModal(true)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-amber-400 bg-amber-50 text-amber-950 hover:bg-amber-100 transition shadow-2xs cursor-pointer"
+                  title="Cài đặt cột SERVICE FEE"
+                >
+                  <SlidersHorizontalIcon size={16} weight="bold" className="text-amber-700" />
+                </button>
+
+                {/* Refresh - Icon Only */}
+                <button
+                  type="button"
+                  onClick={() => setReloadServiceFeeSignal((s) => s + 1)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 transition shadow-2xs cursor-pointer"
+                  title="Làm mới: Tải lại dữ liệu Service Fee mới nhất cho Store"
+                >
+                  <ArrowClockwiseIcon size={16} weight="bold" className="text-indigo-600" />
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -1132,24 +1272,24 @@ export function OrderInputView() {
 
       {/* TABS, FILTERS & STATS UNIFIED BAR */}
       <div className="bg-slate-200/70 p-2 rounded-xl border border-slate-300 flex flex-col gap-1.5 shadow-2xs">
-        {/* Row 1: Sheet Tabs on Left, Sort + Date + Search on Right */}
-        <div className="flex flex-wrap items-center justify-between gap-2 min-h-[36px]">
+        {/* Row 1: Sheet Tabs on Left, Sort + Date + Search + Zoom on Right (Compact 1 Single Row) */}
+        <div className="flex items-center justify-between gap-1.5 min-h-[34px] flex-nowrap overflow-x-auto no-scrollbar">
           {/* Sheet Tabs */}
           <div className="flex items-center gap-1 shrink-0">
             {/* Tab 1: Orders */}
             <button
               type="button"
-              onClick={() => setActiveTab("orders")}
-              className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
+              onClick={() => handleTabChange("orders")}
+              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none whitespace-nowrap ${
                 activeTab === "orders"
                   ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
                   : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
               }`}
             >
-              <ShoppingCartIcon size={16} weight="bold" />
+              <ShoppingCartIcon size={14} weight="bold" />
               <span>Đầu Vào Order</span>
               <span
-                className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
                   activeTab === "orders" ? "bg-emerald-700 text-white" : "bg-slate-300 text-slate-700"
                 }`}
               >
@@ -1160,18 +1300,18 @@ export function OrderInputView() {
             {/* Tab 2: Ads */}
             <button
               type="button"
-              onClick={() => setActiveTab("ads")}
-              className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
+              onClick={() => handleTabChange("ads")}
+              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none whitespace-nowrap ${
                 activeTab === "ads"
                   ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
                   : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
               }`}
             >
-              <TrendUpIcon size={16} weight="bold" />
+              <TrendUpIcon size={14} weight="bold" />
               <span>Ads</span>
               {totalAds > 0 && (
                 <span
-                  className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                  className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
                     activeTab === "ads" ? "bg-emerald-700 text-white" : "bg-slate-300 text-slate-700"
                   }`}
                 >
@@ -1183,73 +1323,121 @@ export function OrderInputView() {
             {/* Tab 3: Return */}
             <button
               type="button"
-              onClick={() => setActiveTab("return")}
-              className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
+              onClick={() => handleTabChange("return")}
+              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none whitespace-nowrap ${
                 activeTab === "return"
                   ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
                   : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
               }`}
             >
-              <ArrowCounterClockwiseIcon size={16} weight="bold" />
+              <ArrowCounterClockwiseIcon size={14} weight="bold" />
               <span>Return</span>
+              {totalReturns > 0 && (
+                <span
+                  className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+                    activeTab === "return" ? "bg-emerald-700 text-white" : "bg-slate-300 text-slate-700"
+                  }`}
+                >
+                  {totalReturns}
+                </span>
+              )}
             </button>
 
             {/* Tab 4: Service Fee */}
             <button
               type="button"
-              onClick={() => setActiveTab("service_fee")}
-              className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
+              onClick={() => handleTabChange("service_fee")}
+              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none whitespace-nowrap ${
                 activeTab === "service_fee"
                   ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
                   : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
               }`}
             >
-              <ReceiptIcon size={16} weight="bold" />
+              <ReceiptIcon size={14} weight="bold" />
               <span>Service Fee</span>
+              {totalServiceFees > 0 && (
+                <span
+                  className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+                    activeTab === "service_fee" ? "bg-emerald-700 text-white" : "bg-slate-300 text-slate-700"
+                  }`}
+                >
+                  {totalServiceFees}
+                </span>
+              )}
             </button>
           </div>
 
           {/* Right Side Controls */}
           {activeTab === "orders" ? (
-            <div className="flex items-center gap-1.5 flex-wrap justify-end ml-auto">
-              {/* Divider */}
-              <div className="h-5 w-px bg-slate-300 select-none hidden md:block" />
+            <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+              <div className="h-4 w-px bg-slate-300 select-none hidden md:block" />
 
               {/* Sort Date Toggle */}
               <button
                 type="button"
                 onClick={() => setDateSort((prev) => (prev === "desc" ? "asc" : "desc"))}
-                className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-bold transition shadow-2xs whitespace-nowrap cursor-pointer ${
+                className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-xs font-bold transition shadow-2xs whitespace-nowrap cursor-pointer ${
                   dateSort === "desc"
                     ? "border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
                     : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
                 }`}
                 title="Sắp xếp theo ngày mua đơn hàng"
               >
-                {dateSort === "desc" ? <CaretDownIcon size={13} weight="bold" /> : <CaretUpIcon size={13} weight="bold" />}
+                {dateSort === "desc" ? <CaretDownIcon size={12} weight="bold" /> : <CaretUpIcon size={12} weight="bold" />}
                 <span>{dateSort === "desc" ? "Mới nhất" : "Cũ nhất"}</span>
               </button>
 
+              {/* Date range picker (Orders) */}
+              <div className="flex items-center gap-1 bg-white border border-slate-300 rounded-lg px-1.5 py-0.5 text-xs shadow-2xs">
+                <span className="text-[11px] font-semibold text-slate-500">Từ:</span>
+                <input
+                  type="date"
+                  value={orderStartDate}
+                  onChange={(e) => setOrderStartDate(e.target.value)}
+                  className="bg-transparent text-xs text-slate-700 font-medium focus:outline-hidden cursor-pointer w-[95px]"
+                />
+                <span className="text-[11px] font-semibold text-slate-500">Đến:</span>
+                <input
+                  type="date"
+                  value={orderEndDate}
+                  onChange={(e) => setOrderEndDate(e.target.value)}
+                  className="bg-transparent text-xs text-slate-700 font-medium focus:outline-hidden cursor-pointer w-[95px]"
+                />
+                {(orderStartDate || orderEndDate) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOrderStartDate("");
+                      setOrderEndDate("");
+                    }}
+                    className="text-slate-400 hover:text-rose-600 ml-0.5 cursor-pointer"
+                    title="Xoá lọc ngày"
+                  >
+                    <XIcon size={11} weight="bold" />
+                  </button>
+                )}
+              </div>
+
               {/* Quick Search Input */}
-              <div className="relative w-40 sm:w-56 focus-within:!w-64 transition-all duration-200">
+              <div className="relative w-36 sm:w-44 focus-within:!w-56 transition-all duration-200">
                 <MagnifyingGlassIcon
-                  size={13}
-                  className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"
+                  size={12}
+                  className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400"
                 />
                 <input
                   type="text"
-                  placeholder="Tìm mã đơn, SKU, City..."
+                  placeholder="Tìm đơn, SKU, City..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 bg-white pl-7 pr-6 py-1 text-xs font-medium text-slate-800 placeholder-slate-400 outline-none transition focus:border-indigo-500 focus:ring-1 focus:ring-indigo-100 shadow-2xs"
+                  className="w-full rounded-lg border border-slate-300 bg-white pl-6 pr-5 py-0.5 text-xs font-medium text-slate-800 placeholder-slate-400 outline-none transition focus:border-indigo-500 focus:ring-1 focus:ring-indigo-100 shadow-2xs"
                 />
                 {search && (
                   <button
                     type="button"
                     onClick={() => setSearch("")}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
                   >
-                    <XIcon size={11} />
+                    <XIcon size={10} />
                   </button>
                 )}
               </div>
@@ -1259,15 +1447,15 @@ export function OrderInputView() {
                 <button
                   type="button"
                   onClick={() => setTableZoom((z) => Math.max(60, z - 10))}
-                  className="h-6 w-6 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 hover:shadow-2xs active:scale-95 transition cursor-pointer"
+                  className="h-5 w-5 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 hover:shadow-2xs active:scale-95 transition cursor-pointer"
                   title="Thu nhỏ bảng (-10%)"
                 >
-                  <MinusIcon size={13} weight="bold" />
+                  <MinusIcon size={11} weight="bold" />
                 </button>
                 <button
                   type="button"
                   onClick={() => setTableZoom(100)}
-                  className="px-1.5 py-0.5 text-[11px] font-mono font-bold text-slate-700 hover:text-indigo-600 cursor-pointer"
+                  className="px-1 py-0.5 text-[10px] font-mono font-bold text-slate-700 hover:text-indigo-600 cursor-pointer"
                   title="Đặt lại cỡ 100%"
                 >
                   {tableZoom}%
@@ -1275,48 +1463,47 @@ export function OrderInputView() {
                 <button
                   type="button"
                   onClick={() => setTableZoom((z) => Math.min(150, z + 10))}
-                  className="h-6 w-6 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 hover:shadow-2xs active:scale-95 transition cursor-pointer"
+                  className="h-5 w-5 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 hover:shadow-2xs active:scale-95 transition cursor-pointer"
                   title="Phóng to bảng (+10%)"
                 >
-                  <PlusIcon size={13} weight="bold" />
+                  <PlusIcon size={11} weight="bold" />
                 </button>
               </div>
             </div>
           ) : activeTab === "ads" ? (
-            <div className="flex items-center gap-1.5 flex-wrap justify-end ml-auto">
-              {/* Divider */}
-              <div className="h-5 w-px bg-slate-300 select-none hidden md:block" />
+            <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+              <div className="h-4 w-px bg-slate-300 select-none hidden md:block" />
 
               {/* Sort Date Toggle */}
               <button
                 type="button"
                 onClick={() => setAdsDateSort((prev) => (prev === "desc" ? "asc" : "desc"))}
-                className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-bold transition shadow-2xs whitespace-nowrap cursor-pointer ${
+                className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-xs font-bold transition shadow-2xs whitespace-nowrap cursor-pointer ${
                   adsDateSort === "desc"
                     ? "border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
                     : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
                 }`}
                 title="Sắp xếp theo ngày báo cáo Ads"
               >
-                {adsDateSort === "desc" ? <CaretDownIcon size={13} weight="bold" /> : <CaretUpIcon size={13} weight="bold" />}
+                {adsDateSort === "desc" ? <CaretDownIcon size={12} weight="bold" /> : <CaretUpIcon size={12} weight="bold" />}
                 <span>{adsDateSort === "desc" ? "Mới nhất" : "Cũ nhất"}</span>
               </button>
 
               {/* Date range picker (Ads) */}
-              <div className="flex items-center gap-1 bg-white border border-slate-300 rounded-lg px-2 py-0.5 text-xs shadow-2xs">
+              <div className="flex items-center gap-1 bg-white border border-slate-300 rounded-lg px-1.5 py-0.5 text-xs shadow-2xs">
                 <span className="text-[11px] font-semibold text-slate-500">Từ:</span>
                 <input
                   type="date"
                   value={adsStartDate}
                   onChange={(e) => setAdsStartDate(e.target.value)}
-                  className="bg-transparent text-xs text-slate-700 font-medium focus:outline-hidden cursor-pointer w-[105px]"
+                  className="bg-transparent text-xs text-slate-700 font-medium focus:outline-hidden cursor-pointer w-[95px]"
                 />
                 <span className="text-[11px] font-semibold text-slate-500">Đến:</span>
                 <input
                   type="date"
                   value={adsEndDate}
                   onChange={(e) => setAdsEndDate(e.target.value)}
-                  className="bg-transparent text-xs text-slate-700 font-medium focus:outline-hidden cursor-pointer w-[105px]"
+                  className="bg-transparent text-xs text-slate-700 font-medium focus:outline-hidden cursor-pointer w-[95px]"
                 />
                 {(adsStartDate || adsEndDate) && (
                   <button
@@ -1328,31 +1515,31 @@ export function OrderInputView() {
                     className="text-slate-400 hover:text-rose-600 ml-0.5 cursor-pointer"
                     title="Xoá lọc ngày"
                   >
-                    <XIcon size={12} weight="bold" />
+                    <XIcon size={11} weight="bold" />
                   </button>
                 )}
               </div>
 
               {/* Quick Search Input (Ads) */}
-              <div className="relative w-40 sm:w-48 focus-within:!w-64 transition-all duration-200">
+              <div className="relative w-36 sm:w-44 focus-within:!w-56 transition-all duration-200">
                 <MagnifyingGlassIcon
-                  size={13}
-                  className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"
+                  size={12}
+                  className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400"
                 />
                 <input
                   type="text"
                   placeholder="Tìm Portfolio, SKU, PIC..."
                   value={adsSearch}
                   onChange={(e) => setAdsSearch(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 bg-white pl-7 pr-6 py-1 text-xs font-medium text-slate-800 placeholder-slate-400 outline-none transition focus:border-indigo-500 focus:ring-1 focus:ring-indigo-100 shadow-2xs"
+                  className="w-full rounded-lg border border-slate-300 bg-white pl-6 pr-5 py-0.5 text-xs font-medium text-slate-800 placeholder-slate-400 outline-none transition focus:border-indigo-500 focus:ring-1 focus:ring-indigo-100 shadow-2xs"
                 />
                 {adsSearch && (
                   <button
                     type="button"
                     onClick={() => setAdsSearch("")}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
                   >
-                    <XIcon size={11} />
+                    <XIcon size={10} />
                   </button>
                 )}
               </div>
@@ -1362,15 +1549,15 @@ export function OrderInputView() {
                 <button
                   type="button"
                   onClick={() => setTableZoom((z) => Math.max(60, z - 10))}
-                  className="h-6 w-6 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 hover:shadow-2xs active:scale-95 transition cursor-pointer"
+                  className="h-5 w-5 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 hover:shadow-2xs active:scale-95 transition cursor-pointer"
                   title="Thu nhỏ bảng (-10%)"
                 >
-                  <MinusIcon size={13} weight="bold" />
+                  <MinusIcon size={11} weight="bold" />
                 </button>
                 <button
                   type="button"
                   onClick={() => setTableZoom(100)}
-                  className="px-1.5 py-0.5 text-[11px] font-mono font-bold text-slate-700 hover:text-indigo-600 cursor-pointer"
+                  className="px-1 py-0.5 text-[10px] font-mono font-bold text-slate-700 hover:text-indigo-600 cursor-pointer"
                   title="Đặt lại cỡ 100%"
                 >
                   {tableZoom}%
@@ -1378,14 +1565,210 @@ export function OrderInputView() {
                 <button
                   type="button"
                   onClick={() => setTableZoom((z) => Math.min(150, z + 10))}
-                  className="h-6 w-6 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 hover:shadow-2xs active:scale-95 transition cursor-pointer"
+                  className="h-5 w-5 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 hover:shadow-2xs active:scale-95 transition cursor-pointer"
                   title="Phóng to bảng (+10%)"
                 >
-                  <PlusIcon size={13} weight="bold" />
+                  <PlusIcon size={11} weight="bold" />
                 </button>
               </div>
             </div>
-          ) : null}
+          ) : activeTab === "return" ? (
+            <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+              <div className="h-4 w-px bg-slate-300 select-none hidden md:block" />
+
+              <button
+                type="button"
+                onClick={() => setReturnDateSort((prev) => (prev === "desc" ? "asc" : "desc"))}
+                className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-xs font-bold transition shadow-2xs whitespace-nowrap cursor-pointer ${
+                  returnDateSort === "desc"
+                    ? "border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                    : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                }`}
+                title="Sắp xếp theo ngày Return"
+              >
+                {returnDateSort === "desc" ? <CaretDownIcon size={12} weight="bold" /> : <CaretUpIcon size={12} weight="bold" />}
+                <span>{returnDateSort === "desc" ? "Mới nhất" : "Cũ nhất"}</span>
+              </button>
+
+              <div className="flex items-center gap-1 bg-white border border-slate-300 rounded-lg px-1.5 py-0.5 text-xs shadow-2xs">
+                <span className="text-[11px] font-semibold text-slate-500">Từ:</span>
+                <input
+                  type="date"
+                  value={returnStartDate}
+                  onChange={(e) => setReturnStartDate(e.target.value)}
+                  className="bg-transparent text-xs text-slate-700 font-medium focus:outline-hidden cursor-pointer w-[95px]"
+                />
+                <span className="text-[11px] font-semibold text-slate-500">Đến:</span>
+                <input
+                  type="date"
+                  value={returnEndDate}
+                  onChange={(e) => setReturnEndDate(e.target.value)}
+                  className="bg-transparent text-xs text-slate-700 font-medium focus:outline-hidden cursor-pointer w-[95px]"
+                />
+                {(returnStartDate || returnEndDate) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReturnStartDate("");
+                      setReturnEndDate("");
+                    }}
+                    className="text-slate-400 hover:text-rose-600 ml-0.5 cursor-pointer"
+                    title="Xoá lọc ngày"
+                  >
+                    <XIcon size={11} weight="bold" />
+                  </button>
+                )}
+              </div>
+
+              <div className="relative w-36 sm:w-44 focus-within:!w-56 transition-all duration-200">
+                <MagnifyingGlassIcon
+                  size={12}
+                  className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400"
+                />
+                <input
+                  type="text"
+                  placeholder="Tìm Order ID, SKU, PIC..."
+                  value={returnSearch}
+                  onChange={(e) => setReturnSearch(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white pl-6 pr-5 py-0.5 text-xs font-medium text-slate-800 placeholder-slate-400 outline-none transition focus:border-indigo-500 focus:ring-1 focus:ring-indigo-100 shadow-2xs"
+                />
+                {returnSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setReturnSearch("")}
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    <XIcon size={10} />
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-300 shadow-2xs">
+                <button
+                  type="button"
+                  onClick={() => setTableZoom((z) => Math.max(60, z - 10))}
+                  className="h-5 w-5 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 hover:shadow-2xs active:scale-95 transition cursor-pointer"
+                  title="Thu nhỏ bảng (-10%)"
+                >
+                  <MinusIcon size={11} weight="bold" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTableZoom(100)}
+                  className="px-1 py-0.5 text-[10px] font-mono font-bold text-slate-700 hover:text-indigo-600 cursor-pointer"
+                  title="Đặt lại cỡ 100%"
+                >
+                  {tableZoom}%
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTableZoom((z) => Math.min(150, z + 10))}
+                  className="h-5 w-5 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 hover:shadow-2xs active:scale-95 transition cursor-pointer"
+                  title="Phóng to bảng (+10%)"
+                >
+                  <PlusIcon size={11} weight="bold" />
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+              <div className="h-4 w-px bg-slate-300 select-none hidden md:block" />
+
+              <button
+                type="button"
+                onClick={() => setServiceFeeDateSort((prev) => (prev === "desc" ? "asc" : "desc"))}
+                className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-xs font-bold transition shadow-2xs whitespace-nowrap cursor-pointer ${
+                  serviceFeeDateSort === "desc"
+                    ? "border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                    : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                }`}
+                title="Sắp xếp theo ngày Service Fee"
+              >
+                {serviceFeeDateSort === "desc" ? <CaretDownIcon size={12} weight="bold" /> : <CaretUpIcon size={12} weight="bold" />}
+                <span>{serviceFeeDateSort === "desc" ? "Mới nhất" : "Cũ nhất"}</span>
+              </button>
+
+              <div className="flex items-center gap-1 bg-white border border-slate-300 rounded-lg px-1.5 py-0.5 text-xs shadow-2xs">
+                <span className="text-[11px] font-semibold text-slate-500">Từ:</span>
+                <input
+                  type="date"
+                  value={serviceFeeStartDate}
+                  onChange={(e) => setServiceFeeStartDate(e.target.value)}
+                  className="bg-transparent text-xs text-slate-700 font-medium focus:outline-hidden cursor-pointer w-[95px]"
+                />
+                <span className="text-[11px] font-semibold text-slate-500">Đến:</span>
+                <input
+                  type="date"
+                  value={serviceFeeEndDate}
+                  onChange={(e) => setServiceFeeEndDate(e.target.value)}
+                  className="bg-transparent text-xs text-slate-700 font-medium focus:outline-hidden cursor-pointer w-[95px]"
+                />
+                {(serviceFeeStartDate || serviceFeeEndDate) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setServiceFeeStartDate("");
+                      setServiceFeeEndDate("");
+                    }}
+                    className="text-slate-400 hover:text-rose-600 ml-0.5 cursor-pointer"
+                    title="Xoá lọc ngày"
+                  >
+                    <XIcon size={11} weight="bold" />
+                  </button>
+                )}
+              </div>
+
+              <div className="relative w-36 sm:w-44 focus-within:!w-56 transition-all duration-200">
+                <MagnifyingGlassIcon
+                  size={12}
+                  className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400"
+                />
+                <input
+                  type="text"
+                  placeholder="Tìm loại phí, Order ID..."
+                  value={serviceFeeSearch}
+                  onChange={(e) => setServiceFeeSearch(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white pl-6 pr-5 py-0.5 text-xs font-medium text-slate-800 placeholder-slate-400 outline-none transition focus:border-indigo-500 focus:ring-1 focus:ring-indigo-100 shadow-2xs"
+                />
+                {serviceFeeSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setServiceFeeSearch("")}
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    <XIcon size={10} />
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-300 shadow-2xs">
+                <button
+                  type="button"
+                  onClick={() => setTableZoom((z) => Math.max(60, z - 10))}
+                  className="h-5 w-5 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 hover:shadow-2xs active:scale-95 transition cursor-pointer"
+                  title="Thu nhỏ bảng (-10%)"
+                >
+                  <MinusIcon size={11} weight="bold" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTableZoom(100)}
+                  className="px-1 py-0.5 text-[10px] font-mono font-bold text-slate-700 hover:text-indigo-600 cursor-pointer"
+                  title="Đặt lại cỡ 100%"
+                >
+                  {tableZoom}%
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTableZoom((z) => Math.min(150, z + 10))}
+                  className="h-5 w-5 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 hover:shadow-2xs active:scale-95 transition cursor-pointer"
+                  title="Phóng to bảng (+10%)"
+                >
+                  <PlusIcon size={11} weight="bold" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ĐƯỜNG KẺ NGĂN CÁCH 2 DÒNG NHƯ Ở BÊN INVENTORY */}
@@ -1470,11 +1853,71 @@ export function OrderInputView() {
               <span className="font-bold text-emerald-700 font-mono">{adsStats.avgRoas.toFixed(2)}</span>
             </div>
           </div>
-        ) : null}
+        ) : activeTab === "return" ? (
+          <div className="flex items-center gap-2 flex-wrap text-xs text-slate-900 justify-end py-0.5 ml-auto">
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-medium">Returns:</span>
+              <span className="font-bold text-slate-950 font-mono">{returnStats.totalRows.toLocaleString()}</span>
+            </div>
+            <span className="text-slate-400 select-none">|</span>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-medium">Total Hoàn:</span>
+              <span className="font-bold text-rose-700 font-mono">{formatCurrency(returnStats.totalAmount)}</span>
+            </div>
+            <span className="text-slate-400 select-none">|</span>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-medium">Amazon Fees:</span>
+              <span className="font-bold text-amber-700 font-mono">{formatCurrency(returnStats.totalAmazonFees)}</span>
+            </div>
+            <span className="text-slate-400 select-none">|</span>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-medium">Basecost:</span>
+              <span className="font-bold text-slate-700 font-mono">{formatCurrency(returnStats.totalBasecost)}</span>
+            </div>
+            <span className="text-slate-400 select-none">|</span>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-medium">Sau Basecost:</span>
+              <span className="font-bold text-emerald-700 font-mono">{formatCurrency(returnStats.totalReturnSauBasecost)}</span>
+            </div>
+            <span className="text-slate-400 select-none">|</span>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-medium">SKUs:</span>
+              <span className="font-bold text-indigo-700 font-mono">{returnStats.uniqueSkus.toLocaleString()}</span>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 flex-wrap text-xs text-slate-900 justify-end py-0.5 ml-auto">
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-medium">Khoản phí:</span>
+              <span className="font-bold text-slate-950 font-mono">{serviceFeeStats.totalRows.toLocaleString()}</span>
+            </div>
+            <span className="text-slate-400 select-none">|</span>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-medium">Tổng phí:</span>
+              <span className="font-bold text-rose-700 font-mono">{formatCurrency(serviceFeeStats.totalAmount)}</span>
+            </div>
+            <span className="text-slate-400 select-none">|</span>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-medium">Amazon Fees:</span>
+              <span className="font-bold text-amber-700 font-mono">{formatCurrency(serviceFeeStats.totalAmazonFees)}</span>
+            </div>
+            <span className="text-slate-400 select-none">|</span>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-medium">Other:</span>
+              <span className="font-bold text-slate-700 font-mono">{formatCurrency(serviceFeeStats.totalOther)}</span>
+            </div>
+            <span className="text-slate-400 select-none">|</span>
+            <div className="flex items-center gap-1">
+              <span className="text-slate-500 font-medium">Hạng mục:</span>
+              <span className="font-bold text-indigo-700 font-mono">{serviceFeeStats.uniqueFeeTypes.toLocaleString()}</span>
+            </div>
+          </div>
+        )}
+
       </div>
 
-      {activeTab === "orders" ? (
-        <>
+      {visitedTabs.orders && (
+        <div className={activeTab === "orders" ? "space-y-3" : "hidden"}>
           {/* ACTIVE COLUMN FILTERS BAR (Chỉ hiện khi có lọc) */}
           {Object.keys(columnFilters).length > 0 && (
             <div className="flex items-center gap-2 p-2 bg-amber-50/60 border border-amber-200 rounded-xl flex-wrap text-xs">
@@ -1650,17 +2093,15 @@ export function OrderInputView() {
                             : col.align === "right"
                             ? "text-right"
                             : "text-left";
-                        const isWrapCol = col.id === "product_name";
+                        const cellVal = (item as any)[col.id];
 
                         return (
                           <td
                             key={col.id}
                             style={f.style}
-                            className={`py-1.5 px-2.5 text-[13px] text-slate-900 border-r border-slate-200 transition-colors leading-tight ${alignClass} ${
-                              isWrapCol ? "whitespace-normal break-words" : "whitespace-nowrap overflow-hidden text-ellipsis"
-                            } ${f.className}`}
+                            className={`py-1.5 px-2.5 text-[13px] text-slate-900 border-r border-slate-200 transition-colors leading-tight ${alignClass} ${f.className} overflow-hidden text-ellipsis whitespace-nowrap`}
                           >
-                            <div className={isWrapCol ? "w-full" : "truncate w-full min-w-0"}>
+                            <div className="truncate w-full min-w-0" title={typeof cellVal === "string" ? cellVal : undefined}>
                               {renderCellContent(item, col.id, rowIndex)}
                             </div>
                           </td>
@@ -1748,130 +2189,94 @@ export function OrderInputView() {
           </div>
         </div>
       </div>
-    </>
-  ) : activeTab === "ads" ? (
-    <AdsInputView
-      stores={stores}
-      selectedStoreId={selectedStoreId}
-      onStoreChange={handleStoreChange}
-      search={adsSearch}
-      setSearch={setAdsSearch}
-      dateSort={adsDateSort}
-      setDateSort={setAdsDateSort}
-      startDate={adsStartDate}
-      setStartDate={setAdsStartDate}
-      endDate={adsEndDate}
-      setEndDate={setAdsEndDate}
-      onStatsChange={setAdsStats}
-      tableZoom={tableZoom}
-      showImportModal={showAdsImportModal}
-      setShowImportModal={setShowAdsImportModal}
-      showColumnModal={showAdsColumnModal}
-      setShowColumnModal={setShowAdsColumnModal}
-      resetColumnsSignal={resetAdsColumnsSignal}
-      autoFitColumnsSignal={autoFitAdsColumnsSignal}
-      reloadSignal={reloadAdsSignal}
-      onTotalAdsChange={setTotalAds}
-      notify={notify}
-    />
-  ) : (
-        /* FUTURE IMPORT TABS: RETURN, SERVICE FEE */
-        <div className="rounded-xl border border-slate-300 bg-white p-8 shadow-2xs space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-start justify-between border-b border-slate-100 pb-5 gap-4">
-            <div className="flex items-start gap-3.5">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-2xs mt-0.5">
-                {activeTab === "return" ? (
-                  <ArrowCounterClockwiseIcon size={24} weight="bold" />
-                ) : (
-                  <ReceiptIcon size={24} weight="bold" />
-                )}
-              </span>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-lg font-bold text-slate-900 tracking-tight">
-                    {activeTab === "return"
-                      ? "Import Dữ Liệu Return & Hoàn Tiền"
-                      : "Import Dữ Liệu Phí Dịch Vụ (Service Fee)"}
-                  </h2>
-                  <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[11px] font-bold text-amber-800 border border-amber-200">
-                    Sắp ra mắt
-                  </span>
-                </div>
-                <p className="text-xs text-slate-500 mt-1 max-w-2xl leading-relaxed">
-                  {activeTab === "return"
-                    ? "Nhập file đối soát hoàn tiền (Customer Returns & Refunds), phí lưu kho trả hàng và tỷ lệ trả hàng theo SKU."
-                    : "Nhập file chi phí phụ sàn Amazon (Storage Fee, Inbound Placement Service Fee, Removal Order Fee, Disposal Fee)."}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 self-start shrink-0">
-              <span className="text-xs font-semibold text-slate-500">Store:</span>
-              <span className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded-lg">
-                {stores.find((s) => s.id === selectedStoreId)?.name || "Chưa chọn"}
-              </span>
-            </div>
-          </div>
+    </div>
+  )}
 
-          {/* Drag & Drop Upload Zone Preview */}
-          <div
-            onClick={() => {
-              setToast({ type: "success", message: `Tính năng nhập file ${activeTab.toUpperCase()} đang được kết nối.` });
-              setTimeout(() => setToast(null), 3500);
-            }}
-            className="rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50/70 p-10 text-center hover:border-indigo-400 hover:bg-indigo-50/20 transition-all cursor-pointer"
-          >
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white shadow-2xs border border-slate-200 text-indigo-600 mb-3">
-              <UploadSimpleIcon size={28} weight="bold" />
-            </div>
-            <h3 className="text-sm font-bold text-slate-800">
-              Kéo thả file báo cáo {activeTab === "return" ? "Return" : "Service Fee"} vào đây
-            </h3>
-            <p className="text-xs text-slate-500 mt-1">
-              Hỗ trợ định dạng .xlsx, .csv, .tsv từ Amazon Seller Central
-            </p>
-            <div className="mt-4 inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-indigo-700 transition">
-              <UploadSimpleIcon size={16} weight="bold" />
-              <span>Chọn file từ máy tính</span>
-            </div>
-          </div>
+  {visitedTabs.ads && (
+    <div className={activeTab === "ads" ? "space-y-3" : "hidden"}>
+      <AdsInputView
+        stores={stores}
+        selectedStoreId={selectedStoreId}
+        onStoreChange={handleStoreChange}
+        search={adsSearch}
+        setSearch={setAdsSearch}
+        dateSort={adsDateSort}
+        setDateSort={setAdsDateSort}
+        startDate={adsStartDate}
+        setStartDate={setAdsStartDate}
+        endDate={adsEndDate}
+        setEndDate={setAdsEndDate}
+        onStatsChange={setAdsStats}
+        tableZoom={tableZoom}
+        showImportModal={showAdsImportModal}
+        setShowImportModal={setShowAdsImportModal}
+        showColumnModal={showAdsColumnModal}
+        setShowColumnModal={setShowAdsColumnModal}
+        resetColumnsSignal={resetAdsColumnsSignal}
+        autoFitColumnsSignal={autoFitAdsColumnsSignal}
+        reloadSignal={reloadAdsSignal}
+        onTotalAdsChange={setTotalAds}
+        notify={notify}
+      />
+    </div>
+  )}
 
-          {/* Anticipated Data Structure Preview */}
-          <div className="space-y-3">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              Cột dữ liệu chuẩn bị tích hợp
-            </h4>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {(activeTab === "return"
-                ? [
-                    { name: "Order ID", desc: "Mã đơn hàng phát sinh hoàn" },
-                    { name: "Return Date", desc: "Ngày hoàn tiền / trả hàng" },
-                    { name: "SKU / ASIN", desc: "Sản phẩm bị hoàn" },
-                    { name: "Quantity", desc: "Số lượng trả về" },
-                    { name: "Refund Amount", desc: "Số tiền đã hoàn cho khách" },
-                    { name: "Reason", desc: "Lý do trả hàng (Defective...)" },
-                    { name: "Fulfillment Center", desc: "Kho FBA tiếp nhận lại" },
-                    { name: "Disposition", desc: "Sellable / Customer Damaged" },
-                  ]
-                : [
-                    { name: "Fee Type", desc: "Loại phí (Storage, Placement...)" },
-                    { name: "Amount", desc: "Số tiền tính phí" },
-                    { name: "Currency", desc: "Loại tiền tệ (USD, CAD, EUR)" },
-                    { name: "Period / Date", desc: "Kỳ tính phí theo tháng" },
-                    { name: "SKU / FNSKU", desc: "Mã hàng bị tính phụ phí" },
-                    { name: "Volume (cu ft)", desc: "Thể tích lưu kho thực tế" },
-                    { name: "Marketplace", desc: "Thị trường áp dụng phụ phí" },
-                    { name: "Description", desc: "Ghi chú chi tiết bản kê sàn" },
-                  ]
-              ).map((item, idx) => (
-                <div key={idx} className="rounded-lg border border-slate-200 bg-slate-50/60 p-2.5 space-y-1">
-                  <span className="text-xs font-bold text-slate-800 block truncate">{item.name}</span>
-                  <span className="text-[11px] text-slate-500 block leading-snug">{item.desc}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
+  {visitedTabs.return && (
+    <div className={activeTab === "return" ? "space-y-3" : "hidden"}>
+      <ReturnInputView
+        stores={stores}
+        selectedStoreId={selectedStoreId}
+        onStoreChange={handleStoreChange}
+        search={returnSearch}
+        setSearch={setReturnSearch}
+        dateSort={returnDateSort}
+        setDateSort={setReturnDateSort}
+        startDate={returnStartDate}
+        setStartDate={setReturnStartDate}
+        endDate={returnEndDate}
+        setEndDate={setReturnEndDate}
+        onStatsChange={setReturnStats}
+        tableZoom={tableZoom}
+        showImportModal={showReturnImportModal}
+        setShowImportModal={setShowReturnImportModal}
+        showColumnModal={showReturnColumnModal}
+        setShowColumnModal={setShowReturnColumnModal}
+        resetColumnsSignal={resetReturnColumnsSignal}
+        reloadSignal={reloadReturnSignal}
+        onTotalReturnsChange={setTotalReturns}
+        notify={notify}
+      />
+    </div>
+  )}
+
+  {visitedTabs.service_fee && (
+    <div className={activeTab === "service_fee" ? "space-y-3" : "hidden"}>
+      <ServiceFeeInputView
+        stores={stores}
+        selectedStoreId={selectedStoreId}
+        onStoreChange={handleStoreChange}
+        search={serviceFeeSearch}
+        setSearch={setServiceFeeSearch}
+        dateSort={serviceFeeDateSort}
+        setDateSort={setServiceFeeDateSort}
+        startDate={serviceFeeStartDate}
+        setStartDate={setServiceFeeStartDate}
+        endDate={serviceFeeEndDate}
+        setEndDate={setServiceFeeEndDate}
+        onStatsChange={setServiceFeeStats}
+        tableZoom={tableZoom}
+        showImportModal={showServiceFeeImportModal}
+        setShowImportModal={setShowServiceFeeImportModal}
+        showColumnModal={showServiceFeeColumnModal}
+        setShowColumnModal={setShowServiceFeeColumnModal}
+        resetColumnsSignal={resetServiceFeeColumnsSignal}
+        reloadSignal={reloadServiceFeeSignal}
+        onTotalServiceFeesChange={setTotalServiceFees}
+        notify={notify}
+      />
+    </div>
+  )}
+
 
       {/* CONTEXT MENU */}
       {columnContextMenu && (() => {

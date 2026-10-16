@@ -13,6 +13,8 @@ import { listStores } from "./accounting-db";
 import { importCheckShipmentsFromCsv } from "./inventory-db";
 import { parseOrdersBuffer, batchUpsertOrders } from "./orders-db";
 import { parseAdsBuffer, batchUpsertAds } from "./ads-db";
+import { parseReturnBuffer, batchUpsertReturns } from "./returns-db";
+import { parseServiceFeeBuffer, batchUpsertServiceFees } from "./service-fees-db";
 
 export interface ManagedAccountingFile {
   id: string;
@@ -67,10 +69,10 @@ export function detectFileType(fileName: string): { code: string; label: string;
     return { code: "02_ALL_ORDERS", label: "02. Đơn hàng All Orders", isIngestable: true };
   }
   if (lower.includes("03_returns") || lower.includes("returns")) {
-    return { code: "03_RETURNS", label: "03. Trả hàng Returns", isIngestable: false };
+    return { code: "03_RETURNS", label: "03. Trả hàng Returns", isIngestable: true };
   }
   if (lower.includes("04_servicefees") || lower.includes("servicefees") || lower.includes("service fees")) {
-    return { code: "04_SERVICE_FEES", label: "04. Phí dịch vụ Service Fees", isIngestable: false };
+    return { code: "04_SERVICE_FEES", label: "04. Phí dịch vụ Service Fees", isIngestable: true };
   }
   if (lower.includes("05_campaigns") || lower.includes("campaign")) {
     return { code: "05_CAMPAIGNS", label: "05. Chi phí Ads (Portfolios)", isIngestable: true };
@@ -343,6 +345,32 @@ export async function ingestAccountingFile(r2Key: string, storeName: string): Pr
     };
   }
 
+  if (typeInfo.code === "03_RETURNS") {
+    const returnRows = await parseReturnBuffer(buffer, fileName, targetStore.id);
+    const result = await batchUpsertReturns(targetStore.id, returnRows);
+    return {
+      success: true,
+      type: "03_RETURNS",
+      message: `Đã nạp thành công ${result.count} dòng dữ liệu trả hàng (Return) vào hệ thống!`,
+      count: result.count,
+      createdCount: result.createdCount,
+      updatedCount: 0,
+    };
+  }
+
+  if (typeInfo.code === "04_SERVICE_FEES") {
+    const feeRows = await parseServiceFeeBuffer(buffer, fileName, targetStore.id);
+    const result = await batchUpsertServiceFees(targetStore.id, feeRows);
+    return {
+      success: true,
+      type: "04_SERVICE_FEES",
+      message: `Đã nạp thành công ${result.count} dòng dữ liệu phí dịch vụ (Service Fee) vào hệ thống!`,
+      count: result.count,
+      createdCount: result.createdCount,
+      updatedCount: 0,
+    };
+  }
+
   throw new Error(`Loại file '${typeInfo.label}' chưa hỗ trợ tự động nạp dữ liệu.`);
 }
 
@@ -351,7 +379,7 @@ export async function ingestAccountingFile(r2Key: string, storeName: string): Pr
  * và nạp dữ liệu vào database cho TẤT CẢ các Store trong hệ thống.
  */
 export async function syncLatestFilesForAllStores(
-  fileTypeCode: "07_SHIPMENTS" | "02_ALL_ORDERS" | "05_CAMPAIGNS" | "01_PORTFOLIOS"
+  fileTypeCode: "07_SHIPMENTS" | "02_ALL_ORDERS" | "05_CAMPAIGNS" | "01_PORTFOLIOS" | "03_RETURNS" | "04_SERVICE_FEES"
 ): Promise<{
   success: boolean;
   fileTypeCode: string;

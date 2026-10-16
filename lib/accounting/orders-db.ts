@@ -134,6 +134,8 @@ export async function listOrders(
     limit?: number;
     search?: string;
     dateSort?: "asc" | "desc";
+    startDate?: string;
+    endDate?: string;
     filters?: Record<string, string>;
   } = {}
 ): Promise<{ orders: OrderItem[]; total: number; stats: OrderStats }> {
@@ -143,9 +145,18 @@ export async function listOrders(
   const offset = (page - 1) * limit;
   const search = options.search?.trim() || "";
   const dateSort = options.dateSort || "desc";
+  const startDate = options.startDate?.trim() || "";
+  const endDate = options.endDate?.trim() || "";
 
   // Build filter conditions
   const conditions = [sql`store_id = ${storeId}`];
+
+  if (startDate) {
+    conditions.push(sql`COALESCE(date, purchase_date::date) >= ${startDate}::date`);
+  }
+  if (endDate) {
+    conditions.push(sql`COALESCE(date, purchase_date::date) <= ${endDate}::date`);
+  }
 
   if (search) {
     const s = `%${search}%`;

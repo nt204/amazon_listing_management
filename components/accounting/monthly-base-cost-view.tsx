@@ -23,6 +23,7 @@ import {
   type ColumnConfig,
   DEFAULT_MONTHLY_BASE_COST_COLUMNS,
   ColumnHeaderCell,
+  createTextWidthMeasurer,
 } from "./column-manager-modal";
 
 export interface MonthlyBaseCostViewRef {
@@ -499,6 +500,39 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
     const referenceMonthLabel = `tháng ${referenceMonth}/${year}`;
     const isFutureMonth = (month: number) => year > currentYear || (year === currentYear && month > currentMonth);
 
+    const handleAutoFitMonthlyColumn = useCallback((col: ColumnConfig) => {
+      // Mockup và biểu đồ là ô giao diện, không có chuỗi dữ liệu để đo.
+      if (col.id === "mockup" || col.id === "sparkline") {
+        onResizeColumn?.(col.id, col.id === "mockup" ? 72 : 110);
+        notify("Đã tự điều chỉnh độ rộng cột!", "success");
+        return;
+      }
+
+      const measureText = createTextWidthMeasurer();
+      let widestValueWidth = 0;
+      for (const row of rows) {
+        let value = "";
+        if (col.id === "product_type") value = row.product_type || "-";
+        else if (col.id === "sku") value = row.sku || "-";
+        else if (col.id === "asin") value = row.asin || "-";
+        else if (col.id === "reference_hang_ton") {
+          value = String(row.months[referenceMonth]?.sl_ton_dau_ky ?? row.hang_ton_dau_nam ?? "-");
+        } else if (col.id === "reference_gia_von") {
+          const cost = row.months[referenceMonth]?.basecost_dau_ky ?? row.gia_von_dau_nam;
+          value = cost && cost > 0 ? formatCurrency(cost) : "-";
+        } else if (col.id.startsWith("month_")) {
+          value = formatCostNumber(row.months[Number(col.id.replace("month_", ""))]?.basecost);
+        }
+        widestValueWidth = Math.max(widestValueWidth, measureText(value));
+      }
+
+      const labelWords = (col.label || col.id).split(/[-_ \n/]+/).filter(Boolean);
+      const headerWidth = Math.max(...labelWords.map((word) => word.length), 5) * 8.2 + 26;
+      const contentWidth = widestValueWidth > 0 ? widestValueWidth + 30 : 0;
+      onResizeColumn?.(col.id, Math.max(52, Math.ceil(Math.max(headerWidth, contentWidth))));
+      notify("Đã tự điều chỉnh độ rộng cột!", "success");
+    }, [notify, onResizeColumn, referenceMonth, rows]);
+
     return (
       <div className="flex flex-col flex-1 h-full min-h-0 bg-slate-50 dark:bg-slate-950">
         {/* Quick Summary Pill Bar */}
@@ -611,7 +645,11 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
                       }}
                       className={`px-2 font-bold text-center leading-tight select-none ${headerBgClass} ${f.className}`}
                       onResize={onResizeColumn ? (id, width) => onResizeColumn(id, width) : undefined}
-                      onAutoFit={onAutoFitColumn}
+                      onAutoFit={(id) => {
+                        const targetColumn = activeColumns.find((column) => column.id === id);
+                        if (targetColumn && onResizeColumn) handleAutoFitMonthlyColumn(targetColumn);
+                        else onAutoFitColumn?.(id);
+                      }}
                       onColumnClick={onColumnContextMenu ? (id, event) => onColumnContextMenu(id, event.clientX, event.clientY) : undefined}
                     >
                       <div className="w-full flex items-center justify-center text-center overflow-hidden">

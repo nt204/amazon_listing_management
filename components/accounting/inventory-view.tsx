@@ -14,6 +14,7 @@ import {
   ArrowsInLineHorizontalIcon,
   BarcodeIcon,
   CalculatorIcon,
+  CameraIcon,
   CaretDownIcon,
   CaretUpIcon,
   CheckCircleIcon,
@@ -111,6 +112,7 @@ import {
   DEFAULT_CHECK_SHIPMENT_COLUMNS,
   DEFAULT_MONTHLY_BASE_COST_COLUMNS,
   ColumnHeaderCell,
+  createTextWidthMeasurer,
 } from "./column-manager-modal";
 import { InventoryHistoryDrawer } from "./inventory-history-drawer";
 import { MonthlyBaseCostView, type MonthlyBaseCostViewRef } from "./monthly-base-cost-view";
@@ -583,6 +585,114 @@ function getRawEditableString(val: unknown, field?: string): string {
   return s;
 }
 
+// Active inline editor input only rendered when a cell is actively in edit mode
+function ActiveCellEditor({
+  table,
+  id,
+  field,
+  value,
+  options = [],
+  onSave,
+  onCancel,
+  inputAlignClass,
+  hasOptions,
+}: {
+  table: "sku" | "inbound" | "check_shipment";
+  id: string;
+  field: string;
+  value: unknown;
+  options?: string[];
+  onSave: (table?: "sku" | "inbound" | "check_shipment" | unknown, id?: string, field?: string, val?: string) => void | Promise<void>;
+  onCancel: () => void;
+  inputAlignClass: string;
+  hasOptions: boolean;
+}) {
+  const [localVal, setLocalVal] = useState(() => getRawEditableString(value));
+  const inputRef = useRef<HTMLInputElement>(null);
+  const isCommittingRef = useRef(false);
+
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      if (inputRef.current) {
+        inputRef.current.focus();
+        inputRef.current.select();
+      }
+    });
+  }, []);
+
+  const commitSave = () => {
+    if (isCommittingRef.current) return;
+    isCommittingRef.current = true;
+    const cleanLocal = localVal.trim();
+    const cleanOrig = getRawEditableString(value);
+    if (cleanLocal !== cleanOrig) {
+      onSave(table, id, field, cleanLocal);
+    } else {
+      onCancel();
+    }
+  };
+
+  const typed = localVal.trim().toLowerCase();
+  const suggestedOptions = typed && localVal !== getRawEditableString(value)
+    ? options.filter((option) => option.toLowerCase().includes(typed))
+    : options;
+
+  return (
+    <div
+      className="absolute inset-0 z-30 p-0.5 flex items-center bg-white rounded ring-2 ring-emerald-600 shadow-md"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="relative h-full w-full">
+        <input
+          ref={inputRef}
+          type="text"
+          value={localVal}
+          onChange={(e) => setLocalVal(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commitSave();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              isCommittingRef.current = true;
+              onCancel();
+            }
+          }}
+          onBlur={commitSave}
+          className={`h-full w-full rounded border border-emerald-500 bg-white px-2 ${hasOptions ? "pr-6" : ""} text-[13px] font-normal text-slate-950 focus:outline-none ${inputAlignClass}`}
+        />
+        {hasOptions && (
+          <div className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400">
+            <CaretDownIcon size={12} weight="bold" />
+          </div>
+        )}
+        {hasOptions && (
+          <div className="absolute left-0 top-full z-[100] mt-1 max-h-56 min-w-[200px] w-full overflow-y-auto rounded-lg border border-slate-200 bg-white p-1 shadow-2xl">
+            {suggestedOptions.slice(0, 40).map((option) => (
+              <button
+                key={option}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  isCommittingRef.current = true;
+                  setLocalVal(option);
+                  onSave(table, id, field, option);
+                }}
+                className="block w-full whitespace-nowrap rounded px-2.5 py-1.5 text-left text-[13px] font-medium text-slate-900 hover:bg-indigo-50 hover:text-indigo-700"
+              >
+                {option}
+              </button>
+            ))}
+            {suggestedOptions.length === 0 && (
+              <div className="px-2.5 py-2 text-xs text-slate-400">Nhấn Enter để lưu giá trị mới</div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Ultra-fast, Excel-like Inline Editable Cell (0ms keystroke lag, auto-save on blur / Enter)
 const EditableCell = memo(
   function EditableCell({
@@ -621,50 +731,11 @@ const EditableCell = memo(
       inlineEditing?.id === id &&
       inlineEditing?.field === field;
 
-    const [localVal, setLocalVal] = useState("");
-    const inputRef = useRef<HTMLInputElement>(null);
-    const isCommittingRef = useRef(false);
-
-    useEffect(() => {
-      if (isEditing) {
-        setLocalVal(getRawEditableString(value));
-        isCommittingRef.current = false;
-        requestAnimationFrame(() => {
-          if (inputRef.current) {
-            inputRef.current.focus();
-            inputRef.current.select();
-          }
-        });
-      }
-    }, [isEditing, value]);
-
-    const commitSave = () => {
-      if (isCommittingRef.current) return;
-      isCommittingRef.current = true;
-      const cleanLocal = localVal.trim();
-      const cleanOrig = getRawEditableString(value);
-      if (cleanLocal !== cleanOrig) {
-        onSave(table, id, field, cleanLocal);
-      } else {
-        onCancel();
-      }
-    };
-
     const alignClass = className.includes("text-center")
       ? "justify-center text-center"
       : className.includes("text-right")
       ? "justify-end text-right"
       : "justify-start text-left";
-
-    const inputAlignClass = className.includes("text-center")
-      ? "text-center"
-      : className.includes("text-right")
-      ? "text-right"
-      : "text-left";
-    const typed = localVal.trim().toLowerCase();
-    const suggestedOptions = typed && localVal !== getRawEditableString(value)
-      ? options.filter((option) => option.toLowerCase().includes(typed))
-      : options;
 
     const hasOptions = options.length > 0;
 
@@ -715,58 +786,23 @@ const EditableCell = memo(
         )}
 
         {isEditing && (
-          <div
-            className="absolute inset-0 z-30 p-0.5 flex items-center bg-white rounded ring-2 ring-emerald-600 shadow-md"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="relative h-full w-full">
-              <input
-                ref={inputRef}
-                type="text"
-                value={localVal}
-                onChange={(e) => setLocalVal(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    commitSave();
-                  } else if (e.key === "Escape") {
-                    e.preventDefault();
-                    isCommittingRef.current = true;
-                    onCancel();
-                  }
-                }}
-                onBlur={commitSave}
-                className={`h-full w-full rounded border border-emerald-500 bg-white px-2 ${hasOptions ? "pr-6" : ""} text-[13px] font-normal text-slate-950 focus:outline-none ${inputAlignClass}`}
-              />
-              {hasOptions && (
-                <div className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400">
-                  <CaretDownIcon size={12} weight="bold" />
-                </div>
-              )}
-              {hasOptions && (
-                <div className="absolute left-0 top-full z-[100] mt-1 max-h-56 min-w-[200px] w-full overflow-y-auto rounded-lg border border-slate-200 bg-white p-1 shadow-2xl">
-                  {suggestedOptions.slice(0, 40).map((option) => (
-                    <button
-                      key={option}
-                      type="button"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        isCommittingRef.current = true;
-                        setLocalVal(option);
-                        onSave(table, id, field, option);
-                      }}
-                      className="block w-full whitespace-nowrap rounded px-2.5 py-1.5 text-left text-[13px] font-medium text-slate-900 hover:bg-indigo-50 hover:text-indigo-700"
-                    >
-                      {option}
-                    </button>
-                  ))}
-                  {suggestedOptions.length === 0 && (
-                    <div className="px-2.5 py-2 text-xs text-slate-400">Nhấn Enter để lưu giá trị mới</div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
+          <ActiveCellEditor
+            table={table}
+            id={id}
+            field={field}
+            value={value}
+            options={options}
+            onSave={onSave}
+            onCancel={onCancel}
+            inputAlignClass={
+              className.includes("text-center")
+                ? "text-center"
+                : className.includes("text-right")
+                ? "text-right"
+                : "text-left"
+            }
+            hasOptions={hasOptions}
+          />
         )}
       </td>
     );
@@ -831,6 +867,7 @@ function PaginationBar({
               <option value={25}>25</option>
               <option value={50}>50</option>
               <option value={100}>100</option>
+              <option value={200}>200</option>
             </select>
           </div>
         )}
@@ -890,10 +927,154 @@ function PaginationBar({
 function getOptimizedThumbnailUrl(url: string | null): string | null {
   if (!url) return null;
   const trimmed = url.trim();
-  if (trimmed.includes("trello.com") || trimmed.includes("drive.google.com")) {
-    return `/api/accounting/inventory/mockup-proxy?url=${encodeURIComponent(trimmed)}`;
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    return `/api/accounting/inventory/mockup-proxy?w=64&url=${encodeURIComponent(trimmed)}`;
   }
   return trimmed;
+}
+
+// Background Image Preload Queue (limited concurrency: max 4 parallel requests to prevent network congestion)
+const preloadedImageUrls = new Set<string>();
+const preloadQueue: string[] = [];
+let activePreloadWorkers = 0;
+const MAX_CONCURRENT_PRELOADS = 4;
+
+function processNextPreload() {
+  if (typeof window === "undefined" || activePreloadWorkers >= MAX_CONCURRENT_PRELOADS) return;
+  const nextUrl = preloadQueue.shift();
+  if (!nextUrl) return;
+
+  activePreloadWorkers++;
+  const img = new Image();
+  img.decoding = "async";
+  img.onload = () => {
+    preloadedImageUrls.add(nextUrl);
+    activePreloadWorkers--;
+    processNextPreload();
+  };
+  img.onerror = () => {
+    activePreloadWorkers--;
+    processNextPreload();
+  };
+  img.src = nextUrl;
+}
+
+export function queuePreloadImage(url: string | null | undefined) {
+  if (!url || typeof window === "undefined") return;
+  const optUrl = getOptimizedThumbnailUrl(url);
+  if (!optUrl || preloadedImageUrls.has(optUrl) || preloadQueue.includes(optUrl)) return;
+  preloadQueue.push(optUrl);
+  processNextPreload();
+}
+
+// Automatically downscale an image (File, Blob, or DataURL) to max dimension and compress to WebP
+async function downscaleImage(
+  source: File | Blob | string,
+  maxDimension = 240,
+  quality = 0.82
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const handleImageLoaded = (img: HTMLImageElement) => {
+      let width = img.naturalWidth || img.width;
+      let height = img.naturalHeight || img.height;
+      if (!width || !height) {
+        resolve(typeof source === "string" ? source : "");
+        return;
+      }
+      if (width > maxDimension || height > maxDimension) {
+        if (width > height) {
+          height = Math.round((height * maxDimension) / width);
+          width = maxDimension;
+        } else {
+          width = Math.round((width * maxDimension) / height);
+          height = maxDimension;
+        }
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, width);
+      canvas.height = Math.max(1, height);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        resolve(typeof source === "string" ? source : "");
+        return;
+      }
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(img, 0, 0, width, height);
+
+      try {
+        const webpUrl = canvas.toDataURL("image/webp", quality);
+        if (webpUrl && webpUrl.startsWith("data:image/webp")) {
+          resolve(webpUrl);
+          return;
+        }
+      } catch {}
+      try {
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      } catch {
+        resolve(typeof source === "string" ? source : "");
+      }
+    };
+
+    if (typeof source === "string") {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => handleImageLoaded(img);
+      img.onerror = () => resolve(source);
+      img.src = source;
+    } else {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const dataUrl = e.target?.result as string;
+        const img = new Image();
+        img.onload = () => handleImageLoaded(img);
+        img.onerror = () => resolve(dataUrl);
+        img.src = dataUrl;
+      };
+      reader.onerror = () => reject(new Error("Không thể đọc file ảnh"));
+      reader.readAsDataURL(source);
+    }
+  });
+}
+
+// Extract image from clipboard event (handles pasted files, blobs, data URLs, image URLs)
+async function extractImageFromClipboard(
+  e: React.ClipboardEvent | ClipboardEvent,
+  maxDimension = 240
+): Promise<string | null> {
+  const items = e.clipboardData?.items;
+  if (items) {
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) {
+          e.preventDefault();
+          return await downscaleImage(file, maxDimension);
+        }
+      }
+    }
+  }
+
+  const text = e.clipboardData?.getData("text")?.trim();
+  if (text) {
+    if (text.startsWith("data:image/")) {
+      e.preventDefault();
+      return await downscaleImage(text, maxDimension);
+    }
+    if (text.startsWith("http://") || text.startsWith("https://")) {
+      if (text.match(/\.(jpeg|jpg|png|gif|webp|avif|svg)(\?.*)?$/i)) {
+        e.preventDefault();
+        try {
+          return await downscaleImage(text, maxDimension);
+        } catch {
+          return text;
+        }
+      }
+    }
+  }
+
+  return null;
 }
 
 // Compact, Fast Mockup Thumbnail (44x44px, async decode, low fetch priority, in-place preview)
@@ -935,6 +1116,252 @@ function MockupThumbnail({
         className="h-full w-full object-contain rounded transition-transform duration-150 group-hover:scale-110"
       />
     </button>
+  );
+}
+
+// Compact, Interactive Mockup Cell with Paste & Auto-Downscale support in tables
+const MockupCell = memo(function MockupCell({
+  table,
+  id,
+  field,
+  url,
+  alt,
+  onPreview,
+  onSave,
+  notify,
+}: {
+  table: "sku" | "inbound";
+  id: string;
+  field: "mockup" | "mockup_url";
+  url: string | null;
+  alt: string;
+  onPreview?: (preview: {
+    url: string;
+    table: "sku" | "inbound";
+    id: string;
+    field: "mockup" | "mockup_url";
+    title: string;
+  }) => void;
+  onSave: (table: "sku" | "inbound", id: string, field: string, value: string) => Promise<void> | void;
+  notify?: (message: string, type?: "success" | "error") => void;
+}) {
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [hasError, setHasError] = useState(false);
+  const optimizedUrl = useMemo(() => getOptimizedThumbnailUrl(url), [url]);
+
+  const handleProcessImage = async (fileOrUrl: File | Blob | string) => {
+    setIsProcessing(true);
+    try {
+      const downscaled = await downscaleImage(fileOrUrl, 240, 0.82);
+      await onSave(table, id, field, downscaled);
+      notify?.("Đã dán và tự động nén ảnh Mockup!", "success");
+    } catch (err) {
+      notify?.("Lỗi xử lý ảnh: " + (err as Error).message, "error");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handlePaste = async (e: React.ClipboardEvent) => {
+    const extracted = await extractImageFromClipboard(e, 240);
+    if (extracted) {
+      await handleProcessImage(extracted);
+    }
+  };
+
+  const handleOpenPreview = () => {
+    onPreview?.({
+      url: url || "",
+      table,
+      id,
+      field,
+      title: alt,
+    });
+  };
+
+  return (
+    <div
+      tabIndex={0}
+      onPaste={handlePaste}
+      className="group/mockup relative flex h-11 w-11 mx-auto items-center justify-center rounded-lg border border-slate-200 bg-white p-0.5 hover:border-indigo-500 hover:ring-2 hover:ring-indigo-200 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-300 focus:outline-hidden transition shadow-2xs select-none"
+      title="Click ảnh để xem chi tiết / thay ảnh | Dán ảnh nhanh (Ctrl+V)"
+    >
+      {isProcessing ? (
+        <div className="flex h-full w-full items-center justify-center text-indigo-600 bg-white/90">
+          <ArrowClockwiseIcon size={18} weight="bold" className="animate-spin" />
+        </div>
+      ) : url && !hasError ? (
+        <button
+          type="button"
+          onClick={handleOpenPreview}
+          className="h-full w-full block overflow-hidden rounded cursor-pointer"
+        >
+          <img
+            src={optimizedUrl || url}
+            alt={alt}
+            width={44}
+            height={44}
+            loading="eager"
+            decoding="async"
+            onError={(e) => {
+              // Nếu link proxy bị lỗi, fallback thử link trực tiếp
+              const target = e.currentTarget;
+              if (url && target.src !== url) {
+                target.src = url;
+              } else {
+                setHasError(true);
+              }
+            }}
+            className="h-full w-full object-contain rounded transition-transform duration-150 group-hover/mockup:scale-105"
+          />
+        </button>
+      ) : (
+        /* Empty placeholder */
+        <div
+          onClick={() => {
+            onPreview?.({
+              url: "",
+              table,
+              id,
+              field,
+              title: alt,
+            });
+          }}
+          className="flex h-full w-full items-center justify-center rounded bg-slate-50 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition cursor-pointer"
+          title="Chưa có ảnh. Click để xem chi tiết / đổi ảnh hoặc ấn Ctrl+V để dán"
+        >
+          <ImageSquareIcon size={20} weight="duotone" />
+        </div>
+      )}
+    </div>
+  );
+});
+
+// Full-featured Mockup Paste & Upload Field for Add/Edit Modals
+function MockupPasteField({
+  label = "Ảnh Mockup",
+  value,
+  onChange,
+  onPreview,
+  notify,
+}: {
+  label?: string;
+  value: string;
+  onChange: (val: string) => void;
+  onPreview?: (url: string) => void;
+  notify?: (message: string, type?: "success" | "error") => void;
+}) {
+  const [isCompressing, setIsCompressing] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const optimizedUrl = useMemo(() => getOptimizedThumbnailUrl(value), [value]);
+
+  const handleProcess = async (fileOrUrl: File | Blob | string) => {
+    setIsCompressing(true);
+    try {
+      const downscaled = await downscaleImage(fileOrUrl, 280, 0.82);
+      onChange(downscaled);
+      notify?.("Đã nén và tự động tối ưu ảnh Mockup!", "success");
+    } catch (err) {
+      notify?.("Lỗi nén ảnh: " + (err as Error).message, "error");
+    } finally {
+      setIsCompressing(false);
+    }
+  };
+
+  const handlePaste = async (e: React.ClipboardEvent) => {
+    const extracted = await extractImageFromClipboard(e, 280);
+    if (extracted) {
+      await handleProcess(extracted);
+    }
+  };
+
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      await handleProcess(file);
+    }
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  return (
+    <div className="space-y-1.5 md:col-span-3">
+      <div className="flex items-center justify-between">
+        <label className="font-bold text-slate-700 flex items-center gap-1.5">
+          <ImageSquareIcon size={16} weight="bold" className="text-indigo-600" />
+          <span>{label}</span>
+          <span className="text-[11px] font-normal text-slate-500">(Cho phép dán ảnh trực tiếp với Ctrl+V)</span>
+        </label>
+        {value && (
+          <button
+            type="button"
+            onClick={() => onChange("")}
+            className="text-[11px] font-bold text-rose-600 hover:text-rose-800 cursor-pointer"
+          >
+            Xóa ảnh
+          </button>
+        )}
+      </div>
+
+      <div
+        tabIndex={0}
+        onPaste={handlePaste}
+        className="flex flex-col sm:flex-row items-center gap-3 p-3 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50/70 hover:bg-slate-50 hover:border-indigo-400 focus:border-indigo-500 focus:bg-indigo-50/30 focus:outline-hidden transition"
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleFile}
+          className="hidden"
+        />
+
+        {/* Thumbnail Preview Box */}
+        <div className="relative h-16 w-16 shrink-0 rounded-lg border border-slate-300 bg-white p-0.5 overflow-hidden flex items-center justify-center shadow-2xs">
+          {isCompressing ? (
+            <ArrowClockwiseIcon size={24} className="animate-spin text-indigo-600" />
+          ) : value ? (
+            <img
+              src={optimizedUrl || value}
+              alt="Mockup preview"
+              className="h-full w-full object-contain rounded cursor-pointer"
+              onClick={() => onPreview?.(value)}
+              title="Click để phóng to ảnh"
+            />
+          ) : (
+            <ImageSquareIcon size={28} className="text-slate-300" />
+          )}
+        </div>
+
+        {/* Controls: URL input or Paste Zone Hint */}
+        <div className="flex-1 w-full space-y-1.5">
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              placeholder="Dán ảnh (Ctrl+V) tại đây hoặc nhập link URL https://..."
+              value={value.startsWith("data:image/") ? "[Ảnh đã tải lên & tự động nén WebP]" : value}
+              onChange={(e) => {
+                if (!e.target.value.startsWith("[Ảnh")) {
+                  onChange(e.target.value);
+                }
+              }}
+              onPaste={handlePaste}
+              className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:outline-hidden shadow-2xs font-mono"
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs font-bold hover:bg-slate-100 hover:text-indigo-600 transition shadow-2xs cursor-pointer shrink-0 flex items-center gap-1.5"
+            >
+              <UploadSimpleIcon size={14} weight="bold" />
+              <span>Chọn file</span>
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-500 flex items-center gap-1">
+            <span>💡 <b>Mẹo:</b> Sao chép ảnh từ bất kỳ đâu (Zalo, website, chụp màn hình) rồi ấn <b>Ctrl+V</b> để dán. Hệ thống sẽ tự động downscale ảnh WebP siêu nhẹ.</span>
+          </p>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1105,6 +1532,18 @@ function InventoryViewInner() {
   useEffect(() => {
     window.sessionStorage.setItem("accounting_inventory_active_tab", activeTab);
   }, [activeTab]);
+
+  const [visitedTabs, setVisitedTabs] = useState<Record<InventoryTab, boolean>>(() => ({
+    sku: activeTab === "sku",
+    inbound: activeTab === "inbound",
+    check_shipment: activeTab === "check_shipment",
+    monthly_base_cost: activeTab === "monthly_base_cost",
+  }));
+
+  const handleTabChange = useCallback((tab: InventoryTab) => {
+    setActiveTab(tab);
+    setVisitedTabs((prev) => (prev[tab] ? prev : { ...prev, [tab]: true }));
+  }, []);
   const monthlyBaseCostRef = useRef<MonthlyBaseCostViewRef>(null);
   const [monthlyBaseCostYear, setMonthlyBaseCostYear] = useState<number>(2026);
   const [syncingMonthlyBaseCost, setSyncingMonthlyBaseCost] = useState<boolean>(false);
@@ -1127,11 +1566,11 @@ function InventoryViewInner() {
   const [monthlyBaseCostSearch, setMonthlyBaseCostSearch] = useState("");
   const debouncedMonthlyBaseCostSearch = useDebounce(monthlyBaseCostSearch, 300);
 
-  // Bấm tiêu đề một cột ngày để đổi giữa mới nhất và cũ nhất.  Mỗi bảng giữ
-  // lựa chọn riêng để việc chuyển tab không làm mất thứ tự người dùng đang xem.
+  // Bấm tiêu đề một cột ngày để đổi giữa mới nhất và cũ nhất.
+  // Mặc định Bảng Mã và Đi Hàng sắp xếp theo ngày tạo (created_at DESC) để dòng mới luôn ở trên đầu.
   const [dateSort, setDateSort] = useState<Record<"sku" | "inbound" | "check_shipment", { field: string; direction: "asc" | "desc" }>>({
-    sku: { field: "thang_listing", direction: "desc" },
-    inbound: { field: "ngay_di", direction: "desc" },
+    sku: { field: "created_at", direction: "desc" },
+    inbound: { field: "created_at", direction: "desc" },
     check_shipment: { field: "ngay_update", direction: "desc" },
   });
   const [columnFilters, setColumnFilters] = useState<Record<"sku" | "inbound" | "check_shipment", Record<string, string>>>({
@@ -1183,8 +1622,16 @@ function InventoryViewInner() {
     });
   }, []);
 
-  // Blur backdrop mockup preview modal state
-  const [previewModalUrl, setPreviewModalUrl] = useState<string | null>(null);
+  // Blur backdrop mockup preview modal state (with optional inline change action)
+  const [previewModal, setPreviewModal] = useState<{
+    url: string;
+    table?: "sku" | "inbound";
+    id?: string;
+    field?: "mockup" | "mockup_url";
+    title?: string;
+  } | null>(null);
+  const [isUpdatingPreviewMockup, setIsUpdatingPreviewMockup] = useState(false);
+  const previewFileInputRef = useRef<HTMLInputElement>(null);
 
   // Column management states
   const [skuColumns, setSkuColumns] = useState<ColumnConfig[]>(DEFAULT_SKU_COLUMNS);
@@ -1201,9 +1648,7 @@ function InventoryViewInner() {
 
   useEffect(() => {
     try {
-      const saved =
-        localStorage.getItem(FROZEN_COLUMNS_STORAGE_KEY) ||
-        (selectedStoreId ? localStorage.getItem(`accounting_frozen_columns_${selectedStoreId}`) : null);
+      const saved = localStorage.getItem(FROZEN_COLUMNS_STORAGE_KEY);
       if (!saved) return;
       const parsed = JSON.parse(saved);
       setFrozenThrough((current) => ({ ...current, ...parsed }));
@@ -1311,28 +1756,22 @@ function InventoryViewInner() {
   // Load columns from localStorage (áp dụng đồng bộ tất cả store)
   useEffect(() => {
     try {
-      const skuStored =
-        localStorage.getItem(SKU_COLUMNS_STORAGE_KEY) ||
-        (selectedStoreId ? localStorage.getItem(`accounting_sku_columns_${selectedStoreId}`) : null);
-      if (skuStored) {
-        const parsed: ColumnConfig[] = JSON.parse(skuStored);
-        const defaultMap = new Map(DEFAULT_SKU_COLUMNS.map((def) => [def.id, def]));
+      const mergeFromParsed = (parsedCols: ColumnConfig[], defaultCols: ColumnConfig[]) => {
+        const defaultMap = new Map(defaultCols.map((def) => [def.id, def]));
         const ordered: ColumnConfig[] = [];
         const seenIds = new Set<string>();
 
-        // Frozen columns always stay first
-        for (const def of DEFAULT_SKU_COLUMNS.filter((c) => c.isFrozen)) {
-          const found = parsed.find((p) => p.id === def.id);
-          ordered.push(found ? { ...def, ...found, isFrozen: true } : def);
-          seenIds.add(def.id);
-        }
-
-        // Add columns in the order saved by user in parsed
-        for (const item of parsed) {
+        // Giữ chính xác thứ tự, độ rộng (kéo dãn/thu nhỏ) và trạng thái hiển thị của người dùng
+        for (const item of parsedCols) {
           if (seenIds.has(item.id)) continue;
           if (defaultMap.has(item.id)) {
             const def = defaultMap.get(item.id)!;
-            ordered.push({ ...def, ...item, isFrozen: false });
+            ordered.push({
+              ...def,
+              ...item,
+              width: item.width ?? def.width,
+              label: item.label || def.label,
+            });
             seenIds.add(item.id);
           } else if (item.isCustom) {
             ordered.push(item);
@@ -1340,129 +1779,52 @@ function InventoryViewInner() {
           }
         }
 
-        // Add any remaining default columns
-        for (const def of DEFAULT_SKU_COLUMNS) {
+        // Bổ sung các cột mặc định còn thiếu (nếu có update)
+        for (const def of defaultCols) {
           if (!seenIds.has(def.id)) {
             ordered.push(def);
             seenIds.add(def.id);
           }
         }
-        setSkuColumns(ordered);
+        return ordered;
+      };
+
+      const skuStored = localStorage.getItem(SKU_COLUMNS_STORAGE_KEY);
+      if (skuStored) {
+        const parsed: ColumnConfig[] = JSON.parse(skuStored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setSkuColumns(mergeFromParsed(parsed, DEFAULT_SKU_COLUMNS));
+        }
       } else {
         setSkuColumns(DEFAULT_SKU_COLUMNS);
       }
 
-      const inboundStored =
-        localStorage.getItem(INBOUND_COLUMNS_STORAGE_KEY) ||
-        (selectedStoreId ? localStorage.getItem(`accounting_inbound_columns_${selectedStoreId}`) : null);
+      const inboundStored = localStorage.getItem(INBOUND_COLUMNS_STORAGE_KEY);
       if (inboundStored) {
         const parsed: ColumnConfig[] = JSON.parse(inboundStored);
-        const defaultMap = new Map(DEFAULT_INBOUND_COLUMNS.map((def) => [def.id, def]));
-        const ordered: ColumnConfig[] = [];
-        const seenIds = new Set<string>();
-
-        // Frozen columns always stay first
-        for (const def of DEFAULT_INBOUND_COLUMNS.filter((c) => c.isFrozen)) {
-          const found = parsed.find((p) => p.id === def.id);
-          ordered.push(found ? { ...def, ...found, isFrozen: true } : def);
-          seenIds.add(def.id);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setInboundColumns(mergeFromParsed(parsed, DEFAULT_INBOUND_COLUMNS));
         }
-
-        // Add columns in the order saved by user in parsed
-        for (const item of parsed) {
-          if (seenIds.has(item.id)) continue;
-          if (defaultMap.has(item.id)) {
-            const def = defaultMap.get(item.id)!;
-            ordered.push({ ...def, ...item, isFrozen: false });
-            seenIds.add(item.id);
-          } else if (item.isCustom) {
-            ordered.push(item);
-            seenIds.add(item.id);
-          }
-        }
-
-        // Add any remaining default columns
-        for (const def of DEFAULT_INBOUND_COLUMNS) {
-          if (!seenIds.has(def.id)) {
-            ordered.push(def);
-            seenIds.add(def.id);
-          }
-        }
-        setInboundColumns(ordered);
       } else {
         setInboundColumns(DEFAULT_INBOUND_COLUMNS);
       }
 
-      const checkStored =
-        localStorage.getItem(CHECK_SHIPMENT_COLUMNS_STORAGE_KEY) ||
-        (selectedStoreId ? localStorage.getItem(`accounting_check_shipment_columns_${selectedStoreId}`) : null);
+      const checkStored = localStorage.getItem(CHECK_SHIPMENT_COLUMNS_STORAGE_KEY);
       if (checkStored) {
         const parsed: ColumnConfig[] = JSON.parse(checkStored);
-        const defaultMap = new Map(DEFAULT_CHECK_SHIPMENT_COLUMNS.map((def) => [def.id, def]));
-        const ordered: ColumnConfig[] = [];
-        const seenIds = new Set<string>();
-
-        // Frozen columns always stay first
-        for (const def of DEFAULT_CHECK_SHIPMENT_COLUMNS.filter((c) => c.isFrozen)) {
-          const found = parsed.find((p) => p.id === def.id);
-          ordered.push(found ? { ...def, ...found, isFrozen: true } : def);
-          seenIds.add(def.id);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setCheckShipmentColumns(mergeFromParsed(parsed, DEFAULT_CHECK_SHIPMENT_COLUMNS));
         }
-
-        for (const item of parsed) {
-          if (seenIds.has(item.id)) continue;
-          if (defaultMap.has(item.id)) {
-            const def = defaultMap.get(item.id)!;
-            ordered.push({ ...def, ...item, isFrozen: false });
-            seenIds.add(item.id);
-          } else if (item.isCustom) {
-            ordered.push(item);
-            seenIds.add(item.id);
-          }
-        }
-
-        for (const def of DEFAULT_CHECK_SHIPMENT_COLUMNS) {
-          if (!seenIds.has(def.id)) {
-            ordered.push(def);
-            seenIds.add(def.id);
-          }
-        }
-        setCheckShipmentColumns(ordered);
       } else {
         setCheckShipmentColumns(DEFAULT_CHECK_SHIPMENT_COLUMNS);
       }
 
-      const monthlyStored =
-        localStorage.getItem(MONTHLY_BASE_COST_COLUMNS_STORAGE_KEY) ||
-        (selectedStoreId ? localStorage.getItem(`accounting_monthly_base_cost_columns_${selectedStoreId}`) : null);
+      const monthlyStored = localStorage.getItem(MONTHLY_BASE_COST_COLUMNS_STORAGE_KEY);
       if (monthlyStored) {
         const parsed: ColumnConfig[] = JSON.parse(monthlyStored);
-        const defaultMap = new Map(DEFAULT_MONTHLY_BASE_COST_COLUMNS.map((def) => [def.id, def]));
-        const ordered: ColumnConfig[] = [];
-        const seenIds = new Set<string>();
-
-        for (const def of DEFAULT_MONTHLY_BASE_COST_COLUMNS.filter((c) => c.isFrozen)) {
-          const found = parsed.find((p) => p.id === def.id);
-          ordered.push(found ? { ...def, ...found, isFrozen: true } : def);
-          seenIds.add(def.id);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setMonthlyBaseCostColumns(mergeFromParsed(parsed, DEFAULT_MONTHLY_BASE_COST_COLUMNS));
         }
-
-        for (const item of parsed) {
-          if (seenIds.has(item.id)) continue;
-          if (defaultMap.has(item.id)) {
-            const def = defaultMap.get(item.id)!;
-            ordered.push({ ...def, ...item, isFrozen: false });
-            seenIds.add(item.id);
-          }
-        }
-
-        for (const def of DEFAULT_MONTHLY_BASE_COST_COLUMNS) {
-          if (!seenIds.has(def.id)) {
-            ordered.push(def);
-            seenIds.add(def.id);
-          }
-        }
-        setMonthlyBaseCostColumns(ordered);
       } else {
         setMonthlyBaseCostColumns(DEFAULT_MONTHLY_BASE_COST_COLUMNS);
       }
@@ -1767,12 +2129,12 @@ function InventoryViewInner() {
     [],
   );
 
-  // Pagination 50/1 states
+  // Pagination states (Mặc định 100 dòng / trang)
   const [skuPage, setSkuPage] = useState(1);
-  const [skuLimit, setSkuLimit] = useState(50);
+  const [skuLimit, setSkuLimit] = useState(100);
 
   const [shipmentPage, setShipmentPage] = useState(1);
-  const [shipmentLimit, setShipmentLimit] = useState(50);
+  const [shipmentLimit, setShipmentLimit] = useState(100);
 
   const [checkShipmentPage, setCheckShipmentPage] = useState(1);
   const [checkShipmentLimit, setCheckShipmentLimit] = useState(50);
@@ -1790,7 +2152,7 @@ function InventoryViewInner() {
     setCheckShipmentPage(1);
   }, [selectedStoreId, debouncedCheckShipmentSearch, checkShipmentStatusFilter, checkShipmentBrandFilter]);
 
-  // 1. TanStack Query for SKU Master (Server-side Page Pagination, 50/trang)
+  // 1. TanStack Query for SKU Master (Server-side Page Pagination, 100/trang)
   const skuQuery = useQuery({
     queryKey: ["sku-master", selectedStoreId, skuPage, skuLimit, debouncedSkuSearch, skuStatusFilter, skuTypeFilter],
     queryFn: async ({ signal }) => {
@@ -1815,12 +2177,12 @@ function InventoryViewInner() {
     enabled: !!selectedStoreId,
   });
 
-  const allSkus = skuQuery.data?.items || [];
+  const allSkus = useMemo(() => skuQuery.data?.items ?? [], [skuQuery.data?.items]);
   const skuTotalCount = skuQuery.data?.total ?? 0;
   const skuTotal = skuTotalCount;
   const skuTotalPages = Math.max(1, Math.ceil(skuTotal / skuLimit));
 
-  // 2. TanStack Query for Inbound Shipments (Server-side Page Pagination, 50/trang)
+  // 2. TanStack Query for Inbound Shipments (Server-side Page Pagination, 100/trang)
   const shipmentQuery = useQuery({
     queryKey: ["inbound-shipments", selectedStoreId, shipmentPage, shipmentLimit, debouncedShipmentSearch, shipmentStatusFilter],
     queryFn: async ({ signal }) => {
@@ -1843,6 +2205,11 @@ function InventoryViewInner() {
     },
     enabled: !!selectedStoreId,
   });
+
+  const allShipments = useMemo(() => shipmentQuery.data?.items ?? [], [shipmentQuery.data?.items]);
+  const shipmentTotalCount = shipmentQuery.data?.total ?? 0;
+  const shipmentTotal = shipmentTotalCount;
+  const shipmentTotalPages = Math.max(1, Math.ceil(shipmentTotal / shipmentLimit));
 
   // 3. TanStack Query for Check Shipments (Server-side Page Pagination, 50/trang)
   const checkShipmentQuery = useQuery({
@@ -1892,12 +2259,7 @@ function InventoryViewInner() {
     enabled: !!selectedStoreId,
   });
 
-  const allShipments = shipmentQuery.data?.items || [];
-  const shipmentTotalCount = shipmentQuery.data?.total ?? 0;
-  const shipmentTotal = shipmentTotalCount;
-  const shipmentTotalPages = Math.max(1, Math.ceil(shipmentTotal / shipmentLimit));
-
-  const allCheckShipments = checkShipmentQuery.data?.items || [];
+  const allCheckShipments = useMemo(() => checkShipmentQuery.data?.items ?? [], [checkShipmentQuery.data?.items]);
   const checkShipmentTotalCount = checkShipmentQuery.data?.total ?? 0;
   const checkShipmentTotal = checkShipmentTotalCount;
   const checkShipmentTotalPages = Math.max(1, Math.ceil(checkShipmentTotal / checkShipmentLimit));
@@ -1917,6 +2279,11 @@ function InventoryViewInner() {
   const loadingSkus = skuQuery.isLoading;
   const loadingShipments = shipmentQuery.isLoading;
   const loadingCheckShipments = checkShipmentQuery.isLoading;
+  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const notify = useCallback((message: string, type: "success" | "error" = "success") => {
+    setToast({ type, message });
+    setTimeout(() => setToast(null), 4000);
+  }, []);
 
   // Modals & Forms
   const [showImportModal, setShowImportModal] = useState(false);
@@ -2129,7 +2496,7 @@ function InventoryViewInner() {
         setInlineSaving(false);
       }
     },
-    [selectedStore, selectedStoreId, skuPage, skuLimit, shipmentPage, shipmentLimit, checkShipmentPage, checkShipmentLimit, debouncedSkuSearch, debouncedShipmentSearch, debouncedCheckShipmentSearch, skuStatusFilter, skuTypeFilter, shipmentStatusFilter, checkShipmentStatusFilter, checkShipmentBrandFilter, inlineEditing, queryClient]
+    [selectedStore, selectedStoreId, inlineEditing, notify, queryClient]
   );
 
   const compareDatesDesc = (aStr?: string | null, bStr?: string | null): number => {
@@ -2146,14 +2513,20 @@ function InventoryViewInner() {
     return bClean.localeCompare(aClean);
   };
 
-  // Mặc định sắp xếp BẢNG MÃ theo tháng listing mới nhất
+  // Mặc định sắp xếp BẢNG MÃ theo ngày tạo mới nhất (dòng mới luôn ở trên đầu)
   const sortedSkus = useMemo(() => {
     return allSkus.filter((item) => Object.entries(columnFilters.sku).every(([field, value]) =>
       !value || String((item as any)[field] ?? item.custom_fields?.[field] ?? "").trim() === value,
     )).sort((a, b) => {
       const sort = dateSort.sku;
-      const cmp = compareDatesDesc((a as any)[sort.field], (b as any)[sort.field]) * (sort.direction === "desc" ? 1 : -1);
-      if (cmp !== 0) return cmp;
+      if (sort.field === "created_at") {
+        const ca = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const cb = b.created_at ? new Date(b.created_at).getTime() : 0;
+        if (ca !== cb) return sort.direction === "desc" ? cb - ca : ca - cb;
+      } else {
+        const cmp = compareDatesDesc((a as any)[sort.field], (b as any)[sort.field]) * (sort.direction === "desc" ? 1 : -1);
+        if (cmp !== 0) return cmp;
+      }
       const ca = a.created_at ? new Date(a.created_at).getTime() : 0;
       const cb = b.created_at ? new Date(b.created_at).getTime() : 0;
       if (ca !== cb) return cb - ca;
@@ -2161,14 +2534,20 @@ function InventoryViewInner() {
     });
   }, [allSkus, dateSort.sku, columnFilters.sku]);
 
-  // Mặc định sắp xếp CHI TIẾT ĐI HÀNG theo ngày đi từ mới nhất
+  // Mặc định sắp xếp CHI TIẾT ĐI HÀNG theo ngày tạo mới nhất (dòng mới luôn ở trên đầu)
   const sortedShipments = useMemo(() => {
     return allShipments.filter((item) => Object.entries(columnFilters.inbound).every(([field, value]) =>
       !value || String((item as any)[field] ?? item.custom_fields?.[field] ?? "").trim() === value,
     )).sort((a, b) => {
       const sort = dateSort.inbound;
-      const cmp = compareDatesDesc((a as any)[sort.field], (b as any)[sort.field]) * (sort.direction === "desc" ? 1 : -1);
-      if (cmp !== 0) return cmp;
+      if (sort.field === "created_at") {
+        const ca = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const cb = b.created_at ? new Date(b.created_at).getTime() : 0;
+        if (ca !== cb) return sort.direction === "desc" ? cb - ca : ca - cb;
+      } else {
+        const cmp = compareDatesDesc((a as any)[sort.field], (b as any)[sort.field]) * (sort.direction === "desc" ? 1 : -1);
+        if (cmp !== 0) return cmp;
+      }
       const ca = a.created_at ? new Date(a.created_at).getTime() : 0;
       const cb = b.created_at ? new Date(b.created_at).getTime() : 0;
       return cb - ca;
@@ -2197,12 +2576,36 @@ function InventoryViewInner() {
     return Array.from(set).sort();
   }, [allCheckShipments]);
 
-  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const skuScrollRef = useRef<HTMLDivElement>(null);
+  const shipmentScrollRef = useRef<HTMLDivElement>(null);
 
-  const notify = (message: string, type: "success" | "error" = "success") => {
-    setToast({ type, message });
-    setTimeout(() => setToast(null), 4000);
-  };
+  // Preload ảnh nền cho các SKU/Shipment trên trang hiện tại (trì hoãn 100ms sau khi render tab để không tranh chấp CPU)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (activeTab === "sku" && sortedSkus.length > 0) {
+        for (const item of sortedSkus) {
+          if (item) {
+            queuePreloadImage(item.mockup_url || item.mockup);
+          }
+        }
+      } else if (activeTab === "inbound" && sortedShipments.length > 0) {
+        for (const item of sortedShipments) {
+          if (item) {
+            queuePreloadImage(item.mockup);
+          }
+        }
+      }
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [activeTab, sortedSkus, sortedShipments]);
+
+  useEffect(() => {
+    skuScrollRef.current?.scrollTo({ top: 0 });
+  }, [selectedStoreId, skuPage, debouncedSkuSearch, skuTypeFilter, columnFilters.sku]);
+
+  useEffect(() => {
+    shipmentScrollRef.current?.scrollTo({ top: 0 });
+  }, [selectedStoreId, shipmentPage, debouncedShipmentSearch, shipmentStatusFilter, columnFilters.inbound]);
 
   // Tính toán độ rộng vừa khít nội dung thực tế và tiêu đề cột cho tất cả các bảng
   const calculateAutoFitWidth = useCallback(
@@ -2211,22 +2614,15 @@ function InventoryViewInner() {
       colId: string,
       label: string
     ): number => {
-      // 1. Ngoại lệ cố định các cột đặc thù
-      if (colId === "stt") return 52;
+      // Cột hiển thị thuần UI không có chuỗi dữ liệu để đo.
       if (colId === "mockup") return 72;
       if (colId === "sparkline") return 110;
-      if (colId.startsWith("month_")) return 75;
-      if (colId === "ship_to") return 80;
-      if (colId === "skus_count") return 70;
-      if (colId === "quantity" || colId === "units_expected" || colId === "units_located") return 95;
-      if (colId === "card" || colId === "tag" || colId === "hop_tui") return 80;
-      if (colId === "referral_fee_pct") return 85;
 
-      // 2. Quét dữ liệu mẫu từ bảng đang nạp (tối đa 150 dòng)
-      let maxContentChars = 0;
+      // Quét toàn bộ dữ liệu đang nạp để cột luôn bao trọn giá trị dài nhất.
+      const measureText = createTextWidthMeasurer();
+      let maxContentWidth = 0;
       if (table === "sku") {
-        const sample = allSkus.slice(0, 150);
-        for (const item of sample) {
+        for (const item of allSkus) {
           const val = (item as any)[colId] ?? (item.custom_fields as any)?.[colId];
           if (val != null) {
             let str = "";
@@ -2235,12 +2631,11 @@ function InventoryViewInner() {
             } else {
               str = String(val).trim();
             }
-            if (str.length > maxContentChars) maxContentChars = str.length;
+            maxContentWidth = Math.max(maxContentWidth, measureText(str));
           }
         }
       } else if (table === "inbound") {
-        const sample = allShipments.slice(0, 150);
-        for (const item of sample) {
+        for (const item of allShipments) {
           const val = (item as any)[colId] ?? (item.custom_fields as any)?.[colId];
           if (val != null) {
             let str = "";
@@ -2249,70 +2644,27 @@ function InventoryViewInner() {
             } else {
               str = String(val).trim();
             }
-            if (str.length > maxContentChars) maxContentChars = str.length;
+            maxContentWidth = Math.max(maxContentWidth, measureText(str));
           }
         }
       } else if (table === "check_shipment") {
-        const sample = allCheckShipments.slice(0, 150);
-        for (const item of sample) {
+        for (const item of allCheckShipments) {
           const val = (item as any)[colId] ?? (item.custom_fields as any)?.[colId];
           if (val != null) {
             const str = String(val).trim();
-            if (str.length > maxContentChars) maxContentChars = str.length;
+            maxContentWidth = Math.max(maxContentWidth, measureText(str));
           }
         }
       }
 
-      // Hệ số pixel/ký tự cho font-mono vs font thường
-      const isMono =
-        colId.includes("sku") ||
-        colId.includes("asin") ||
-        colId.includes("fnsku") ||
-        colId.includes("id") ||
-        colId.includes("date") ||
-        colId.includes("cost") ||
-        colId.includes("fee") ||
-        colId.includes("price");
-      const charWidth = isMono ? 7.6 : 7.2;
-      const contentWidth = maxContentChars > 0 ? Math.round(maxContentChars * charWidth + 24) : 0;
+      const contentWidth = maxContentWidth > 0 ? Math.ceil(maxContentWidth + 30) : 0;
 
       // Chiều rộng tối thiểu để tiêu đề không bị cắt chữ quá nhỏ (ngắt theo dấu gạch ngang, khoảng trắng, gạch dưới)
       const labelWords = (label || colId).split(/[-_ \n/]+/).filter(Boolean);
       const longestWordLength = labelWords.length > 0 ? Math.max(...labelWords.map((w) => w.length)) : 5;
       const headerWidth = Math.round(longestWordLength * 8.2 + 24);
 
-      let targetWidth = Math.max(contentWidth, headerWidth);
-
-      // Giới hạn trần tối đa theo từng cột để dữ liệu gọn gàng không bị khoảng trống quá lớn
-      const caps: Record<string, number> = {
-        product_type: 220,
-        sku: 200,
-        brand: 145,
-        asin: 145,
-        fnsku: 145,
-        shipment_id: 170,
-        shipment_name: 260,
-        ten_lo_hang: 220,
-        note: 220,
-        creative_headline: 260,
-        brand_logo_asset_id: 220,
-        landing_page_url: 160,
-        mockup_url: 140,
-        tinh_trang_hang_den_kho: 170,
-        basecost_tb: 120,
-        final_basecost: 110,
-        total_basecost: 120,
-        shipping_fee: 105,
-        amazon_fee: 105,
-        amazon_received: 115,
-        so_luong_amazon_nhan: 130,
-        ngay_danh_gia_sku_event: 150,
-        reference_hang_ton: 95,
-        reference_gia_von: 110,
-      };
-
-      const maxCap = caps[colId] || 160;
-      targetWidth = Math.min(targetWidth, maxCap);
+      const targetWidth = Math.max(contentWidth, headerWidth);
 
       return Math.max(52, targetWidth);
     },
@@ -2901,11 +3253,9 @@ function InventoryViewInner() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không thể nhân bản SKU");
 
-      setSkuPage(1);
-
       // Cập nhật tức thời vào cache query
       queryClient.setQueryData(
-        ["sku-master", selectedStoreId, 1, skuLimit, debouncedSkuSearch, skuStatusFilter, skuTypeFilter],
+        ["sku-master", selectedStoreId, skuPage, skuLimit, debouncedSkuSearch, skuStatusFilter, skuTypeFilter],
         (oldData: any) => {
           if (!oldData) return oldData;
           return {
@@ -2916,6 +3266,7 @@ function InventoryViewInner() {
         }
       );
 
+      setSkuPage(1);
       await fetchSkus();
 
       notify(`Đã nhân bản SKU lên dòng đầu tiên! Nhập mã SKU mới để hoàn tất.`, "success");
@@ -2989,10 +3340,13 @@ function InventoryViewInner() {
         throw new Error(data.error || "Lỗi khi lưu SKU");
       }
 
+      if (!skuFormData.id) {
+        setSkuPage(1);
+      }
       notify(skuFormData.id ? "Đã cập nhật phôi SKU thành công!" : "Đã tạo phôi SKU mới thành công!");
       setShowSkuModal(false);
       queryClient.invalidateQueries({ queryKey: ["inventory-field-options", selectedStoreId] });
-      fetchSkus();
+      await fetchSkus();
     } catch (err) {
       notify((err as Error).message, "error");
     } finally {
@@ -3110,10 +3464,13 @@ function InventoryViewInner() {
         throw new Error(data.error || "Lỗi khi lưu lô hàng");
       }
 
+      if (!shipmentFormData.id) {
+        setShipmentPage(1);
+      }
       notify(shipmentFormData.id ? "Đã cập nhật lô hàng thành công!" : "Đã tạo lô hàng mới thành công!");
       setShowShipmentModal(false);
       queryClient.invalidateQueries({ queryKey: ["inventory-field-options", selectedStoreId] });
-      fetchShipments();
+      await fetchShipments();
     } catch (err) {
       notify((err as Error).message, "error");
     } finally {
@@ -3683,7 +4040,6 @@ function InventoryViewInner() {
     }
 
     let cellValue: any = (item as any)[cid];
-    const setting = fieldSettingsQuery.data?.settings.find((entry) => entry.entity_type === "sku" && entry.field_id === cid);
     let displayNode: React.ReactNode = safeDisplay(cellValue);
     let cellClass = "py-1.5 px-2.5 text-[13px] text-slate-900 border-r border-slate-200";
 
@@ -3932,7 +4288,6 @@ function InventoryViewInner() {
     }
 
     let cellValue: any = (item as any)[cid];
-    const setting = fieldSettingsQuery.data?.settings.find((entry) => entry.entity_type === "inbound" && entry.field_id === cid);
     let displayNode: React.ReactNode = safeDisplay(cellValue);
     let cellClass = "py-1.5 px-2.5 text-[13px] text-slate-900 border-r border-slate-200";
 
@@ -4699,7 +5054,7 @@ function InventoryViewInner() {
         <div className="flex items-center gap-1 shrink-0">
           <button
             type="button"
-            onClick={() => setActiveTab("sku")}
+            onClick={() => handleTabChange("sku")}
             className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
               activeTab === "sku"
                 ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
@@ -4719,7 +5074,7 @@ function InventoryViewInner() {
 
           <button
             type="button"
-            onClick={() => setActiveTab("inbound")}
+            onClick={() => handleTabChange("inbound")}
             className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
               activeTab === "inbound"
                 ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
@@ -4739,7 +5094,7 @@ function InventoryViewInner() {
 
           <button
             type="button"
-            onClick={() => setActiveTab("check_shipment")}
+            onClick={() => handleTabChange("check_shipment")}
             className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
               activeTab === "check_shipment"
                 ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
@@ -4759,7 +5114,7 @@ function InventoryViewInner() {
 
           <button
             type="button"
-            onClick={() => setActiveTab("monthly_base_cost")}
+            onClick={() => handleTabChange("monthly_base_cost")}
             className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
               activeTab === "monthly_base_cost"
                 ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
@@ -5091,9 +5446,12 @@ function InventoryViewInner() {
       {/* TAB 1: SKU MASTER TABLE
           FROZEN COLUMNS: STT (left-0), Product Type (left-[56px]), Phôi Mockup (left-[230px]), Mã SKU (left-[326px])
           SOLID 100% OPAQUE BACKGROUND & CRISP DIVIDER LINE */}
-      {activeTab === "sku" && (
-        <div className="rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col">
-          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-230px)] min-h-[480px] scrollbar-thin [scrollbar-color:#94a3b8_#f1f5f9] [&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-slate-400 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-600">
+      {visitedTabs.sku && (
+        <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col ${activeTab === "sku" ? "" : "hidden"}`}>
+          <div
+            ref={skuScrollRef}
+            className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-230px)] min-h-[480px] scrollbar-thin [scrollbar-color:#94a3b8_#f1f5f9] [&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-slate-400 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-600"
+          >
             <div style={{ zoom: `${tableZoom}%` }} className="min-w-full">
               <table ref={skuTableRef} className="min-w-max w-full table-fixed border-separate border-spacing-0 text-left text-sm">
               <colgroup>
@@ -5132,7 +5490,8 @@ function InventoryViewInner() {
                     return (
                       <tr
                         key={item.id}
-                        className="group h-[34px] min-h-[34px] bg-white even:bg-[#f8fafc] hover:bg-amber-50/60 transition-colors whitespace-nowrap [&>td]:border-b [&>td]:border-slate-200"
+                        data-index={idx}
+                        className={`inventory-row group h-[34px] min-h-[34px] hover:bg-amber-50/60 transition-colors whitespace-nowrap [&>td]:border-b [&>td]:border-slate-200 ${idx % 2 === 0 ? "bg-white" : "bg-[#f8fafc]"}`}
                       >
                           {/* FROZEN 1: STT with Pencil Button aligned */}
                           {skuColMap["stt"]?.visible !== false && (() => {
@@ -5188,10 +5547,15 @@ function InventoryViewInner() {
                                 style={f.style}
                                 className={`py-1 px-1 text-center ${f.className}`}
                               >
-                                <MockupThumbnail
+                                <MockupCell
+                                  table="sku"
+                                  id={item.id}
+                                  field="mockup_url"
                                   url={item.mockup_url || item.mockup}
                                   alt={item.sku}
-                                  onPreview={(url) => setPreviewModalUrl(url)}
+                                  onPreview={(previewData) => setPreviewModal(previewData)}
+                                  onSave={(tbl, id, fld, val) => handleSaveInlineCell(tbl, id, fld, val)}
+                                  notify={notify}
                                 />
                               </td>
                             );
@@ -5270,7 +5634,7 @@ function InventoryViewInner() {
           </div>
           </div>
 
-          {/* Pagination Bar 50/1 */}
+          {/* Pagination Bar 100/1 */}
           <PaginationBar
             page={skuPage}
             totalPages={skuTotalPages}
@@ -5288,9 +5652,12 @@ function InventoryViewInner() {
 
       {/* TAB 2: INBOUND SHIPMENTS TABLE
           FROZEN COLUMNS: STT (left-0), Product Type (left-[56px]), Mockup (left-[230px]), Mã SKU (left-[326px]) */}
-      {activeTab === "inbound" && (
-        <div className="rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col">
-          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-230px)] min-h-[480px] scrollbar-thin [scrollbar-color:#94a3b8_#f1f5f9] [&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-slate-400 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-600">
+      {visitedTabs.inbound && (
+        <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col ${activeTab === "inbound" ? "" : "hidden"}`}>
+          <div
+            ref={shipmentScrollRef}
+            className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-230px)] min-h-[480px] scrollbar-thin [scrollbar-color:#94a3b8_#f1f5f9] [&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-slate-400 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-600"
+          >
             <div style={{ zoom: `${tableZoom}%` }} className="min-w-full">
               <table ref={inboundTableRef} className="min-w-max w-full table-fixed border-separate border-spacing-0 text-left text-sm">
               <colgroup>
@@ -5329,7 +5696,8 @@ function InventoryViewInner() {
                     return (
                       <tr
                         key={item.id}
-                        className="group h-[34px] min-h-[34px] bg-white even:bg-[#f8fafc] hover:bg-amber-50/60 transition-colors whitespace-nowrap [&>td]:border-b [&>td]:border-slate-200"
+                        data-index={idx}
+                        className={`inventory-row group h-[34px] min-h-[34px] hover:bg-amber-50/60 transition-colors whitespace-nowrap [&>td]:border-b [&>td]:border-slate-200 ${idx % 2 === 0 ? "bg-white" : "bg-[#f8fafc]"}`}
                       >
                           {/* FROZEN 1: STT with Pencil Button aligned */}
                           {inboundColMap["stt"]?.visible !== false && (() => {
@@ -5385,10 +5753,15 @@ function InventoryViewInner() {
                                 style={f.style}
                                 className={`py-1 px-1 text-center ${f.className}`}
                               >
-                                <MockupThumbnail
+                                <MockupCell
+                                  table="inbound"
+                                  id={item.id}
+                                  field="mockup"
                                   url={item.mockup}
                                   alt={item.sku}
-                                  onPreview={(url) => setPreviewModalUrl(url)}
+                                  onPreview={(previewData) => setPreviewModal(previewData)}
+                                  onSave={(tbl, id, fld, val) => handleSaveInlineCell(tbl, id, fld, val)}
+                                  notify={notify}
                                 />
                               </td>
                             );
@@ -5467,7 +5840,7 @@ function InventoryViewInner() {
           </div>
         </div>
 
-        {/* Pagination Bar 50/1 */}
+        {/* Pagination Bar 100/1 */}
         <PaginationBar
           page={shipmentPage}
           totalPages={shipmentTotalPages}
@@ -5485,8 +5858,8 @@ function InventoryViewInner() {
 
       {/* TAB 3: CHECK SHIPMENT TABLE
           FROZEN COLUMNS: STT (left-0), Shipment ID (left-[58px]), Shipment Name (left-[218px]) */}
-      {activeTab === "check_shipment" && (
-        <div className="rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col">
+      {visitedTabs.check_shipment && (
+        <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col ${activeTab === "check_shipment" ? "" : "hidden"}`}>
           <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-230px)] min-h-[480px] scrollbar-thin [scrollbar-color:#94a3b8_#f1f5f9] [&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-slate-400 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-600">
             <div style={{ zoom: `${tableZoom}%` }} className="min-w-full">
               <table ref={checkShipmentTableRef} className="min-w-max w-full table-fixed border-separate border-spacing-0 text-left text-sm">
@@ -5528,7 +5901,7 @@ function InventoryViewInner() {
                     return (
                       <tr
                         key={item.id}
-                        className="group h-[34px] min-h-[34px] bg-white even:bg-[#f8fafc] hover:bg-amber-50/60 transition-colors whitespace-nowrap [&>td]:border-b [&>td]:border-slate-200"
+                        className="inventory-row group h-[34px] min-h-[34px] bg-white even:bg-[#f8fafc] hover:bg-amber-50/60 transition-colors whitespace-nowrap [&>td]:border-b [&>td]:border-slate-200"
                       >
                         {/* FROZEN 1: STT with Pencil Button aligned */}
                         {checkShipmentColMap["stt"]?.visible !== false && (() => {
@@ -5670,8 +6043,8 @@ function InventoryViewInner() {
     )}
 
       {/* TAB 4: BASE COST THÁNG */}
-      {activeTab === "monthly_base_cost" && (
-        <div className="rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col flex-1 min-h-[580px]">
+      {visitedTabs.monthly_base_cost && (
+        <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col flex-1 min-h-[580px] ${activeTab === "monthly_base_cost" ? "" : "hidden"}`}>
           <MonthlyBaseCostView
             ref={monthlyBaseCostRef}
             storeId={selectedStoreId}
@@ -5703,7 +6076,17 @@ function InventoryViewInner() {
       {/* MODAL 1: NHÂN VIÊN ĐIỀN THÊM PHÔI MỚI HOẶC SỬA PHÔI CŨ (SKU MASTER) */}
       {showSkuModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-          <div className="w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl space-y-4">
+          <div
+            tabIndex={0}
+            onPaste={async (e) => {
+              const extracted = await extractImageFromClipboard(e, 280);
+              if (extracted) {
+                setSkuFormData((prev) => ({ ...prev, mockup_url: extracted }));
+                notify("Đã tự động nén và dán ảnh Mockup!", "success");
+              }
+            }}
+            className="w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl space-y-4 outline-hidden"
+          >
             <div className="flex items-center justify-between border-b border-slate-200 pb-3">
               <div className="flex items-center gap-2">
                 <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-white font-bold text-sm">
@@ -5781,29 +6164,14 @@ function InventoryViewInner() {
                   options={getColumnOptions("sku", "product_type")}
                 />
 
-                {/* Mockup URL / Link phôi ảnh */}
-                <div className="space-y-1 md:col-span-2">
-                  <label className="font-bold text-slate-700">Link Ảnh Mockup (URL ảnh trực tiếp)</label>
-                  <input
-                    type="url"
-                    placeholder="https://... (Link ảnh phôi để hiển thị ảnh to trong bảng)"
-                    value={skuFormData.mockup_url}
-                    onChange={(e) => setSkuFormData({ ...skuFormData, mockup_url: e.target.value })}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-800 focus:border-indigo-500 focus:outline-hidden"
-                  />
-                </div>
-
-                {/* Preview Image if entered */}
-                <div className="space-y-1 flex flex-col items-center justify-center">
-                  <span className="font-bold text-slate-700 text-[11px]">Xem trước ảnh phôi</span>
-                  {skuFormData.mockup_url ? (
-                    <div className="h-14 w-14 rounded-lg border border-slate-300 p-0.5 overflow-hidden bg-white">
-                      <img src={getOptimizedThumbnailUrl(skuFormData.mockup_url) || skuFormData.mockup_url} alt="preview" className="h-full w-full object-contain" />
-                    </div>
-                  ) : (
-                    <span className="text-[11px] text-slate-400">Chưa có link ảnh</span>
-                  )}
-                </div>
+                {/* Mockup Paste & Upload Zone with Auto-Downscaling */}
+                <MockupPasteField
+                  label="Ảnh Mockup Phôi SKU"
+                  value={skuFormData.mockup_url}
+                  onChange={(val) => setSkuFormData({ ...skuFormData, mockup_url: val })}
+                  onPreview={(url) => setPreviewModal({ url })}
+                  notify={notify}
+                />
 
                 {/* ASIN */}
                 <div className="space-y-1">
@@ -6120,7 +6488,17 @@ function InventoryViewInner() {
       {/* MODAL 2: NHÂN VIÊN ĐIỀN THÊM HOẶC SỬA LÔ HÀNG (INBOUND SHIPMENTS) */}
       {showShipmentModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-          <div className="w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl space-y-4">
+          <div
+            tabIndex={0}
+            onPaste={async (e) => {
+              const extracted = await extractImageFromClipboard(e, 280);
+              if (extracted) {
+                setShipmentFormData((prev) => ({ ...prev, mockup: extracted }));
+                notify("Đã tự động nén và dán ảnh Mockup!", "success");
+              }
+            }}
+            className="w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl space-y-4 outline-hidden"
+          >
             <div className="flex items-center justify-between border-b border-slate-200 pb-3">
               <div className="flex items-center gap-2">
                 <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-white font-bold text-sm">
@@ -6363,6 +6741,15 @@ function InventoryViewInner() {
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-800 focus:border-indigo-500 focus:outline-hidden"
                   />
                 </div>
+
+                {/* Mockup Paste & Upload Zone with Auto-Downscaling */}
+                <MockupPasteField
+                  label="Ảnh Mockup Đơn Hàng / Lô Hàng"
+                  value={shipmentFormData.mockup}
+                  onChange={(val) => setShipmentFormData({ ...shipmentFormData, mockup: val })}
+                  onPreview={(url) => setPreviewModal({ url })}
+                  notify={notify}
+                />
 
                 {/* Note */}
                 <div className="space-y-1 md:col-span-3">
@@ -6998,44 +7385,138 @@ function InventoryViewInner() {
         </div>
       )}
 
-      {/* MODAL PREVIEW MOCKUP ẢNH MỜ (BLURRY BACKDROP PREVIEW, KHÔNG CHUYỂN TRANG) */}
-      {previewModalUrl && (
+      {/* MODAL PREVIEW MOCKUP ẢNH MỜ (BLURRY BACKDROP PREVIEW, CÓ NÚT THAY ẢNH / DÁN ẢNH) */}
+      {previewModal && (
         <div
           role="dialog"
           aria-modal="true"
-          onClick={() => setPreviewModalUrl(null)}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-4 animate-in fade-in duration-200 cursor-zoom-out"
+          tabIndex={0}
+          onPaste={async (e) => {
+            if (!previewModal.table || !previewModal.id || !previewModal.field) return;
+            const extracted = await extractImageFromClipboard(e, 240);
+            if (!extracted) return;
+            setIsUpdatingPreviewMockup(true);
+            try {
+              const downscaled = await downscaleImage(extracted, 240, 0.82);
+              await handleSaveInlineCell(previewModal.table, previewModal.id, previewModal.field, downscaled);
+              setPreviewModal((prev) => (prev ? { ...prev, url: downscaled } : null));
+              notify("Đã thay và tự động nén ảnh Mockup mới thành công!", "success");
+            } catch (err) {
+              notify("Lỗi khi thay ảnh: " + (err as Error).message, "error");
+            } finally {
+              setIsUpdatingPreviewMockup(false);
+            }
+          }}
+          onClick={() => {
+            if (!isUpdatingPreviewMockup) setPreviewModal(null);
+          }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-4 animate-in fade-in duration-200 cursor-zoom-out outline-hidden"
         >
+          <input
+            ref={previewFileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file || !previewModal.table || !previewModal.id || !previewModal.field) return;
+              setIsUpdatingPreviewMockup(true);
+              try {
+                const downscaled = await downscaleImage(file, 240, 0.82);
+                await handleSaveInlineCell(previewModal.table, previewModal.id, previewModal.field, downscaled);
+                setPreviewModal((prev) => (prev ? { ...prev, url: downscaled } : null));
+                notify("Đã cập nhật ảnh Mockup mới thành công!", "success");
+              } catch (err) {
+                notify("Lỗi khi cập nhật ảnh: " + (err as Error).message, "error");
+              } finally {
+                setIsUpdatingPreviewMockup(false);
+                if (previewFileInputRef.current) previewFileInputRef.current.value = "";
+              }
+            }}
+          />
+
           <div
             onClick={(e) => e.stopPropagation()}
-            className="relative max-w-2xl max-h-[85vh] p-2.5 bg-white/95 rounded-2xl shadow-2xl border border-white/20 flex flex-col items-center cursor-default overflow-hidden animate-in zoom-in-95 duration-150"
+            className="relative max-w-2xl w-full p-4 bg-white/95 rounded-2xl shadow-2xl border border-white/20 flex flex-col items-center cursor-default overflow-hidden animate-in zoom-in-95 duration-150"
           >
-            <button
-              type="button"
-              onClick={() => setPreviewModalUrl(null)}
-              className="absolute top-3 right-3 z-10 rounded-full bg-black/60 hover:bg-black text-white p-1.5 transition cursor-pointer shadow-md"
-              title="Đóng preview"
-            >
-              <XIcon size={18} weight="bold" />
-            </button>
-            <div className="relative flex items-center justify-center w-full max-h-[75vh] overflow-hidden rounded-xl bg-slate-100">
-              <img
-                src={getOptimizedThumbnailUrl(previewModalUrl) || previewModalUrl}
-                alt="Mockup Preview"
-                className="max-w-full max-h-[75vh] object-contain rounded-lg"
-              />
-            </div>
-            <div className="w-full flex items-center justify-between px-3 pt-2 text-xs text-slate-600">
-              <span className="font-medium truncate max-w-[360px]">{previewModalUrl}</span>
-              <a
-                href={previewModalUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800 font-bold transition ml-2 shrink-0"
+            {/* Header toolbar */}
+            <div className="w-full flex items-center justify-between pb-3 border-b border-slate-200">
+              <div className="flex items-center gap-2 truncate">
+                <span className="font-black text-sm text-slate-800">Mockup Preview</span>
+                {previewModal.title && (
+                  <span className="text-xs text-slate-500 truncate max-w-[280px]">
+                    ({previewModal.title})
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewModal(null)}
+                className="rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 p-1.5 transition cursor-pointer"
+                title="Đóng preview (Esc)"
               >
-                <span>Mở link gốc</span>
-                <ArrowSquareOutIcon size={14} weight="bold" />
-              </a>
+                <XIcon size={18} weight="bold" />
+              </button>
+            </div>
+
+            {/* Image display */}
+            <div className="relative flex items-center justify-center w-full min-h-[220px] max-h-[70vh] my-3 overflow-hidden rounded-xl bg-slate-100">
+              {isUpdatingPreviewMockup ? (
+                <div className="flex flex-col items-center justify-center gap-2 p-8 text-indigo-600">
+                  <ArrowClockwiseIcon size={28} weight="bold" className="animate-spin" />
+                  <span className="text-xs font-bold text-slate-600">Đang nén WebP và cập nhật...</span>
+                </div>
+              ) : previewModal.url ? (
+                <img
+                  src={getOptimizedThumbnailUrl(previewModal.url) || previewModal.url}
+                  alt={previewModal.title || "Mockup Preview"}
+                  className="max-w-full max-h-[65vh] object-contain rounded-lg"
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center gap-2 p-10 text-slate-400">
+                  <ImageSquareIcon size={44} weight="duotone" />
+                  <span className="text-xs font-medium">Chưa có ảnh mockup</span>
+                </div>
+              )}
+            </div>
+
+            {/* Bottom Actions toolbar */}
+            <div className="w-full flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 text-xs">
+              <div className="flex items-center gap-2 truncate text-slate-500">
+                {previewModal.table ? (
+                  <span className="text-[11px] text-slate-400">Ấn <kbd className="px-1.5 py-0.5 bg-slate-100 border border-slate-300 rounded font-mono text-[10px] text-slate-700 font-bold">Ctrl + V</kbd> để dán ảnh mới</span>
+                ) : (
+                  <span className="truncate max-w-[260px] text-[11px] font-mono">{previewModal.url}</span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 ml-auto shrink-0">
+                {/* Nút THAY ẢNH - chỉ xuất hiện khi ấn vào ảnh trong bảng */}
+                {previewModal.table && previewModal.id && previewModal.field && (
+                  <button
+                    type="button"
+                    disabled={isUpdatingPreviewMockup}
+                    onClick={() => previewFileInputRef.current?.click()}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white font-bold hover:bg-indigo-700 active:scale-95 transition shadow-xs cursor-pointer"
+                    title="Chọn file ảnh từ máy hoặc dán ảnh (Ctrl+V)"
+                  >
+                    <CameraIcon size={15} weight="bold" />
+                    <span>Thay ảnh</span>
+                  </button>
+                )}
+
+                {previewModal.url && (
+                  <a
+                    href={previewModal.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-100 font-bold transition"
+                  >
+                    <span>Mở link gốc</span>
+                    <ArrowSquareOutIcon size={14} weight="bold" />
+                  </a>
+                )}
+              </div>
             </div>
           </div>
         </div>

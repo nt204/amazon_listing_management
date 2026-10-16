@@ -13,6 +13,8 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get("limit") || "50", 10);
     const search = searchParams.get("search") || "";
     const dateSort = (searchParams.get("dateSort") as "asc" | "desc") || "desc";
+    const startDate = searchParams.get("startDate") || "";
+    const endDate = searchParams.get("endDate") || "";
 
     // Collect column filters
     const filters: Record<string, string> = {};
@@ -27,6 +29,8 @@ export async function GET(request: NextRequest) {
       limit,
       search,
       dateSort,
+      startDate,
+      endDate,
       filters,
     });
 

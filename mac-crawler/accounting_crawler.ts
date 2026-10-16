@@ -1109,6 +1109,80 @@ export async function parseAndIngestAdsFile(filePath: string, store: StoreTarget
   return data.processed || 0;
 }
 
+export async function parseAndIngestReturnsFile(filePath: string, store: StoreTarget): Promise<number> {
+  const webAppUrl = process.env.WEB_APP_URL || "https://ncehub.net";
+  const authToken = process.env.WEB_APP_AUTH_TOKEN?.trim();
+  if (!fs.existsSync(filePath) || fs.statSync(filePath).size === 0) return 0;
+  if (!authToken) throw new Error("Thiếu WEB_APP_AUTH_TOKEN; không thể nạp Returns.");
+
+  const storeId = await resolveVerifiedStoreId(store);
+
+  console.log(`  [Ingest - Returns] Đang đọc file: ${path.basename(filePath)} → ${store.store_name} (${storeId})...`);
+  const fileBuffer = fs.readFileSync(filePath);
+  const isXlsx = filePath.endsWith(".xlsx");
+
+  const formData = new FormData();
+  const blob = new Blob([fileBuffer], {
+    type: isXlsx
+      ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      : "text/csv",
+  });
+  formData.append("file", blob, path.basename(filePath));
+  formData.append("store_id", storeId);
+
+  const res = await fetch(`${webAppUrl.replace(/\/$/, "")}/api/accounting/returns/import`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${authToken}` },
+    body: formData,
+  });
+  const responseText = await res.text();
+  if (!res.ok) {
+    throw new Error(`API import Returns lỗi HTTP ${res.status}: ${responseText.slice(0, 500)}`);
+  }
+  const data = JSON.parse(responseText) as {
+    success?: boolean; processed?: number; totalParsed?: number; message?: string;
+  };
+  console.log(`  [Ingest - Returns] ✅ ${store.store_name}: nạp thành công ${data.processed || 0} / ${data.totalParsed || 0} dòng Returns.`);
+  return data.processed || 0;
+}
+
+export async function parseAndIngestServiceFeesFile(filePath: string, store: StoreTarget): Promise<number> {
+  const webAppUrl = process.env.WEB_APP_URL || "https://ncehub.net";
+  const authToken = process.env.WEB_APP_AUTH_TOKEN?.trim();
+  if (!fs.existsSync(filePath) || fs.statSync(filePath).size === 0) return 0;
+  if (!authToken) throw new Error("Thiếu WEB_APP_AUTH_TOKEN; không thể nạp Service Fees.");
+
+  const storeId = await resolveVerifiedStoreId(store);
+
+  console.log(`  [Ingest - Service Fees] Đang đọc file: ${path.basename(filePath)} → ${store.store_name} (${storeId})...`);
+  const fileBuffer = fs.readFileSync(filePath);
+  const isXlsx = filePath.endsWith(".xlsx");
+
+  const formData = new FormData();
+  const blob = new Blob([fileBuffer], {
+    type: isXlsx
+      ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      : "text/csv",
+  });
+  formData.append("file", blob, path.basename(filePath));
+  formData.append("store_id", storeId);
+
+  const res = await fetch(`${webAppUrl.replace(/\/$/, "")}/api/accounting/service-fees/import`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${authToken}` },
+    body: formData,
+  });
+  const responseText = await res.text();
+  if (!res.ok) {
+    throw new Error(`API import Service Fees lỗi HTTP ${res.status}: ${responseText.slice(0, 500)}`);
+  }
+  const data = JSON.parse(responseText) as {
+    success?: boolean; processed?: number; totalParsed?: number; message?: string;
+  };
+  console.log(`  [Ingest - Service Fees] ✅ ${store.store_name}: nạp thành công ${data.processed || 0} / ${data.totalParsed || 0} dòng Service Fees.`);
+  return data.processed || 0;
+}
+
 // ============================================================================
 // HÀM CHÍNH: CRAWL KẾ TOÁN CHO TỪNG STORE
 // ============================================================================
@@ -1204,12 +1278,32 @@ export async function crawlAccountingForStore(
         label: "File 03 - Returns",
         filePrefix: "03_Returns_",
         download: () => downloadFile03Returns(page, storeDownloadDir, targetDateStr),
+        afterSuccess: async () => {
+          const returnsPath = result.files.file03_returns;
+          if (returnsPath) {
+            try {
+              await parseAndIngestReturnsFile(returnsPath, store);
+            } catch (err: any) {
+              console.warn(`  ⚠️ [File 03 - Returns] Tạm thời chưa nạp tự động vào Web App (${err?.message}). File đã tải an toàn trên máy.`);
+            }
+          }
+        },
       },
       {
         key: "file04_service_fees",
         label: "File 04 - Service Fees",
         filePrefix: "04_ServiceFees_",
         download: () => downloadFile04ServiceFees(page, storeDownloadDir, targetDateStr),
+        afterSuccess: async () => {
+          const serviceFeesPath = result.files.file04_service_fees;
+          if (serviceFeesPath) {
+            try {
+              await parseAndIngestServiceFeesFile(serviceFeesPath, store);
+            } catch (err: any) {
+              console.warn(`  ⚠️ [File 04 - Service Fees] Tạm thời chưa nạp tự động vào Web App (${err?.message}). File đã tải an toàn trên máy.`);
+            }
+          }
+        },
       },
       {
         key: "file05_campaigns",

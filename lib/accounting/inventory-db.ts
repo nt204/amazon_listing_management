@@ -405,7 +405,7 @@ export async function listSkuMaster(
 ): Promise<{ items: SkuMasterItem[]; total: number; page: number; limit: number; nextCursor: string | null }> {
   const sql = await getDatabaseClient();
   const page = Math.max(1, params.page || 1);
-  const limit = Math.min(1000, Math.max(1, params.limit || 50));
+  const limit = Math.min(10000, Math.max(1, params.limit || 50));
   const offset = params.cursor ? 0 : (page - 1) * limit;
 
   let cursorCreatedAt: string | null = null;
@@ -496,7 +496,7 @@ export async function listSkuMaster(
         created_at < ${cursorCreatedAt}::timestamptz
         OR (created_at = ${cursorCreatedAt}::timestamptz AND id < ${cursorId}::uuid)
       ))
-    ORDER BY thang_listing DESC NULLS LAST, created_at DESC, id DESC
+    ORDER BY created_at DESC, id DESC
     LIMIT ${limit} OFFSET ${offset}
   `;
 
@@ -725,7 +725,7 @@ export async function listInboundShipments(
 ): Promise<{ items: InboundShipmentItem[]; total: number; page: number; limit: number; nextCursor: string | null }> {
   const sql = await getDatabaseClient();
   const page = Math.max(1, params.page || 1);
-  const limit = Math.min(1000, Math.max(1, params.limit || 50));
+  const limit = Math.min(10000, Math.max(1, params.limit || 50));
   const offset = params.cursor ? 0 : (page - 1) * limit;
 
   let cursorCreatedAt: string | null = null;
@@ -815,7 +815,7 @@ export async function listInboundShipments(
         s.created_at < ${cursorCreatedAt}::timestamptz
         OR (s.created_at = ${cursorCreatedAt}::timestamptz AND s.id < ${cursorId}::uuid)
       ))
-    ORDER BY s.ngay_di DESC NULLS LAST, s.created_at DESC, s.id DESC
+    ORDER BY s.created_at DESC, s.id DESC
     LIMIT ${limit} OFFSET ${offset}
   `;
 
