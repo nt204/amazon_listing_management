@@ -8,10 +8,9 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/ad/mac-crawler/run_accounting_daily.sh</string>
+        <string>/Users/macbook/Desktop/Amazon Listing Management/mac-crawler/run_accounting_daily.sh</string>
     </array>
 
-    <!-- Lịch chạy: 15:00 chiều mỗi ngày -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
@@ -26,20 +25,20 @@
     <true/>
 
     <key>StandardOutPath</key>
-    <string>/Users/ad/Library/Logs/mac-accounting.log</string>
+    <string>/Users/macbook/Library/Logs/mac-accounting.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/ad/Library/Logs/mac-accounting.log</string>
+    <string>/Users/macbook/Library/Logs/mac-accounting.log</string>
 
     <key>WorkingDirectory</key>
-    <string>/Users/ad/mac-crawler</string>
+    <string>/Users/macbook/Desktop/Amazon Listing Management/mac-crawler</string>
 
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
         <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
         <key>HOME</key>
-        <string>/Users/ad</string>
+        <string>/Users/macbook</string>
     </dict>
 </dict>
 </plist>
