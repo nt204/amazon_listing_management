@@ -630,7 +630,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     };
   }, [isStoreDropdownOpen]);
 
-  const handleFeatureTabClick = useCallback((tabKey: 
+  const handleFeatureTabClick = useCallback((tabKey:
     | "overview"
     | "campaigns"
     | "ad_groups"
@@ -2333,7 +2333,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
   };
 
   return (
-    <div className={`w-full space-y-4 text-slate-800 ${!isEmbedded ? "max-w-7xl mx-auto p-6" : ""}`}>
+    <div className={`font-accounting-system w-full space-y-4 text-slate-800 ${!isEmbedded ? "max-w-7xl mx-auto p-6" : ""}`}>
       {/* Toast Notification */}
       {toast && (
         <div className={`fixed bottom-20 right-6 z-50 text-white px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2.5 text-xs font-bold border animate-in fade-in ${toast.type === "error"
@@ -2370,13 +2370,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                 ref={storeSelectRef}
                 type="button"
                 onClick={() => setIsStoreDropdownOpen((prev) => !prev)}
-                className={`flex items-center gap-2 rounded-xl px-3.5 py-1.5 transition-all duration-200 cursor-pointer select-none ${
-                  isStoreHighlight
+                className={`flex items-center gap-2 rounded-xl px-3.5 py-1.5 transition-all duration-200 cursor-pointer select-none ${isStoreHighlight
                     ? "ring-2 ring-emerald-500 border-emerald-500 bg-emerald-50 text-emerald-950 shadow-md scale-105"
                     : isStoreDropdownOpen
-                    ? "bg-emerald-100 border border-emerald-400 text-emerald-950 shadow-xs"
-                    : "bg-emerald-50/90 hover:bg-emerald-100/90 border border-emerald-300/90 shadow-2xs text-emerald-950"
-                }`}
+                      ? "bg-emerald-100 border border-emerald-400 text-emerald-950 shadow-xs"
+                      : "bg-emerald-50/90 hover:bg-emerald-100/90 border border-emerald-300/90 shadow-2xs text-emerald-950"
+                  }`}
               >
                 <Storefront
                   size={19}
@@ -2411,19 +2410,17 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                         handleStoreChange("ALL");
                         setIsStoreDropdownOpen(false);
                       }}
-                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer text-left ${
-                        selectedStore === "ALL"
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer text-left ${selectedStore === "ALL"
                           ? "bg-emerald-600 text-white font-black shadow-xs"
                           : "text-slate-700 hover:bg-emerald-50 hover:text-emerald-900"
-                      }`}
+                        }`}
                     >
                       <div className="flex items-center gap-2 truncate">
                         <Storefront size={16} weight={selectedStore === "ALL" ? "bold" : "regular"} className="shrink-0" />
                         <span className="truncate">All Stores</span>
                       </div>
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
-                        selectedStore === "ALL" ? "bg-emerald-700 text-white" : "bg-slate-100 text-slate-600"
-                      }`}>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${selectedStore === "ALL" ? "bg-emerald-700 text-white" : "bg-slate-100 text-slate-600"
+                        }`}>
                         {stores.length}
                       </span>
                     </button>
@@ -2438,11 +2435,10 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                             handleStoreChange(s.name);
                             setIsStoreDropdownOpen(false);
                           }}
-                          className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer text-left ${
-                            isSelected
+                          className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer text-left ${isSelected
                               ? "bg-emerald-600 text-white font-black shadow-xs"
                               : "text-slate-700 hover:bg-emerald-50 hover:text-emerald-900"
-                          }`}
+                            }`}
                         >
                           <span className="truncate">{s.name}</span>
                           {isSelected && <Check size={14} weight="bold" className="shrink-0 ml-2" />}
@@ -2468,11 +2464,10 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                     setIsCustomDate(false);
                     setSelectedDays(d);
                   }}
-                  className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
-                    !isCustomDate && selectedDays === d
+                  className={`px-2.5 py-1 rounded-md transition cursor-pointer ${!isCustomDate && selectedDays === d
                       ? "bg-white text-indigo-700 shadow-2xs font-bold"
                       : "text-slate-600 hover:text-slate-900"
-                  }`}
+                    }`}
                 >
                   {d}D
                 </button>
@@ -2914,16 +2909,16 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                         </td>
                       </tr>
                     ) : overviewTopSkus.map((sku) => (
-                        <tr key={`${sku.storeName || selectedStore}-${sku.sku}`} className="hover:bg-slate-50">
-                          <td className="py-1.5 font-bold text-slate-800 max-w-[160px] truncate">
-                            <span title={sku.sku}>{sku.sku}</span>
-                          </td>
-                          <td className="py-1.5 text-right text-slate-700">${sku.spend.toFixed(2)}</td>
-                          <td className="py-1.5 text-right font-black text-slate-900">{sku.orders}</td>
-                          <td className="py-1.5 text-right font-black text-emerald-600">${sku.sales.toFixed(2)}</td>
-                          <td className="py-1.5 text-right font-bold text-emerald-700">{sku.acos.toFixed(1)}%</td>
-                        </tr>
-                      ))}
+                      <tr key={`${sku.storeName || selectedStore}-${sku.sku}`} className="hover:bg-slate-50">
+                        <td className="py-1.5 font-bold text-slate-800 max-w-[160px] truncate">
+                          <span title={sku.sku}>{sku.sku}</span>
+                        </td>
+                        <td className="py-1.5 text-right text-slate-700">${sku.spend.toFixed(2)}</td>
+                        <td className="py-1.5 text-right font-normal text-slate-800">{sku.orders}</td>
+                        <td className="py-1.5 text-right font-normal text-emerald-600">${sku.sales.toFixed(2)}</td>
+                        <td className="py-1.5 text-right font-normal text-emerald-700">{sku.acos.toFixed(1)}%</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -2979,23 +2974,23 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                         </td>
                       </tr>
                     ) : overviewWeakSkus.map((sku) => (
-                        <tr key={`${selectedStore}-${sku.sku}`} className="hover:bg-slate-50">
-                          <td className="py-1.5 font-bold text-slate-800 max-w-[160px] truncate">
-                            <span title={sku.sku}>{sku.sku}</span>
-                          </td>
-                          <td className="py-1.5 text-right font-black text-rose-700">${sku.spend.toFixed(2)}</td>
-                          <td className="py-1.5 text-right font-black text-slate-900">{sku.orders}</td>
-                          <td className="py-1.5 text-right font-bold text-slate-700">${sku.sales.toFixed(2)}</td>
-                          <td className="py-1.5 text-right">
-                            <span
-                              className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-rose-50 text-rose-700 border border-rose-200"
-                              title={`Break-even ACoS: ${sku.breakEvenAcos.toFixed(1)}%`}
-                            >
-                              {sku.acos.toFixed(1)}%
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
+                      <tr key={`${selectedStore}-${sku.sku}`} className="hover:bg-slate-50">
+                        <td className="py-1.5 font-bold text-slate-800 max-w-[160px] truncate">
+                          <span title={sku.sku}>{sku.sku}</span>
+                        </td>
+                        <td className="py-1.5 text-right font-normal text-rose-700">${sku.spend.toFixed(2)}</td>
+                        <td className="py-1.5 text-right font-normal text-slate-800">{sku.orders}</td>
+                        <td className="py-1.5 text-right font-normal text-slate-700">${sku.sales.toFixed(2)}</td>
+                        <td className="py-1.5 text-right">
+                          <span
+                            className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-rose-50 text-rose-700 border border-rose-200"
+                            title={`Break-even ACoS: ${sku.breakEvenAcos.toFixed(1)}%`}
+                          >
+                            {sku.acos.toFixed(1)}%
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -3326,7 +3321,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                     return (
                       <tr key={i} className="hover:bg-slate-50/80 transition group">
                         {/* Campaign Name: Clickable to view Targets directly */}
-                        <td className="py-2.5 px-3.5 min-w-[280px] max-w-[550px]">
+                        <td className="py-2.5 px-3.5 min-w-[280px] max-w-[550px] col-primary font-bold">
                           <button
                             type="button"
                             onClick={() => {
@@ -3792,8 +3787,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                                 onChange={() => targetBulkSelection.toggleItem(targetKey)}
                               />
                             </td>
-                            <td className="px-3 py-2.5 font-bold text-slate-900 min-w-[180px]">
-                              <div className="break-words leading-snug" title={target.targetKeyword}>{target.targetKeyword}</div>
+                            <td className="px-3 py-2.5 font-bold text-slate-900 min-w-[180px] col-primary">
+                              <div className="break-words leading-snug font-bold" title={target.targetKeyword}>{target.targetKeyword}</div>
                             </td>
                             <td className="px-3 py-2.5 font-semibold text-slate-700 min-w-[260px]">
                               <div className="break-words leading-snug" title={target.campaignName}>{target.campaignName}</div>
@@ -4046,23 +4041,23 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                 ) : (
                   paginatedSkus.map((s, i) => (
                     <tr key={i} className="hover:bg-slate-50/80 transition">
-                      <td className="py-2.5 px-3.5 font-bold text-slate-900 flex items-center gap-2">
+                      <td className="py-2.5 px-3.5 font-bold text-slate-900 flex items-center gap-2 col-primary">
                         <Tag size={14} className="text-indigo-600 shrink-0" />
-                        <span className="truncate max-w-[280px]" title={s.sku}>{s.sku}</span>
+                        <span className="truncate max-w-[280px] font-bold text-slate-900" title={s.sku}>{s.sku}</span>
                       </td>
                       <td className="py-2.5 px-2.5 text-slate-600">{s.storeName}</td>
                       <td className="py-2.5 px-3 text-right font-medium text-slate-700">
                         {s.impressions ? s.impressions.toLocaleString() : "0"}
                       </td>
-                      <td className={`py-2.5 px-3 text-right font-bold ${s.clicks === 0 ? "text-slate-400" : "text-slate-900"}`}>
+                      <td className={`py-2.5 px-3 text-right font-normal ${s.clicks === 0 ? "text-slate-400" : "text-slate-700"}`}>
                         {s.clicks}
                       </td>
-                      <td className="py-2.5 px-2 text-right text-slate-500 font-medium">
+                      <td className="py-2.5 px-2 text-right text-slate-500 font-normal">
                         {s.impressions > 0 ? `${(s.ctr || 0).toFixed(2)}%` : "-"}
                       </td>
-                      <td className="py-2.5 px-3 text-right font-bold text-slate-900">${s.spend.toFixed(2)}</td>
-                      <td className="py-2.5 px-3 text-right font-black text-emerald-600">${s.sales.toFixed(2)}</td>
-                      <td className="py-2.5 px-3 text-right font-black text-slate-900">{s.orders}</td>
+                      <td className="py-2.5 px-3 text-right font-normal text-slate-800">${s.spend.toFixed(2)}</td>
+                      <td className="py-2.5 px-3 text-right font-normal text-emerald-600">${s.sales.toFixed(2)}</td>
+                      <td className="py-2.5 px-3 text-right font-normal text-slate-700">{s.orders}</td>
                       <td className="py-2.5 px-3 text-right text-slate-700">{s.clicks > 0 ? `${s.cvr.toFixed(1)}%` : "-"}</td>
                       <td className="py-2.5 px-3 text-right">
                         <span

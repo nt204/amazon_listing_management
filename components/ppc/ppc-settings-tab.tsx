@@ -210,8 +210,8 @@ export function PpcSettingsTab({
           <button
             onClick={() => setSubTab("phoi")}
             className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs transition cursor-pointer ${subTab === "phoi"
-                ? "bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200/80 font-black shadow-2xs"
-                : "text-slate-600 font-bold hover:text-slate-900 hover:bg-slate-100"
+              ? "bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200/80 font-black shadow-2xs"
+              : "text-slate-600 font-bold hover:text-slate-900 hover:bg-slate-100"
               }`}
           >
             <Tag size={15} weight={subTab === "phoi" ? "bold" : "regular"} className={subTab === "phoi" ? "text-indigo-600" : "text-slate-400"} />
@@ -221,8 +221,8 @@ export function PpcSettingsTab({
           <button
             onClick={() => setSubTab("rules")}
             className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs transition cursor-pointer ${subTab === "rules"
-                ? "bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200/80 font-black shadow-2xs"
-                : "text-slate-600 font-bold hover:text-slate-900 hover:bg-slate-100"
+              ? "bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200/80 font-black shadow-2xs"
+              : "text-slate-600 font-bold hover:text-slate-900 hover:bg-slate-100"
               }`}
           >
             <Sliders size={15} weight={subTab === "rules" ? "bold" : "regular"} className={subTab === "rules" ? "text-indigo-600" : "text-slate-400"} />
@@ -379,8 +379,8 @@ export function PpcSettingsTab({
                   key={type}
                   onClick={() => setSelectedRuleType(type)}
                   className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${selectedRuleType === type
-                      ? "bg-indigo-600 text-white shadow-xs"
-                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                    ? "bg-indigo-600 text-white shadow-xs"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
                     }`}
                 >
                   [{type}]
@@ -420,10 +420,10 @@ export function PpcSettingsTab({
                           <td className="py-2.5 px-3">
                             <span
                               className={`font-black ${tier.action === "BID_INCREASE"
-                                  ? "text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded"
-                                  : tier.action === "BID_DECREASE"
-                                    ? "text-rose-600 bg-rose-50 px-2 py-0.5 rounded"
-                                    : "text-slate-600 bg-slate-100 px-2 py-0.5 rounded"
+                                ? "text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded"
+                                : tier.action === "BID_DECREASE"
+                                  ? "text-rose-600 bg-rose-50 px-2 py-0.5 rounded"
+                                  : "text-slate-600 bg-slate-100 px-2 py-0.5 rounded"
                                 }`}
                             >
                               {tier.action}
@@ -465,12 +465,12 @@ export function PpcSettingsTab({
                           <td className="py-2.5 px-3">
                             <span
                               className={`font-black ${tier.action === "BID_INCREASE"
-                                  ? "text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded"
-                                  : tier.action === "PAUSE_TARGET"
-                                    ? "text-amber-700 bg-amber-50 px-2 py-0.5 rounded"
-                                    : tier.action === "BID_DECREASE"
-                                      ? "text-rose-600 bg-rose-50 px-2 py-0.5 rounded"
-                                      : "text-slate-600 bg-slate-100 px-2 py-0.5 rounded"
+                                ? "text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded"
+                                : tier.action === "PAUSE_TARGET"
+                                  ? "text-amber-700 bg-amber-50 px-2 py-0.5 rounded"
+                                  : tier.action === "BID_DECREASE"
+                                    ? "text-rose-600 bg-rose-50 px-2 py-0.5 rounded"
+                                    : "text-slate-600 bg-slate-100 px-2 py-0.5 rounded"
                                 }`}
                             >
                               {tier.action}
@@ -1173,8 +1173,8 @@ export function PpcCostMasterStandalone() {
             type="button"
             onClick={() => setIsFastEntryOpen((prev) => !prev)}
             className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition shadow-2xs cursor-pointer ${isFastEntryOpen
-                ? "bg-indigo-50 text-indigo-700 border border-indigo-200"
-                : "bg-indigo-600 hover:bg-indigo-700 text-white"
+              ? "bg-indigo-50 text-indigo-700 border border-indigo-200"
+              : "bg-indigo-600 hover:bg-indigo-700 text-white"
               }`}
           >
             <Lightning size={15} weight="fill" className={isFastEntryOpen ? "text-indigo-600" : "text-amber-300"} />
@@ -1881,8 +1881,8 @@ export function PpcRuleManagerStandalone() {
             <button
               onClick={() => setActiveTab("rules")}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition cursor-pointer ${activeTab === "rules"
-                  ? "bg-white text-indigo-700 font-extrabold shadow-2xs"
-                  : "text-slate-600 font-bold hover:text-slate-900"
+                ? "bg-white text-indigo-700 font-extrabold shadow-2xs"
+                : "text-slate-600 font-bold hover:text-slate-900"
                 }`}
             >
               <Sliders size={14} weight={activeTab === "rules" ? "bold" : "regular"} />
@@ -1920,8 +1920,8 @@ export function PpcRuleManagerStandalone() {
                   key={type}
                   onClick={() => setSelectedRuleType(type)}
                   className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${selectedRuleType === type
-                      ? "bg-indigo-600 text-white shadow-xs"
-                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
+                    ? "bg-indigo-600 text-white shadow-xs"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
                     }`}
                 >
                   [{type}]
@@ -1962,10 +1962,10 @@ export function PpcRuleManagerStandalone() {
                             <td className="py-2.5 px-3">
                               <span
                                 className={`font-black ${tier.action === "BID_INCREASE"
-                                    ? "text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded"
-                                    : tier.action === "BID_DECREASE"
-                                      ? "text-rose-600 bg-rose-50 px-2 py-0.5 rounded"
-                                      : "text-slate-600 bg-slate-100 px-2 py-0.5 rounded"
+                                  ? "text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded"
+                                  : tier.action === "BID_DECREASE"
+                                    ? "text-rose-600 bg-rose-50 px-2 py-0.5 rounded"
+                                    : "text-slate-600 bg-slate-100 px-2 py-0.5 rounded"
                                   }`}
                               >
                                 {tier.action}
@@ -2007,10 +2007,10 @@ export function PpcRuleManagerStandalone() {
                             <td className="py-2.5 px-3">
                               <span
                                 className={`font-black ${tier.action === "BID_INCREASE"
-                                    ? "text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded"
-                                    : tier.action === "PAUSE_TARGET"
-                                      ? "text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200"
-                                      : "text-rose-600 bg-rose-50 px-2 py-0.5 rounded"
+                                  ? "text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded"
+                                  : tier.action === "PAUSE_TARGET"
+                                    ? "text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200"
+                                    : "text-rose-600 bg-rose-50 px-2 py-0.5 rounded"
                                   }`}
                               >
                                 {tier.action}

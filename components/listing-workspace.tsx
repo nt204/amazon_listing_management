@@ -394,7 +394,7 @@ export function ListingWorkspace({
       });
 
       setHasUnreadBatch(hasNewCompleted);
-    } catch {}
+    } catch { }
   }, [userBatchSeenKey]);
 
   useEffect(() => {
@@ -416,7 +416,7 @@ export function ListingWorkspace({
   const markBatchAsRead = useCallback(() => {
     try {
       localStorage.setItem(userBatchSeenKey, Date.now().toString());
-    } catch {}
+    } catch { }
     setHasUnreadBatch(false);
   }, [userBatchSeenKey]);
 
@@ -447,11 +447,10 @@ export function ListingWorkspace({
                   selectView("listing");
                   markBatchAsRead();
                 }}
-                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
-                  sidebarTab === "trello" && viewMode === "trello"
+                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${sidebarTab === "trello" && viewMode === "trello"
                     ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                     : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                }`}
+                  }`}
               >
                 <div className="flex items-center gap-2.5 min-w-0">
                   <KanbanIcon
@@ -477,8 +476,8 @@ export function ListingWorkspace({
                 type="button"
                 onClick={() => selectView("mockups")}
                 className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${sidebarTab === "mockups" && viewMode === "trello"
-                    ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
-                    : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
+                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                   }`}
               >
                 <ImageSquareIcon
@@ -496,8 +495,8 @@ export function ListingWorkspace({
                 type="button"
                 onClick={() => selectView("sellersprite")}
                 className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${viewMode === "sellersprite"
-                    ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
-                    : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
+                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                   }`}
               >
                 <LightningIcon
@@ -516,8 +515,8 @@ export function ListingWorkspace({
                   type="button"
                   onClick={() => selectPpcSection("dashboard")}
                   className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${viewMode === "ppc"
-                      ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
-                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                    ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
+                    : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                     }`}
                 >
                   <div className="flex items-center gap-2.5">
@@ -531,8 +530,8 @@ export function ListingWorkspace({
                   <div className="flex items-center gap-1.5">
                     <span
                       className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded border transition-colors ${viewMode === "ppc"
-                          ? "bg-indigo-100/70 text-indigo-700 border-indigo-200"
-                          : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                        ? "bg-indigo-100/70 text-indigo-700 border-indigo-200"
+                        : "bg-emerald-50 text-emerald-700 border-emerald-200"
                         }`}
                     >
                       MỚI
@@ -557,10 +556,10 @@ export function ListingWorkspace({
                         setPpcDashboardTab("overview");
                       }}
                       className={`flex w-full items-center justify-between gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "overview"
-                          ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                          : ppcSection === "dashboard"
-                            ? "text-indigo-900 font-semibold hover:bg-slate-100"
-                            : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                        ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                        : ppcSection === "dashboard"
+                          ? "text-indigo-900 font-semibold hover:bg-slate-100"
+                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
                         }`}
                     >
                       <div className="flex items-center gap-2 min-w-0">
@@ -584,8 +583,8 @@ export function ListingWorkspace({
                         type="button"
                         onClick={() => selectPpcDashboardTab("campaigns")}
                         className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "campaigns"
-                            ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                            : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                          ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
                           }`}
                       >
                         <span
@@ -600,8 +599,8 @@ export function ListingWorkspace({
                         type="button"
                         onClick={() => selectPpcDashboardTab("targets")}
                         className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "targets"
-                            ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                            : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                          ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
                           }`}
                       >
                         <span
@@ -616,8 +615,8 @@ export function ListingWorkspace({
                         type="button"
                         onClick={() => selectPpcDashboardTab("search_terms")}
                         className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "search_terms"
-                            ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                            : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                          ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
                           }`}
                       >
                         <span
@@ -632,8 +631,8 @@ export function ListingWorkspace({
                         type="button"
                         onClick={() => selectPpcDashboardTab("skus")}
                         className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "skus"
-                            ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                            : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                          ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
                           }`}
                       >
                         <span
@@ -648,8 +647,8 @@ export function ListingWorkspace({
                         type="button"
                         onClick={() => selectPpcDashboardTab("st_campaigns")}
                         className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "st_campaigns"
-                            ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                            : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                          ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
                           }`}
                       >
                         <span
@@ -665,8 +664,8 @@ export function ListingWorkspace({
                       type="button"
                       onClick={() => selectPpcSection("negative_keyword")}
                       className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "negative_keyword"
-                          ? "bg-rose-50 text-rose-800 font-bold shadow-2xs border border-rose-200/60"
-                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                        ? "bg-rose-50 text-rose-800 font-bold shadow-2xs border border-rose-200/60"
+                        : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
                         }`}
                     >
                       <span
@@ -681,8 +680,8 @@ export function ListingWorkspace({
                       type="button"
                       onClick={() => selectPpcSection("sale_kw")}
                       className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "sale_kw"
-                          ? "bg-emerald-50 text-emerald-800 font-bold shadow-2xs border border-emerald-200/60"
-                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                        ? "bg-emerald-50 text-emerald-800 font-bold shadow-2xs border border-emerald-200/60"
+                        : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
                         }`}
                     >
                       <span
@@ -697,8 +696,8 @@ export function ListingWorkspace({
                       type="button"
                       onClick={() => selectPpcSection("auto_bid")}
                       className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "auto_bid"
-                          ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                        ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                        : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
                         }`}
                     >
                       <span
@@ -716,8 +715,8 @@ export function ListingWorkspace({
                       type="button"
                       onClick={() => selectPpcSection("phoi")}
                       className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "phoi"
-                          ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                        ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                        : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
                         }`}
                     >
                       <span
@@ -732,8 +731,8 @@ export function ListingWorkspace({
                       type="button"
                       onClick={() => selectPpcSection("rules")}
                       className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "rules"
-                          ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                        ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                        : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
                         }`}
                     >
                       <span
@@ -754,8 +753,8 @@ export function ListingWorkspace({
                   type="button"
                   onClick={() => selectAccountingSection("overview")}
                   className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${viewMode === "accounting"
-                      ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
-                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                    ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
+                    : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                     }`}
                 >
                   <div className="flex items-center gap-2.5">
@@ -782,16 +781,16 @@ export function ListingWorkspace({
                       type="button"
                       onClick={() => selectAccountingSection("overview")}
                       className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "overview" || accountingSection === "dashboard"
-                          ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
-                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                         }`}
                     >
                       <SquaresFourIcon
                         size={17}
                         weight={accountingSection === "overview" || accountingSection === "dashboard" ? "fill" : "duotone"}
                         className={`shrink-0 mt-0.5 ${accountingSection === "overview" || accountingSection === "dashboard"
-                            ? "text-indigo-600"
-                            : "text-slate-400"
+                          ? "text-indigo-600"
+                          : "text-slate-400"
                           }`}
                       />
                       <div className="flex min-w-0 flex-1 flex-col leading-tight">
@@ -805,8 +804,8 @@ export function ListingWorkspace({
                       type="button"
                       onClick={() => selectAccountingSection("stores")}
                       className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "stores"
-                          ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
-                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                         }`}
                     >
                       <StorefrontIcon
@@ -826,8 +825,8 @@ export function ListingWorkspace({
                       type="button"
                       onClick={() => selectAccountingSection("inventory")}
                       className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "inventory"
-                          ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
-                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                         }`}
                     >
                       <PackageIcon
@@ -847,8 +846,8 @@ export function ListingWorkspace({
                       type="button"
                       onClick={() => selectAccountingSection("orders")}
                       className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "orders" || accountingSection === "import"
-                          ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
-                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                         }`}
                     >
                       <UploadSimpleIcon
@@ -868,12 +867,12 @@ export function ListingWorkspace({
                       type="button"
                       onClick={() => selectAccountingSection("financials")}
                       className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "financials" ||
-                          accountingSection === "revenue" ||
-                          accountingSection === "costs" ||
-                          accountingSection === "amazon_fees" ||
-                          accountingSection === "ads"
-                          ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
-                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        accountingSection === "revenue" ||
+                        accountingSection === "costs" ||
+                        accountingSection === "amazon_fees" ||
+                        accountingSection === "ads"
+                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                         }`}
                     >
                       <WalletIcon
@@ -888,12 +887,12 @@ export function ListingWorkspace({
                             : "duotone"
                         }
                         className={`shrink-0 mt-0.5 ${accountingSection === "financials" ||
-                            accountingSection === "revenue" ||
-                            accountingSection === "costs" ||
-                            accountingSection === "amazon_fees" ||
-                            accountingSection === "ads"
-                            ? "text-indigo-600"
-                            : "text-slate-400"
+                          accountingSection === "revenue" ||
+                          accountingSection === "costs" ||
+                          accountingSection === "amazon_fees" ||
+                          accountingSection === "ads"
+                          ? "text-indigo-600"
+                          : "text-slate-400"
                           }`}
                       />
                       <div className="flex min-w-0 flex-1 flex-col leading-tight">
@@ -907,10 +906,10 @@ export function ListingWorkspace({
                       type="button"
                       onClick={() => selectAccountingSection("reports")}
                       className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "reports" ||
-                          accountingSection === "pnl" ||
-                          accountingSection === "settlements"
-                          ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
-                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        accountingSection === "pnl" ||
+                        accountingSection === "settlements"
+                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                         }`}
                     >
                       <TrendUpIcon
@@ -923,10 +922,10 @@ export function ListingWorkspace({
                             : "duotone"
                         }
                         className={`shrink-0 mt-0.5 ${accountingSection === "reports" ||
-                            accountingSection === "pnl" ||
-                            accountingSection === "settlements"
-                            ? "text-indigo-600"
-                            : "text-slate-400"
+                          accountingSection === "pnl" ||
+                          accountingSection === "settlements"
+                          ? "text-indigo-600"
+                          : "text-slate-400"
                           }`}
                       />
                       <div className="flex min-w-0 flex-1 flex-col leading-tight">
@@ -943,8 +942,8 @@ export function ListingWorkspace({
                       type="button"
                       onClick={() => selectAccountingSection("admin")}
                       className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "admin" || accountingSection === "files"
-                          ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
-                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                         }`}
                     >
                       <GearIcon
@@ -970,11 +969,10 @@ export function ListingWorkspace({
             <button
               type="button"
               onClick={() => selectView("kanban")}
-              className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
-                activeView === "kanban"
+              className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${activeView === "kanban"
                   ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
                   : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-              }`}
+                }`}
             >
               <div className="flex items-center gap-2.5 min-w-0">
                 <ChatCircleDotsIcon
@@ -1156,7 +1154,7 @@ export function ListingWorkspace({
               />
             </div>
           ) : viewMode === "ppc" ? (
-            <div className="h-full w-full overflow-y-auto p-6 bg-slate-50 thin-scrollbar">
+            <div className="font-accounting-system h-full w-full overflow-y-auto p-6 bg-slate-50 thin-scrollbar">
               {ppcSection === "phoi" ? (
                 <PpcCostMasterStandalone />
               ) : ppcSection === "rules" ? (

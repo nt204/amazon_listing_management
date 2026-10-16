@@ -2,6 +2,7 @@ import { chromium, type BrowserContext, type Page } from "playwright-core";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import { sendTelegramMessage } from "./telegram";
 
@@ -40,6 +41,93 @@ const MAX_TASK_RETRIES = 5;
 const MAX_HISTORICAL_ORDER_RETRIES = 3;
 const MAX_MISSING_FILE_CHECKS = 3;
 const ACCOUNTING_TASK_COUNT = 8;
+
+function base32Decode(base32: string): Buffer {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  const clean = base32.replace(/[\s=-]/g, "").toUpperCase();
+  let bits = "";
+  for (const char of clean) {
+    const value = alphabet.indexOf(char);
+    if (value >= 0) bits += value.toString(2).padStart(5, "0");
+  }
+  const bytes: number[] = [];
+  for (let index = 0; index + 8 <= bits.length; index += 8) {
+    bytes.push(Number.parseInt(bits.slice(index, index + 8), 2));
+  }
+  return Buffer.from(bytes);
+}
+
+function generateTotp(secret: string, timeStep = 30): string {
+  const counter = Math.floor(Date.now() / 1000 / timeStep);
+  const counterBuffer = Buffer.alloc(8);
+  counterBuffer.writeBigInt64BE(BigInt(counter));
+  const digest = crypto.createHmac("sha1", base32Decode(secret)).update(counterBuffer).digest();
+  const offset = digest[digest.length - 1] & 0x0f;
+  const binary =
+    ((digest[offset] & 0x7f) << 24) |
+    ((digest[offset + 1] & 0xff) << 16) |
+    ((digest[offset + 2] & 0xff) << 8) |
+    (digest[offset + 3] & 0xff);
+  return String(binary % 1_000_000).padStart(6, "0");
+}
+
+async function autoLoginBozspacerSellerCentral(page: Page): Promise<void> {
+  if (!isSignInUrl(page.url())) return;
+
+  const email = process.env.BOZSPACER_AMAZON_EMAIL || "jennie662quynhunce@gmail.com";
+  const password = process.env.BOZSPACER_AMAZON_PASSWORD || "";
+  const secret = process.env.BOZSPACER_AMAZON_2FA_SECRET || "";
+  if (!password) throw new Error("[BOZSPACER] Chưa cấu hình BOZSPACER_AMAZON_PASSWORD trong config.env.");
+
+  console.log(`  [BOZSPACER] 🔐 Seller Central yêu cầu đăng nhập; đang tự động khôi phục phiên...`);
+  const emailField = page.locator("#ap_email").first();
+  if (await emailField.isVisible().catch(() => false)) {
+    await emailField.fill(email);
+    const continueButton = page.locator("#continue").first();
+    if (await continueButton.isVisible().catch(() => false)) {
+      await Promise.all([
+        page.waitForNavigation({ timeout: 25_000 }).catch(() => null),
+        continueButton.click(),
+      ]);
+    }
+  }
+
+  const passwordField = page.locator("#ap_password").first();
+  await passwordField.waitFor({ state: "visible", timeout: 10_000 }).catch(() => {});
+  if (await passwordField.isVisible().catch(() => false)) {
+    await passwordField.fill(password);
+    await page.locator('input[name="rememberMe"]').first().check().catch(() => {});
+    const submitButton = page.locator("#signInSubmit").first();
+    if (await submitButton.isVisible().catch(() => false)) {
+      await Promise.all([
+        page.waitForNavigation({ timeout: 25_000 }).catch(() => null),
+        submitButton.click(),
+      ]);
+    }
+  }
+
+  await page.waitForTimeout(2_000);
+  const otpField = page.locator("#auth-mfa-otpcode").first();
+  if (await otpField.isVisible().catch(() => false)) {
+    if (!secret) throw new Error("[BOZSPACER] Seller Central yêu cầu OTP nhưng chưa cấu hình BOZSPACER_AMAZON_2FA_SECRET.");
+    console.log(`  [BOZSPACER] 🔑 Đang tự động xác thực TOTP...`);
+    await otpField.fill(generateTotp(secret));
+    await page.locator("#auth-mfa-remember-device").first().check().catch(() => {});
+    const otpSubmit = page.locator("#auth-signin-button").first();
+    if (await otpSubmit.isVisible().catch(() => false)) {
+      await Promise.all([
+        page.waitForNavigation({ timeout: 25_000 }).catch(() => null),
+        otpSubmit.click(),
+      ]);
+    }
+  }
+
+  await page.waitForTimeout(4_000);
+  if (isSignInUrl(page.url())) {
+    throw new Error(`[BOZSPACER] Auto-login Seller Central không thành công (URL: ${page.url()}).`);
+  }
+  console.log(`  [BOZSPACER] ✅ Đã khôi phục phiên Seller Central.`);
+}
 
 function getVietnamDateParts(now = new Date()): { year: number; month: number; day: number; hour: number } {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -384,7 +472,7 @@ async function downloadWithRetry(
 /**
  * File 01: Portfolios Report từ Amazon Advertising
  */
-async function downloadFile01Portfolios(page: Page, downloadDir: string, targetDateStr: string): Promise<string | null> {
+export async function downloadFile01Portfolios(page: Page, downloadDir: string, targetDateStr: string): Promise<string | null> {
   const url = "https://advertising.amazon.com/cm/portfolios";
   console.log(`  [File 01 - Portfolios] Đang truy cập ${url}...`);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
@@ -421,24 +509,58 @@ async function downloadFile01Portfolios(page: Page, downloadDir: string, targetD
     }
   } catch { }
 
-  // Khớp script cũ: bỏ mọi bộ lọc/search còn sót trước khi export.
+  // Khớp hoàn toàn KETOAN cũ (Ketoanamz-01-6file.py:802-832):
+  // 1. Reset filter (chờ tối đa 10s, click bằng script)
   try {
     const resetBtn = page.locator('button[data-e2e-id="resetButton"]').first();
-    if (await resetBtn.isVisible({ timeout: 3000 })) await resetBtn.click();
-    const clearSearchBtn = page.locator('#UCM-CM-APP\\:ALL_PORTFOLIOS\\:searchInput + button').first();
-    if (await clearSearchBtn.isVisible({ timeout: 2000 })) await clearSearchBtn.click();
-    await page.waitForTimeout(1500);
+    await resetBtn.waitFor({ state: "visible", timeout: 10000 });
+    await resetBtn.evaluate((el: HTMLElement) => el.click());
+    console.log("  [File 01 - Portfolios] Đã click nút 'Reset' filter.");
+    await page.waitForTimeout(2500);
+  } catch {
+    console.log("  [File 01 - Portfolios] Không tìm thấy nút 'Reset' (có thể không có filter nào đang bật), tiếp tục.");
+  }
+
+  // 2. Xóa ô search terms nếu có
+  try {
+    const clearBtnXPath = page.locator("xpath=//input[@id='UCM-CM-APP:ALL_PORTFOLIOS:searchInput']/following-sibling::button").first();
+    const searchInput = page.locator("input[id='UCM-CM-APP:ALL_PORTFOLIOS:searchInput'], #UCM-CM-APP\\:ALL_PORTFOLIOS\\:searchInput").first();
+
+    let cleared = false;
+    if (await clearBtnXPath.isVisible({ timeout: 4000 }).catch(() => false)) {
+      await clearBtnXPath.evaluate((el: HTMLElement) => el.click());
+      console.log("  [File 01 - Portfolios] Đã click nút Clear search terms.");
+      cleared = true;
+      await page.waitForTimeout(1500);
+    }
+
+    if (await searchInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+      const val = await searchInput.inputValue().catch(() => "");
+      if (val && val.trim().length > 0) {
+        await searchInput.fill("");
+        await searchInput.press("Enter");
+        console.log(`  [File 01 - Portfolios] Đã xóa text trong ô tìm kiếm (trước đó là '${val}').`);
+        cleared = true;
+        await page.waitForTimeout(1500);
+      }
+    }
+
+    if (!cleared) {
+      console.log("  [File 01 - Portfolios] Ô tìm kiếm đã trống hoặc không có nút xóa.");
+    }
   } catch { }
 
-  // Tìm nút Export
+  // 3. Tìm nút Export và chờ 10-12s như KETOAN cũ để table kết xuất lại dữ liệu sau khi reset
   const exportBtn = page.locator('button[data-e2e-id="export"]').first();
-  await exportBtn.waitFor({ state: "visible", timeout: 15000 });
-  await page.waitForTimeout(2000);
+  await exportBtn.waitFor({ state: "visible", timeout: 20000 });
+
+  console.log("  [File 01 - Portfolios] Đã tìm thấy nút Export. Chờ 10 giây để dữ liệu hoàn tất render trước khi bấm tải...");
+  await page.waitForTimeout(10000);
 
   console.log(`  [File 01 - Portfolios] Đang nhấn nút Export và chờ tải file...`);
   const [download] = await Promise.all([
-    page.waitForEvent("download", { timeout: 35000 }),
-    exportBtn.click(),
+    page.waitForEvent("download", { timeout: 45000 }),
+    exportBtn.evaluate((el: HTMLElement) => el.click()).catch(() => exportBtn.click()),
   ]);
 
   const targetPath = path.join(downloadDir, `01_Portfolios_${targetDateStr}.csv`);
@@ -543,51 +665,79 @@ async function downloadFile02AllOrders(page: Page, downloadDir: string, targetDa
  * Khắc phục triệt để lỗi Playwright bắt nhầm thẻ <input hidden="true" name="startDate/endDate">.
  */
 async function fillPaymentsDatePicker(page: Page, pickerIndex: number, dateStr: string): Promise<void> {
-  const picker = page.locator(`div.time-range-selection kat-date-picker:nth-child(${pickerIndex})`);
-  
-  // 1. Thử qua Playwright locator với bộ lọc không ẩn (not hidden)
-  try {
-    const visibleInput = picker.locator("input:not([hidden]):not([type='hidden'])").first();
-    if (await visibleInput.isVisible({ timeout: 5000 })) {
-      await visibleInput.click();
-      await visibleInput.fill("");
-      await visibleInput.fill(dateStr);
-      await visibleInput.press("Tab").catch(() => {});
-      return;
-    }
-  } catch { }
-
-  // 2. Thao tác trực tiếp vào DOM / Shadow DOM nếu locator visible bị chặn
-  await page.evaluate(
+  const actualValue = await page.evaluate(
     ({ idx, val }) => {
-      const pickers = document.querySelectorAll("div.time-range-selection kat-date-picker");
+      const pickers = document.querySelectorAll("div.time-range-selection > kat-date-picker");
       const p = pickers[idx - 1] as any;
-      if (!p) return;
+      if (!p) throw new Error(`Không tìm thấy date picker thứ ${idx}`);
+      const katInput = p.shadowRoot?.querySelector("kat-input") || p.querySelector("kat-input");
+      const input = katInput?.shadowRoot?.querySelector("input") || katInput?.querySelector("input");
+      if (!(input instanceof HTMLInputElement)) throw new Error(`Không tìm thấy input của date picker thứ ${idx}`);
 
-      if ("value" in p) p.value = val;
-      p.setAttribute("value", val);
-
-      // Shadow DOM bên trong kat-input
-      const katInput = p.querySelector("kat-input");
-      if (katInput && katInput.shadowRoot) {
-        const sInp = katInput.shadowRoot.querySelector("input") as HTMLInputElement | null;
-        if (sInp) {
-          sInp.value = val;
-          sInp.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
-          sInp.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
-        }
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, "");
+      input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+      setter?.call(input, val);
+      for (const eventName of ["input", "change", "blur"]) {
+        input.dispatchEvent(new Event(eventName, { bubbles: true, composed: true }));
       }
-
-      // Input thông thường trong light DOM
-      const inputs = Array.from(p.querySelectorAll("input")) as HTMLInputElement[];
-      inputs.forEach((inp) => {
-        inp.value = val;
-        inp.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
-        inp.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
-      });
+      return input.value;
     },
     { idx: pickerIndex, val: dateStr }
   );
+  if (actualValue !== dateStr) {
+    throw new Error(`Date picker ${pickerIndex} không nhận ngày ${dateStr} (giá trị thực tế: ${actualValue || "rỗng"}).`);
+  }
+}
+
+async function applyPaymentsDateRange(page: Page, dateFromStr: string, dateToStr: string): Promise<void> {
+  await fillPaymentsDatePicker(page, 1, dateFromStr);
+  await fillPaymentsDatePicker(page, 2, dateToStr);
+
+  const form = page.locator("div.time-range-selection").locator("xpath=ancestor::form[1]");
+  const updateButton = form.locator("kat-button").first();
+  await updateButton.waitFor({ state: "visible", timeout: 10_000 });
+  await updateButton.click({ force: true });
+
+  const nativeSubmit = form.locator("button").first();
+  if (await nativeSubmit.isVisible().catch(() => false)) {
+    await nativeSubmit.click({ force: true }).catch(() => {});
+  }
+  await page.waitForTimeout(6_000);
+
+  const displayedValues = await page.evaluate(() =>
+    Array.from(document.querySelectorAll("div.time-range-selection > kat-date-picker")).slice(0, 2).map((picker: any) => {
+      const katInput = picker.shadowRoot?.querySelector("kat-input") || picker.querySelector("kat-input");
+      const input = katInput?.shadowRoot?.querySelector("input") || katInput?.querySelector("input");
+      return input?.value || "";
+    })
+  );
+  if (displayedValues[0] !== dateFromStr || displayedValues[1] !== dateToStr) {
+    throw new Error(`Amazon không giữ bộ lọc ngày sau Update: ${displayedValues.join(" → ") || "không đọc được"}.`);
+  }
+  console.log(`  [Payments] ✅ Đã áp dụng bộ lọc ngày ${dateFromStr} - ${dateToStr}.`);
+}
+
+function validatePaymentsCsvDateRange(filePath: string, dateFromStr: string, dateToStr: string): void {
+  const parseUsDate = (value: string) => {
+    const match = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    return match ? Date.UTC(Number(match[3]), Number(match[1]) - 1, Number(match[2])) : Number.NaN;
+  };
+  const from = parseUsDate(dateFromStr);
+  const to = parseUsDate(dateToStr);
+  const lines = fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, "").split(/\r?\n/).filter(Boolean);
+  const invalidDates: string[] = [];
+  for (const line of lines.slice(1)) {
+    const match = line.match(/^"?([0-9]{1,2}\/[0-9]{1,2}\/[0-9]{4})"?,/);
+    if (!match) continue;
+    const value = parseUsDate(match[1]);
+    if (!Number.isFinite(value) || value < from || value > to) invalidDates.push(match[1]);
+    if (invalidDates.length >= 3) break;
+  }
+  if (invalidDates.length > 0) {
+    fs.unlinkSync(filePath);
+    throw new Error(`Amazon xuất dữ liệu ngoài kỳ ${dateFromStr}-${dateToStr}: ${invalidDates.join(", ")}. Đã xóa file sai.`);
+  }
 }
 
 /** Gỡ bỏ các popup hướng dẫn (Joyride tour) hoặc dialog cản trở click của Amazon */
@@ -621,18 +771,7 @@ async function downloadFile03Returns(page: Page, downloadDir: string, targetDate
   const dateFromStr = formatUsDateFromIso(targetDateStr, 6);
   const dateToStr = formatUsDateFromIso(targetDateStr);
 
-  await fillPaymentsDatePicker(page, 1, dateFromStr);
-  await fillPaymentsDatePicker(page, 2, dateToStr);
-  await page.waitForTimeout(1000);
-
-  await dismissOverlays(page);
-
-  // Nhấn nút Update để áp dụng dải ngày (dùng force: true để không bị Joyride chặn)
-  const updateBtn = page.locator("kat-button:has-text('Update'), kat-button[label='Update'], article:nth-child(2) form kat-button, form kat-button").first();
-  if (await updateBtn.isVisible({ timeout: 8000 })) {
-    await updateBtn.click({ force: true }).catch(() => updateBtn.click());
-    await page.waitForTimeout(4000);
-  }
+  await applyPaymentsDateRange(page, dateFromStr, dateToStr);
 
   await dismissOverlays(page);
 
@@ -654,21 +793,15 @@ async function downloadFile03Returns(page: Page, downloadDir: string, targetDate
 
       const targetPath = path.join(downloadDir, `03_Returns_${targetDateStr}.csv`);
       await download.saveAs(targetPath);
+      validatePaymentsCsvDateRange(targetPath, dateFromStr, dateToStr);
       console.log(`  [File 03 - Returns] ✅ Tải thành công: ${path.basename(targetPath)}`);
       return targetPath;
     } catch (err: any) {
-      console.warn(`  [File 03 - Returns] Không nhận được file tải xuống (${err?.message}). Tạo file rỗng.`);
-      const emptyPath = path.join(downloadDir, `03_Returns_${targetDateStr}.csv`);
-      fs.writeFileSync(emptyPath, "Date,Order ID,SKU,Transaction type,Payment Type,Payment Detail,Amount,Quantity\n");
-      return emptyPath;
+      throw err;
     }
   }
 
-  // Nếu không có nút Download, tạo file rỗng chuẩn cấu trúc
-  console.log(`  [File 03 - Returns] Không thấy nút Download. Tạo file rỗng.`);
-  const emptyPath = path.join(downloadDir, `03_Returns_${targetDateStr}.csv`);
-  fs.writeFileSync(emptyPath, "Date,Order ID,SKU,Transaction type,Payment Type,Payment Detail,Amount,Quantity\n");
-  return emptyPath;
+  throw new Error("Không thấy nút Download Returns sau khi áp dụng bộ lọc ngày.");
 }
 
 /**
@@ -690,17 +823,7 @@ async function downloadFile04ServiceFees(page: Page, downloadDir: string, target
   const dateFromStr = formatUsDateFromIso(targetDateStr, 6);
   const dateToStr = formatUsDateFromIso(targetDateStr);
 
-  await fillPaymentsDatePicker(page, 1, dateFromStr);
-  await fillPaymentsDatePicker(page, 2, dateToStr);
-  await page.waitForTimeout(1000);
-
-  await dismissOverlays(page);
-
-  const updateBtn = page.locator("kat-button:has-text('Update'), kat-button[label='Update'], article:nth-child(2) form kat-button, form kat-button").first();
-  if (await updateBtn.isVisible({ timeout: 8000 })) {
-    await updateBtn.click({ force: true }).catch(() => updateBtn.click());
-    await page.waitForTimeout(4000);
-  }
+  await applyPaymentsDateRange(page, dateFromStr, dateToStr);
 
   await dismissOverlays(page);
 
@@ -722,20 +845,15 @@ async function downloadFile04ServiceFees(page: Page, downloadDir: string, target
 
       const targetPath = path.join(downloadDir, `04_ServiceFees_${targetDateStr}.csv`);
       await download.saveAs(targetPath);
+      validatePaymentsCsvDateRange(targetPath, dateFromStr, dateToStr);
       console.log(`  [File 04 - Service Fees] ✅ Tải thành công: ${path.basename(targetPath)}`);
       return targetPath;
     } catch (err: any) {
-      console.warn(`  [File 04 - Service Fees] Không nhận được file tải xuống (${err?.message}). Tạo file rỗng.`);
-      const emptyPath = path.join(downloadDir, `04_ServiceFees_${targetDateStr}.csv`);
-      fs.writeFileSync(emptyPath, "Date,Transaction type,Payment Type,Payment Detail,Amount\n");
-      return emptyPath;
+      throw err;
     }
   }
 
-  console.log(`  [File 04 - Service Fees] Không thấy nút Download. Tạo file rỗng.`);
-  const emptyPath = path.join(downloadDir, `04_ServiceFees_${targetDateStr}.csv`);
-  fs.writeFileSync(emptyPath, "Date,Transaction type,Payment Type,Payment Detail,Amount\n");
-  return emptyPath;
+  throw new Error("Không thấy nút Download Service Fees sau khi áp dụng bộ lọc ngày.");
 }
 
 /**
@@ -1381,7 +1499,20 @@ export async function crawlAccountingForStore(
         }
       }
 
-      const downloaded = await downloadWithRetry(task.label, task.download, MAX_TASK_RETRIES, Boolean(task.allowNoData));
+      const downloadWithSessionRecovery = async () => {
+        try {
+          return await task.download();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const sessionExpired = isSignInUrl(page.url()) || /chưa đăng nhập|sign-in|signin/i.test(message);
+          if (store.store_name.toUpperCase() !== "BOZSPACER" || !sessionExpired) throw error;
+
+          await autoLoginBozspacerSellerCentral(page);
+          console.log(`  [${task.label}] Thử lại ngay sau khi auto-login thành công...`);
+          return task.download();
+        }
+      };
+      const downloaded = await downloadWithRetry(task.label, downloadWithSessionRecovery, MAX_TASK_RETRIES, Boolean(task.allowNoData));
       if (downloaded.noData) {
         noDataTasks.add(task.key);
         finalErrors.delete(task.key);

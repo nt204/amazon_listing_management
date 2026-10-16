@@ -1396,7 +1396,7 @@ export function PpcSaleKwView({
     selectedStore === "ALL" || loading || loadingRegistryLookup || !registryLookupReady;
 
   return (
-    <div className="space-y-4">
+    <div className="font-accounting-system space-y-4">
       {/* 1. Sub-tab Navigation Header (đồng bộ bố cục ST Optimization) */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
         <div className="flex items-center gap-2">
@@ -1893,7 +1893,7 @@ export function PpcSaleKwView({
                                 <span className={`px-2 py-0.5 rounded text-[10px] font-black text-white uppercase shrink-0 ${exactEnabled ? "bg-blue-600" : "bg-slate-400"}`}>
                                   Exact
                                 </span>
-                                <span className={`font-extrabold truncate font-mono text-[11px] ${exactEnabled ? "text-blue-950" : "text-slate-400"}`}>
+                                <span className={`font-normal truncate text-[11px] ${exactEnabled ? "text-blue-950" : "text-slate-400"}`}>
                                   {group.campaignNames.exact}
                                 </span>
                               </div>
@@ -1922,7 +1922,7 @@ export function PpcSaleKwView({
                                 <span className={`px-2 py-0.5 rounded text-[10px] font-black text-white uppercase shrink-0 ${phraseEnabled ? "bg-sky-600" : "bg-slate-400"}`}>
                                   Phrase
                                 </span>
-                                <span className={`font-extrabold truncate font-mono text-[11px] ${phraseEnabled ? "text-sky-950" : "text-slate-400"}`}>
+                                <span className={`font-normal truncate text-[11px] ${phraseEnabled ? "text-sky-950" : "text-slate-400"}`}>
                                   {group.campaignNames.phrase}
                                 </span>
                               </div>
@@ -1951,7 +1951,7 @@ export function PpcSaleKwView({
                                 <span className={`px-2 py-0.5 rounded text-[10px] font-black text-white uppercase shrink-0 ${broadEnabled ? "bg-emerald-600" : "bg-slate-400"}`}>
                                   Broad
                                 </span>
-                                <span className={`font-extrabold truncate font-mono text-[11px] ${broadEnabled ? "text-emerald-950" : "text-slate-400"}`}>
+                                <span className={`font-normal truncate text-[11px] ${broadEnabled ? "text-emerald-950" : "text-slate-400"}`}>
                                   {group.campaignNames.broad}
                                 </span>
                               </div>
@@ -2015,9 +2015,9 @@ export function PpcSaleKwView({
                                       className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                                     />
                                   </td>
-                                  <td className="py-2.5 px-3 font-bold text-slate-900">
+                                  <td className="py-2.5 px-3 font-bold text-slate-900 col-primary">
                                     <div className="flex items-center gap-1.5">
-                                      <span>{item.customerSearchTerm}</span>
+                                      <span className="font-bold text-slate-900">{item.customerSearchTerm}</span>
                                       <button
                                         onClick={() => copyToClipboard(item.customerSearchTerm, item.key)}
                                         className="text-slate-400 hover:text-slate-600 transition"
@@ -2069,7 +2069,7 @@ export function PpcSaleKwView({
                                     ${item.spend.toFixed(2)}
                                   </td>
                                   <td className="py-2.5 px-3 text-center">
-                                    <span className="font-extrabold text-slate-900 bg-emerald-50 border border-emerald-300 text-emerald-950 px-2 py-0.5 rounded font-mono" title="Bid sẽ nạp cho các campaign đã chọn = CPC trung bình của term">
+                                    <span className="font-semibold text-slate-900 bg-emerald-50 border border-emerald-300 text-emerald-950 px-2 py-0.5 rounded" title="Bid sẽ nạp cho các campaign đã chọn = CPC trung bình của term">
                                       ${item.bid.toFixed(2)}
                                     </span>
                                   </td>
@@ -2288,8 +2288,8 @@ export function PpcSaleKwView({
                             className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
                           />
                         </td>
-                        <td className="py-3 px-3 font-bold text-slate-900">
-                          {item.keyword_text}
+                        <td className="py-3 px-3 font-bold text-slate-900 col-primary">
+                          <span className="font-bold text-slate-900">{item.keyword_text}</span>
                         </td>
                         <td className="py-3 px-3">
                           <div className="flex items-center gap-1.5 max-w-xs group">

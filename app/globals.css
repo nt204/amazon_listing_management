@@ -29,7 +29,9 @@ body {
   margin: 0;
   color: var(--text);
   background: var(--background);
-  font-family: var(--font-app-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", "Noto Sans", "Liberation Sans", Arial, sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji" !important;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   letter-spacing: -0.01em;
@@ -48,37 +50,71 @@ body {
   color: #0f172a;
 }
 
+.font-accounting-system,
+.font-accounting-system *,
+.font-accounting-system .font-mono,
+.font-accounting-system [class*="font-mono"],
+.font-accounting-system .font-sans,
+.font-accounting-system [class*="font-sans"],
 .font-accounting-system table,
 .font-accounting-system th,
 .font-accounting-system td,
 .font-accounting-system input,
 .font-accounting-system select,
 .font-accounting-system textarea,
-.font-accounting-system button,
-.font-accounting-system .font-sans {
+.font-accounting-system button {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", "Noto Sans", "Liberation Sans", Arial, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji" !important;
 }
 
-/* Quy chuẩn toàn bộ dữ liệu ô (data cells) cho toàn bộ sheet/cột Accounting:
-   Cỡ chữ 12px (tỷ lệ 90% vừa mắt, số liệu thẳng hàng, gọn gàng, không bị to quá) */
+/* Xóa bỏ hoàn toàn các kiểu in đậm quá đà (font-black, font-extrabold) gây chói mắt */
+.font-accounting-system .font-black,
+.font-accounting-system .font-extrabold {
+  font-weight: 600 !important;
+}
+
+/* Quy chuẩn toàn bộ dữ liệu ô (data cells):
+   Cỡ chữ 12px, độ đậm bình thường font-weight 400 */
 .font-accounting-system table td,
 .font-accounting-system table td input,
 .font-accounting-system table td select,
 .font-accounting-system table td textarea {
   font-size: 12px !important;
+  font-weight: 400 !important;
   color: #0f172a;
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
 }
 
-/* Tiêu đề cột: 11.5px, in hoa, đậm nét */
-.font-accounting-system table th {
+.font-accounting-system table tbody td:not(.col-primary),
+.font-accounting-system table tbody td:not(.col-primary) *:not([class*="badge"]):not([class*="status"]):not([role="status"]) {
+  font-weight: 400 !important;
+}
+
+/* Tiêu đề cột / tiêu đề bảng (th): 11.5px, in hoa, đậm nét */
+.font-accounting-system table th,
+.font-accounting-system table th * {
   font-size: 11.5px !important;
-  font-weight: 700;
+  font-weight: 700 !important;
   letter-spacing: 0.04em;
   color: #020617;
+}
+
+/* Cột chính của mỗi bảng (tên chiến dịch, keyword, search term, sku...): in đậm (font-weight: 700) */
+.font-accounting-system table tbody td.col-primary,
+.font-accounting-system table tbody td.col-primary *,
+.font-accounting-system table tbody td.col-primary span,
+.font-accounting-system table tbody td.col-primary div,
+.font-accounting-system table tbody td.col-primary a,
+.font-accounting-system table tbody td.col-primary button,
+.font-accounting-system table tbody tr > td:first-child:not(:has(input[type="checkbox"])):not(.text-center),
+.font-accounting-system table tbody tr > td:first-child:not(:has(input[type="checkbox"])):not(.text-center) *,
+.font-accounting-system table tbody tr > td:first-child:has(input[type="checkbox"]) + td,
+.font-accounting-system table tbody tr > td:first-child:has(input[type="checkbox"]) + td *,
+.font-accounting-system table tbody tr > td.text-center:first-child + td,
+.font-accounting-system table tbody tr > td.text-center:first-child + td * {
+  font-weight: 700 !important;
 }
 
 
@@ -196,6 +232,7 @@ button:disabled {
 }
 
 @media (prefers-reduced-motion: reduce) {
+
   *,
   *::before,
   *::after {
@@ -204,6 +241,7 @@ button:disabled {
     animation-duration: 0.01ms !important;
   }
 }
+
 /* The original frozen-column divider is hidden only while a user moves the
    lock boundary to another column. The runtime boundary supplies the new line. */
 table.freeze-boundary-moved th::after,

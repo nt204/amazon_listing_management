@@ -412,7 +412,7 @@ function PpcStCampaignRollupViewInner({
   const deltaTermsPct = Number(summary?.delta?.termsPct ?? 0);
 
   return (
-    <div className="space-y-4 text-slate-800">
+    <div className="font-accounting-system space-y-4 text-slate-800">
       {/* 1. HEADER BANNER & ACTION BAR */}
       <div className="bg-white rounded-2xl border border-slate-200/90 p-4 shadow-2xs space-y-3">
         <div className="flex items-center justify-between pb-2 border-b border-slate-100">
@@ -929,9 +929,9 @@ function PpcStCampaignRollupViewInner({
                           </td>
 
                           {/* 1. Campaign Name */}
-                          <td className="py-2.5 px-3 font-sans font-bold text-slate-900">
+                          <td className="py-2.5 px-3 font-bold text-slate-900 col-primary">
                             <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="break-words select-text">{row.campaignName}</span>
+                              <span className="break-words select-text font-bold text-slate-900">{row.campaignName}</span>
                               <PpcCopyButton value={row.campaignName} label="tên campaign" />
                             </div>
                           </td>
@@ -1030,9 +1030,9 @@ function PpcStCampaignRollupViewInner({
                           </td>
 
                           {/* 1. Campaign Name */}
-                          <td className="py-2.5 px-3 font-sans font-bold text-slate-900">
+                          <td className="py-2.5 px-3 font-bold text-slate-900 col-primary">
                             <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="break-words select-text">{row.campaignName}</span>
+                              <span className="break-words select-text font-bold text-slate-900">{row.campaignName}</span>
                               <PpcCopyButton value={row.campaignName} label="tên campaign" />
                             </div>
                           </td>

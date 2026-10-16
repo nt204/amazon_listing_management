@@ -796,7 +796,7 @@ export function PpcStOptimizationView({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="font-accounting-system space-y-4">
       {/* 0. Sub-tab Navigation (User preference: Tab con ngay trong mục Phủ Định ST) */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
         <div className="flex items-center gap-2">
@@ -1157,9 +1157,9 @@ export function PpcStOptimizationView({
                     </td>
 
                     {/* Customer Search Term */}
-                    <td className="py-2.5 px-3">
+                    <td className="py-2.5 px-3 col-primary">
                       <div className="flex items-center gap-1.5 group">
-                        <span className="font-bold text-slate-900 font-mono text-[11px] max-w-[260px] truncate" title={c.customerSearchTerm}>
+                        <span className="font-bold text-slate-900 max-w-[260px] truncate" title={c.customerSearchTerm}>
                           {c.customerSearchTerm}
                         </span>
                         <button

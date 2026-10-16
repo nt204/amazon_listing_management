@@ -1288,25 +1288,25 @@ export function PpcSkuRecommendationGroupView({
                         className="h-4 w-4 cursor-pointer rounded border-slate-300 accent-indigo-600 disabled:cursor-not-allowed"
                       />
                     </td>
-                    <td className="py-3 px-3 font-bold text-slate-900 group-hover:text-indigo-600 transition">
+                    <td className="py-3 px-3 font-bold text-slate-900 group-hover:text-indigo-600 transition col-primary">
                       {group.sku}
                     </td>
-                    <td className="py-3 px-3 text-slate-500 font-mono">{group.asin || "—"}</td>
+                    <td className="py-3 px-3 text-slate-500">{group.asin || "—"}</td>
                     <td className="py-3 px-3">
-                      <span className={`px-2 py-0.5 rounded text-[11px] font-bold border ${group.productType === SKU_PREFIX_ERROR_PRODUCT_TYPE || group.productType === "Lỗi Prefix" || !group.productType || group.productType === "Chưa xác định"
-                          ? "bg-rose-100 text-rose-800 border-rose-300 font-extrabold"
-                          : "bg-slate-100 text-slate-700 border-slate-200"
+                      <span className={`px-2 py-0.5 rounded text-[11px] border ${group.productType === SKU_PREFIX_ERROR_PRODUCT_TYPE || group.productType === "Lỗi Prefix" || !group.productType || group.productType === "Chưa xác định"
+                          ? "bg-rose-100 text-rose-800 border-rose-300 font-semibold"
+                          : "bg-slate-100 text-slate-700 border-slate-200 font-normal"
                         }`}>
                         {group.productType || "Chưa xác định"}
                       </span>
                     </td>
-                    <td className="py-3 px-3 text-right text-slate-900 font-bold font-mono">
+                    <td className="py-3 px-3 text-right text-slate-800 font-normal">
                       ${group.spend.toFixed(2)}
                     </td>
-                    <td className="py-3 px-3 text-right text-emerald-700 font-black font-mono">
+                    <td className="py-3 px-3 text-right text-emerald-700 font-normal">
                       ${group.sales.toFixed(2)}
                     </td>
-                    <td className="py-3 px-3 text-right font-mono font-bold">
+                    <td className="py-3 px-3 text-right font-normal">
                       <span
                         className={
                           isBleeding
@@ -1319,21 +1319,21 @@ export function PpcSkuRecommendationGroupView({
                         {group.acos.toFixed(1)}%
                       </span>
                     </td>
-                    <td className="py-3 px-3 text-right font-black text-amber-700 font-mono">
+                    <td className="py-3 px-3 text-right text-amber-700 font-normal">
                       {group.breakEvenAcos.toFixed(1)}%
                     </td>
                     <td className="py-3 px-3 text-center">
-                      <span className="px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-extrabold text-xs border border-indigo-200">
+                      <span className="px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-normal text-xs border border-indigo-200">
                         {group.totalRecommendations}
                       </span>
                     </td>
-                    <td className="py-3 px-3 text-center font-black text-emerald-700 font-mono">
+                    <td className="py-3 px-3 text-center text-emerald-700 font-normal">
                       {group.increaseCount > 0 ? group.increaseCount : "—"}
                     </td>
-                    <td className="py-3 px-3 text-center font-black text-rose-700 font-mono">
+                    <td className="py-3 px-3 text-center text-rose-700 font-normal">
                       {group.decreaseCount > 0 ? group.decreaseCount : "—"}
                     </td>
-                    <td className="py-3 px-3 text-center font-black text-amber-800 font-mono">
+                    <td className="py-3 px-3 text-center text-amber-800 font-normal">
                       {group.pauseCount > 0 ? group.pauseCount : "—"}
                     </td>
                     <td className="py-3 px-3 text-center">
@@ -1724,7 +1724,7 @@ export function PpcSkuRecommendationGroupView({
 
                               {/* FULL CAMPAIGN NAME (NO TRUNCATION!) */}
                               <h4
-                                className="font-bold text-slate-900 text-xs font-mono break-all select-all flex-1 hover:text-indigo-600 transition"
+                                className="font-semibold text-slate-900 text-xs break-all select-all flex-1 hover:text-indigo-600 transition"
                                 title="Bấm để mở / thu gọn danh sách target"
                               >
                                 {cg.campaignName}
@@ -1817,9 +1817,9 @@ export function PpcSkuRecommendationGroupView({
                                         <td className="py-2.5 px-2 whitespace-nowrap">
                                           {renderActionBadge(rec.recType)}
                                         </td>
-                                        <td className="py-2.5 px-3">
+                                        <td className="py-2.5 px-3 col-primary">
                                           <div className="font-bold text-slate-900 break-words flex items-center gap-1.5" title={rec.keyword}>
-                                            <span>{rec.keyword}</span>
+                                            <span className="font-bold text-slate-900">{rec.keyword}</span>
                                             <button
                                               type="button"
                                               onClick={() => handleExplainRule(rec)}

@@ -585,56 +585,56 @@ export function PpcTimeSeriesChart({
 
         {/* 4 Mini KPI Cards */}
         {!hideSummaryCards && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-            <div className="rounded-lg bg-slate-50/80 p-2 border border-slate-100/80">
-              <span className="text-[9.5px] font-bold text-slate-400 uppercase block">Spend ({badgeText})</span>
-              <div className="flex items-baseline justify-between mt-0.5">
-                <span className="text-sm font-black text-slate-900">
-                  {currency}{totals.spend.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
-                </span>
-                <span className="text-[9px] font-bold text-slate-500">
-                  {currency}{totals.avgDailySpend.toFixed(0)}/d
-                </span>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div className="rounded-lg bg-slate-50/80 p-2.5 border border-slate-100/80 min-w-0">
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block whitespace-nowrap truncate" title={`Spend (${badgeText})`}>
+                Spend ({badgeText})
+              </span>
+              <div className="text-base font-bold text-slate-900 tracking-tight mt-1 truncate">
+                {currency}{totals.spend.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+              </div>
+              <div className="text-[10px] font-medium text-slate-500 mt-0.5 whitespace-nowrap truncate">
+                {currency}{totals.avgDailySpend.toFixed(0)}/ngày
               </div>
             </div>
 
-            <div className="rounded-lg bg-slate-50/80 p-2 border border-slate-100/80">
-              <span className="text-[9.5px] font-bold text-slate-400 uppercase block">Revenue ({badgeText})</span>
-              <div className="flex items-baseline justify-between mt-0.5">
-                <span className="text-sm font-black text-emerald-600">
-                  {currency}{totals.revenue.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
-                </span>
-                <span className="text-[9px] font-bold text-emerald-600">
-                  {totals.roas.toFixed(2)}x
-                </span>
+            <div className="rounded-lg bg-slate-50/80 p-2.5 border border-slate-100/80 min-w-0">
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block whitespace-nowrap truncate" title={`Revenue (${badgeText})`}>
+                Revenue ({badgeText})
+              </span>
+              <div className="text-base font-bold text-emerald-600 tracking-tight mt-1 truncate">
+                {currency}{totals.revenue.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+              </div>
+              <div className="text-[10px] font-semibold text-emerald-600 mt-0.5 whitespace-nowrap truncate">
+                ROAS: {totals.roas.toFixed(2)}x
               </div>
             </div>
 
-            <div className="rounded-lg bg-slate-50/80 p-2 border border-slate-100/80">
-              <span className="text-[9.5px] font-bold text-slate-400 uppercase block">ACOS TB</span>
-              <div className="flex items-baseline justify-between mt-0.5">
-                <span className={`text-sm font-black ${
-                  totals.revenue === 0
-                    ? totals.spend > 0 ? "text-rose-600" : "text-slate-400"
-                    : totals.acos <= targetAcos ? "text-indigo-600" : "text-rose-600"
-                }`}>
-                  {totals.revenue > 0 ? `${totals.acos.toFixed(1)}%` : totals.spend > 0 ? "N/A" : "—"}
-                </span>
-                <span className="text-[9px] font-bold text-slate-500">
-                  {totals.revenue > 0 ? "ACOS" : "Chưa có sales"}
-                </span>
+            <div className="rounded-lg bg-slate-50/80 p-2.5 border border-slate-100/80 min-w-0">
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block whitespace-nowrap truncate" title="ACOS TB">
+                ACOS TB
+              </span>
+              <div className={`text-base font-bold tracking-tight mt-1 truncate ${
+                totals.revenue === 0
+                  ? totals.spend > 0 ? "text-rose-600" : "text-slate-400"
+                  : totals.acos <= targetAcos ? "text-indigo-600" : "text-rose-600"
+              }`}>
+                {totals.revenue > 0 ? `${totals.acos.toFixed(1)}%` : totals.spend > 0 ? "N/A" : "—"}
+              </div>
+              <div className="text-[10px] font-medium text-slate-500 mt-0.5 whitespace-nowrap truncate">
+                {totals.revenue > 0 ? (totals.acos <= targetAcos ? `Mục tiêu: ≤${targetAcos}%` : `Vượt mục tiêu (≤${targetAcos}%)`) : "Chưa có sales"}
               </div>
             </div>
 
-            <div className="rounded-lg bg-slate-50/80 p-2 border border-slate-100/80">
-              <span className="text-[9.5px] font-bold text-slate-400 uppercase block">Đơn Hàng</span>
-              <div className="flex items-baseline justify-between mt-0.5">
-                <span className="text-sm font-black text-slate-900">
-                  {totals.orders.toLocaleString()}
-                </span>
-                <span className="text-[9px] font-bold text-slate-500">
-                  AOV: {currency}{totals.avgOrderValue.toFixed(0)}
-                </span>
+            <div className="rounded-lg bg-slate-50/80 p-2.5 border border-slate-100/80 min-w-0">
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block whitespace-nowrap truncate" title="Đơn Hàng">
+                Đơn Hàng
+              </span>
+              <div className="text-base font-bold text-slate-900 tracking-tight mt-1 truncate">
+                {totals.orders.toLocaleString()}
+              </div>
+              <div className="text-[10px] font-medium text-slate-500 mt-0.5 whitespace-nowrap truncate">
+                AOV: {currency}{totals.avgOrderValue.toFixed(0)}
               </div>
             </div>
           </div>

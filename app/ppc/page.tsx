@@ -24,11 +24,13 @@ export default async function PpcPage({
   const params = await searchParams;
 
   return (
-    <PpcDashboard
-      actor={actor}
-      initialTab={params.tab as any}
-      initialSubTab={params.subTab as any}
-      initialStore={params.store}
-    />
+    <div className="font-accounting-system min-h-screen bg-slate-50">
+      <PpcDashboard
+        actor={actor}
+        initialTab={params.tab as any}
+        initialSubTab={params.subTab as any}
+        initialStore={params.store}
+      />
+    </div>
   );
 }
