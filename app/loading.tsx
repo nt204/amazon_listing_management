@@ -1,7 +1,7 @@
 export default function Loading() {
   return (
-    <main className="flex h-screen w-screen bg-slate-50 text-slate-800" aria-busy="true" aria-label="Đang tải NCE HUB">
-      <aside className="w-56 shrink-0 border-r border-slate-200 bg-white p-4">
+    <main className="flex min-h-[100dvh] w-full bg-slate-50 text-slate-800" aria-busy="true" aria-label="Đang tải NCE HUB">
+      <aside className="hidden w-56 shrink-0 border-r border-slate-200 bg-white p-4 lg:block">
         <div className="h-9 w-32 animate-pulse rounded-xl bg-slate-200" />
         <div className="mt-7 space-y-3">
           {Array.from({ length: 4 }, (_, index) => (

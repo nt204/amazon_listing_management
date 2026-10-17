@@ -760,8 +760,8 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
       {/* Top Header & Product Input Card */}
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-          <div className="flex items-center gap-3">
-            <span className="p-1.5 rounded-lg bg-indigo-50 text-indigo-600 border border-indigo-100">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            <span className="p-1.5 rounded-lg bg-indigo-50 text-indigo-600 border border-indigo-100 shrink-0">
               <Lightning size={18} weight="fill" />
             </span>
             <h1 className="text-base font-black text-slate-900">
@@ -773,13 +773,13 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
               <button
                 type="button"
                 onClick={() => setSelectedTool("helium10")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition cursor-pointer ${selectedTool === "helium10"
+                className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-black transition cursor-pointer ${selectedTool === "helium10"
                     ? "bg-white text-sky-700 shadow-2xs border border-sky-200"
                     : "text-slate-600 hover:text-slate-900"
                   }`}
               >
-                <span className="h-2 w-2 rounded-full bg-sky-500 ring-2 ring-sky-200" />
-                <span>Helium 10 (Mặc định)</span>
+                <span className="h-2 w-2 rounded-full bg-sky-500 ring-2 ring-sky-200 shrink-0" />
+                <span>Helium 10<span className="hidden sm:inline"> (Mặc định)</span></span>
               </button>
               <button
                 type="button"

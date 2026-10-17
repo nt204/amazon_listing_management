@@ -3659,20 +3659,20 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   <th
                     className="px-3 py-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() =>
-                      handleSort("orders", targetSortField, targetSortDir, setTargetSortField, setTargetSortDir, () => setTargetPage(1))
+                      handleSort("acos", targetSortField, targetSortDir, setTargetSortField, setTargetSortDir, () => setTargetPage(1))
                     }
                   >
-                    Orders {targetSortField === "orders" && (targetSortDir === "asc" ? "↑" : "↓")}
+                    ACOS (%) {targetSortField === "acos" && (targetSortDir === "asc" ? "↑" : "↓")}
                   </th>
                   <th className="px-3 py-3 text-right">CPC</th>
                   <th className="px-3 py-3 text-right">CVR</th>
                   <th
                     className="px-3 py-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() =>
-                      handleSort("acos", targetSortField, targetSortDir, setTargetSortField, setTargetSortDir, () => setTargetPage(1))
+                      handleSort("orders", targetSortField, targetSortDir, setTargetSortField, setTargetSortDir, () => setTargetPage(1))
                     }
                   >
-                    ACOS (%) {targetSortField === "acos" && (targetSortDir === "asc" ? "↑" : "↓")}
+                    Orders {targetSortField === "orders" && (targetSortDir === "asc" ? "↑" : "↓")}
                   </th>
                   <th className="px-2 py-3 text-center whitespace-nowrap w-[60px] min-w-[60px] sticky right-0 z-20 bg-slate-50 border-l border-slate-200 shadow-[-4px_0_8px_rgba(0,0,0,0.04)]">
                     Terms
@@ -3751,8 +3751,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                       <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-600 whitespace-nowrap">
                         ${serverTargetSummary.sales.toFixed(2)}
                       </td>
-                      <td className="px-3 py-2.5 text-right font-mono font-black text-indigo-700 whitespace-nowrap">
-                        {serverTargetSummary.orders.toLocaleString()}
+                      <td className={`px-3 py-2.5 text-right font-mono font-black whitespace-nowrap ${serverTargetSummary.acos <= targetAcos ? "text-emerald-700" : "text-rose-700"}`}>
+                        {serverTargetSummary.sales > 0 ? `${serverTargetSummary.acos.toFixed(1)}%` : serverTargetSummary.spend > 0 ? "0 sales" : "0.0%"}
                       </td>
                       <td className="px-3 py-2.5 text-right font-mono font-black text-slate-800 whitespace-nowrap">
                         ${serverTargetSummary.cpc.toFixed(2)}
@@ -3760,8 +3760,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                       <td className="px-3 py-2.5 text-right font-mono font-black text-slate-800 whitespace-nowrap">
                         {serverTargetSummary.cvr.toFixed(1)}%
                       </td>
-                      <td className={`px-3 py-2.5 text-right font-mono font-black whitespace-nowrap ${serverTargetSummary.acos <= targetAcos ? "text-emerald-700" : "text-rose-700"}`}>
-                        {serverTargetSummary.sales > 0 ? `${serverTargetSummary.acos.toFixed(1)}%` : serverTargetSummary.spend > 0 ? "0 sales" : "0.0%"}
+                      <td className="px-3 py-2.5 text-right font-mono font-black text-indigo-700 whitespace-nowrap">
+                        {serverTargetSummary.orders.toLocaleString()}
                       </td>
                       <td className="px-2 py-2.5 text-center whitespace-nowrap w-[60px] min-w-[60px] sticky right-0 z-10 bg-slate-100 border-l border-slate-300 font-bold text-slate-400">
                         —
@@ -3800,14 +3800,61 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                             <td className="px-3 py-2.5 text-right font-mono text-slate-700 whitespace-nowrap">{(target.impressions || 0).toLocaleString()}</td>
                             <td className="px-3 py-2.5 text-right font-mono text-slate-600 whitespace-nowrap">{(target.clicks || 0).toLocaleString()}</td>
                             <td className="px-3 py-2.5 text-right font-mono text-slate-700 whitespace-nowrap">{target.ctr ? `${target.ctr.toFixed(2)}%` : "0.00%"}</td>
-                            <td className="px-3 py-2.5 text-right font-mono font-bold text-slate-900 whitespace-nowrap">${target.spend.toFixed(2)}</td>
+                            <td className="px-3 py-2.5 text-right font-mono whitespace-nowrap">
+                              {target.orders === 0 && target.spend >= 15 ? (
+                                <span
+                                  className="inline-block px-1.5 py-0.5 rounded font-black text-rose-700 bg-rose-50 border border-rose-300"
+                                  title="Cảnh báo: Chi tiêu vượt ngưỡng ($15+) nhưng chưa có đơn hàng nào"
+                                >
+                                  ${target.spend.toFixed(2)}
+                                </span>
+                              ) : (
+                                <span className={`font-bold ${target.spend > 0 ? "text-slate-900" : "text-slate-400"}`}>
+                                  ${target.spend.toFixed(2)}
+                                </span>
+                              )}
+                            </td>
                             <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-600 whitespace-nowrap">${target.sales.toFixed(2)}</td>
-                            <td className="px-3 py-2.5 text-right font-mono font-bold text-slate-900 whitespace-nowrap">{target.orders}</td>
+                            <td className="px-3 py-2.5 text-right font-mono whitespace-nowrap">
+                              {target.orders === 0 || target.sales === 0 ? (
+                                target.spend >= 15 ? (
+                                  <span
+                                    className="inline-block px-1.5 py-0.5 rounded text-[11px] font-black text-rose-700 bg-rose-50 border border-rose-300"
+                                    title="Chưa có sale, chi tiêu cao vượt ngưỡng"
+                                  >
+                                    0 sales
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-400 text-xs">
+                                    {target.spend > 0 ? "0 sales" : "—"}
+                                  </span>
+                                )
+                              ) : target.acos > 50 ? (
+                                <span
+                                  className="inline-block px-1.5 py-0.5 rounded text-[11px] font-black text-rose-700 bg-rose-50 border border-rose-300"
+                                  title={`ACOS cao vượt ngưỡng (${target.acos.toFixed(1)}% > 50%)`}
+                                >
+                                  {target.acos.toFixed(1)}%
+                                </span>
+                              ) : target.acos <= targetAcos ? (
+                                <span
+                                  className="inline-block px-1.5 py-0.5 rounded text-[11px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200"
+                                  title={`ACOS tốt trong ngưỡng mục tiêu (≤ ${targetAcos}%)`}
+                                >
+                                  {target.acos.toFixed(1)}%
+                                </span>
+                              ) : (
+                                <span
+                                  className="inline-block px-1.5 py-0.5 rounded text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200"
+                                  title={`ACOS chấp nhận được (${target.acos.toFixed(1)}%)`}
+                                >
+                                  {target.acos.toFixed(1)}%
+                                </span>
+                              )}
+                            </td>
                             <td className="px-3 py-2.5 text-right font-mono text-slate-600 whitespace-nowrap">${target.cpc.toFixed(2)}</td>
                             <td className="px-3 py-2.5 text-right font-mono text-slate-700 whitespace-nowrap">{target.cvr.toFixed(1)}%</td>
-                            <td className={`px-3 py-2.5 text-right font-mono font-black whitespace-nowrap ${target.acos <= targetAcos ? "text-emerald-700" : "text-rose-700"}`}>
-                              {target.acos > 500 ? "0 sales" : `${target.acos.toFixed(1)}%`}
-                            </td>
+                            <td className="px-3 py-2.5 text-right font-mono font-bold text-slate-900 whitespace-nowrap">{target.orders}</td>
                             <td className={`px-2 py-2 text-center whitespace-nowrap w-[60px] min-w-[60px] sticky right-0 z-10 border-l border-slate-200 shadow-[-4px_0_8px_rgba(0,0,0,0.04)] transition ${isExpanded ? "bg-indigo-50" : isSelected ? "bg-indigo-50/70" : "bg-white group-hover:bg-slate-50"
                               }`}>
                               <button
@@ -3851,9 +3898,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                                           <th className="py-2 px-2.5 text-right">Clicks</th>
                                           <th className="py-2 px-2.5 text-right">Spend ($)</th>
                                           <th className="py-2 px-2.5 text-right">Sales ($)</th>
-                                          <th className="py-2 px-2.5 text-right">Orders</th>
-                                          <th className="py-2 px-2.5 text-right">CVR</th>
                                           <th className="py-2 px-2.5 text-right">ACOS</th>
+                                          <th className="py-2 px-2.5 text-right">CVR</th>
+                                          <th className="py-2 px-2.5 text-right">Orders</th>
                                         </tr>
                                       </thead>
                                       <tbody className="divide-y divide-slate-100 font-medium">
@@ -3876,22 +3923,39 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                                             </td>
                                             <td className="py-2 px-2.5 text-right font-mono text-slate-600">{(term.impressions || 0).toLocaleString()}</td>
                                             <td className="py-2 px-2.5 text-right font-mono text-slate-600">{term.clicks}</td>
-                                            <td className="py-2 px-2.5 text-right font-mono text-slate-900">${term.spend.toFixed(2)}</td>
+                                            <td className="py-2 px-2.5 text-right font-mono whitespace-nowrap">
+                                              {term.orders === 0 && term.spend >= 10 ? (
+                                                <span
+                                                  className="inline-block px-1.5 py-0.5 rounded font-black text-rose-700 bg-rose-50 border border-rose-300 text-[11px]"
+                                                  title="Search term chi tiêu cao ($10+) chưa có đơn"
+                                                >
+                                                  ${term.spend.toFixed(2)}
+                                                </span>
+                                              ) : (
+                                                <span className={term.spend > 0 ? "text-slate-900" : "text-slate-400"}>
+                                                  ${term.spend.toFixed(2)}
+                                                </span>
+                                              )}
+                                            </td>
                                             <td className="py-2 px-2.5 text-right font-mono font-bold text-emerald-600">${term.sales.toFixed(2)}</td>
-                                            <td className="py-2 px-2.5 text-right font-mono font-bold text-slate-900">{term.orders}</td>
-                                            <td className="py-2 px-2.5 text-right font-mono text-slate-600">{(term.cvr * 100).toFixed(1)}%</td>
                                             <td className="py-2 px-2.5 text-right font-mono">
                                               <span
-                                                className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${term.orders === 0
-                                                  ? "text-rose-600 bg-rose-50"
-                                                  : term.acos <= targetAcos
-                                                    ? "text-emerald-700 bg-emerald-50"
-                                                    : "text-amber-700 bg-amber-50"
+                                                className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black border ${term.orders === 0 || term.sales === 0
+                                                  ? term.spend >= 10
+                                                    ? "text-rose-700 bg-rose-50 border-rose-300"
+                                                    : "text-slate-500 bg-slate-50 border-slate-200"
+                                                  : term.acos > 50
+                                                    ? "text-rose-700 bg-rose-50 border-rose-300"
+                                                    : term.acos <= targetAcos
+                                                      ? "text-emerald-700 bg-emerald-50 border-emerald-200"
+                                                      : "text-amber-700 bg-amber-50 border-amber-200"
                                                   }`}
                                               >
                                                 {term.orders === 0 ? "0 sales" : `${term.acos.toFixed(1)}%`}
                                               </span>
                                             </td>
+                                            <td className="py-2 px-2.5 text-right font-mono text-slate-600">{(term.cvr * 100).toFixed(1)}%</td>
+                                            <td className="py-2 px-2.5 text-right font-mono font-bold text-slate-900">{term.orders}</td>
                                           </tr>
                                         ))}
                                       </tbody>
@@ -4426,11 +4490,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                         </td>
                         <td className="py-2.5 px-3 text-right font-bold text-slate-700">{(t.impressions || 0).toLocaleString()}</td>
                         <td className="py-2.5 px-3 text-right font-bold text-slate-800">{t.clicks}</td>
-                        <td className="py-2.5 px-3 text-right text-slate-500">{t.ctr ? `${(t.ctr * 100).toFixed(2)}%` : "0.00%"}</td>
+                        <td className="py-2.5 px-3 text-right text-slate-500">{Number.isFinite(t.ctr) ? `${(t.ctr * 100).toFixed(2)}%` : "-"}</td>
                         <td className="py-2.5 px-3 text-right font-bold text-slate-900">${t.spend.toFixed(2)}</td>
                         <td className="py-2.5 px-3 text-right font-black text-emerald-600">${t.sales.toFixed(2)}</td>
                         <td className="py-2.5 px-3 text-right font-black text-slate-900">{t.orders}</td>
-                        <td className="py-2.5 px-3 text-right text-slate-700">{(t.cvr * 100).toFixed(1)}%</td>
+                        <td className="py-2.5 px-3 text-right text-slate-700">{Number.isFinite(t.cvr) ? `${(t.cvr * 100).toFixed(1)}%` : "-"}</td>
                         <td className="py-2.5 px-3 text-right font-bold">
                           <span
                             className={`${t.orders === 0 && t.clicks >= 9

@@ -245,9 +245,9 @@ export function AccountingWorkspace({
     };
 
     return (
-      <div className="w-full max-w-5xl mx-auto py-6 space-y-6">
-        <div className="bg-white rounded-2xl border border-slate-200/90 p-7 shadow-2xs space-y-6">
-          <div className="space-y-4">
+      <div className="w-full max-w-5xl mx-auto py-3 sm:py-6 space-y-4 sm:space-y-6">
+        <div className="bg-white rounded-2xl border border-slate-200/90 p-4 sm:p-7 shadow-2xs space-y-4 sm:space-y-6">
+          <div className="space-y-3 sm:space-y-4">
             <div className="flex items-center justify-between">
               <h1 className="text-xl font-bold text-slate-900 tracking-tight">Financials</h1>
               <span className="text-[11px] font-semibold text-slate-400 bg-slate-100 px-2.5 py-1 rounded-full">
@@ -302,9 +302,9 @@ export function AccountingWorkspace({
     };
 
     return (
-      <div className="w-full max-w-5xl mx-auto py-6 space-y-6">
-        <div className="bg-white rounded-2xl border border-slate-200/90 p-7 shadow-2xs space-y-6">
-          <div className="space-y-4">
+      <div className="w-full max-w-5xl mx-auto py-3 sm:py-6 space-y-4 sm:space-y-6">
+        <div className="bg-white rounded-2xl border border-slate-200/90 p-4 sm:p-7 shadow-2xs space-y-4 sm:space-y-6">
+          <div className="space-y-3 sm:space-y-4">
             <div className="flex items-center justify-between">
               <h1 className="text-xl font-bold text-slate-900 tracking-tight">Reports</h1>
               <span className="text-[11px] font-semibold text-slate-400 bg-slate-100 px-2.5 py-1 rounded-full">
@@ -335,7 +335,7 @@ export function AccountingWorkspace({
           </div>
 
           {/* Sub-tab view area */}
-          <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-6 space-y-2">
+          <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-4 sm:p-6 space-y-2">
             <h2 className="text-base font-bold text-slate-900">
               {activeTabDef.name}
             </h2>
@@ -352,8 +352,8 @@ export function AccountingWorkspace({
   const moduleInfo = MODULE_DEFINITIONS[effectiveSection] || MODULE_DEFINITIONS.overview;
 
   return (
-    <div className="w-full max-w-4xl mx-auto py-8">
-      <div className="bg-white rounded-2xl border border-slate-200 p-8 shadow-2xs text-center space-y-4">
+    <div className="w-full max-w-4xl mx-auto py-4 sm:py-8">
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-8 shadow-2xs text-center space-y-4">
         <div className="inline-flex items-center justify-center h-10 w-10 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-600 font-extrabold text-sm">
           {moduleInfo.number}
         </div>

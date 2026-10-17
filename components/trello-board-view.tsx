@@ -31,6 +31,7 @@ import {
   ClockCounterClockwiseIcon,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import type {
   BrandProfile,
   ListingTemplateRequiredField,
@@ -41,7 +42,20 @@ import {
   extractTrelloBoardId,
   prioritizeTrelloCoverAttachment,
 } from "@/lib/trello";
-import { AutoMockupGenerator } from "@/components/auto-mockup-generator";
+const AutoMockupGenerator = dynamic(
+  () => import("@/components/auto-mockup-generator").then((mod) => mod.AutoMockupGenerator),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex-1 overflow-y-auto p-6 bg-slate-100 flex items-center justify-center min-h-[400px]">
+        <div className="flex flex-col items-center gap-3 text-slate-500">
+          <div className="h-8 w-8 animate-spin rounded-full border-3 border-indigo-600 border-t-transparent" />
+          <span className="text-xs font-bold">Đang tải bộ tạo Mockup...</span>
+        </div>
+      </div>
+    ),
+  }
+);
 import { downloadOriginalTrelloImage } from "@/lib/trello-image-client";
 import { readNdjsonStream } from "@/lib/read-ndjson-stream";
 import { runWithConcurrency } from "@/lib/run-with-concurrency";
@@ -143,6 +157,7 @@ export function TrelloBoardView({
   const [listingCards, setListingCards] = useState<TrelloCard[]>([]);
   const [selectedCardIds, setSelectedCardIds] = useState<Set<string>>(new Set());
   const [selectedListingCardIds, setSelectedListingCardIds] = useState<Set<string>>(new Set());
+  const [mobileTrelloColumn, setMobileTrelloColumn] = useState<"review" | "listing">("review");
 
   const toggleSelectListingCard = (cardId: string) => {
     setSelectedListingCardIds((prev) => {
@@ -1192,21 +1207,21 @@ export function TrelloBoardView({
     <div className="relative flex h-full w-full flex-col bg-slate-50/60 text-slate-800 font-sans">
       {/* Prominent Header Control Cards Panel - Only for Listing tab */}
       {activeTab === "listing" && (
-        <div className="flex flex-col border-b border-slate-200/80 bg-white px-6 py-4 shadow-2xs gap-4 shrink-0">
-          <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex flex-col border-b border-slate-200/80 bg-white px-3 sm:px-6 py-3 sm:py-4 shadow-2xs gap-3 sm:gap-4 shrink-0">
+          <div className="flex flex-wrap items-center justify-between gap-3 sm:gap-4">
             {/* Title Section */}
-            <div className="flex items-center gap-3.5">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-indigo-700 text-white shadow-sm shadow-indigo-500/25">
-                <KanbanIcon className="h-6 w-6" weight="duotone" />
+            <div className="flex items-center gap-2.5 sm:gap-3.5">
+              <div className="flex h-9 w-9 sm:h-11 sm:w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-indigo-700 text-white shadow-sm shadow-indigo-500/25 shrink-0">
+                <KanbanIcon className="h-5 w-5 sm:h-6 sm:w-6" weight="duotone" />
               </div>
               <div>
-                <h2 className="text-base font-black text-slate-900 tracking-tight">Bảng Trello Kanban</h2>
-                <p className="text-xs font-semibold text-slate-400">Quản lý quy trình tạo và xuất listing</p>
+                <h2 className="text-sm sm:text-base font-black text-slate-900 tracking-tight">Bảng Trello Kanban</h2>
+                <p className="text-[11px] sm:text-xs font-semibold text-slate-400">Quản lý quy trình tạo và xuất listing</p>
               </div>
             </div>
 
             {/* Control Cards Row */}
-            <div className="relative flex flex-wrap items-center gap-3">
+            <div className="relative flex flex-wrap items-center gap-2 sm:gap-3 max-w-full">
               {/* Backdrop to close dropdown on outside click */}
               {openDropdown && (
                 <div
@@ -1772,32 +1787,32 @@ export function TrelloBoardView({
 
       {/* Floating Multi-Select Batch Action Bar */}
       {selectedCardIds.size > 0 && (
-        <div className="sticky top-0 z-20 flex items-center justify-between border-b border-sky-300 bg-sky-600 px-6 py-3 text-white shadow-lg">
-          <div className="flex items-center gap-3">
-            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white text-xs font-bold text-sky-700">
+        <div className="sticky top-0 z-20 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 border-b border-sky-300 bg-sky-600 px-3 py-2.5 sm:px-6 sm:py-3 text-white shadow-lg">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-6 w-6 sm:h-7 sm:w-7 items-center justify-center rounded-full bg-white text-xs font-bold text-sky-700 shrink-0">
               {selectedCardIds.size}
             </span>
-            <span className="text-xs font-bold">Thẻ đã chọn để Batch Listing</span>
+            <span className="text-xs font-bold truncate">Thẻ đã chọn để Batch Listing</span>
             {batchProcessing && (
-              <span className="text-xs font-semibold text-sky-100">
+              <span className="text-xs font-semibold text-sky-100 hidden sm:inline">
                 (Hoàn tất {batchProgress.current}/{batchProgress.total}, tối đa 2 thẻ cùng lúc)
               </span>
             )}
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center justify-end gap-2 sm:gap-3 flex-wrap">
             <button
               onClick={() => setSelectedCardIds(new Set())}
               disabled={batchProcessing}
-              className="text-xs text-sky-100 hover:text-white underline"
+              className="text-xs text-sky-100 hover:text-white underline cursor-pointer"
             >
-              Bỏ chọn tất cả
+              Bỏ chọn
             </button>
             {batchProcessing ? (
               <button
                 type="button"
                 onClick={cancelBatchListings}
-                className="flex items-center gap-1.5 rounded-lg bg-red-500 px-4 py-2 text-xs font-bold text-white shadow hover:bg-red-400 transition cursor-pointer"
+                className="flex items-center gap-1.5 rounded-lg bg-red-500 px-3 py-1.5 sm:px-4 sm:py-2 text-xs font-bold text-white shadow hover:bg-red-400 transition cursor-pointer"
               >
                 <XIcon className="h-4 w-4" weight="bold" />
                 <span>Ngắt Batch</span>
@@ -1807,13 +1822,13 @@ export function TrelloBoardView({
                 onClick={processBatchListings}
                 disabled={!shopId || !templateId || submittingBatch}
                 title={!shopId || !templateId ? "Hãy chọn shop và blank template trước" : undefined}
-                className="flex items-center gap-1.5 rounded-lg bg-amber-400 px-4 py-2 text-xs font-bold text-slate-900 shadow hover:bg-amber-300 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex items-center gap-1.5 rounded-lg bg-amber-400 px-3 py-1.5 sm:px-4 sm:py-2 text-xs font-bold text-slate-900 shadow hover:bg-amber-300 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <LightningIcon className={`h-4 w-4 fill-current ${submittingBatch ? "animate-spin" : ""}`} />
-                <span>
+                <LightningIcon className={`h-4 w-4 fill-current shrink-0 ${submittingBatch ? "animate-spin" : ""}`} />
+                <span className="truncate">
                   {submittingBatch
-                    ? "Đang gửi tác vụ chạy nền..."
-                    : `Batch Tạo Listing Cho ${selectedCardIds.size} Thẻ (Chạy nền Server)`}
+                    ? "Đang gửi..."
+                    : `Batch Tạo Listing Cho ${selectedCardIds.size} Thẻ`}
                 </span>
               </button>
             )}
@@ -1860,31 +1875,31 @@ export function TrelloBoardView({
 
       {/* Inline Quick View Drawer for Generated Listing Details */}
       {inspectListing && (
-        <div className="fixed inset-y-0 right-0 z-50 flex w-full max-w-2xl flex-col border-l border-slate-200 bg-white shadow-2xl">
-          <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-slate-50">
+        <div className="fixed inset-y-0 right-0 z-50 flex w-full max-w-full md:max-w-2xl flex-col border-l border-slate-200 bg-white shadow-2xl">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-slate-200 px-4 py-3 sm:px-6 sm:py-4 bg-slate-50 gap-2.5">
             <div>
               <span className="rounded-md bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-800 border border-sky-200">
                 SKU: {inspectListing.input.internal_name}
               </span>
               <h3 className="mt-1 text-base font-bold text-slate-900">Chi Tiết Listing Đã Sinh</h3>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
               {shopId && templateId ? (
                 <a
                   href={`/api/trello/download-card-excel?cardId=${encodeURIComponent(inspectListing.trelloCardId || "")}&listingId=${inspectListing.id}&shopId=${encodeURIComponent(shopId)}&templateId=${encodeURIComponent(templateId)}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white shadow transition hover:bg-emerald-700 active:translate-y-px"
+                  className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow transition hover:bg-emerald-700 active:translate-y-px"
                   title={`Tạo file từ template của ${selectedShopName}`}
                 >
                   <DownloadSimpleIcon className="h-4 w-4" />
-                  <span>Xuất cho {selectedShopName}</span>
+                  <span>Xuất file</span>
                 </a>
               ) : (
                 <button
                   type="button"
                   onClick={openAddTemplateModal}
-                  className="flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-1.5 text-xs font-bold text-amber-900 hover:bg-amber-100"
+                  className="flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-900 hover:bg-amber-100 cursor-pointer"
                 >
                   <StorefrontIcon className="h-4 w-4" />
                   <span>Cấu hình shop</span>
@@ -1892,21 +1907,21 @@ export function TrelloBoardView({
               )}
               <button
                 onClick={() => copyListingText(inspectListing)}
-                className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer"
               >
                 {copied ? <CheckIcon className="h-4 w-4 text-emerald-600" /> : <CopyIcon className="h-4 w-4" />}
                 <span>{copied ? "Đã Copy" : "Copy Text"}</span>
               </button>
               <button
                 onClick={() => setInspectListing(null)}
-                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-200 hover:text-slate-700"
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-200 hover:text-slate-700 cursor-pointer"
               >
                 <XIcon className="h-5 w-5" />
               </button>
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
             {inspectListing.result.metadata.stage_timings_ms && (
               <div>
                 <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Thời gian xử lý</label>
@@ -1964,7 +1979,7 @@ export function TrelloBoardView({
       {/* Main Content Area: Mockup Generator or Kanban Board */}
 
       {activeTab === "mockups" ? (
-        <div className="flex-1 overflow-y-auto p-6 bg-slate-100">
+        <div className="flex-1 overflow-y-auto bg-slate-100 p-3 sm:p-4 lg:p-6">
           <AutoMockupGenerator
             boardId={boardId}
             sourceListId={mockupSourceListId}
@@ -1975,9 +1990,48 @@ export function TrelloBoardView({
         </div>
       ) : (
         /* Main Kanban Columns Container */
-        <div className="flex flex-1 overflow-x-auto p-6 gap-6 bg-slate-100 min-h-0">
-          {/* Configured Listing source column */}
-          <div className="flex w-1/2 flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-2xs">
+        <div className="flex flex-1 flex-col overflow-hidden bg-slate-100 min-h-0">
+          {/* Mobile column switch tabs (< lg) */}
+          <div className="lg:hidden flex items-center bg-white border-b border-slate-200 px-3 py-2 shrink-0">
+            <div className="grid grid-cols-2 gap-1.5 w-full bg-slate-100 p-1 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setMobileTrelloColumn("review")}
+                className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+                  mobileTrelloColumn === "review"
+                    ? "bg-white text-slate-900 shadow-xs"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                <span className="h-2 w-2 rounded-full bg-amber-500" />
+                <span className="truncate">{reviewList ? reviewList.name : "Cột đầu"}</span>
+                <span className="rounded-full bg-amber-100 px-1.5 py-0.2 text-[10px] text-amber-800 font-extrabold">
+                  {displayReviewCards.length}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMobileTrelloColumn("listing")}
+                className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+                  mobileTrelloColumn === "listing"
+                    ? "bg-white text-slate-900 shadow-xs"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                <span className="truncate">{listingList ? listingList.name : "Cột đích"}</span>
+                <span className="rounded-full bg-emerald-100 px-1.5 py-0.2 text-[10px] text-emerald-800 font-extrabold">
+                  {displayListingCards.length}
+                </span>
+              </button>
+            </div>
+          </div>
+
+          <div className="flex flex-1 overflow-x-auto p-3 sm:p-4 lg:p-6 gap-4 lg:gap-6 min-h-0">
+            {/* Configured Listing source column */}
+            <div className={`w-full lg:w-1/2 flex-col rounded-2xl border border-slate-200 bg-white p-3.5 sm:p-5 shadow-2xs ${
+              mobileTrelloColumn === "review" ? "flex" : "hidden lg:flex"
+            }`}>
             {/* Column Header */}
             <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2.5">
@@ -2394,10 +2448,10 @@ export function TrelloBoardView({
               }
               setDraggedCardId(null);
             }}
-            className={`flex w-1/2 flex-col rounded-2xl border p-5 shadow-2xs transition ${draggedCardId
+            className={`w-full lg:w-1/2 flex-col rounded-2xl border p-3.5 sm:p-5 shadow-2xs transition ${draggedCardId
               ? "border-emerald-500 bg-emerald-50/20 ring-4 ring-emerald-400/20"
               : "border-slate-200 bg-white"
-              }`}
+              } ${mobileTrelloColumn === "listing" ? "flex" : "hidden lg:flex"}`}
           >
             {/* Column Header */}
             <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-3">
@@ -2697,6 +2751,7 @@ export function TrelloBoardView({
                 <option value={50}>50 / trang</option>
               </select>
             </div>
+          </div>
           </div>
         </div>
       )}

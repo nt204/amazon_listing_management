@@ -256,6 +256,8 @@ export async function GET(request: Request) {
         const orders = Number(r.orders || 0);
         const impressions = Number(r.impressions || 0);
         const cpc = clicks > 0 ? Math.round((spend / clicks) * 100) / 100 : 0;
+        const ctr = impressions > 0 ? Math.round((clicks / impressions) * 1_000_000) / 1_000_000 : 0;
+        const cvr = clicks > 0 ? Math.round((orders / clicks) * 1_000_000) / 1_000_000 : 0;
         const acos = sales > 0 ? Math.round((spend / sales) * 1000) / 10 : (spend > 0 ? 999 : 0);
         const roas = spend > 0 ? Math.round((sales / spend) * 100) / 100 : 0;
 
@@ -278,6 +280,8 @@ export async function GET(request: Request) {
           sales: Math.round(sales * 100) / 100,
           orders,
           cpc,
+          ctr,
+          cvr,
           acos,
           roas,
           reportDate: r.report_date,

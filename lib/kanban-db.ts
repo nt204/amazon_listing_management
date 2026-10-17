@@ -19,6 +19,15 @@ export interface KanbanCard {
   updatedAt: string;
 }
 
+export interface KanbanComment {
+  id: string;
+  cardId: string;
+  body: string;
+  authorName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface KanbanCardRow {
   id: string;
   title: string;
@@ -29,6 +38,15 @@ interface KanbanCardRow {
   images: string[] | string | null;
   author_name: string;
   position: number;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface KanbanCommentRow {
+  id: string;
+  card_id: string;
+  body: string;
+  author_name: string;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -60,6 +78,46 @@ function rowToCard(row: KanbanCardRow): KanbanCard {
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
   };
+}
+
+function rowToComment(row: KanbanCommentRow): KanbanComment {
+  return {
+    id: row.id,
+    cardId: row.card_id,
+    body: row.body,
+    authorName: row.author_name || "Thành viên",
+    createdAt: new Date(row.created_at).toISOString(),
+    updatedAt: new Date(row.updated_at).toISOString(),
+  };
+}
+
+export async function listKanbanComments(cardId: string): Promise<KanbanComment[]> {
+  const sql = await getDatabaseClient();
+  const rows = await sql<KanbanCommentRow[]>`
+    SELECT id, card_id, body, author_name, created_at, updated_at
+    FROM kanban_feedback_comments
+    WHERE card_id = ${cardId}::uuid
+    ORDER BY created_at ASC, id ASC
+  `;
+  return rows.map(rowToComment);
+}
+
+export async function createKanbanComment(input: {
+  cardId: string;
+  body: string;
+  authorName?: string;
+}): Promise<KanbanComment | null> {
+  const sql = await getDatabaseClient();
+  const body = input.body.trim();
+  if (!body) return null;
+
+  const rows = await sql<KanbanCommentRow[]>`
+    INSERT INTO kanban_feedback_comments (card_id, body, author_name)
+    SELECT ${input.cardId}::uuid, ${body}, ${input.authorName?.trim() || "Thành viên"}
+    WHERE EXISTS (SELECT 1 FROM kanban_feedback_cards WHERE id = ${input.cardId}::uuid)
+    RETURNING id, card_id, body, author_name, created_at, updated_at
+  `;
+  return rows[0] ? rowToComment(rows[0]) : null;
 }
 
 export async function listKanbanCards(filters?: {

@@ -365,12 +365,17 @@ export function AutoMockupGenerator({
     "low" | "medium" | "high"
   >(DEFAULT_MOCKUP_QUALITY);
 
+  const [mounted, setMounted] = useState(false);
   const [allPresets, setAllPresets] = useState<ProductCategoryPreset[]>(() => getAllPresets());
   const [selectedCategory, setSelectedCategory] = useState<string>(() => getAllPresets()[0]?.id || "");
   const [mockupContents, setMockupContents] = useState<MockupContentItem[]>(() => {
     const loaded = getAllPresets();
     return limitSelectedMockupContents(loaded[0]?.contents || []);
   });
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const [showAddContentModal, setShowAddContentModal] = useState(false);
   const [showManageModal, setShowManageModal] = useState(false);
@@ -804,6 +809,7 @@ export function AutoMockupGenerator({
 
   const [draggedCardId, setDraggedCardId] = useState<string | null>(null);
   const [draggedFromColumn, setDraggedFromColumn] = useState<"design" | "mockup" | null>(null);
+  const [mobileMockupColumn, setMobileMockupColumn] = useState<"design" | "mockup">("design");
 
   const moveCardToList = async (
     cardId: string,
@@ -2923,36 +2929,42 @@ export function AutoMockupGenerator({
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              {allPresets.length === 0 && (
+              {!mounted ? (
+                <div className="flex items-center gap-2 py-1">
+                  <div className="h-8 w-28 animate-pulse rounded-xl bg-slate-200" />
+                  <div className="h-8 w-32 animate-pulse rounded-xl bg-slate-200" />
+                </div>
+              ) : allPresets.length === 0 ? (
                 <div className="w-full rounded-2xl border border-dashed border-indigo-200 bg-white/80 px-4 py-3 text-xs font-semibold text-slate-500">
                   Chưa có mục sản phẩm. Chọn <strong>Quản Lý Mẫu SP &amp; Content</strong> để tạo mục đầu tiên.
                 </div>
-              )}
-              {allPresets.map((cat) => {
-                const isActive = selectedCategory === cat.id;
-                return (
-                  <button
-                    key={cat.id}
-                    type="button"
-                    onClick={() => handleSelectCategory(cat.id)}
-                    className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-extrabold transition-all duration-150 cursor-pointer ${
-                      isActive
-                        ? "bg-gradient-to-r from-indigo-600 to-indigo-700 text-white shadow-xs ring-2 ring-indigo-500/30 scale-[1.02]"
-                        : "bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-900 border border-slate-200/90 shadow-2xs"
-                    }`}
-                  >
-                    <span className="text-sm">{cat.icon || "📦"}</span>
-                    <span>{cat.label}</span>
-                    <span
-                      className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
-                        isActive ? "bg-white/25 text-white" : "bg-slate-100 text-slate-600"
+              ) : (
+                allPresets.map((cat) => {
+                  const isActive = selectedCategory === cat.id;
+                  return (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => handleSelectCategory(cat.id)}
+                      className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-extrabold transition-all duration-150 cursor-pointer ${
+                        isActive
+                          ? "bg-gradient-to-r from-indigo-600 to-indigo-700 text-white shadow-xs ring-2 ring-indigo-500/30 scale-[1.02]"
+                          : "bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-900 border border-slate-200/90 shadow-2xs"
                       }`}
                     >
-                      {cat.contents.length} Content
-                    </span>
-                  </button>
-                );
-              })}
+                      <span className="text-sm">{cat.icon || "📦"}</span>
+                      <span>{cat.label}</span>
+                      <span
+                        className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
+                          isActive ? "bg-white/25 text-white" : "bg-slate-100 text-slate-600"
+                        }`}
+                      >
+                        {cat.contents.length} Content
+                      </span>
+                    </button>
+                  );
+                })
+              )}
             </div>
           </div>
 
@@ -3089,6 +3101,40 @@ export function AutoMockupGenerator({
         </div>
       )}
 
+      {/* Mobile column switcher - keep one focused work queue visible at a time. */}
+      <div className="flex items-center rounded-xl bg-slate-100 p-1 md:hidden">
+        <button
+          type="button"
+          onClick={() => setMobileMockupColumn("design")}
+          className={`flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-bold transition cursor-pointer ${
+            mobileMockupColumn === "design"
+              ? "bg-white text-slate-900 shadow-xs"
+              : "text-slate-600 hover:text-slate-900"
+          }`}
+        >
+          <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500" />
+          <span className="truncate">{sourceListName}</span>
+          <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-extrabold text-amber-800">
+            {designCards.length}
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setMobileMockupColumn("mockup")}
+          className={`flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-bold transition cursor-pointer ${
+            mobileMockupColumn === "mockup"
+              ? "bg-white text-slate-900 shadow-xs"
+              : "text-slate-600 hover:text-slate-900"
+          }`}
+        >
+          <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
+          <span className="truncate">{targetListName}</span>
+          <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-extrabold text-emerald-800">
+            {mockupCards.length}
+          </span>
+        </button>
+      </div>
+
       {/* 2-Column Kanban Layout */}
       <div className="flex flex-col md:flex-row gap-6">
         {/* COLUMN 1: CỘT DESIGN (50% Width) */}
@@ -3106,7 +3152,7 @@ export function AutoMockupGenerator({
             setDraggedCardId(null);
             setDraggedFromColumn(null);
           }}
-          className={`flex w-full md:w-1/2 flex-col rounded-3xl border p-5 shadow-xs space-y-4 transition-all duration-200 ${draggedFromColumn === "mockup"
+          className={`${mobileMockupColumn === "design" ? "flex" : "hidden md:flex"} w-full md:w-1/2 flex-col rounded-3xl border p-5 shadow-xs space-y-4 transition-all duration-200 ${draggedFromColumn === "mockup"
               ? "border-amber-400 bg-amber-50/30 ring-4 ring-amber-400/20"
               : "border-slate-200/80 bg-white/90 backdrop-blur-xs"
             }`}
@@ -3334,7 +3380,7 @@ export function AutoMockupGenerator({
             setDraggedCardId(null);
             setDraggedFromColumn(null);
           }}
-          className={`flex w-full md:w-1/2 flex-col rounded-3xl border p-5 shadow-xs space-y-4 transition-all duration-200 ${draggedFromColumn === "design"
+          className={`${mobileMockupColumn === "mockup" ? "flex" : "hidden md:flex"} w-full md:w-1/2 flex-col rounded-3xl border p-5 shadow-xs space-y-4 transition-all duration-200 ${draggedFromColumn === "design"
               ? "border-emerald-400 bg-emerald-50/30 ring-4 ring-emerald-400/20"
               : "border-slate-200/80 bg-white/90 backdrop-blur-xs"
             }`}

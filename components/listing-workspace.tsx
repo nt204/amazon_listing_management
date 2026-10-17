@@ -21,6 +21,7 @@ import {
   TrendUpIcon,
   ChatCircleDotsIcon,
   FolderSimpleIcon,
+  ListIcon,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
@@ -76,6 +77,723 @@ interface ListingWorkspaceProps {
 }
 
 type WorkspaceView = "listing" | "mockups" | "sellersprite" | "ppc" | "accounting" | "kanban";
+type PpcSection = "dashboard" | "negative_keyword" | "sale_kw" | "auto_bid" | "phoi" | "rules";
+type PpcDashboardTab = "overview" | "campaigns" | "targets" | "search_terms" | "skus" | "st_campaigns";
+type AccountingSection =
+  | "overview"
+  | "stores"
+  | "inventory"
+  | "files"
+  | "orders"
+  | "import"
+  | "financials"
+  | "reports"
+  | "admin"
+  | "dashboard"
+  | "revenue"
+  | "costs"
+  | "amazon_fees"
+  | "ads"
+  | "pnl"
+  | "settlements";
+
+interface WorkspaceSidebarProps {
+  actor?: RequestActor;
+  sidebarTab: string;
+  viewMode: string;
+  activeView: WorkspaceView;
+  hasUnreadBatch: boolean;
+  markBatchAsRead: () => void;
+  selectView: (v: WorkspaceView) => void;
+  selectPpcSection: (s: PpcSection) => void;
+  selectPpcDashboardTab: (t: PpcDashboardTab) => void;
+  ppcSection: PpcSection;
+  ppcDashboardTab: PpcDashboardTab;
+  selectAccountingSection: (s: AccountingSection, subTab?: string) => void;
+  accountingSection: AccountingSection;
+  kanbanPendingCount: number;
+  loadingGuides: boolean;
+  handleOpenGuides: () => void;
+  isMobile?: boolean;
+  onClose?: () => void;
+}
+
+function WorkspaceSidebar({
+  actor,
+  sidebarTab,
+  viewMode,
+  activeView,
+  hasUnreadBatch,
+  markBatchAsRead,
+  selectView,
+  selectPpcSection,
+  selectPpcDashboardTab,
+  ppcSection,
+  ppcDashboardTab,
+  selectAccountingSection,
+  accountingSection,
+  kanbanPendingCount,
+  loadingGuides,
+  handleOpenGuides,
+  isMobile,
+  onClose,
+}: WorkspaceSidebarProps) {
+  return (
+    <div className="flex h-full flex-col justify-between">
+      <div>
+        {/* Logo & App Info */}
+        <div className="mb-5 flex items-center justify-between px-1 pt-1">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-50 border border-slate-200/80 p-1 shadow-xs">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/logo.png" alt="NCE HUB Logo" className="h-full w-full object-contain" />
+            </div>
+            <div>
+              <h1 className="text-sm font-black tracking-tight text-slate-900 leading-tight">NCE HUB</h1>
+              <p className="text-[10px] font-semibold text-slate-400">Workflow &amp; Trello Automation</p>
+            </div>
+          </div>
+          {isMobile && onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 transition cursor-pointer"
+              title="Đóng menu"
+            >
+              <XIcon size={16} weight="bold" />
+            </button>
+          )}
+        </div>
+
+        {/* Navigation Menu List */}
+        <nav className="space-y-1.5">
+          {/* Listing Tab */}
+          {(actor?.allowedFeatures?.includes("listing") ?? true) && (
+            <button
+              type="button"
+              onClick={() => {
+                selectView("listing");
+                markBatchAsRead();
+                onClose?.();
+              }}
+              className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
+                sidebarTab === "trello" && viewMode === "trello"
+                  ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
+                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+              }`}
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <KanbanIcon
+                  size={17}
+                  className={sidebarTab === "trello" && viewMode === "trello" ? "text-indigo-600" : "text-slate-400"}
+                  weight="duotone"
+                />
+                <span>Listing</span>
+              </div>
+              {/* Chấm đỏ thông báo khi có Batch chạy xong */}
+              {hasUnreadBatch && (
+                <span className="relative flex h-2.5 w-2.5 shrink-0" title="Có Batch Listing vừa hoàn tất!">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500 ring-2 ring-white"></span>
+                </span>
+              )}
+            </button>
+          )}
+
+          {/* Mockups Tab */}
+          {(actor?.allowedFeatures?.includes("mockups") ?? true) && (
+            <button
+              type="button"
+              onClick={() => {
+                selectView("mockups");
+                onClose?.();
+              }}
+              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
+                sidebarTab === "mockups" && viewMode === "trello"
+                  ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
+                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+              }`}
+            >
+              <ImageSquareIcon
+                size={17}
+                className={sidebarTab === "mockups" && viewMode === "trello" ? "text-indigo-600" : "text-slate-400"}
+                weight="duotone"
+              />
+              <span>Mockup design</span>
+            </button>
+          )}
+
+          {/* SellerSprite Tab */}
+          {(actor?.allowedFeatures?.includes("sellersprite") ?? true) && (
+            <button
+              type="button"
+              onClick={() => {
+                selectView("sellersprite");
+                onClose?.();
+              }}
+              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
+                viewMode === "sellersprite"
+                  ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
+                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+              }`}
+            >
+              <LightningIcon
+                size={17}
+                className={viewMode === "sellersprite" ? "text-indigo-600" : "text-slate-400"}
+                weight="duotone"
+              />
+              <span>Đào Keyword</span>
+            </button>
+          )}
+
+          {/* Amazon PPC Analytics Group */}
+          {(actor?.allowedFeatures?.includes("ppc") ?? true) && (
+            <div className="space-y-1">
+              <button
+                type="button"
+                onClick={() => {
+                  selectPpcSection("dashboard");
+                  onClose?.();
+                }}
+                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
+                  viewMode === "ppc"
+                    ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
+                    : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                }`}
+              >
+                <div className="flex items-center gap-2.5">
+                  <ChartLineUpIcon
+                    size={17}
+                    weight={viewMode === "ppc" ? "fill" : "duotone"}
+                    className={viewMode === "ppc" ? "text-indigo-600" : "text-emerald-600"}
+                  />
+                  <span>PPC Analytics</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded border transition-colors ${
+                      viewMode === "ppc"
+                        ? "bg-indigo-100/70 text-indigo-700 border-indigo-200"
+                        : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                    }`}
+                  >
+                    MỚI
+                  </span>
+                  <CaretDownIcon
+                    size={12}
+                    weight="bold"
+                    className={`transition-transform duration-200 ${
+                      viewMode === "ppc" ? "rotate-0 text-indigo-600" : "-rotate-90 text-slate-400"
+                    }`}
+                  />
+                </div>
+              </button>
+
+              {/* Sub-items under PPC Analytics */}
+              {viewMode === "ppc" && (
+                <div className="ml-3 pl-2.5 border-l-2 border-indigo-100 space-y-0.5 pt-0.5 animate-in fade-in slide-in-from-top-1 duration-150">
+                  {/* Mục 1: PPC Dashboard */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      selectPpcSection("dashboard");
+                      selectPpcDashboardTab("overview");
+                      onClose?.();
+                    }}
+                    className={`flex w-full items-center justify-between gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
+                      ppcSection === "dashboard" && ppcDashboardTab === "overview"
+                        ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                        : ppcSection === "dashboard"
+                          ? "text-indigo-900 font-semibold hover:bg-slate-100"
+                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        className={`h-2 w-2 rounded-full shrink-0 transition-colors ${
+                          ppcSection === "dashboard" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                        }`}
+                      />
+                      <span className="truncate">PPC Dashboard</span>
+                    </div>
+                    <CaretDownIcon
+                      size={11}
+                      weight="bold"
+                      className="rotate-0 text-indigo-500 shrink-0"
+                    />
+                  </button>
+
+                  {/* Sub-items under PPC Dashboard - giữ cố định mở luôn */}
+                  <div className="ml-2 pl-2 border-l border-indigo-200/80 space-y-0.5 py-0.5">
+                    {/* Mục: Campaign */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        selectPpcDashboardTab("campaigns");
+                        onClose?.();
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${
+                        ppcSection === "dashboard" && ppcDashboardTab === "campaigns"
+                          ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                      }`}
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${
+                          ppcSection === "dashboard" && ppcDashboardTab === "campaigns" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                        }`}
+                      />
+                      <span className="truncate">Campaign</span>
+                    </button>
+
+                    {/* Mục: Target */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        selectPpcDashboardTab("targets");
+                        onClose?.();
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${
+                        ppcSection === "dashboard" && ppcDashboardTab === "targets"
+                          ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                      }`}
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${
+                          ppcSection === "dashboard" && ppcDashboardTab === "targets" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                        }`}
+                      />
+                      <span className="truncate">Target</span>
+                    </button>
+
+                    {/* Mục: Search Term */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        selectPpcDashboardTab("search_terms");
+                        onClose?.();
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${
+                        ppcSection === "dashboard" && ppcDashboardTab === "search_terms"
+                          ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                      }`}
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${
+                          ppcSection === "dashboard" && ppcDashboardTab === "search_terms" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                        }`}
+                      />
+                      <span className="truncate">Search Term</span>
+                    </button>
+
+                    {/* Mục: SKU */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        selectPpcDashboardTab("skus");
+                        onClose?.();
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${
+                        ppcSection === "dashboard" && ppcDashboardTab === "skus"
+                          ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                      }`}
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${
+                          ppcSection === "dashboard" && ppcDashboardTab === "skus" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                        }`}
+                      />
+                      <span className="truncate">SKU</span>
+                    </button>
+
+                    {/* Mục: Đối Soát ST */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        selectPpcDashboardTab("st_campaigns");
+                        onClose?.();
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${
+                        ppcSection === "dashboard" && ppcDashboardTab === "st_campaigns"
+                          ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                      }`}
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${
+                          ppcSection === "dashboard" && ppcDashboardTab === "st_campaigns" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                        }`}
+                      />
+                      <span className="truncate">Đối Soát ST</span>
+                    </button>
+                  </div>
+
+                  {/* Mục con 1: Quản lý Phôi */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      selectPpcSection("phoi");
+                      onClose?.();
+                    }}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
+                      ppcSection === "phoi"
+                        ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                        : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                    }`}
+                  >
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${
+                        ppcSection === "phoi" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                      }`}
+                    />
+                    <span>Quản lý Phôi</span>
+                  </button>
+
+                  {/* Mục con 2: Quản lý Rule */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      selectPpcSection("rules");
+                      onClose?.();
+                    }}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
+                      ppcSection === "rules"
+                        ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                        : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                    }`}
+                  >
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${
+                        ppcSection === "rules" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                      }`}
+                    />
+                    <span>Quản lý Rule</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Accounting Group (cùng cấp với PPC Analytics) */}
+          {(actor?.allowedFeatures?.includes("accounting") ?? true) && (
+            <div className="space-y-1">
+              <button
+                type="button"
+                onClick={() => {
+                  selectAccountingSection("overview");
+                  onClose?.();
+                }}
+                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
+                  viewMode === "accounting"
+                    ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
+                    : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                }`}
+              >
+                <div className="flex items-center gap-2.5">
+                  <ReceiptIcon
+                    size={17}
+                    weight={viewMode === "accounting" ? "fill" : "duotone"}
+                    className={viewMode === "accounting" ? "text-indigo-600" : "text-slate-500"}
+                  />
+                  <span>Accounting</span>
+                </div>
+                <CaretDownIcon
+                  size={12}
+                  weight="bold"
+                  className={`transition-transform duration-200 ${
+                    viewMode === "accounting" ? "rotate-0 text-indigo-600" : "-rotate-90 text-slate-400"
+                  }`}
+                />
+              </button>
+
+              {/* Sub-items under Accounting: 6 main groups + System Admin */}
+              {viewMode === "accounting" && (
+                <div className="space-y-0.5 pt-1 animate-in fade-in slide-in-from-top-1 duration-150">
+                  {/* 1. Overview */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      selectAccountingSection("overview");
+                      onClose?.();
+                    }}
+                    className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
+                      accountingSection === "overview" || accountingSection === "dashboard"
+                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                    }`}
+                  >
+                    <SquaresFourIcon
+                      size={17}
+                      weight={accountingSection === "overview" || accountingSection === "dashboard" ? "fill" : "duotone"}
+                      className={`shrink-0 mt-0.5 ${
+                        accountingSection === "overview" || accountingSection === "dashboard"
+                          ? "text-indigo-600"
+                          : "text-slate-400"
+                      }`}
+                    />
+                    <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                      <span className="text-xs font-bold text-slate-800">Overview</span>
+                      <span className="text-[10.5px] font-normal text-slate-400 leading-snug">Dashboard tổng quan</span>
+                    </div>
+                  </button>
+
+                  {/* 2. Stores */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      selectAccountingSection("stores");
+                      onClose?.();
+                    }}
+                    className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
+                      accountingSection === "stores"
+                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                    }`}
+                  >
+                    <StorefrontIcon
+                      size={17}
+                      weight={accountingSection === "stores" ? "fill" : "duotone"}
+                      className={`shrink-0 mt-0.5 ${accountingSection === "stores" ? "text-indigo-600" : "text-slate-400"}`}
+                    />
+                    <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                      <span className="text-xs font-bold text-slate-800">Stores</span>
+                      <span className="text-[10.5px] font-normal text-slate-400 leading-snug">Quản lý Store</span>
+                    </div>
+                  </button>
+
+                  {/* 3. Inventory */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      selectAccountingSection("inventory");
+                      onClose?.();
+                    }}
+                    className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
+                      accountingSection === "inventory"
+                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                    }`}
+                  >
+                    <PackageIcon
+                      size={17}
+                      weight={accountingSection === "inventory" ? "fill" : "duotone"}
+                      className={`shrink-0 mt-0.5 ${accountingSection === "inventory" ? "text-indigo-600" : "text-slate-400"}`}
+                    />
+                    <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                      <span className="text-xs font-bold text-slate-800">Inventory</span>
+                      <span className="text-[10.5px] font-normal text-slate-400 leading-snug break-words">SKU, phôi, lô hàng, shipment</span>
+                    </div>
+                  </button>
+
+                  {/* 4. Import (formerly Orders) */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      selectAccountingSection("orders");
+                      onClose?.();
+                    }}
+                    className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
+                      accountingSection === "orders" || accountingSection === "import"
+                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                    }`}
+                  >
+                    <UploadSimpleIcon
+                      size={17}
+                      weight={accountingSection === "orders" || accountingSection === "import" ? "bold" : "regular"}
+                      className={`shrink-0 mt-0.5 ${
+                        accountingSection === "orders" || accountingSection === "import" ? "text-indigo-600" : "text-slate-400"
+                      }`}
+                    />
+                    <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                      <span className="text-xs font-bold text-slate-800">Import</span>
+                      <span className="text-[10.5px] font-normal text-slate-400 leading-snug break-words">Orders, Ads, Return, Service Fee</span>
+                    </div>
+                  </button>
+
+                  {/* 5. Financials */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      selectAccountingSection("financials");
+                      onClose?.();
+                    }}
+                    className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
+                      accountingSection === "financials" ||
+                      accountingSection === "revenue" ||
+                      accountingSection === "costs" ||
+                      accountingSection === "amazon_fees" ||
+                      accountingSection === "ads"
+                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                    }`}
+                  >
+                    <WalletIcon
+                      size={17}
+                      weight={
+                        accountingSection === "financials" ||
+                        accountingSection === "revenue" ||
+                        accountingSection === "costs" ||
+                        accountingSection === "amazon_fees" ||
+                        accountingSection === "ads"
+                          ? "fill"
+                          : "duotone"
+                      }
+                      className={`shrink-0 mt-0.5 ${
+                        accountingSection === "financials" ||
+                        accountingSection === "revenue" ||
+                        accountingSection === "costs" ||
+                        accountingSection === "amazon_fees" ||
+                        accountingSection === "ads"
+                          ? "text-indigo-600"
+                          : "text-slate-400"
+                      }`}
+                    />
+                    <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                      <span className="text-xs font-bold text-slate-800">Financials</span>
+                      <span className="text-[10.5px] font-normal text-slate-400 leading-snug break-words">Doanh thu, chi phí, Amazon Fees, Ads</span>
+                    </div>
+                  </button>
+
+                  {/* 6. Reports */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      selectAccountingSection("reports");
+                      onClose?.();
+                    }}
+                    className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
+                      accountingSection === "reports" ||
+                      accountingSection === "pnl" ||
+                      accountingSection === "settlements"
+                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                    }`}
+                  >
+                    <TrendUpIcon
+                      size={17}
+                      weight={
+                        accountingSection === "reports" ||
+                        accountingSection === "pnl" ||
+                        accountingSection === "settlements"
+                          ? "fill"
+                          : "duotone"
+                      }
+                      className={`shrink-0 mt-0.5 ${
+                        accountingSection === "reports" ||
+                        accountingSection === "pnl" ||
+                        accountingSection === "settlements"
+                          ? "text-indigo-600"
+                          : "text-slate-400"
+                      }`}
+                    />
+                    <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                      <span className="text-xs font-bold text-slate-800">Reports</span>
+                      <span className="text-[10.5px] font-normal text-slate-400 leading-snug break-words">P&L, Settlement, đối soát</span>
+                    </div>
+                  </button>
+
+                  {/* Subtle Divider before System Admin */}
+                  <div className="my-1.5 border-t border-slate-100" />
+
+                  {/* 7. System Admin */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      selectAccountingSection("admin");
+                      onClose?.();
+                    }}
+                    className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
+                      accountingSection === "admin" || accountingSection === "files"
+                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
+                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                    }`}
+                  >
+                    <GearIcon
+                      size={17}
+                      weight={accountingSection === "admin" || accountingSection === "files" ? "fill" : "duotone"}
+                      className={`shrink-0 mt-0.5 ${
+                        accountingSection === "admin" || accountingSection === "files" ? "text-indigo-600" : "text-slate-400"
+                      }`}
+                    />
+                    <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                      <span className="text-xs font-bold text-slate-800">System Admin</span>
+                      <span className="text-[10.5px] font-normal text-slate-400 leading-snug break-words">Quản lý file tải về & hệ thống</span>
+                    </div>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Divider */}
+          <div className="my-2 border-t border-slate-100" />
+
+          {/* Kanban Feedback Tab */}
+          <button
+            type="button"
+            onClick={() => {
+              selectView("kanban");
+              onClose?.();
+            }}
+            className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${
+              activeView === "kanban"
+                ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
+                : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+            }`}
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <ChatCircleDotsIcon
+                size={17}
+                weight={activeView === "kanban" ? "fill" : "duotone"}
+                className={activeView === "kanban" ? "text-indigo-600" : "text-slate-400"}
+              />
+              <span className="truncate">Kanban Góp ý &amp; Báo lỗi</span>
+            </div>
+            {kanbanPendingCount > 0 && (
+              <span
+                className="ml-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-black text-white shadow-xs leading-none shrink-0 animate-in fade-in zoom-in-75 duration-150"
+                title={`${kanbanPendingCount} góp ý / báo lỗi chưa xử lý`}
+              >
+                {kanbanPendingCount > 99 ? "99+" : kanbanPendingCount}
+              </span>
+            )}
+          </button>
+        </nav>
+      </div>
+
+      {/* SIDEBAR BOTTOM WIDGETS */}
+      <div className="space-y-3 pt-3 border-t border-slate-100">
+        {/* Need Help Box */}
+        <div className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50/80 via-white to-sky-50/60 p-3 shadow-2xs">
+          <div className="flex items-center gap-2 mb-1.5">
+            <div className="flex h-5 w-5 items-center justify-center rounded-full bg-indigo-600 text-white text-[10px] font-bold shadow-xs">
+              ?
+            </div>
+            <h4 className="text-xs font-extrabold text-slate-900">Cần hỗ trợ?</h4>
+          </div>
+          <p className="text-[11px] font-medium leading-relaxed text-slate-500 mb-2.5">
+            Xem hướng dẫn hoặc liên hệ team hỗ trợ.
+          </p>
+          <button
+            type="button"
+            disabled={loadingGuides}
+            onClick={() => {
+              void handleOpenGuides();
+              onClose?.();
+            }}
+            className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-indigo-200 bg-white px-3 py-1.5 text-[11px] font-extrabold text-indigo-700 shadow-2xs hover:bg-indigo-50/80 hover:border-indigo-300 transition cursor-pointer disabled:opacity-60"
+          >
+            <span>{loadingGuides ? "Đang mở..." : "📖 Xem hướng dẫn"}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function ListingWorkspace({
   initialBrands = [],
@@ -89,25 +807,6 @@ export function ListingWorkspace({
   const hasTrelloAccess = allowedFeatureSet.has("listing") || allowedFeatureSet.has("mockups");
   const [brands, setBrands] = useState<BrandProfile[]>(initialBrands);
   const [activeView, setActiveView] = useState<WorkspaceView>(initialView);
-  type PpcSection = "dashboard" | "negative_keyword" | "sale_kw" | "auto_bid" | "phoi" | "rules";
-  type PpcDashboardTab = "overview" | "campaigns" | "targets" | "search_terms" | "skus" | "st_campaigns";
-  type AccountingSection =
-    | "overview"
-    | "stores"
-    | "inventory"
-    | "files"
-    | "orders"
-    | "import"
-    | "financials"
-    | "reports"
-    | "admin"
-    | "dashboard"
-    | "revenue"
-    | "costs"
-    | "amazon_fees"
-    | "ads"
-    | "pnl"
-    | "settlements";
   const [ppcSection, setPpcSection] = useState<PpcSection>("dashboard");
   const [ppcDashboardTab, setPpcDashboardTab] = useState<PpcDashboardTab>("overview");
   const [ppcNavNonce, setPpcNavNonce] = useState(0);
@@ -125,6 +824,7 @@ export function ListingWorkspace({
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [kanbanPendingCount, setKanbanPendingCount] = useState<number>(0);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const fetchKanbanCount = useCallback(async () => {
     try {
@@ -133,7 +833,7 @@ export function ListingWorkspace({
       const data = await res.json();
       if (Array.isArray(data.cards)) {
         // Đếm số lượng góp ý / báo lỗi chưa xử lý xong (chưa chuyển sang done)
-        const pending = data.cards.filter((c: any) => c.status !== "done").length;
+        const pending = data.cards.filter((c: { status?: string }) => c.status !== "done").length;
         setKanbanPendingCount(pending);
       }
     } catch {
@@ -387,9 +1087,9 @@ export function ListingWorkspace({
       const lastSeenStr = localStorage.getItem(userBatchSeenKey);
       const lastSeenTime = lastSeenStr ? Number(lastSeenStr) : 0;
 
-      const hasNewCompleted = data.activeBatches.some((b: any) => {
+      const hasNewCompleted = data.activeBatches.some((b: { status?: string; completed_at?: string; updated_at?: string }) => {
         if (b.status !== "completed" && b.status !== "failed") return false;
-        const batchTime = new Date(b.completed_at || b.updated_at).getTime();
+        const batchTime = new Date(b.completed_at || b.updated_at || 0).getTime();
         return batchTime > lastSeenTime;
       });
 
@@ -421,612 +1121,79 @@ export function ListingWorkspace({
   }, [userBatchSeenKey]);
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-slate-50 text-slate-800 font-sans">
-      {/* LEFT SIDEBAR NAVIGATION */}
-      <aside className="flex w-64 shrink-0 flex-col justify-between border-r border-slate-200/80 bg-white p-3.5 shadow-xs select-none">
-        <div>
-          {/* Logo & App Info */}
-          <div className="mb-5 flex items-center gap-2.5 px-1 pt-1">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-50 border border-slate-200/80 p-1 shadow-xs">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/logo.png" alt="NCE HUB Logo" className="h-full w-full object-contain" />
-            </div>
-            <div>
-              <h1 className="text-sm font-black tracking-tight text-slate-900 leading-tight">NCE HUB</h1>
-              <p className="text-[10px] font-semibold text-slate-400">Workflow &amp; Trello Automation</p>
-            </div>
-          </div>
-
-          {/* Navigation Menu List */}
-          <nav className="space-y-1.5">
-            {/* Listing Tab */}
-            {(actor?.allowedFeatures?.includes("listing") ?? true) && (
-              <button
-                type="button"
-                onClick={() => {
-                  selectView("listing");
-                  markBatchAsRead();
-                }}
-                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${sidebarTab === "trello" && viewMode === "trello"
-                    ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
-                    : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                  }`}
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <KanbanIcon
-                    size={17}
-                    className={sidebarTab === "trello" && viewMode === "trello" ? "text-indigo-600" : "text-slate-400"}
-                    weight="duotone"
-                  />
-                  <span>Listing</span>
-                </div>
-                {/* Chấm đỏ thông báo khi có Batch chạy xong */}
-                {hasUnreadBatch && (
-                  <span className="relative flex h-2.5 w-2.5 shrink-0" title="Có Batch Listing vừa hoàn tất!">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500 ring-2 ring-white"></span>
-                  </span>
-                )}
-              </button>
-            )}
-
-            {/* Mockups Tab */}
-            {(actor?.allowedFeatures?.includes("mockups") ?? true) && (
-              <button
-                type="button"
-                onClick={() => selectView("mockups")}
-                className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${sidebarTab === "mockups" && viewMode === "trello"
-                  ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
-                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                  }`}
-              >
-                <ImageSquareIcon
-                  size={17}
-                  className={sidebarTab === "mockups" && viewMode === "trello" ? "text-indigo-600" : "text-slate-400"}
-                  weight="duotone"
-                />
-                <span>Mockup design</span>
-              </button>
-            )}
-
-            {/* SellerSprite Tab */}
-            {(actor?.allowedFeatures?.includes("sellersprite") ?? true) && (
-              <button
-                type="button"
-                onClick={() => selectView("sellersprite")}
-                className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${viewMode === "sellersprite"
-                  ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
-                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                  }`}
-              >
-                <LightningIcon
-                  size={17}
-                  className={viewMode === "sellersprite" ? "text-indigo-600" : "text-slate-400"}
-                  weight="duotone"
-                />
-                <span>Đào Keyword</span>
-              </button>
-            )}
-
-            {/* Amazon PPC Analytics Group */}
-            {(actor?.allowedFeatures?.includes("ppc") ?? true) && (
-              <div className="space-y-1">
-                <button
-                  type="button"
-                  onClick={() => selectPpcSection("dashboard")}
-                  className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${viewMode === "ppc"
-                    ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
-                    : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                    }`}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <ChartLineUpIcon
-                      size={17}
-                      weight={viewMode === "ppc" ? "fill" : "duotone"}
-                      className={viewMode === "ppc" ? "text-indigo-600" : "text-emerald-600"}
-                    />
-                    <span>PPC Analytics</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span
-                      className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded border transition-colors ${viewMode === "ppc"
-                        ? "bg-indigo-100/70 text-indigo-700 border-indigo-200"
-                        : "bg-emerald-50 text-emerald-700 border-emerald-200"
-                        }`}
-                    >
-                      MỚI
-                    </span>
-                    <CaretDownIcon
-                      size={12}
-                      weight="bold"
-                      className={`transition-transform duration-200 ${viewMode === "ppc" ? "rotate-0 text-indigo-600" : "-rotate-90 text-slate-400"
-                        }`}
-                    />
-                  </div>
-                </button>
-
-                {/* Sub-items under PPC Analytics */}
-                {viewMode === "ppc" && (
-                  <div className="ml-3 pl-2.5 border-l-2 border-indigo-100 space-y-0.5 pt-0.5 animate-in fade-in slide-in-from-top-1 duration-150">
-                    {/* Mục 1: PPC Dashboard */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        selectPpcSection("dashboard");
-                        setPpcDashboardTab("overview");
-                      }}
-                      className={`flex w-full items-center justify-between gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "overview"
-                        ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                        : ppcSection === "dashboard"
-                          ? "text-indigo-900 font-semibold hover:bg-slate-100"
-                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
-                        }`}
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span
-                          className={`h-2 w-2 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                            }`}
-                        />
-                        <span className="truncate">PPC Dashboard</span>
-                      </div>
-                      <CaretDownIcon
-                        size={11}
-                        weight="bold"
-                        className="rotate-0 text-indigo-500 shrink-0"
-                      />
-                    </button>
-
-                    {/* Sub-items under PPC Dashboard - giữ cố định mở luôn */}
-                    <div className="ml-2 pl-2 border-l border-indigo-200/80 space-y-0.5 py-0.5">
-                      {/* Mục: Campaign */}
-                      <button
-                        type="button"
-                        onClick={() => selectPpcDashboardTab("campaigns")}
-                        className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "campaigns"
-                          ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
-                          }`}
-                      >
-                        <span
-                          className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "campaigns" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                            }`}
-                        />
-                        <span className="truncate">Campaign</span>
-                      </button>
-
-                      {/* Mục: Target */}
-                      <button
-                        type="button"
-                        onClick={() => selectPpcDashboardTab("targets")}
-                        className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "targets"
-                          ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
-                          }`}
-                      >
-                        <span
-                          className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "targets" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                            }`}
-                        />
-                        <span className="truncate">Target</span>
-                      </button>
-
-                      {/* Mục: Search Term */}
-                      <button
-                        type="button"
-                        onClick={() => selectPpcDashboardTab("search_terms")}
-                        className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "search_terms"
-                          ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
-                          }`}
-                      >
-                        <span
-                          className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "search_terms" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                            }`}
-                        />
-                        <span className="truncate">Search Term</span>
-                      </button>
-
-                      {/* Mục: SKU */}
-                      <button
-                        type="button"
-                        onClick={() => selectPpcDashboardTab("skus")}
-                        className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "skus"
-                          ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
-                          }`}
-                      >
-                        <span
-                          className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "skus" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                            }`}
-                        />
-                        <span className="truncate">SKU</span>
-                      </button>
-
-                      {/* Mục: Đối Soát ST */}
-                      <button
-                        type="button"
-                        onClick={() => selectPpcDashboardTab("st_campaigns")}
-                        className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "dashboard" && ppcDashboardTab === "st_campaigns"
-                          ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                          : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
-                          }`}
-                      >
-                        <span
-                          className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${ppcSection === "dashboard" && ppcDashboardTab === "st_campaigns" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                            }`}
-                        />
-                        <span className="truncate">Đối Soát ST</span>
-                      </button>
-                    </div>
-
-                    {/* Mục 2: Negative Keyword */}
-                    <button
-                      type="button"
-                      onClick={() => selectPpcSection("negative_keyword")}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "negative_keyword"
-                        ? "bg-rose-50 text-rose-800 font-bold shadow-2xs border border-rose-200/60"
-                        : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
-                        }`}
-                    >
-                      <span
-                        className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "negative_keyword" ? "bg-rose-600 ring-2 ring-rose-200" : "bg-slate-300"
-                          }`}
-                      />
-                      <span>Negative Keyword</span>
-                    </button>
-
-                    {/* Mục 3: Lên Camp Sale KW */}
-                    <button
-                      type="button"
-                      onClick={() => selectPpcSection("sale_kw")}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "sale_kw"
-                        ? "bg-emerald-50 text-emerald-800 font-bold shadow-2xs border border-emerald-200/60"
-                        : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
-                        }`}
-                    >
-                      <span
-                        className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "sale_kw" ? "bg-emerald-600 ring-2 ring-emerald-200" : "bg-slate-300"
-                          }`}
-                      />
-                      <span>Lên Camp Sale KW</span>
-                    </button>
-
-                    {/* Mục 4: Auto Bid */}
-                    <button
-                      type="button"
-                      onClick={() => selectPpcSection("auto_bid")}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "auto_bid"
-                        ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                        : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
-                        }`}
-                    >
-                      <span
-                        className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "auto_bid" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                          }`}
-                      />
-                      <span>Auto Bid</span>
-                    </button>
-
-                    {/* Phân cách danh mục cấu hình */}
-                    <div className="h-px bg-slate-200/70 my-1 mx-1" />
-
-                    {/* Mục con 1: Quản lý Phôi */}
-                    <button
-                      type="button"
-                      onClick={() => selectPpcSection("phoi")}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "phoi"
-                        ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                        : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
-                        }`}
-                    >
-                      <span
-                        className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "phoi" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                          }`}
-                      />
-                      <span>Quản lý Phôi</span>
-                    </button>
-
-                    {/* Mục con 2: Quản lý Rule */}
-                    <button
-                      type="button"
-                      onClick={() => selectPpcSection("rules")}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${ppcSection === "rules"
-                        ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
-                        : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
-                        }`}
-                    >
-                      <span
-                        className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${ppcSection === "rules" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
-                          }`}
-                      />
-                      <span>Quản lý Rule</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Accounting Group (cùng cấp với PPC Analytics) */}
-            {(actor?.allowedFeatures?.includes("accounting") ?? true) && (
-              <div className="space-y-1">
-                <button
-                  type="button"
-                  onClick={() => selectAccountingSection("overview")}
-                  className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${viewMode === "accounting"
-                    ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
-                    : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                    }`}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <ReceiptIcon
-                      size={17}
-                      weight={viewMode === "accounting" ? "fill" : "duotone"}
-                      className={viewMode === "accounting" ? "text-indigo-600" : "text-slate-500"}
-                    />
-                    <span>Accounting</span>
-                  </div>
-                  <CaretDownIcon
-                    size={12}
-                    weight="bold"
-                    className={`transition-transform duration-200 ${viewMode === "accounting" ? "rotate-0 text-indigo-600" : "-rotate-90 text-slate-400"
-                      }`}
-                  />
-                </button>
-
-                {/* Sub-items under Accounting: 6 main groups + System Admin */}
-                {viewMode === "accounting" && (
-                  <div className="space-y-0.5 pt-1 animate-in fade-in slide-in-from-top-1 duration-150">
-                    {/* 1. Overview */}
-                    <button
-                      type="button"
-                      onClick={() => selectAccountingSection("overview")}
-                      className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "overview" || accountingSection === "dashboard"
-                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
-                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                        }`}
-                    >
-                      <SquaresFourIcon
-                        size={17}
-                        weight={accountingSection === "overview" || accountingSection === "dashboard" ? "fill" : "duotone"}
-                        className={`shrink-0 mt-0.5 ${accountingSection === "overview" || accountingSection === "dashboard"
-                          ? "text-indigo-600"
-                          : "text-slate-400"
-                          }`}
-                      />
-                      <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                        <span className="text-xs font-bold text-slate-800">Overview</span>
-                        <span className="text-[10.5px] font-normal text-slate-400 leading-snug">Dashboard tổng quan</span>
-                      </div>
-                    </button>
-
-                    {/* 2. Stores */}
-                    <button
-                      type="button"
-                      onClick={() => selectAccountingSection("stores")}
-                      className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "stores"
-                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
-                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                        }`}
-                    >
-                      <StorefrontIcon
-                        size={17}
-                        weight={accountingSection === "stores" ? "fill" : "duotone"}
-                        className={`shrink-0 mt-0.5 ${accountingSection === "stores" ? "text-indigo-600" : "text-slate-400"
-                          }`}
-                      />
-                      <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                        <span className="text-xs font-bold text-slate-800">Stores</span>
-                        <span className="text-[10.5px] font-normal text-slate-400 leading-snug">Quản lý Store</span>
-                      </div>
-                    </button>
-
-                    {/* 3. Inventory */}
-                    <button
-                      type="button"
-                      onClick={() => selectAccountingSection("inventory")}
-                      className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "inventory"
-                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
-                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                        }`}
-                    >
-                      <PackageIcon
-                        size={17}
-                        weight={accountingSection === "inventory" ? "fill" : "duotone"}
-                        className={`shrink-0 mt-0.5 ${accountingSection === "inventory" ? "text-indigo-600" : "text-slate-400"
-                          }`}
-                      />
-                      <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                        <span className="text-xs font-bold text-slate-800">Inventory</span>
-                        <span className="text-[10.5px] font-normal text-slate-400 leading-snug break-words">SKU, phôi, lô hàng, shipment</span>
-                      </div>
-                    </button>
-
-                    {/* 4. Import (formerly Orders) */}
-                    <button
-                      type="button"
-                      onClick={() => selectAccountingSection("orders")}
-                      className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "orders" || accountingSection === "import"
-                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
-                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                        }`}
-                    >
-                      <UploadSimpleIcon
-                        size={17}
-                        weight={accountingSection === "orders" || accountingSection === "import" ? "bold" : "regular"}
-                        className={`shrink-0 mt-0.5 ${accountingSection === "orders" || accountingSection === "import" ? "text-indigo-600" : "text-slate-400"
-                          }`}
-                      />
-                      <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                        <span className="text-xs font-bold text-slate-800">Import</span>
-                        <span className="text-[10.5px] font-normal text-slate-400 leading-snug break-words">Orders, Ads, Return, Service Fee</span>
-                      </div>
-                    </button>
-
-                    {/* 5. Financials */}
-                    <button
-                      type="button"
-                      onClick={() => selectAccountingSection("financials")}
-                      className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "financials" ||
-                        accountingSection === "revenue" ||
-                        accountingSection === "costs" ||
-                        accountingSection === "amazon_fees" ||
-                        accountingSection === "ads"
-                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
-                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                        }`}
-                    >
-                      <WalletIcon
-                        size={17}
-                        weight={
-                          accountingSection === "financials" ||
-                            accountingSection === "revenue" ||
-                            accountingSection === "costs" ||
-                            accountingSection === "amazon_fees" ||
-                            accountingSection === "ads"
-                            ? "fill"
-                            : "duotone"
-                        }
-                        className={`shrink-0 mt-0.5 ${accountingSection === "financials" ||
-                          accountingSection === "revenue" ||
-                          accountingSection === "costs" ||
-                          accountingSection === "amazon_fees" ||
-                          accountingSection === "ads"
-                          ? "text-indigo-600"
-                          : "text-slate-400"
-                          }`}
-                      />
-                      <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                        <span className="text-xs font-bold text-slate-800">Financials</span>
-                        <span className="text-[10.5px] font-normal text-slate-400 leading-snug break-words">Doanh thu, chi phí, Amazon Fees, Ads</span>
-                      </div>
-                    </button>
-
-                    {/* 6. Reports */}
-                    <button
-                      type="button"
-                      onClick={() => selectAccountingSection("reports")}
-                      className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "reports" ||
-                        accountingSection === "pnl" ||
-                        accountingSection === "settlements"
-                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
-                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                        }`}
-                    >
-                      <TrendUpIcon
-                        size={17}
-                        weight={
-                          accountingSection === "reports" ||
-                            accountingSection === "pnl" ||
-                            accountingSection === "settlements"
-                            ? "fill"
-                            : "duotone"
-                        }
-                        className={`shrink-0 mt-0.5 ${accountingSection === "reports" ||
-                          accountingSection === "pnl" ||
-                          accountingSection === "settlements"
-                          ? "text-indigo-600"
-                          : "text-slate-400"
-                          }`}
-                      />
-                      <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                        <span className="text-xs font-bold text-slate-800">Reports</span>
-                        <span className="text-[10.5px] font-normal text-slate-400 leading-snug break-words">P&L, Settlement, đối soát</span>
-                      </div>
-                    </button>
-
-                    {/* Subtle Divider before System Admin */}
-                    <div className="my-1.5 border-t border-slate-100" />
-
-                    {/* 7. System Admin */}
-                    <button
-                      type="button"
-                      onClick={() => selectAccountingSection("admin")}
-                      className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${accountingSection === "admin" || accountingSection === "files"
-                        ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
-                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                        }`}
-                    >
-                      <GearIcon
-                        size={17}
-                        weight={accountingSection === "admin" || accountingSection === "files" ? "fill" : "duotone"}
-                        className={`shrink-0 mt-0.5 ${accountingSection === "admin" || accountingSection === "files" ? "text-indigo-600" : "text-slate-400"
-                          }`}
-                      />
-                      <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                        <span className="text-xs font-bold text-slate-800">System Admin</span>
-                        <span className="text-[10.5px] font-normal text-slate-400 leading-snug break-words">Quản lý file tải về & hệ thống</span>
-                      </div>
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Divider */}
-            <div className="my-2 border-t border-slate-100" />
-
-            {/* Kanban Feedback Tab */}
-            <button
-              type="button"
-              onClick={() => selectView("kanban")}
-              className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-150 cursor-pointer ${activeView === "kanban"
-                  ? "bg-indigo-50 text-indigo-700 font-extrabold shadow-2xs ring-1 ring-indigo-200/60"
-                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                }`}
-            >
-              <div className="flex items-center gap-2.5 min-w-0">
-                <ChatCircleDotsIcon
-                  size={17}
-                  weight={activeView === "kanban" ? "fill" : "duotone"}
-                  className={activeView === "kanban" ? "text-indigo-600" : "text-slate-400"}
-                />
-                <span className="truncate">Kanban Góp ý &amp; Báo lỗi</span>
-              </div>
-              {kanbanPendingCount > 0 && (
-                <span
-                  className="ml-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-black text-white shadow-xs leading-none shrink-0 animate-in fade-in zoom-in-75 duration-150"
-                  title={`${kanbanPendingCount} góp ý / báo lỗi chưa xử lý`}
-                >
-                  {kanbanPendingCount > 99 ? "99+" : kanbanPendingCount}
-                </span>
-              )}
-            </button>
-          </nav>
-        </div>
-
-        {/* SIDEBAR BOTTOM WIDGETS */}
-        <div className="space-y-3 pt-3 border-t border-slate-100">
-          {/* Need Help Box */}
-          <div className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50/80 via-white to-sky-50/60 p-3 shadow-2xs">
-            <div className="flex items-center gap-2 mb-1.5">
-              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-indigo-600 text-white text-[10px] font-bold shadow-xs">
-                ?
-              </div>
-              <h4 className="text-xs font-extrabold text-slate-900">Cần hỗ trợ?</h4>
-            </div>
-            <p className="text-[11px] font-medium leading-relaxed text-slate-500 mb-2.5">
-              Xem hướng dẫn hoặc liên hệ team hỗ trợ.
-            </p>
-            <button
-              type="button"
-              disabled={loadingGuides}
-              onClick={() => void handleOpenGuides()}
-              className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-indigo-200 bg-white px-3 py-1.5 text-[11px] font-extrabold text-indigo-700 shadow-2xs hover:bg-indigo-50/80 hover:border-indigo-300 transition cursor-pointer disabled:opacity-60"
-            >
-              <span>{loadingGuides ? "Đang mở..." : "📖 Xem hướng dẫn"}</span>
-            </button>
-          </div>
-        </div>
+    <div className="flex h-[100dvh] w-full max-w-full overflow-hidden bg-slate-50 text-slate-800 font-sans">
+      {/* LEFT SIDEBAR NAVIGATION (Desktop: lg+) */}
+      <aside className="hidden lg:flex w-64 shrink-0 flex-col justify-between border-r border-slate-200/80 bg-white p-3.5 shadow-xs select-none overflow-y-auto">
+        <WorkspaceSidebar
+          actor={actor}
+          sidebarTab={sidebarTab}
+          viewMode={viewMode}
+          activeView={activeView}
+          hasUnreadBatch={hasUnreadBatch}
+          markBatchAsRead={markBatchAsRead}
+          selectView={selectView}
+          selectPpcSection={selectPpcSection}
+          selectPpcDashboardTab={selectPpcDashboardTab}
+          ppcSection={ppcSection}
+          ppcDashboardTab={ppcDashboardTab}
+          selectAccountingSection={selectAccountingSection}
+          accountingSection={accountingSection}
+          kanbanPendingCount={kanbanPendingCount}
+          loadingGuides={loadingGuides}
+          handleOpenGuides={handleOpenGuides}
+        />
       </aside>
+
+      {/* MOBILE SIDEBAR DRAWER OVERLAY (< lg) */}
+      {mobileNavOpen && (
+        <div className="fixed inset-0 z-50 flex lg:hidden">
+          <div
+            className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs transition-opacity"
+            onClick={() => setMobileNavOpen(false)}
+            aria-hidden="true"
+          />
+          <aside className="relative flex w-72 max-w-[85vw] flex-col justify-between bg-white p-4 shadow-2xl z-10 overflow-y-auto animate-in slide-in-from-left duration-200 select-none">
+            <WorkspaceSidebar
+              actor={actor}
+              sidebarTab={sidebarTab}
+              viewMode={viewMode}
+              activeView={activeView}
+              hasUnreadBatch={hasUnreadBatch}
+              markBatchAsRead={markBatchAsRead}
+              selectView={selectView}
+              selectPpcSection={selectPpcSection}
+              selectPpcDashboardTab={selectPpcDashboardTab}
+              ppcSection={ppcSection}
+              ppcDashboardTab={ppcDashboardTab}
+              selectAccountingSection={selectAccountingSection}
+              accountingSection={accountingSection}
+              kanbanPendingCount={kanbanPendingCount}
+              loadingGuides={loadingGuides}
+              handleOpenGuides={handleOpenGuides}
+              isMobile={true}
+              onClose={() => setMobileNavOpen(false)}
+            />
+          </aside>
+        </div>
+      )}
 
       {/* MAIN WORKSPACE AREA */}
       <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
         {/* TOP NAVBAR HEADER */}
-        <header className="flex h-13 shrink-0 items-center justify-between border-b border-slate-200/80 bg-white/95 backdrop-blur-md px-5 shadow-2xs relative z-50">
-          {/* Active View Title */}
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-2.5 w-2.5 rounded-full bg-indigo-600 ring-4 ring-indigo-100" />
-            <h2 className="text-xs font-black uppercase tracking-wider text-slate-800">
+        <header className="flex h-13 shrink-0 items-center justify-between border-b border-slate-200/80 bg-white/95 backdrop-blur-md px-3 sm:px-5 shadow-2xs relative z-40">
+          {/* Active View Title & Mobile Hamburger Button */}
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+            <button
+              type="button"
+              onClick={() => setMobileNavOpen(true)}
+              className="flex lg:hidden h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 transition cursor-pointer shrink-0"
+              title="Mở menu điều hướng"
+              aria-label="Mở menu điều hướng"
+            >
+              <ListIcon size={18} weight="bold" />
+            </button>
+            <span className="hidden sm:flex h-2.5 w-2.5 rounded-full bg-indigo-600 ring-4 ring-indigo-100 shrink-0" />
+            <h2 className="text-xs font-black uppercase tracking-wider text-slate-800 truncate max-w-[150px] xs:max-w-[220px] sm:max-w-md md:max-w-none">
               {viewMode === "sellersprite"
                 ? "Đào Keyword"
                 : viewMode === "ppc"
@@ -1078,16 +1245,16 @@ export function ListingWorkspace({
           </div>
 
           {/* Right Header Items: Trello Config & User Avatar */}
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
             {hasTrelloAccess && viewMode !== "ppc" && viewMode !== "accounting" ? (
               <button
                 type="button"
                 onClick={() => setShowTrelloConfigModal(true)}
-                className="flex items-center gap-2 rounded-xl border border-slate-200/90 bg-white px-3 py-1.5 text-xs font-extrabold text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-slate-300 transition duration-150 cursor-pointer"
+                className="flex items-center gap-1.5 rounded-xl border border-slate-200/90 bg-white px-2.5 sm:px-3 py-1.5 text-xs font-extrabold text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-slate-300 transition duration-150 cursor-pointer"
                 title="Cấu hình Board và các cột Trello"
               >
                 <GearIcon size={16} className="text-slate-500" weight="bold" />
-                <span>Cấu hình Trello</span>
+                <span className="hidden sm:inline">Cấu hình Trello</span>
               </button>
             ) : null}
 
@@ -1145,7 +1312,7 @@ export function ListingWorkspace({
               <KanbanBoard currentUser={actor ? { displayName: actor.displayName, email: actor.email } : undefined} />
             </div>
           ) : viewMode === "sellersprite" ? (
-            <div className="h-full w-full overflow-y-auto p-6 bg-slate-50 thin-scrollbar">
+            <div className="h-full w-full overflow-y-auto p-3 sm:p-4 md:p-6 bg-slate-50 thin-scrollbar">
               <SellerSpriteKeywordMiner
                 onImportKeywords={() => {
                   selectView("listing");
@@ -1154,7 +1321,7 @@ export function ListingWorkspace({
               />
             </div>
           ) : viewMode === "ppc" ? (
-            <div className="font-accounting-system h-full w-full overflow-y-auto p-6 bg-slate-50 thin-scrollbar">
+            <div className="font-accounting-system h-full w-full overflow-y-auto p-3 sm:p-4 md:p-6 bg-slate-50 thin-scrollbar">
               {ppcSection === "phoi" ? (
                 <PpcCostMasterStandalone />
               ) : ppcSection === "rules" ? (
@@ -1196,7 +1363,7 @@ export function ListingWorkspace({
               )}
             </div>
           ) : viewMode === "accounting" ? (
-            <div className="font-accounting-system h-full w-full overflow-y-auto p-6 bg-slate-50 thin-scrollbar">
+            <div className="font-accounting-system h-full w-full overflow-y-auto p-3 sm:p-4 md:p-6 bg-slate-50 thin-scrollbar">
               <AccountingWorkspace
                 activeSection={accountingSection}
                 activeSubTab={accountingSubTab}
