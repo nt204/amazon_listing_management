@@ -9,9 +9,10 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const status = (url.searchParams.get("status") || undefined) as KanbanStatus | undefined;
     const urgency = (url.searchParams.get("urgency") || undefined) as KanbanUrgency | undefined;
+    const featureName = url.searchParams.get("featureName") || url.searchParams.get("feature") || undefined;
     const search = url.searchParams.get("search") || undefined;
 
-    const cards = await listKanbanCards({ status, urgency, search });
+    const cards = await listKanbanCards({ status, urgency, featureName, search });
     return Response.json({ cards }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return routeErrorResponse(error, "Không thể tải danh sách thẻ kanban.");
@@ -34,6 +35,8 @@ export async function POST(request: Request) {
       description?: string;
       urgency?: KanbanUrgency;
       status?: KanbanStatus;
+      featureName?: string;
+      feature?: string;
       images?: string[];
       authorName?: string;
     };
@@ -51,6 +54,7 @@ export async function POST(request: Request) {
     const status: KanbanStatus =
       body.status === "in_progress" || body.status === "done" ? body.status : "todo";
 
+    const featureName = (body.featureName || body.feature || "").trim();
     const authorName = (body.authorName || "").trim() || actorDisplayName || "Thành viên";
 
     const card = await createKanbanCard({
@@ -58,6 +62,7 @@ export async function POST(request: Request) {
       description: body.description || "",
       urgency,
       status,
+      featureName,
       images: Array.isArray(body.images) ? body.images : [],
       authorName,
     });

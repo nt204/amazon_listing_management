@@ -39,6 +39,8 @@ export async function PATCH(
       description?: string;
       urgency?: KanbanUrgency;
       status?: KanbanStatus;
+      featureName?: string;
+      feature?: string;
       images?: string[];
       authorName?: string;
       position?: number;
@@ -51,7 +53,12 @@ export async function PATCH(
       return Response.json({ success: true, card: moved });
     }
 
-    const card = await updateKanbanCard(id, body);
+    const featureName = body.featureName !== undefined ? body.featureName : body.feature;
+
+    const card = await updateKanbanCard(id, {
+      ...body,
+      ...(featureName !== undefined ? { featureName } : {}),
+    });
     if (!card) {
       throw new ApiError("Không tìm thấy thẻ để cập nhật.", 404);
     }

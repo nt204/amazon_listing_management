@@ -11,6 +11,7 @@ export interface KanbanCard {
   description: string;
   urgency: KanbanUrgency;
   status: KanbanStatus;
+  featureName: string;
   images: string[];
   authorName: string;
   position: number;
@@ -24,6 +25,7 @@ interface KanbanCardRow {
   description: string;
   urgency: KanbanUrgency;
   status: KanbanStatus;
+  feature_name?: string | null;
   images: string[] | string | null;
   author_name: string;
   position: number;
@@ -51,6 +53,7 @@ function rowToCard(row: KanbanCardRow): KanbanCard {
     description: row.description || "",
     urgency: row.urgency,
     status: row.status,
+    featureName: row.feature_name || "",
     images: parseImages(row.images),
     authorName: row.author_name || "",
     position: Number(row.position) || 0,
@@ -62,21 +65,24 @@ function rowToCard(row: KanbanCardRow): KanbanCard {
 export async function listKanbanCards(filters?: {
   status?: KanbanStatus;
   urgency?: KanbanUrgency;
+  featureName?: string;
   search?: string;
 }): Promise<KanbanCard[]> {
   const sql = await getDatabaseClient();
 
   const rows = await sql<KanbanCardRow[]>`
-    SELECT id, title, description, urgency, status, images, author_name, position, created_at, updated_at
+    SELECT id, title, description, urgency, status, feature_name, images, author_name, position, created_at, updated_at
     FROM kanban_feedback_cards
     WHERE
       (${filters?.status ? filters.status : null}::text IS NULL OR status = ${filters?.status || null})
       AND (${filters?.urgency ? filters.urgency : null}::text IS NULL OR urgency = ${filters?.urgency || null})
+      AND (${filters?.featureName ? filters.featureName : null}::text IS NULL OR feature_name = ${filters?.featureName || null})
       AND (
         ${filters?.search ? `%${filters.search}%` : null}::text IS NULL
         OR title ILIKE ${filters?.search ? `%${filters.search}%` : null}
         OR description ILIKE ${filters?.search ? `%${filters.search}%` : null}
         OR author_name ILIKE ${filters?.search ? `%${filters.search}%` : null}
+        OR feature_name ILIKE ${filters?.search ? `%${filters.search}%` : null}
       )
     ORDER BY position ASC, created_at DESC
   `;
@@ -87,7 +93,7 @@ export async function listKanbanCards(filters?: {
 export async function getKanbanCardById(id: string): Promise<KanbanCard | null> {
   const sql = await getDatabaseClient();
   const rows = await sql<KanbanCardRow[]>`
-    SELECT id, title, description, urgency, status, images, author_name, position, created_at, updated_at
+    SELECT id, title, description, urgency, status, feature_name, images, author_name, position, created_at, updated_at
     FROM kanban_feedback_cards
     WHERE id = ${id}::uuid
     LIMIT 1
@@ -101,6 +107,7 @@ export async function createKanbanCard(input: {
   description?: string;
   urgency?: KanbanUrgency;
   status?: KanbanStatus;
+  featureName?: string;
   images?: string[];
   authorName?: string;
 }): Promise<KanbanCard> {
@@ -109,6 +116,7 @@ export async function createKanbanCard(input: {
   const description = (input.description || "").trim();
   const urgency: KanbanUrgency = input.urgency || "medium";
   const status: KanbanStatus = input.status || "todo";
+  const featureName = (input.featureName || "").trim();
   const imagesJson = JSON.stringify(input.images || []);
   const authorName = (input.authorName || "").trim();
 
@@ -122,11 +130,11 @@ export async function createKanbanCard(input: {
 
   const rows = await sql<KanbanCardRow[]>`
     INSERT INTO kanban_feedback_cards (
-      title, description, urgency, status, images, author_name, position, created_at, updated_at
+      title, description, urgency, status, feature_name, images, author_name, position, created_at, updated_at
     ) VALUES (
-      ${title}, ${description}, ${urgency}, ${status}, ${imagesJson}::jsonb, ${authorName}, ${nextPos}, NOW(), NOW()
+      ${title}, ${description}, ${urgency}, ${status}, ${featureName}, ${imagesJson}::jsonb, ${authorName}, ${nextPos}, NOW(), NOW()
     )
-    RETURNING id, title, description, urgency, status, images, author_name, position, created_at, updated_at
+    RETURNING id, title, description, urgency, status, feature_name, images, author_name, position, created_at, updated_at
   `;
 
   return rowToCard(rows[0]);
@@ -139,6 +147,7 @@ export async function updateKanbanCard(
     description?: string;
     urgency?: KanbanUrgency;
     status?: KanbanStatus;
+    featureName?: string;
     images?: string[];
     authorName?: string;
     position?: number;
@@ -154,6 +163,7 @@ export async function updateKanbanCard(
   const description = updates.description !== undefined ? updates.description.trim() : existing.description;
   const urgency = updates.urgency !== undefined ? updates.urgency : existing.urgency;
   const status = updates.status !== undefined ? updates.status : existing.status;
+  const featureName = updates.featureName !== undefined ? updates.featureName.trim() : existing.featureName;
   const imagesJson = updates.images !== undefined ? JSON.stringify(updates.images) : JSON.stringify(existing.images);
   const authorName = updates.authorName !== undefined ? updates.authorName.trim() : existing.authorName;
   const position = updates.position !== undefined ? updates.position : existing.position;
@@ -165,12 +175,13 @@ export async function updateKanbanCard(
       description = ${description},
       urgency = ${urgency},
       status = ${status},
+      feature_name = ${featureName},
       images = ${imagesJson}::jsonb,
       author_name = ${authorName},
       position = ${position},
       updated_at = NOW()
     WHERE id = ${id}::uuid
-    RETURNING id, title, description, urgency, status, images, author_name, position, created_at, updated_at
+    RETURNING id, title, description, urgency, status, feature_name, images, author_name, position, created_at, updated_at
   `;
 
   if (!rows[0]) return null;
@@ -203,7 +214,7 @@ export async function moveKanbanCard(
       position = ${newPosition},
       updated_at = NOW()
     WHERE id = ${id}::uuid
-    RETURNING id, title, description, urgency, status, images, author_name, position, created_at, updated_at
+    RETURNING id, title, description, urgency, status, feature_name, images, author_name, position, created_at, updated_at
   `;
 
   if (!rows[0]) return null;

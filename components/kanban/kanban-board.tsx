@@ -11,11 +11,59 @@ export interface KanbanCardItem {
   description: string;
   urgency: UrgencyLevel;
   status: CardStatus;
+  featureName: string;
   images: string[];
   authorName: string;
   position: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface FeatureOption {
+  id: string;
+  label: string;
+  badgeClass: string;
+}
+
+export const KANBAN_FEATURES: FeatureOption[] = [
+  {
+    id: "Listing",
+    label: "Listing",
+    badgeClass: "bg-indigo-50 text-indigo-700 border-indigo-200 font-bold",
+  },
+  {
+    id: "Mockup design",
+    label: "Mockup design",
+    badgeClass: "bg-purple-50 text-purple-700 border-purple-200 font-bold",
+  },
+  {
+    id: "Đào Keyword",
+    label: "Đào Keyword",
+    badgeClass: "bg-amber-50 text-amber-700 border-amber-200 font-bold",
+  },
+  {
+    id: "PPC Analytics",
+    label: "PPC Analytics",
+    badgeClass: "bg-emerald-50 text-emerald-700 border-emerald-200 font-bold",
+  },
+  {
+    id: "Kế toán Amazon",
+    label: "Kế toán Amazon",
+    badgeClass: "bg-blue-50 text-blue-700 border-blue-200 font-bold",
+  },
+  {
+    id: "Chung / Khác",
+    label: "Chung / Khác",
+    badgeClass: "bg-slate-100 text-slate-700 border-slate-300 font-bold",
+  },
+];
+
+export function getFeatureBadgeClass(featureName?: string): string {
+  if (!featureName) return "bg-slate-100 text-slate-600 border-slate-200 font-medium";
+  const found = KANBAN_FEATURES.find(
+    (f) => f.id.toLowerCase() === featureName.toLowerCase() || f.label.toLowerCase() === featureName.toLowerCase()
+  );
+  return found?.badgeClass || "bg-indigo-50 text-indigo-700 border-indigo-200 font-bold";
 }
 
 interface KanbanBoardProps {
@@ -131,6 +179,7 @@ export function KanbanBoard({ currentUser }: KanbanBoardProps) {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [urgencyFilter, setUrgencyFilter] = useState<UrgencyLevel | "all">("all");
+  const [featureFilter, setFeatureFilter] = useState<string>("all");
 
   // Drag and Drop state
   const [draggedCardId, setDraggedCardId] = useState<string | null>(null);
@@ -141,6 +190,7 @@ export function KanbanBoard({ currentUser }: KanbanBoardProps) {
   const [editingCard, setEditingCard] = useState<KanbanCardItem | null>(null);
   const [formTitle, setFormTitle] = useState("");
   const [formDescription, setFormDescription] = useState("");
+  const [formFeature, setFormFeature] = useState<string>("PPC Analytics");
   const [formUrgency, setFormUrgency] = useState<UrgencyLevel>("medium");
   const [formStatus, setFormStatus] = useState<CardStatus>("todo");
   const [formAuthor, setFormAuthor] = useState("");
@@ -184,6 +234,7 @@ export function KanbanBoard({ currentUser }: KanbanBoardProps) {
     setEditingCard(null);
     setFormTitle("");
     setFormDescription("");
+    setFormFeature(featureFilter !== "all" ? featureFilter : "PPC Analytics");
     setFormUrgency("medium");
     setFormStatus(defaultStatus);
     setFormAuthor(currentUser?.displayName || "");
@@ -197,6 +248,7 @@ export function KanbanBoard({ currentUser }: KanbanBoardProps) {
     setEditingCard(card);
     setFormTitle(card.title);
     setFormDescription(card.description);
+    setFormFeature(card.featureName || "PPC Analytics");
     setFormUrgency(card.urgency);
     setFormStatus(card.status);
     setFormAuthor(card.authorName);
@@ -275,6 +327,7 @@ export function KanbanBoard({ currentUser }: KanbanBoardProps) {
           body: JSON.stringify({
             title: formTitle.trim(),
             description: formDescription.trim(),
+            featureName: formFeature.trim(),
             urgency: formUrgency,
             status: formStatus,
             authorName: formAuthor.trim(),
@@ -292,6 +345,7 @@ export function KanbanBoard({ currentUser }: KanbanBoardProps) {
           body: JSON.stringify({
             title: formTitle.trim(),
             description: formDescription.trim(),
+            featureName: formFeature.trim(),
             urgency: formUrgency,
             status: formStatus,
             authorName: formAuthor.trim(),
@@ -389,6 +443,9 @@ export function KanbanBoard({ currentUser }: KanbanBoardProps) {
   // Filtered cards
   const filteredCards = useMemo(() => {
     return cards.filter((card) => {
+      if (featureFilter !== "all" && (card.featureName || "") !== featureFilter) {
+        return false;
+      }
       if (urgencyFilter !== "all" && card.urgency !== urgencyFilter) {
         return false;
       }
@@ -397,11 +454,12 @@ export function KanbanBoard({ currentUser }: KanbanBoardProps) {
         const inTitle = card.title.toLowerCase().includes(query);
         const inDesc = card.description.toLowerCase().includes(query);
         const inAuthor = card.authorName.toLowerCase().includes(query);
-        if (!inTitle && !inDesc && !inAuthor) return false;
+        const inFeature = (card.featureName || "").toLowerCase().includes(query);
+        if (!inTitle && !inDesc && !inAuthor && !inFeature) return false;
       }
       return true;
     });
-  }, [cards, urgencyFilter, searchQuery]);
+  }, [cards, featureFilter, urgencyFilter, searchQuery]);
 
   return (
     <div className="font-accounting-system flex h-full w-full flex-col bg-slate-50 text-slate-900 overflow-hidden select-none">
@@ -421,11 +479,28 @@ export function KanbanBoard({ currentUser }: KanbanBoardProps) {
             {/* Search Box */}
             <input
               type="text"
-              placeholder="Tìm theo tên lỗi, mô tả..."
+              placeholder="Tìm theo tên lỗi, mô tả, chức năng..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="h-9 w-56 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:outline-hidden"
             />
+
+            {/* Filter by Feature */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-bold text-slate-500 shrink-0">Chức năng:</span>
+              <select
+                value={featureFilter}
+                onChange={(e) => setFeatureFilter(e.target.value)}
+                className="h-9 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-bold text-slate-800 focus:border-indigo-500 focus:outline-hidden cursor-pointer"
+              >
+                <option value="all">Tất cả chức năng</option>
+                {KANBAN_FEATURES.map((feat) => (
+                  <option key={feat.id} value={feat.id}>
+                    {feat.label}
+                  </option>
+                ))}
+              </select>
+            </div>
 
             {/* Filter by Urgency */}
             <div className="flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs font-semibold">
@@ -565,14 +640,25 @@ export function KanbanBoard({ currentUser }: KanbanBoardProps) {
                             urgencyInfo.borderClass
                           } ${isDragging ? "opacity-40 scale-95" : "opacity-100"}`}
                         >
-                          {/* CARD TOP: Urgency Badge + Date */}
+                          {/* CARD TOP: Feature Badge + Urgency Badge + Date */}
                           <div className="mb-2 flex items-center justify-between gap-2">
-                            <span
-                              className={`rounded border px-2 py-0.5 text-[11px] ${urgencyInfo.badgeClass}`}
-                            >
-                              {urgencyInfo.label}
-                            </span>
-                            <span className="text-[11px] text-slate-400 font-mono">
+                            <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                              {card.featureName ? (
+                                <span
+                                  className={`rounded border px-2 py-0.5 text-[11px] ${getFeatureBadgeClass(
+                                    card.featureName
+                                  )}`}
+                                >
+                                  {card.featureName}
+                                </span>
+                              ) : null}
+                              <span
+                                className={`rounded border px-2 py-0.5 text-[11px] ${urgencyInfo.badgeClass}`}
+                              >
+                                {urgencyInfo.label}
+                              </span>
+                            </div>
+                            <span className="text-[11px] text-slate-400 font-mono shrink-0">
                               {formatDate(card.createdAt)}
                             </span>
                           </div>
@@ -712,6 +798,32 @@ export function KanbanBoard({ currentUser }: KanbanBoardProps) {
                   onChange={(e) => setFormTitle(e.target.value)}
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-hidden"
                 />
+              </div>
+
+              {/* Chức năng liên quan */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Chức năng liên quan <span className="text-red-500">*</span>
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {KANBAN_FEATURES.map((feat) => {
+                    const isSelected = formFeature === feat.id;
+                    return (
+                      <button
+                        key={feat.id}
+                        type="button"
+                        onClick={() => setFormFeature(feat.id)}
+                        className={`rounded-lg border py-2 px-2 text-xs font-bold text-center transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                          isSelected
+                            ? "border-indigo-600 bg-indigo-50 text-indigo-700 ring-2 ring-indigo-300 shadow-2xs"
+                            : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                        }`}
+                      >
+                        <span>{feat.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* Mức độ cấp thiết */}
@@ -873,7 +985,16 @@ export function KanbanBoard({ currentUser }: KanbanBoardProps) {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
           <div className="w-full max-w-xl rounded-xl border border-slate-200 bg-white shadow-xl animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3.5 bg-slate-50/50 rounded-t-xl">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                {selectedCardForDetail.featureName && (
+                  <span
+                    className={`rounded border px-2 py-0.5 text-xs ${getFeatureBadgeClass(
+                      selectedCardForDetail.featureName
+                    )}`}
+                  >
+                    {selectedCardForDetail.featureName}
+                  </span>
+                )}
                 <span
                   className={`rounded border px-2 py-0.5 text-xs ${
                     URGENCY_CONFIG[selectedCardForDetail.urgency].badgeClass
