@@ -659,7 +659,9 @@ function ActiveCellEditor({
             }
           }}
           onBlur={commitSave}
-          className={`h-full w-full rounded border border-emerald-500 bg-white px-2 ${hasOptions ? "pr-6" : ""} text-[13px] font-normal text-slate-950 focus:outline-none ${inputAlignClass}`}
+          className={`h-full w-full rounded border border-emerald-500 bg-white px-2 ${hasOptions ? "pr-6" : ""} text-[13px] ${
+            field === "sku" ? "font-bold" : "font-normal"
+          } text-slate-950 focus:outline-none ${inputAlignClass}`}
         />
         {hasOptions && (
           <div className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400">
@@ -4044,6 +4046,10 @@ function InventoryViewInner() {
     let cellClass = "py-1.5 px-2.5 text-[13px] text-slate-900 border-r border-slate-200";
 
     switch (cid) {
+      case "sku":
+        displayNode = <span className="font-bold text-slate-950 text-[13px] col-sku col-primary" style={{ fontWeight: 700 }}>{safeDisplay(item.sku)}</span>;
+        cellClass = "py-1.5 px-2.5 text-[13px] font-bold text-slate-950 border-r border-slate-200 col-sku col-primary";
+        break;
       case "brand":
         displayNode = <span className="font-normal text-[13px] text-slate-900">{safeDisplay(item.brand)}</span>;
         break;
@@ -4292,6 +4298,10 @@ function InventoryViewInner() {
     let cellClass = "py-1.5 px-2.5 text-[13px] text-slate-900 border-r border-slate-200";
 
     switch (cid) {
+      case "sku":
+        displayNode = <span className="font-bold text-slate-950 text-[13px] col-sku col-primary" style={{ fontWeight: 700 }}>{safeDisplay(item.sku)}</span>;
+        cellClass = "py-1.5 px-2.5 text-[13px] font-bold text-slate-950 border-r border-slate-200 col-sku col-primary";
+        break;
       case "brand":
         displayNode = <span className="font-normal text-[13px] text-slate-900">{safeDisplay(item.brand)}</span>;
         break;
@@ -5571,12 +5581,12 @@ function InventoryViewInner() {
                                 field="sku"
                                 value={item.sku}
                                 display={
-                                  <span className="font-medium text-slate-950 text-[13px]">
+                                  <span className="font-bold text-slate-950 text-[13px] col-sku col-primary" style={{ fontWeight: 700 }}>
                                     {item.sku}
                                   </span>
                                 }
-                                style={f.style}
-                                className={`py-1.5 px-3 text-[13px] ${f.className}`}
+                                style={{ ...f.style, fontWeight: 700 }}
+                                className={`py-1.5 px-3 text-[13px] font-bold col-sku col-primary ${f.className}`}
                                 inlineEditing={inlineEditing}
                                 inlineSaving={inlineSaving}
                                 onStartEdit={startInlineEdit}
@@ -5777,12 +5787,12 @@ function InventoryViewInner() {
                                 field="sku"
                                 value={item.sku}
                                 display={
-                                  <span className="font-medium text-slate-950 text-[13px]">
+                                  <span className="font-bold text-slate-950 text-[13px] col-sku col-primary" style={{ fontWeight: 700 }}>
                                     {item.sku}
                                   </span>
                                 }
-                                style={f.style}
-                                className={`py-1.5 px-3 text-[13px] ${f.className}`}
+                                style={{ ...f.style, fontWeight: 700 }}
+                                className={`py-1.5 px-3 text-[13px] font-bold col-sku col-primary ${f.className}`}
                                 inlineEditing={inlineEditing}
                                 inlineSaving={inlineSaving}
                                 onStartEdit={startInlineEdit}

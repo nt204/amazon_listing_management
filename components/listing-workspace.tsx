@@ -431,6 +431,72 @@ function WorkspaceSidebar({
                     </button>
                   </div>
 
+                  {/* Mục 2: Negative Keyword */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      selectPpcSection("negative_keyword");
+                      onClose?.();
+                    }}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
+                      ppcSection === "negative_keyword"
+                        ? "bg-rose-50 text-rose-800 font-bold shadow-2xs border border-rose-200/60"
+                        : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                    }`}
+                  >
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${
+                        ppcSection === "negative_keyword" ? "bg-rose-600 ring-2 ring-rose-200" : "bg-slate-300"
+                      }`}
+                    />
+                    <span>Negative Keyword</span>
+                  </button>
+
+                  {/* Mục 3: Lên Camp Sale KW */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      selectPpcSection("sale_kw");
+                      onClose?.();
+                    }}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
+                      ppcSection === "sale_kw"
+                        ? "bg-emerald-50 text-emerald-800 font-bold shadow-2xs border border-emerald-200/60"
+                        : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                    }`}
+                  >
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${
+                        ppcSection === "sale_kw" ? "bg-emerald-600 ring-2 ring-emerald-200" : "bg-slate-300"
+                      }`}
+                    />
+                    <span>Lên Camp Sale KW</span>
+                  </button>
+
+                  {/* Mục 4: Đề Xuất & Auto Bid */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      selectPpcSection("auto_bid");
+                      onClose?.();
+                    }}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer ${
+                      ppcSection === "auto_bid"
+                        ? "bg-indigo-100/80 text-indigo-900 font-bold shadow-2xs"
+                        : "text-slate-600 font-semibold hover:bg-slate-100 hover:text-slate-900"
+                    }`}
+                  >
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ml-0.5 shrink-0 transition-colors ${
+                        ppcSection === "auto_bid" ? "bg-indigo-600 ring-2 ring-indigo-200" : "bg-slate-300"
+                      }`}
+                    />
+                    <span>Đề Xuất &amp; Auto Bid</span>
+                  </button>
+
+                  {/* Phân cách danh mục cấu hình */}
+                  <div className="h-px bg-slate-200/70 my-1 mx-1" />
+
                   {/* Mục con 1: Quản lý Phôi */}
                   <button
                     type="button"

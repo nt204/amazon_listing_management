@@ -774,8 +774,8 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
                           return (
                             <td
                               key={cid}
-                              style={f.style}
-                              className={`px-2.5 py-1 font-mono font-normal tracking-tight whitespace-nowrap text-xs truncate ${
+                              style={{ ...f.style, fontWeight: 700 }}
+                              className={`px-2.5 py-1 font-mono font-bold col-sku col-primary tracking-tight whitespace-nowrap text-xs truncate ${
                                 f.isFrozen
                                   ? f.className
                                   : "border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 group-hover:bg-slate-50 dark:group-hover:bg-slate-800 text-slate-900 dark:text-slate-100"

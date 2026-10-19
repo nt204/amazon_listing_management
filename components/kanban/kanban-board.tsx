@@ -842,50 +842,19 @@ export function KanbanBoard({ currentUser }: KanbanBoardProps) {
                               {card.authorName || "Ẩn danh"}
                             </span>
 
-                            {/* Quick column mover buttons */}
                             <div
                               className="flex items-center gap-1"
                               onClick={(e) => e.stopPropagation()}
                             >
                               <button
                                 type="button"
-                                title="Xem và thêm comment"
-                                aria-label="Xem và thêm comment"
+                                title="Xem chi tiết & bình luận"
+                                aria-label="Xem chi tiết & bình luận"
                                 onClick={() => handleOpenCardDetail(card)}
-                                className="flex h-6 w-6 items-center justify-center rounded border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 hover:text-indigo-800 cursor-pointer"
+                                className="flex h-6 w-6 items-center justify-center rounded border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 hover:text-indigo-800 transition cursor-pointer"
                               >
                                 <ChatCircleDotsIcon size={14} weight="bold" />
                               </button>
-                              {column.id !== "todo" && (
-                                <button
-                                  type="button"
-                                  title="Chuyển về Ý kiến"
-                                  onClick={() => moveCardToStatus(card.id, "todo")}
-                                  className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer"
-                                >
-                                  ← Ý kiến
-                                </button>
-                              )}
-                              {column.id !== "in_progress" && (
-                                <button
-                                  type="button"
-                                  title="Chuyển sang Đang sửa"
-                                  onClick={() => moveCardToStatus(card.id, "in_progress")}
-                                  className="rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700 hover:bg-blue-100 cursor-pointer"
-                                >
-                                  Đang sửa
-                                </button>
-                              )}
-                              {column.id !== "done" && (
-                                <button
-                                  type="button"
-                                  title="Chuyển sang Đã sửa"
-                                  onClick={() => moveCardToStatus(card.id, "done")}
-                                  className="rounded border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100 cursor-pointer"
-                                >
-                                  Đã sửa →
-                                </button>
-                              )}
                             </div>
                           </div>
                         </div>

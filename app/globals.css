@@ -84,15 +84,14 @@ body {
 .font-accounting-system table td input,
 .font-accounting-system table td select,
 .font-accounting-system table td textarea {
-  font-size: 12px !important;
-  font-weight: 400 !important;
+  font-size: 12px;
   color: #0f172a;
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
 }
 
-.font-accounting-system table tbody td:not(.col-primary),
-.font-accounting-system table tbody td:not(.col-primary) *:not([class*="badge"]):not([class*="status"]):not([role="status"]) {
+.font-accounting-system table tbody td:not(.col-primary):not(.col-sku):not([class*="font-bold"]):not([class*="font-semibold"]):not([class*="font-black"]),
+.font-accounting-system table tbody td:not(.col-primary):not(.col-sku):not([class*="font-bold"]):not([class*="font-semibold"]):not([class*="font-black"]) *:not([class*="badge"]):not([class*="status"]):not([role="status"]):not([class*="font-bold"]):not([class*="font-semibold"]):not([class*="font-black"]):not(strong):not(b) {
   font-weight: 400 !important;
 }
 
@@ -112,6 +111,12 @@ body {
 .font-accounting-system table tbody td.col-primary div,
 .font-accounting-system table tbody td.col-primary a,
 .font-accounting-system table tbody td.col-primary button,
+.font-accounting-system table tbody td.col-sku,
+.font-accounting-system table tbody td.col-sku *,
+.font-accounting-system table tbody td.col-sku span,
+.font-accounting-system table tbody td.col-sku div,
+.font-accounting-system table tbody td [class*="font-bold"],
+.font-accounting-system table tbody td.font-bold,
 .font-accounting-system table tbody tr > td:first-child:not(:has(input[type="checkbox"])):not(.text-center),
 .font-accounting-system table tbody tr > td:first-child:not(:has(input[type="checkbox"])):not(.text-center) *,
 .font-accounting-system table tbody tr > td:first-child:has(input[type="checkbox"]) + td,
