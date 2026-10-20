@@ -28,8 +28,8 @@ const FBA_DAILY_FROZEN_STORAGE_KEY = "acc_fba_daily_frozen_global";
 function formatCurrency(val: number | null | undefined): string {
   if (val == null || isNaN(val)) return "—";
   return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   }).format(val);
 }
 
@@ -171,7 +171,7 @@ export function FbaDailyView() {
           if (typeof val === "number") {
             str = colId.includes("pct") || colId === "margin" || colId === "roi" || colId === "tacos" || colId === "acos"
               ? `${(val * 100).toFixed(1)}%`
-              : `$${val.toFixed(2)}`;
+              : val.toFixed(2);
           } else {
             str = String(val).trim();
           }

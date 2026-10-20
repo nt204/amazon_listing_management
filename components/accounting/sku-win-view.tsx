@@ -119,8 +119,8 @@ const SKU_WIN_FROZEN_STORAGE_KEY = "accounting_sku_win_frozen_through";
 
 // Number formatters
 const formatCurrency = (val: number | null | undefined) => {
-  if (val == null || isNaN(val)) return "$0.00";
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 }).format(val);
+  if (val == null || isNaN(val)) return "0.00";
+  return new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val);
 };
 
 const formatInteger = (val: number | null | undefined) => {
