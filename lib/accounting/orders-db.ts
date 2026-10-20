@@ -80,14 +80,7 @@ export function convertToMarketplaceDate(
   const num = parseFloat(s);
   if (!isNaN(num) && num > 20000 && num < 80000 && /^\d+(\.\d+)?$/.test(s)) {
     const d = new Date(Math.round((num - 25569) * 86400 * 1000));
-    return isNaN(d.getTime())
-      ? null
-      : new Intl.DateTimeFormat("en-CA", {
-          timeZone,
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-        }).format(d);
+    return isNaN(d.getTime()) ? null : d.toISOString().split("T")[0];
   }
 
   // Pure YYYY-MM-DD

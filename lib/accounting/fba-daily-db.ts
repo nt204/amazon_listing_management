@@ -131,6 +131,7 @@ export async function listFbaDaily(
         AND mbc.period = to_char(o.date, 'YYYY-MM')
       WHERE o.store_id = ${storeId}
         AND (o.fulfillment_channel = 'Amazon' OR o.fulfillment_channel IS NULL)
+        AND (o.order_status != 'Cancelled' OR o.order_status IS NULL)
         ${hasDateFilter ? sql`AND o.date >= ${startDate}::date AND o.date <= ${endDate}::date` : sql``}
       GROUP BY o.date
     ),
