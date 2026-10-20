@@ -164,6 +164,7 @@ export async function listSkuWin(
         AND mbc.period = to_char(o.date, 'YYYY-MM')
       WHERE o.store_id = ${storeId}
         AND (o.order_status != 'Cancelled' OR o.order_status IS NULL)
+        AND o.item_price IS NOT NULL
         ${hasDateFilter ? sql`AND o.date >= ${startDate}::date AND o.date <= ${endDate}::date` : sql``}
       GROUP BY o.sku
     ),

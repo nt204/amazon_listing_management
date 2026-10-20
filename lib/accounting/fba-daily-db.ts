@@ -115,13 +115,16 @@ export async function listFbaDaily(
           COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, sm.basecost_tb, 0)
         ) as total_basecost,
         SUM(
-          COALESCE(sm.amazon_fee, 0) + (COALESCE(sm.referral_fee_pct, 0.15) * COALESCE(o.item_price, 0) * (
-            CASE 
-              WHEN o.currency = 'CAD' THEN 0.738 
-              WHEN o.currency = 'MXN' THEN 0.056 
-              ELSE 1.0 
-            END
-          ))
+          CASE 
+            WHEN COALESCE(o.item_price, 0) = 0 THEN 0
+            ELSE COALESCE(sm.amazon_fee, 0) + (COALESCE(sm.referral_fee_pct, 0.15) * COALESCE(o.item_price, 0) * (
+              CASE 
+                WHEN o.currency = 'CAD' THEN 0.738 
+                WHEN o.currency = 'MXN' THEN 0.056 
+                ELSE 1.0 
+              END
+            ))
+          END
         ) as total_amz_fee
       FROM accounting_orders o
       LEFT JOIN accounting_sku_master sm ON sm.store_id = o.store_id AND sm.sku = o.sku
@@ -132,6 +135,7 @@ export async function listFbaDaily(
       WHERE o.store_id = ${storeId}
         AND (o.fulfillment_channel = 'Amazon' OR o.fulfillment_channel IS NULL)
         AND (o.order_status != 'Cancelled' OR o.order_status IS NULL)
+        AND o.item_price IS NOT NULL
         ${hasDateFilter ? sql`AND o.date >= ${startDate}::date AND o.date <= ${endDate}::date` : sql``}
       GROUP BY o.date
     ),
@@ -154,7 +158,19 @@ export async function listFbaDaily(
         SUM(
           GREATEST(
             0, 
-            ABS(COALESCE(r.total, 0)) - COALESCE(NULLIF(ABS(r.basecost), 0), mbc.basecost_thang, sm.basecost_tb, 0)
+            ABS(COALESCE(r.total, 0)) - COALESCE(
+              NULLIF(ABS(r.basecost), 0),
+              (
+                SELECT SUM(COALESCE(orig_mbc.basecost_thang, orig_sm.basecost_tb, 0) * COALESCE(orig_o.quantity, 1))
+                FROM accounting_orders orig_o
+                LEFT JOIN accounting_sku_master orig_sm ON orig_sm.store_id = orig_o.store_id AND orig_sm.sku = orig_o.sku
+                LEFT JOIN accounting_monthly_base_cost orig_mbc ON orig_mbc.store_id = orig_o.store_id AND orig_mbc.sku = orig_o.sku AND orig_mbc.period = to_char(orig_o.date, 'YYYY-MM')
+                WHERE orig_o.store_id = r.store_id AND orig_o.amazon_order_id = r.order_id
+              ),
+              mbc.basecost_thang, 
+              sm.basecost_tb, 
+              0
+            )
           )
         ) as return_total
       FROM accounting_returns r
