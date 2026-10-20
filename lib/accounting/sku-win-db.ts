@@ -111,12 +111,18 @@ export async function listSkuWin(
   const page = Math.max(1, options.page || 1);
   const limit = options.limit && options.limit > 0 ? options.limit : 50;
 
+  // SKU Win chỉ hiển thị các SKU phát triển (từ Bảng mã) trừ khi có chỉ định khác
+  const statusCondition = status
+    ? (status.toLowerCase() === "all" ? sql`` : sql`AND sm.status = ${status}`)
+    : sql`AND sm.status = 'Phát triển'`;
+
   // 1. Fetch available Product Types and Statuses for filter dropdowns
   const [filterOptions] = await Promise.all([
     sql<{ product_type: string; status: string }[]>`
-      SELECT DISTINCT product_type, status
-      FROM accounting_sku_master
-      WHERE store_id = ${storeId} AND deleted_at IS NULL
+      SELECT DISTINCT sm.product_type, sm.status
+      FROM accounting_sku_master sm
+      WHERE sm.store_id = ${storeId} AND sm.deleted_at IS NULL
+        ${statusCondition}
     `,
   ]);
 
@@ -304,8 +310,8 @@ export async function listSkuWin(
     LEFT JOIN ads_compare ac ON ac.sku = sm.sku
     ` : sql``}
     WHERE sm.store_id = ${storeId} AND sm.deleted_at IS NULL
+    ${statusCondition}
     ${productType ? sql`AND sm.product_type = ${productType}` : sql``}
-    ${status ? sql`AND sm.status = ${status}` : sql``}
     ${search ? sql`AND (sm.sku ILIKE ${'%' + search + '%'} OR sm.asin ILIKE ${'%' + search + '%'} OR sm.product_type ILIKE ${'%' + search + '%'} OR sm.niche ILIKE ${'%' + search + '%'} OR sm.pic_mkt ILIKE ${'%' + search + '%'})` : sql``}
   `;
 
