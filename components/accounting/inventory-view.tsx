@@ -1606,10 +1606,21 @@ function InventoryViewInner() {
     return () => document.removeEventListener("mousedown", closeMenu);
   }, [columnContextMenu]);
   const setColumnFilter = useCallback((table: "sku" | "inbound" | "check_shipment", field: string, value: string) => {
-    setColumnFilters((previous) => ({
-      ...previous,
-      [table]: { ...previous[table], [field]: value },
-    }));
+    setColumnFilters((previous) => {
+      const nextTable = { ...previous[table] };
+      if (!value) {
+        delete nextTable[field];
+      } else {
+        nextTable[field] = value;
+      }
+      return {
+        ...previous,
+        [table]: nextTable,
+      };
+    });
+    if (table === "sku") setSkuPage(1);
+    if (table === "inbound") setShipmentPage(1);
+    if (table === "check_shipment") setCheckShipmentPage(1);
   }, []);
   const toggleDateSort = useCallback((table: "sku" | "inbound" | "check_shipment", field: string) => {
     setDateSort((previous) => {
@@ -2141,10 +2152,13 @@ function InventoryViewInner() {
   const [checkShipmentPage, setCheckShipmentPage] = useState(1);
   const [checkShipmentLimit, setCheckShipmentLimit] = useState(50);
 
+  const effectiveSkuStatus = columnFilters.sku?.status || skuStatusFilter;
+  const effectiveSkuProductType = columnFilters.sku?.product_type || skuTypeFilter;
+
   // Reset page to 1 when filters or selected store change
   useEffect(() => {
     setSkuPage(1);
-  }, [selectedStoreId, debouncedSkuSearch, skuStatusFilter, skuTypeFilter]);
+  }, [selectedStoreId, debouncedSkuSearch, effectiveSkuStatus, effectiveSkuProductType]);
 
   useEffect(() => {
     setShipmentPage(1);
@@ -2156,7 +2170,7 @@ function InventoryViewInner() {
 
   // 1. TanStack Query for SKU Master (Server-side Page Pagination, 100/trang)
   const skuQuery = useQuery({
-    queryKey: ["sku-master", selectedStoreId, skuPage, skuLimit, debouncedSkuSearch, skuStatusFilter, skuTypeFilter],
+    queryKey: ["sku-master", selectedStoreId, skuPage, skuLimit, debouncedSkuSearch, effectiveSkuStatus, effectiveSkuProductType],
     queryFn: async ({ signal }) => {
       const params = new URLSearchParams({
         store_id: selectedStoreId!,
@@ -2164,8 +2178,8 @@ function InventoryViewInner() {
         limit: String(skuLimit),
       });
       if (debouncedSkuSearch) params.set("search", debouncedSkuSearch);
-      if (skuStatusFilter) params.set("status", skuStatusFilter);
-      if (skuTypeFilter) params.set("product_type", skuTypeFilter);
+      if (effectiveSkuStatus) params.set("status", effectiveSkuStatus);
+      if (effectiveSkuProductType) params.set("product_type", effectiveSkuProductType);
 
       const res = await fetch(`/api/accounting/inventory/sku-master?${params.toString()}`, { signal });
       if (!res.ok) throw new Error("Không thể tải danh sách SKU Master");
