@@ -1073,7 +1073,7 @@ async function downloadFile07Shipments(page: Page, downloadDir: string, targetDa
  * File 08: Distribution Center (AWD) Shipments Report
  * URL: https://sellercentral.amazon.com/amazonsell/dc-shipments?orderBy=UPDATE_TIME&isOrderAscending=false&pageSize=100&pageIndex=0
  */
-async function downloadFile08DcShipments(page: Page, downloadDir: string, targetDateStr: string): Promise<string | null> {
+export async function downloadFile08DcShipments(page: Page, downloadDir: string, targetDateStr: string): Promise<string | null> {
   const url = "https://sellercentral.amazon.com/amazonsell/dc-shipments?orderBy=UPDATE_TIME&isOrderAscending=false&pageSize=100&pageIndex=0";
   console.log(`  [File 08 - DC Shipments] Đang truy cập Distribution Center Shipments: ${url}...`);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
@@ -1083,27 +1083,55 @@ async function downloadFile08DcShipments(page: Page, downloadDir: string, target
     throw new Error("Seller Central chưa đăng nhập.");
   }
 
-  // Chờ bảng dữ liệu hoặc nút xuất hiện
-  await page.waitForSelector("table, [data-tag='protos-table-export-button'], [data-testid], button", { timeout: 20000 }).catch(() => {});
-  await page.waitForTimeout(2000);
+  console.log(`  [File 08 - DC Shipments] Đang chờ nút Export/Download hoặc trạng thái không có dữ liệu...`);
 
-  console.log(`  [File 08 - DC Shipments] Đang tìm nút Export/Download...`);
+  // Không dùng selector chung như "button" để kết luận trang đã tải xong: thanh điều
+  // hướng luôn có button và từng khiến crawler bỏ qua báo cáo khi bảng AWD tải chậm.
+  const exportSelector = [
+    "button[data-tag='protos-table-export-button']",
+    "button[aria-label*='Export' i]",
+    "button[aria-label*='Download' i]",
+    "button[title*='Export' i]",
+    "button[title*='Download' i]",
+  ].join(", ");
+  const explicitEmptyPattern = /^(no shipments(?: found)?|no data(?: available)?|no records(?: found)?|you (?:do not|don't) have any (?:awd )?shipments)[.!]?$/i;
+  const deadline = Date.now() + 45_000;
+  let exportBtn = page.locator(exportSelector).first();
+  let btnFound = false;
+  let hasExplicitEmptyState = false;
 
-  // 1. Selector chuẩn xác trên Amazon Cloudscape Table: data-tag="protos-table-export-button"
-  let exportBtn = page.locator("button[data-tag='protos-table-export-button']").first();
-  let btnFound = await exportBtn.isVisible().catch(() => false);
-
-  // 2. Fallback: các selector aria-label/title
-  if (!btnFound) {
-    exportBtn = page.locator(
-      "button[aria-label*='Export' i], button[aria-label*='Download' i], button[title*='Export' i], button[title*='Download' i]"
-    ).first();
+  while (Date.now() < deadline) {
+    if (isSignInUrl(page.url())) throw new Error("Seller Central chưa đăng nhập.");
     btnFound = await exportBtn.isVisible().catch(() => false);
+    if (btnFound) break;
+
+    hasExplicitEmptyState = await page.locator("main, [role='main'], body").first().evaluate(
+      (root, patternSource) => {
+        const pattern = new RegExp(patternSource, "i");
+        return Array.from(root.querySelectorAll("p, span, div, td")).some((element) => {
+          const htmlElement = element as HTMLElement;
+          const text = (htmlElement.innerText || "").replace(/\s+/g, " ").trim();
+          if (!pattern.test(text)) return false;
+          const style = window.getComputedStyle(htmlElement);
+          const rect = htmlElement.getBoundingClientRect();
+          return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+        });
+      },
+      explicitEmptyPattern.source,
+    ).catch(() => false);
+    if (hasExplicitEmptyState) break;
+    await page.waitForTimeout(1500);
+  }
+
+  if (!btnFound && hasExplicitEmptyState) {
+    console.warn(`  [File 08 - DC Shipments] Amazon xác nhận không có dữ liệu AWD; bỏ qua hợp lệ.`);
+    return null;
   }
 
   if (!btnFound) {
-    console.warn(`  [File 08 - DC Shipments] Không tìm thấy nút Export (có thể store chưa có dữ liệu lô hàng AWD). Bỏ qua.`);
-    return null;
+    const evidencePath = path.join(downloadDir, `08_DcShipments_${targetDateStr}_export_missing_${Date.now()}.png`);
+    await page.screenshot({ path: evidencePath, fullPage: true }).catch(() => {});
+    throw new Error(`Trang AWD đã mở nhưng nút Export chưa xuất hiện sau 45 giây. Ảnh kiểm tra: ${evidencePath}`);
   }
 
   console.log(`  [File 08 - DC Shipments] Nhấn nút Export và chờ tải file...`);

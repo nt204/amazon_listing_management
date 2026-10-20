@@ -7,6 +7,7 @@ import {
   CaretRight,
   CaretDown,
   Check,
+  X,
 } from "@phosphor-icons/react";
 
 export interface DateRange {
@@ -30,6 +31,7 @@ const MONTH_NAMES = [
 ];
 
 const PRESETS = [
+  { label: "Tất cả thời gian", id: "all" },
   { label: "Today", id: "today" },
   { label: "Yesterday", id: "yesterday" },
   { label: "Last 7 days", id: "last_7_days" },
@@ -39,7 +41,6 @@ const PRESETS = [
   { label: "This month", id: "this_month" },
   { label: "Last month", id: "last_month" },
   { label: "Year to date", id: "ytd" },
-  { label: "Lifetime (Toàn bộ)", id: "lifetime" },
 ];
 
 function padZero(n: number) {
@@ -70,7 +71,7 @@ export function PpcAmazonDatePicker({
   minDate,
   maxDate,
   anchorDate,
-  align = "right",
+  align = "left",
 }: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -148,6 +149,14 @@ export function PpcAmazonDatePicker({
 
   const handlePresetClick = (presetId: string) => {
     setActivePreset(presetId);
+    if (presetId === "all" || presetId === "lifetime") {
+      setTempStart("");
+      setTempEnd("");
+      setIsPickingEnd(false);
+      onChange({ startDate: "", endDate: "" });
+      setIsOpen(false);
+      return;
+    }
     const today = parseDateString(anchorDate || maxDate || formatDateString(new Date()));
 
     let start = new Date(today);
@@ -183,7 +192,7 @@ export function PpcAmazonDatePicker({
       start = new Date(today.getFullYear(), 0, 1);
       end = new Date(today);
     } else if (presetId === "lifetime") {
-      start = parseDateString(minDate || formatDateString(today));
+      start = parseDateString(minDate || "2020-01-01");
       end = new Date(today);
     }
 
@@ -200,6 +209,10 @@ export function PpcAmazonDatePicker({
     // Auto navigate calendar to the selected start
     setLeftViewYear(start.getFullYear());
     setLeftViewMonth(start.getMonth());
+
+    // Auto apply preset and close popover immediately
+    onChange({ startDate: sStr, endDate: eStr });
+    setIsOpen(false);
   };
 
   const handleDayClick = (dayStr: string) => {
@@ -303,7 +316,8 @@ export function PpcAmazonDatePicker({
 
   // Format label for button
   const displayLabel = useMemo(() => {
-    if (!value.startDate || !value.endDate) return "Chọn khoảng ngày";
+    if (!value.startDate && !value.endDate) return "Tất cả thời gian";
+    if (!value.startDate || !value.endDate) return value.startDate || value.endDate;
     const [y1, m1, d1] = value.startDate.split("-");
     const [y2, m2, d2] = value.endDate.split("-");
     if (value.startDate === value.endDate) return `${d1}/${m1}/${y1}`;
@@ -311,7 +325,7 @@ export function PpcAmazonDatePicker({
   }, [value.startDate, value.endDate]);
 
   return (
-    <div className="relative inline-block" ref={containerRef}>
+    <div className={`relative inline-block ${isOpen ? "z-[100]" : ""}`} ref={containerRef}>
       {/* Trigger Button */}
       <button
         type="button"
@@ -322,12 +336,26 @@ export function PpcAmazonDatePicker({
         <CalendarBlank size={15} weight="bold" className="text-indigo-600" />
         {label && <span className="text-slate-500 font-semibold">{label}:</span>}
         <span className="font-mono text-slate-900">{displayLabel}</span>
-        <CaretDown size={11} weight="bold" className={`text-slate-400 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+        {(value.startDate || value.endDate) ? (
+          <span
+            role="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onChange({ startDate: "", endDate: "" });
+            }}
+            className="p-0.5 rounded-full hover:bg-slate-200 text-slate-400 hover:text-rose-600 transition"
+            title="Bỏ lọc ngày (Xem tất cả)"
+          >
+            <X size={12} weight="bold" />
+          </span>
+        ) : (
+          <CaretDown size={11} weight="bold" className={`text-slate-400 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+        )}
       </button>
 
       {/* Popover Container (Styled exactly like Amazon Ads Console) */}
       {isOpen && (
-        <div className={`absolute ${align === "left" ? "left-0" : "right-0"} top-full mt-1.5 z-50 bg-white border border-slate-300 rounded-xl shadow-2xl overflow-hidden flex flex-col md:flex-row animate-in fade-in zoom-in-95 duration-150 max-w-[calc(100vw-2rem)]`}>
+        <div className={`absolute ${align === "left" ? "left-0" : "right-0"} top-full mt-1.5 z-[100] bg-white border border-slate-300 rounded-xl shadow-2xl overflow-hidden flex flex-col md:flex-row animate-in fade-in zoom-in-95 duration-150 max-w-[calc(100vw-2rem)]`}>
           {/* Left Sidebar: Presets list */}
           <div className="w-full md:w-44 border-b md:border-b-0 md:border-r border-slate-200 bg-slate-50/70 p-2 flex flex-col justify-between">
             <div className="space-y-0.5">

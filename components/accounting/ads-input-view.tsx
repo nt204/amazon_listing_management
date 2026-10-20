@@ -290,6 +290,11 @@ export function AdsInputView({
     return () => clearTimeout(handler);
   }, [search]);
 
+  // Reset page on date range change
+  useEffect(() => {
+    setPage(1);
+  }, [startDate, endDate]);
+
   // Fetch Ads Data
   const fetchAds = useCallback(async () => {
     if (!selectedStoreId) return;

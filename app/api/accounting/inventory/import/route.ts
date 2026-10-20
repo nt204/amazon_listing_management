@@ -10,11 +10,12 @@ import {
 } from "@/lib/accounting/inventory-db";
 import { getStoreById } from "@/lib/accounting/accounting-db";
 
-export const maxDuration = 120; // Cho phép đủ thời gian cho file Excel/CSV lớn
+export const maxDuration = 300; // Workbook kế toán đầy đủ có thể lớn hàng trăm MB sau giải nén.
 
 export async function POST(request: Request) {
   try {
-    await authorize(request, "write", "accounting");
+    const actor = await authorize(request, "write", "accounting");
+    const actorName = actor.email || actor.displayName || actor.userId || "system";
 
     const contentType = request.headers.get("content-type") || "";
     if (!contentType.includes("multipart/form-data")) {
@@ -112,7 +113,7 @@ export async function POST(request: Request) {
 
     if (type === "monthly_base_cost") {
       const year = parseInt((formData.get("year") as string) || "2026", 10) || 2026;
-      const result = await importMonthlyBaseCostFromWorkbook(storeId, workbook, year);
+      const result = await importMonthlyBaseCostFromWorkbook(storeId, workbook, year, actorName);
       return Response.json({
         success: true,
         type: "monthly_base_cost",

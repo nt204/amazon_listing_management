@@ -721,7 +721,16 @@ export async function patchSkuMasterField(
 
 export async function listInboundShipments(
   storeId: string,
-  params: { search?: string; status?: string; shipmentId?: string; cursor?: string; page?: number; limit?: number } = {},
+  params: {
+    search?: string;
+    status?: string;
+    shipmentId?: string;
+    cursor?: string;
+    page?: number;
+    limit?: number;
+    sortField?: "created_at" | "updated_at" | "ngay_request" | "ngay_thanh_toan" | "ngay_di" | "ngay_den";
+    sortDirection?: "asc" | "desc";
+  } = {},
 ): Promise<{ items: InboundShipmentItem[]; total: number; page: number; limit: number; nextCursor: string | null }> {
   const sql = await getDatabaseClient();
   const page = Math.max(1, params.page || 1);
@@ -744,6 +753,19 @@ export async function listInboundShipments(
   }
 
   const searchPattern = params.search ? `%${params.search.trim().toLowerCase()}%` : null;
+  const sortField = params.sortField || "created_at";
+  const sortDirection = params.sortDirection === "asc" ? sql`ASC` : sql`DESC`;
+  const sortExpression = sortField === "created_at"
+    ? sql`s.created_at`
+    : sortField === "updated_at"
+    ? sql`s.updated_at`
+    : sortField === "ngay_request"
+    ? sql`CASE WHEN s.ngay_request ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN s.ngay_request::date END`
+    : sortField === "ngay_thanh_toan"
+    ? sql`CASE WHEN s.ngay_thanh_toan ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN s.ngay_thanh_toan::date END`
+    : sortField === "ngay_di"
+    ? sql`CASE WHEN s.ngay_di ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN s.ngay_di::date END`
+    : sql`CASE WHEN s.ngay_den ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN s.ngay_den::date END`;
 
   const countRows = await sql<{ count: string }[]>`
     SELECT COUNT(*)::text as count
@@ -811,11 +833,11 @@ export async function listInboundShipments(
       ))
       AND (${params.status || null}::text IS NULL OR s.status = ${params.status || null})
       AND (${params.shipmentId || null}::text IS NULL OR s.shipment_id = ${params.shipmentId || null})
-      AND (${cursorCreatedAt}::timestamptz IS NULL OR (
+      AND (${cursorCreatedAt}::timestamptz IS NULL OR ${sortField !== "created_at" || params.sortDirection === "asc"} OR (
         s.created_at < ${cursorCreatedAt}::timestamptz
         OR (s.created_at = ${cursorCreatedAt}::timestamptz AND s.id < ${cursorId}::uuid)
       ))
-    ORDER BY s.created_at DESC, s.id DESC
+    ORDER BY ${sortExpression} ${sortDirection} NULLS LAST, s.created_at DESC, s.id DESC
     LIMIT ${limit} OFFSET ${offset}
   `;
 
@@ -1208,8 +1230,12 @@ export function getExcelCellValue(cell: ExcelJS.Cell | undefined): string | numb
   if (typeof val === "object" && val !== null) {
     const obj = val as Record<string, unknown>;
     if (obj.result !== undefined) val = obj.result;
+    else if (cell.result !== undefined) val = cell.result;
     else if (obj.text !== undefined) val = obj.text;
     else if (obj.hyperlink !== undefined) val = obj.hyperlink;
+  }
+  if (cell.result !== undefined && cell.result !== null && (val === null || typeof val === "object")) {
+    val = cell.result;
   }
   if (val instanceof Date) {
     if (isNaN(val.getTime())) return null;
@@ -2264,8 +2290,11 @@ export async function importInboundShipmentsFromWorkbook(
     const ngay_di = cleanDateOnly(rowValues["ngay_di"]);
     const ngay_den = cleanDateOnly(rowValues["ngay_den"]);
     const amazon_received = parseInteger(rowValues["amazon_received"]);
-    const tinh_trang_hang_den_kho = (rowValues["tinh_trang_hang_den_kho"] as string) || null;
-    const status = (rowValues["status"] as string) || null;
+    const raw_tinh_trang = (rowValues["tinh_trang_hang_den_kho"] as string) || null;
+    const raw_status = (rowValues["status"] as string) || null;
+    // Đồng nhất dữ liệu: nếu người dùng gõ 1 trong 2 cột thì tự động fallback cho cột còn lại
+    const tinh_trang_hang_den_kho = raw_tinh_trang || raw_status || null;
+    const status = raw_status || raw_tinh_trang || null;
     const so_luong_amazon_nhan = parseInteger(rowValues["so_luong_amazon_nhan"]);
     const discrepancy = parseInteger(rowValues["discrepancy"]);
     const note = (rowValues["note"] as string) || null;
@@ -2311,6 +2340,9 @@ export async function importInboundShipmentsFromWorkbook(
       errors.push(`Lỗi lô hàng ${item.shipment_id || item.sku}: ${(err as Error).message}`);
     }
   }
+
+  // Tự động đồng bộ ngay với Check Shipment có sẵn để cập nhật tức thì trạng thái và số lượng nhận
+  await syncCheckShipmentsToInbound(storeId, undefined, "system").catch(() => {});
 
   return { count, errors };
 }
@@ -2847,7 +2879,7 @@ export async function importCheckShipmentsFromWorkbook(
   const colIndexMap: Record<number, keyof CheckShipmentItem> = {};
 
   headerRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
-    let headerText = getExcelCellValue(cell);
+    const headerText = getExcelCellValue(cell);
     if (!headerText && colNumber === 2) {
       colIndexMap[colNumber] = "brand";
       return;
@@ -3245,25 +3277,25 @@ export function calculateMonthlyBaseCostCore({
   // bình quân giá. Giữ rawTon để tháng sau tiếp tục phản ánh đúng tồn cuối Excel.
   const ton = Number.isFinite(rawTon) ? Math.max(0, rawTon) : 0;
   const giaTon = Math.max(0, Number(basecostDauKy) || 0);
-  const gtriTon = Math.round(ton * giaTon * 100) / 100;
+  const gtriTon = ton * giaTon;
 
   const nhap = Math.max(0, Number(slNhap) || 0);
   const gtriN = Math.max(0, Number(gtriNhap) || 0);
-  const donGiaNhap = nhap > 0 ? Math.round((gtriN / nhap) * 100) / 100 : 0;
+  const donGiaNhap = nhap > 0 ? gtriN / nhap : 0;
 
   const tongSl = ton + nhap;
-  const tongGtri = Math.round((gtriTon + gtriN) * 100) / 100;
+  const tongGtri = gtriTon + gtriN;
 
   let basecost = 0;
   let rule: "weighted_average" | "new_inbound_only" | "carry_over" | "existing_inventory" = "carry_over";
   let ruleLabel = "Giữ tham chiếu cũ";
 
   if (ton > 0 && nhap > 0) {
-    basecost = tongSl > 0 ? Math.round((tongGtri / tongSl) * 100) / 100 : 0;
+    basecost = tongSl > 0 ? tongGtri / tongSl : 0;
     rule = "weighted_average";
     ruleLabel = "Bình quân gia quyền (Tồn + Nhập)";
   } else if (ton > 0 && nhap === 0) {
-    basecost = Math.round(giaTon * 100) / 100;
+    basecost = giaTon;
     rule = "existing_inventory";
     ruleLabel = "Theo giá tồn đầu kỳ (Không nhập)";
   } else if (ton <= 0 && nhap > 0) {
@@ -3271,16 +3303,14 @@ export function calculateMonthlyBaseCostCore({
     rule = "new_inbound_only";
     ruleLabel = "Giá nhập mới 100% (Hết tồn cũ)";
   } else {
-    basecost = Math.round(giaTon * 100) / 100;
+    basecost = giaTon;
     rule = "carry_over";
     ruleLabel = "Tham chiếu tháng trước (Không tồn/nhập)";
   }
 
-  basecost = Math.round(basecost * 100) / 100;
-
   return {
     slTonDauKy: Number.isFinite(rawTon) ? rawTon : 0,
-    basecostDauKy: Math.round(giaTon * 100) / 100,
+    basecostDauKy: giaTon,
     gtriTonDauKy: gtriTon,
     slNhap: nhap,
     gtriNhap: gtriN,
@@ -3461,7 +3491,7 @@ export async function updateMonthlyBaseCostField(
   }
 
   // Tự động tính toán lại nếu không phải người dùng sửa đè trực tiếp ô basecost_thang
-  let calc = calculateMonthlyBaseCostCore({
+  const calc = calculateMonthlyBaseCostCore({
     slTon,
     basecostDauKy: giaTon,
     slNhap,
@@ -4294,9 +4324,18 @@ export async function importMonthlyBaseCostFromWorkbook(
   let headerRowIndex = 1;
   let skuCol = -1;
   let monthCol = -1;
+  let startDateCol = -1;
+  let endDateCol = -1;
+  let brandCol = -1;
+  let asinCol = -1;
   let hangTonCol = -1;
   let hangTonCuoiCol = -1;
   let giaVonCol = -1;
+  let slNhapCol = -1;
+  let gtriNhapCol = -1;
+  let donGiaNhapCol = -1;
+  let daBanCol = -1;
+  let dienCol = -1;
   let basecostCol = -1;
   const monthCols = new Map<number, number>();
 
@@ -4324,6 +4363,14 @@ export async function importMonthlyBaseCostFromWorkbook(
       skuCol = c;
     } else if (str === "month" || str === "tháng" || str === "thang") {
       monthCol = c;
+    } else if (str === "đầu tháng" || str === "dau thang") {
+      startDateCol = c;
+    } else if (str === "cuối tháng" || str === "cuoi thang") {
+      endDateCol = c;
+    } else if (str === "brand" || str === "thương hiệu" || str === "thuong hieu") {
+      brandCol = c;
+    } else if (str === "asin") {
+      asinCol = c;
     } else if (
       str.includes("hàng tồn đầu") ||
       str.includes("hang ton dau") ||
@@ -4342,6 +4389,10 @@ export async function importMonthlyBaseCostFromWorkbook(
       str.includes("ton cuoi")
     ) {
       hangTonCuoiCol = c;
+    } else if (str.includes("số hàng nhập") || str.includes("so hang nhap")) {
+      slNhapCol = c;
+    } else if (str.includes("tổng tiền đã đi") || str.includes("tong tien da di")) {
+      gtriNhapCol = c;
     } else if (
       str.includes("trung bình giá đầu") ||
       str.includes("trung binh gia dau") ||
@@ -4353,6 +4404,10 @@ export async function importMonthlyBaseCostFromWorkbook(
       str.includes("gia_von")
     ) {
       giaVonCol = c;
+    } else if (str === "trung bình giá" || str === "trung binh gia") {
+      donGiaNhapCol = c;
+    } else if (str === "đã bán" || str === "da ban") {
+      daBanCol = c;
     } else if (
       str.includes("basecost tính") ||
       str.includes("basecost tinh")
@@ -4366,6 +4421,8 @@ export async function importMonthlyBaseCostFromWorkbook(
     ) {
       // Fallback cho template không có cột "Basecost tính/tháng" rõ ràng.
       if (basecostCol === -1) basecostCol = c;
+    } else if (str === "điền" || str === "dien") {
+      dienCol = c;
     } else {
       // Nhận diện cột tháng ngang (Format Pivot: Tháng 1 .. Tháng 12)
       const matchMonth =
@@ -4405,6 +4462,7 @@ export async function importMonthlyBaseCostFromWorkbook(
   }
 
   const periodM1 = `${year}-01`;
+  let lastImportedMonth = 0;
 
   /**
    * Excel Basecost ghi tồn cuối từng tháng. Giá trị này là tồn đầu của tháng kế tiếp;
@@ -4412,8 +4470,13 @@ export async function importMonthlyBaseCostFromWorkbook(
    * Giá trị âm vẫn được giữ để phản ánh thiếu hàng như file gốc; hàm tính Base Cost
    * đã dùng MAX(tồn, 0) nên không lấy số âm vào mẫu số bình quân.
    */
-  const saveNextMonthOpeningQuantity = async (sku: string, month: number, rawValue: unknown) => {
-    if (month >= 12 || rawValue === null || rawValue === undefined || rawValue === "") return;
+  const saveNextMonthOpeningQuantity = async (
+    sku: string,
+    month: number,
+    rawValue: unknown,
+    closingBasecost: number | null = null,
+  ) => {
+    if (rawValue === null || rawValue === undefined || rawValue === "") return;
 
     const openingQty = Number(String(rawValue).replace(/,/g, ""));
     if (!Number.isFinite(openingQty) || !Number.isInteger(openingQty)) {
@@ -4421,8 +4484,13 @@ export async function importMonthlyBaseCostFromWorkbook(
       return;
     }
 
-    const nextPeriod = `${year}-${String(month + 1).padStart(2, "0")}`;
+    const nextYear = month >= 12 ? year + 1 : year;
+    const nextMonth = month >= 12 ? 1 : month + 1;
+    const nextPeriod = `${nextYear}-${String(nextMonth).padStart(2, "0")}`;
     const meta = skuMasterMap.get(sku);
+    const basecostDau = closingBasecost !== null && closingBasecost > 0 ? closingBasecost : 0;
+    const gtriTon = openingQty * basecostDau;
+
     await sql`
       INSERT INTO accounting_monthly_base_cost (
         store_id, period, sku, sku_id, brand, product_type,
@@ -4432,14 +4500,33 @@ export async function importMonthlyBaseCostFromWorkbook(
         calculation_rule, is_overridden, last_changed_by, updated_at
       ) VALUES (
         ${storeId}, ${nextPeriod}, ${sku}, ${meta?.id || null}, ${meta?.brand || null}, ${meta?.product_type || null},
-        ${openingQty}, 0, 0,
+        ${openingQty}, ${basecostDau}, ${gtriTon},
         0, 0, 0,
-        ${openingQty}, 0, 0,
+        ${openingQty}, ${gtriTon}, ${basecostDau},
         'excel_previous_closing', false, ${changedBy}, NOW()
       )
       ON CONFLICT (store_id, period, sku) DO UPDATE
       SET
         sl_ton_dau_ky = EXCLUDED.sl_ton_dau_ky,
+        basecost_dau_ky = CASE 
+          WHEN accounting_monthly_base_cost.basecost_dau_ky = 0 THEN EXCLUDED.basecost_dau_ky 
+          ELSE accounting_monthly_base_cost.basecost_dau_ky 
+        END,
+        gtri_ton_dau_ky = CASE 
+          WHEN accounting_monthly_base_cost.gtri_ton_dau_ky = 0 THEN EXCLUDED.gtri_ton_dau_ky 
+          ELSE accounting_monthly_base_cost.gtri_ton_dau_ky 
+        END,
+        tong_sl_kha_dung = EXCLUDED.sl_ton_dau_ky + accounting_monthly_base_cost.sl_nhap,
+        tong_gtri_kha_dung = (EXCLUDED.sl_ton_dau_ky * CASE 
+          WHEN accounting_monthly_base_cost.basecost_dau_ky = 0 THEN EXCLUDED.basecost_dau_ky 
+          ELSE accounting_monthly_base_cost.basecost_dau_ky 
+        END) + accounting_monthly_base_cost.gtri_nhap,
+        basecost_thang = CASE 
+          WHEN accounting_monthly_base_cost.is_overridden THEN accounting_monthly_base_cost.basecost_thang
+          WHEN accounting_monthly_base_cost.calculation_rule = 'excel_source_snapshot' THEN accounting_monthly_base_cost.basecost_thang
+          WHEN accounting_monthly_base_cost.basecost_thang = 0 THEN EXCLUDED.basecost_thang
+          ELSE accounting_monthly_base_cost.basecost_thang
+        END,
         last_changed_by = ${changedBy},
         updated_at = NOW()
       WHERE accounting_monthly_base_cost.deleted_at IS NULL
@@ -4489,6 +4576,7 @@ export async function importMonthlyBaseCostFromWorkbook(
 
       const m = Number(getExcelCellValue(row.getCell(monthCol)));
       if (isNaN(m) || m < 1 || m > 12) continue;
+      lastImportedMonth = Math.max(lastImportedMonth, m);
 
       if (!skuProcessedSet.has(sku)) {
         skuProcessedSet.add(sku);
@@ -4496,106 +4584,80 @@ export async function importMonthlyBaseCostFromWorkbook(
       }
 
       const meta = skuMasterMap.get(sku);
+      const numberAt = (column: number): number | null => {
+        if (column === -1) return null;
+        const value = getExcelCellValue(row.getCell(column));
+        if (value === null || value === undefined || value === "") return null;
+        const parsed = Number(String(value).replace(/[$,]/g, ""));
+        return Number.isFinite(parsed) ? parsed : null;
+      };
+      const slTon = numberAt(hangTonCol) ?? 0;
+      const basecostDau = numberAt(giaVonCol) ?? 0;
+      const slNhap = numberAt(slNhapCol) ?? 0;
+      const gtriNhap = numberAt(gtriNhapCol) ?? 0;
+      const donGiaNhap = numberAt(donGiaNhapCol) ?? (slNhap !== 0 ? gtriNhap / slNhap : 0);
+      const basecost = numberAt(basecostCol);
+      const closingQty = numberAt(hangTonCuoiCol);
+      const importedBrand = brandCol === -1 ? null : getExcelCellValue(row.getCell(brandCol));
+      const periodStr = `${year}-${String(m).padStart(2, "0")}`;
+      const sourceFields = {
+        import_source: "BASECOST THÁNG",
+        start_date: startDateCol === -1 ? null : getExcelCellValue(row.getCell(startDateCol)),
+        end_date: endDateCol === -1 ? null : getExcelCellValue(row.getCell(endDateCol)),
+        brand: importedBrand,
+        asin: asinCol === -1 ? null : getExcelCellValue(row.getCell(asinCol)),
+        sold_quantity: numberAt(daBanCol),
+        closing_quantity: closingQty,
+        dien: dienCol === -1 ? null : getExcelCellValue(row.getCell(dienCol)),
+      };
 
-      // Tháng 1: Lưu số lượng tồn & đơn giá tồn đầu năm
-      if (m === 1) {
-        let hangTonVal: number | null = null;
-        if (hangTonCol !== -1) {
-          const v = getExcelCellValue(row.getCell(hangTonCol));
-          if (v !== null && v !== undefined && v !== "") {
-            const n = Number(String(v).replace(/,/g, ""));
-            if (!isNaN(n)) hangTonVal = Math.max(0, n);
-          }
-        }
-        let giaVonVal: number | null = null;
-        if (giaVonCol !== -1) {
-          const v = getExcelCellValue(row.getCell(giaVonCol));
-          if (v !== null && v !== undefined && v !== "") {
-            const n = Number(String(v).replace(/[$,]/g, ""));
-            if (!isNaN(n)) giaVonVal = Math.max(0, Math.round(n * 100) / 100);
-          }
-        }
-
-        // Fallback từ sheet TỒN nếu có
-        if ((hangTonVal === null || giaVonVal === null) && tonDauNamMap.has(sku)) {
-          const t = tonDauNamMap.get(sku)!;
-          if (hangTonVal === null) hangTonVal = t.hangTon;
-          if (giaVonVal === null) giaVonVal = t.giaVon;
-        }
-
-        if (hangTonVal !== null || giaVonVal !== null) {
-          updatedInitialCount++;
-          const slTon = hangTonVal ?? 0;
-          const basecostDau = giaVonVal ?? 0;
-          const gtriTon = Math.round(slTon * basecostDau * 100) / 100;
-
-          await sql`
-            INSERT INTO accounting_monthly_base_cost (
-              store_id, period, sku, sku_id, brand, product_type,
-              sl_ton_dau_ky, basecost_dau_ky, gtri_ton_dau_ky,
-              sl_nhap, gtri_nhap, don_gia_nhap_tb,
-              tong_sl_kha_dung, tong_gtri_kha_dung, basecost_thang,
-              calculation_rule, is_overridden, last_changed_by, updated_at
-            ) VALUES (
-              ${storeId}, ${periodM1}, ${sku}, ${meta?.id || null}, ${meta?.brand || null}, ${meta?.product_type || null},
-              ${slTon}, ${basecostDau}, ${gtriTon},
-              0, 0, 0,
-              ${slTon}, ${gtriTon}, ${basecostDau},
-              'manual_excel_import', false, ${changedBy}, NOW()
-            )
-            ON CONFLICT (store_id, period, sku) DO UPDATE
-            SET
-              sl_ton_dau_ky = ${slTon},
-              basecost_dau_ky = ${basecostDau},
-              gtri_ton_dau_ky = ${gtriTon},
-              last_changed_by = ${changedBy},
-              updated_at = NOW()
-            WHERE accounting_monthly_base_cost.deleted_at IS NULL
-          `;
-        }
+      // Mỗi dòng của sheet là một snapshot đã chốt. Giữ nguyên số liệu nguồn,
+      // không tính lại hoặc làm tròn trong lúc import.
+      if (basecost !== null) {
+        if (m === 1) updatedInitialCount++;
+        overriddenMonthCount++;
+        const gtriTon = slTon * basecostDau;
+        await sql`
+          INSERT INTO accounting_monthly_base_cost (
+            store_id, period, sku, sku_id, brand, product_type,
+            sl_ton_dau_ky, basecost_dau_ky, gtri_ton_dau_ky,
+            sl_nhap, gtri_nhap, don_gia_nhap_tb,
+            tong_sl_kha_dung, tong_gtri_kha_dung, basecost_thang,
+            calculation_rule, is_overridden, custom_fields, last_changed_by, updated_at
+          ) VALUES (
+            ${storeId}, ${periodStr}, ${sku}, ${meta?.id || null}, ${String(importedBrand || meta?.brand || "") || null}, ${meta?.product_type || null},
+            ${slTon}, ${basecostDau}, ${gtriTon},
+            ${slNhap}, ${gtriNhap}, ${donGiaNhap},
+            ${slTon + slNhap}, ${gtriTon + gtriNhap}, ${basecost},
+            'excel_source_snapshot', true, ${sql.json(sourceFields)}, ${changedBy}, NOW()
+          )
+          ON CONFLICT (store_id, period, sku) DO UPDATE SET
+            sku_id = COALESCE(EXCLUDED.sku_id, accounting_monthly_base_cost.sku_id),
+            brand = COALESCE(EXCLUDED.brand, accounting_monthly_base_cost.brand),
+            product_type = COALESCE(EXCLUDED.product_type, accounting_monthly_base_cost.product_type),
+            sl_ton_dau_ky = EXCLUDED.sl_ton_dau_ky,
+            basecost_dau_ky = EXCLUDED.basecost_dau_ky,
+            gtri_ton_dau_ky = EXCLUDED.gtri_ton_dau_ky,
+            sl_nhap = EXCLUDED.sl_nhap,
+            gtri_nhap = EXCLUDED.gtri_nhap,
+            don_gia_nhap_tb = EXCLUDED.don_gia_nhap_tb,
+            tong_sl_kha_dung = EXCLUDED.tong_sl_kha_dung,
+            tong_gtri_kha_dung = EXCLUDED.tong_gtri_kha_dung,
+            basecost_thang = EXCLUDED.basecost_thang,
+            calculation_rule = 'excel_source_snapshot',
+            is_overridden = true,
+            custom_fields = EXCLUDED.custom_fields,
+            deleted_at = NULL,
+            last_changed_by = ${changedBy},
+            updated_at = NOW()
+        `;
       }
 
       // Tồn cuối tháng m là tồn đầu kỳ của tháng m + 1.
       if (hangTonCuoiCol !== -1) {
-        await saveNextMonthOpeningQuantity(sku, m, getExcelCellValue(row.getCell(hangTonCuoiCol)));
+        await saveNextMonthOpeningQuantity(sku, m, getExcelCellValue(row.getCell(hangTonCuoiCol)), basecost);
       }
 
-      // Basecost chốt của tháng m
-      if (basecostCol !== -1) {
-        const v = getExcelCellValue(row.getCell(basecostCol));
-        if (v !== null && v !== undefined && v !== "") {
-          const n = Number(String(v).replace(/[$,]/g, ""));
-          if (!isNaN(n) && n > 0) {
-            const cost = Math.round(n * 100) / 100;
-            const periodStr = `${year}-${String(m).padStart(2, "0")}`;
-            overriddenMonthCount++;
-
-            await sql`
-              INSERT INTO accounting_monthly_base_cost (
-                store_id, period, sku, sku_id, brand, product_type,
-                sl_ton_dau_ky, basecost_dau_ky, gtri_ton_dau_ky,
-                sl_nhap, gtri_nhap, don_gia_nhap_tb,
-                tong_sl_kha_dung, tong_gtri_kha_dung, basecost_thang,
-                calculation_rule, is_overridden, last_changed_by, updated_at
-              ) VALUES (
-                ${storeId}, ${periodStr}, ${sku}, ${meta?.id || null}, ${meta?.brand || null}, ${meta?.product_type || null},
-                0, 0, 0,
-                0, 0, 0,
-                0, 0, ${cost},
-                'manual_excel_import', true, ${changedBy}, NOW()
-              )
-              ON CONFLICT (store_id, period, sku) DO UPDATE
-              SET
-                basecost_thang = ${cost},
-                is_overridden = true,
-                calculation_rule = 'manual_excel_import',
-                last_changed_by = ${changedBy},
-                updated_at = NOW()
-              WHERE accounting_monthly_base_cost.deleted_at IS NULL
-            `;
-          }
-        }
-      }
     }
   } else {
     // TRƯỜNG HỢP B: File dạng Pivot Ma trận (Các tháng 1..12 là cột ngang)
@@ -4711,8 +4773,9 @@ export async function importMonthlyBaseCostFromWorkbook(
     }
   }
 
-  // 3. Tự động cascade tính toán nối tiếp cho 12 tháng từ dữ liệu ban đầu và Chi Tiết Đi Hàng
-  for (let m = 1; m <= 12; m++) {
+  // Snapshot dạng dòng là dữ liệu gốc: chỉ tự tính các tháng chưa xuất hiện trong file.
+  const firstMonthToCalculate = monthCol !== -1 ? lastImportedMonth + 1 : 1;
+  for (let m = firstMonthToCalculate; m <= 12; m++) {
     const p = `${year}-${String(m).padStart(2, "0")}`;
     await syncMonthlyBaseCostFromInbound(storeId, p, changedBy);
   }

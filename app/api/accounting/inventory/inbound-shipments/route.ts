@@ -56,8 +56,34 @@ export async function GET(request: Request) {
     const cursor = searchParams.get("cursor") || undefined;
     const page = parseInt(searchParams.get("page") || "1", 10);
     const limit = parseInt(searchParams.get("limit") || "50", 10);
+    const allowedSortFields = new Set([
+      "created_at",
+      "updated_at",
+      "ngay_request",
+      "ngay_thanh_toan",
+      "ngay_di",
+      "ngay_den",
+    ]);
+    const requestedSortField = searchParams.get("sort_field") || "created_at";
+    const sortField = (allowedSortFields.has(requestedSortField) ? requestedSortField : "created_at") as
+      | "created_at"
+      | "updated_at"
+      | "ngay_request"
+      | "ngay_thanh_toan"
+      | "ngay_di"
+      | "ngay_den";
+    const sortDirection = searchParams.get("sort_dir") === "asc" ? "asc" : "desc";
 
-    const result = await listInboundShipments(storeId, { search, status, shipmentId, cursor, page, limit });
+    const result = await listInboundShipments(storeId, {
+      search,
+      status,
+      shipmentId,
+      cursor,
+      page,
+      limit,
+      sortField,
+      sortDirection,
+    });
     return Response.json(result);
   } catch (error) {
     return routeErrorResponse(error, "Failed to load Inbound Shipments.", 500);

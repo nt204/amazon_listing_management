@@ -326,6 +326,11 @@ export function ServiceFeeInputView({
     setPage(1);
   }, []);
 
+  // Reset page on date range change
+  useEffect(() => {
+    setPage(1);
+  }, [startDate, endDate]);
+
   // Fetch Service Fees Data
   const fetchServiceFees = useCallback(async () => {
     if (!selectedStoreId) {

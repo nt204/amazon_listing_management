@@ -51,7 +51,7 @@ export async function GET(request: NextRequest) {
         signature_confirmation_recommended
       FROM accounting_orders
       WHERE store_id = ${storeId}
-      ORDER BY purchase_date DESC NULLS LAST, id DESC
+      ORDER BY date DESC NULLS LAST, purchase_date DESC NULLS LAST, id DESC
     `;
 
     const storeRes = await sql<{ name: string }[]>`

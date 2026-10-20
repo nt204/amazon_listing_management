@@ -252,6 +252,68 @@ export const DEFAULT_SERVICE_FEE_INPUT_COLUMNS: ColumnConfig[] = [
   { id: "quy", label: "Quý", defaultLabel: "Quý", visible: true, align: "center", width: 70 },
 ];
 
+export const DEFAULT_SKU_WIN_COLUMNS: ColumnConfig[] = [
+  { id: "stt", label: "STT", defaultLabel: "STT", visible: true, isFrozen: true, align: "center", width: 72 },
+  { id: "product_type", label: "Product Type", defaultLabel: "Product Type", visible: true, isFrozen: true, width: 150 },
+  { id: "mockup", label: "Image", defaultLabel: "Image", visible: true, isFrozen: true, align: "center", width: 72 },
+  { id: "sku", label: "SKU", defaultLabel: "SKU", visible: true, isFrozen: true, width: 180 },
+  { id: "asin", label: "ASIN", defaultLabel: "ASIN", visible: true, align: "center", width: 135 },
+  { id: "revenue", label: "Revenue", defaultLabel: "Revenue", visible: true, align: "right", width: 120 },
+  { id: "quantity", label: "Quantity", defaultLabel: "Quantity", visible: true, align: "right", width: 85 },
+  { id: "ads_fee", label: "Ads Fee", defaultLabel: "Ads Fee", visible: true, align: "right", width: 115 },
+  { id: "basecost", label: "Basecost", defaultLabel: "Basecost", visible: true, align: "right", width: 115 },
+  { id: "amazon_fee", label: "Amazon Fee", defaultLabel: "Amazon Fee", visible: true, align: "right", width: 135 },
+  { id: "thue", label: "Thuế", defaultLabel: "Thuế", visible: true, align: "right", width: 105 },
+  { id: "promotion", label: "Promotion", defaultLabel: "Promotion", visible: true, align: "right", width: 110 },
+  { id: "return_cost", label: "Return", defaultLabel: "Return", visible: true, align: "right", width: 105 },
+  { id: "profit", label: "Profit", defaultLabel: "Profit", visible: true, align: "right", width: 125 },
+  { id: "profit_per_item", label: "Profit/item", defaultLabel: "Profit/item", visible: true, align: "right", width: 110 },
+  { id: "basecost_per_item", label: "Basecost/item", defaultLabel: "Basecost/item", visible: false, align: "right", width: 120 },
+  { id: "tacos", label: "TACOS (%)", defaultLabel: "TACOS (%)", visible: false, align: "right", width: 95 },
+  { id: "acos", label: "ACOS (%)", defaultLabel: "ACOS (%)", visible: false, align: "right", width: 95 },
+  { id: "margin", label: "MARGIN (%)", defaultLabel: "MARGIN (%)", visible: false, align: "right", width: 105 },
+  { id: "roi", label: "ROI (%)", defaultLabel: "ROI (%)", visible: false, align: "right", width: 95 },
+  { id: "revenue_ads", label: "Revenue Ads", defaultLabel: "Revenue Ads", visible: false, align: "right", width: 125 },
+  { id: "all_time_quantity", label: "Lượng bán tổng", defaultLabel: "Lượng bán tổng", visible: false, align: "right", width: 120 },
+  { id: "return_rate", label: "Tỷ lệ Return (%)", defaultLabel: "Tỷ lệ Return (%)", visible: false, align: "right", width: 115 },
+  { id: "shipped_qty", label: "Số hàng đã đi", defaultLabel: "Số hàng đã đi", visible: false, align: "right", width: 115 },
+  { id: "revenue_target", label: "Revenue mục tiêu", defaultLabel: "Revenue mục tiêu", visible: false, align: "right", width: 140 },
+  { id: "unit_target", label: "Unit mục tiêu", defaultLabel: "Unit mục tiêu", visible: false, align: "right", width: 115 },
+  { id: "spend_target", label: "Spend mục tiêu", defaultLabel: "Spend mục tiêu", visible: false, align: "right", width: 130 },
+  { id: "profit_target", label: "Profit mục tiêu", defaultLabel: "Profit mục tiêu", visible: false, align: "right", width: 130 },
+  { id: "brand", label: "Brand", defaultLabel: "Brand", visible: false, width: 120 },
+  { id: "status", label: "Trạng thái", defaultLabel: "Trạng thái", visible: false, align: "center", width: 115 },
+  { id: "niche", label: "Niche", defaultLabel: "Niche", visible: false, width: 120 },
+  { id: "pic_mkt", label: "PIC MKT", defaultLabel: "PIC MKT", visible: false, width: 110 },
+  { id: "custom_price", label: "Giá bảng mã", defaultLabel: "Giá bảng mã", visible: false, align: "right", width: 120 },
+];
+
+export const DEFAULT_FBA_DAILY_COLUMNS: ColumnConfig[] = [
+  { id: "stt", label: "STT", defaultLabel: "STT", visible: true, isFrozen: true, align: "center", width: 60 },
+  { id: "week", label: "Tuần", defaultLabel: "Tuần", visible: true, isFrozen: true, align: "center", width: 85 },
+  { id: "date", label: "Date", defaultLabel: "Date", visible: true, isFrozen: true, align: "center", width: 110 },
+  { id: "revenue", label: "Revenue", defaultLabel: "Revenue", visible: true, align: "right", width: 125 },
+  { id: "quantity", label: "Quantity", defaultLabel: "Quantity", visible: true, align: "right", width: 90 },
+  { id: "ads_fee", label: "Ads Fee", defaultLabel: "Ads Fee", visible: true, align: "right", width: 115 },
+  { id: "basecost", label: "Base Cost", defaultLabel: "Base Cost", visible: true, align: "right", width: 115 },
+  { id: "amazon_fee", label: "AMZ Fee", defaultLabel: "AMZ Fee", visible: true, align: "right", width: 125 },
+  { id: "thue", label: "Thuế", defaultLabel: "Thuế", visible: true, align: "right", width: 105 },
+  { id: "promotion", label: "Promotion", defaultLabel: "Promotion", visible: true, align: "right", width: 110 },
+  { id: "return_cost", label: "Refund", defaultLabel: "Refund", visible: true, align: "right", width: 105 },
+  { id: "profit", label: "Profit", defaultLabel: "Profit", visible: true, align: "right", width: 125 },
+  { id: "balance", label: "Balance", defaultLabel: "Balance", visible: true, align: "right", width: 120 },
+  { id: "roi", label: "ROI (%)", defaultLabel: "ROI (%)", visible: true, align: "right", width: 95 },
+  { id: "tacos", label: "TACOS (%)", defaultLabel: "TACOS (%)", visible: true, align: "right", width: 95 },
+  { id: "acos", label: "ACOS (%)", defaultLabel: "ACOS (%)", visible: true, align: "right", width: 95 },
+  { id: "margin", label: "% Profit", defaultLabel: "% Profit", visible: true, align: "right", width: 95 },
+  { id: "margin_pre_ads", label: "% Profit trước ADS", defaultLabel: "% Profit trước ADS", visible: false, align: "right", width: 135 },
+  { id: "profit_per_item", label: "Profit/item", defaultLabel: "Profit/item", visible: true, align: "right", width: 110 },
+  { id: "revenue_ads", label: "Revenue ads", defaultLabel: "Revenue ads", visible: false, align: "right", width: 125 },
+  { id: "quantity_ads", label: "Quantity (Ads)", defaultLabel: "Quantity (Ads)", visible: false, align: "right", width: 115 },
+  { id: "clicks", label: "Click", defaultLabel: "Click", visible: false, align: "right", width: 90 },
+];
+
+
 
 export function ColumnHeaderCell({
   col,
@@ -290,7 +352,7 @@ export function ColumnHeaderCell({
   onAutoFit?: (id: string) => void;
   onColumnClick?: (id: string, event: React.MouseEvent<HTMLTableCellElement>) => void;
 }) {
-  const isMovable = !!(col && !col.isFrozen && !isFrozen && draggable);
+  const isMovable = !!(col && draggable);
 
   return (
     <th
@@ -377,7 +439,7 @@ export function ColumnHeaderCell({
             window.addEventListener("pointerup", onEnd);
             window.addEventListener("pointercancel", onEnd);
           }}
-          className="absolute right-0 top-0 z-20 h-full w-2 translate-x-1/2 cursor-col-resize touch-none transition-colors hover:bg-amber-900/30 focus:bg-amber-900/30"
+          className="absolute right-0 top-0 z-[60] h-full w-2.5 translate-x-1/2 cursor-col-resize touch-none transition-colors hover:bg-amber-900/40 focus:bg-amber-900/40"
         />
       )}
     </th>
@@ -419,9 +481,9 @@ export function ColumnManagerModal({
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
 
-  // Keep in sync when modal opens or columns prop changes
   useEffect(() => {
     if (isOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setLocalColumns([...columns]);
       setSearch("");
       setNewColName("");
@@ -694,7 +756,7 @@ export function ColumnManagerModal({
             />
             <select
               value={newColType}
-              onChange={(e) => setNewColType(e.target.value as any)}
+              onChange={(e) => setNewColType(e.target.value as "text" | "number" | "date")}
               className="text-xs px-2.5 py-1.5 bg-white border border-amber-300 rounded-lg text-slate-700 outline-none"
             >
               <option value="text">Dạng chữ (Text)</option>

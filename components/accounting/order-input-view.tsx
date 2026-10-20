@@ -43,6 +43,7 @@ import {
 } from "./column-manager-modal";
 import type { ReturnStats } from "@/lib/accounting/returns-db";
 import type { ServiceFeeStats } from "@/lib/accounting/service-fees-db";
+import { PpcAmazonDatePicker, type DateRange } from "@/components/ppc/ppc-amazon-date-picker";
 
 const ImportTabLoading = () => (
   <div className="grid min-h-[420px] place-items-center rounded-xl border border-slate-200 bg-white" role="status">
@@ -91,6 +92,13 @@ function formatCurrency(val: number | null | undefined, currency = "USD"): strin
 function formatNumber(val: number | null | undefined): string {
   if (val == null || isNaN(val)) return "0";
   return new Intl.NumberFormat("en-US").format(val);
+}
+
+function getAmazonLatestAvailableDate(): string {
+  const date = new Date();
+  date.setDate(date.getDate() - 1);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 export type ImportTab = "orders" | "ads" | "return" | "service_fee";
@@ -191,8 +199,21 @@ export function OrderInputView() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [dateSort, setDateSort] = useState<"asc" | "desc">("desc");
-  const [orderStartDate, setOrderStartDate] = useState("");
-  const [orderEndDate, setOrderEndDate] = useState("");
+
+  // Amazon reports are complete through yesterday; keep all 4 tabs on the same range.
+  const importMaxDate = getAmazonLatestAvailableDate();
+  const [importDateRange, setImportDateRange] = useState<DateRange>({
+    startDate: "",
+    endDate: "",
+  });
+  const handleDateRangeChange = (newRange: DateRange) => {
+    setImportDateRange(newRange);
+    setPage(1);
+  };
+  const orderStartDate = importDateRange.startDate;
+  const orderEndDate = importDateRange.endDate;
+  const setOrderStartDate = (d: string) => setImportDateRange((prev) => ({ ...prev, startDate: d }));
+  const setOrderEndDate = (d: string) => setImportDateRange((prev) => ({ ...prev, endDate: d }));
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
   const [tableZoom, setTableZoom] = useState(90);
 
@@ -212,8 +233,10 @@ export function OrderInputView() {
   // Ads Tab State & Action Signals
   const [adsSearch, setAdsSearch] = useState("");
   const [adsDateSort, setAdsDateSort] = useState<"asc" | "desc">("desc");
-  const [adsStartDate, setAdsStartDate] = useState("");
-  const [adsEndDate, setAdsEndDate] = useState("");
+  const adsStartDate = importDateRange.startDate;
+  const adsEndDate = importDateRange.endDate;
+  const setAdsStartDate = (d: string) => setImportDateRange((prev) => ({ ...prev, startDate: d }));
+  const setAdsEndDate = (d: string) => setImportDateRange((prev) => ({ ...prev, endDate: d }));
   const [adsStats, setAdsStats] = useState({
     totalRows: 0,
     totalSpend: 0,
@@ -235,8 +258,10 @@ export function OrderInputView() {
   // Return Tab State & Action Signals
   const [returnSearch, setReturnSearch] = useState("");
   const [returnDateSort, setReturnDateSort] = useState<"asc" | "desc">("desc");
-  const [returnStartDate, setReturnStartDate] = useState("");
-  const [returnEndDate, setReturnEndDate] = useState("");
+  const returnStartDate = importDateRange.startDate;
+  const returnEndDate = importDateRange.endDate;
+  const setReturnStartDate = (d: string) => setImportDateRange((prev) => ({ ...prev, startDate: d }));
+  const setReturnEndDate = (d: string) => setImportDateRange((prev) => ({ ...prev, endDate: d }));
   const [returnStats, setReturnStats] = useState<ReturnStats>({
     totalRows: 0,
     totalAmount: 0,
@@ -257,8 +282,10 @@ export function OrderInputView() {
   // Service Fee Tab State & Action Signals
   const [serviceFeeSearch, setServiceFeeSearch] = useState("");
   const [serviceFeeDateSort, setServiceFeeDateSort] = useState<"asc" | "desc">("desc");
-  const [serviceFeeStartDate, setServiceFeeStartDate] = useState("");
-  const [serviceFeeEndDate, setServiceFeeEndDate] = useState("");
+  const serviceFeeStartDate = importDateRange.startDate;
+  const serviceFeeEndDate = importDateRange.endDate;
+  const setServiceFeeStartDate = (d: string) => setImportDateRange((prev) => ({ ...prev, startDate: d }));
+  const setServiceFeeEndDate = (d: string) => setImportDateRange((prev) => ({ ...prev, endDate: d }));
   const [serviceFeeStats, setServiceFeeStats] = useState<ServiceFeeStats>({
     totalRows: 0,
     totalAmount: 0,
@@ -1272,10 +1299,10 @@ export function OrderInputView() {
 
       {/* TABS, FILTERS & STATS UNIFIED BAR */}
       <div className="bg-slate-200/70 p-2 rounded-xl border border-slate-300 flex flex-col gap-1.5 shadow-2xs">
-        {/* Row 1: Sheet Tabs on Left, Sort + Date + Search + Zoom on Right (Compact 1 Single Row) */}
-        <div className="flex items-center justify-between gap-1.5 min-h-[34px] flex-nowrap overflow-x-auto no-scrollbar">
+        {/* Row 1: Sheet Tabs */}
+        <div className="flex items-center justify-start min-h-[34px] overflow-x-auto no-scrollbar">
           {/* Sheet Tabs */}
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="flex items-center gap-1 shrink-0 overflow-x-auto no-scrollbar py-0.5">
             {/* Tab 1: Orders */}
             <button
               type="button"
@@ -1293,7 +1320,7 @@ export function OrderInputView() {
                   activeTab === "orders" ? "bg-emerald-700 text-white" : "bg-slate-300 text-slate-700"
                 }`}
               >
-                {totalOrders}
+                {totalOrders.toLocaleString()}
               </span>
             </button>
 
@@ -1366,10 +1393,16 @@ export function OrderInputView() {
               )}
             </button>
           </div>
+        </div>
 
-          {/* Right Side Controls */}
+        <div className="w-full border-t border-slate-300/80" />
+
+        {/* Row 2: Active tab filters on the left, evaluation stats on the right */}
+        <div className="flex items-center gap-3 min-h-[32px] flex-nowrap overflow-visible">
+
+          {/* Active Tab Filters */}
           {activeTab === "orders" ? (
-            <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+            <div className="flex items-center gap-1.5 shrink-0">
               <div className="h-4 w-px bg-slate-300 select-none hidden md:block" />
 
               {/* Sort Date Toggle */}
@@ -1388,35 +1421,14 @@ export function OrderInputView() {
               </button>
 
               {/* Date range picker (Orders) */}
-              <div className="flex items-center gap-1 bg-white border border-slate-300 rounded-lg px-1.5 py-0.5 text-xs shadow-2xs">
-                <span className="text-[11px] font-semibold text-slate-500">Từ:</span>
-                <input
-                  type="date"
-                  value={orderStartDate}
-                  onChange={(e) => setOrderStartDate(e.target.value)}
-                  className="bg-transparent text-xs text-slate-700 font-medium focus:outline-hidden cursor-pointer w-[95px]"
-                />
-                <span className="text-[11px] font-semibold text-slate-500">Đến:</span>
-                <input
-                  type="date"
-                  value={orderEndDate}
-                  onChange={(e) => setOrderEndDate(e.target.value)}
-                  className="bg-transparent text-xs text-slate-700 font-medium focus:outline-hidden cursor-pointer w-[95px]"
-                />
-                {(orderStartDate || orderEndDate) && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setOrderStartDate("");
-                      setOrderEndDate("");
-                    }}
-                    className="text-slate-400 hover:text-rose-600 ml-0.5 cursor-pointer"
-                    title="Xoá lọc ngày"
-                  >
-                    <XIcon size={11} weight="bold" />
-                  </button>
-                )}
-              </div>
+              <PpcAmazonDatePicker
+                value={importDateRange}
+                onChange={handleDateRangeChange}
+                maxDate={importMaxDate}
+                align="left"
+              />
+
+
 
               {/* Quick Search Input */}
               <div className="relative w-36 sm:w-44 focus-within:!w-56 transition-all duration-200">
@@ -1471,7 +1483,7 @@ export function OrderInputView() {
               </div>
             </div>
           ) : activeTab === "ads" ? (
-            <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+            <div className="flex items-center gap-1.5 shrink-0">
               <div className="h-4 w-px bg-slate-300 select-none hidden md:block" />
 
               {/* Sort Date Toggle */}
@@ -1490,35 +1502,12 @@ export function OrderInputView() {
               </button>
 
               {/* Date range picker (Ads) */}
-              <div className="flex items-center gap-1 bg-white border border-slate-300 rounded-lg px-1.5 py-0.5 text-xs shadow-2xs">
-                <span className="text-[11px] font-semibold text-slate-500">Từ:</span>
-                <input
-                  type="date"
-                  value={adsStartDate}
-                  onChange={(e) => setAdsStartDate(e.target.value)}
-                  className="bg-transparent text-xs text-slate-700 font-medium focus:outline-hidden cursor-pointer w-[95px]"
-                />
-                <span className="text-[11px] font-semibold text-slate-500">Đến:</span>
-                <input
-                  type="date"
-                  value={adsEndDate}
-                  onChange={(e) => setAdsEndDate(e.target.value)}
-                  className="bg-transparent text-xs text-slate-700 font-medium focus:outline-hidden cursor-pointer w-[95px]"
-                />
-                {(adsStartDate || adsEndDate) && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAdsStartDate("");
-                      setAdsEndDate("");
-                    }}
-                    className="text-slate-400 hover:text-rose-600 ml-0.5 cursor-pointer"
-                    title="Xoá lọc ngày"
-                  >
-                    <XIcon size={11} weight="bold" />
-                  </button>
-                )}
-              </div>
+              <PpcAmazonDatePicker
+                value={importDateRange}
+                onChange={handleDateRangeChange}
+                maxDate={importMaxDate}
+                align="left"
+              />
 
               {/* Quick Search Input (Ads) */}
               <div className="relative w-36 sm:w-44 focus-within:!w-56 transition-all duration-200">
@@ -1573,7 +1562,7 @@ export function OrderInputView() {
               </div>
             </div>
           ) : activeTab === "return" ? (
-            <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+            <div className="flex items-center gap-1.5 shrink-0">
               <div className="h-4 w-px bg-slate-300 select-none hidden md:block" />
 
               <button
@@ -1590,35 +1579,13 @@ export function OrderInputView() {
                 <span>{returnDateSort === "desc" ? "Mới nhất" : "Cũ nhất"}</span>
               </button>
 
-              <div className="flex items-center gap-1 bg-white border border-slate-300 rounded-lg px-1.5 py-0.5 text-xs shadow-2xs">
-                <span className="text-[11px] font-semibold text-slate-500">Từ:</span>
-                <input
-                  type="date"
-                  value={returnStartDate}
-                  onChange={(e) => setReturnStartDate(e.target.value)}
-                  className="bg-transparent text-xs text-slate-700 font-medium focus:outline-hidden cursor-pointer w-[95px]"
-                />
-                <span className="text-[11px] font-semibold text-slate-500">Đến:</span>
-                <input
-                  type="date"
-                  value={returnEndDate}
-                  onChange={(e) => setReturnEndDate(e.target.value)}
-                  className="bg-transparent text-xs text-slate-700 font-medium focus:outline-hidden cursor-pointer w-[95px]"
-                />
-                {(returnStartDate || returnEndDate) && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setReturnStartDate("");
-                      setReturnEndDate("");
-                    }}
-                    className="text-slate-400 hover:text-rose-600 ml-0.5 cursor-pointer"
-                    title="Xoá lọc ngày"
-                  >
-                    <XIcon size={11} weight="bold" />
-                  </button>
-                )}
-              </div>
+              {/* Date range picker (Return) */}
+              <PpcAmazonDatePicker
+                value={importDateRange}
+                onChange={handleDateRangeChange}
+                maxDate={importMaxDate}
+                align="left"
+              />
 
               <div className="relative w-36 sm:w-44 focus-within:!w-56 transition-all duration-200">
                 <MagnifyingGlassIcon
@@ -1671,7 +1638,7 @@ export function OrderInputView() {
               </div>
             </div>
           ) : (
-            <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+            <div className="flex items-center gap-1.5 shrink-0">
               <div className="h-4 w-px bg-slate-300 select-none hidden md:block" />
 
               <button
@@ -1688,35 +1655,13 @@ export function OrderInputView() {
                 <span>{serviceFeeDateSort === "desc" ? "Mới nhất" : "Cũ nhất"}</span>
               </button>
 
-              <div className="flex items-center gap-1 bg-white border border-slate-300 rounded-lg px-1.5 py-0.5 text-xs shadow-2xs">
-                <span className="text-[11px] font-semibold text-slate-500">Từ:</span>
-                <input
-                  type="date"
-                  value={serviceFeeStartDate}
-                  onChange={(e) => setServiceFeeStartDate(e.target.value)}
-                  className="bg-transparent text-xs text-slate-700 font-medium focus:outline-hidden cursor-pointer w-[95px]"
-                />
-                <span className="text-[11px] font-semibold text-slate-500">Đến:</span>
-                <input
-                  type="date"
-                  value={serviceFeeEndDate}
-                  onChange={(e) => setServiceFeeEndDate(e.target.value)}
-                  className="bg-transparent text-xs text-slate-700 font-medium focus:outline-hidden cursor-pointer w-[95px]"
-                />
-                {(serviceFeeStartDate || serviceFeeEndDate) && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setServiceFeeStartDate("");
-                      setServiceFeeEndDate("");
-                    }}
-                    className="text-slate-400 hover:text-rose-600 ml-0.5 cursor-pointer"
-                    title="Xoá lọc ngày"
-                  >
-                    <XIcon size={11} weight="bold" />
-                  </button>
-                )}
-              </div>
+              {/* Date range picker (Service Fee) */}
+              <PpcAmazonDatePicker
+                value={importDateRange}
+                onChange={handleDateRangeChange}
+                maxDate={importMaxDate}
+                align="left"
+              />
 
               <div className="relative w-36 sm:w-44 focus-within:!w-56 transition-all duration-200">
                 <MagnifyingGlassIcon
@@ -1769,12 +1714,8 @@ export function OrderInputView() {
               </div>
             </div>
           )}
-        </div>
 
-        {/* ĐƯỜNG KẺ NGĂN CÁCH 2 DÒNG NHƯ Ở BÊN INVENTORY */}
-        <div className="w-full border-t border-slate-300/80" />
-
-        {/* Row 2: Evaluation Stats */}
+        {/* Evaluation Stats */}
         {activeTab === "orders" ? (
           <div className="flex items-center gap-2 flex-wrap text-xs text-slate-900 justify-end py-0.5 ml-auto">
             <div className="flex items-center gap-1">
@@ -1913,7 +1854,7 @@ export function OrderInputView() {
             </div>
           </div>
         )}
-
+        </div>
       </div>
 
       {visitedTabs.orders && (
@@ -2580,15 +2521,23 @@ export function OrderInputView() {
         onReset={handleResetColumns}
       />
 
-      {/* MODAL NHẬP FILE ORDER */}
+      {/* MODAL NHẬP FILE ORDER / KẾ TOÁN TỔNG HỢP */}
       {showImportModal && (
         <OrderImportModal
           isOpen={showImportModal}
           onClose={() => setShowImportModal(false)}
           storeId={selectedStoreId}
           storeName={selectedStore?.name || "Store"}
-          onSuccess={() => {
+          onSuccess={(allSheets?: boolean) => {
             fetchOrders();
+            if (allSheets) {
+              setReloadAdsSignal((s) => s + 1);
+              setReloadReturnSignal((s) => s + 1);
+              setReloadServiceFeeSignal((s) => s + 1);
+              // Bỏ lọc ngày để người dùng nhìn thấy toàn bộ dữ liệu lịch sử vừa nạp
+              setImportDateRange({ startDate: "", endDate: "" });
+              setPage(1);
+            }
             setShowImportModal(false);
           }}
           notify={notify}
@@ -2600,6 +2549,7 @@ export function OrderInputView() {
 
 /**
  * Modal Import Order file (.txt, .tsv, .csv, .xlsx, .xls)
+ * Tích hợp tự động quét & nạp trọn bộ 4 Sheet (Order, Ads, Return, Fees) từ file Excel tổng hợp
  */
 function OrderImportModal({
   isOpen,
@@ -2613,15 +2563,18 @@ function OrderImportModal({
   onClose: () => void;
   storeId: string;
   storeName: string;
-  onSuccess: () => void;
+  onSuccess: (allSheets?: boolean) => void;
   notify: (msg: string, type?: "success" | "error") => void;
 }) {
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
+  const [importAllSheets, setImportAllSheets] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
+
+  const isXlsx = file?.name ? file.name.toLowerCase().endsWith(".xlsx") || file.name.toLowerCase().endsWith(".xls") : false;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -2641,11 +2594,15 @@ function OrderImportModal({
     if (!file || !storeId) return;
     try {
       setIsUploading(true);
+      const isExcelFile = file.name.toLowerCase().endsWith(".xlsx") || file.name.toLowerCase().endsWith(".xls");
+      const useUnified = isExcelFile && importAllSheets;
+      const endpoint = useUnified ? "/api/accounting/unified-import" : "/api/accounting/orders/import";
+
       const formData = new FormData();
       formData.append("file", file);
       formData.append("store_id", storeId);
 
-      const res = await fetch("/api/accounting/orders/import", {
+      const res = await fetch(endpoint, {
         method: "POST",
         body: formData,
       });
@@ -2653,10 +2610,10 @@ function OrderImportModal({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Tải lên thất bại");
 
-      notify(data.message || `Đã nhập thành công ${data.processed} đơn hàng!`, "success");
+      notify(data.message || `Đã nhập thành công toàn bộ dữ liệu!`, "success");
       setFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
-      onSuccess();
+      onSuccess(useUnified);
     } catch (err: any) {
       notify(err.message, "error");
     } finally {
@@ -2673,7 +2630,7 @@ function OrderImportModal({
               <UploadSimpleIcon size={20} weight="bold" />
             </span>
             <div>
-              <h2 className="text-base font-bold text-slate-900">Nhập File Đầu Vào Order</h2>
+              <h2 className="text-base font-bold text-slate-900">Nhập File Kế Toán / Đầu Vào Order</h2>
               <p className="text-xs text-slate-500">Store: <span className="font-bold text-slate-800">{storeName}</span></p>
             </div>
           </div>
@@ -2740,12 +2697,32 @@ function OrderImportModal({
                   Kéo thả file vào đây hoặc <span className="text-indigo-600 underline">chọn file</span>
                 </p>
                 <p className="text-xs text-slate-400 mt-1">
-                  Hỗ trợ: Báo cáo Amazon Seller Central (file <b>.txt</b>, <b>.tsv</b>) hoặc Excel <b>.xlsx</b> (sheet "Đầu vào Order" từ file ketoan_limima).
+                  Hỗ trợ: Báo cáo Amazon (.txt, .tsv, .csv) hoặc file Excel tổng hợp <b>.xlsx</b> (chứa 4 sheet: <i>Đầu vào Order, ADS, RETURN, Service Fees</i> như ketoan_limima.xlsx).
                 </p>
               </div>
             </div>
           )}
         </div>
+
+        {/* Unified 4-Sheet Option if XLSX */}
+        {isXlsx && (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 text-xs text-emerald-950 space-y-1.5">
+            <label className="flex items-start gap-2 cursor-pointer font-bold select-none text-emerald-900">
+              <input
+                type="checkbox"
+                checked={importAllSheets}
+                onChange={(e) => setImportAllSheets(e.target.checked)}
+                className="mt-0.5 rounded border-emerald-400 text-emerald-600 focus:ring-emerald-500 h-4 w-4"
+              />
+              <div>
+                <span>Tự động quét & nạp trọn bộ cả 4 Sheet (Order, ADS, RETURN, Service Fees)</span>
+                <p className="text-[11px] font-normal text-emerald-700 mt-0.5">
+                  Đọc bằng Single-Pass Stream trực tiếp từ đĩa, cam kết <b>không bao giờ tràn RAM</b> (OOM), đọc đầy đủ 100% dòng dữ liệu và <b>tự động xóa file tạm</b> trên máy chủ ngay sau khi nạp xong.
+                </p>
+              </div>
+            </label>
+          </div>
+        )}
 
         {/* Instructions */}
         <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3.5 text-xs text-indigo-950 space-y-1">
@@ -2756,7 +2733,8 @@ function OrderImportModal({
           <ul className="list-disc list-inside text-indigo-800 space-y-0.5 pl-1 text-[11.5px]">
             <li>Tự động nhận diện tab separator của Amazon và chuẩn hóa tên cột.</li>
             <li>Tự động trích xuất cột <b>Date</b> từ <code>purchase-date</code> nếu file chưa có.</li>
-            <li>Tự động gộp / cập nhật (Upsert) theo <b>Mã đơn + SKU</b>, không lo bị trùng lặp.</li>
+            <li>Tự động gộp / cập nhật (Upsert) theo khóa chuẩn, không lo bị trùng lặp.</li>
+            <li>Sau khi nạp xong, hệ thống sẽ tự động chuyển sang chế độ <b>"Toàn bộ lịch sử"</b> để xem trọn vẹn dữ liệu.</li>
           </ul>
         </div>
 
@@ -2778,7 +2756,7 @@ function OrderImportModal({
             {isUploading ? (
               <>
                 <ArrowClockwiseIcon size={14} className="animate-spin" />
-                <span>Đang xử lý & lưu đơn hàng...</span>
+                <span>Đang stream & nạp dữ liệu (không tràn RAM)...</span>
               </>
             ) : (
               <>

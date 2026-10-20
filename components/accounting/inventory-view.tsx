@@ -2148,7 +2148,7 @@ function InventoryViewInner() {
 
   useEffect(() => {
     setShipmentPage(1);
-  }, [selectedStoreId, debouncedShipmentSearch, shipmentStatusFilter]);
+  }, [selectedStoreId, debouncedShipmentSearch, shipmentStatusFilter, dateSort.inbound]);
 
   useEffect(() => {
     setCheckShipmentPage(1);
@@ -2186,7 +2186,7 @@ function InventoryViewInner() {
 
   // 2. TanStack Query for Inbound Shipments (Server-side Page Pagination, 100/trang)
   const shipmentQuery = useQuery({
-    queryKey: ["inbound-shipments", selectedStoreId, shipmentPage, shipmentLimit, debouncedShipmentSearch, shipmentStatusFilter],
+    queryKey: ["inbound-shipments", selectedStoreId, shipmentPage, shipmentLimit, debouncedShipmentSearch, shipmentStatusFilter, dateSort.inbound.field, dateSort.inbound.direction],
     queryFn: async ({ signal }) => {
       const params = new URLSearchParams({
         store_id: selectedStoreId!,
@@ -2195,6 +2195,8 @@ function InventoryViewInner() {
       });
       if (debouncedShipmentSearch) params.set("search", debouncedShipmentSearch);
       if (shipmentStatusFilter) params.set("status", shipmentStatusFilter);
+      params.set("sort_field", dateSort.inbound.field);
+      params.set("sort_dir", dateSort.inbound.direction);
 
       const res = await fetch(`/api/accounting/inventory/inbound-shipments?${params.toString()}`, { signal });
       if (!res.ok) throw new Error("Không thể tải danh sách Inbound Shipments");
@@ -2292,7 +2294,7 @@ function InventoryViewInner() {
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<{
     success: boolean;
-    type?: "sku" | "inbound" | "check_shipment";
+    type?: "sku" | "inbound" | "check_shipment" | "monthly_base_cost";
     count?: number;
     errors?: string[];
   } | null>(null);
@@ -7052,7 +7054,7 @@ function InventoryViewInner() {
               <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3 text-xs text-indigo-900">
                 <p className="font-semibold text-indigo-800">
                   {activeTab === "monthly_base_cost"
-                    ? `Hỗ trợ file Excel chứa các cột: SKU, Hàng tồn 1/1, Trung bình giá 1/1 và Basecost Tháng 1..12. Hệ thống sẽ tự động nạp và cascade tính tiếp các tháng còn lại.`
+                    ? `Đọc trực tiếp sheet BASECOST THÁNG: giữ nguyên tồn đầu, giá đầu tháng, hàng nhập, tổng tiền, Basecost chốt và tồn cuối. Hệ thống chỉ tự tính các tháng chưa có trong file.`
                     : "Hỗ trợ đọc nhiều file cùng lúc."}
                 </p>
               </div>

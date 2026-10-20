@@ -173,8 +173,8 @@ export async function parseReturnBuffer(
     sql<{ sku: string; loai: string; pic_mkt: string; status: string; basecost_tb: number }[]>`
       SELECT sku, loai, pic_mkt, status, basecost_tb FROM accounting_sku_master WHERE store_id = ${storeId}
     `.catch(() => []),
-    sql<{ amazon_order_id: string; sku: string }[]>`
-      SELECT amazon_order_id, sku FROM accounting_orders WHERE store_id = ${storeId}
+    sql<{ amazon_order_id: string; sku: string; fulfillment_channel: string | null }[]>`
+      SELECT amazon_order_id, sku, fulfillment_channel FROM accounting_orders WHERE store_id = ${storeId}
     `.catch(() => []),
   ]);
 
@@ -190,10 +190,14 @@ export async function parseReturnBuffer(
     }
   }
 
-  const orderToSkuMap = new Map<string, string>();
+  const orderInfoMap = new Map<string, { sku: string; loai: string }>();
   for (const o of orderRows) {
-    if (o.amazon_order_id && o.sku) {
-      orderToSkuMap.set(o.amazon_order_id.trim(), o.sku.trim());
+    if (o.amazon_order_id) {
+      const isFbm = o.fulfillment_channel?.trim().toLowerCase() === "merchant";
+      orderInfoMap.set(o.amazon_order_id.trim(), {
+        sku: (o.sku || "").trim(),
+        loai: isFbm ? "FBM" : "FBA",
+      });
     }
   }
 
@@ -292,12 +296,13 @@ export async function parseReturnBuffer(
             const effectiveDate = cleanDate || new Date().toISOString().split("T")[0];
 
             let sku = String(getColVal(["sku"]) || "").trim();
-            if (!sku && orderId) {
-              sku = orderToSkuMap.get(orderId) || "";
+            const orderInfo = orderId ? orderInfoMap.get(orderId) : null;
+            if (!sku && orderInfo) {
+              sku = orderInfo.sku;
             }
 
             const master = sku ? skuMap.get(sku.toUpperCase()) : null;
-            const loai = String(getColVal(["loại", "loai"]) || master?.loai || "FBA").trim();
+            const loai = String(getColVal(["loại", "loai"]) || orderInfo?.loai || master?.loai || "FBA").trim();
             const pic = String(getColVal(["pic", "pic mkt", "mkt pic"]) || master?.pic || "").trim();
             const basecostVal = getColVal(["basecost", "chi phí gốc"]);
             const basecost = basecostVal != null ? parseReturnNumber(basecostVal) : master ? -Math.abs(master.basecost) : 0;
@@ -402,12 +407,13 @@ export async function parseReturnBuffer(
       const effectiveDate = cleanDate || new Date().toISOString().split("T")[0];
 
       let sku = getVal(skuIdx);
-      if (!sku && orderId) {
-        sku = orderToSkuMap.get(orderId) || "";
+      const orderInfo = orderId ? orderInfoMap.get(orderId) : null;
+      if (!sku && orderInfo) {
+        sku = orderInfo.sku;
       }
 
       const master = sku ? skuMap.get(sku.toUpperCase()) : null;
-      const loai = getVal(loaiIdx) || master?.loai || "FBA";
+      const loai = getVal(loaiIdx) || orderInfo?.loai || master?.loai || "FBA";
       const pic = getVal(picIdx) || master?.pic || "";
       const basecostVal = getVal(basecostIdx);
       const basecost = basecostVal ? parseReturnNumber(basecostVal) : master ? -Math.abs(master.basecost) : 0;

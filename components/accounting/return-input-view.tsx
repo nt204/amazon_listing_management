@@ -326,6 +326,11 @@ export function ReturnInputView({
     setPage(1);
   }, []);
 
+  // Reset page on date range change
+  useEffect(() => {
+    setPage(1);
+  }, [startDate, endDate]);
+
   // Fetch Return Data
   const fetchReturns = useCallback(async () => {
     if (!selectedStoreId) {

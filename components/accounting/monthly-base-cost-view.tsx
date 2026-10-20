@@ -900,7 +900,8 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
                         if (cid.startsWith("month_")) {
                           const m = Number(cid.replace("month_", ""));
                           const cell = r.months[m];
-                          const isFuture = isFutureMonth(m);
+                          const hasCost = Boolean(cell && cell.basecost && cell.basecost > 0);
+                          const isFuture = isFutureMonth(m) && !hasCost;
                           const isEditing =
                             !isFuture &&
                             editingCell?.sku === r.sku &&
@@ -936,7 +937,7 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
                                   ? `Tháng ${m}/${year} chưa tới nên chưa tính Basecost.`
                                   : `Tháng ${m}/${year}: Basecost = $${cell?.basecost?.toFixed(2) || "0.00"}${
                                       cell?.has_shipment ? " (Có chuyến hàng nhập về)" : ""
-                                    }${cell?.is_overridden ? " (User đã sửa tay)" : ""}. Nhấp đúp để sửa.`
+                                    }${cell?.is_overridden ? " (Dữ liệu đã chốt/nhập)" : ""}. Nhấp đúp để sửa.`
                               }
                             >
                               {isEditing ? (

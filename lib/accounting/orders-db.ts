@@ -59,57 +59,65 @@ export interface OrderStats {
   canceledCount: number;
 }
 
-export function cleanOrderDate(val: unknown): string | null {
+export function convertToMarketplaceDate(
+  val: unknown,
+  timeZone = "America/Los_Angeles"
+): string | null {
   if (val == null) return null;
-
-  // Excel serial date number (e.g. 45964 -> 2025-11-03)
-  if (typeof val === "number" && !isNaN(val) && val > 20000 && val < 80000) {
-    const date = new Date(Math.round((val - 25569) * 86400 * 1000));
-    if (!isNaN(date.getTime())) {
-      return date.toISOString().split("T")[0];
-    }
-  }
-
   if (val instanceof Date) {
     if (isNaN(val.getTime())) return null;
-    return val.toISOString().split("T")[0];
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(val);
   }
   let s = String(val).trim();
   if (!s || s === "—" || s === "-" || s === "null" || s === "None" || s === "undefined") return null;
 
-  // Excel serial number as string
+  // Excel serial number
   const num = parseFloat(s);
   if (!isNaN(num) && num > 20000 && num < 80000 && /^\d+(\.\d+)?$/.test(s)) {
-    const date = new Date(Math.round((num - 25569) * 86400 * 1000));
-    if (!isNaN(date.getTime())) {
-      return date.toISOString().split("T")[0];
-    }
+    const d = new Date(Math.round((num - 25569) * 86400 * 1000));
+    return isNaN(d.getTime())
+      ? null
+      : new Intl.DateTimeFormat("en-CA", {
+          timeZone,
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        }).format(d);
   }
 
-  // Handle ISO string
-  if (s.includes("T")) s = s.split("T")[0].trim();
-  if (s.includes(" 00:00:00")) s = s.split(" ")[0].trim();
-  s = s.replace(/(\s+|T)?\d{2}:\d{2}:\d{2}(\.\d+)?Z?/i, "").trim();
-
-  // YYYY-MM-DD
-  const ymd = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
-  if (ymd) {
-    return `${ymd[1]}-${ymd[2].padStart(2, "0")}-${ymd[3].padStart(2, "0")}`;
+  // Pure YYYY-MM-DD
+  const ymdOnly = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (ymdOnly) {
+    return `${ymdOnly[1]}-${ymdOnly[2].padStart(2, "0")}-${ymdOnly[3].padStart(2, "0")}`;
   }
 
   // DD/MM/YYYY
-  const dmy = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
-  if (dmy) {
-    return `${dmy[3]}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
+  const dmyOnly = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (dmyOnly) {
+    return `${dmyOnly[3]}-${dmyOnly[2].padStart(2, "0")}-${dmyOnly[1].padStart(2, "0")}`;
   }
 
-  // Try standard parse to ensure valid date
+  // Timestamp string (ISO or with timezone offset)
   const parsed = new Date(s);
   if (!isNaN(parsed.getTime())) {
-    return parsed.toISOString().split("T")[0];
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(parsed);
   }
 
   return null;
+}
+
+export function cleanOrderDate(val: unknown): string | null {
+  return convertToMarketplaceDate(val, "America/Los_Angeles");
 }
 
 export function cleanOrderNumber(val: unknown): number | null {
@@ -152,10 +160,10 @@ export async function listOrders(
   const conditions = [sql`store_id = ${storeId}`];
 
   if (startDate) {
-    conditions.push(sql`COALESCE(date, purchase_date::date) >= ${startDate}::date`);
+    conditions.push(sql`date >= ${startDate}::date`);
   }
   if (endDate) {
-    conditions.push(sql`COALESCE(date, purchase_date::date) <= ${endDate}::date`);
+    conditions.push(sql`date <= ${endDate}::date`);
   }
 
   if (search) {
@@ -248,8 +256,8 @@ export async function listOrders(
     WHERE ${whereClause}
     ORDER BY ${
       dateSort === "asc"
-        ? sql`purchase_date ASC NULLS FIRST, date ASC NULLS FIRST, id ASC`
-        : sql`purchase_date DESC NULLS LAST, date DESC NULLS LAST, id DESC`
+        ? sql`date ASC NULLS FIRST, purchase_date ASC NULLS FIRST, id ASC`
+        : sql`date DESC NULLS LAST, purchase_date DESC NULLS LAST, id DESC`
     }
     LIMIT ${limit} OFFSET ${offset}
   `;
@@ -371,7 +379,8 @@ export async function deleteOrder(storeId: string, id: string): Promise<boolean>
  */
 export function normalizeOrderRow(
   raw: Record<string, any>,
-  storeId: string
+  storeId: string,
+  fallbackDate?: string | null
 ): Partial<OrderItem> | null {
   const getVal = (...keys: string[]): any => {
     for (const k of keys) {
@@ -394,10 +403,13 @@ export function normalizeOrderRow(
 
   const orderItemId = rawOrderItemId ? String(rawOrderItemId).trim() : "";
 
-  const purchaseDateRaw = getVal("purchase-date", "purchase_date", "order-date", "Date", "date");
+  const purchaseDateRaw = getVal("purchase-date", "purchase_date", "order-date");
   let dateVal = cleanOrderDate(getVal("Date", "date"));
+  if (!dateVal && fallbackDate) {
+    dateVal = cleanOrderDate(fallbackDate);
+  }
   if (!dateVal && purchaseDateRaw) {
-    dateVal = cleanOrderDate(purchaseDateRaw);
+    dateVal = convertToMarketplaceDate(purchaseDateRaw, "America/Los_Angeles");
   }
 
   const parseIsoOrDate = (val: any): string | null => {
@@ -473,6 +485,20 @@ export async function parseOrdersBuffer(
 ): Promise<Partial<OrderItem>[]> {
   const lowerName = filename.toLowerCase();
 
+  // Extract fallback date from filename if available (e.g. "02_AllOrders_2026-10-18.tsv" -> "2026-10-18")
+  let fileFallbackDate: string | null = null;
+  const isoMatch = filename.match(/\b(\d{4}[-_/]\d{1,2}[-_/]\d{1,2})\b/);
+  if (isoMatch) {
+    fileFallbackDate = cleanOrderDate(isoMatch[1]);
+  } else {
+    const textDateMatch = filename.match(
+      /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[ _-](\d{1,2})[ _-](\d{4})\b/i
+    );
+    if (textDateMatch) {
+      fileFallbackDate = convertToMarketplaceDate(`${textDateMatch[1]} ${textDateMatch[2]} ${textDateMatch[3]}`);
+    }
+  }
+
   // Excel file (.xlsx, .xls)
   if (lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls")) {
     // 1. Tối ưu cực nhanh cho .xlsx bằng streaming và kiểm tra sheet name qua JSZip
@@ -533,7 +559,7 @@ export async function parseOrdersBuffer(
                       rowData[h] = cellVal;
                     }
                   });
-                  const normalized = normalizeOrderRow(rowData, storeId);
+                  const normalized = normalizeOrderRow(rowData, storeId, fileFallbackDate);
                   if (normalized) rows.push(normalized);
                 }
               }
@@ -589,7 +615,7 @@ export async function parseOrdersBuffer(
             rowData[header] = val;
           }
         });
-        const normalized = normalizeOrderRow(rowData, storeId);
+        const normalized = normalizeOrderRow(rowData, storeId, fileFallbackDate);
         if (normalized) rows.push(normalized);
       }
     });
@@ -639,7 +665,7 @@ export async function parseOrdersBuffer(
     for (let h = 0; h < headers.length; h++) {
       rowData[headers[h]] = values[h] !== undefined ? values[h] : null;
     }
-    const normalized = normalizeOrderRow(rowData, storeId);
+    const normalized = normalizeOrderRow(rowData, storeId, fileFallbackDate);
     if (normalized) rows.push(normalized);
   }
 
