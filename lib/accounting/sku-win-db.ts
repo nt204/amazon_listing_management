@@ -139,7 +139,7 @@ export async function listSkuWin(
     WITH orders_filtered AS (
       SELECT 
         o.sku,
-        COUNT(DISTINCT COALESCE(o.amazon_order_id, o.id::text)) as total_order_count,
+        COUNT(DISTINCT CASE WHEN COALESCE(o.item_price, 0) > 0 THEN COALESCE(o.amazon_order_id, o.id::text) END) as total_order_count,
         SUM(COALESCE(o.quantity, 1)) as total_qty,
         SUM(
           COALESCE(o.item_price, 0) * (
@@ -229,7 +229,7 @@ export async function listSkuWin(
     orders_compare AS (
       SELECT 
         o.sku,
-        COUNT(DISTINCT COALESCE(o.amazon_order_id, o.id::text)) as compare_order_count,
+        COUNT(DISTINCT CASE WHEN COALESCE(o.item_price, 0) > 0 THEN COALESCE(o.amazon_order_id, o.id::text) END) as compare_order_count,
         SUM(COALESCE(o.quantity, 1)) as compare_qty,
         SUM(COALESCE(o.item_price, 0) * (CASE WHEN o.currency = 'CAD' THEN 0.738 WHEN o.currency = 'MXN' THEN 0.056 ELSE 1.0 END)) as compare_rev,
         SUM(COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, sm.basecost_tb, 0)) as compare_basecost,
