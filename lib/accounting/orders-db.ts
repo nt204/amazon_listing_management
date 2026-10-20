@@ -66,6 +66,10 @@ export function convertToMarketplaceDate(
   if (val == null) return null;
   if (val instanceof Date) {
     if (isNaN(val.getTime())) return null;
+    // Date-only from Excel (midnight UTC): keep UTC date directly to avoid -1 day timezone shift!
+    if (val.getUTCHours() === 0 && val.getUTCMinutes() === 0 && val.getUTCSeconds() === 0) {
+      return val.toISOString().split("T")[0];
+    }
     return new Intl.DateTimeFormat("en-CA", {
       timeZone,
       year: "numeric",
@@ -98,6 +102,9 @@ export function convertToMarketplaceDate(
   // Timestamp string (ISO or with timezone offset)
   const parsed = new Date(s);
   if (!isNaN(parsed.getTime())) {
+    if (parsed.getUTCHours() === 0 && parsed.getUTCMinutes() === 0 && parsed.getUTCSeconds() === 0) {
+      return parsed.toISOString().split("T")[0];
+    }
     return new Intl.DateTimeFormat("en-CA", {
       timeZone,
       year: "numeric",
