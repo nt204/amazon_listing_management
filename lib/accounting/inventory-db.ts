@@ -1004,6 +1004,50 @@ export async function upsertInboundShipmentItem(
       ${changedBy},
       NOW()
     )
+    ON CONFLICT (
+      store_id,
+      LOWER(BTRIM(sku)),
+      LOWER(COALESCE(
+        NULLIF(BTRIM(shipment_id), ''),
+        'lot:' || NULLIF(BTRIM(ten_lo_hang), '')
+      ))
+    )
+    WHERE deleted_at IS NULL
+      AND (
+        NULLIF(BTRIM(shipment_id), '') IS NOT NULL
+        OR NULLIF(BTRIM(ten_lo_hang), '') IS NOT NULL
+      )
+    DO UPDATE SET
+      sku_id = COALESCE(EXCLUDED.sku_id, accounting_inbound_shipments.sku_id),
+      brand = EXCLUDED.brand,
+      sup = EXCLUDED.sup,
+      ngay_request = EXCLUDED.ngay_request,
+      product_type = EXCLUDED.product_type,
+      mockup = EXCLUDED.mockup,
+      sku = EXCLUDED.sku,
+      quantity = EXCLUDED.quantity,
+      line_ship = EXCLUDED.line_ship,
+      base_cost_per_unit = EXCLUDED.base_cost_per_unit,
+      card = EXCLUDED.card,
+      tag = EXCLUDED.tag,
+      shipping_fee = EXCLUDED.shipping_fee,
+      hop_tui = EXCLUDED.hop_tui,
+      final_basecost = EXCLUDED.final_basecost,
+      total_basecost = EXCLUDED.total_basecost,
+      ngay_thanh_toan = EXCLUDED.ngay_thanh_toan,
+      ten_lo_hang = EXCLUDED.ten_lo_hang,
+      shipment_id = EXCLUDED.shipment_id,
+      ngay_di = EXCLUDED.ngay_di,
+      ngay_den = EXCLUDED.ngay_den,
+      amazon_received = EXCLUDED.amazon_received,
+      tinh_trang_hang_den_kho = EXCLUDED.tinh_trang_hang_den_kho,
+      status = EXCLUDED.status,
+      so_luong_amazon_nhan = EXCLUDED.so_luong_amazon_nhan,
+      discrepancy = EXCLUDED.discrepancy,
+      note = EXCLUDED.note,
+      trang_thai = EXCLUDED.trang_thai,
+      last_changed_by = EXCLUDED.last_changed_by,
+      updated_at = NOW()
     RETURNING
       id, store_id, sku_id, brand, sup, ngay_request, product_type, mockup,
       sku, quantity, line_ship, base_cost_per_unit::float, card::float,
