@@ -866,9 +866,14 @@ export async function upsertInboundShipmentItem(
       (data.hop_tui || 0));
 
   const totalBaseCost = data.total_basecost ?? finalBaseCost * (data.quantity || 0);
-  const discrepancy =
-    data.discrepancy ??
-    (data.quantity || 0) - (data.so_luong_amazon_nhan ?? data.amazon_received ?? 0);
+  const isStarShipment = Boolean(data.shipment_id?.trim().toLowerCase().startsWith("star"));
+  const effectiveSoLuongAmazonNhan = isStarShipment
+    ? (data.quantity || 0)
+    : (data.so_luong_amazon_nhan ?? null);
+  const discrepancy = isStarShipment
+    ? 0
+    : (data.discrepancy ??
+      ((data.quantity || 0) - (effectiveSoLuongAmazonNhan ?? data.amazon_received ?? 0)));
 
   let resolvedSkuId = data.sku_id ?? null;
   if (!resolvedSkuId && data.sku?.trim()) {
@@ -913,7 +918,7 @@ export async function upsertInboundShipmentItem(
         amazon_received = ${data.amazon_received ?? null},
         tinh_trang_hang_den_kho = ${data.tinh_trang_hang_den_kho ?? null},
         status = ${data.status ?? null},
-        so_luong_amazon_nhan = ${data.so_luong_amazon_nhan ?? null},
+        so_luong_amazon_nhan = ${effectiveSoLuongAmazonNhan},
         discrepancy = ${discrepancy},
         note = ${data.note ?? null},
         trang_thai = ${data.trang_thai ?? null},
@@ -992,7 +997,7 @@ export async function upsertInboundShipmentItem(
       ${data.amazon_received ?? null},
       ${data.tinh_trang_hang_den_kho ?? null},
       ${data.status ?? null},
-      ${data.so_luong_amazon_nhan ?? null},
+      ${effectiveSoLuongAmazonNhan},
       ${discrepancy},
       ${data.note ?? null},
       ${data.trang_thai ?? null},
@@ -1085,6 +1090,30 @@ export async function patchInboundShipmentField(
       custom_fields, created_at::text, updated_at::text
   `;
   if (!rows[0]) throw new Error("Không tìm thấy lô hàng cần cập nhật.");
+
+  // Với shipment STAR: luôn giữ cột Số lượng Amazon nhận bằng quantity và discrepancy = 0
+  if (rows[0].shipment_id?.trim().toLowerCase().startsWith("star")) {
+    if (field === "quantity" || field === "shipment_id" || field === "so_luong_amazon_nhan") {
+      const synced = await sql<InboundShipmentItem[]>`
+        UPDATE accounting_inbound_shipments
+        SET
+          so_luong_amazon_nhan = COALESCE(quantity, 0),
+          discrepancy = 0,
+          updated_at = NOW()
+        WHERE id = ${id} AND store_id = ${storeId}
+        RETURNING
+          id, store_id, sku_id, brand, sup, ngay_request, product_type, mockup,
+          sku, quantity, line_ship, base_cost_per_unit::float, card::float,
+          tag::float, shipping_fee::float, hop_tui::float, final_basecost::float,
+          total_basecost::float, ngay_thanh_toan, ten_lo_hang, shipment_id,
+          ngay_di, ngay_den, amazon_received, tinh_trang_hang_den_kho, status,
+          so_luong_amazon_nhan, discrepancy, note, trang_thai,
+          custom_fields, created_at::text, updated_at::text
+      `;
+      if (synced[0]) return synced[0];
+    }
+  }
+
   return rows[0];
 }
 
@@ -2295,8 +2324,10 @@ export async function importInboundShipmentsFromWorkbook(
     // Đồng nhất dữ liệu: nếu người dùng gõ 1 trong 2 cột thì tự động fallback cho cột còn lại
     const tinh_trang_hang_den_kho = raw_tinh_trang || raw_status || null;
     const status = raw_status || raw_tinh_trang || null;
-    const so_luong_amazon_nhan = parseInteger(rowValues["so_luong_amazon_nhan"]);
-    const discrepancy = parseInteger(rowValues["discrepancy"]);
+    const isStarShipment = Boolean(shipment_id?.trim().toLowerCase().startsWith("star"));
+    const raw_so_luong_amazon_nhan = parseInteger(rowValues["so_luong_amazon_nhan"]);
+    const so_luong_amazon_nhan = isStarShipment ? (quantity || 0) : raw_so_luong_amazon_nhan;
+    const discrepancy = isStarShipment ? 0 : parseInteger(rowValues["discrepancy"]);
     const note = (rowValues["note"] as string) || null;
     const trang_thai = (rowValues["trang_thai"] as string) || null;
 
@@ -3041,14 +3072,20 @@ export async function syncCheckShipmentsToInbound(
   const updatedRows = await sql<{ id: string }[]>`
     UPDATE accounting_inbound_shipments s
     SET
-      so_luong_amazon_nhan = c.units_located,
+      so_luong_amazon_nhan = CASE
+        WHEN LOWER(TRIM(s.shipment_id)) LIKE 'star%' THEN COALESCE(s.quantity, 0)
+        ELSE c.units_located
+      END,
       status = c.status,
       tinh_trang_hang_den_kho = c.status,
       ngay_di = CASE
         WHEN c.created_date IS NOT NULL AND TRIM(c.created_date) != '' THEN c.created_date
         ELSE s.ngay_di
       END,
-      discrepancy = COALESCE(s.quantity, 0) - COALESCE(c.units_located, 0),
+      discrepancy = CASE
+        WHEN LOWER(TRIM(s.shipment_id)) LIKE 'star%' THEN 0
+        ELSE COALESCE(s.quantity, 0) - COALESCE(c.units_located, 0)
+      END,
       last_changed_by = ${changedBy},
       updated_at = NOW()
     FROM (
@@ -3069,13 +3106,39 @@ export async function syncCheckShipmentsToInbound(
       AND s.deleted_at IS NULL
       ${idFilter}
       AND (
-        s.so_luong_amazon_nhan IS DISTINCT FROM c.units_located OR
+        s.so_luong_amazon_nhan IS DISTINCT FROM (
+          CASE
+            WHEN LOWER(TRIM(s.shipment_id)) LIKE 'star%' THEN COALESCE(s.quantity, 0)
+            ELSE c.units_located
+          END
+        ) OR
         s.status IS DISTINCT FROM c.status OR
         s.tinh_trang_hang_den_kho IS DISTINCT FROM c.status OR
         (c.created_date IS NOT NULL AND TRIM(c.created_date) != '' AND s.ngay_di IS DISTINCT FROM c.created_date) OR
-        s.discrepancy IS DISTINCT FROM (COALESCE(s.quantity, 0) - COALESCE(c.units_located, 0))
+        s.discrepancy IS DISTINCT FROM (
+          CASE
+            WHEN LOWER(TRIM(s.shipment_id)) LIKE 'star%' THEN 0
+            ELSE COALESCE(s.quantity, 0) - COALESCE(c.units_located, 0)
+          END
+        )
       )
     RETURNING s.id
+  `;
+
+  // Luôn đảm bảo toàn bộ shipment STAR trong kho có so_luong_amazon_nhan = quantity và discrepancy = 0
+  await sql`
+    UPDATE accounting_inbound_shipments
+    SET
+      so_luong_amazon_nhan = COALESCE(quantity, 0),
+      discrepancy = 0,
+      updated_at = NOW()
+    WHERE store_id = ${storeId}
+      AND deleted_at IS NULL
+      AND LOWER(TRIM(shipment_id)) LIKE 'star%'
+      AND (
+        so_luong_amazon_nhan IS DISTINCT FROM COALESCE(quantity, 0)
+        OR discrepancy IS DISTINCT FROM 0
+      )
   `;
 
   return { updatedCount: updatedRows.length };

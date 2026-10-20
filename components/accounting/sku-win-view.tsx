@@ -952,7 +952,7 @@ export function SkuWinView() {
                   {visibleColumns.map((col) => {
                     const f = getCellFreezeProps(col.id, true);
                     const isSorted = sortField === col.id;
-                    const isKeyBoldCol = col.id === "stt" || col.id === "product_type" || col.id === "mockup" || col.id === "sku";
+                    const isKeyBoldCol = col.id === "stt" || col.id === "mockup" || col.id === "sku";
                     let displayColLabel = (col.label || "").replace(/\s*\(\$\)/g, "").trim();
                     if (col.id === "revenue" && (displayColLabel.toLowerCase() === "revenue" || !displayColLabel)) {
                       displayColLabel = "Revenue";
@@ -1055,7 +1055,7 @@ export function SkuWinView() {
                   <tr className="bg-[#fffbeb] text-slate-900 border-b-2 border-amber-500/80 text-xs select-none shadow-2xs">
                     {visibleColumns.map((col) => {
                       const f = getCellFreezeProps(col.id, true);
-                      const isKeyBoldCol = col.id === "stt" || col.id === "product_type" || col.id === "mockup" || col.id === "sku";
+                      const isKeyBoldCol = col.id === "stt" || col.id === "mockup" || col.id === "sku";
                       const isProfitCol = col.id === "profit";
                       const bgStyle = f.isFrozen ? { backgroundColor: "#fffbeb" } : {};
 
@@ -1254,7 +1254,7 @@ export function SkuWinView() {
                       >
                         {visibleColumns.map((col) => {
                           const f = getCellFreezeProps(col.id, false);
-                          const isKeyBoldCol = col.id === "stt" || col.id === "product_type" || col.id === "mockup" || col.id === "sku";
+                          const isKeyBoldCol = col.id === "stt" || col.id === "mockup" || col.id === "sku";
                           const isProfitCol = col.id === "profit";
                           const bgStyle = f.isFrozen ? { backgroundColor: isEven ? "#ffffff" : "#f8fafc" } : {};
 
@@ -1287,7 +1287,7 @@ export function SkuWinView() {
 
                               {/* Product Type */}
                               {col.id === "product_type" && (
-                                <span className="font-bold text-slate-800">{item.product_type || "—"}</span>
+                                <span className="font-normal text-slate-800">{item.product_type?.toLowerCase() || "—"}</span>
                               )}
 
                               {/* Image / Mockup */}
