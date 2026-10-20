@@ -66,6 +66,11 @@ export function convertToMarketplaceDate(
   if (val == null) return null;
   if (val instanceof Date) {
     if (isNaN(val.getTime())) return null;
+    // Nếu là đối tượng Date lúc 00:00:00 UTC (phổ biến khi đọc ô Date từ file Excel),
+    // không trừ timezone vì sẽ làm lùi ngày sang ngày hôm trước!
+    if (val.getUTCHours() === 0 && val.getUTCMinutes() === 0 && val.getUTCSeconds() === 0) {
+      return val.toISOString().split("T")[0];
+    }
     return new Intl.DateTimeFormat("en-CA", {
       timeZone,
       year: "numeric",
@@ -98,6 +103,9 @@ export function convertToMarketplaceDate(
   // Timestamp string (ISO or with timezone offset)
   const parsed = new Date(s);
   if (!isNaN(parsed.getTime())) {
+    if (parsed.getUTCHours() === 0 && parsed.getUTCMinutes() === 0 && parsed.getUTCSeconds() === 0 && !s.includes("T")) {
+      return parsed.toISOString().split("T")[0];
+    }
     return new Intl.DateTimeFormat("en-CA", {
       timeZone,
       year: "numeric",
@@ -397,12 +405,15 @@ export function normalizeOrderRow(
   const orderItemId = rawOrderItemId ? String(rawOrderItemId).trim() : "";
 
   const purchaseDateRaw = getVal("purchase-date", "purchase_date", "order-date");
-  let dateVal = cleanOrderDate(getVal("Date", "date"));
+  let dateVal: string | null = null;
+  if (purchaseDateRaw) {
+    dateVal = convertToMarketplaceDate(purchaseDateRaw, "America/Los_Angeles");
+  }
+  if (!dateVal) {
+    dateVal = cleanOrderDate(getVal("Date", "date"));
+  }
   if (!dateVal && fallbackDate) {
     dateVal = cleanOrderDate(fallbackDate);
-  }
-  if (!dateVal && purchaseDateRaw) {
-    dateVal = convertToMarketplaceDate(purchaseDateRaw, "America/Los_Angeles");
   }
 
   const parseIsoOrDate = (val: any): string | null => {
@@ -786,6 +797,22 @@ export async function batchUpsertOrders(
     `;
 
     totalProcessed += validRows.length;
+  }
+
+  // Tự động dọn dẹp các dòng lịch sử trống order_item_id nếu đã có dòng mang order_item_id thực tế
+  if (totalProcessed > 0) {
+    await sql`
+      DELETE FROM accounting_orders o1
+      WHERE o1.store_id = ${storeId}
+        AND o1.order_item_id = ''
+        AND EXISTS (
+          SELECT 1 FROM accounting_orders o2
+          WHERE o2.store_id = o1.store_id
+            AND o2.amazon_order_id = o1.amazon_order_id
+            AND o2.sku = o1.sku
+            AND o2.order_item_id != ''
+        )
+    `;
   }
 
   return { count: totalProcessed };
