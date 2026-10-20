@@ -163,7 +163,6 @@ export async function listSkuWin(
         AND mbc.sku = o.sku 
         AND mbc.period = to_char(o.date, 'YYYY-MM')
       WHERE o.store_id = ${storeId}
-        AND (o.fulfillment_channel = 'Amazon' OR o.fulfillment_channel IS NULL)
         AND (o.order_status != 'Cancelled' OR o.order_status IS NULL)
         ${hasDateFilter ? sql`AND o.date >= ${startDate}::date AND o.date <= ${endDate}::date` : sql``}
       GROUP BY o.sku
@@ -172,7 +171,6 @@ export async function listSkuWin(
       SELECT sku, SUM(COALESCE(quantity, 1)) as all_time_qty
       FROM accounting_orders
       WHERE store_id = ${storeId}
-        AND (fulfillment_channel = 'Amazon' OR fulfillment_channel IS NULL)
         AND (order_status != 'Cancelled' OR order_status IS NULL)
       GROUP BY sku
     ),
@@ -244,7 +242,6 @@ export async function listSkuWin(
         AND mbc.sku = o.sku 
         AND mbc.period = to_char(o.date, 'YYYY-MM')
       WHERE o.store_id = ${storeId}
-        AND (o.fulfillment_channel = 'Amazon' OR o.fulfillment_channel IS NULL)
         AND (o.order_status != 'Cancelled' OR o.order_status IS NULL)
         AND o.date >= ${compareStartDate}::date 
         AND o.date <= ${compareEndDate}::date
