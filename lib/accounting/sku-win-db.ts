@@ -147,7 +147,7 @@ export async function listSkuWin(
           COALESCE(o.item_price, 0) * (
             CASE 
               WHEN o.currency = 'CAD' THEN 0.738 
-              WHEN o.currency = 'MXN' THEN 0.056 
+              WHEN o.currency = 'MXN' THEN 0.051
               ELSE 1.0 
             END
           )
@@ -156,7 +156,7 @@ export async function listSkuWin(
           (COALESCE(o.item_promotion_discount, 0) + COALESCE(o.ship_promotion_discount, 0)) * (
             CASE 
               WHEN o.currency = 'CAD' THEN 0.738 
-              WHEN o.currency = 'MXN' THEN 0.056 
+              WHEN o.currency = 'MXN' THEN 0.051
               ELSE 1.0 
             END
           )
@@ -171,7 +171,8 @@ export async function listSkuWin(
         AND mbc.sku = o.sku 
         AND mbc.period = to_char(o.date, 'YYYY-MM')
       WHERE o.store_id = ${storeId}
-        AND (o.order_status != 'Cancelled' OR o.order_status IS NULL)
+        AND o.fulfillment_channel = 'Amazon'
+        AND o.currency IN ('USD', 'CAD', 'MXN')
         AND o.item_price IS NOT NULL
         ${hasDateFilter ? sql`AND o.date >= ${startDate}::date AND o.date <= ${endDate}::date` : sql``}
       GROUP BY o.sku
@@ -197,25 +198,10 @@ export async function listSkuWin(
       SELECT 
         r.sku,
         COUNT(*) as return_count,
-        SUM(
-          GREATEST(
-            0, 
-            ABS(COALESCE(r.total, 0)) - COALESCE(NULLIF(ABS(r.basecost), 0), mbc.basecost_thang, sm.basecost_tb, 0)
-          )
-        ) as return_total
+        ABS(SUM(COALESCE(r.return_sau_basecost, 0))) as return_total
       FROM accounting_returns r
-      LEFT JOIN accounting_sku_master sm ON sm.store_id = r.store_id AND sm.sku = r.sku
-      LEFT JOIN LATERAL (
-        SELECT fulfillment_channel 
-        FROM accounting_orders o 
-        WHERE o.store_id = r.store_id AND o.amazon_order_id = r.order_id 
-        LIMIT 1
-      ) ord ON true
-      LEFT JOIN accounting_monthly_base_cost mbc 
-        ON mbc.store_id = r.store_id 
-        AND mbc.sku = r.sku
-        AND mbc.period = to_char(r.date, 'YYYY-MM')
       WHERE r.store_id = ${storeId}
+        AND UPPER(COALESCE(r.loai, 'FBA')) = 'FBA'
         ${hasDateFilter ? sql`AND r.date >= ${startDate}::date AND r.date <= ${endDate}::date` : sql``}
       GROUP BY r.sku
     ),
@@ -233,13 +219,13 @@ export async function listSkuWin(
         o.sku,
         COUNT(DISTINCT CASE WHEN COALESCE(o.item_price, 0) > 0 THEN COALESCE(o.amazon_order_id, o.id::text) END) as compare_order_count,
         SUM(COALESCE(o.quantity, 1)) as compare_qty,
-        SUM(COALESCE(o.item_price, 0) * (CASE WHEN o.currency = 'CAD' THEN 0.738 WHEN o.currency = 'MXN' THEN 0.056 ELSE 1.0 END)) as compare_rev,
+        SUM(COALESCE(o.item_price, 0) * (CASE WHEN o.currency = 'CAD' THEN 0.738 WHEN o.currency = 'MXN' THEN 0.051 ELSE 1.0 END)) as compare_rev,
         SUM(COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, sm.basecost_tb, 0)) as compare_basecost,
         SUM(
           (COALESCE(o.item_promotion_discount, 0) + COALESCE(o.ship_promotion_discount, 0)) * (
             CASE 
               WHEN o.currency = 'CAD' THEN 0.738 
-              WHEN o.currency = 'MXN' THEN 0.056 
+              WHEN o.currency = 'MXN' THEN 0.051
               ELSE 1.0 
             END
           )
@@ -251,7 +237,8 @@ export async function listSkuWin(
         AND mbc.sku = o.sku 
         AND mbc.period = to_char(o.date, 'YYYY-MM')
       WHERE o.store_id = ${storeId}
-        AND (o.order_status != 'Cancelled' OR o.order_status IS NULL)
+        AND o.fulfillment_channel = 'Amazon'
+        AND o.currency IN ('USD', 'CAD', 'MXN')
         AND o.date >= ${compareStartDate}::date 
         AND o.date <= ${compareEndDate}::date
       GROUP BY o.sku
