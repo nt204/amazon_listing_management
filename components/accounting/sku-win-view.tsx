@@ -611,7 +611,9 @@ export function SkuWinView() {
             left: `${offset}px`,
             zIndex: 20,
           },
-          className: isBoundary ? "border-r-2 border-r-amber-500/80 shadow-[2px_0_5px_rgba(0,0,0,0.06)]" : "",
+          className: isBoundary
+            ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]"
+            : "",
         });
         offset += widthNum;
       } else {
@@ -1018,8 +1020,8 @@ export function SkuWinView() {
                         isFrozen={f.isFrozen}
                         isBoundary={f.isBoundary}
                         style={f.style}
-                        className={`py-1.5 px-2 text-xs bg-[#ff9900] text-slate-900 border-r border-amber-600/70 select-none ${isKeyBoldCol ? "font-bold text-slate-950" : "font-normal text-slate-900"
-                          } ${col.align === "center" ? "text-center" : col.align === "right" ? "text-right" : "text-left"} ${f.className}`}
+                        className={`py-1.5 px-2 text-xs bg-[#f59e0b] text-slate-950 border-r border-amber-600/70 select-none ${isKeyBoldCol ? "font-bold text-slate-950" : "font-normal text-slate-900"
+                          } ${col.align === "center" ? "text-center" : col.align === "right" ? "text-right" : "text-left"}`}
                         draggable={true}
                         isDragging={headerDragId === col.id}
                         isDragOver={headerDragOverId === col.id}
@@ -1103,7 +1105,7 @@ export function SkuWinView() {
 
                 {/* ROW 2: TOTAL / SUM ROW ĐỨNG NGAY TRÊN ĐẦU MỖI CỘT TƯƠNG ỨNG */}
                 {stats && (
-                  <tr className="bg-[#fffbeb] text-slate-900 border-b-2 border-amber-500/80 text-xs select-none shadow-2xs">
+                  <tr className="bg-[#fffbeb] text-slate-900 border-b border-amber-300 text-xs select-none shadow-2xs">
                     {visibleColumns.map((col) => {
                       const f = getCellFreezeProps(col.id, true);
                       const isKeyBoldCol = col.id === "stt" || col.id === "mockup" || col.id === "sku";

@@ -310,7 +310,11 @@ export function FbaDailyView() {
           left: `${leftOffset}px`,
           zIndex: isHeader ? 30 : 20,
         },
-        className: isLast ? "border-r-2 border-r-amber-400 shadow-sm" : "",
+        className: isLast
+          ? (isHeader
+              ? "border-r-2 border-r-amber-700/80 shadow-sm"
+              : "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]")
+          : "",
       };
     },
     [frozenColumns, visibleColumns]
@@ -640,7 +644,7 @@ export function FbaDailyView() {
 
               {/* ROW 2: STICKY TOTAL ROW RIGHT BELOW HEADERS */}
               {stats && (
-                <tr className="bg-[#fffbeb] text-slate-900 border-b-2 border-amber-500/80 text-xs select-none shadow-2xs">
+                <tr className="bg-[#fffbeb] text-slate-900 border-b border-amber-300 text-xs select-none shadow-2xs">
                   {visibleColumns.map((col) => {
                     const f = getCellFreezeProps(col.id, true);
                     const bgStyle = f.isFrozen ? { backgroundColor: "#fffbeb" } : {};

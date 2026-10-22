@@ -377,9 +377,7 @@ export function ColumnHeaderCell({
       }}
       title={isMovable ? "Kéo thả tiêu đề cột này để đổi vị trí trực tiếp trên bảng" : undefined}
       className={`relative group/th select-none transition-all ${
-        isFrozen ? "bg-[#f59e0b] text-slate-950" : ""
-      } ${
-        isBoundary ? "border-r-2 !border-r-amber-900" : ""
+        isBoundary ? "border-r-2 border-r-amber-700/80 shadow-[2px_0_4px_rgba(0,0,0,0.06)]" : ""
       } ${
         isMovable ? "cursor-grab active:cursor-grabbing hover:brightness-105" : onColumnClick ? "cursor-pointer hover:brightness-105" : ""
       } ${
