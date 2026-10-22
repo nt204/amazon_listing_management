@@ -248,7 +248,7 @@ export async function listFbaDaily(
     return {
       id: dateStr,
       date: dateStr,
-      week: `Tuần ${weekNum}`,
+      week: `T${weekNum}`,
       month: monthStr,
       revenue,
       quantity,

@@ -288,6 +288,10 @@ export const DEFAULT_SKU_WIN_COLUMNS: ColumnConfig[] = [
   { id: "custom_price", label: "Giá bảng mã", defaultLabel: "Giá bảng mã", visible: false, align: "right", width: 120 },
 ];
 
+export const DEFAULT_SKU_TEST_COLUMNS: ColumnConfig[] = [
+  ...DEFAULT_SKU_WIN_COLUMNS.map((col) => ({ ...col })),
+];
+
 export const DEFAULT_FBA_DAILY_COLUMNS: ColumnConfig[] = [
   { id: "stt", label: "STT", defaultLabel: "STT", visible: true, isFrozen: true, align: "center", width: 60 },
   { id: "week", label: "Tuần", defaultLabel: "Tuần", visible: true, isFrozen: true, align: "center", width: 85 },

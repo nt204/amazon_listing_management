@@ -83,6 +83,7 @@ export interface ListSkuWinOptions {
   search?: string;
   productType?: string;
   status?: string;
+  defaultStatus?: string;
   skuType?: "all" | "win" | "loss" | "ordered";
   startDate?: string;
   endDate?: string;
@@ -101,6 +102,7 @@ export async function listSkuWin(
   const search = options.search?.trim() || "";
   const productType = options.productType?.trim() || "";
   const status = options.status?.trim() || "";
+  const defaultStatus = options.defaultStatus || "Phát triển";
   const skuType = options.skuType || "all";
   const startDate = options.startDate?.trim() || "";
   const endDate = options.endDate?.trim() || "";
@@ -111,10 +113,10 @@ export async function listSkuWin(
   const page = Math.max(1, options.page || 1);
   const limit = options.limit && options.limit > 0 ? options.limit : 50;
 
-  // SKU Win chỉ hiển thị các SKU phát triển (từ Bảng mã) trừ khi có chỉ định khác
+  // Lọc theo trạng thái Bảng mã: SKU Win mặc định 'Phát triển', SKU Test mặc định 'Test'
   const statusCondition = status
-    ? (status.toLowerCase() === "all" ? sql`` : sql`AND sm.status = ${status}`)
-    : sql`AND sm.status = 'Phát triển'`;
+    ? (status.toLowerCase() === "all" ? sql`` : sql`AND (sm.status = ${status} OR LOWER(sm.status) = LOWER(${status}))`)
+    : (defaultStatus.toLowerCase() === "all" ? sql`` : sql`AND (sm.status = ${defaultStatus} OR LOWER(sm.status) = LOWER(${defaultStatus}))`);
 
   // 1. Fetch available Product Types and Statuses for filter dropdowns
   const [filterOptions] = await Promise.all([
@@ -564,3 +566,18 @@ export async function updateSkuWinCustomFields(
 
   return customFields;
 }
+
+export async function listSkuTest(
+  storeId: string,
+  options: ListSkuWinOptions = {}
+): Promise<{ items: SkuWinItem[]; total: number; stats: SkuWinStats; productTypes: string[]; statuses: string[] }> {
+  return listSkuWin(storeId, {
+    ...options,
+    defaultStatus: options.defaultStatus || "Test",
+  });
+}
+
+export const updateSkuTestCustomFields = updateSkuWinCustomFields;
+export type SkuTestItem = SkuWinItem;
+export type SkuTestStats = SkuWinStats;
+export type ListSkuTestOptions = ListSkuWinOptions;

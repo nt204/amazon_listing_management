@@ -38,6 +38,11 @@ import {
   PpcAmazonDatePicker,
   type DateRange,
 } from "@/components/ppc/ppc-amazon-date-picker";
+import {
+  getAmazonLatestAvailableDate,
+  getSavedStoreDateRange,
+  saveStoreDateRange,
+} from "./financials-date-utils";
 
 export interface SkuWinItem {
   id: string;
@@ -133,12 +138,7 @@ const formatPercent = (val: number | null | undefined) => {
   return `${(val * 100).toFixed(1)}%`;
 };
 
-function getAmazonLatestAvailableDate(): string {
-  const date = new Date();
-  date.setDate(date.getDate() - 1);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
+// getAmazonLatestAvailableDate is imported from ./financials-date-utils
 
 // Debounce hook
 function useDebounce<T>(value: T, delay: number): T {
@@ -259,17 +259,10 @@ export function SkuWinView() {
 
   // Amazon reports are complete through yesterday.
   const financialMaxDate = getAmazonLatestAvailableDate();
+  // Date Range state: defaults to 'This Month' or per-account saved range
   const [dateRange, setDateRange] = useState<DateRange>(() => {
-    const end = new Date();
-    end.setDate(end.getDate() - 1);
-    const start = new Date();
-    start.setTime(end.getTime());
-    start.setDate(start.getDate() - 30);
-    const pad = (n: number) => String(n).padStart(2, "0");
-    return {
-      startDate: `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}`,
-      endDate: `${end.getFullYear()}-${pad(end.getMonth() + 1)}-${pad(end.getDate())}`,
-    };
+    const initStoreId = typeof window !== "undefined" ? localStorage.getItem("acc_selected_store_id") || "" : "";
+    return getSavedStoreDateRange("sku_win", initStoreId, financialMaxDate);
   });
   const startDate = dateRange.startDate;
   const endDate = dateRange.endDate;
@@ -386,7 +379,7 @@ export function SkuWinView() {
     return () => window.removeEventListener("pointerdown", handlePointerDown);
   }, []);
 
-  // 1. Fetch Stores
+  // 1. Fetch Stores (Only once on mount)
   useEffect(() => {
     let ignore = false;
     async function loadStores() {
@@ -395,11 +388,14 @@ export function SkuWinView() {
         if (res.ok) {
           const data = await res.json();
           if (!ignore) {
-            setStores(data.stores || []);
-            if (!selectedStoreId && data.stores?.length > 0) {
-              const defaultStore = data.stores.find((s: Store) => s.name === "LIMIMA") || data.stores[0];
+            const list: Store[] = data.stores || [];
+            setStores(list);
+            const currentSelected = typeof window !== "undefined" ? localStorage.getItem("acc_selected_store_id") || "" : "";
+            if (!currentSelected && list.length > 0) {
+              const defaultStore = list.find((s: Store) => s.name === "LIMIMA") || list[0];
               setSelectedStoreId(defaultStore.id);
               localStorage.setItem("acc_selected_store_id", defaultStore.id);
+              setDateRange(getSavedStoreDateRange("sku_win", defaultStore.id, financialMaxDate));
             }
           }
         }
@@ -413,7 +409,35 @@ export function SkuWinView() {
     return () => {
       ignore = true;
     };
-  }, [selectedStoreId]);
+  }, [financialMaxDate]);
+
+  const handleStoreSelect = (newStoreId: string) => {
+    setSelectedStoreId(newStoreId);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("acc_selected_store_id", newStoreId);
+      window.dispatchEvent(new CustomEvent("acc_store_changed", { detail: newStoreId }));
+    }
+    setDateRange(getSavedStoreDateRange("sku_win", newStoreId, financialMaxDate));
+    setPage(1);
+  };
+
+  // Sync store change from other tabs
+  useEffect(() => {
+    const handleSyncStore = (e: any) => {
+      const newStoreId = e.detail || (typeof window !== "undefined" ? localStorage.getItem("acc_selected_store_id") : null);
+      if (newStoreId && newStoreId !== selectedStoreId) {
+        setSelectedStoreId(newStoreId);
+        setDateRange(getSavedStoreDateRange("sku_win", newStoreId, financialMaxDate));
+        setPage(1);
+      }
+    };
+    window.addEventListener("acc_store_changed", handleSyncStore);
+    window.addEventListener("storage", handleSyncStore);
+    return () => {
+      window.removeEventListener("acc_store_changed", handleSyncStore);
+      window.removeEventListener("storage", handleSyncStore);
+    };
+  }, [selectedStoreId, financialMaxDate]);
 
   // 2. Fetch Data
   const fetchData = useCallback(async () => {
@@ -548,46 +572,76 @@ export function SkuWinView() {
   // Visible Columns
   const visibleColumns = useMemo(() => columns.filter((c) => c.visible !== false), [columns]);
 
-  // Freeze helpers
+  // Pre-calculate freeze metrics for all visible columns (O(1) Map lookup instead of inner loops on every cell)
+  const freezeMetrics = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        isFrozen: boolean;
+        isBoundary: boolean;
+        headerStyle: React.CSSProperties;
+        bodyStyle: React.CSSProperties;
+        className: string;
+      }
+    >();
+
+    let offset = 0;
+    const frozenIndex = visibleColumns.findIndex((c) => c.id === frozenThrough);
+
+    for (let i = 0; i < visibleColumns.length; i++) {
+      const col = visibleColumns[i];
+      const widthNum =
+        typeof col.width === "number"
+          ? col.width
+          : parseInt(String(col.width).replace(/\D/g, "") || "100", 10);
+
+      const isFrozen = frozenIndex !== -1 && i <= frozenIndex;
+      if (isFrozen) {
+        const isBoundary = col.id === frozenThrough;
+        map.set(col.id, {
+          isFrozen: true,
+          isBoundary,
+          headerStyle: {
+            position: "sticky",
+            left: `${offset}px`,
+            zIndex: 40,
+          },
+          bodyStyle: {
+            position: "sticky",
+            left: `${offset}px`,
+            zIndex: 20,
+          },
+          className: isBoundary ? "border-r-2 border-r-amber-500/80 shadow-[2px_0_5px_rgba(0,0,0,0.06)]" : "",
+        });
+        offset += widthNum;
+      } else {
+        map.set(col.id, {
+          isFrozen: false,
+          isBoundary: false,
+          headerStyle: {},
+          bodyStyle: {},
+          className: "",
+        });
+      }
+    }
+    return map;
+  }, [visibleColumns, frozenThrough]);
+
+  // Fast freeze helpers with instant O(1) Map lookup
   const getCellFreezeProps = useCallback(
     (colId: string, isHeader = false) => {
-      let offset = 0;
-
-      for (let i = 0; i < visibleColumns.length; i++) {
-        const col = visibleColumns[i];
-        const widthNum =
-          typeof col.width === "number"
-            ? col.width
-            : parseInt(String(col.width).replace(/\D/g, "") || "100", 10);
-
-        if (col.id === colId) {
-          const isBoundary = col.id === frozenThrough;
-          return {
-            isFrozen: true,
-            isBoundary,
-            style: {
-              position: "sticky" as const,
-              left: `${offset}px`,
-              zIndex: isHeader ? 40 : 20,
-            },
-            className: isBoundary ? "border-r-2 border-r-amber-500/80 shadow-[2px_0_5px_rgba(0,0,0,0.06)]" : "",
-          };
-        }
-
-        offset += widthNum;
-        if (col.id === frozenThrough) {
-          break;
-        }
+      const metric = freezeMetrics.get(colId);
+      if (!metric) {
+        return { isFrozen: false, isBoundary: false, style: {}, className: "" };
       }
-
       return {
-        isFrozen: false,
-        isBoundary: false,
-        style: {},
-        className: "",
+        isFrozen: metric.isFrozen,
+        isBoundary: metric.isBoundary,
+        style: isHeader ? metric.headerStyle : metric.bodyStyle,
+        className: metric.className,
       };
     },
-    [visibleColumns, frozenThrough]
+    [freezeMetrics]
   );
 
   // Resize Column
@@ -772,13 +826,7 @@ export function SkuWinView() {
             <select
               id="skuwin-store-select"
               value={selectedStoreId}
-              onChange={(e) => {
-                setSelectedStoreId(e.target.value);
-                if (typeof window !== "undefined") {
-                  localStorage.setItem("acc_selected_store_id", e.target.value);
-                }
-                setPage(1);
-              }}
+              onChange={(e) => handleStoreSelect(e.target.value)}
               disabled={loadingStores}
               className="font-bold text-slate-800 bg-transparent focus:outline-hidden cursor-pointer"
             >
@@ -795,6 +843,9 @@ export function SkuWinView() {
             value={dateRange}
             onChange={(newRange) => {
               setDateRange(newRange);
+              if (selectedStoreId) {
+                saveStoreDateRange("sku_win", selectedStoreId, newRange);
+              }
               setPage(1);
             }}
             maxDate={financialMaxDate}
@@ -1287,7 +1338,7 @@ export function SkuWinView() {
 
                               {/* Product Type */}
                               {col.id === "product_type" && (
-                                <span className="font-normal text-slate-800">{item.product_type?.toLowerCase() || "—"}</span>
+                                <span className="font-normal text-slate-800">{item.product_type || "—"}</span>
                               )}
 
                               {/* Image / Mockup */}

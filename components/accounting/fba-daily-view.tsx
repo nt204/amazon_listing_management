@@ -6,8 +6,12 @@ import {
   CaretDownIcon,
   CaretUpIcon,
   DownloadSimpleIcon,
+  EyeSlashIcon,
+  LockIcon,
+  LockOpenIcon,
   MagnifyingGlassIcon,
   MinusIcon,
+  PencilSimpleIcon,
   PlusIcon,
   SlidersHorizontalIcon,
 } from "@phosphor-icons/react";
@@ -21,6 +25,11 @@ import {
   createTextWidthMeasurer,
 } from "./column-manager-modal";
 import { PpcAmazonDatePicker, type DateRange } from "@/components/ppc/ppc-amazon-date-picker";
+import {
+  getAmazonLatestAvailableDate,
+  getSavedStoreDateRange,
+  saveStoreDateRange,
+} from "./financials-date-utils";
 
 const FBA_DAILY_COLUMNS_STORAGE_KEY = "acc_fba_daily_columns_global";
 const FBA_DAILY_FROZEN_STORAGE_KEY = "acc_fba_daily_frozen_global";
@@ -44,6 +53,7 @@ function formatPercent(val: number | null | undefined): string {
 }
 
 export function FbaDailyView() {
+  const financialMaxDate = getAmazonLatestAvailableDate();
   const [stores, setStores] = useState<Store[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<string>(() => {
     if (typeof window !== "undefined") {
@@ -53,18 +63,10 @@ export function FbaDailyView() {
   });
   const [loadingStores, setLoadingStores] = useState(true);
 
-  // Date Range state
+  // Date Range state: defaults to 'This Month' or per-account saved range
   const [dateRange, setDateRange] = useState<DateRange>(() => {
-    const end = new Date();
-    end.setDate(end.getDate() - 1);
-    const start = new Date();
-    start.setTime(end.getTime());
-    start.setDate(start.getDate() - 30);
-    const pad = (n: number) => String(n).padStart(2, "0");
-    return {
-      startDate: `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}`,
-      endDate: `${end.getFullYear()}-${pad(end.getMonth() + 1)}-${pad(end.getDate())}`,
-    };
+    const initStoreId = typeof window !== "undefined" ? localStorage.getItem("acc_selected_store_id") || "" : "";
+    return getSavedStoreDateRange("fba_daily", initStoreId, financialMaxDate);
   });
 
   const [search, setSearch] = useState("");
@@ -141,6 +143,12 @@ export function FbaDailyView() {
   const [showColumnModal, setShowColumnModal] = useState(false);
   const [headerDragId, setHeaderDragId] = useState<string | null>(null);
   const [headerDragOverId, setHeaderDragOverId] = useState<string | null>(null);
+  const [columnContextMenu, setColumnContextMenu] = useState<{
+    field: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const columnMenuRef = useRef<HTMLDivElement>(null);
 
   const visibleColumns = useMemo(
     () => columns.filter((col) => col.visible !== false),
@@ -221,6 +229,54 @@ export function FbaDailyView() {
     setFrozenColumns(["stt", "week", "date"]);
   };
 
+  const handleSetFrozenThrough = useCallback(
+    (colId: string) => {
+      const targetIndex = visibleColumns.findIndex((col) => col.id === colId);
+      if (targetIndex === -1) return;
+
+      const nextFrozenColumns = visibleColumns.slice(0, targetIndex + 1).map((col) => col.id);
+      setFrozenColumns(nextFrozenColumns);
+      if (typeof window !== "undefined") {
+        localStorage.setItem(FBA_DAILY_FROZEN_STORAGE_KEY, JSON.stringify(nextFrozenColumns));
+      }
+    },
+    [visibleColumns]
+  );
+
+  const handleResetFrozenColumns = useCallback(() => {
+    const defaultFrozenColumns = ["stt", "week", "date"];
+    setFrozenColumns(defaultFrozenColumns);
+    if (typeof window !== "undefined") {
+      localStorage.setItem(FBA_DAILY_FROZEN_STORAGE_KEY, JSON.stringify(defaultFrozenColumns));
+    }
+  }, []);
+
+  const handleQuickHideColumn = useCallback(
+    (colId: string) => {
+      handleSaveColumns(columns.map((col) => (col.id === colId ? { ...col, visible: false } : col)));
+      setFrozenColumns((current) => {
+        if (!current.includes(colId)) return current;
+        const next = current.filter((id) => id !== colId);
+        if (typeof window !== "undefined") {
+          localStorage.setItem(FBA_DAILY_FROZEN_STORAGE_KEY, JSON.stringify(next));
+        }
+        return next;
+      });
+    },
+    [columns]
+  );
+
+  useEffect(() => {
+    function handlePointerDown(event: PointerEvent) {
+      if (columnMenuRef.current && !columnMenuRef.current.contains(event.target as Node)) {
+        setColumnContextMenu(null);
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, []);
+
   // Cumulative sticky left offsets for frozen columns
   const getCellFreezeProps = useCallback(
     (colId: string, isHeader = false) => {
@@ -268,7 +324,7 @@ export function FbaDailyView() {
     return () => clearTimeout(timer);
   }, [search]);
 
-  // Load stores
+  // Load stores (only once on mount)
   useEffect(() => {
     async function loadStores() {
       try {
@@ -278,9 +334,11 @@ export function FbaDailyView() {
           const data = await res.json();
           const storeList: Store[] = data.stores || [];
           setStores(storeList);
-          if (storeList.length > 0 && !selectedStoreId) {
+          const currentSelected = typeof window !== "undefined" ? localStorage.getItem("acc_selected_store_id") || "" : "";
+          if (!currentSelected && storeList.length > 0) {
             setSelectedStoreId(storeList[0].id);
             localStorage.setItem("acc_selected_store_id", storeList[0].id);
+            setDateRange(getSavedStoreDateRange("fba_daily", storeList[0].id, financialMaxDate));
           }
         }
       } catch {
@@ -290,7 +348,33 @@ export function FbaDailyView() {
       }
     }
     loadStores();
-  }, [selectedStoreId]);
+  }, [financialMaxDate]);
+
+  const handleStoreSelect = (newStoreId: string) => {
+    setSelectedStoreId(newStoreId);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("acc_selected_store_id", newStoreId);
+      window.dispatchEvent(new CustomEvent("acc_store_changed", { detail: newStoreId }));
+    }
+    setDateRange(getSavedStoreDateRange("fba_daily", newStoreId, financialMaxDate));
+  };
+
+  // Sync store change from other tabs
+  useEffect(() => {
+    const handleSyncStore = (e: any) => {
+      const newStoreId = e.detail || (typeof window !== "undefined" ? localStorage.getItem("acc_selected_store_id") : null);
+      if (newStoreId && newStoreId !== selectedStoreId) {
+        setSelectedStoreId(newStoreId);
+        setDateRange(getSavedStoreDateRange("fba_daily", newStoreId, financialMaxDate));
+      }
+    };
+    window.addEventListener("acc_store_changed", handleSyncStore);
+    window.addEventListener("storage", handleSyncStore);
+    return () => {
+      window.removeEventListener("acc_store_changed", handleSyncStore);
+      window.removeEventListener("storage", handleSyncStore);
+    };
+  }, [selectedStoreId, financialMaxDate]);
 
   // Fetch FBA daily data
   const fetchData = useCallback(async () => {
@@ -354,10 +438,7 @@ export function FbaDailyView() {
             <span className="text-[11px] font-bold uppercase text-slate-400">STORE</span>
             <select
               value={selectedStoreId}
-              onChange={(e) => {
-                setSelectedStoreId(e.target.value);
-                localStorage.setItem("acc_selected_store_id", e.target.value);
-              }}
+              onChange={(e) => handleStoreSelect(e.target.value)}
               disabled={loadingStores}
               className="font-bold text-slate-800 bg-transparent focus:outline-hidden cursor-pointer"
             >
@@ -372,7 +453,13 @@ export function FbaDailyView() {
           {/* Amazon Date Range Picker */}
           <PpcAmazonDatePicker
             value={dateRange}
-            onChange={(next) => setDateRange(next)}
+            onChange={(next) => {
+              setDateRange(next);
+              if (selectedStoreId) {
+                saveStoreDateRange("fba_daily", selectedStoreId, next);
+              }
+            }}
+            maxDate={financialMaxDate}
             align="left"
           />
 
@@ -504,8 +591,7 @@ export function FbaDailyView() {
                       onAutoFit={handleAutoFitColumn}
                     >
                       <div
-                        onClick={() => handleSort(col.id)}
-                        className={`flex items-center gap-1 cursor-pointer hover:text-amber-100 transition-colors ${
+                        className={`group/title flex min-h-[30px] w-full items-center gap-1 ${
                           col.align === "center"
                             ? "justify-center"
                             : col.align === "right"
@@ -513,16 +599,39 @@ export function FbaDailyView() {
                             : "justify-start"
                         }`}
                       >
-                        <span className="truncate">{col.label}</span>
-                        {isSorted && (
-                          <span className="text-white shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleSort(col.id)}
+                          className="inline-flex min-w-0 cursor-pointer items-center gap-1 truncate transition-colors hover:text-amber-100"
+                          title={`Bấm để sắp xếp theo ${col.label}`}
+                        >
+                          <span className="truncate">{col.label}</span>
+                          {isSorted && (
+                            <span className="shrink-0 text-white">
                             {sortDirection === "asc" ? (
                               <CaretUpIcon size={12} weight="bold" />
                             ) : (
                               <CaretDownIcon size={12} weight="bold" />
                             )}
-                          </span>
-                        )}
+                            </span>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setColumnContextMenu({
+                              field: col.id,
+                              x: event.clientX,
+                              y: event.clientY,
+                            });
+                          }}
+                          className="ml-0.5 shrink-0 cursor-pointer rounded p-0.5 text-slate-900 opacity-0 transition hover:bg-amber-600/40 group-hover/title:opacity-100 focus-visible:opacity-100"
+                          title={`Tùy chọn & Setting cột "${col.label}"`}
+                          aria-label={`Tùy chọn cột ${col.label}`}
+                        >
+                          <SlidersHorizontalIcon size={11} weight="bold" />
+                        </button>
                       </div>
                     </ColumnHeaderCell>
                   );
@@ -741,7 +850,7 @@ export function FbaDailyView() {
                             {/* Tuần */}
                             {col.id === "week" && (
                               <span className="inline-block px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-bold">
-                                {item.week}
+                                {item.week?.startsWith("Tuần ") ? item.week.replace(/^Tuần\s*/i, "T") : item.week}
                               </span>
                             )}
 
@@ -929,6 +1038,98 @@ export function FbaDailyView() {
           </table>
         </div>
       </div>
+
+      {/* COLUMN CONTEXT MENU */}
+      {columnContextMenu && (() => {
+        const field = columnContextMenu.field;
+        const col = columns.find((item) => item.id === field);
+        const colLabel = col?.label || field;
+        const visibleIndex = visibleColumns.findIndex((item) => item.id === field);
+        const isCurrentBoundary =
+          visibleIndex >= 0 &&
+          frozenColumns.includes(field) &&
+          !visibleColumns.slice(visibleIndex + 1).some((item) => frozenColumns.includes(item.id));
+
+        return (
+          <div
+            ref={columnMenuRef}
+            className="fixed z-[100] w-56 overflow-hidden rounded-xl border border-slate-300 bg-white shadow-2xl animate-in fade-in zoom-in-95 duration-100"
+            style={{
+              left: Math.max(8, Math.min(columnContextMenu.x, (typeof window !== "undefined" ? window.innerWidth : 1200) - 232)),
+              top: Math.max(8, Math.min(columnContextMenu.y, (typeof window !== "undefined" ? window.innerHeight : 800) - 210)),
+            }}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/90 px-3 py-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Tùy chọn cột</span>
+              <span className="max-w-[120px] truncate text-xs font-bold text-slate-900">{colLabel}</span>
+            </div>
+
+            <div className="space-y-0.5 p-1">
+              <button
+                type="button"
+                onClick={() => {
+                  handleAutoFitColumn(field);
+                  setColumnContextMenu(null);
+                }}
+                className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+              >
+                <SlidersHorizontalIcon size={14} className="shrink-0 text-amber-600" />
+                <span>Thu nhỏ cột</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowColumnModal(true);
+                  setColumnContextMenu(null);
+                }}
+                className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+              >
+                <PencilSimpleIcon size={14} className="shrink-0 text-slate-500" />
+                <span>Setting cột</span>
+              </button>
+
+              {!isCurrentBoundary ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleSetFrozenThrough(field);
+                    setColumnContextMenu(null);
+                  }}
+                  className="flex w-full cursor-pointer items-center gap-2 rounded-lg bg-amber-50 px-2.5 py-1.5 text-left text-xs font-bold text-amber-950 transition hover:bg-amber-100"
+                >
+                  <LockIcon size={14} weight="bold" className="shrink-0 text-amber-600" />
+                  <span>Khóa đến cột này</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleResetFrozenColumns();
+                    setColumnContextMenu(null);
+                  }}
+                  className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+                >
+                  <LockOpenIcon size={14} weight="bold" className="shrink-0 text-amber-600" />
+                  <span>Về khóa mặc định (Date)</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  handleQuickHideColumn(field);
+                  setColumnContextMenu(null);
+                }}
+                className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-semibold text-rose-700 transition hover:bg-rose-50"
+              >
+                <EyeSlashIcon size={14} className="shrink-0 text-rose-500" />
+                <span>Ẩn cột này</span>
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* FOOTER BAR */}
       <div className="bg-slate-100 px-3 py-1.5 border-t border-slate-200 text-xs text-slate-500 flex items-center justify-between">
