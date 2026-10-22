@@ -368,7 +368,7 @@ export function ColumnHeaderCell({
       onDragEnd={onDragEnd}
       style={{
         ...style,
-        ...(isFrozen ? { position: "sticky", zIndex: 40 } : {}),
+        ...(isFrozen ? { position: "sticky", zIndex: 40, backgroundColor: (style as any)?.backgroundColor || "#ff9900" } : {}),
       }}
       onClick={(event) => {
         if (!col || !onColumnClick) return;
@@ -376,8 +376,10 @@ export function ColumnHeaderCell({
         onColumnClick(col.id, event);
       }}
       title={isMovable ? "Kéo thả tiêu đề cột này để đổi vị trí trực tiếp trên bảng" : undefined}
-      className={`relative group/th select-none transition-all ${
-        isBoundary ? "border-r-2 border-r-amber-700/80 shadow-[2px_0_4px_rgba(0,0,0,0.06)]" : ""
+      className={`relative group/th select-none transition-all border-b-2 border-amber-600 ${
+        isBoundary
+          ? "border-r-2 !border-r-amber-700 shadow-[2px_0_4px_rgba(0,0,0,0.08)]"
+          : "border-r border-amber-600/70"
       } ${
         isMovable ? "cursor-grab active:cursor-grabbing hover:brightness-105" : onColumnClick ? "cursor-pointer hover:brightness-105" : ""
       } ${

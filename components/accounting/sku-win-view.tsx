@@ -1020,7 +1020,7 @@ export function SkuWinView() {
                         isFrozen={f.isFrozen}
                         isBoundary={f.isBoundary}
                         style={f.style}
-                        className={`py-1.5 px-2 text-xs bg-[#f59e0b] text-slate-950 border-r border-amber-600/70 select-none ${isKeyBoldCol ? "font-bold text-slate-950" : "font-normal text-slate-900"
+                        className={`py-1.5 px-2 text-xs bg-[#ff9900] text-slate-950 select-none ${isKeyBoldCol ? "font-bold text-slate-950" : "font-normal text-slate-900"
                           } ${col.align === "center" ? "text-center" : col.align === "right" ? "text-right" : "text-left"}`}
                         draggable={true}
                         isDragging={headerDragId === col.id}
@@ -1116,7 +1116,11 @@ export function SkuWinView() {
                         <td
                           key={`total-${col.id}`}
                           style={{ ...f.style, ...bgStyle }}
-                          className={`py-1.5 px-2.5 text-xs border-r border-amber-200/80 whitespace-nowrap ${
+                          className={`py-1.5 px-2.5 text-xs border-b border-amber-300 whitespace-nowrap ${
+                            f.isBoundary
+                              ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]"
+                              : "border-r border-amber-200/80"
+                          } ${
                             isKeyBoldCol ? "font-bold text-slate-950" : "font-semibold"
                           } ${
                             col.align === "center"
@@ -1124,7 +1128,7 @@ export function SkuWinView() {
                               : col.align === "right"
                               ? "text-right font-mono"
                               : "text-left"
-                          } ${f.className}`}
+                          }`}
                         >
                           {col.id === "stt" && (
                             <span className="inline-block px-1 py-0.5 rounded bg-amber-200/70 text-amber-950 text-[10px] font-black tracking-wider">
@@ -1315,13 +1319,17 @@ export function SkuWinView() {
                             <td
                               key={col.id}
                               style={{ ...f.style, ...bgStyle }}
-                              className={`py-1.5 px-2.5 text-xs text-slate-900 border-r border-slate-200 transition-colors ${isKeyBoldCol ? "font-bold text-slate-950" : "font-normal"
+                              className={`py-1.5 px-2.5 text-xs text-slate-900 border-b border-slate-200 transition-colors ${
+                                f.isBoundary
+                                  ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]"
+                                  : "border-r border-slate-200"
+                              } ${isKeyBoldCol ? "font-bold text-slate-950" : "font-normal"
                                 } ${col.align === "center"
                                   ? "text-center"
                                   : col.align === "right"
                                     ? "text-right font-mono"
                                     : "text-left"
-                                } ${f.className}`}
+                                }`}
                             >
                               {/* STT + Edit */}
                               {col.id === "stt" && (

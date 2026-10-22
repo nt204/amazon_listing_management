@@ -553,15 +553,15 @@ export function FbaDailyView() {
           }}
           className="min-w-full inline-block align-top"
         >
-          <table className="w-full border-collapse text-left border-b border-slate-200">
+          <table className="w-full border-separate border-spacing-0 text-left border-b border-slate-200">
             {/* THEAD with Header Row + Sticky TOTAL Row */}
-            <thead className="sticky top-0 z-30 select-none">
+            <thead className="sticky top-0 z-30 select-none bg-[#ff9900] text-slate-950">
               {/* ROW 1: COLUMN HEADERS */}
-              <tr className="bg-amber-500 text-white text-xs font-bold shadow-xs">
+              <tr className="text-xs font-bold shadow-xs">
                 {visibleColumns.map((col) => {
                   const f = getCellFreezeProps(col.id, true);
                   const isSorted = sortField === col.id;
-                  const bgStyle = f.isFrozen ? { backgroundColor: "#f59e0b" } : {};
+                  const bgStyle = f.isFrozen ? { backgroundColor: "#ff9900" } : {};
 
                   return (
                     <ColumnHeaderCell
@@ -570,7 +570,7 @@ export function FbaDailyView() {
                       isFrozen={f.isFrozen}
                       isBoundary={f.isBoundary}
                       style={{ ...f.style, ...bgStyle }}
-                      className="border-r border-amber-600/70 py-2 px-2.5 whitespace-nowrap"
+                      className="py-2 px-2.5 whitespace-nowrap bg-[#ff9900] text-slate-950"
                       draggable={true}
                       isDragging={headerDragId === col.id}
                       isDragOver={headerDragOverId === col.id}
@@ -654,13 +654,17 @@ export function FbaDailyView() {
                       <td
                         key={`total-${col.id}`}
                         style={{ ...f.style, ...bgStyle }}
-                        className={`py-1.5 px-2.5 text-xs border-r border-amber-200/80 whitespace-nowrap font-semibold ${
+                        className={`py-1.5 px-2.5 text-xs border-b border-amber-300 whitespace-nowrap font-semibold ${
+                          f.isBoundary
+                            ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]"
+                            : "border-r border-amber-200/80"
+                        } ${
                           col.align === "center"
                             ? "text-center"
                             : col.align === "right"
                             ? "text-right font-mono"
                             : "text-left"
-                        } ${f.className}`}
+                        }`}
                       >
                         {col.id === "stt" && (
                           <span className="inline-block px-1 py-0.5 rounded bg-amber-200/70 text-amber-950 text-[10px] font-black tracking-wider">
@@ -836,13 +840,17 @@ export function FbaDailyView() {
                           <td
                             key={col.id}
                             style={{ ...f.style, ...cellBg }}
-                            className={`py-1.5 px-2.5 text-xs border-r border-slate-100 whitespace-nowrap ${
+                            className={`py-1.5 px-2.5 text-xs border-b border-slate-200 whitespace-nowrap ${
+                              f.isBoundary
+                                ? "border-r-2 border-r-slate-300 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)]"
+                                : "border-r border-slate-200"
+                            } ${
                               col.align === "center"
                                 ? "text-center"
                                 : col.align === "right"
                                 ? "text-right font-mono"
                                 : "text-left"
-                            } ${f.className}`}
+                            }`}
                           >
                             {/* STT */}
                             {col.id === "stt" && (
