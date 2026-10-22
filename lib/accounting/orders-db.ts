@@ -445,7 +445,7 @@ export function normalizeOrderRow(
       : null,
     purchase_date: parseIsoOrDate(purchaseDateRaw),
     last_updated_date: parseIsoOrDate(getVal("last-updated-date", "last_updated_date")),
-    order_status: getVal("order-status", "order_status", "status") ? String(getVal("order-status", "order_status", "status")).trim() : null,
+    order_status: getVal("order-status", "order_status") ? String(getVal("order-status", "order_status")).trim() : null,
     fulfillment_channel: getVal("fulfillment-channel", "fulfillment_channel") ? String(getVal("fulfillment-channel", "fulfillment_channel")).trim() : null,
     sales_channel: getVal("sales-channel", "sales_channel") ? String(getVal("sales-channel", "sales_channel")).trim() : null,
     order_channel: getVal("order-channel", "order_channel") ? String(getVal("order-channel", "order_channel")).trim() : null,

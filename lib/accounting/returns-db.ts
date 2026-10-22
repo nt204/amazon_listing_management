@@ -468,7 +468,7 @@ export async function parseReturnBuffer(
   const results: Omit<ReturnItem, "id" | "created_at" | "updated_at">[] = [];
 
   for (const item of rawItems) {
-    const key = `${item.date}::${item.order_id}::${item.sku}::${item.total.toFixed(2)}::${item.amazon_fees.toFixed(2)}`;
+    const key = `${item.date}::${item.order_id}::${item.total.toFixed(2)}::${item.amazon_fees.toFixed(2)}`;
     const count = (occurrenceTracker.get(key) || 0) + 1;
     occurrenceTracker.set(key, count);
 
@@ -666,46 +666,36 @@ export async function batchUpsertReturns(
     }
   }
   const deduped = Array.from(dedupedMap.values());
+  if (deduped.length === 0) return { count: 0, createdCount: 0 };
 
+  const snapshotDates = Array.from(new Set(deduped.map((item) => item.date).filter(Boolean)));
   const CHUNK_SIZE = 500;
-  let totalProcessed = 0;
+  const cols = [
+    "store_id", "date", "order_id", "sku", "loai", "pic", "basecost",
+    "transaction_status", "transaction_type", "product_details",
+    "total_product_charges", "total_promotional_rebates", "amazon_fees",
+    "other", "total", "return_sau_basecost", "tuan", "thang", "quy",
+    "trang_thai", "row_hash"
+  ] as const;
 
-  for (let i = 0; i < deduped.length; i += CHUNK_SIZE) {
-    const chunk = deduped.slice(i, i + CHUNK_SIZE);
-    const cols = [
-      "store_id", "date", "order_id", "sku", "loai", "pic", "basecost",
-      "transaction_status", "transaction_type", "product_details",
-      "total_product_charges", "total_promotional_rebates", "amazon_fees",
-      "other", "total", "return_sau_basecost", "tuan", "thang", "quy",
-      "trang_thai", "row_hash"
-    ] as const;
-
-    await sql`
-      INSERT INTO accounting_returns ${sql(chunk, ...cols)}
-      ON CONFLICT (store_id, row_hash) DO UPDATE SET
-        sku = CASE WHEN EXCLUDED.sku != '' THEN EXCLUDED.sku ELSE accounting_returns.sku END,
-        loai = CASE WHEN EXCLUDED.loai != '' THEN EXCLUDED.loai ELSE accounting_returns.loai END,
-        pic = CASE WHEN EXCLUDED.pic != '' THEN EXCLUDED.pic ELSE accounting_returns.pic END,
-        basecost = EXCLUDED.basecost,
-        transaction_status = EXCLUDED.transaction_status,
-        product_details = CASE WHEN EXCLUDED.product_details != '' THEN EXCLUDED.product_details ELSE accounting_returns.product_details END,
-        total_product_charges = EXCLUDED.total_product_charges,
-        total_promotional_rebates = EXCLUDED.total_promotional_rebates,
-        amazon_fees = EXCLUDED.amazon_fees,
-        other = EXCLUDED.other,
-        total = EXCLUDED.total,
-        return_sau_basecost = EXCLUDED.return_sau_basecost,
-        tuan = EXCLUDED.tuan,
-        thang = EXCLUDED.thang,
-        quy = EXCLUDED.quy,
-        trang_thai = CASE WHEN EXCLUDED.trang_thai != '' THEN EXCLUDED.trang_thai ELSE accounting_returns.trang_thai END,
-        updated_at = NOW()
+  // File Return là snapshot đầy đủ theo ngày. Thay thế nguyên ngày để dữ liệu cũ
+  // (đặc biệt các dòng từng thiếu SKU) không tồn tại song song với snapshot mới.
+  await sql.begin(async (transaction) => {
+    await transaction`
+      DELETE FROM accounting_returns
+      WHERE store_id = ${storeId}
+        AND date IN ${transaction(snapshotDates)}
     `;
 
-    totalProcessed += chunk.length;
-  }
+    for (let i = 0; i < deduped.length; i += CHUNK_SIZE) {
+      const chunk = deduped.slice(i, i + CHUNK_SIZE);
+      await transaction`
+        INSERT INTO accounting_returns ${transaction(chunk, ...cols)}
+      `;
+    }
+  });
 
-  return { count: totalProcessed, createdCount: totalProcessed };
+  return { count: deduped.length, createdCount: deduped.length };
 }
 
 export async function updateReturnCell(

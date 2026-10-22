@@ -422,7 +422,7 @@ export async function importUnifiedAccountingExcel(
             if (!cleanDate && !orderId) continue;
             const effectiveDate = cleanDate || new Date().toISOString().split("T")[0];
 
-            let sku = String(getColVal(["sku", "msku"]) || vals[1] || "").trim();
+            const sku = String(getColVal(["sku", "msku"]) || vals[1] || "").trim();
             const master = sku ? skuMap.get(sku.toUpperCase()) : null;
             const loai = String(getColVal(["loại", "loai"]) || master?.loai || "FBA").trim();
             const pic = String(getColVal(["pic", "pic mkt", "mkt pic"]) || master?.pic || "").trim();
@@ -451,7 +451,7 @@ export async function importUnifiedAccountingExcel(
             const quy = Number(getColVal(["quý", "quy"])) || quarter;
             const trangThai = String(getColVal(["trạng thái", "trang thai"]) || master?.status || "Phát triển").trim();
 
-            const key = `${effectiveDate}::${orderId}::${sku}::${total.toFixed(2)}::${amazonFees.toFixed(2)}`;
+            const key = `${effectiveDate}::${orderId}::${total.toFixed(2)}::${amazonFees.toFixed(2)}`;
             const count = (returnOccurrenceTracker.get(key) || 0) + 1;
             returnOccurrenceTracker.set(key, count);
 
@@ -483,17 +483,12 @@ export async function importUnifiedAccountingExcel(
               custom_fields: {},
             });
 
-            if (returnChunk.length >= chunkSize) {
-              const res = await batchUpsertReturns(storeId, returnChunk);
-              counts.returns += res.count;
-              options.onProgress?.("returns", counts.returns);
-              returnChunk = [];
-            }
+            options.onProgress?.("returns", returnChunk.length);
           }
         }
         if (returnChunk.length > 0) {
           const res = await batchUpsertReturns(storeId, returnChunk);
-          counts.returns += res.count;
+          counts.returns = res.count;
           returnChunk = [];
         }
         processedSheets.push(`RETURN (${currentSheetName}): ${counts.returns.toLocaleString()} dòng`);

@@ -97,7 +97,7 @@ export async function listFbaDaily(
           COALESCE(o.item_price, 0) * (
             CASE 
               WHEN o.currency = 'CAD' THEN 0.738 
-              WHEN o.currency = 'MXN' THEN 0.056 
+              WHEN o.currency = 'MXN' THEN 0.051
               ELSE 1.0 
             END
           )
@@ -106,7 +106,7 @@ export async function listFbaDaily(
           (COALESCE(o.item_promotion_discount, 0) + COALESCE(o.ship_promotion_discount, 0)) * (
             CASE 
               WHEN o.currency = 'CAD' THEN 0.738 
-              WHEN o.currency = 'MXN' THEN 0.056 
+              WHEN o.currency = 'MXN' THEN 0.051
               ELSE 1.0 
             END
           )
@@ -120,12 +120,21 @@ export async function listFbaDaily(
             ELSE COALESCE(sm.amazon_fee, 0) + (COALESCE(sm.referral_fee_pct, 0.15) * COALESCE(o.item_price, 0) * (
               CASE 
                 WHEN o.currency = 'CAD' THEN 0.738 
-                WHEN o.currency = 'MXN' THEN 0.056 
+                WHEN o.currency = 'MXN' THEN 0.051
                 ELSE 1.0 
               END
             ))
           END
-        ) as total_amz_fee
+        ) as total_amz_fee,
+        SUM(
+          COALESCE(o.item_price, 0) * (
+            CASE
+              WHEN o.currency = 'CAD' THEN 0.738
+              WHEN o.currency = 'MXN' THEN 0.051
+              ELSE 1.0
+            END
+          ) * (0.01 + COALESCE(sm.referral_fee_pct, 0.15) * 0.10)
+        ) as total_order_tax
       FROM accounting_orders o
       LEFT JOIN accounting_sku_master sm ON sm.store_id = o.store_id AND sm.sku = o.sku
       LEFT JOIN accounting_monthly_base_cost mbc 
@@ -133,8 +142,8 @@ export async function listFbaDaily(
         AND mbc.sku = o.sku 
         AND mbc.period = to_char(o.date, 'YYYY-MM')
       WHERE o.store_id = ${storeId}
-        AND (o.fulfillment_channel = 'Amazon' OR o.fulfillment_channel IS NULL)
-        AND (o.order_status != 'Cancelled' OR o.order_status IS NULL)
+        AND o.fulfillment_channel = 'Amazon'
+        AND o.currency IN ('USD', 'CAD', 'MXN')
         AND o.item_price IS NOT NULL
         ${hasDateFilter ? sql`AND o.date >= ${startDate}::date AND o.date <= ${endDate}::date` : sql``}
       GROUP BY o.date
@@ -155,31 +164,10 @@ export async function listFbaDaily(
       SELECT 
         r.date,
         COUNT(*) as return_count,
-        SUM(
-          GREATEST(
-            0, 
-            ABS(COALESCE(r.total, 0)) - COALESCE(
-              NULLIF(ABS(r.basecost), 0),
-              (
-                SELECT SUM(COALESCE(orig_mbc.basecost_thang, orig_sm.basecost_tb, 0) * COALESCE(orig_o.quantity, 1))
-                FROM accounting_orders orig_o
-                LEFT JOIN accounting_sku_master orig_sm ON orig_sm.store_id = orig_o.store_id AND orig_sm.sku = orig_o.sku
-                LEFT JOIN accounting_monthly_base_cost orig_mbc ON orig_mbc.store_id = orig_o.store_id AND orig_mbc.sku = orig_o.sku AND orig_mbc.period = to_char(orig_o.date, 'YYYY-MM')
-                WHERE orig_o.store_id = r.store_id AND orig_o.amazon_order_id = r.order_id
-              ),
-              mbc.basecost_thang, 
-              sm.basecost_tb, 
-              0
-            )
-          )
-        ) as return_total
+        ABS(SUM(COALESCE(r.return_sau_basecost, 0))) as return_total
       FROM accounting_returns r
-      LEFT JOIN accounting_sku_master sm ON sm.store_id = r.store_id AND sm.sku = r.sku
-      LEFT JOIN accounting_monthly_base_cost mbc 
-        ON mbc.store_id = r.store_id 
-        AND mbc.sku = r.sku
-        AND mbc.period = to_char(r.date, 'YYYY-MM')
       WHERE r.store_id = ${storeId}
+        AND UPPER(COALESCE(r.loai, 'FBA')) = 'FBA'
         ${hasDateFilter ? sql`AND r.date >= ${startDate}::date AND r.date <= ${endDate}::date` : sql``}
       GROUP BY r.date
     ),
@@ -198,6 +186,7 @@ export async function listFbaDaily(
       COALESCE(a.total_spend, 0)::numeric as ads_fee,
       COALESCE(o.total_basecost, 0)::numeric as basecost,
       COALESCE(o.total_amz_fee, 0)::numeric as amazon_fee,
+      COALESCE(o.total_order_tax, 0)::numeric as order_tax,
       COALESCE(o.total_promo, 0)::numeric as promotion,
       COALESCE(r.return_total, 0)::numeric as return_cost,
       COALESCE(a.total_ad_sales, 0)::numeric as revenue_ads,
@@ -218,14 +207,15 @@ export async function listFbaDaily(
     const adsFee = Number(r.ads_fee || 0);
     const basecost = Number(r.basecost || 0);
     const amazonFee = Number(r.amazon_fee || 0);
+    const orderTax = Number(r.order_tax || 0);
     const promotion = Number(r.promotion || 0);
     const returnCost = Math.abs(Number(r.return_cost || 0));
     const revenueAds = Number(r.revenue_ads || 0);
     const quantityAds = Number(r.quantity_ads || 0);
     const clicks = Number(r.clicks || 0);
 
-    // Thuế = 2.5% * revenue + 10% * adsFee
-    const thue = (0.025 * revenue) + (0.10 * adsFee);
+    // Khớp workbook: 1% doanh thu + 10% referral fee + 10% Ads Fee.
+    const thue = orderTax + (0.10 * adsFee);
 
     // Profit = Revenue - Ads Fee - Basecost - Amazon Fee - Thuế - Promotion - Return
     const profit = revenue - adsFee - basecost - amazonFee - thue - promotion - returnCost;
