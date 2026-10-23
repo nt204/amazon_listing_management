@@ -680,9 +680,9 @@ export async function listReturns(
 export async function batchUpsertReturns(
   storeId: string,
   items: Omit<ReturnItem, "id" | "created_at" | "updated_at">[],
-  options: { snapshot?: "dates" | "all" | false } = { snapshot: "dates" }
+  options: { snapshot?: "dates" | "all" | false; coverage?: { start: string; end: string } } = { snapshot: "dates" }
 ): Promise<{ count: number; createdCount: number }> {
-  if (items.length === 0) return { count: 0, createdCount: 0 };
+  if (items.length === 0 && !options.coverage) return { count: 0, createdCount: 0 };
   const sql = await getDatabaseClient();
 
   // Deduplicate within the same batch by row_hash
@@ -693,8 +693,6 @@ export async function batchUpsertReturns(
     }
   }
   const deduped = Array.from(dedupedMap.values());
-  if (deduped.length === 0) return { count: 0, createdCount: 0 };
-
   const snapshotDates = Array.from(new Set(deduped.map((item) => item.date).filter(Boolean)));
   const CHUNK_SIZE = 500;
   const cols = [
@@ -710,6 +708,12 @@ export async function batchUpsertReturns(
   await sql.begin(async (transaction) => {
     if (options.snapshot === "all") {
       await transaction`DELETE FROM accounting_returns WHERE store_id = ${storeId}`;
+    } else if (options.snapshot !== false && options.coverage) {
+      await transaction`
+        DELETE FROM accounting_returns
+        WHERE store_id = ${storeId}
+          AND date BETWEEN ${options.coverage.start} AND ${options.coverage.end}
+      `;
     } else if (options.snapshot !== false && snapshotDates.length > 0) {
       await transaction`
         DELETE FROM accounting_returns

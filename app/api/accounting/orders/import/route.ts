@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseOrdersBuffer, batchUpsertOrders, normalizeOrderRow } from "@/lib/accounting/orders-db";
+import { assertRowsInsideCoverage, normalizeImportCoverage } from "@/lib/accounting/import-coverage";
 
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
@@ -13,6 +14,7 @@ export async function POST(request: NextRequest) {
       const formData = await request.formData();
       const file = formData.get("file") as File | null;
       const storeId = formData.get("store_id") as string | null;
+      const coverage = normalizeImportCoverage(formData.get("coverage_start"), formData.get("coverage_end"));
 
       if (!storeId) {
         return NextResponse.json({ error: "Missing store_id" }, { status: 400 });
@@ -25,14 +27,15 @@ export async function POST(request: NextRequest) {
       const buffer = Buffer.from(await file.arrayBuffer());
       const parsedOrders = await parseOrdersBuffer(buffer, file.name, storeId);
 
-      if (parsedOrders.length === 0) {
+      if (parsedOrders.length === 0 && !coverage) {
         return NextResponse.json(
           { error: "Không tìm thấy dòng dữ liệu đơn hàng hợp lệ trong file tải lên. Vui lòng kiểm tra lại định dạng file." },
           { status: 400 }
         );
       }
 
-      const result = await batchUpsertOrders(storeId, parsedOrders);
+      assertRowsInsideCoverage(parsedOrders, coverage);
+      const result = await batchUpsertOrders(storeId, parsedOrders, { snapshot: "dates", coverage });
 
       return NextResponse.json({
         success: true,
@@ -44,7 +47,8 @@ export async function POST(request: NextRequest) {
 
     // 2. Direct JSON payload
     const body = await request.json();
-    const { store_id, rows } = body;
+    const { store_id, rows, coverage_start, coverage_end } = body;
+    const coverage = normalizeImportCoverage(coverage_start, coverage_end);
 
     if (!store_id || !Array.isArray(rows)) {
       return NextResponse.json({ error: "Invalid payload: store_id and rows required" }, { status: 400 });
@@ -54,11 +58,12 @@ export async function POST(request: NextRequest) {
       .map((r) => normalizeOrderRow(r, store_id))
       .filter((r): r is NonNullable<typeof r> => r !== null);
 
-    if (normalizedRows.length === 0) {
+    if (normalizedRows.length === 0 && !coverage) {
       return NextResponse.json({ error: "Không có dòng dữ liệu hợp lệ để xử lý" }, { status: 400 });
     }
 
-    const result = await batchUpsertOrders(store_id, normalizedRows);
+    assertRowsInsideCoverage(normalizedRows, coverage);
+    const result = await batchUpsertOrders(store_id, normalizedRows, { snapshot: "dates", coverage });
 
     return NextResponse.json({
       success: true,

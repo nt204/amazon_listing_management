@@ -691,9 +691,9 @@ export async function parseOrdersBuffer(
 export async function batchUpsertOrders(
   storeId: string,
   orders: Partial<OrderItem>[],
-  options: { snapshot?: "dates" | "all" | false } = { snapshot: "dates" }
+  options: { snapshot?: "dates" | "all" | false; coverage?: { start: string; end: string } } = { snapshot: "dates" }
 ): Promise<{ count: number }> {
-  if (orders.length === 0) return { count: 0 };
+  if (orders.length === 0 && !options.coverage) return { count: 0 };
   const sql = await getDatabaseClient();
 
   const chunkSize = 500;
@@ -716,6 +716,12 @@ export async function batchUpsertOrders(
   await sql.begin(async (transaction) => {
     if (options.snapshot === "all") {
       await transaction`DELETE FROM accounting_orders WHERE store_id = ${storeId}`;
+    } else if (options.snapshot !== false && options.coverage) {
+      await transaction`
+        DELETE FROM accounting_orders
+        WHERE store_id = ${storeId}
+          AND date BETWEEN ${options.coverage.start} AND ${options.coverage.end}
+      `;
     } else if (options.snapshot !== false && snapshotDates.length > 0) {
       await transaction`
         DELETE FROM accounting_orders

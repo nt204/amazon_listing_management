@@ -15,6 +15,7 @@ import { parseOrdersBuffer, batchUpsertOrders } from "./orders-db";
 import { parseAdsBuffer, batchUpsertAds } from "./ads-db";
 import { parseReturnBuffer, batchUpsertReturns } from "./returns-db";
 import { parseServiceFeeBuffer, batchUpsertServiceFees } from "./service-fees-db";
+import { assertRowsInsideCoverage, coverageFromAccountingFileName } from "./import-coverage";
 
 export interface ManagedAccountingFile {
   id: string;
@@ -321,7 +322,9 @@ export async function ingestAccountingFile(r2Key: string, storeName: string): Pr
 
   if (typeInfo.code === "02_ALL_ORDERS") {
     const orders = await parseOrdersBuffer(buffer, fileName, targetStore.id);
-    const result = await batchUpsertOrders(targetStore.id, orders);
+    const coverage = coverageFromAccountingFileName(fileName, "orders");
+    assertRowsInsideCoverage(orders, coverage);
+    const result = await batchUpsertOrders(targetStore.id, orders, { snapshot: "dates", coverage });
     return {
       success: true,
       type: "02_ALL_ORDERS",
@@ -334,7 +337,9 @@ export async function ingestAccountingFile(r2Key: string, storeName: string): Pr
 
   if (typeInfo.code === "05_CAMPAIGNS" || typeInfo.code === "01_PORTFOLIOS") {
     const adsRows = await parseAdsBuffer(buffer, fileName, targetStore.id);
-    const result = await batchUpsertAds(targetStore.id, adsRows);
+    const coverage = coverageFromAccountingFileName(fileName, "ads");
+    assertRowsInsideCoverage(adsRows, coverage);
+    const result = await batchUpsertAds(targetStore.id, adsRows, { snapshot: "dates", coverage });
     return {
       success: true,
       type: typeInfo.code,
@@ -347,7 +352,9 @@ export async function ingestAccountingFile(r2Key: string, storeName: string): Pr
 
   if (typeInfo.code === "03_RETURNS") {
     const returnRows = await parseReturnBuffer(buffer, fileName, targetStore.id);
-    const result = await batchUpsertReturns(targetStore.id, returnRows);
+    const coverage = coverageFromAccountingFileName(fileName, "returns");
+    assertRowsInsideCoverage(returnRows, coverage);
+    const result = await batchUpsertReturns(targetStore.id, returnRows, { snapshot: "dates", coverage });
     return {
       success: true,
       type: "03_RETURNS",
@@ -464,4 +471,3 @@ export async function syncLatestFilesForAllStores(
     results,
   };
 }
-

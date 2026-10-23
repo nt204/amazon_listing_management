@@ -830,10 +830,9 @@ export async function parseAdsBuffer(
 export async function batchUpsertAds(
   storeId: string,
   items: Array<Omit<AdsItem, "id" | "created_at" | "updated_at">>,
-  options: { snapshot?: "dates" | "all" | false } = { snapshot: "dates" }
+  options: { snapshot?: "dates" | "all" | false; coverage?: { start: string; end: string } } = { snapshot: "dates" }
 ): Promise<{ count: number; createdCount: number; updatedCount: number }> {
-  if (items.length === 0) return { count: 0, createdCount: 0, updatedCount: 0 };
-
+  if (items.length === 0 && !options.coverage) return { count: 0, createdCount: 0, updatedCount: 0 };
   const sql = await getDatabaseClient();
 
   // Deduplicate items on (store_id, date, portfolio)
@@ -862,6 +861,12 @@ export async function batchUpsertAds(
   await sql.begin(async (transaction) => {
     if (options.snapshot === "all") {
       await transaction`DELETE FROM accounting_ads WHERE store_id = ${storeId}`;
+    } else if (options.snapshot !== false && options.coverage) {
+      await transaction`
+        DELETE FROM accounting_ads
+        WHERE store_id = ${storeId}
+          AND date BETWEEN ${options.coverage.start} AND ${options.coverage.end}
+      `;
     } else if (options.snapshot !== false && snapshotDates.length > 0) {
       await transaction`
         DELETE FROM accounting_ads

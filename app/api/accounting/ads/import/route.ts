@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseAdsBuffer, batchUpsertAds } from "@/lib/accounting/ads-db";
+import { assertRowsInsideCoverage, normalizeImportCoverage } from "@/lib/accounting/import-coverage";
 
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
@@ -13,6 +14,7 @@ export async function POST(request: NextRequest) {
       const formData = await request.formData();
       const file = formData.get("file") as File | null;
       const storeId = formData.get("store_id") as string | null;
+      const coverage = normalizeImportCoverage(formData.get("coverage_start"), formData.get("coverage_end"));
 
       if (!storeId) {
         return NextResponse.json({ error: "Missing store_id" }, { status: 400 });
@@ -25,7 +27,7 @@ export async function POST(request: NextRequest) {
       const buffer = Buffer.from(await file.arrayBuffer());
       const parsedRows = await parseAdsBuffer(buffer, file.name, storeId);
 
-      if (parsedRows.length === 0) {
+      if (parsedRows.length === 0 && !coverage) {
         return NextResponse.json(
           {
             error:
@@ -35,7 +37,8 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const result = await batchUpsertAds(storeId, parsedRows);
+      assertRowsInsideCoverage(parsedRows, coverage);
+      const result = await batchUpsertAds(storeId, parsedRows, { snapshot: "dates", coverage });
 
       return NextResponse.json({
         success: true,
@@ -47,7 +50,8 @@ export async function POST(request: NextRequest) {
 
     // 2. Direct JSON payload
     const body = await request.json();
-    const { store_id, rows } = body;
+    const { store_id, rows, coverage_start, coverage_end } = body;
+    const coverage = normalizeImportCoverage(coverage_start, coverage_end);
 
     if (!store_id || !Array.isArray(rows)) {
       return NextResponse.json(
@@ -56,14 +60,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (rows.length === 0) {
+    if (rows.length === 0 && !coverage) {
       return NextResponse.json(
         { error: "Không có dòng dữ liệu hợp lệ để xử lý" },
         { status: 400 }
       );
     }
 
-    const result = await batchUpsertAds(store_id, rows);
+    assertRowsInsideCoverage(rows, coverage);
+    const result = await batchUpsertAds(store_id, rows, { snapshot: "dates", coverage });
 
     return NextResponse.json({
       success: true,
