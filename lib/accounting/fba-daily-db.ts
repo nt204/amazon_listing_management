@@ -119,7 +119,10 @@ export async function listFbaDaily(
           )
         ) as total_promo,
         SUM(
-          COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, 0)
+          CASE 
+            WHEN o.amazon_order_id LIKE 'S0%' THEN 0
+            ELSE COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, 0)
+          END
         ) as total_basecost,
         SUM(
           CASE 

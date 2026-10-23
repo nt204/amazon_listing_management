@@ -164,7 +164,10 @@ export async function listSkuWin(
           )
         ) as total_promo,
         SUM(
-          COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, 0)
+          CASE 
+            WHEN o.amazon_order_id LIKE 'S0%' THEN 0
+            ELSE COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, 0)
+          END
         ) as total_basecost
       FROM accounting_orders o
       LEFT JOIN accounting_sku_master sm ON sm.store_id = o.store_id AND sm.sku = o.sku
@@ -224,7 +227,12 @@ export async function listSkuWin(
         COUNT(DISTINCT CASE WHEN COALESCE(o.item_price, 0) > 0 THEN COALESCE(o.amazon_order_id, o.id::text) END) as compare_order_count,
         SUM(COALESCE(o.quantity, 1)) as compare_qty,
         SUM(COALESCE(o.item_price, 0) * (CASE WHEN o.currency = 'CAD' THEN 0.738 WHEN o.currency = 'MXN' THEN 0.051 ELSE 1.0 END)) as compare_rev,
-        SUM(COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, 0)) as compare_basecost,
+        SUM(
+          CASE 
+            WHEN o.amazon_order_id LIKE 'S0%' THEN 0
+            ELSE COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, 0)
+          END
+        ) as compare_basecost,
         SUM(
           (COALESCE(o.item_promotion_discount, 0) + COALESCE(o.ship_promotion_discount, 0)) * (
             CASE 
