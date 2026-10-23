@@ -141,7 +141,7 @@ export async function listSkuWin(
     WITH orders_filtered AS (
       SELECT 
         o.sku,
-        COUNT(DISTINCT CASE WHEN COALESCE(o.item_price, 0) > 0 THEN COALESCE(o.amazon_order_id, o.id::text) END) as total_order_count,
+        COUNT(CASE WHEN COALESCE(o.item_price, 0) > 0 THEN 1 END) as total_order_count,
         SUM(COALESCE(o.quantity, 1)) as total_qty,
         SUM(
           COALESCE(o.item_price, 0) * (
@@ -179,7 +179,6 @@ export async function listSkuWin(
         AND o.fulfillment_channel = 'Amazon'
         AND o.currency IN ('USD', 'CAD', 'MXN')
         AND LOWER(COALESCE(o.order_status, '')) NOT IN ('cancelled', 'canceled')
-        AND o.amazon_order_id NOT LIKE 'S0%'
         ${hasDateFilter ? sql`AND o.date >= ${startDate}::date AND o.date <= ${endDate}::date` : sql``}
       GROUP BY o.sku
     ),
@@ -225,7 +224,7 @@ export async function listSkuWin(
     orders_compare AS (
       SELECT 
         o.sku,
-        COUNT(DISTINCT CASE WHEN COALESCE(o.item_price, 0) > 0 THEN COALESCE(o.amazon_order_id, o.id::text) END) as compare_order_count,
+        COUNT(CASE WHEN COALESCE(o.item_price, 0) > 0 THEN 1 END) as compare_order_count,
         SUM(COALESCE(o.quantity, 1)) as compare_qty,
         SUM(COALESCE(o.item_price, 0) * (CASE WHEN o.currency = 'CAD' THEN 0.738 WHEN o.currency = 'MXN' THEN 0.051 ELSE 1.0 END)) as compare_rev,
         SUM(
@@ -253,7 +252,6 @@ export async function listSkuWin(
         AND o.fulfillment_channel = 'Amazon'
         AND o.currency IN ('USD', 'CAD', 'MXN')
         AND LOWER(COALESCE(o.order_status, '')) NOT IN ('cancelled', 'canceled')
-        AND o.amazon_order_id NOT LIKE 'S0%'
         AND o.date >= ${compareStartDate}::date 
         AND o.date <= ${compareEndDate}::date
       GROUP BY o.sku
