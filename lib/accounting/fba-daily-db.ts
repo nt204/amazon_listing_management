@@ -121,14 +121,17 @@ export async function listFbaDaily(
           COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, 0)
         ) as total_basecost,
         SUM(
-          COALESCE(sm.amazon_fee, 0) + (COALESCE(sm.referral_fee_pct, 0) * COALESCE(o.item_price, 0) * (
-            CASE 
-              WHEN o.currency = 'CAD' THEN 0.738 
-              WHEN o.currency = 'MXN' THEN 0.051
-              WHEN o.currency = 'USD' THEN 1.0
-              ELSE 0
-            END
-          ))
+          CASE 
+            WHEN COALESCE(o.item_price, 0) = 0 THEN 0
+            ELSE COALESCE(sm.amazon_fee, 0) + (COALESCE(sm.referral_fee_pct, 0) * COALESCE(o.item_price, 0) * (
+              CASE 
+                WHEN o.currency = 'CAD' THEN 0.738 
+                WHEN o.currency = 'MXN' THEN 0.051
+                WHEN o.currency = 'USD' THEN 1.0
+                ELSE 0
+              END
+            ))
+          END
         ) as total_amz_fee,
         SUM(
           COALESCE(o.item_price, 0) * (
