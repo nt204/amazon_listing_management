@@ -601,7 +601,7 @@ export async function listPpcPerformance(
  */
 export async function listTargetRowsForRecommendations(
   scope: DataScope,
-  filters: { storeName: string; days: number; sku?: string },
+  filters: { storeName: string; days: number; sku?: string; includePaused?: boolean },
   options: { limit?: number; offset?: number; unbounded?: boolean } = {},
 ): Promise<PpcPerformanceRow[]> {
   const sql = await getDatabaseClient();
@@ -656,7 +656,10 @@ export async function listTargetRowsForRecommendations(
         AND p.grain = 'TARGET'
         AND p.is_negative = false
         AND lower(p.state) = 'enabled'
-        AND lower(p.campaign_state) = 'enabled'
+        AND (
+          (${Boolean(filters.includePaused)} AND (lower(p.campaign_state) IN ('enabled', 'paused') OR coalesce(p.campaign_state, '') = ''))
+          OR lower(p.campaign_state) = 'enabled'
+        )
         AND (lower(p.ad_group_state) = 'enabled' OR coalesce(p.ad_group_state, '') = '')
         AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
         AND (p.campaign_name ~* '(SP03|SB05|SB01|VIDEO)')
@@ -705,7 +708,10 @@ export async function listTargetRowsForRecommendations(
         AND p.grain = 'TARGET'
         AND p.is_negative = false
         AND lower(p.state) = 'enabled'
-        AND lower(p.campaign_state) = 'enabled'
+        AND (
+          (${Boolean(filters.includePaused)} AND (lower(p.campaign_state) IN ('enabled', 'paused') OR coalesce(p.campaign_state, '') = ''))
+          OR lower(p.campaign_state) = 'enabled'
+        )
         AND (lower(p.ad_group_state) = 'enabled' OR coalesce(p.ad_group_state, '') = '')
         AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
         AND (p.campaign_name ~* '(SP03|SB05|SB01|VIDEO)')

@@ -14,16 +14,18 @@ export function groupedRecommendationsCacheKey(
   storeId: string,
   storeName: string,
   days: number,
+  includePaused = false,
 ): string {
-  return `${teamId}\0${storeId}\0${storeName}\0${days}`;
+  return `${teamId}\0${storeId}\0${storeName}\0${days}\0${includePaused ? 1 : 0}`;
 }
 
 export function groupedRecommendationsRedisKey(
   teamId: string,
   storeName: string,
   days: number,
+  includePaused = false,
 ): string {
-  return `ppc:recommendations:${teamId}:${encodeURIComponent(storeName)}:${days}`;
+  return `ppc:recommendations:${teamId}:${encodeURIComponent(storeName)}:${days}:${includePaused ? 1 : 0}`;
 }
 
 export function getCachedGroupedRecommendations(cacheKey: string): Awaited<ReturnType<typeof getGroupedRecommendations>> | null {

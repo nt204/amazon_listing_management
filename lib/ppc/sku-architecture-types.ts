@@ -209,6 +209,7 @@ export interface SkuRecommendationGroup {
   pauseCount: number;
   budgetCount: number;
   campaignTypes?: string[];
+  campaignStates?: string[];
   economics: SkuEconomics;
 }
 

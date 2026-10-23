@@ -66,6 +66,8 @@ interface PpcSkuRecommendationGroupProps {
   actionQueue?: PpcAction[];
   selectedStore?: string;
   isStoreSwitching?: boolean;
+  includePausedCampaigns?: boolean;
+  onIncludePausedCampaignsChange?: (include: boolean) => void;
 }
 
 export type QuickFilterType =
@@ -171,6 +173,8 @@ export function PpcSkuRecommendationGroupView({
   actionQueue,
   selectedStore,
   isStoreSwitching = false,
+  includePausedCampaigns = false,
+  onIncludePausedCampaignsChange,
 }: PpcSkuRecommendationGroupProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedPhôi, setSelectedPhôi] = useState("ALL");
@@ -624,6 +628,7 @@ export function PpcSkuRecommendationGroupView({
         else if (r.recType === "PAUSE_TARGET") totalPause++;
       }
       const firstRec = recs[0];
+      const campState = (firstRec?.campaignState || "enabled").toLowerCase();
       let campType = "SP03";
       if (firstRec?.ruleProfile) {
         const parts = firstRec.ruleProfile.split(" ");
@@ -641,6 +646,7 @@ export function PpcSkuRecommendationGroupView({
       return {
         campaignName,
         campaignType: campType,
+        campaignState: campState,
         adType: firstRec?.adType,
         recs,
         totalIncrease,
@@ -925,7 +931,11 @@ export function PpcSkuRecommendationGroupView({
     );
   };
 
-  const isFilterActive = searchTerm !== "" || selectedPhôi !== "ALL" || quickFilter !== "ALL" || selectedCampType !== "ALL";
+  const isFilterActive =
+    searchTerm !== "" ||
+    selectedPhôi !== "ALL" ||
+    quickFilter !== "ALL" ||
+    selectedCampType !== "ALL";
 
   const isSwitchingWindow = isLoading
     && loadedRecommendationWindowDays !== null
@@ -1011,6 +1021,23 @@ export function PpcSkuRecommendationGroupView({
                 );
               })}
             </div>
+
+            {/* Checkbox nhỏ: Bao gồm Camp Paused */}
+            {onIncludePausedCampaignsChange && (
+              <label
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs text-slate-700 font-semibold cursor-pointer select-none transition shadow-2xs"
+                title="Mặc định chỉ tải campaign enable. Tích chọn để tải thêm đề xuất cho các campaign đang paused."
+              >
+                <input
+                  type="checkbox"
+                  checked={Boolean(includePausedCampaigns)}
+                  disabled={isLoading}
+                  onChange={(e) => onIncludePausedCampaignsChange(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                />
+                <span>Bao gồm Camp Paused</span>
+              </label>
+            )}
 
             {/* Reset Filter Button */}
             {isFilterActive && (
@@ -1778,12 +1805,12 @@ export function PpcSkuRecommendationGroupView({
                       })}
                     </div>
 
-                    {selectedRecIds.size > 0 && (
-                      <span className="text-xs text-indigo-600 font-bold">
-                        (Đã chọn {selectedRecIds.size} mục)
-                      </span>
-                    )}
-                  </div>
+                      {selectedRecIds.size > 0 && (
+                        <span className="text-xs text-indigo-600 font-bold">
+                          (Đã chọn {selectedRecIds.size} mục)
+                        </span>
+                      )}
+                    </div>
 
                   <div className="flex items-center gap-2">
                     <button
@@ -1933,6 +1960,12 @@ export function PpcSkuRecommendationGroupView({
                               <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800 border border-indigo-200/80">
                                 {cg.campaignType}
                               </span>
+
+                              {cg.campaignState === "paused" && (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-200/80">
+                                  PAUSED
+                                </span>
+                              )}
 
                               {/* FULL CAMPAIGN NAME (NO TRUNCATION!) */}
                               <h4

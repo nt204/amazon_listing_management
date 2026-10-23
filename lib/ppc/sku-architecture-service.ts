@@ -1223,7 +1223,8 @@ export function evaluateRowWithRuleEngine(
   econMap: Map<string, SkuEconomics>,
 ): PpcRecommendation | null {
   if (row.grain !== "TARGET" || row.isNegative) return null;
-  if (/paused|archived/i.test(row.state || row.campaignState || row.adGroupState)) return null;
+  if (/archived/i.test(row.state || "") || /archived/i.test(row.campaignState || "") || /archived/i.test(row.adGroupState || "")) return null;
+  if (/paused/i.test(row.state || "")) return null;
 
   const sku = (
     extractSkuFromText(row.sku) ||
@@ -1366,6 +1367,7 @@ export function evaluateRowWithRuleEngine(
     productType: econ.productType,
     ruleProfile: `${format} v1.0`,
     actionState,
+    campaignState: (row.campaignState || "enabled").toLowerCase(),
     clicks: row.clicks,
     spend: row.spend,
     sales: row.sales,
@@ -1438,6 +1440,7 @@ export async function getGroupedRecommendations(
     let pauseCount = 0;
     let budgetCount = 0;
     const campTypesSet = new Set<string>();
+    const campStatesSet = new Set<string>();
 
     for (const r of recs) {
       if (r.recType === "BID_INCREASE") increaseCount++;
@@ -1451,6 +1454,10 @@ export async function getGroupedRecommendations(
       else if (ruleProf.startsWith("SP03") || /SP03/.test(camp)) campTypesSet.add("SP03");
       else if (r.adType === "SB") campTypesSet.add("SB");
       else if (r.adType === "SP") campTypesSet.add("SP03");
+
+      const cState = (r.campaignState || "enabled").toLowerCase();
+      if (cState === "paused") campStatesSet.add("paused");
+      else campStatesSet.add("enabled");
     }
 
     groups.push({
@@ -1469,6 +1476,7 @@ export async function getGroupedRecommendations(
       pauseCount,
       budgetCount,
       campaignTypes: Array.from(campTypesSet),
+      campaignStates: Array.from(campStatesSet),
       economics: econ,
     });
   }
@@ -1504,6 +1512,7 @@ export async function getGroupedRecommendations(
     let pauseCount = 0;
     let budgetCount = 0;
     const campTypesSet = new Set<string>();
+    const campStatesSet = new Set<string>();
 
     for (const r of recs) {
       if (r.recType === "BID_INCREASE") increaseCount++;
@@ -1517,6 +1526,10 @@ export async function getGroupedRecommendations(
       else if (ruleProf.startsWith("SP03") || /SP03/.test(camp)) campTypesSet.add("SP03");
       else if (r.adType === "SB") campTypesSet.add("SB");
       else if (r.adType === "SP") campTypesSet.add("SP03");
+
+      const cState = (r.campaignState || "enabled").toLowerCase();
+      if (cState === "paused") campStatesSet.add("paused");
+      else campStatesSet.add("enabled");
     }
 
     groups.push({
@@ -1535,6 +1548,7 @@ export async function getGroupedRecommendations(
       pauseCount,
       budgetCount,
       campaignTypes: Array.from(campTypesSet),
+      campaignStates: Array.from(campStatesSet),
       economics: econ,
     });
   }

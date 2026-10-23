@@ -442,6 +442,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
   const [skuRecGroups, setSkuRecGroups] = useState<SkuRecommendationGroup[]>([]);
   const [skuRecAllRecs, setSkuRecAllRecs] = useState<PpcRecommendation[]>([]);
   const [loadedRecommendationWindowDays, setLoadedRecommendationWindowDays] = useState<number | null>(null);
+  const [includePausedRecs, setIncludePausedRecs] = useState(false);
   const [actionQueue, setActionQueue] = useState<PpcAction[]>([]);
   const [actionQueueCount, setActionQueueCount] = useState<number>(0);
   const lastLoadedRecKeyRef = useRef<string>("");
@@ -1133,7 +1134,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
   }, [selectedDays, selectedStore]);
 
   const loadGroupedRecommendations = useCallback(async (force = false) => {
-    const currentKey = `${selectedStore}:${selectedSku}:${selectedDays}`;
+    const currentKey = `${selectedStore}:${selectedSku}:${selectedDays}:${includePausedRecs ? 1 : 0}`;
     if (!force && lastLoadedRecKeyRef.current === currentKey) {
       return;
     }
@@ -1146,7 +1147,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     setLoadingRecs(true);
     try {
       const res = await fetch(
-        `/api/ppc/recommendations/grouped?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}&summary=1${force ? "&refresh=1" : ""}`,
+        `/api/ppc/recommendations/grouped?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(selectedSku)}&days=${selectedDays}&summary=1&includePaused=${includePausedRecs ? "1" : "0"}${force ? "&refresh=1" : ""}`,
         { cache: "no-store", signal: controller.signal },
       );
       if (!res.ok) return;
@@ -1171,7 +1172,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
         setLoadingRecs(false);
       }
     }
-  }, [selectedStore, selectedSku, selectedDays]);
+  }, [selectedStore, selectedSku, selectedDays, includePausedRecs]);
 
   useEffect(() => {
     if (activeTab === "recommendations") return;
@@ -1179,14 +1180,14 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
   }, [activeTab]);
 
   const loadSkuRecommendationDetails = useCallback(async (sku: string) => {
-    const cacheKey = `${selectedStore}:${selectedDays}:${sku.trim().toUpperCase()}`;
+    const cacheKey = `${selectedStore}:${selectedDays}:${sku.trim().toUpperCase()}:${includePausedRecs ? 1 : 0}`;
     const cached = skuRecDetailsCacheRef.current.get(cacheKey);
     if (cached) {
       setSkuRecAllRecs(cached);
       return cached;
     }
     const res = await fetch(
-      `/api/ppc/recommendations/grouped?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(sku)}&days=${selectedDays}`,
+      `/api/ppc/recommendations/grouped?storeName=${encodeURIComponent(selectedStore)}&sku=${encodeURIComponent(sku)}&days=${selectedDays}&includePaused=${includePausedRecs ? "1" : "0"}`,
       { cache: "no-store" },
     );
     if (!res.ok) throw new Error(`Không thể tải recommendation cho SKU ${sku}`);
@@ -1196,7 +1197,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     skuRecDetailsCacheRef.current.set(cacheKey, recommendations);
     setSkuRecAllRecs(recommendations);
     return recommendations;
-  }, [selectedStore, selectedDays]);
+  }, [selectedStore, selectedDays, includePausedRecs]);
 
   const loadActionQueueCount = useCallback(async (targetStore?: string) => {
     try {
@@ -4659,6 +4660,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                 setIsCustomDate(false);
                 setSelectedDays(days);
               }}
+              includePausedCampaigns={includePausedRecs}
+              onIncludePausedCampaignsChange={setIncludePausedRecs}
               onLoadSkuRecommendations={loadSkuRecommendationDetails}
               onApproveToQueue={handleApproveToQueue}
               onOpenActionQueue={() => setIsActionQueueOpen(true)}

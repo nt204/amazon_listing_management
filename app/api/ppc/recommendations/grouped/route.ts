@@ -24,6 +24,7 @@ export async function GET(request: Request) {
     const refresh = searchParams.get("refresh") === "1" || searchParams.get("refresh") === "true";
     const summaryOnly = searchParams.get("summary") === "1";
     const days = Number(searchParams.get("days") || 30);
+    const includePaused = searchParams.get("includePaused") === "1" || searchParams.get("includePaused") === "true";
 
     if (!Number.isInteger(days) || days < 1 || days > 3650) {
       throw new ApiError("Số ngày đánh giá recommendation phải là số nguyên từ 1 đến 3650.", 400);
@@ -36,8 +37,8 @@ export async function GET(request: Request) {
 
     // Each attribution window must have an isolated cache entry. Reusing the
     // 30-day result for a 7-day request can produce unsafe bid decisions.
-    const cacheKey = groupedRecommendationsCacheKey(scope.teamId, storeId, storeName, days);
-    const redisKey = groupedRecommendationsRedisKey(scope.teamId, storeName, days);
+    const cacheKey = groupedRecommendationsCacheKey(scope.teamId, storeId, storeName, days, includePaused);
+    const redisKey = groupedRecommendationsRedisKey(scope.teamId, storeName, days, includePaused);
     if (refresh) {
       await invalidateCachePattern(redisKey);
     }
@@ -55,7 +56,7 @@ export async function GET(request: Request) {
         // time out before Auto Bid could render any data.
         const targetRows = await listTargetRowsForRecommendations(
           scope,
-          { storeName, days },
+          { storeName, days, includePaused },
           { unbounded: true },
         );
         return getGroupedRecommendations(storeId, targetRows, days);

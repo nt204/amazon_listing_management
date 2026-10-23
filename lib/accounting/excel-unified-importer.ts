@@ -44,6 +44,8 @@ export interface UnifiedImportResult {
     ads: number;
     returns: number;
     serviceFees: number;
+    skuMaster: number;
+    monthlyBasecost?: number;
   };
   totalProcessed: number;
   durationMs: number;
@@ -68,7 +70,7 @@ export async function importUnifiedAccountingExcel(
 ): Promise<UnifiedImportResult> {
   const startTime = Date.now();
   const chunkSize = options.chunkSize || 1000;
-  const counts = { orders: 0, ads: 0, returns: 0, serviceFees: 0 };
+  const counts = { orders: 0, ads: 0, returns: 0, serviceFees: 0, skuMaster: 0, monthlyBasecost: 0 };
   const processedSheets: string[] = [];
 
   if (!fs.existsSync(filePath)) {
@@ -90,7 +92,7 @@ export async function importUnifiedAccountingExcel(
     console.warn("[ExcelUnifiedImporter] Không thể đọc danh sách sheet qua JSZip:", err.message);
   }
 
-  // 2. Tìm tên sheet tương ứng cho 4 bảng
+  // 2. Tìm tên sheet tương ứng cho các bảng
   const findSheet = (patterns: string[]): string | null => {
     for (const p of patterns) {
       const match = sheetNames.find((s) => s.trim().toLowerCase() === p.toLowerCase());
@@ -107,8 +109,17 @@ export async function importUnifiedAccountingExcel(
   const targetAdsSheet = findSheet(["ads", "campaign ads", "campaigns", "portfolio"]);
   const targetReturnSheet = findSheet(["return", "returns"]);
   const targetServiceFeeSheet = findSheet(["service fees", "service fee", "servicefees"]);
+  const targetSkuMasterSheet = findSheet(["bảng mã", "bang ma", "sku master", "bang_ma", "danh mục sku", "bảng mã sku"]);
+  const targetBasecostThangSheet = findSheet(["basecost tháng", "basecost thang", "basecost_thang", "monthly basecost", "base cost tháng"]);
 
-  const targetSheetsToFind = new Set([targetOrdersSheet, targetAdsSheet, targetReturnSheet, targetServiceFeeSheet].filter(Boolean) as string[]);
+  const targetSheetsToFind = new Set([
+    targetOrdersSheet, 
+    targetAdsSheet, 
+    targetReturnSheet, 
+    targetServiceFeeSheet, 
+    targetSkuMasterSheet,
+    targetBasecostThangSheet
+  ].filter(Boolean) as string[]);
   let completedSheetsCount = 0;
 
   console.log("[ExcelUnifiedImporter] Mục tiêu sheet nhận diện được:", {
@@ -143,9 +154,10 @@ export async function importUnifiedAccountingExcel(
   `;
   const storeName = storeRes[0]?.name || "STORE";
 
-  // Tracker cho Returns & Service Fees để sinh deterministic hash
+  // Tracker cho Returns, Service Fees & Orders để sinh deterministic hash / unique item id
   const returnOccurrenceTracker = new Map<string, number>();
   const serviceFeeOccurrenceTracker = new Map<string, number>();
+  const orderOccurrenceTracker = new Map<string, number>();
 
   try {
     // 3. ĐỌC SINGLE-PASS DUY NHẤT TOÀN BỘ WORKBOOK
@@ -192,6 +204,12 @@ export async function importUnifiedAccountingExcel(
 
             const normalized = normalizeOrderRow(rowData, storeId, null);
             if (normalized) {
+              const occKey = `${normalized.amazon_order_id}::${normalized.sku}`;
+              const occ = (orderOccurrenceTracker.get(occKey) || 0) + 1;
+              orderOccurrenceTracker.set(occKey, occ);
+              if (!normalized.order_item_id && occ > 1) {
+                normalized.order_item_id = `item_${occ}`;
+              }
               orderRows.push(normalized);
             }
           }
@@ -608,7 +626,231 @@ export async function importUnifiedAccountingExcel(
         }
       }
 
-      // Sheet không thuộc 4 sheet trên -> xả nhanh qua iterator
+      // ==========================================
+      // SHEET 5: BẢNG MÃ (SKU MASTER)
+      // ==========================================
+      else if (currentSheetName === targetSkuMasterSheet) {
+        console.log(`[ExcelUnifiedImporter] 🚀 Đang đọc Sheet BẢNG MÃ: "${currentSheetName}"`);
+        const skuRows: Array<any> = [];
+        const headers: string[] = [];
+        let isHeaderRow = true;
+
+        for await (const row of ws) {
+          const vals = (row.values as any[]) || [];
+          if (isHeaderRow) {
+            isHeaderRow = false;
+            vals.forEach((v, idx) => {
+              if (v != null) {
+                let str = "";
+                if (typeof v === "object") {
+                  str = String((v as any).result || (v as any).text || (v as any).formula || "").trim().toLowerCase();
+                } else {
+                  str = String(v).trim().toLowerCase();
+                }
+                headers[idx] = str;
+              }
+            });
+          } else {
+            const getColVal = (patterns: string[]): any => {
+              for (const p of patterns) {
+                const idx = headers.indexOf(p.toLowerCase());
+                if (idx !== -1 && vals[idx] !== undefined) {
+                  let c = vals[idx];
+                  while (c && typeof c === "object" && !(c instanceof Date)) {
+                    if ("result" in c) c = c.result;
+                    else if ("text" in c) c = c.text;
+                    else break;
+                  }
+                  return c;
+                }
+              }
+              return null;
+            };
+
+            const skuVal = getColVal(["sku", "mã sku", "msku"]) || vals[4];
+            if (!skuVal) continue;
+            const sku = String(skuVal).trim();
+            if (!sku || sku.toLowerCase() === "sku") continue;
+
+            const brand = String(getColVal(["brand", "thương hiệu"]) || vals[1] || "").trim() || null;
+            const productType = String(getColVal(["product type", "loại sản phẩm", "loại sp"]) || vals[2] || "").trim() || null;
+            const mockup = String(getColVal(["mockup", "hình ảnh", "ảnh", "mockup url"]) || vals[3] || "").trim() || null;
+            const asin = String(getColVal(["asin"]) || vals[5] || "").trim() || null;
+            const fnsku = String(getColVal(["fnsku"]) || vals[6] || "").trim() || null;
+            const rawAmzFee = getColVal(["amazon fee", "fba fee", "amazon fee (chưa có referal fee)"]) || vals[7];
+            const amazonFee = rawAmzFee != null && !isNaN(Number(rawAmzFee)) ? Number(rawAmzFee) : null;
+            const rawRef = getColVal(["% referal", "% referral", "referral", "referal"]) || vals[8];
+            let referralFeePct = rawRef != null && !isNaN(Number(rawRef)) ? Number(rawRef) : null;
+            if (referralFeePct != null && referralFeePct > 1) referralFeePct = referralFeePct / 100;
+            const picMkt = String(getColVal(["pic mkt", "marketing", "mkt pic"]) || vals[9] || "").trim() || null;
+            const loai = String(getColVal(["loại", "loai"]) || vals[10] || "FBA").trim() || "FBA";
+            const niche = String(getColVal(["niche"]) || vals[11] || "").trim() || null;
+            const picIdea = String(getColVal(["pic idea", "idea pic"]) || vals[12] || "").trim() || null;
+            const status = String(getColVal(["trạng thái", "status"]) || vals[13] || "Phát triển").trim() || "Phát triển";
+            const rawBasecost = getColVal(["basecost", "basecost_tb", "chi phí gốc"]) || vals[24];
+            const basecostTb = rawBasecost != null && !isNaN(Number(rawBasecost)) ? Number(rawBasecost) : null;
+
+            skuRows.push({
+              store_id: storeId,
+              sku,
+              brand,
+              product_type: productType,
+              mockup,
+              asin,
+              fnsku,
+              amazon_fee: amazonFee,
+              referral_fee_pct: referralFeePct,
+              pic_mkt: picMkt,
+              loai,
+              niche,
+              pic_idea: picIdea,
+              status,
+              basecost_tb: basecostTb
+            });
+          }
+        }
+
+        if (skuRows.length > 0) {
+          for (const s of skuRows) {
+            await sql`
+              INSERT INTO accounting_sku_master (
+                store_id, sku, brand, product_type, mockup, asin, fnsku, 
+                amazon_fee, referral_fee_pct, pic_mkt, loai, niche, pic_idea, status, basecost_tb, updated_at
+              ) VALUES (
+                ${s.store_id}, ${s.sku}, ${s.brand}, ${s.product_type}, ${s.mockup}, ${s.asin}, ${s.fnsku},
+                ${s.amazon_fee}, ${s.referral_fee_pct}, ${s.pic_mkt}, ${s.loai}, ${s.niche}, ${s.pic_idea}, ${s.status}, ${s.basecost_tb}, NOW()
+              )
+              ON CONFLICT (store_id, sku) DO UPDATE SET
+                brand = COALESCE(EXCLUDED.brand, accounting_sku_master.brand),
+                product_type = COALESCE(EXCLUDED.product_type, accounting_sku_master.product_type),
+                asin = COALESCE(EXCLUDED.asin, accounting_sku_master.asin),
+                fnsku = COALESCE(EXCLUDED.fnsku, accounting_sku_master.fnsku),
+                amazon_fee = COALESCE(EXCLUDED.amazon_fee, accounting_sku_master.amazon_fee),
+                referral_fee_pct = COALESCE(EXCLUDED.referral_fee_pct, accounting_sku_master.referral_fee_pct),
+                pic_mkt = COALESCE(EXCLUDED.pic_mkt, accounting_sku_master.pic_mkt),
+                loai = COALESCE(EXCLUDED.loai, accounting_sku_master.loai),
+                status = COALESCE(EXCLUDED.status, accounting_sku_master.status),
+                basecost_tb = COALESCE(EXCLUDED.basecost_tb, accounting_sku_master.basecost_tb),
+                deleted_at = NULL,
+                updated_at = NOW()
+            `;
+            const skuKey = s.sku.trim().toUpperCase();
+            skuMap.set(skuKey, {
+              loai: s.loai || "",
+              pic_mkt: s.pic_mkt || "",
+              pic: s.pic_mkt || "",
+              status: s.status || "Phát triển",
+              basecost: s.basecost_tb || 0,
+            });
+          }
+          counts.skuMaster = skuRows.length;
+        }
+        processedSheets.push(`BẢNG MÃ (${currentSheetName}): ${counts.skuMaster.toLocaleString()} SKU`);
+        console.log(`[ExcelUnifiedImporter] ✅ Hoàn thành Sheet Bảng Mã: ${counts.skuMaster} SKU`);
+        completedSheetsCount++;
+        if (completedSheetsCount >= targetSheetsToFind.size) {
+          console.log(`[ExcelUnifiedImporter] 🎯 Đã nạp đủ ${completedSheetsCount}/${targetSheetsToFind.size} sheet. Đóng stream.`);
+          try { stream.destroy(); } catch {}
+          break;
+        }
+      }
+
+      // ==========================================
+      // SHEET 6: BASECOST THÁNG
+      // ==========================================
+      else if (currentSheetName === targetBasecostThangSheet) {
+        console.log(`[ExcelUnifiedImporter] 🚀 Đang đọc Sheet Basecost Tháng: "${currentSheetName}"`);
+        const headers: string[] = [];
+        let isHeaderRow = true;
+        const baseRows: Array<{
+          store_id: string;
+          sku: string;
+          period: string;
+          basecost_thang: number;
+          brand?: string | null;
+          asin?: string | null;
+        }> = [];
+
+        for await (const row of ws) {
+          const vals = (row.values as any[]) || [];
+          if (isHeaderRow) {
+            isHeaderRow = false;
+            vals.forEach((v, idx) => {
+              if (v != null) headers[idx] = String(v).trim().toLowerCase().replace(/\s+/g, " ");
+            });
+          } else {
+            const getColVal = (patterns: string[]): any => {
+              for (const p of patterns) {
+                const idx = headers.indexOf(p.toLowerCase());
+                if (idx !== -1 && vals[idx] !== undefined) {
+                  let cellVal = vals[idx];
+                  if (cellVal && typeof cellVal === "object") {
+                    if ("result" in cellVal) cellVal = cellVal.result;
+                    else if ("text" in cellVal) cellVal = cellVal.text;
+                  }
+                  return cellVal;
+                }
+              }
+              return null;
+            };
+
+            const rawMonth = getColVal(["month", "tháng", "thang"]) || vals[1];
+            const rawSku = getColVal(["sku", "mã sku", "ma sku"]) || vals[5];
+            const rawBasecost = getColVal(["basecost tính/tháng", "basecost", "basecost tính / tháng", "basecost thang"]) || vals[13];
+
+            if (!rawSku || rawMonth == null || rawBasecost == null) continue;
+            const sku = String(rawSku).trim();
+            if (!sku || sku.toLowerCase() === "sku") continue;
+
+            const monthNum = parseInt(String(rawMonth), 10);
+            if (isNaN(monthNum) || monthNum < 1 || monthNum > 12) continue;
+
+            const basecostNum = parseFloat(String(rawBasecost));
+            if (isNaN(basecostNum)) continue;
+
+            const period = `2026-${String(monthNum).padStart(2, "0")}`;
+            const brand = String(getColVal(["brand", "thương hiệu"]) || vals[4] || "").trim() || null;
+            const asin = String(getColVal(["asin"]) || vals[6] || "").trim() || null;
+
+            baseRows.push({
+              store_id: storeId,
+              sku,
+              period,
+              basecost_thang: basecostNum,
+              brand,
+              asin,
+            });
+          }
+        }
+
+        if (baseRows.length > 0) {
+          for (const b of baseRows) {
+            await sql`
+              INSERT INTO accounting_monthly_base_cost (
+                store_id, sku, period, basecost_thang, brand, asin, updated_at
+              ) VALUES (
+                ${b.store_id}, ${b.sku}, ${b.period}, ${b.basecost_thang}, ${b.brand ?? null}, ${b.asin ?? null}, NOW()
+              )
+              ON CONFLICT (store_id, period, sku) DO UPDATE SET
+                basecost_thang = EXCLUDED.basecost_thang,
+                brand = COALESCE(EXCLUDED.brand, accounting_monthly_base_cost.brand),
+                asin = COALESCE(EXCLUDED.asin, accounting_monthly_base_cost.asin),
+                updated_at = NOW()
+            `;
+          }
+          counts.monthlyBasecost = baseRows.length;
+        }
+        processedSheets.push(`BASECOST THÁNG (${currentSheetName}): ${counts.monthlyBasecost.toLocaleString()} dòng`);
+        console.log(`[ExcelUnifiedImporter] ✅ Hoàn thành Sheet Basecost Tháng: ${counts.monthlyBasecost} dòng`);
+        completedSheetsCount++;
+        if (completedSheetsCount >= targetSheetsToFind.size) {
+          console.log(`[ExcelUnifiedImporter] 🎯 Đã nạp đủ ${completedSheetsCount}/${targetSheetsToFind.size} sheet. Đóng stream.`);
+          try { stream.destroy(); } catch {}
+          break;
+        }
+      }
+
+      // Sheet không thuộc các sheet trên -> xả nhanh qua iterator
       else {
         if (completedSheetsCount >= targetSheetsToFind.size && targetSheetsToFind.size > 0) {
           try { stream.destroy(); } catch {}
@@ -631,10 +873,47 @@ export async function importUnifiedAccountingExcel(
     }
   }
 
+  // 5. Tự động đồng bộ ngược SKU Master sang Ads & Returns
+  // Đảm bảo dữ liệu luôn nhất quán 100% cho dù thứ tự các sheet trong file Excel nằm ở bất kỳ đâu
+  try {
+    await sql`
+      UPDATE accounting_ads a
+      SET pic_mkt = COALESCE(NULLIF(a.pic_mkt, ''), sm.pic_mkt),
+          loai = COALESCE(NULLIF(a.loai, ''), sm.loai, 'FBA')
+      FROM accounting_sku_master sm
+      WHERE sm.store_id = a.store_id 
+        AND sm.sku = a.sku 
+        AND a.store_id = ${storeId};
+    `;
+    await sql`
+      UPDATE accounting_returns r
+      SET pic_mkt = COALESCE(NULLIF(r.pic_mkt, ''), sm.pic_mkt),
+          loai = COALESCE(NULLIF(r.loai, ''), sm.loai, 'FBA'),
+          basecost = CASE 
+            WHEN COALESCE(r.basecost, 0) = 0 THEN COALESCE(sm.basecost_tb, 0) 
+            ELSE r.basecost 
+          END,
+          return_sau_basecost = CASE 
+            WHEN COALESCE(r.return_sau_basecost, 0) = 0 AND COALESCE(sm.basecost_tb, 0) > 0 
+              THEN r.total - COALESCE(sm.basecost_tb, 0)
+            ELSE r.return_sau_basecost 
+          END
+      FROM accounting_sku_master sm
+      WHERE sm.store_id = r.store_id 
+        AND sm.sku = r.sku 
+        AND r.store_id = ${storeId};
+    `;
+    console.log(`[ExcelUnifiedImporter] 🔄 Đã đồng bộ SKU Master sang Ads & Returns cho store ${storeId}`);
+  } catch (syncErr: any) {
+    console.warn(`[ExcelUnifiedImporter] ⚠️ Lỗi khi đồng bộ SKU Master:`, syncErr?.message);
+  }
+
   const durationMs = Date.now() - startTime;
-  const totalProcessed = counts.orders + counts.ads + counts.returns + counts.serviceFees;
+  const totalProcessed = counts.orders + counts.ads + counts.returns + counts.serviceFees + counts.skuMaster + counts.monthlyBasecost;
 
   const msgParts: string[] = [];
+  if (counts.skuMaster > 0) msgParts.push(`${counts.skuMaster.toLocaleString()} SKU Bảng Mã`);
+  if (counts.monthlyBasecost > 0) msgParts.push(`${counts.monthlyBasecost.toLocaleString()} dòng Basecost Tháng`);
   if (counts.orders > 0) msgParts.push(`${counts.orders.toLocaleString()} đơn hàng`);
   if (counts.ads > 0) msgParts.push(`${counts.ads.toLocaleString()} dòng Ads`);
   if (counts.returns > 0) msgParts.push(`${counts.returns.toLocaleString()} hoàn tiền Return`);

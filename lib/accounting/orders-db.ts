@@ -834,6 +834,7 @@ export async function batchUpsertOrders(
             AND o2.amazon_order_id = o1.amazon_order_id
             AND o2.sku = o1.sku
             AND o2.order_item_id != ''
+            AND o2.order_item_id NOT LIKE 'item_%'
         )
     `;
   }

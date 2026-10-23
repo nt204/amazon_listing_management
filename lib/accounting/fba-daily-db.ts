@@ -118,7 +118,7 @@ export async function listFbaDaily(
           )
         ) as total_promo,
         SUM(
-          COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, 0)
+          COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, sm.basecost_tb, 0)
         ) as total_basecost,
         SUM(
           CASE 
@@ -153,6 +153,8 @@ export async function listFbaDaily(
         AND o.fulfillment_channel = 'Amazon'
         AND o.date < CURRENT_DATE
         AND o.currency IN ('USD', 'CAD', 'MXN')
+        AND LOWER(COALESCE(o.order_status, '')) NOT IN ('cancelled', 'canceled')
+        AND o.amazon_order_id NOT LIKE 'S0%'
         ${hasDateFilter ? sql`AND o.date >= ${startDate}::date AND o.date <= ${endDate}::date` : sql``}
       GROUP BY o.date
     ),
