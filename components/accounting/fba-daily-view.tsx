@@ -54,7 +54,7 @@ function formatPercent(val: number | null | undefined): string {
 }
 
 export function FbaDailyView() {
-  const financialMaxDate = getAmazonLatestAvailableDate();
+  const financialMaxDate = useMemo(() => getAmazonLatestAvailableDate(), []);
   const [stores, setStores] = useState<Store[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<string>(() => {
     if (typeof window !== "undefined") {
@@ -360,17 +360,17 @@ export function FbaDailyView() {
             setDateRange(getSavedStoreDateRange("fba_daily", targetStore.id, financialMaxDate));
           }
         }
-      } catch {
-        // error
+      } catch (err) {
+        console.error("Failed to load stores:", err);
       } finally {
-        if (!ignore) setLoadingStores(false);
+        setLoadingStores(false);
       }
     }
     loadStores();
     return () => {
       ignore = true;
     };
-  }, [financialMaxDate]);
+  }, []);
 
   const handleStoreSelect = (newStoreId: string) => {
     if (!newStoreId) return;
@@ -397,7 +397,7 @@ export function FbaDailyView() {
       window.removeEventListener("acc_store_changed", handleSyncStore);
       window.removeEventListener("storage", handleSyncStore);
     };
-  }, [selectedStoreId, stores, financialMaxDate]);
+  }, [selectedStoreId, stores]);
 
   // Fetch FBA daily data
   const fetchData = useCallback(async () => {

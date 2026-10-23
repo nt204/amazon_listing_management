@@ -261,7 +261,7 @@ export function SkuTestView() {
   const [loadingStores, setLoadingStores] = useState(true);
 
   // Amazon reports are complete through yesterday.
-  const financialMaxDate = getAmazonLatestAvailableDate();
+  const financialMaxDate = useMemo(() => getAmazonLatestAvailableDate(), []);
   // Date Range state: defaults to 'This Month' or per-account saved range
   const [dateRange, setDateRange] = useState<DateRange>(() => {
     const initStoreId = typeof window !== "undefined" ? localStorage.getItem("acc_selected_store_id") || "" : "";
@@ -411,14 +411,14 @@ export function SkuTestView() {
       } catch (err) {
         console.error("Failed to load stores:", err);
       } finally {
-        if (!ignore) setLoadingStores(false);
+        setLoadingStores(false);
       }
     }
     loadStores();
     return () => {
       ignore = true;
     };
-  }, [financialMaxDate]);
+  }, []);
 
   const handleStoreSelect = (newStoreId: string) => {
     if (!newStoreId) return;
@@ -447,7 +447,7 @@ export function SkuTestView() {
       window.removeEventListener("acc_store_changed", handleSyncStore);
       window.removeEventListener("storage", handleSyncStore);
     };
-  }, [selectedStoreId, stores, financialMaxDate]);
+  }, [selectedStoreId, stores]);
 
   // 2. Fetch Data
   const fetchData = useCallback(async () => {
