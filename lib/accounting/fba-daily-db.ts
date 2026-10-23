@@ -96,8 +96,7 @@ export async function listFbaDaily(
       SELECT 
         o.date,
         COUNT(DISTINCT COALESCE(o.amazon_order_id, o.id::text)) as order_count,
-        SUM(CASE WHEN NULLIF(TRIM(COALESCE(o.currency, '')), '') IS NOT NULL
-          THEN COALESCE(o.quantity, 1) ELSE 0 END) as total_qty,
+        SUM(COALESCE(o.quantity, 1)) as total_qty,
         SUM(
           COALESCE(o.item_price, 0) * (
             CASE 
@@ -119,23 +118,17 @@ export async function listFbaDaily(
           )
         ) as total_promo,
         SUM(
-          CASE 
-            WHEN o.amazon_order_id LIKE 'S0%' THEN 0
-            ELSE COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, 0)
-          END
+          COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, 0)
         ) as total_basecost,
         SUM(
-          CASE 
-            WHEN COALESCE(o.item_price, 0) = 0 OR o.currency NOT IN ('USD', 'CAD', 'MXN') THEN 0
-            ELSE COALESCE(sm.amazon_fee, 0) + (COALESCE(sm.referral_fee_pct, 0) * COALESCE(o.item_price, 0) * (
-              CASE 
-                WHEN o.currency = 'CAD' THEN 0.738 
-                WHEN o.currency = 'MXN' THEN 0.051
-                WHEN o.currency = 'USD' THEN 1.0
-                ELSE 0
-              END
-            ))
-          END
+          COALESCE(sm.amazon_fee, 0) + (COALESCE(sm.referral_fee_pct, 0) * COALESCE(o.item_price, 0) * (
+            CASE 
+              WHEN o.currency = 'CAD' THEN 0.738 
+              WHEN o.currency = 'MXN' THEN 0.051
+              WHEN o.currency = 'USD' THEN 1.0
+              ELSE 0
+            END
+          ))
         ) as total_amz_fee,
         SUM(
           COALESCE(o.item_price, 0) * (
@@ -156,7 +149,7 @@ export async function listFbaDaily(
       WHERE o.store_id = ${storeId}
         AND o.fulfillment_channel = 'Amazon'
         AND o.date < CURRENT_DATE
-        AND NOT (LOWER(COALESCE(o.order_status, '')) IN ('cancelled', 'canceled') AND COALESCE(o.item_price, 0) = 0)
+        AND o.currency IN ('USD', 'CAD', 'MXN')
         ${hasDateFilter ? sql`AND o.date >= ${startDate}::date AND o.date <= ${endDate}::date` : sql``}
       GROUP BY o.date
     ),
