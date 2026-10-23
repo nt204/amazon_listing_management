@@ -16,6 +16,7 @@ export interface FbaDailyItem {
   promotion: number;
   return_cost: number;
   profit: number;
+  net_profit: number;
   balance: number;
   roi: number;
   tacos: number;
@@ -39,6 +40,7 @@ export interface FbaDailyStats {
   totalPromotion: number;
   totalReturnCost: number;
   totalProfit: number;
+  totalNetProfit: number;
   totalBalance: number;
   totalRevenueAds: number;
   totalClicks: number;
@@ -57,6 +59,8 @@ export interface ListFbaDailyOptions {
   page?: number;
   limit?: number;
 }
+
+const DAILY_SERVICE_COST = (20000 * 0.8572) / 184;
 
 function getExcelWeekNum(dateStr: string): number {
   try {
@@ -92,13 +96,15 @@ export async function listFbaDaily(
       SELECT 
         o.date,
         COUNT(DISTINCT COALESCE(o.amazon_order_id, o.id::text)) as order_count,
-        SUM(COALESCE(o.quantity, 1)) as total_qty,
+        SUM(CASE WHEN NULLIF(TRIM(COALESCE(o.currency, '')), '') IS NOT NULL
+          THEN COALESCE(o.quantity, 1) ELSE 0 END) as total_qty,
         SUM(
           COALESCE(o.item_price, 0) * (
             CASE 
               WHEN o.currency = 'CAD' THEN 0.738 
               WHEN o.currency = 'MXN' THEN 0.051
-              ELSE 1.0 
+              WHEN o.currency = 'USD' THEN 1.0
+              ELSE 0
             END
           )
         ) as total_rev,
@@ -107,21 +113,23 @@ export async function listFbaDaily(
             CASE 
               WHEN o.currency = 'CAD' THEN 0.738 
               WHEN o.currency = 'MXN' THEN 0.051
-              ELSE 1.0 
+              WHEN o.currency = 'USD' THEN 1.0
+              ELSE 0
             END
           )
         ) as total_promo,
         SUM(
-          COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, sm.basecost_tb, 0)
+          COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, 0)
         ) as total_basecost,
         SUM(
           CASE 
-            WHEN COALESCE(o.item_price, 0) = 0 THEN 0
-            ELSE COALESCE(sm.amazon_fee, 0) + (COALESCE(sm.referral_fee_pct, 0.15) * COALESCE(o.item_price, 0) * (
+            WHEN COALESCE(o.item_price, 0) = 0 OR o.currency NOT IN ('USD', 'CAD', 'MXN') THEN 0
+            ELSE COALESCE(sm.amazon_fee, 0) + (COALESCE(sm.referral_fee_pct, 0) * COALESCE(o.item_price, 0) * (
               CASE 
                 WHEN o.currency = 'CAD' THEN 0.738 
                 WHEN o.currency = 'MXN' THEN 0.051
-                ELSE 1.0 
+                WHEN o.currency = 'USD' THEN 1.0
+                ELSE 0
               END
             ))
           END
@@ -131,9 +139,10 @@ export async function listFbaDaily(
             CASE
               WHEN o.currency = 'CAD' THEN 0.738
               WHEN o.currency = 'MXN' THEN 0.051
-              ELSE 1.0
+              WHEN o.currency = 'USD' THEN 1.0
+              ELSE 0
             END
-          ) * (0.01 + COALESCE(sm.referral_fee_pct, 0.15) * 0.10)
+          ) * (0.01 + COALESCE(sm.referral_fee_pct, 0) * 0.10)
         ) as total_order_tax
       FROM accounting_orders o
       LEFT JOIN accounting_sku_master sm ON sm.store_id = o.store_id AND sm.sku = o.sku
@@ -143,8 +152,7 @@ export async function listFbaDaily(
         AND mbc.period = to_char(o.date, 'YYYY-MM')
       WHERE o.store_id = ${storeId}
         AND o.fulfillment_channel = 'Amazon'
-        AND o.currency IN ('USD', 'CAD', 'MXN')
-        AND o.item_price IS NOT NULL
+        AND o.date < CURRENT_DATE
         ${hasDateFilter ? sql`AND o.date >= ${startDate}::date AND o.date <= ${endDate}::date` : sql``}
       GROUP BY o.date
     ),
@@ -157,6 +165,8 @@ export async function listFbaDaily(
         SUM(clicks) as total_clicks
       FROM accounting_ads
       WHERE store_id = ${storeId}
+        AND UPPER(TRIM(loai)) = 'FBA'
+        AND date < CURRENT_DATE
         ${hasDateFilter ? sql`AND date >= ${startDate}::date AND date <= ${endDate}::date` : sql``}
       GROUP BY date
     ),
@@ -164,10 +174,27 @@ export async function listFbaDaily(
       SELECT 
         r.date,
         COUNT(*) as return_count,
-        ABS(SUM(COALESCE(r.return_sau_basecost, 0))) as return_total
+        -SUM(
+          COALESCE(r.total, 0)
+          + COALESCE((
+              SELECT mbc.basecost_thang
+              FROM accounting_monthly_base_cost mbc
+              WHERE mbc.store_id = r.store_id
+                AND mbc.sku = r.sku
+                AND mbc.period = to_char(r.date, 'YYYY-MM')
+              LIMIT 1
+            ), 0) * COALESCE((
+              SELECT MAX(o.quantity)
+              FROM accounting_orders o
+              WHERE o.store_id = r.store_id
+                AND o.amazon_order_id = r.order_id
+                AND o.sku = r.sku
+            ), 1)
+        ) as return_total
       FROM accounting_returns r
       WHERE r.store_id = ${storeId}
-        AND UPPER(COALESCE(r.loai, 'FBA')) = 'FBA'
+        AND UPPER(TRIM(r.loai)) = 'FBA'
+        AND r.date < CURRENT_DATE
         ${hasDateFilter ? sql`AND r.date >= ${startDate}::date AND r.date <= ${endDate}::date` : sql``}
       GROUP BY r.date
     ),
@@ -209,7 +236,7 @@ export async function listFbaDaily(
     const amazonFee = Number(r.amazon_fee || 0);
     const orderTax = Number(r.order_tax || 0);
     const promotion = Number(r.promotion || 0);
-    const returnCost = Math.abs(Number(r.return_cost || 0));
+    const returnCost = Number(r.return_cost || 0);
     const revenueAds = Number(r.revenue_ads || 0);
     const quantityAds = Number(r.quantity_ads || 0);
     const clicks = Number(r.clicks || 0);
@@ -219,6 +246,7 @@ export async function listFbaDaily(
 
     // Profit = Revenue - Ads Fee - Basecost - Amazon Fee - Thuế - Promotion - Return
     const profit = revenue - adsFee - basecost - amazonFee - thue - promotion - returnCost;
+    const netProfit = profit - DAILY_SERVICE_COST;
 
     // Balance = Revenue - Amazon Fee - Ads Fee - Return Cost
     const balance = revenue - amazonFee - adsFee - returnCost;
@@ -249,6 +277,7 @@ export async function listFbaDaily(
       promotion,
       return_cost: returnCost,
       profit,
+      net_profit: netProfit,
       balance,
       roi,
       tacos,
@@ -302,6 +331,7 @@ export async function listFbaDaily(
   let totalPromotion = 0;
   let totalReturnCost = 0;
   let totalProfit = 0;
+  let totalNetProfit = 0;
   let totalBalance = 0;
   let totalRevenueAds = 0;
   let totalClicks = 0;
@@ -316,6 +346,7 @@ export async function listFbaDaily(
     totalPromotion += item.promotion;
     totalReturnCost += item.return_cost;
     totalProfit += item.profit;
+    totalNetProfit += item.net_profit;
     totalBalance += item.balance;
     totalRevenueAds += item.revenue_ads;
     totalClicks += item.clicks;
@@ -337,6 +368,7 @@ export async function listFbaDaily(
     totalPromotion,
     totalReturnCost,
     totalProfit,
+    totalNetProfit,
     totalBalance,
     totalRevenueAds,
     totalClicks,

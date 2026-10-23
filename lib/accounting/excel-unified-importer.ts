@@ -129,7 +129,7 @@ export async function importUnifiedAccountingExcel(
   for (const s of skuMasters) {
     const skuKey = s.sku.trim().toUpperCase();
     skuMap.set(skuKey, {
-      loai: s.loai || "FBA",
+      loai: s.loai || "",
       pic_mkt: s.pic_mkt || "",
       pic: s.pic_mkt || "",
       status: s.status || "Phát triển",
@@ -166,7 +166,7 @@ export async function importUnifiedAccountingExcel(
       // ==========================================
       if (currentSheetName === targetOrdersSheet) {
         console.log(`[ExcelUnifiedImporter] 🚀 Đang đọc Sheet Orders: "${currentSheetName}"`);
-        let orderChunk: Partial<OrderItem>[] = [];
+        const orderRows: Partial<OrderItem>[] = [];
         const headers: string[] = [];
         let isHeaderRow = true;
 
@@ -192,20 +192,14 @@ export async function importUnifiedAccountingExcel(
 
             const normalized = normalizeOrderRow(rowData, storeId, null);
             if (normalized) {
-              orderChunk.push(normalized);
-              if (orderChunk.length >= chunkSize) {
-                const res = await batchUpsertOrders(storeId, orderChunk);
-                counts.orders += res.count;
-                options.onProgress?.("orders", counts.orders);
-                orderChunk = []; // Giải phóng RAM ngay
-              }
+              orderRows.push(normalized);
             }
           }
         }
-        if (orderChunk.length > 0) {
-          const res = await batchUpsertOrders(storeId, orderChunk);
+        if (orderRows.length > 0) {
+          const res = await batchUpsertOrders(storeId, orderRows, { snapshot: "all" });
           counts.orders += res.count;
-          orderChunk = [];
+          options.onProgress?.("orders", counts.orders);
         }
         processedSheets.push(`Orders (${currentSheetName}): ${counts.orders.toLocaleString()} dòng`);
         console.log(`[ExcelUnifiedImporter] ✅ Hoàn thành Sheet Orders: ${counts.orders} dòng`);
@@ -305,7 +299,7 @@ export async function importUnifiedAccountingExcel(
             }
 
             const matchedMaster = sku ? skuMap.get(sku.toUpperCase()) : null;
-            if (!loai) loai = matchedMaster?.loai || "FBA";
+            if (!loai) loai = matchedMaster?.loai || "";
             if (!mktPic) mktPic = matchedMaster?.pic_mkt || portfolio.split(/\s+/)[0] || "";
             if (!trangThai) trangThai = matchedMaster?.status || "Phát triển";
 
@@ -350,16 +344,12 @@ export async function importUnifiedAccountingExcel(
               trang_thai: trangThai,
             });
 
-            if (adsChunk.length >= chunkSize) {
-              const res = await batchUpsertAds(storeId, adsChunk);
-              counts.ads += res.count;
-              options.onProgress?.("ads", counts.ads);
-              adsChunk = [];
-            }
+            // Giữ toàn bộ sheet để batchUpsertAds thay snapshot theo ngày đúng
+            // một lần; gọi theo chunk sẽ làm chunk sau xóa dữ liệu chunk trước.
           }
         }
         if (adsChunk.length > 0) {
-          const res = await batchUpsertAds(storeId, adsChunk);
+          const res = await batchUpsertAds(storeId, adsChunk, { snapshot: "all" });
           counts.ads += res.count;
           adsChunk = [];
         }
@@ -424,7 +414,7 @@ export async function importUnifiedAccountingExcel(
 
             const sku = String(getColVal(["sku", "msku"]) || vals[1] || "").trim();
             const master = sku ? skuMap.get(sku.toUpperCase()) : null;
-            const loai = String(getColVal(["loại", "loai"]) || master?.loai || "FBA").trim();
+            const loai = String(getColVal(["loại", "loai"]) || master?.loai || "").trim();
             const pic = String(getColVal(["pic", "pic mkt", "mkt pic"]) || master?.pic || "").trim();
             const basecostVal = getColVal(["basecost", "chi phí gốc"]) || vals[4];
             const basecost = basecostVal != null ? parseReturnNumber(basecostVal) : master ? -Math.abs(master.basecost) : 0;
@@ -487,7 +477,7 @@ export async function importUnifiedAccountingExcel(
           }
         }
         if (returnChunk.length > 0) {
-          const res = await batchUpsertReturns(storeId, returnChunk);
+          const res = await batchUpsertReturns(storeId, returnChunk, { snapshot: "all" });
           counts.returns = res.count;
           returnChunk = [];
         }

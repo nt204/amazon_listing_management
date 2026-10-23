@@ -59,11 +59,13 @@ export async function GET(request: Request) {
       "Promotion",
       "Refund",
       "Profit",
+      "Net Profit",
       "Balance",
       "ROI",
       "TAcos",
       "Acos",
       "% Profit",
+      "% Profit trước ADS",
       "Profit/item",
       "Revenue ads",
       "Quantity (Ads)",
@@ -101,11 +103,13 @@ export async function GET(request: Request) {
         item.promotion,
         item.return_cost,
         item.profit,
+        item.net_profit,
         item.balance,
         item.roi,
         item.tacos,
         item.acos,
         item.margin,
+        item.margin_pre_ads,
         item.profit_per_item,
         item.revenue_ads,
         item.quantity_ads,
@@ -113,13 +117,13 @@ export async function GET(request: Request) {
       ];
 
       // Formats
-      [3, 5, 6, 7, 8, 9, 10, 11, 12, 17, 18].forEach((colIdx) => {
+      [3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 19, 20].forEach((colIdx) => {
         row.getCell(colIdx).numFmt = "$#,##0.00";
       });
-      [4, 19, 20].forEach((colIdx) => {
+      [4, 21, 22].forEach((colIdx) => {
         row.getCell(colIdx).numFmt = "#,##0";
       });
-      [13, 14, 15, 16].forEach((colIdx) => {
+      [14, 15, 16, 17, 18].forEach((colIdx) => {
         row.getCell(colIdx).numFmt = "0.0%";
       });
 

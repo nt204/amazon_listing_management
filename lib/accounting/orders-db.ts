@@ -25,7 +25,7 @@ export interface OrderItem {
   asin: string | null;
   item_status: string | null;
   quantity: number;
-  currency: string;
+  currency: string | null;
   item_price: number | null;
   item_tax: number | null;
   shipping_price: number | null;
@@ -402,6 +402,13 @@ export function normalizeOrderRow(
 
   if (!amazonOrderId || !sku) return null;
 
+  // Amazon exports can repeat the header in the middle of a large file. Never
+  // persist that repeated header as an order row.
+  const normalizedOrderId = String(amazonOrderId).trim().toLowerCase().replace(/[_\s]/g, "-");
+  if (normalizedOrderId === "amazon-order-id" || String(sku).trim().toLowerCase() === "sku") {
+    return null;
+  }
+
   const orderItemId = rawOrderItemId ? String(rawOrderItemId).trim() : "";
 
   const purchaseDateRaw = getVal("purchase-date", "purchase_date", "order-date");
@@ -456,7 +463,7 @@ export function normalizeOrderRow(
     asin: getVal("asin", "ASIN") ? String(getVal("asin", "ASIN")).trim() : null,
     item_status: getVal("item-status", "item_status") ? String(getVal("item-status", "item_status")).trim() : null,
     quantity: Math.max(1, Math.round(cleanOrderNumber(getVal("quantity", "qty", "quantity-purchased")) || 1)),
-    currency: getVal("currency") ? String(getVal("currency")).trim() : "USD",
+    currency: getVal("currency") ? String(getVal("currency")).trim() : null,
     item_price: cleanOrderNumber(getVal("item-price", "item_price", "principal", "item-price-amount")),
     item_tax: cleanOrderNumber(getVal("item-tax", "item_tax", "tax")),
     shipping_price: cleanOrderNumber(getVal("shipping-price", "shipping_price", "shipping")),
@@ -681,7 +688,8 @@ export async function parseOrdersBuffer(
  */
 export async function batchUpsertOrders(
   storeId: string,
-  orders: Partial<OrderItem>[]
+  orders: Partial<OrderItem>[],
+  options: { snapshot?: "dates" | "all" | false } = { snapshot: "dates" }
 ): Promise<{ count: number }> {
   if (orders.length === 0) return { count: 0 };
   const sql = await getDatabaseClient();
@@ -700,6 +708,19 @@ export async function batchUpsertOrders(
     "purchase_order_number", "price_designation", "customized_url", "customized_page",
     "signature_confirmation_recommended"
   ] as const;
+
+  const snapshotDates = Array.from(new Set(orders.map((order) => order.date).filter(Boolean))) as string[];
+
+  await sql.begin(async (transaction) => {
+    if (options.snapshot === "all") {
+      await transaction`DELETE FROM accounting_orders WHERE store_id = ${storeId}`;
+    } else if (options.snapshot !== false && snapshotDates.length > 0) {
+      await transaction`
+        DELETE FROM accounting_orders
+        WHERE store_id = ${storeId}
+          AND date IN ${transaction(snapshotDates)}
+      `;
+    }
 
   for (let i = 0; i < orders.length; i += chunkSize) {
     const chunk = orders.slice(i, i + chunkSize);
@@ -725,7 +746,7 @@ export async function batchUpsertOrders(
       asin: o.asin ?? null,
       item_status: o.item_status ?? null,
       quantity: o.quantity ?? 1,
-      currency: o.currency ?? "USD",
+      currency: o.currency ?? null,
       item_price: o.item_price ?? null,
       item_tax: o.item_tax ?? null,
       shipping_price: o.shipping_price ?? null,
@@ -755,8 +776,8 @@ export async function batchUpsertOrders(
     }
     const dedupedRows = Array.from(dedupeMap.values());
 
-    await sql`
-      INSERT INTO accounting_orders ${sql(dedupedRows, ...cols)}
+    await transaction`
+      INSERT INTO accounting_orders ${transaction(dedupedRows, ...cols)}
       ON CONFLICT (store_id, amazon_order_id, sku, order_item_id)
       DO UPDATE SET
         date = COALESCE(EXCLUDED.date, accounting_orders.date),
@@ -801,7 +822,7 @@ export async function batchUpsertOrders(
 
   // Tự động dọn dẹp các dòng lịch sử trống order_item_id nếu đã có dòng mang order_item_id thực tế
   if (totalProcessed > 0) {
-    await sql`
+    await transaction`
       DELETE FROM accounting_orders o1
       WHERE o1.store_id = ${storeId}
         AND o1.order_item_id = ''
@@ -814,6 +835,7 @@ export async function batchUpsertOrders(
         )
     `;
   }
+  });
 
   return { count: totalProcessed };
 }

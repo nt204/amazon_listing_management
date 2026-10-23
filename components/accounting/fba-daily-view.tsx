@@ -106,7 +106,7 @@ export function FbaDailyView() {
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed) && parsed.length > 0) {
             const defaultMap = new Map(DEFAULT_FBA_DAILY_COLUMNS.map((c) => [c.id, c]));
-            return parsed.map((col: ColumnConfig) => {
+            const restored = parsed.map((col: ColumnConfig) => {
               const def = defaultMap.get(col.id);
               return {
                 ...col,
@@ -116,6 +116,11 @@ export function FbaDailyView() {
                 width: col.width || def?.width,
               };
             });
+            const restoredIds = new Set(restored.map((col: ColumnConfig) => col.id));
+            return [
+              ...restored,
+              ...DEFAULT_FBA_DAILY_COLUMNS.filter((col) => !restoredIds.has(col.id)),
+            ];
           }
         } catch {
           // fallback
@@ -733,6 +738,11 @@ export function FbaDailyView() {
                             {formatCurrency(stats.totalProfit)}
                           </span>
                         )}
+                        {col.id === "net_profit" && (
+                          <span className={`font-bold tabular-nums ${stats.totalNetProfit >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                            {formatCurrency(stats.totalNetProfit)}
+                          </span>
+                        )}
                         {col.id === "balance" && (
                           <span className="font-bold text-slate-950 tabular-nums">
                             {formatCurrency(stats.totalBalance)}
@@ -941,6 +951,12 @@ export function FbaDailyView() {
                                 }`}
                               >
                                 {formatCurrency(item.profit)}
+                              </span>
+                            )}
+
+                            {col.id === "net_profit" && (
+                              <span className={`font-semibold tabular-nums ${item.net_profit >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                                {formatCurrency(item.net_profit)}
                               </span>
                             )}
 

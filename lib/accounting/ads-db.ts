@@ -337,7 +337,7 @@ export async function parseAdsBuffer(
   // Fetch known SKUs & PICs from accounting_sku_master for intelligent mapping
   const sql = await getDatabaseClient();
   const knownSkus = await sql<{ sku: string; pic_mkt: string; loai: string; status: string }[]>`
-    SELECT sku, COALESCE(pic_mkt, '') as pic_mkt, COALESCE(loai, 'FBA') as loai, COALESCE(status, '') as status
+    SELECT sku, COALESCE(pic_mkt, '') as pic_mkt, COALESCE(loai, '') as loai, COALESCE(status, '') as status
     FROM accounting_sku_master
     WHERE store_id = ${storeId} AND sku IS NOT NULL AND sku != ''
   `;
@@ -465,7 +465,7 @@ export async function parseAdsBuffer(
                   }
 
                   const matchedMaster = sku ? skuMap.get(sku.toUpperCase()) : null;
-                  if (!loai) loai = matchedMaster?.loai || "FBA";
+                  if (!loai) loai = matchedMaster?.loai || "";
                   if (!mktPic) {
                     mktPic = matchedMaster?.pic_mkt || portfolio.split(/\s+/)[0] || "";
                   }
@@ -633,7 +633,7 @@ export async function parseAdsBuffer(
       }
 
       const matchedMaster = sku ? skuMap.get(sku.toUpperCase()) : null;
-      if (!loai) loai = matchedMaster?.loai || "FBA";
+      if (!loai) loai = matchedMaster?.loai || "";
       if (!mktPic) {
         mktPic = matchedMaster?.pic_mkt || portfolio.split(/\s+/)[0] || "";
       }
@@ -773,7 +773,7 @@ export async function parseAdsBuffer(
       }
 
       const matchedMaster = sku ? skuMap.get(sku.toUpperCase()) : null;
-      if (!loai) loai = matchedMaster?.loai || "FBA";
+      if (!loai) loai = matchedMaster?.loai || "";
       if (!mktPic) {
         mktPic = matchedMaster?.pic_mkt || portfolio.split(/\s+/)[0] || "";
       }
@@ -829,7 +829,8 @@ export async function parseAdsBuffer(
 
 export async function batchUpsertAds(
   storeId: string,
-  items: Array<Omit<AdsItem, "id" | "created_at" | "updated_at">>
+  items: Array<Omit<AdsItem, "id" | "created_at" | "updated_at">>,
+  options: { snapshot?: "dates" | "all" | false } = { snapshot: "dates" }
 ): Promise<{ count: number; createdCount: number; updatedCount: number }> {
   if (items.length === 0) return { count: 0, createdCount: 0, updatedCount: 0 };
 
@@ -842,24 +843,37 @@ export async function batchUpsertAds(
     dedupedMap.set(key, item);
   }
   const deduped = Array.from(dedupedMap.values());
+  const snapshotDates = Array.from(new Set(deduped.map((item) => item.date).filter(Boolean)));
 
   const CHUNK_SIZE = 500;
   let totalProcessed = 0;
 
-  for (let i = 0; i < deduped.length; i += CHUNK_SIZE) {
-    const chunk = deduped.slice(i, i + CHUNK_SIZE);
-
-    const cols = [
+  const cols = [
       "store_id", "date", "portfolio", "status", "budget_type", "budget",
       "budget_start", "budget_end", "campaign_count", "impressions", "clicks",
       "ctr", "spend", "cpc", "orders", "sales", "acos", "roas",
       "ntb_orders", "pct_orders_ntb", "ntb_sales", "pct_sales_ntb",
       "viewable_impressions", "vcpm", "sku", "loai", "mkt_pic",
       "tuan", "thang", "quy", "thue_10", "trang_thai"
-    ] as const;
+  ] as const;
 
-    await sql`
-      INSERT INTO accounting_ads ${sql(chunk, ...cols)}
+  // Báo cáo ADS là snapshot theo ngày. Xóa snapshot cũ trong cùng transaction
+  // để campaign/portfolio đã biến mất khỏi file không tiếp tục bị cộng vào FBA.
+  await sql.begin(async (transaction) => {
+    if (options.snapshot === "all") {
+      await transaction`DELETE FROM accounting_ads WHERE store_id = ${storeId}`;
+    } else if (options.snapshot !== false && snapshotDates.length > 0) {
+      await transaction`
+        DELETE FROM accounting_ads
+        WHERE store_id = ${storeId}
+          AND date IN ${transaction(snapshotDates)}
+      `;
+    }
+
+    for (let i = 0; i < deduped.length; i += CHUNK_SIZE) {
+      const chunk = deduped.slice(i, i + CHUNK_SIZE);
+      await transaction`
+      INSERT INTO accounting_ads ${transaction(chunk, ...cols)}
       ON CONFLICT (store_id, date, portfolio) DO UPDATE SET
         status = EXCLUDED.status,
         budget_type = EXCLUDED.budget_type,
@@ -891,10 +905,10 @@ export async function batchUpsertAds(
         thue_10 = EXCLUDED.thue_10,
         trang_thai = CASE WHEN EXCLUDED.trang_thai != '' THEN EXCLUDED.trang_thai ELSE accounting_ads.trang_thai END,
         updated_at = NOW()
-    `;
-
-    totalProcessed += chunk.length;
-  }
+      `;
+      totalProcessed += chunk.length;
+    }
+  });
 
   return {
     count: totalProcessed,

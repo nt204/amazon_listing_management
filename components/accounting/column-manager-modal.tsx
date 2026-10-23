@@ -305,6 +305,7 @@ export const DEFAULT_FBA_DAILY_COLUMNS: ColumnConfig[] = [
   { id: "promotion", label: "Promotion", defaultLabel: "Promotion", visible: true, align: "right", width: 110 },
   { id: "return_cost", label: "Refund", defaultLabel: "Refund", visible: true, align: "right", width: 105 },
   { id: "profit", label: "Profit", defaultLabel: "Profit", visible: true, align: "right", width: 125 },
+  { id: "net_profit", label: "Net Profit", defaultLabel: "Net Profit", visible: true, align: "right", width: 125 },
   { id: "balance", label: "Balance", defaultLabel: "Balance", visible: true, align: "right", width: 120 },
   { id: "roi", label: "ROI (%)", defaultLabel: "ROI (%)", visible: true, align: "right", width: 95 },
   { id: "tacos", label: "TACOS (%)", defaultLabel: "TACOS (%)", visible: true, align: "right", width: 95 },

@@ -169,12 +169,18 @@ export async function parseReturnBuffer(
   const isXlsx = lowerName.endsWith(".xlsx") || lowerName.endsWith(".xlsm");
 
   // Lookup order data and SKU master for smart column filling
-  const [skuRows, orderRows] = await Promise.all([
+  const [skuRows, orderRows, monthlyBasecostRows] = await Promise.all([
     sql<{ sku: string; loai: string; pic_mkt: string; status: string; basecost_tb: number }[]>`
       SELECT sku, loai, pic_mkt, status, basecost_tb FROM accounting_sku_master WHERE store_id = ${storeId}
     `.catch(() => []),
-    sql<{ amazon_order_id: string; sku: string; fulfillment_channel: string | null }[]>`
-      SELECT amazon_order_id, sku, fulfillment_channel FROM accounting_orders WHERE store_id = ${storeId}
+    sql<{ amazon_order_id: string; sku: string; fulfillment_channel: string | null; quantity: number | null }[]>`
+      SELECT amazon_order_id, sku, fulfillment_channel, quantity
+      FROM accounting_orders WHERE store_id = ${storeId}
+    `.catch(() => []),
+    sql<{ sku: string; period: string; basecost_thang: number }[]>`
+      SELECT sku, period, basecost_thang
+      FROM accounting_monthly_base_cost
+      WHERE store_id = ${storeId}
     `.catch(() => []),
   ]);
 
@@ -182,7 +188,7 @@ export async function parseReturnBuffer(
   for (const s of skuRows) {
     if (s.sku) {
       skuMap.set(s.sku.trim().toUpperCase(), {
-        loai: s.loai || "FBA",
+        loai: s.loai || "",
         pic: s.pic_mkt || "",
         status: s.status || "Phát triển",
         basecost: Number(s.basecost_tb) || 0,
@@ -190,13 +196,19 @@ export async function parseReturnBuffer(
     }
   }
 
-  const orderInfoMap = new Map<string, { sku: string; loai: string }>();
+  const monthlyBasecostMap = new Map<string, number>();
+  for (const row of monthlyBasecostRows) {
+    monthlyBasecostMap.set(`${row.period}::${row.sku.trim().toUpperCase()}`, Number(row.basecost_thang) || 0);
+  }
+
+  const orderInfoMap = new Map<string, { sku: string; loai: string; quantity: number }>();
   for (const o of orderRows) {
     if (o.amazon_order_id) {
       const isFbm = o.fulfillment_channel?.trim().toLowerCase() === "merchant";
       orderInfoMap.set(o.amazon_order_id.trim(), {
         sku: (o.sku || "").trim(),
         loai: isFbm ? "FBM" : "FBA",
+        quantity: Math.max(1, Number(o.quantity) || 1),
       });
     }
   }
@@ -302,10 +314,17 @@ export async function parseReturnBuffer(
             }
 
             const master = sku ? skuMap.get(sku.toUpperCase()) : null;
-            const loai = String(getColVal(["loại", "loai"]) || orderInfo?.loai || master?.loai || "FBA").trim();
+            const loai = String(getColVal(["loại", "loai"]) || orderInfo?.loai || master?.loai || "").trim();
             const pic = String(getColVal(["pic", "pic mkt", "mkt pic"]) || master?.pic || "").trim();
             const basecostVal = getColVal(["basecost", "chi phí gốc"]);
-            const basecost = basecostVal != null ? parseReturnNumber(basecostVal) : master ? -Math.abs(master.basecost) : 0;
+            const period = effectiveDate.slice(0, 7);
+            const monthlyBasecost = sku ? monthlyBasecostMap.get(`${period}::${sku.toUpperCase()}`) : undefined;
+            const quantity = orderInfo?.quantity || 1;
+            const basecost = basecostVal != null
+              ? parseReturnNumber(basecostVal)
+              : monthlyBasecost != null
+                ? -Math.abs(monthlyBasecost * quantity)
+                : 0;
 
             const txStatus = String(getColVal(["transaction status", "trạng thái giao dịch"]) || "Released").trim();
             const txType = String(getColVal(["transaction type", "loại giao dịch"]) || "Refund").trim();
@@ -413,10 +432,17 @@ export async function parseReturnBuffer(
       }
 
       const master = sku ? skuMap.get(sku.toUpperCase()) : null;
-      const loai = getVal(loaiIdx) || orderInfo?.loai || master?.loai || "FBA";
+      const loai = getVal(loaiIdx) || orderInfo?.loai || master?.loai || "";
       const pic = getVal(picIdx) || master?.pic || "";
       const basecostVal = getVal(basecostIdx);
-      const basecost = basecostVal ? parseReturnNumber(basecostVal) : master ? -Math.abs(master.basecost) : 0;
+      const period = effectiveDate.slice(0, 7);
+      const monthlyBasecost = sku ? monthlyBasecostMap.get(`${period}::${sku.toUpperCase()}`) : undefined;
+      const quantity = orderInfo?.quantity || 1;
+      const basecost = basecostVal
+        ? parseReturnNumber(basecostVal)
+        : monthlyBasecost != null
+          ? -Math.abs(monthlyBasecost * quantity)
+          : 0;
 
       const txStatus = getVal(statusIdx) || "Released";
       const txType = getVal(typeIdx) || "Refund";
@@ -653,7 +679,8 @@ export async function listReturns(
 
 export async function batchUpsertReturns(
   storeId: string,
-  items: Omit<ReturnItem, "id" | "created_at" | "updated_at">[]
+  items: Omit<ReturnItem, "id" | "created_at" | "updated_at">[],
+  options: { snapshot?: "dates" | "all" | false } = { snapshot: "dates" }
 ): Promise<{ count: number; createdCount: number }> {
   if (items.length === 0) return { count: 0, createdCount: 0 };
   const sql = await getDatabaseClient();
@@ -681,11 +708,15 @@ export async function batchUpsertReturns(
   // File Return là snapshot đầy đủ theo ngày. Thay thế nguyên ngày để dữ liệu cũ
   // (đặc biệt các dòng từng thiếu SKU) không tồn tại song song với snapshot mới.
   await sql.begin(async (transaction) => {
-    await transaction`
-      DELETE FROM accounting_returns
-      WHERE store_id = ${storeId}
-        AND date IN ${transaction(snapshotDates)}
-    `;
+    if (options.snapshot === "all") {
+      await transaction`DELETE FROM accounting_returns WHERE store_id = ${storeId}`;
+    } else if (options.snapshot !== false && snapshotDates.length > 0) {
+      await transaction`
+        DELETE FROM accounting_returns
+        WHERE store_id = ${storeId}
+          AND date IN ${transaction(snapshotDates)}
+      `;
+    }
 
     for (let i = 0; i < deduped.length; i += CHUNK_SIZE) {
       const chunk = deduped.slice(i, i + CHUNK_SIZE);

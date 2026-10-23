@@ -148,7 +148,8 @@ export async function listSkuWin(
             CASE 
               WHEN o.currency = 'CAD' THEN 0.738 
               WHEN o.currency = 'MXN' THEN 0.051
-              ELSE 1.0 
+              WHEN o.currency = 'USD' THEN 1.0
+              ELSE 0
             END
           )
         ) as total_rev,
@@ -157,12 +158,13 @@ export async function listSkuWin(
             CASE 
               WHEN o.currency = 'CAD' THEN 0.738 
               WHEN o.currency = 'MXN' THEN 0.051
-              ELSE 1.0 
+              WHEN o.currency = 'USD' THEN 1.0
+              ELSE 0
             END
           )
         ) as total_promo,
         SUM(
-          COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, sm.basecost_tb, 0)
+          COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, 0)
         ) as total_basecost
       FROM accounting_orders o
       LEFT JOIN accounting_sku_master sm ON sm.store_id = o.store_id AND sm.sku = o.sku
@@ -192,6 +194,7 @@ export async function listSkuWin(
         SUM(sales) as total_ad_sales
       FROM accounting_ads
       WHERE store_id = ${storeId}
+        AND UPPER(TRIM(loai)) = 'FBA'
         ${hasDateFilter ? sql`AND date >= ${startDate}::date AND date <= ${endDate}::date` : sql``}
       GROUP BY sku
     ),
@@ -199,10 +202,26 @@ export async function listSkuWin(
       SELECT 
         r.sku,
         COUNT(*) as return_count,
-        ABS(SUM(COALESCE(r.return_sau_basecost, 0))) as return_total
+        -SUM(
+          COALESCE(r.total, 0)
+          + COALESCE((
+              SELECT mbc.basecost_thang
+              FROM accounting_monthly_base_cost mbc
+              WHERE mbc.store_id = r.store_id
+                AND mbc.sku = r.sku
+                AND mbc.period = to_char(r.date, 'YYYY-MM')
+              LIMIT 1
+            ), 0) * COALESCE((
+              SELECT MAX(o.quantity)
+              FROM accounting_orders o
+              WHERE o.store_id = r.store_id
+                AND o.amazon_order_id = r.order_id
+                AND o.sku = r.sku
+            ), 1)
+        ) as return_total
       FROM accounting_returns r
       WHERE r.store_id = ${storeId}
-        AND UPPER(COALESCE(r.loai, 'FBA')) = 'FBA'
+        AND UPPER(TRIM(r.loai)) = 'FBA'
         ${hasDateFilter ? sql`AND r.date >= ${startDate}::date AND r.date <= ${endDate}::date` : sql``}
       GROUP BY r.sku
     ),
@@ -221,7 +240,7 @@ export async function listSkuWin(
         COUNT(DISTINCT CASE WHEN COALESCE(o.item_price, 0) > 0 THEN COALESCE(o.amazon_order_id, o.id::text) END) as compare_order_count,
         SUM(COALESCE(o.quantity, 1)) as compare_qty,
         SUM(COALESCE(o.item_price, 0) * (CASE WHEN o.currency = 'CAD' THEN 0.738 WHEN o.currency = 'MXN' THEN 0.051 ELSE 1.0 END)) as compare_rev,
-        SUM(COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, sm.basecost_tb, 0)) as compare_basecost,
+        SUM(COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, 0)) as compare_basecost,
         SUM(
           (COALESCE(o.item_promotion_discount, 0) + COALESCE(o.ship_promotion_discount, 0)) * (
             CASE 
@@ -250,6 +269,7 @@ export async function listSkuWin(
       SELECT sku, SUM(spend) as compare_spend
       FROM accounting_ads
       WHERE store_id = ${storeId}
+        AND UPPER(TRIM(loai)) = 'FBA'
         AND date >= ${compareStartDate}::date AND date <= ${compareEndDate}::date
       GROUP BY sku
     )
@@ -266,7 +286,7 @@ export async function listSkuWin(
       sm.niche,
       sm.pic_mkt,
       COALESCE(sm.amazon_fee, 0)::numeric as amazon_fee_unit,
-      COALESCE(sm.referral_fee_pct, 0.15)::numeric as referral_fee_pct,
+      COALESCE(sm.referral_fee_pct, 0)::numeric as referral_fee_pct,
       NULLIF(sm.custom_fields->>'price', '')::numeric as custom_price,
       NULLIF(sm.custom_fields->'targets'->>'revenue', '')::numeric as revenue_target,
       NULLIF(sm.custom_fields->'targets'->>'unit', '')::numeric as unit_target,
@@ -315,14 +335,14 @@ export async function listSkuWin(
     const adsFee = Number(r.ads_fee || 0);
     const basecost = Number(r.basecost || 0);
     const promotion = Number(r.promotion || 0);
-    const returnCost = Math.abs(Number(r.return_cost || 0));
+    const returnCost = Number(r.return_cost || 0);
     const returnCount = Number(r.return_count || 0);
     const revenueAds = Number(r.revenue_ads || 0);
     const allTimeQuantity = Number(r.all_time_quantity || 0);
     const shippedQty = Number(r.shipped_qty || 0);
 
     const amazonFeeUnit = Number(r.amazon_fee_unit || 0);
-    const referralFeePct = Number(r.referral_fee_pct || 0.15);
+    const referralFeePct = Number(r.referral_fee_pct || 0);
     const customPrice = r.custom_price != null ? Number(r.custom_price) : null;
 
     // Amazon Fee = referral fee on revenue + fixed AMZ fee per unique order.
