@@ -106,7 +106,7 @@ export async function listFbaDaily(
       SELECT 
         store_id,
         asin,
-        SUM(amazon_fee) as amazon_fee,
+        MAX(amazon_fee) as amazon_fee,
         MAX(referral_fee_pct) as referral_fee_pct
       FROM accounting_sku_master
       WHERE asin IS NOT NULL AND asin != ''
@@ -146,7 +146,7 @@ export async function listFbaDaily(
         SUM(
           CASE 
             WHEN COALESCE(o.item_price, 0) = 0 THEN 0
-            ELSE COALESCE(af.amazon_fee, sm.amazon_fee, 0) + (COALESCE(af.referral_fee_pct, sm.referral_fee_pct, 0) * COALESCE(o.item_price, 0) * (
+            ELSE COALESCE(sm.amazon_fee, af.amazon_fee, 0) + (COALESCE(sm.referral_fee_pct, af.referral_fee_pct, 0) * COALESCE(o.item_price, 0) * (
               CASE 
                 WHEN o.currency = 'CAD' THEN 0.738 
                 WHEN o.currency = 'MXN' THEN 0.051
@@ -164,7 +164,7 @@ export async function listFbaDaily(
               WHEN o.currency = 'USD' THEN 1.0
               ELSE 0
             END
-          ) * (0.01 + COALESCE(af.referral_fee_pct, sm.referral_fee_pct, 0) * 0.10)
+          ) * (0.01 + COALESCE(sm.referral_fee_pct, af.referral_fee_pct, 0) * 0.10)
         ) as total_order_tax
       FROM accounting_orders o
       LEFT JOIN asin_fees af ON af.store_id = o.store_id AND af.asin = o.asin

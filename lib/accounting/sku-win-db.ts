@@ -142,7 +142,7 @@ export async function listSkuWin(
       SELECT 
         store_id,
         asin,
-        SUM(amazon_fee) as amazon_fee,
+        MAX(amazon_fee) as amazon_fee,
         MAX(referral_fee_pct) as referral_fee_pct
       FROM accounting_sku_master
       WHERE asin IS NOT NULL AND asin != ''
@@ -182,7 +182,7 @@ export async function listSkuWin(
         SUM(
           CASE 
             WHEN COALESCE(o.item_price, 0) = 0 THEN 0
-            ELSE COALESCE(af.amazon_fee, sm.amazon_fee, 0) + (COALESCE(af.referral_fee_pct, sm.referral_fee_pct, 0) * COALESCE(o.item_price, 0) * (
+            ELSE COALESCE(sm.amazon_fee, af.amazon_fee, 0) + (COALESCE(sm.referral_fee_pct, af.referral_fee_pct, 0) * COALESCE(o.item_price, 0) * (
               CASE 
                 WHEN o.currency = 'CAD' THEN 0.738 
                 WHEN o.currency = 'MXN' THEN 0.051
@@ -269,7 +269,7 @@ export async function listSkuWin(
         SUM(
           CASE 
             WHEN COALESCE(o.item_price, 0) = 0 THEN 0
-            ELSE COALESCE(af_cmp.amazon_fee, sm.amazon_fee, 0) + (COALESCE(af_cmp.referral_fee_pct, sm.referral_fee_pct, 0) * COALESCE(o.item_price, 0) * (
+            ELSE COALESCE(sm.amazon_fee, af_cmp.amazon_fee, 0) + (COALESCE(sm.referral_fee_pct, af_cmp.referral_fee_pct, 0) * COALESCE(o.item_price, 0) * (
               CASE 
                 WHEN o.currency = 'CAD' THEN 0.738 
                 WHEN o.currency = 'MXN' THEN 0.051
@@ -314,8 +314,8 @@ export async function listSkuWin(
       sm.status,
       sm.niche,
       sm.pic_mkt,
-      COALESCE(af_out.amazon_fee, sm.amazon_fee, 0)::numeric as amazon_fee_unit,
-      COALESCE(af_out.referral_fee_pct, sm.referral_fee_pct, 0)::numeric as referral_fee_pct,
+      COALESCE(sm.amazon_fee, af_out.amazon_fee, 0)::numeric as amazon_fee_unit,
+      COALESCE(sm.referral_fee_pct, af_out.referral_fee_pct, 0)::numeric as referral_fee_pct,
       NULLIF(sm.custom_fields->>'price', '')::numeric as custom_price,
       NULLIF(sm.custom_fields->'targets'->>'revenue', '')::numeric as revenue_target,
       NULLIF(sm.custom_fields->'targets'->>'unit', '')::numeric as unit_target,
