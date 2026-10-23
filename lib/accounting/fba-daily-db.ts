@@ -153,6 +153,7 @@ export async function listFbaDaily(
       WHERE o.store_id = ${storeId}
         AND o.fulfillment_channel = 'Amazon'
         AND o.date < CURRENT_DATE
+        AND NOT (LOWER(COALESCE(o.order_status, '')) IN ('cancelled', 'canceled') AND COALESCE(o.item_price, 0) = 0)
         ${hasDateFilter ? sql`AND o.date >= ${startDate}::date AND o.date <= ${endDate}::date` : sql``}
       GROUP BY o.date
     ),

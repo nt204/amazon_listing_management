@@ -175,6 +175,7 @@ export async function listSkuWin(
       WHERE o.store_id = ${storeId}
         AND o.fulfillment_channel = 'Amazon'
         AND o.currency IN ('USD', 'CAD', 'MXN')
+        AND NOT (LOWER(COALESCE(o.order_status, '')) IN ('cancelled', 'canceled') AND COALESCE(o.item_price, 0) = 0)
         AND (COALESCE(o.quantity, 0) > 0 OR COALESCE(o.item_price, 0) > 0)
         ${hasDateFilter ? sql`AND o.date >= ${startDate}::date AND o.date <= ${endDate}::date` : sql``}
       GROUP BY o.sku
@@ -183,7 +184,7 @@ export async function listSkuWin(
       SELECT sku, SUM(COALESCE(quantity, 1)) as all_time_qty
       FROM accounting_orders
       WHERE store_id = ${storeId}
-        AND (order_status != 'Cancelled' OR order_status IS NULL)
+        AND NOT (LOWER(COALESCE(order_status, '')) IN ('cancelled', 'canceled') AND COALESCE(item_price, 0) = 0)
       GROUP BY sku
     ),
     ads_filtered AS (
@@ -242,6 +243,7 @@ export async function listSkuWin(
       WHERE o.store_id = ${storeId}
         AND o.fulfillment_channel = 'Amazon'
         AND o.currency IN ('USD', 'CAD', 'MXN')
+        AND NOT (LOWER(COALESCE(o.order_status, '')) IN ('cancelled', 'canceled') AND COALESCE(o.item_price, 0) = 0)
         AND (COALESCE(o.quantity, 0) > 0 OR COALESCE(o.item_price, 0) > 0)
         AND o.date >= ${compareStartDate}::date 
         AND o.date <= ${compareEndDate}::date
