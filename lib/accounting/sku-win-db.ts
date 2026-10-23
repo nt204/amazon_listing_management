@@ -175,7 +175,6 @@ export async function listSkuWin(
       WHERE o.store_id = ${storeId}
         AND o.fulfillment_channel = 'Amazon'
         AND o.currency IN ('USD', 'CAD', 'MXN')
-        AND o.item_price IS NOT NULL
         AND (COALESCE(o.quantity, 0) > 0 OR COALESCE(o.item_price, 0) > 0)
         ${hasDateFilter ? sql`AND o.date >= ${startDate}::date AND o.date <= ${endDate}::date` : sql``}
       GROUP BY o.sku
@@ -202,26 +201,10 @@ export async function listSkuWin(
       SELECT 
         r.sku,
         COUNT(*) as return_count,
-        -SUM(
-          COALESCE(r.total, 0)
-          + COALESCE((
-              SELECT mbc.basecost_thang
-              FROM accounting_monthly_base_cost mbc
-              WHERE mbc.store_id = r.store_id
-                AND mbc.sku = r.sku
-                AND mbc.period = to_char(r.date, 'YYYY-MM')
-              LIMIT 1
-            ), 0) * COALESCE((
-              SELECT MAX(o.quantity)
-              FROM accounting_orders o
-              WHERE o.store_id = r.store_id
-                AND o.amazon_order_id = r.order_id
-                AND o.sku = r.sku
-            ), 1)
-        ) as return_total
+        -SUM(COALESCE(r.return_sau_basecost, 0)) as return_total
       FROM accounting_returns r
       WHERE r.store_id = ${storeId}
-        AND UPPER(TRIM(r.loai)) = 'FBA'
+        AND UPPER(TRIM(COALESCE(r.loai, 'FBA'))) = 'FBA'
         ${hasDateFilter ? sql`AND r.date >= ${startDate}::date AND r.date <= ${endDate}::date` : sql``}
       GROUP BY r.sku
     ),
@@ -259,7 +242,6 @@ export async function listSkuWin(
       WHERE o.store_id = ${storeId}
         AND o.fulfillment_channel = 'Amazon'
         AND o.currency IN ('USD', 'CAD', 'MXN')
-        AND o.item_price IS NOT NULL
         AND (COALESCE(o.quantity, 0) > 0 OR COALESCE(o.item_price, 0) > 0)
         AND o.date >= ${compareStartDate}::date 
         AND o.date <= ${compareEndDate}::date

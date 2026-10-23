@@ -174,26 +174,10 @@ export async function listFbaDaily(
       SELECT 
         r.date,
         COUNT(*) as return_count,
-        -SUM(
-          COALESCE(r.total, 0)
-          + COALESCE((
-              SELECT mbc.basecost_thang
-              FROM accounting_monthly_base_cost mbc
-              WHERE mbc.store_id = r.store_id
-                AND mbc.sku = r.sku
-                AND mbc.period = to_char(r.date, 'YYYY-MM')
-              LIMIT 1
-            ), 0) * COALESCE((
-              SELECT MAX(o.quantity)
-              FROM accounting_orders o
-              WHERE o.store_id = r.store_id
-                AND o.amazon_order_id = r.order_id
-                AND o.sku = r.sku
-            ), 1)
-        ) as return_total
+        -SUM(COALESCE(r.return_sau_basecost, 0)) as return_total
       FROM accounting_returns r
       WHERE r.store_id = ${storeId}
-        AND UPPER(TRIM(r.loai)) = 'FBA'
+        AND UPPER(TRIM(COALESCE(r.loai, 'FBA'))) = 'FBA'
         AND r.date < CURRENT_DATE
         ${hasDateFilter ? sql`AND r.date >= ${startDate}::date AND r.date <= ${endDate}::date` : sql``}
       GROUP BY r.date
