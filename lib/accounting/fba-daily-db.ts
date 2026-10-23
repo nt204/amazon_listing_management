@@ -95,9 +95,17 @@ export async function listFbaDaily(
     WITH daily_orders AS (
       SELECT 
         o.date,
-        COUNT(DISTINCT COALESCE(o.amazon_order_id, o.id::text)) as order_count,
-        SUM(CASE WHEN NULLIF(TRIM(COALESCE(o.currency, '')), '') IS NOT NULL
-          THEN COALESCE(o.quantity, 1) ELSE 0 END) as total_qty,
+        COUNT(DISTINCT CASE WHEN COALESCE(o.item_price, 0) > 0 THEN COALESCE(o.amazon_order_id, o.id::text) END) as order_count,
+        SUM(
+          CASE 
+            WHEN o.amazon_order_id LIKE 'S0%' 
+              OR COALESCE(o.item_price, 0) = 0 
+              OR NULLIF(TRIM(COALESCE(o.currency, '')), '') IS NULL
+              OR o.currency NOT IN ('USD', 'CAD', 'MXN')
+            THEN 0 
+            ELSE COALESCE(o.quantity, 1) 
+          END
+        ) as total_qty,
         SUM(
           COALESCE(o.item_price, 0) * (
             CASE 
@@ -120,7 +128,7 @@ export async function listFbaDaily(
         ) as total_promo,
         SUM(
           CASE 
-            WHEN o.amazon_order_id LIKE 'S0%' THEN 0
+            WHEN o.amazon_order_id LIKE 'S0%' OR COALESCE(o.item_price, 0) = 0 THEN 0
             ELSE COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, 0)
           END
         ) as total_basecost,
@@ -138,14 +146,17 @@ export async function listFbaDaily(
           END
         ) as total_amz_fee,
         SUM(
-          COALESCE(o.item_price, 0) * (
-            CASE
-              WHEN o.currency = 'CAD' THEN 0.738
-              WHEN o.currency = 'MXN' THEN 0.051
-              WHEN o.currency = 'USD' THEN 1.0
-              ELSE 0
-            END
-          ) * (0.01 + COALESCE(sm.referral_fee_pct, 0) * 0.10)
+          CASE 
+            WHEN COALESCE(o.item_price, 0) = 0 OR o.currency NOT IN ('USD', 'CAD', 'MXN') THEN 0
+            ELSE COALESCE(o.item_price, 0) * (
+              CASE
+                WHEN o.currency = 'CAD' THEN 0.738
+                WHEN o.currency = 'MXN' THEN 0.051
+                WHEN o.currency = 'USD' THEN 1.0
+                ELSE 0
+              END
+            ) * (0.01 + COALESCE(sm.referral_fee_pct, 0) * 0.10)
+          END
         ) as total_order_tax
       FROM accounting_orders o
       LEFT JOIN accounting_sku_master sm ON sm.store_id = o.store_id AND sm.sku = o.sku
@@ -156,7 +167,7 @@ export async function listFbaDaily(
       WHERE o.store_id = ${storeId}
         AND o.fulfillment_channel = 'Amazon'
         AND o.date < CURRENT_DATE
-        AND NOT (LOWER(COALESCE(o.order_status, '')) IN ('cancelled', 'canceled') AND COALESCE(o.item_price, 0) = 0)
+        AND LOWER(COALESCE(o.order_status, '')) NOT IN ('cancelled', 'canceled')
         ${hasDateFilter ? sql`AND o.date >= ${startDate}::date AND o.date <= ${endDate}::date` : sql``}
       GROUP BY o.date
     ),

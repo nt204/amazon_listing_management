@@ -657,7 +657,7 @@ export async function listTargetRowsForRecommendations(
         AND p.is_negative = false
         AND lower(p.state) = 'enabled'
         AND lower(p.campaign_state) = 'enabled'
-        AND lower(p.ad_group_state) = 'enabled'
+        AND (lower(p.ad_group_state) = 'enabled' OR coalesce(p.ad_group_state, '') = '')
         AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
         AND (p.campaign_name ~* '(SP03|SB05|SB01|VIDEO)')
       ORDER BY p.spend DESC, p.id
@@ -706,7 +706,7 @@ export async function listTargetRowsForRecommendations(
         AND p.is_negative = false
         AND lower(p.state) = 'enabled'
         AND lower(p.campaign_state) = 'enabled'
-        AND lower(p.ad_group_state) = 'enabled'
+        AND (lower(p.ad_group_state) = 'enabled' OR coalesce(p.ad_group_state, '') = '')
         AND (${filters.storeName === "ALL"} OR lower(s.name) = lower(${filters.storeName}))
         AND (p.campaign_name ~* '(SP03|SB05|SB01|VIDEO)')
         AND (p.report_end_date - p.report_start_date + 1)

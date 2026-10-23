@@ -175,6 +175,7 @@ export function PpcSkuRecommendationGroupView({
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedPhôi, setSelectedPhôi] = useState("ALL");
   const [quickFilter, setQuickFilter] = useState<QuickFilterType>("ALL");
+  const [selectedCampType, setSelectedCampType] = useState<"ALL" | "SP03" | "SB05" | "SB01">("ALL");
   const [sortField, setSortField] = useState<SortField>("totalRecommendations");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [page, setPage] = useState(1);
@@ -195,6 +196,7 @@ export function PpcSkuRecommendationGroupView({
   const [isApproving, setIsApproving] = useState(false);
   const [modalSearch, setModalSearch] = useState("");
   const [modalActionFilter, setModalActionFilter] = useState<"ALL" | "BID_INCREASE" | "BID_DECREASE" | "PAUSE_TARGET">("ALL");
+  const [modalCampTypeFilter, setModalCampTypeFilter] = useState<"ALL" | "SP03" | "SB05" | "SB01">("ALL");
   const [recentlyApprovedIds, setRecentlyApprovedIds] = useState<Set<string>>(new Set());
   const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set());
   const [ruleExplanationModal, setRuleExplanationModal] = useState<PpcRecommendation | null>(null);
@@ -216,6 +218,9 @@ export function PpcSkuRecommendationGroupView({
       setSearchTerm("");
       setSelectedPhôi("ALL");
       setQuickFilter("ALL");
+      setSelectedCampType("ALL");
+      setModalCampTypeFilter("ALL");
+      setExpandedCampaigns(new Set());
     }
   }, [selectedStore]);
 
@@ -338,8 +343,33 @@ export function PpcSkuRecommendationGroupView({
     onOpenActionQueue();
   };
 
-  const handleOpenSkuGroup = async (group: SkuRecommendationGroup) => {
+  const handleOpenSkuGroup = async (
+    group: SkuRecommendationGroup,
+    overrideAction?: "ALL" | "BID_INCREASE" | "BID_DECREASE" | "PAUSE_TARGET",
+    overrideCampType?: "ALL" | "SP03" | "SB05" | "SB01",
+  ) => {
     setSelectedSkuGroup(group);
+
+    // Mặc định lọc action theo quickFilter hiện tại (nếu đang bấm Tăng Bid, Giảm Bid, Pause)
+    let initialAction: "ALL" | "BID_INCREASE" | "BID_DECREASE" | "PAUSE_TARGET" = "ALL";
+    if (overrideAction) {
+      initialAction = overrideAction;
+    } else if (quickFilter === "INCREASE") {
+      initialAction = "BID_INCREASE";
+    } else if (quickFilter === "DECREASE") {
+      initialAction = "BID_DECREASE";
+    } else if (quickFilter === "PAUSE") {
+      initialAction = "PAUSE_TARGET";
+    }
+    setModalActionFilter(initialAction);
+
+    // Mặc định lọc dạng chạy theo selectedCampType hiện tại
+    const initialCampType = overrideCampType || (selectedCampType !== "ALL" ? selectedCampType : "ALL");
+    setModalCampTypeFilter(initialCampType);
+
+    setRecentlyApprovedIds(new Set());
+    setSelectedRecIds(new Set());
+    setExpandedCampaigns(new Set());
     setLoadingSkuDetails(true);
     try {
       await onLoadSkuRecommendations(group.sku);
@@ -419,6 +449,20 @@ export function PpcSkuRecommendationGroupView({
     };
   }, [groups]);
 
+  // Campaign Type Counts for badges
+  const campTypeCounts = useMemo(() => {
+    let sp03 = 0;
+    let sb05 = 0;
+    let sb01 = 0;
+    for (const g of groups) {
+      const types = g.campaignTypes || [];
+      if (types.includes("SP03")) sp03++;
+      if (types.includes("SB05")) sb05++;
+      if (types.includes("SB01")) sb01++;
+    }
+    return { sp03, sb05, sb01 };
+  }, [groups]);
+
   // Handle Sort Toggle
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -449,33 +493,51 @@ export function PpcSkuRecommendationGroupView({
       // 3. Quick Filter
       switch (quickFilter) {
         case "INCREASE":
-          return g.increaseCount > 0;
+          if (g.increaseCount <= 0) return false;
+          break;
         case "DECREASE":
-          return g.decreaseCount > 0;
+          if (g.decreaseCount <= 0) return false;
+          break;
         case "PAUSE":
-          return g.pauseCount > 0;
+          if (g.pauseCount <= 0) return false;
+          break;
         case "BLEEDING":
-          return g.spend > 0 && g.acos > g.breakEvenAcos;
+          if (!(g.spend > 0 && g.acos > g.breakEvenAcos)) return false;
+          break;
         case "PROFITABLE":
-          return g.sales > 0 && g.acos <= g.breakEvenAcos;
+          if (!(g.sales > 0 && g.acos <= g.breakEvenAcos)) return false;
+          break;
         case "ZERO_SPEND":
-          return g.spend === 0;
+          if (g.spend !== 0) return false;
+          break;
         case "ZERO_SALES":
-          return g.spend > 0 && g.sales === 0;
+          if (!(g.spend > 0 && g.sales === 0)) return false;
+          break;
         case "PREFIX_ERROR":
-          return (
+          if (!(
             g.productType === SKU_PREFIX_ERROR_PRODUCT_TYPE ||
             g.productType === "Lỗi Prefix" ||
             !g.productType ||
             g.productType === "Chưa xác định"
-          );
+          )) return false;
+          break;
         case "ALL":
         default:
-          return true;
+          break;
       }
+
+      // 4. Dạng chạy filter
+      if (selectedCampType !== "ALL") {
+        const types = g.campaignTypes;
+        if (!types || !types.includes(selectedCampType)) {
+          return false;
+        }
+      }
+
+      return true;
     });
 
-    // 4. Sort
+    // 5. Sort
     return result.sort((a, b) => {
       const valA = a[sortField];
       const valB = b[sortField];
@@ -488,7 +550,7 @@ export function PpcSkuRecommendationGroupView({
       const numB = typeof valB === "number" ? valB : 0;
       return sortOrder === "asc" ? numA - numB : numB - numA;
     });
-  }, [groups, searchTerm, selectedPhôi, quickFilter, sortField, sortOrder]);
+  }, [groups, searchTerm, selectedPhôi, quickFilter, selectedCampType, sortField, sortOrder]);
 
   const totalPages = Math.max(1, Math.ceil(filteredGroups.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -499,7 +561,7 @@ export function PpcSkuRecommendationGroupView({
     // Filters and sorting describe a new result set; show it from the first page.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPage(1);
-  }, [searchTerm, selectedPhôi, quickFilter, sortField, sortOrder]);
+  }, [searchTerm, selectedPhôi, quickFilter, selectedCampType, sortField, sortOrder]);
 
   const selectedVisibleSkuCount = filteredGroups.reduce(
     (count, group) => count + (selectedSkus.has(group.sku) ? 1 : 0),
@@ -521,6 +583,16 @@ export function PpcSkuRecommendationGroupView({
       .filter((r) => (r.sku || "").toUpperCase() === selectedSkuGroup.sku.toUpperCase())
       .filter((r) => {
         if (modalActionFilter !== "ALL" && r.recType !== modalActionFilter) return false;
+        if (modalCampTypeFilter !== "ALL") {
+          const camp = (r.campaignName || "").toUpperCase();
+          const ruleProf = (r.ruleProfile || "").toUpperCase();
+          let cType = "SP03";
+          if (ruleProf.startsWith("SB05") || /SB05|\bVIDEO\b/.test(camp)) cType = "SB05";
+          else if (ruleProf.startsWith("SB01") || /SB01/.test(camp)) cType = "SB01";
+          else if (ruleProf.startsWith("SP03") || /SP03/.test(camp)) cType = "SP03";
+          else if (r.adType === "SB") cType = "SB";
+          if (cType !== modalCampTypeFilter) return false;
+        }
         if (modalSearch) {
           const q = modalSearch.toLowerCase().trim();
           const matchKw = (r.keyword || "").toLowerCase().includes(q);
@@ -529,7 +601,7 @@ export function PpcSkuRecommendationGroupView({
         }
         return true;
       });
-  }, [allRecommendations, selectedSkuGroup, modalActionFilter, modalSearch]);
+  }, [allRecommendations, selectedSkuGroup, modalActionFilter, modalCampTypeFilter, modalSearch]);
 
   // Group currentSkuRecs by Campaign
   const groupedByCampaign = useMemo(() => {
@@ -552,18 +624,18 @@ export function PpcSkuRecommendationGroupView({
         else if (r.recType === "PAUSE_TARGET") totalPause++;
       }
       const firstRec = recs[0];
-      let campType = "SP";
+      let campType = "SP03";
       if (firstRec?.ruleProfile) {
         const parts = firstRec.ruleProfile.split(" ");
-        campType = parts[0] || "SP";
+        campType = parts[0] || "SP03";
+      } else if (/SB05|\bVIDEO\b/i.test(campaignName)) {
+        campType = "SB05";
       } else if (campaignName.includes("SB01")) {
         campType = "SB01";
-      } else if (campaignName.includes("SB05")) {
-        campType = "SB05";
       } else if (campaignName.includes("SP03")) {
         campType = "SP03";
-      } else if (firstRec?.adType) {
-        campType = firstRec.adType;
+      } else if (firstRec?.adType === "SB") {
+        campType = "SB";
       }
 
       return {
@@ -577,6 +649,11 @@ export function PpcSkuRecommendationGroupView({
       };
     });
   }, [currentSkuRecs]);
+
+  // Mặc định đóng tất cả các thẻ campaign khi mở SKU modal hoặc đóng modal
+  useEffect(() => {
+    setExpandedCampaigns(new Set());
+  }, [selectedSkuGroup?.sku]);
 
   const toggleCampaignExpanded = (campName: string) => {
     setExpandedCampaigns((prev) => {
@@ -848,7 +925,7 @@ export function PpcSkuRecommendationGroupView({
     );
   };
 
-  const isFilterActive = searchTerm !== "" || selectedPhôi !== "ALL" || quickFilter !== "ALL";
+  const isFilterActive = searchTerm !== "" || selectedPhôi !== "ALL" || quickFilter !== "ALL" || selectedCampType !== "ALL";
 
   const isSwitchingWindow = isLoading
     && loadedRecommendationWindowDays !== null
@@ -943,6 +1020,7 @@ export function PpcSkuRecommendationGroupView({
                   setSearchTerm("");
                   setSelectedPhôi("ALL");
                   setQuickFilter("ALL");
+                  setSelectedCampType("ALL");
                 }}
                 className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-semibold text-slate-500 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 transition cursor-pointer shadow-2xs"
                 title="Đặt lại bộ lọc"
@@ -1169,6 +1247,66 @@ export function PpcSkuRecommendationGroupView({
               {filterCounts.prefixError}
             </span>
           </button>
+
+          {/* Dạng chạy Filter Chips */}
+          <div className="h-4 w-px bg-slate-200 mx-1 shrink-0 hidden sm:block" />
+          <span className="text-[11px] font-bold uppercase text-slate-400 tracking-wider flex items-center gap-1 mr-0.5">
+            <span>Dạng:</span>
+          </span>
+
+          {/* SP03 */}
+          <button
+            type="button"
+            onClick={() => setSelectedCampType(selectedCampType === "SP03" ? "ALL" : "SP03")}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+              selectedCampType === "SP03"
+                ? "bg-indigo-700 text-white border-indigo-700 shadow-2xs"
+                : "bg-white text-slate-700 hover:bg-indigo-50/50 hover:text-indigo-800 border-slate-200/80"
+            }`}
+          >
+            <span className="font-bold">SP03</span>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+              selectedCampType === "SP03" ? "bg-indigo-800 text-white" : "bg-indigo-50 text-indigo-700"
+            }`}>
+              {campTypeCounts.sp03}
+            </span>
+          </button>
+
+          {/* SB05 */}
+          <button
+            type="button"
+            onClick={() => setSelectedCampType(selectedCampType === "SB05" ? "ALL" : "SB05")}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+              selectedCampType === "SB05"
+                ? "bg-purple-700 text-white border-purple-700 shadow-2xs"
+                : "bg-white text-slate-700 hover:bg-purple-50/50 hover:text-purple-800 border-slate-200/80"
+            }`}
+          >
+            <span className="font-bold">SB05</span>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+              selectedCampType === "SB05" ? "bg-purple-800 text-white" : "bg-purple-50 text-purple-700"
+            }`}>
+              {campTypeCounts.sb05}
+            </span>
+          </button>
+
+          {/* SB01 */}
+          <button
+            type="button"
+            onClick={() => setSelectedCampType(selectedCampType === "SB01" ? "ALL" : "SB01")}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+              selectedCampType === "SB01"
+                ? "bg-blue-700 text-white border-blue-700 shadow-2xs"
+                : "bg-white text-slate-700 hover:bg-blue-50/50 hover:text-blue-800 border-slate-200/80"
+            }`}
+          >
+            <span className="font-bold">SB01</span>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+              selectedCampType === "SB01" ? "bg-blue-800 text-white" : "bg-blue-50 text-blue-700"
+            }`}>
+              {campTypeCounts.sb01}
+            </span>
+          </button>
         </div>
       </div>
 
@@ -1327,14 +1465,62 @@ export function PpcSkuRecommendationGroupView({
                         {group.totalRecommendations}
                       </span>
                     </td>
-                    <td className="py-3 px-3 text-center text-emerald-700 font-normal">
-                      {group.increaseCount > 0 ? group.increaseCount : "—"}
+                    <td
+                      className={`py-3 px-3 text-center text-emerald-700 font-normal transition ${
+                        group.increaseCount > 0 ? "cursor-pointer hover:bg-emerald-100/60 font-semibold" : ""
+                      }`}
+                      title={group.increaseCount > 0 ? "Mở và chỉ xem các target Tăng Bid" : undefined}
+                      onClick={(e) => {
+                        if (group.increaseCount > 0) {
+                          e.stopPropagation();
+                          void handleOpenSkuGroup(group, "BID_INCREASE");
+                        }
+                      }}
+                    >
+                      {group.increaseCount > 0 ? (
+                        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-800">
+                          <ArrowUpRight size={11} weight="bold" />
+                          {group.increaseCount}
+                        </span>
+                      ) : "—"}
                     </td>
-                    <td className="py-3 px-3 text-center text-rose-700 font-normal">
-                      {group.decreaseCount > 0 ? group.decreaseCount : "—"}
+                    <td
+                      className={`py-3 px-3 text-center text-rose-700 font-normal transition ${
+                        group.decreaseCount > 0 ? "cursor-pointer hover:bg-rose-100/60 font-semibold" : ""
+                      }`}
+                      title={group.decreaseCount > 0 ? "Mở và chỉ xem các target Giảm Bid" : undefined}
+                      onClick={(e) => {
+                        if (group.decreaseCount > 0) {
+                          e.stopPropagation();
+                          void handleOpenSkuGroup(group, "BID_DECREASE");
+                        }
+                      }}
+                    >
+                      {group.decreaseCount > 0 ? (
+                        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-rose-50 border border-rose-200 text-rose-800">
+                          <ArrowDownRight size={11} weight="bold" />
+                          {group.decreaseCount}
+                        </span>
+                      ) : "—"}
                     </td>
-                    <td className="py-3 px-3 text-center text-amber-800 font-normal">
-                      {group.pauseCount > 0 ? group.pauseCount : "—"}
+                    <td
+                      className={`py-3 px-3 text-center text-amber-800 font-normal transition ${
+                        group.pauseCount > 0 ? "cursor-pointer hover:bg-amber-100/60 font-semibold" : ""
+                      }`}
+                      title={group.pauseCount > 0 ? "Mở và chỉ xem các target Pause" : undefined}
+                      onClick={(e) => {
+                        if (group.pauseCount > 0) {
+                          e.stopPropagation();
+                          void handleOpenSkuGroup(group, "PAUSE_TARGET");
+                        }
+                      }}
+                    >
+                      {group.pauseCount > 0 ? (
+                        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-900">
+                          <Pause size={11} weight="bold" />
+                          {group.pauseCount}
+                        </span>
+                      ) : "—"}
                     </td>
                     <td className="py-3 px-3 text-center">
                       <button className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold text-indigo-700 bg-indigo-50/70 hover:bg-indigo-100/90 border border-indigo-200/70 shadow-2xs transition cursor-pointer">
@@ -1538,32 +1724,58 @@ export function PpcSkuRecommendationGroupView({
                     <div className="flex items-center gap-1 bg-white p-0.5 rounded-lg border border-slate-200 text-xs">
                       <button
                         onClick={() => setModalActionFilter("ALL")}
-                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${modalActionFilter === "ALL" ? "bg-indigo-50 text-indigo-700" : "text-slate-600 hover:text-slate-900"
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition ${modalActionFilter === "ALL" ? "bg-indigo-50 text-indigo-700" : "text-slate-600 hover:text-slate-900"
                           }`}
                       >
                         Tất cả
                       </button>
                       <button
                         onClick={() => setModalActionFilter("BID_INCREASE")}
-                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${modalActionFilter === "BID_INCREASE" ? "bg-emerald-50 text-emerald-700" : "text-slate-600 hover:text-emerald-600"
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition ${modalActionFilter === "BID_INCREASE" ? "bg-emerald-50 text-emerald-700" : "text-slate-600 hover:text-emerald-600"
                           }`}
                       >
                         ↑ Tăng
                       </button>
                       <button
                         onClick={() => setModalActionFilter("BID_DECREASE")}
-                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${modalActionFilter === "BID_DECREASE" ? "bg-rose-50 text-rose-700" : "text-slate-600 hover:text-rose-600"
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition ${modalActionFilter === "BID_DECREASE" ? "bg-rose-50 text-rose-700" : "text-slate-600 hover:text-rose-600"
                           }`}
                       >
                         ↓ Giảm
                       </button>
                       <button
                         onClick={() => setModalActionFilter("PAUSE_TARGET")}
-                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${modalActionFilter === "PAUSE_TARGET" ? "bg-amber-50 text-amber-800" : "text-slate-600 hover:text-amber-700"
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition ${modalActionFilter === "PAUSE_TARGET" ? "bg-amber-50 text-amber-800" : "text-slate-600 hover:text-amber-700"
                           }`}
                       >
                         ⏸ Pause
                       </button>
+                    </div>
+
+                    {/* Modal Campaign Type filter pills */}
+                    <div className="flex items-center gap-1 bg-white p-0.5 rounded-lg border border-slate-200 text-xs">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 px-1">Dạng:</span>
+                      {(["SP03", "SB05", "SB01"] as const).map((type) => {
+                        const isActive = modalCampTypeFilter === type;
+                        return (
+                          <button
+                            key={type}
+                            type="button"
+                            onClick={() => setModalCampTypeFilter(modalCampTypeFilter === type ? "ALL" : type)}
+                            className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition ${
+                              isActive
+                                ? type === "SB05"
+                                  ? "bg-purple-600 text-white shadow-2xs"
+                                  : type === "SB01"
+                                    ? "bg-blue-600 text-white shadow-2xs"
+                                    : "bg-indigo-600 text-white shadow-2xs"
+                                : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                            }`}
+                          >
+                            {type}
+                          </button>
+                        );
+                      })}
                     </div>
 
                     {selectedRecIds.size > 0 && (
@@ -1663,7 +1875,7 @@ export function PpcSkuRecommendationGroupView({
                   </div>
                 ) : groupedByCampaign.length === 0 ? (
                   <div className="py-12 text-center text-slate-400 bg-slate-50/50 rounded-xl border border-slate-200">
-                    {modalSearch || modalActionFilter !== "ALL"
+                    {modalSearch || modalActionFilter !== "ALL" || modalCampTypeFilter !== "ALL"
                       ? "Không tìm thấy đề xuất nào phù hợp với bộ lọc tìm kiếm hiện tại."
                       : "Không có đề xuất nào cho SKU này trong kỳ dữ liệu đã chọn."}
                   </div>

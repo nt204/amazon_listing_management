@@ -1437,11 +1437,20 @@ export async function getGroupedRecommendations(
     let decreaseCount = 0;
     let pauseCount = 0;
     let budgetCount = 0;
+    const campTypesSet = new Set<string>();
 
     for (const r of recs) {
       if (r.recType === "BID_INCREASE") increaseCount++;
       else if (r.recType === "BID_DECREASE") decreaseCount++;
       else if (r.recType === "PAUSE_TARGET") pauseCount++;
+
+      const camp = (r.campaignName || "").toUpperCase();
+      const ruleProf = (r.ruleProfile || "").toUpperCase();
+      if (ruleProf.startsWith("SB05") || /SB05|\bVIDEO\b/.test(camp)) campTypesSet.add("SB05");
+      else if (ruleProf.startsWith("SB01") || /SB01/.test(camp)) campTypesSet.add("SB01");
+      else if (ruleProf.startsWith("SP03") || /SP03/.test(camp)) campTypesSet.add("SP03");
+      else if (r.adType === "SB") campTypesSet.add("SB");
+      else if (r.adType === "SP") campTypesSet.add("SP03");
     }
 
     groups.push({
@@ -1459,6 +1468,7 @@ export async function getGroupedRecommendations(
       decreaseCount,
       pauseCount,
       budgetCount,
+      campaignTypes: Array.from(campTypesSet),
       economics: econ,
     });
   }
@@ -1493,11 +1503,20 @@ export async function getGroupedRecommendations(
     let decreaseCount = 0;
     let pauseCount = 0;
     let budgetCount = 0;
+    const campTypesSet = new Set<string>();
 
     for (const r of recs) {
       if (r.recType === "BID_INCREASE") increaseCount++;
       else if (r.recType === "BID_DECREASE") decreaseCount++;
       else if (r.recType === "PAUSE_TARGET") pauseCount++;
+
+      const camp = (r.campaignName || "").toUpperCase();
+      const ruleProf = (r.ruleProfile || "").toUpperCase();
+      if (ruleProf.startsWith("SB05") || /SB05|\bVIDEO\b/.test(camp)) campTypesSet.add("SB05");
+      else if (ruleProf.startsWith("SB01") || /SB01/.test(camp)) campTypesSet.add("SB01");
+      else if (ruleProf.startsWith("SP03") || /SP03/.test(camp)) campTypesSet.add("SP03");
+      else if (r.adType === "SB") campTypesSet.add("SB");
+      else if (r.adType === "SP") campTypesSet.add("SP03");
     }
 
     groups.push({
@@ -1515,6 +1534,7 @@ export async function getGroupedRecommendations(
       decreaseCount,
       pauseCount,
       budgetCount,
+      campaignTypes: Array.from(campTypesSet),
       economics: econ,
     });
   }

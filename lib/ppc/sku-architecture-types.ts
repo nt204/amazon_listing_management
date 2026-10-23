@@ -208,6 +208,7 @@ export interface SkuRecommendationGroup {
   decreaseCount: number;
   pauseCount: number;
   budgetCount: number;
+  campaignTypes?: string[];
   economics: SkuEconomics;
 }
 

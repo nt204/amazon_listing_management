@@ -142,7 +142,16 @@ export async function listSkuWin(
       SELECT 
         o.sku,
         COUNT(DISTINCT CASE WHEN COALESCE(o.item_price, 0) > 0 THEN COALESCE(o.amazon_order_id, o.id::text) END) as total_order_count,
-        SUM(COALESCE(o.quantity, 1)) as total_qty,
+        SUM(
+          CASE 
+            WHEN o.amazon_order_id LIKE 'S0%' 
+              OR COALESCE(o.item_price, 0) = 0 
+              OR NULLIF(TRIM(COALESCE(o.currency, '')), '') IS NULL
+              OR o.currency NOT IN ('USD', 'CAD', 'MXN')
+            THEN 0 
+            ELSE COALESCE(o.quantity, 1) 
+          END
+        ) as total_qty,
         SUM(
           COALESCE(o.item_price, 0) * (
             CASE 
@@ -165,7 +174,7 @@ export async function listSkuWin(
         ) as total_promo,
         SUM(
           CASE 
-            WHEN o.amazon_order_id LIKE 'S0%' THEN 0
+            WHEN o.amazon_order_id LIKE 'S0%' OR COALESCE(o.item_price, 0) = 0 THEN 0
             ELSE COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, 0)
           END
         ) as total_basecost
@@ -178,16 +187,16 @@ export async function listSkuWin(
       WHERE o.store_id = ${storeId}
         AND o.fulfillment_channel = 'Amazon'
         AND o.currency IN ('USD', 'CAD', 'MXN')
-        AND NOT (LOWER(COALESCE(o.order_status, '')) IN ('cancelled', 'canceled') AND COALESCE(o.item_price, 0) = 0)
+        AND LOWER(COALESCE(o.order_status, '')) NOT IN ('cancelled', 'canceled')
         AND (COALESCE(o.quantity, 0) > 0 OR COALESCE(o.item_price, 0) > 0)
         ${hasDateFilter ? sql`AND o.date >= ${startDate}::date AND o.date <= ${endDate}::date` : sql``}
       GROUP BY o.sku
     ),
     all_time_orders AS (
-      SELECT sku, SUM(COALESCE(quantity, 1)) as all_time_qty
-      FROM accounting_orders
+      SELECT sku, SUM(CASE WHEN o.amazon_order_id LIKE 'S0%' OR COALESCE(o.item_price, 0) = 0 THEN 0 ELSE COALESCE(quantity, 1) END) as all_time_qty
+      FROM accounting_orders o
       WHERE store_id = ${storeId}
-        AND NOT (LOWER(COALESCE(order_status, '')) IN ('cancelled', 'canceled') AND COALESCE(item_price, 0) = 0)
+        AND LOWER(COALESCE(order_status, '')) NOT IN ('cancelled', 'canceled')
       GROUP BY sku
     ),
     ads_filtered AS (
@@ -225,11 +234,20 @@ export async function listSkuWin(
       SELECT 
         o.sku,
         COUNT(DISTINCT CASE WHEN COALESCE(o.item_price, 0) > 0 THEN COALESCE(o.amazon_order_id, o.id::text) END) as compare_order_count,
-        SUM(COALESCE(o.quantity, 1)) as compare_qty,
+        SUM(
+          CASE 
+            WHEN o.amazon_order_id LIKE 'S0%' 
+              OR COALESCE(o.item_price, 0) = 0 
+              OR NULLIF(TRIM(COALESCE(o.currency, '')), '') IS NULL
+              OR o.currency NOT IN ('USD', 'CAD', 'MXN')
+            THEN 0 
+            ELSE COALESCE(o.quantity, 1) 
+          END
+        ) as compare_qty,
         SUM(COALESCE(o.item_price, 0) * (CASE WHEN o.currency = 'CAD' THEN 0.738 WHEN o.currency = 'MXN' THEN 0.051 ELSE 1.0 END)) as compare_rev,
         SUM(
           CASE 
-            WHEN o.amazon_order_id LIKE 'S0%' THEN 0
+            WHEN o.amazon_order_id LIKE 'S0%' OR COALESCE(o.item_price, 0) = 0 THEN 0
             ELSE COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, 0)
           END
         ) as compare_basecost,
@@ -251,7 +269,7 @@ export async function listSkuWin(
       WHERE o.store_id = ${storeId}
         AND o.fulfillment_channel = 'Amazon'
         AND o.currency IN ('USD', 'CAD', 'MXN')
-        AND NOT (LOWER(COALESCE(o.order_status, '')) IN ('cancelled', 'canceled') AND COALESCE(o.item_price, 0) = 0)
+        AND LOWER(COALESCE(o.order_status, '')) NOT IN ('cancelled', 'canceled')
         AND (COALESCE(o.quantity, 0) > 0 OR COALESCE(o.item_price, 0) > 0)
         AND o.date >= ${compareStartDate}::date 
         AND o.date <= ${compareEndDate}::date
