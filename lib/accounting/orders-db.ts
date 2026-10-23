@@ -442,6 +442,14 @@ export function normalizeOrderRow(
     return isNaN(parsed.getTime()) ? null : parsed.toISOString();
   };
 
+  const statusVal = getVal("order-status", "order_status") ? String(getVal("order-status", "order_status")).trim() : null;
+  const itemPriceVal = cleanOrderNumber(getVal("item-price", "item_price", "principal", "item-price-amount"));
+  const rawQty = cleanOrderNumber(getVal("quantity", "qty", "quantity-purchased"));
+  const isCancelledOrder = statusVal?.toLowerCase() === "cancelled" || statusVal?.toLowerCase() === "canceled";
+  const resolvedQty = (isCancelledOrder && (!itemPriceVal || itemPriceVal === 0))
+    ? 0
+    : (rawQty != null ? Math.max(0, Math.round(rawQty)) : 1);
+
   return {
     store_id: storeId,
     date: dateVal,
@@ -452,7 +460,7 @@ export function normalizeOrderRow(
       : null,
     purchase_date: parseIsoOrDate(purchaseDateRaw),
     last_updated_date: parseIsoOrDate(getVal("last-updated-date", "last_updated_date")),
-    order_status: getVal("order-status", "order_status") ? String(getVal("order-status", "order_status")).trim() : null,
+    order_status: statusVal,
     fulfillment_channel: getVal("fulfillment-channel", "fulfillment_channel") ? String(getVal("fulfillment-channel", "fulfillment_channel")).trim() : null,
     sales_channel: getVal("sales-channel", "sales_channel") ? String(getVal("sales-channel", "sales_channel")).trim() : null,
     order_channel: getVal("order-channel", "order_channel") ? String(getVal("order-channel", "order_channel")).trim() : null,
@@ -462,9 +470,9 @@ export function normalizeOrderRow(
     sku: String(sku).trim(),
     asin: getVal("asin", "ASIN") ? String(getVal("asin", "ASIN")).trim() : null,
     item_status: getVal("item-status", "item_status") ? String(getVal("item-status", "item_status")).trim() : null,
-    quantity: Math.max(1, Math.round(cleanOrderNumber(getVal("quantity", "qty", "quantity-purchased")) || 1)),
+    quantity: resolvedQty,
     currency: getVal("currency") ? String(getVal("currency")).trim() : null,
-    item_price: cleanOrderNumber(getVal("item-price", "item_price", "principal", "item-price-amount")),
+    item_price: itemPriceVal,
     item_tax: cleanOrderNumber(getVal("item-tax", "item_tax", "tax")),
     shipping_price: cleanOrderNumber(getVal("shipping-price", "shipping_price", "shipping")),
     shipping_tax: cleanOrderNumber(getVal("shipping-tax", "shipping_tax")),
@@ -745,7 +753,9 @@ export async function batchUpsertOrders(
       sku: o.sku!,
       asin: o.asin ?? null,
       item_status: o.item_status ?? null,
-      quantity: o.quantity ?? 1,
+      quantity: (o.order_status?.toLowerCase() === 'cancelled' || o.order_status?.toLowerCase() === 'canceled') && !o.item_price
+        ? 0
+        : (o.quantity != null ? o.quantity : 1),
       currency: o.currency ?? null,
       item_price: o.item_price ?? null,
       item_tax: o.item_tax ?? null,
