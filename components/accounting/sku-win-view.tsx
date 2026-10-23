@@ -117,6 +117,7 @@ export interface SkuWinStats {
 interface Store {
   id: string;
   name: string;
+  marketplace?: string;
 }
 
 const SKU_WIN_COLUMNS_STORAGE_KEY = "accounting_sku_win_columns_global";
@@ -390,12 +391,18 @@ export function SkuWinView() {
           if (!ignore) {
             const list: Store[] = data.stores || [];
             setStores(list);
-            const currentSelected = typeof window !== "undefined" ? localStorage.getItem("acc_selected_store_id") || "" : "";
-            if (!currentSelected && list.length > 0) {
-              const defaultStore = list.find((s: Store) => s.name === "LIMIMA") || list[0];
-              setSelectedStoreId(defaultStore.id);
-              localStorage.setItem("acc_selected_store_id", defaultStore.id);
-              setDateRange(getSavedStoreDateRange("sku_win", defaultStore.id, financialMaxDate));
+            
+            if (list.length > 0) {
+              const savedId = typeof window !== "undefined" ? localStorage.getItem("acc_selected_store_id") || "" : "";
+              const matchedStore = list.find((s) => s.id === savedId);
+              const limimaStore = list.find((s) => s.name.toUpperCase().includes("LIMIMA"));
+              const targetStore = matchedStore || limimaStore || list[0];
+
+              setSelectedStoreId(targetStore.id);
+              if (typeof window !== "undefined") {
+                localStorage.setItem("acc_selected_store_id", targetStore.id);
+              }
+              setDateRange(getSavedStoreDateRange("sku_win", targetStore.id, financialMaxDate));
             }
           }
         }
@@ -412,6 +419,7 @@ export function SkuWinView() {
   }, [financialMaxDate]);
 
   const handleStoreSelect = (newStoreId: string) => {
+    if (!newStoreId) return;
     setSelectedStoreId(newStoreId);
     if (typeof window !== "undefined") {
       localStorage.setItem("acc_selected_store_id", newStoreId);
@@ -425,7 +433,7 @@ export function SkuWinView() {
   useEffect(() => {
     const handleSyncStore = (e: any) => {
       const newStoreId = e.detail || (typeof window !== "undefined" ? localStorage.getItem("acc_selected_store_id") : null);
-      if (newStoreId && newStoreId !== selectedStoreId) {
+      if (newStoreId && newStoreId !== selectedStoreId && stores.some((s) => s.id === newStoreId)) {
         setSelectedStoreId(newStoreId);
         setDateRange(getSavedStoreDateRange("sku_win", newStoreId, financialMaxDate));
         setPage(1);
@@ -437,7 +445,7 @@ export function SkuWinView() {
       window.removeEventListener("acc_store_changed", handleSyncStore);
       window.removeEventListener("storage", handleSyncStore);
     };
-  }, [selectedStoreId, financialMaxDate]);
+  }, [selectedStoreId, stores, financialMaxDate]);
 
   // 2. Fetch Data
   const fetchData = useCallback(async () => {
@@ -823,20 +831,32 @@ export function SkuWinView() {
       <div className="bg-slate-200/70 p-2 rounded-xl border border-slate-300 flex items-center justify-between gap-2 flex-wrap shadow-2xs shrink-0">
         <div className="flex items-center gap-2 flex-wrap">
           {/* Store Selector */}
-          <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs shadow-2xs">
-            <span className="text-[11px] font-bold uppercase text-slate-400">STORE</span>
+          <div className="relative flex items-center bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs shadow-2xs hover:border-slate-400 transition-colors">
+            <StorefrontIcon size={15} weight="bold" className="text-amber-600 mr-1.5 shrink-0" />
             <select
               id="skuwin-store-select"
               value={selectedStoreId}
               onChange={(e) => handleStoreSelect(e.target.value)}
-              disabled={loadingStores}
-              className="font-bold text-slate-800 bg-transparent focus:outline-hidden cursor-pointer"
+              disabled={loadingStores || stores.length === 0}
+              className="font-bold text-slate-800 bg-transparent focus:outline-hidden cursor-pointer pr-5 appearance-none"
+              style={{
+                backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%2364748b' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
+                backgroundPosition: "right 0 center",
+                backgroundRepeat: "no-repeat",
+                backgroundSize: "1.25em 1.25em",
+              }}
             >
-              {stores.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
+              {loadingStores ? (
+                <option value="">Đang tải store...</option>
+              ) : stores.length === 0 ? (
+                <option value="">Không có store</option>
+              ) : (
+                stores.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} ({s.marketplace || "US"})
+                  </option>
+                ))
+              )}
             </select>
           </div>
 

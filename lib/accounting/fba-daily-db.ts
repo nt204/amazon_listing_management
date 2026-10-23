@@ -60,7 +60,10 @@ export interface ListFbaDailyOptions {
   limit?: number;
 }
 
-const DAILY_SERVICE_COST = (20000 * 0.8572) / 184;
+const STORE_SERVICE_RATES: Record<string, number> = {
+  "d0e81dc7-9e27-4706-aebd-9731a2b28d2f": 0.8572, // BOZSPACER
+  "fe847fdf-3c03-42db-aece-4af255c096a8": 0.7292, // LIMIMA
+};
 
 function getExcelWeekNum(dateStr: string): number {
   try {
@@ -89,14 +92,31 @@ export async function listFbaDaily(
   const limit = options.limit && options.limit > 0 ? options.limit : 100;
 
   const hasDateFilter = Boolean(startDate && endDate);
+  const storeRows = await sql<{ service_rate: string | number | null }[]>`
+    SELECT service_rate FROM stores WHERE id = ${storeId} LIMIT 1
+  `;
+  const serviceRate = storeRows[0]?.service_rate != null 
+    ? Number(storeRows[0].service_rate) 
+    : (STORE_SERVICE_RATES[storeId] ?? 0.8572);
+  const dailyServiceCost = (20000 * serviceRate) / 184;
 
   // Daily aggregation across orders (FBA), ads, and returns
   const rows = await sql<Record<string, unknown>[]>`
-    WITH daily_orders AS (
+    WITH asin_fees AS (
+      SELECT 
+        store_id,
+        asin,
+        SUM(amazon_fee) as amazon_fee,
+        MAX(referral_fee_pct) as referral_fee_pct
+      FROM accounting_sku_master
+      WHERE asin IS NOT NULL AND asin != ''
+      GROUP BY store_id, asin
+    ),
+    daily_orders AS (
       SELECT 
         o.date,
-        COUNT(DISTINCT COALESCE(o.amazon_order_id, o.id::text)) as order_count,
-        SUM(COALESCE(o.quantity, 1)) as total_qty,
+        COUNT(DISTINCT CASE WHEN o.amazon_order_id NOT LIKE 'S0%' THEN COALESCE(o.amazon_order_id, o.id::text) END) as order_count,
+        SUM(CASE WHEN o.amazon_order_id NOT LIKE 'S0%' THEN COALESCE(o.quantity, 1) ELSE 0 END) as total_qty,
         SUM(
           COALESCE(o.item_price, 0) * (
             CASE 
@@ -118,12 +138,15 @@ export async function listFbaDaily(
           )
         ) as total_promo,
         SUM(
-          COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, sm.basecost_tb, 0)
+          CASE 
+            WHEN o.amazon_order_id NOT LIKE 'S0%' THEN COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, sm.basecost_tb, 0)
+            ELSE 0
+          END
         ) as total_basecost,
         SUM(
           CASE 
             WHEN COALESCE(o.item_price, 0) = 0 THEN 0
-            ELSE COALESCE(sm.amazon_fee, 0) + (COALESCE(sm.referral_fee_pct, 0) * COALESCE(o.item_price, 0) * (
+            ELSE COALESCE(af.amazon_fee, sm.amazon_fee, 0) + (COALESCE(af.referral_fee_pct, sm.referral_fee_pct, 0) * COALESCE(o.item_price, 0) * (
               CASE 
                 WHEN o.currency = 'CAD' THEN 0.738 
                 WHEN o.currency = 'MXN' THEN 0.051
@@ -141,9 +164,10 @@ export async function listFbaDaily(
               WHEN o.currency = 'USD' THEN 1.0
               ELSE 0
             END
-          ) * (0.01 + COALESCE(sm.referral_fee_pct, 0) * 0.10)
+          ) * (0.01 + COALESCE(af.referral_fee_pct, sm.referral_fee_pct, 0) * 0.10)
         ) as total_order_tax
       FROM accounting_orders o
+      LEFT JOIN asin_fees af ON af.store_id = o.store_id AND af.asin = o.asin
       LEFT JOIN accounting_sku_master sm ON sm.store_id = o.store_id AND sm.sku = o.sku
       LEFT JOIN accounting_monthly_base_cost mbc 
         ON mbc.store_id = o.store_id 
@@ -154,7 +178,6 @@ export async function listFbaDaily(
         AND o.date < CURRENT_DATE
         AND o.currency IN ('USD', 'CAD', 'MXN')
         AND LOWER(COALESCE(o.order_status, '')) NOT IN ('cancelled', 'canceled')
-        AND o.amazon_order_id NOT LIKE 'S0%'
         ${hasDateFilter ? sql`AND o.date >= ${startDate}::date AND o.date <= ${endDate}::date` : sql``}
       GROUP BY o.date
     ),
@@ -232,7 +255,7 @@ export async function listFbaDaily(
 
     // Profit = Revenue - Ads Fee - Basecost - Amazon Fee - Thuế - Promotion - Return
     const profit = revenue - adsFee - basecost - amazonFee - thue - promotion - returnCost;
-    const netProfit = profit - DAILY_SERVICE_COST;
+    const netProfit = profit - dailyServiceCost;
 
     // Balance = Revenue - Amazon Fee - Ads Fee - Return Cost
     const balance = revenue - amazonFee - adsFee - returnCost;

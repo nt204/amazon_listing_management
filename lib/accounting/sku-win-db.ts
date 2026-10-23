@@ -16,7 +16,7 @@ export interface SkuWinItem {
   amazon_fee_unit: number;
   referral_fee_pct: number;
   custom_price: number | null;
-  
+
   // Computed Financials
   revenue: number;
   quantity: number;
@@ -27,7 +27,7 @@ export interface SkuWinItem {
   promotion: number;
   return_cost: number;
   profit: number;
-  
+
   // Unit & Efficiency Metrics
   profit_per_item: number;
   basecost_per_item: number;
@@ -35,20 +35,20 @@ export interface SkuWinItem {
   acos: number;
   margin: number;
   roi: number;
-  
+
   // Contextual Metrics
   revenue_ads: number;
   all_time_quantity: number;
   return_count: number;
   return_rate: number;
   shipped_qty: number;
-  
+
   // Target Goals
   revenue_target: number | null;
   unit_target: number | null;
   spend_target: number | null;
   profit_target: number | null;
-  
+
   // Comparison Period (Optional)
   compare_revenue?: number;
   compare_quantity?: number;
@@ -138,7 +138,17 @@ export async function listSkuWin(
 
   // We query all active SKUs in the store joined with their orders, ads, returns, shipments, and basecost
   const rows = await sql<Record<string, unknown>[]>`
-    WITH orders_filtered AS (
+    WITH asin_fees AS (
+      SELECT 
+        store_id,
+        asin,
+        SUM(amazon_fee) as amazon_fee,
+        MAX(referral_fee_pct) as referral_fee_pct
+      FROM accounting_sku_master
+      WHERE asin IS NOT NULL AND asin != ''
+      GROUP BY store_id, asin
+    ),
+    orders_filtered AS (
       SELECT 
         o.sku,
         COUNT(CASE WHEN COALESCE(o.item_price, 0) > 0 THEN 1 END) as total_order_count,
@@ -165,11 +175,25 @@ export async function listSkuWin(
         ) as total_promo,
         SUM(
           CASE 
-            WHEN o.amazon_order_id LIKE 'S0%' THEN 0
-            ELSE COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, sm.basecost_tb, 0)
+            WHEN o.amazon_order_id NOT LIKE 'S0%' THEN COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, sm.basecost_tb, 0)
+            ELSE 0
           END
-        ) as total_basecost
+        ) as total_basecost,
+        SUM(
+          CASE 
+            WHEN COALESCE(o.item_price, 0) = 0 THEN 0
+            ELSE COALESCE(af.amazon_fee, sm.amazon_fee, 0) + (COALESCE(af.referral_fee_pct, sm.referral_fee_pct, 0) * COALESCE(o.item_price, 0) * (
+              CASE 
+                WHEN o.currency = 'CAD' THEN 0.738 
+                WHEN o.currency = 'MXN' THEN 0.051
+                WHEN o.currency = 'USD' THEN 1.0
+                ELSE 0
+              END
+            ))
+          END
+        ) as total_amz_fee
       FROM accounting_orders o
+      LEFT JOIN asin_fees af ON af.store_id = o.store_id AND af.asin = o.asin
       LEFT JOIN accounting_sku_master sm ON sm.store_id = o.store_id AND sm.sku = o.sku
       LEFT JOIN accounting_monthly_base_cost mbc 
         ON mbc.store_id = o.store_id 
@@ -177,7 +201,7 @@ export async function listSkuWin(
         AND mbc.period = to_char(o.date, 'YYYY-MM')
       WHERE o.store_id = ${storeId}
         AND o.fulfillment_channel = 'Amazon'
-        AND o.currency IN ('USD', 'CAD', 'MXN')
+        AND (o.currency IN ('USD', 'CAD', 'MXN') OR o.amazon_order_id LIKE 'S0%')
         AND LOWER(COALESCE(o.order_status, '')) NOT IN ('cancelled', 'canceled')
         ${hasDateFilter ? sql`AND o.date >= ${startDate}::date AND o.date <= ${endDate}::date` : sql``}
       GROUP BY o.sku
@@ -187,7 +211,7 @@ export async function listSkuWin(
       FROM accounting_orders
       WHERE store_id = ${storeId}
         AND LOWER(COALESCE(order_status, '')) NOT IN ('cancelled', 'canceled')
-        AND amazon_order_id NOT LIKE 'S0%'
+        AND (currency IN ('USD', 'CAD', 'MXN') OR amazon_order_id LIKE 'S0%')
       GROUP BY sku
     ),
     ads_filtered AS (
@@ -229,8 +253,8 @@ export async function listSkuWin(
         SUM(COALESCE(o.item_price, 0) * (CASE WHEN o.currency = 'CAD' THEN 0.738 WHEN o.currency = 'MXN' THEN 0.051 ELSE 1.0 END)) as compare_rev,
         SUM(
           CASE 
-            WHEN o.amazon_order_id LIKE 'S0%' THEN 0
-            ELSE COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, sm.basecost_tb, 0)
+            WHEN o.amazon_order_id NOT LIKE 'S0%' THEN COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, sm.basecost_tb, 0)
+            ELSE 0
           END
         ) as compare_basecost,
         SUM(
@@ -241,8 +265,22 @@ export async function listSkuWin(
               ELSE 1.0 
             END
           )
-        ) as compare_promo
+        ) as compare_promo,
+        SUM(
+          CASE 
+            WHEN COALESCE(o.item_price, 0) = 0 THEN 0
+            ELSE COALESCE(af_cmp.amazon_fee, sm.amazon_fee, 0) + (COALESCE(af_cmp.referral_fee_pct, sm.referral_fee_pct, 0) * COALESCE(o.item_price, 0) * (
+              CASE 
+                WHEN o.currency = 'CAD' THEN 0.738 
+                WHEN o.currency = 'MXN' THEN 0.051
+                WHEN o.currency = 'USD' THEN 1.0
+                ELSE 0
+              END
+            ))
+          END
+        ) as compare_amz_fee
       FROM accounting_orders o
+      LEFT JOIN asin_fees af_cmp ON af_cmp.store_id = o.store_id AND af_cmp.asin = o.asin
       LEFT JOIN accounting_sku_master sm ON sm.store_id = o.store_id AND sm.sku = o.sku
       LEFT JOIN accounting_monthly_base_cost mbc 
         ON mbc.store_id = o.store_id 
@@ -250,7 +288,7 @@ export async function listSkuWin(
         AND mbc.period = to_char(o.date, 'YYYY-MM')
       WHERE o.store_id = ${storeId}
         AND o.fulfillment_channel = 'Amazon'
-        AND o.currency IN ('USD', 'CAD', 'MXN')
+        AND (o.currency IN ('USD', 'CAD', 'MXN') OR o.amazon_order_id LIKE 'S0%')
         AND LOWER(COALESCE(o.order_status, '')) NOT IN ('cancelled', 'canceled')
         AND o.date >= ${compareStartDate}::date 
         AND o.date <= ${compareEndDate}::date
@@ -276,8 +314,8 @@ export async function listSkuWin(
       sm.status,
       sm.niche,
       sm.pic_mkt,
-      COALESCE(sm.amazon_fee, 0)::numeric as amazon_fee_unit,
-      COALESCE(sm.referral_fee_pct, 0)::numeric as referral_fee_pct,
+      COALESCE(af_out.amazon_fee, sm.amazon_fee, 0)::numeric as amazon_fee_unit,
+      COALESCE(af_out.referral_fee_pct, sm.referral_fee_pct, 0)::numeric as referral_fee_pct,
       NULLIF(sm.custom_fields->>'price', '')::numeric as custom_price,
       NULLIF(sm.custom_fields->'targets'->>'revenue', '')::numeric as revenue_target,
       NULLIF(sm.custom_fields->'targets'->>'unit', '')::numeric as unit_target,
@@ -288,6 +326,7 @@ export async function listSkuWin(
       COALESCE(o.total_qty, 0)::numeric as quantity,
       COALESCE(a.total_spend, 0)::numeric as ads_fee,
       COALESCE(o.total_basecost, 0)::numeric as basecost,
+      COALESCE(o.total_amz_fee, 0)::numeric as amazon_fee,
       COALESCE(o.total_promo, 0)::numeric as promotion,
       COALESCE(r.return_total, 0)::numeric as return_cost,
       COALESCE(r.return_count, 0)::numeric as return_count,
@@ -300,9 +339,11 @@ export async function listSkuWin(
       COALESCE(oc.compare_qty, 0)::numeric as compare_quantity,
       COALESCE(ac.compare_spend, 0)::numeric as compare_ads_fee,
       COALESCE(oc.compare_basecost, 0)::numeric as compare_basecost,
+      COALESCE(oc.compare_amz_fee, 0)::numeric as compare_amazon_fee,
       COALESCE(oc.compare_promo, 0)::numeric as compare_promotion
       ` : sql``}
     FROM accounting_sku_master sm
+    LEFT JOIN asin_fees af_out ON af_out.store_id = sm.store_id AND af_out.asin = sm.asin
     LEFT JOIN orders_filtered o ON o.sku = sm.sku
     LEFT JOIN all_time_orders ato ON ato.sku = sm.sku
     LEFT JOIN ads_filtered a ON a.sku = sm.sku
@@ -336,9 +377,8 @@ export async function listSkuWin(
     const referralFeePct = Number(r.referral_fee_pct || 0);
     const customPrice = r.custom_price != null ? Number(r.custom_price) : null;
 
-    // Amazon Fee = referral fee on revenue + fixed AMZ fee per unique order.
-    // The fixed fee is charged by amazon_order_id, not by item quantity.
-    const amazonFee = (referralFeePct * revenue) + (orderCount * amazonFeeUnit);
+    // Amazon Fee from SQL aggregation matching workbook exactly
+    const amazonFee = Number(r.amazon_fee || 0);
 
     // Thuế = 15% x 10% x giá (giá này lấy ở orders) + 1% revenue + 10% spend ads
     // = 1.5% * revenue + 1% * revenue + 10% * spend ads
@@ -378,7 +418,7 @@ export async function listSkuWin(
       compareAdsFee = Number(r.compare_ads_fee || 0);
       const compareBasecost = Number(r.compare_basecost || 0);
       const comparePromo = Number(r.compare_promotion || 0);
-      const compareAmzFee = (referralFeePct * compareRevenue) + (compareOrderCount * amazonFeeUnit);
+      const compareAmzFee = Number(r.compare_amazon_fee || 0);
       const compareThue = (referralFeePct * 0.10 * compareRevenue) + (0.01 * compareRevenue) + (0.10 * compareAdsFee);
       compareProfit = compareRevenue - compareAdsFee - compareBasecost - compareAmzFee - compareThue - comparePromo;
       compareTacos = compareRevenue > 0 ? compareAdsFee / compareRevenue : 0;

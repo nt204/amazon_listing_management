@@ -14,6 +14,7 @@ import {
   PencilSimpleIcon,
   PlusIcon,
   SlidersHorizontalIcon,
+  StorefrontIcon,
 } from "@phosphor-icons/react";
 import type { FbaDailyItem, FbaDailyStats } from "@/lib/accounting/fba-daily-db";
 import type { Store } from "@/lib/accounting/types";
@@ -335,31 +336,44 @@ export function FbaDailyView() {
 
   // Load stores (only once on mount)
   useEffect(() => {
+    let ignore = false;
     async function loadStores() {
       try {
         setLoadingStores(true);
         const res = await fetch("/api/accounting/stores");
         if (res.ok) {
           const data = await res.json();
+          if (ignore) return;
           const storeList: Store[] = data.stores || [];
           setStores(storeList);
-          const currentSelected = typeof window !== "undefined" ? localStorage.getItem("acc_selected_store_id") || "" : "";
-          if (!currentSelected && storeList.length > 0) {
-            setSelectedStoreId(storeList[0].id);
-            localStorage.setItem("acc_selected_store_id", storeList[0].id);
-            setDateRange(getSavedStoreDateRange("fba_daily", storeList[0].id, financialMaxDate));
+          
+          if (storeList.length > 0) {
+            const savedId = typeof window !== "undefined" ? localStorage.getItem("acc_selected_store_id") || "" : "";
+            const matchedStore = storeList.find((s) => s.id === savedId);
+            const limimaStore = storeList.find((s) => s.name.toUpperCase().includes("LIMIMA"));
+            const targetStore = matchedStore || limimaStore || storeList[0];
+            
+            setSelectedStoreId(targetStore.id);
+            if (typeof window !== "undefined") {
+              localStorage.setItem("acc_selected_store_id", targetStore.id);
+            }
+            setDateRange(getSavedStoreDateRange("fba_daily", targetStore.id, financialMaxDate));
           }
         }
       } catch {
         // error
       } finally {
-        setLoadingStores(false);
+        if (!ignore) setLoadingStores(false);
       }
     }
     loadStores();
+    return () => {
+      ignore = true;
+    };
   }, [financialMaxDate]);
 
   const handleStoreSelect = (newStoreId: string) => {
+    if (!newStoreId) return;
     setSelectedStoreId(newStoreId);
     if (typeof window !== "undefined") {
       localStorage.setItem("acc_selected_store_id", newStoreId);
@@ -372,7 +386,7 @@ export function FbaDailyView() {
   useEffect(() => {
     const handleSyncStore = (e: any) => {
       const newStoreId = e.detail || (typeof window !== "undefined" ? localStorage.getItem("acc_selected_store_id") : null);
-      if (newStoreId && newStoreId !== selectedStoreId) {
+      if (newStoreId && newStoreId !== selectedStoreId && stores.some((s) => s.id === newStoreId)) {
         setSelectedStoreId(newStoreId);
         setDateRange(getSavedStoreDateRange("fba_daily", newStoreId, financialMaxDate));
       }
@@ -383,7 +397,7 @@ export function FbaDailyView() {
       window.removeEventListener("acc_store_changed", handleSyncStore);
       window.removeEventListener("storage", handleSyncStore);
     };
-  }, [selectedStoreId, financialMaxDate]);
+  }, [selectedStoreId, stores, financialMaxDate]);
 
   // Fetch FBA daily data
   const fetchData = useCallback(async () => {
@@ -442,20 +456,33 @@ export function FbaDailyView() {
       {/* TOOLBAR: Store, Date Range, Search, Actions */}
       <div className="bg-slate-200/70 p-2 rounded-xl border border-slate-300 flex items-center justify-between gap-2 flex-wrap shadow-2xs shrink-0">
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Store Select */}
-          <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs shadow-2xs">
-            <span className="text-[11px] font-bold uppercase text-slate-400">STORE</span>
+          {/* Store Switcher */}
+          <div className="relative flex items-center bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs shadow-2xs hover:border-slate-400 transition-colors">
+            <StorefrontIcon size={15} weight="bold" className="text-amber-600 mr-1.5 shrink-0" />
             <select
+              id="fba-store-select"
               value={selectedStoreId}
               onChange={(e) => handleStoreSelect(e.target.value)}
-              disabled={loadingStores}
-              className="font-bold text-slate-800 bg-transparent focus:outline-hidden cursor-pointer"
+              disabled={loadingStores || stores.length === 0}
+              className="font-bold text-slate-800 bg-transparent focus:outline-hidden cursor-pointer pr-5 appearance-none"
+              style={{
+                backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%2364748b' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
+                backgroundPosition: "right 0 center",
+                backgroundRepeat: "no-repeat",
+                backgroundSize: "1.25em 1.25em",
+              }}
             >
-              {stores.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name} ({s.marketplace})
-                </option>
-              ))}
+              {loadingStores ? (
+                <option value="">Đang tải store...</option>
+              ) : stores.length === 0 ? (
+                <option value="">Không có store</option>
+              ) : (
+                stores.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} ({s.marketplace || "US"})
+                  </option>
+                ))
+              )}
             </select>
           </div>
 

@@ -232,7 +232,7 @@ export async function importUnifiedAccountingExcel(
           }
         }
         if (orderRows.length > 0) {
-          const res = await batchUpsertOrders(storeId, orderRows, { snapshot: "all" });
+          const res = await batchUpsertOrders(storeId, orderRows, { snapshot: "dates" });
           counts.orders += res.count;
           options.onProgress?.("orders", counts.orders);
         }
@@ -384,7 +384,7 @@ export async function importUnifiedAccountingExcel(
           }
         }
         if (adsChunk.length > 0) {
-          const res = await batchUpsertAds(storeId, adsChunk, { snapshot: "all" });
+          const res = await batchUpsertAds(storeId, adsChunk, { snapshot: "dates" });
           counts.ads += res.count;
           adsChunk = [];
         }
@@ -512,7 +512,7 @@ export async function importUnifiedAccountingExcel(
           }
         }
         if (returnChunk.length > 0) {
-          const res = await batchUpsertReturns(storeId, returnChunk, { snapshot: "all" });
+          const res = await batchUpsertReturns(storeId, returnChunk, { snapshot: "dates" });
           counts.returns = res.count;
           returnChunk = [];
         }
@@ -793,7 +793,15 @@ export async function importUnifiedAccountingExcel(
           if (isHeaderRow) {
             isHeaderRow = false;
             vals.forEach((v, idx) => {
-              if (v != null) headers[idx] = String(v).trim().toLowerCase().replace(/\s+/g, " ");
+              if (v != null) {
+                let str = "";
+                if (typeof v === "object") {
+                  str = String((v as any).result || (v as any).text || (v as any).formula || "").trim().toLowerCase().replace(/\s+/g, " ");
+                } else {
+                  str = String(v).trim().toLowerCase().replace(/\s+/g, " ");
+                }
+                headers[idx] = str;
+              }
             });
           } else {
             const getColVal = (patterns: string[]): any => {
@@ -801,9 +809,10 @@ export async function importUnifiedAccountingExcel(
                 const idx = headers.indexOf(p.toLowerCase());
                 if (idx !== -1 && vals[idx] !== undefined) {
                   let cellVal = vals[idx];
-                  if (cellVal && typeof cellVal === "object") {
+                  while (cellVal && typeof cellVal === "object" && !(cellVal instanceof Date)) {
                     if ("result" in cellVal) cellVal = cellVal.result;
                     else if ("text" in cellVal) cellVal = cellVal.text;
+                    else break;
                   }
                   return cellVal;
                 }
@@ -811,9 +820,24 @@ export async function importUnifiedAccountingExcel(
               return null;
             };
 
-            const rawMonth = getColVal(["month", "tháng", "thang"]) || vals[1];
-            const rawSku = getColVal(["sku", "mã sku", "ma sku"]) || vals[5];
-            const rawBasecost = getColVal(["basecost tính/tháng", "basecost", "basecost tính / tháng", "basecost thang"]) || vals[13];
+            let rawMonth = getColVal(["month", "tháng", "thang"]) ?? vals[1];
+            while (rawMonth && typeof rawMonth === "object" && !(rawMonth instanceof Date)) {
+              if ("result" in rawMonth) rawMonth = rawMonth.result;
+              else if ("text" in rawMonth) rawMonth = rawMonth.text;
+              else break;
+            }
+            let rawSku = getColVal(["sku", "mã sku", "ma sku"]) ?? vals[5];
+            while (rawSku && typeof rawSku === "object" && !(rawSku instanceof Date)) {
+              if ("result" in rawSku) rawSku = rawSku.result;
+              else if ("text" in rawSku) rawSku = rawSku.text;
+              else break;
+            }
+            let rawBasecost = getColVal(["basecost tính/tháng", "basecost", "basecost tính / tháng", "basecost thang"]) ?? vals[13];
+            while (rawBasecost && typeof rawBasecost === "object" && !(rawBasecost instanceof Date)) {
+              if ("result" in rawBasecost) rawBasecost = rawBasecost.result;
+              else if ("text" in rawBasecost) rawBasecost = rawBasecost.text;
+              else break;
+            }
 
             if (!rawSku || rawMonth == null || rawBasecost == null) continue;
             const sku = String(rawSku).trim();
@@ -826,8 +850,21 @@ export async function importUnifiedAccountingExcel(
             if (isNaN(basecostNum)) continue;
 
             const period = `2026-${String(monthNum).padStart(2, "0")}`;
-            const brand = String(getColVal(["brand", "thương hiệu"]) || vals[4] || "").trim() || null;
-            const asin = String(getColVal(["asin"]) || vals[6] || "").trim() || null;
+            let brandVal = getColVal(["brand", "thương hiệu"]) ?? vals[4];
+            while (brandVal && typeof brandVal === "object" && !(brandVal instanceof Date)) {
+              if ("result" in brandVal) brandVal = brandVal.result;
+              else if ("text" in brandVal) brandVal = brandVal.text;
+              else break;
+            }
+            const brand = String(brandVal || "").trim() || null;
+
+            let asinVal = getColVal(["asin"]) ?? vals[6];
+            while (asinVal && typeof asinVal === "object" && !(asinVal instanceof Date)) {
+              if ("result" in asinVal) asinVal = asinVal.result;
+              else if ("text" in asinVal) asinVal = asinVal.text;
+              else break;
+            }
+            const asin = String(asinVal || "").trim() || null;
 
             baseRows.push({
               store_id: storeId,
@@ -844,14 +881,13 @@ export async function importUnifiedAccountingExcel(
           for (const b of baseRows) {
             await sql`
               INSERT INTO accounting_monthly_base_cost (
-                store_id, sku, period, basecost_thang, brand, asin, updated_at
+                store_id, sku, period, basecost_thang, brand, updated_at
               ) VALUES (
-                ${b.store_id}, ${b.sku}, ${b.period}, ${b.basecost_thang}, ${b.brand ?? null}, ${b.asin ?? null}, NOW()
+                ${b.store_id}, ${b.sku}, ${b.period}, ${b.basecost_thang}, ${b.brand ?? null}, NOW()
               )
               ON CONFLICT (store_id, period, sku) DO UPDATE SET
                 basecost_thang = EXCLUDED.basecost_thang,
                 brand = COALESCE(EXCLUDED.brand, accounting_monthly_base_cost.brand),
-                asin = COALESCE(EXCLUDED.asin, accounting_monthly_base_cost.asin),
                 updated_at = NOW()
             `;
           }
@@ -895,7 +931,7 @@ export async function importUnifiedAccountingExcel(
   try {
     await sql`
       UPDATE accounting_ads a
-      SET pic_mkt = COALESCE(NULLIF(a.pic_mkt, ''), sm.pic_mkt),
+      SET mkt_pic = COALESCE(NULLIF(a.mkt_pic, ''), sm.pic_mkt),
           loai = COALESCE(NULLIF(a.loai, ''), sm.loai, 'FBA')
       FROM accounting_sku_master sm
       WHERE sm.store_id = a.store_id 
@@ -904,15 +940,15 @@ export async function importUnifiedAccountingExcel(
     `;
     await sql`
       UPDATE accounting_returns r
-      SET pic_mkt = COALESCE(NULLIF(r.pic_mkt, ''), sm.pic_mkt),
+      SET pic = COALESCE(NULLIF(r.pic, ''), sm.pic_mkt),
           loai = COALESCE(NULLIF(r.loai, ''), sm.loai, 'FBA'),
           basecost = CASE 
-            WHEN COALESCE(r.basecost, 0) = 0 THEN COALESCE(sm.basecost_tb, 0) 
+            WHEN COALESCE(r.basecost, 0) = 0 THEN -ABS(COALESCE(sm.basecost_tb, 0)) 
             ELSE r.basecost 
           END,
           return_sau_basecost = CASE 
             WHEN COALESCE(r.return_sau_basecost, 0) = 0 AND COALESCE(sm.basecost_tb, 0) > 0 
-              THEN r.total - COALESCE(sm.basecost_tb, 0)
+              THEN r.total + ABS(COALESCE(sm.basecost_tb, 0))
             ELSE r.return_sau_basecost 
           END
       FROM accounting_sku_master sm

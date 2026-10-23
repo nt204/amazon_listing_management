@@ -1,6 +1,7 @@
 import { ApiError, authorize, dataScope, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
 import { ingestPpcFilePath, MAX_PPC_REPORT_BYTES, PpcInputError } from "@/lib/ppc/service";
 import { MultipartUploadError, streamMultipartFileUpload } from "@/lib/multipart-file-upload";
+import { notifyLarkEventBestEffort } from "@/lib/lark-notifications";
 
 export const runtime = "nodejs";
 
@@ -44,6 +45,14 @@ export async function POST(request: Request) {
 
     const { invalidateCachePattern } = await import("@/lib/redis");
     await invalidateCachePattern(`ppc:metrics:${scope.teamId}:*`).catch(() => {});
+
+    await notifyLarkEventBestEffort(scope, "ppc", [
+      "✅ Upload file PPC đã hoàn tất",
+      `Store: ${result.storeName || storeName}`,
+      `File: ${file.name}`,
+      `Loại báo cáo: ${result.reportType}`,
+      `Kết quả: ${result.totalParsed} dòng (${result.newInserted} mới, ${result.updated} cập nhật)`,
+    ].join("\n"));
 
     return Response.json({
       success: true,

@@ -34,6 +34,7 @@ import {
   type TrelloAttachment,
 } from "@/lib/trello";
 import { getTrelloServerCredentials } from "@/lib/trello-server-config";
+import { notifyLarkEventBestEffort } from "@/lib/lark-notifications";
 
 const tinySamplePng =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nJkAAAAASUVORK5CYII=";
@@ -403,6 +404,13 @@ export async function executeSingleTrelloListing(
 
   emitProgress("complete", "completed", 0);
   console.info("[listing timing]", JSON.stringify({ card_id: cardId, sku, timings_ms: timings }));
+
+  await notifyLarkEventBestEffort(scope, "listing", [
+    "🎉 Listing đã hoàn tất",
+    `SKU: ${sku}`,
+    `Sản phẩm: ${itemName}`,
+    `Trello: ${updatedCard.name || card.name}`,
+  ].join("\n"));
 
   return {
     success: true,

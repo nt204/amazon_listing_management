@@ -3,8 +3,11 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { Readable } from "node:stream";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { pipeline } from "node:stream/promises";
 import { importUnifiedAccountingExcel } from "@/lib/accounting/excel-unified-importer";
+import { authorize, dataScope } from "@/lib/api-guard";
+import { notifyLarkEventBestEffort } from "@/lib/lark-notifications";
 
 export const maxDuration = 300; // Cho phép chạy tối đa 5 phút cho file lớn 50,000 dòng
 export const dynamic = "force-dynamic";
@@ -12,6 +15,7 @@ export const dynamic = "force-dynamic";
 export async function POST(request: NextRequest) {
   let tempFilePath: string | null = null;
   try {
+    const scope = dataScope(await authorize(request, "write", "accounting"));
     const contentType = request.headers.get("content-type") || "";
     if (!contentType.includes("multipart/form-data")) {
       return NextResponse.json({ error: "Yêu cầu định dạng multipart/form-data" }, { status: 400 });
@@ -34,7 +38,7 @@ export async function POST(request: NextRequest) {
     tempFilePath = path.join(os.tmpdir(), tempFileName);
 
     const fileStream = fs.createWriteStream(tempFilePath);
-    const nodeReadable = Readable.fromWeb(file.stream() as any);
+    const nodeReadable = Readable.fromWeb(file.stream() as unknown as NodeReadableStream);
     await pipeline(nodeReadable, fileStream);
 
     console.log(`[UnifiedImportAPI] Đã lưu file tạm lên đĩa: ${tempFilePath} (${(fs.statSync(tempFilePath).size / 1024 / 1024).toFixed(2)} MB)`);
@@ -47,8 +51,14 @@ export async function POST(request: NextRequest) {
 
     tempFilePath = null; // Đã được xóa bởi importer
 
+    await notifyLarkEventBestEffort(scope, "accounting", [
+      "Import kế toán đã hoàn tất",
+      `File: ${file.name}`,
+      `Store ID: ${storeId}`,
+    ].join("\n"));
+
     return NextResponse.json(result);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[UnifiedImportAPI] Lỗi khi nạp file kế toán:", error);
     // Dọn dẹp file tạm nếu còn sót do exception trước khi importer dọn
     if (tempFilePath && fs.existsSync(tempFilePath)) {
@@ -58,7 +68,7 @@ export async function POST(request: NextRequest) {
       } catch {}
     }
     return NextResponse.json(
-      { error: error.message || "Lỗi khi xử lý file Excel kế toán" },
+      { error: error instanceof Error ? error.message : "Lỗi khi xử lý file Excel kế toán" },
       { status: 500 }
     );
   }

@@ -890,7 +890,56 @@ export async function upsertInboundShipmentItem(
   const cleanNgayDi = cleanDateOnly(data.ngay_di);
   const cleanNgayDen = cleanDateOnly(data.ngay_den);
 
-  if (data.id) {
+  let targetId = data.id || null;
+  if (!targetId && data.sku?.trim()) {
+    const cleanShipmentId = data.shipment_id?.trim() || "";
+    const cleanTenLoHang = data.ten_lo_hang?.trim() || "";
+
+    if (cleanShipmentId) {
+      // 1. Kiểm tra đã có bản ghi cùng SKU + shipment_id hay chưa
+      const existingShipment = await sql<{ id: string }[]>`
+        SELECT id FROM accounting_inbound_shipments
+        WHERE store_id = ${storeId}
+          AND LOWER(TRIM(sku)) = LOWER(${data.sku.trim()})
+          AND LOWER(TRIM(shipment_id)) = LOWER(${cleanShipmentId})
+          AND deleted_at IS NULL
+        LIMIT 1
+      `;
+      if (existingShipment[0]?.id) {
+        targetId = existingShipment[0].id;
+      } else if (cleanTenLoHang) {
+        // 2. Nếu shipment_id mới được điền, tìm bản ghi nháp cũ (cùng tên lô hàng nhưng chưa có shipment_id) để kế thừa cập nhật, tránh sinh bản ghi trùng
+        const draftRow = await sql<{ id: string }[]>`
+          SELECT id FROM accounting_inbound_shipments
+          WHERE store_id = ${storeId}
+            AND LOWER(TRIM(sku)) = LOWER(${data.sku.trim()})
+            AND LOWER(TRIM(COALESCE(ten_lo_hang, ''))) = LOWER(${cleanTenLoHang})
+            AND (shipment_id IS NULL OR TRIM(shipment_id) = '')
+            AND deleted_at IS NULL
+          LIMIT 1
+        `;
+        if (draftRow[0]?.id) {
+          targetId = draftRow[0].id;
+        }
+      }
+    } else if (cleanTenLoHang) {
+      // 3. Nếu chưa có shipment_id, tìm bản ghi nháp cùng tên lô hàng
+      const draftRow = await sql<{ id: string }[]>`
+        SELECT id FROM accounting_inbound_shipments
+        WHERE store_id = ${storeId}
+          AND LOWER(TRIM(sku)) = LOWER(${data.sku.trim()})
+          AND LOWER(TRIM(COALESCE(ten_lo_hang, ''))) = LOWER(${cleanTenLoHang})
+          AND (shipment_id IS NULL OR TRIM(shipment_id) = '')
+          AND deleted_at IS NULL
+        LIMIT 1
+      `;
+      if (draftRow[0]?.id) {
+        targetId = draftRow[0].id;
+      }
+    }
+  }
+
+  if (targetId) {
     const rows = await sql<InboundShipmentItem[]>`
       UPDATE accounting_inbound_shipments
       SET
@@ -924,7 +973,7 @@ export async function upsertInboundShipmentItem(
         trang_thai = ${data.trang_thai ?? null},
         last_changed_by = ${changedBy},
         updated_at = NOW()
-      WHERE id = ${data.id} AND store_id = ${storeId}
+      WHERE id = ${targetId} AND store_id = ${storeId}
       RETURNING
         id, store_id, sku_id, brand, sup, ngay_request, product_type, mockup,
         sku, quantity, line_ship, base_cost_per_unit::float, card::float,
@@ -2374,6 +2423,9 @@ export async function importInboundShipmentsFromWorkbook(
     const discrepancy = isStarShipment ? 0 : parseInteger(rowValues["discrepancy"]);
     const note = (rowValues["note"] as string) || null;
     const trang_thai = (rowValues["trang_thai"] as string) || null;
+
+    // Bỏ qua dòng placeholder/trống không có số lượng và không có shipment_id
+    if (quantity <= 0 && (!shipment_id || !shipment_id.trim())) return;
 
     inboundBatch.push({
       store_id: storeId,

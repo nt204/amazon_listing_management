@@ -14,6 +14,7 @@ import {
   type MockupJob,
 } from "@/lib/mockup-jobs";
 import { deleteMockupPromptReferenceImages } from "@/lib/db";
+import { notifyLarkEventBestEffort } from "@/lib/lark-notifications";
 
 const globalForMockupWorker = globalThis as unknown as {
   mockupJobWorkerStarted?: boolean;
@@ -191,6 +192,18 @@ async function processJob(job: MockupJob, workerId: string) {
     await completeMockupJob(job.id, workerId, result);
     await appendMockupJobEvent(job.id, { type: "complete", data: result });
     await cleanupTemporaryPromptImages(job);
+    await notifyLarkEventBestEffort(
+      { teamId: job.teamId, actorId: job.actorId },
+      "mockups",
+      [
+        "🎨 **Mockup: Hoàn thành tạo ảnh**",
+        `• Tác vụ: \`${job.id}\``,
+        job.cardId ? `• Thẻ Trello: ${job.cardId}` : "",
+        "• Trạng thái: Thành công",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (cancelled || (error instanceof Error && error.name === "AbortError")) {
@@ -224,6 +237,18 @@ async function processJob(job: MockupJob, workerId: string) {
         error: message,
       });
       await cleanupTemporaryPromptImages(job);
+      await notifyLarkEventBestEffort(
+        { teamId: job.teamId, actorId: job.actorId },
+        "mockups",
+        [
+          "❌ **Mockup: Tạo ảnh thất bại**",
+          `• Tác vụ: \`${job.id}\``,
+          job.cardId ? `• Thẻ Trello: ${job.cardId}` : "",
+          `• Lỗi: ${message}`,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      );
     }
   } finally {
     clearInterval(heartbeat);

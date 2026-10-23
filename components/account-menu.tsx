@@ -3,6 +3,7 @@
 import Link from "next/link";
 import {
   ArrowClockwiseIcon,
+  BellRingingIcon,
   GearSixIcon,
   ShieldCheckIcon,
   SignOutIcon,
@@ -10,6 +11,7 @@ import {
 } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import type { RequestActor } from "@/lib/auth";
+import { LarkNotificationSettingsModal } from "@/components/lark-notification-settings-modal";
 
 function initials(name: string) {
   return name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase() || "").join("") || "U";
@@ -24,6 +26,7 @@ export function AccountMenu({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [loadedPendingUserCount, setLoadedPendingUserCount] = useState(0);
+  const [larkSettingsOpen, setLarkSettingsOpen] = useState(false);
 
   useEffect(() => {
     if (actor.role !== "admin" || pendingUserCount !== undefined) return;
@@ -137,6 +140,17 @@ export function AccountMenu({
 
               <button
                 type="button"
+                onClick={() => {
+                  setIsOpen(false);
+                  setLarkSettingsOpen(true);
+                }}
+                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:text-indigo-900 transition cursor-pointer"
+              >
+                <BellRingingIcon size={16} className="text-indigo-600" /> Thông báo Lark
+              </button>
+
+              <button
+                type="button"
                 onClick={handleReload}
                 className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:text-indigo-900 transition cursor-pointer"
               >
@@ -155,6 +169,7 @@ export function AccountMenu({
           </div>
         </>
       )}
+      <LarkNotificationSettingsModal open={larkSettingsOpen} onClose={() => setLarkSettingsOpen(false)} />
     </div>
   );
 }

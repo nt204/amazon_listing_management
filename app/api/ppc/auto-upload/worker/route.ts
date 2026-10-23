@@ -1,6 +1,7 @@
 import { ApiError, authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import { invalidateCachePattern } from "@/lib/redis";
+import { notifyLarkEventBestEffort } from "@/lib/lark-notifications";
 
 export const runtime = "nodejs";
 
@@ -83,7 +84,7 @@ export async function PATCH(request: Request) {
             duration_ms = CASE WHEN ${terminal} THEN GREATEST(0, (EXTRACT(EPOCH FROM (NOW() - created_at)) * 1000)::integer) ELSE duration_ms END
         WHERE id = ${jobId} AND team_id = ${actor.teamId}
           AND status = 'RUNNING' AND lease_token = ${leaseToken}
-        RETURNING id, status, stage
+        RETURNING id, status, stage, file_name, created_by
       `;
       if (!updated.length) throw new ApiError("Lease upload Bulk không còn hợp lệ.", 409);
 
@@ -128,6 +129,14 @@ export async function PATCH(request: Request) {
         invalidateCachePattern(`ppc:query:st-opt:${actor.teamId}:*`).catch(() => {}),
         invalidateCachePattern(`ppc:query:sale-kw:${actor.teamId}:*`).catch(() => {}),
       ]);
+    }
+    if (status === "SUCCESS" || status === "PARTIAL_SUCCESS") {
+      await notifyLarkEventBestEffort({ teamId: actor.teamId, actorId: rows[0].created_by || actor.userId }, "ppc", [
+        "✅ Upload PPC lên Amazon Ads đã hoàn tất",
+        `File: ${rows[0].file_name}`,
+        `Trạng thái: ${status === "SUCCESS" ? "Thành công" : "Thành công một phần"}`,
+        body?.result_summary ? `Kết quả: ${String(body.result_summary).slice(0, 1_000)}` : "",
+      ].filter(Boolean).join("\n"));
     }
     return Response.json({ success: true, job: rows[0] });
   } catch (error) {
