@@ -174,6 +174,7 @@ export async function listSkuWin(
         AND o.fulfillment_channel = 'Amazon'
         AND o.currency IN ('USD', 'CAD', 'MXN')
         AND o.item_price IS NOT NULL
+        AND (COALESCE(o.quantity, 0) > 0 OR COALESCE(o.item_price, 0) > 0)
         ${hasDateFilter ? sql`AND o.date >= ${startDate}::date AND o.date <= ${endDate}::date` : sql``}
       GROUP BY o.sku
     ),
@@ -239,6 +240,8 @@ export async function listSkuWin(
       WHERE o.store_id = ${storeId}
         AND o.fulfillment_channel = 'Amazon'
         AND o.currency IN ('USD', 'CAD', 'MXN')
+        AND o.item_price IS NOT NULL
+        AND (COALESCE(o.quantity, 0) > 0 OR COALESCE(o.item_price, 0) > 0)
         AND o.date >= ${compareStartDate}::date 
         AND o.date <= ${compareEndDate}::date
       GROUP BY o.sku
