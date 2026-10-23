@@ -822,8 +822,30 @@ export async function batchUpsertOrders(
     totalProcessed += validRows.length;
   }
 
-  // Tự động dọn dẹp các dòng lịch sử trống order_item_id nếu đã có dòng mang order_item_id thực tế
+  // Tự động đồng bộ và dọn dẹp các dòng lịch sử trống order_item_id nếu đã có dòng mang order_item_id thực tế
   if (totalProcessed > 0) {
+    // 1. Cập nhật dữ liệu mới nhất (status, promotions, price) từ dòng không có order_item_id sang dòng có order_item_id
+    await transaction`
+      UPDATE accounting_orders o2
+      SET 
+        order_status = COALESCE(o1.order_status, o2.order_status),
+        item_promotion_discount = COALESCE(o1.item_promotion_discount, o2.item_promotion_discount),
+        ship_promotion_discount = COALESCE(o1.ship_promotion_discount, o2.ship_promotion_discount),
+        item_price = COALESCE(o1.item_price, o2.item_price),
+        shipping_price = COALESCE(o1.shipping_price, o2.shipping_price),
+        last_updated_date = COALESCE(o1.last_updated_date, o2.last_updated_date),
+        updated_at = NOW()
+      FROM accounting_orders o1
+      WHERE o1.store_id = ${storeId}
+        AND o1.order_item_id = ''
+        AND o2.store_id = o1.store_id
+        AND o2.amazon_order_id = o1.amazon_order_id
+        AND o2.sku = o1.sku
+        AND o2.order_item_id != ''
+        AND o2.order_item_id NOT LIKE 'item_%';
+    `;
+
+    // 2. Sau khi đã đồng bộ các trường mới nhất, an toàn dọn dẹp dòng trùng order_item_id = ''
     await transaction`
       DELETE FROM accounting_orders o1
       WHERE o1.store_id = ${storeId}

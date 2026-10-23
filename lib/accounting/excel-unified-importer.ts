@@ -202,6 +202,23 @@ export async function importUnifiedAccountingExcel(
               }
             });
 
+            // Fallback: Nếu ô tiêu đề cột order-item-id bị trống trong Excel (ví dụ Col AM / index 38-40)
+            if (!rowData["order-item-id"] && !rowData["order_item_id"]) {
+              for (let i = 35; i < vals.length; i++) {
+                const val = vals[i];
+                if (val != null) {
+                  let rawVal = typeof val === "object" ? (val.result ?? val.text ?? val) : val;
+                  if (typeof rawVal === "number" && rawVal > 1e13 && rawVal < 1e16) {
+                    rowData["order-item-id"] = BigInt(Math.round(rawVal)).toString();
+                    break;
+                  } else if (typeof rawVal === "string" && /^\d{13,16}$/.test(rawVal.trim())) {
+                    rowData["order-item-id"] = rawVal.trim();
+                    break;
+                  }
+                }
+              }
+            }
+
             const normalized = normalizeOrderRow(rowData, storeId, null);
             if (normalized) {
               const occKey = `${normalized.amazon_order_id}::${normalized.sku}`;
