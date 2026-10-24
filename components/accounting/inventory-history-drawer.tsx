@@ -336,7 +336,7 @@ export function InventoryHistoryDrawer({
                     : "text-slate-600 hover:bg-slate-100"
                 }`}
               >
-                Base Cost Tháng
+                Basecost Tháng
               </button>
             </div>
           )}

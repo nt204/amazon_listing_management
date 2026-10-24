@@ -19,7 +19,7 @@ export async function GET(request: Request) {
     const endDate = searchParams.get("end_date") || "";
     const search = searchParams.get("search") || undefined;
     const sortField = searchParams.get("sort_field") || "date";
-    const sortDirection = (searchParams.get("sort_dir") as "asc" | "desc") || "desc";
+    const sortDirection = (searchParams.get("sort_dir") as "asc" | "desc") || "asc";
 
     const result = await listFbaDaily(storeId, {
       startDate,

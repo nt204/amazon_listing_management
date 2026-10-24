@@ -76,3 +76,41 @@ test("LARK_NOTIFICATION_CATEGORIES includes mockups, listing, ppc, and accountin
   assert.deepEqual([...LARK_NOTIFICATION_CATEGORIES], ["listing", "mockups", "ppc", "accounting"]);
 });
 
+test("Lark card notification sends interactive message payload", async () => {
+  const { resetLarkNotificationStateForTests, sendLarkCardNotification } = await getModule();
+  const previousEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
+  const previousFetch = globalThis.fetch;
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  try {
+    process.env.LARK_APP_ID = "cli_test";
+    process.env.LARK_APP_SECRET = "secret_test";
+    resetLarkNotificationStateForTests();
+
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.includes("tenant_access_token")) {
+        return Response.json({ code: 0, tenant_access_token: "token_test", expire: 7200 });
+      }
+      return Response.json({ code: 0, data: { message_id: "om_card_test" } });
+    }) as typeof fetch;
+
+    const sampleCard = { schema: "2.0", header: { title: { tag: "plain_text", content: "Test" } } };
+    assert.deepEqual(await sendLarkCardNotification(sampleCard, { receiveId: "ndtrince@gmail.com", receiveIdType: "email" }), { sent: true });
+    assert.equal(requests.length, 2);
+    assert.match(requests[1].url, /receive_id_type=email/);
+    assert.deepEqual(JSON.parse(String(requests[1].init?.body)), {
+      receive_id: "ndtrince@gmail.com",
+      msg_type: "interactive",
+      content: JSON.stringify(sampleCard),
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+    resetLarkNotificationStateForTests();
+    for (const key of ENV_KEYS) {
+      if (previousEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = previousEnv[key];
+    }
+  }
+});
+

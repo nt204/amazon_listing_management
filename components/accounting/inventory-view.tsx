@@ -1897,7 +1897,7 @@ function InventoryViewInner() {
     try {
       localStorage.setItem(MONTHLY_BASE_COST_COLUMNS_STORAGE_KEY, JSON.stringify(newCols));
     } catch {}
-    notify("Đã lưu thiết lập cột BASE COST THÁNG cho tất cả Store!", "success");
+    notify("Đã lưu thiết lập cột BASECOST THÁNG cho tất cả Store!", "success");
   }, [MONTHLY_BASE_COST_COLUMNS_STORAGE_KEY]);
 
   const handleResetMonthlyBaseCostColumns = useCallback(() => {
@@ -1905,7 +1905,7 @@ function InventoryViewInner() {
     try {
       localStorage.removeItem(MONTHLY_BASE_COST_COLUMNS_STORAGE_KEY);
     } catch {}
-    notify("Đã khôi phục cột BASE COST THÁNG về mặc định!", "success");
+    notify("Đã khôi phục cột BASECOST THÁNG về mặc định!", "success");
   }, [MONTHLY_BASE_COST_COLUMNS_STORAGE_KEY]);
 
   const handleQuickHideColumn = useCallback((tab: "sku" | "inbound" | "check_shipment" | "monthly_base_cost", colId: string) => {
@@ -4893,7 +4893,7 @@ function InventoryViewInner() {
                   type="button"
                   onClick={() => setShowColumnModal(true)}
                   className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-amber-400 bg-amber-50 text-amber-950 hover:bg-amber-100 transition shadow-2xs cursor-pointer"
-                  title={`Cấu hình cột BASE COST THÁNG (${monthlyBaseCostVisibleCount}/${monthlyBaseCostColumns.length})`}
+                  title={`Cấu hình cột BASECOST THÁNG (${monthlyBaseCostVisibleCount}/${monthlyBaseCostColumns.length})`}
                 >
                   <SlidersHorizontalIcon size={16} weight="bold" className="text-amber-700" />
                 </button>
@@ -4917,7 +4917,7 @@ function InventoryViewInner() {
                   type="button"
                   onClick={() => monthlyBaseCostRef.current?.reload()}
                   className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 transition shadow-2xs cursor-pointer"
-                  title="Tải lại bảng Base Cost Tháng"
+                  title="Tải lại bảng Basecost Tháng"
                 >
                   <ArrowClockwiseIcon size={16} weight="bold" />
                 </button>
@@ -4989,7 +4989,7 @@ function InventoryViewInner() {
                       ? "CHI TIẾT ĐI HÀNG"
                       : activeTab === "check_shipment"
                       ? "CHECK SHIPMENT"
-                      : "BASE COST THÁNG"
+                      : "BASECOST THÁNG"
                   } (${
                     activeTab === "sku"
                       ? skuVisibleCount
@@ -5137,7 +5137,7 @@ function InventoryViewInner() {
             }`}
           >
             <CalculatorIcon size={16} weight="bold" />
-            <span>Base Cost Tháng</span>
+            <span>Basecost Tháng</span>
           </button>
         </div>
 
@@ -6057,7 +6057,7 @@ function InventoryViewInner() {
       </div>
     )}
 
-      {/* TAB 4: BASE COST THÁNG */}
+      {/* TAB 4: BASECOST THÁNG */}
       {visitedTabs.monthly_base_cost && (
         <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col flex-1 min-h-[580px] ${activeTab === "monthly_base_cost" ? "" : "hidden"}`}>
           <MonthlyBaseCostView
@@ -7320,7 +7320,7 @@ function InventoryViewInner() {
             ? "CHI TIẾT ĐI HÀNG"
             : activeTab === "check_shipment"
             ? "CHECK SHIPMENT"
-            : "BASE COST THÁNG"
+            : "BASECOST THÁNG"
         }
         columns={
           activeTab === "sku"

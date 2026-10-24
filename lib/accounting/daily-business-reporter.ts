@@ -5,13 +5,17 @@ import { listFbaDaily, type FbaDailyItem } from "@/lib/accounting/fba-daily-db";
 import { notifyLarkEventBestEffort } from "@/lib/lark-notifications";
 
 function formatCurrency(val: number | null | undefined): string {
-  if (val == null || isNaN(val)) return "$0.00";
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(val);
+  if (val == null || isNaN(val)) return "$0";
+  const isNegative = val < 0;
+  const abs = Math.abs(val);
+  const rounded = Math.round(abs);
+  const formatted = new Intl.NumberFormat("en-US").format(rounded);
+  return isNegative ? `-$${formatted}` : `$${formatted}`;
 }
 
-function formatPercent(val: number | null | undefined): string {
-  if (val == null || isNaN(val)) return "0.0%";
-  return `${(val * 100).toFixed(1)}%`;
+function formatQuantity(val: number | null | undefined): string {
+  if (val == null || isNaN(val)) return "0";
+  return new Intl.NumberFormat("en-US").format(Math.round(val));
 }
 
 export async function reportDailyBusinessData(
@@ -72,6 +76,11 @@ export async function reportDailyBusinessData(
   let totalRev = 0;
   let totalQty = 0;
   let totalAds = 0;
+  let totalBaseCost = 0;
+  let totalAmzFee = 0;
+  let totalThue = 0;
+  let totalPromotion = 0;
+  let totalRefund = 0;
   let totalProfit = 0;
 
   for (const store of storeRows) {
@@ -88,6 +97,11 @@ export async function reportDailyBusinessData(
         totalRev += Number(item.revenue || 0);
         totalQty += Number(item.quantity || 0);
         totalAds += Number(item.ads_fee || 0);
+        totalBaseCost += Number(item.basecost || 0);
+        totalAmzFee += Number(item.amazon_fee || 0);
+        totalThue += Number(item.thue || 0);
+        totalPromotion += Number(item.promotion || 0);
+        totalRefund += Number(item.return_cost || 0);
         totalProfit += Number(item.profit || 0);
       }
     } catch (err) {
@@ -99,32 +113,85 @@ export async function reportDailyBusinessData(
     return { success: false, reportedDate: latestDate, message: `Không có dữ liệu kinh doanh cho ngày ${latestDate}.` };
   }
 
-  const overallAcos = totalRev > 0 ? totalAds / totalRev : 0;
-  const overallMargin = totalRev > 0 ? totalProfit / totalRev : 0;
+  // 5. Soạn nội dung thông báo bot Lark dạng bảng (Table Card)
+  const card = {
+    schema: "2.0",
+    config: {
+      width_mode: "fill",
+    },
+    header: {
+      template: "blue",
+      title: {
+        tag: "plain_text",
+        content: `Báo cáo Kinh doanh Ngày ${latestDate}`,
+      },
+    },
+    body: {
+      elements: [
+        {
+          tag: "table",
+          page_size: Math.max(10, reports.length + 2),
+          row_height: "low",
+          freeze_first_column: false,
+          header_style: {
+            text_align: "left",
+            text_size: "normal",
+            background_style: "grey",
+            bold: true,
+            lines: 1,
+          },
+          columns: [
+            { name: "store", display_name: "Store", data_type: "lark_md", horizontal_align: "left", width: "20%" },
+            { name: "revenue", display_name: "Revenue", data_type: "lark_md", horizontal_align: "right", width: "13%" },
+            { name: "quantity", display_name: "Quantity", data_type: "lark_md", horizontal_align: "right", width: "12%" },
+            { name: "ads_fee", display_name: "Ads Fee", data_type: "lark_md", horizontal_align: "right", width: "13%" },
+            { name: "amz_fee", display_name: "AMZ Fee", data_type: "lark_md", horizontal_align: "right", width: "13%" },
+            { name: "refund", display_name: "Refund", data_type: "lark_md", horizontal_align: "right", width: "13%" },
+            { name: "profit", display_name: "Profit", data_type: "lark_md", horizontal_align: "right", width: "16%" },
+          ],
+          rows: [
+            ...reports.map((r) => {
+              const it = r.item;
+              return {
+                store: `${r.storeName}`,
+                revenue: formatCurrency(it.revenue),
+                quantity: formatQuantity(it.quantity),
+                ads_fee: formatCurrency(it.ads_fee),
+                amz_fee: formatCurrency(it.amazon_fee),
+                refund: formatCurrency(it.return_cost),
+                profit: `**${formatCurrency(it.profit)}**`,
+              };
+            }),
+            {
+              store: "**TỔNG CỘNG**",
+              revenue: `**${formatCurrency(totalRev)}**`,
+              quantity: `**${formatQuantity(totalQty)}**`,
+              ads_fee: `**${formatCurrency(totalAds)}**`,
+              amz_fee: `**${formatCurrency(totalAmzFee)}**`,
+              refund: `**${formatCurrency(totalRefund)}**`,
+              profit: `**${formatCurrency(totalProfit)}**`,
+            },
+          ],
+        },
+      ],
+    },
+  };
 
-  // 5. Soạn nội dung thông báo bot Lark
-  const lines: string[] = [
-    `📊 **Báo cáo Dữ liệu Kinh doanh Ngày ${latestDate}**`,
-    `Hệ thống vừa cập nhật dữ liệu kinh doanh mới nhất của các Store:`,
-    "",
+  const fallbackLines = [
+    `Báo cáo Kinh doanh Ngày ${latestDate}`,
+    `Store | Revenue | Quantity | Ads Fee | AMZ Fee | Refund | Profit`,
+    ...reports.map((r) => {
+      const it = r.item;
+      return `${r.storeName} | ${formatCurrency(it.revenue)} | ${formatQuantity(it.quantity)} | ${formatCurrency(it.ads_fee)} | ${formatCurrency(it.amazon_fee)} | ${formatCurrency(it.return_cost)} | ${formatCurrency(it.profit)}`;
+    }),
+    `TỔNG CỘNG | ${formatCurrency(totalRev)} | ${formatQuantity(totalQty)} | ${formatCurrency(totalAds)} | ${formatCurrency(totalAmzFee)} | ${formatCurrency(totalRefund)} | ${formatCurrency(totalProfit)}`,
   ];
 
-  for (const r of reports) {
-    const it = r.item;
-    lines.push(`🏪 **Store: ${r.storeName}**`);
-    lines.push(`• Doanh thu: ${formatCurrency(it.revenue)} | Số lượng: ${it.quantity} units`);
-    lines.push(`• Chi phí Ads: ${formatCurrency(it.ads_fee)} (ACOS: ${formatPercent(it.acos)} | TACOS: ${formatPercent(it.tacos)})`);
-    lines.push(`• Lợi nhuận: ${formatCurrency(it.profit)} (Margin: ${formatPercent(it.margin)} | ROI: ${formatPercent(it.roi)})`);
-    lines.push("");
-  }
-
-  lines.push("📈 **TỔNG HỢP TOÀN BỘ STORE:**");
-  lines.push(`• Tổng doanh thu: ${formatCurrency(totalRev)} | Tổng units: ${totalQty}`);
-  lines.push(`• Tổng chi phí Ads: ${formatCurrency(totalAds)} (ACOS TB: ${formatPercent(overallAcos)})`);
-  lines.push(`• Tổng lợi nhuận: ${formatCurrency(totalProfit)} (Margin TB: ${formatPercent(overallMargin)})`);
-
   // 6. Gửi thông báo Lark bot cho danh mục "accounting"
-  await notifyLarkEventBestEffort(scope, "accounting", lines);
+  await notifyLarkEventBestEffort(scope, "accounting", {
+    card,
+    fallbackText: fallbackLines.join("\n"),
+  });
 
   // 7. Lưu lại ngày đã báo cáo vào app_settings
   await sql`

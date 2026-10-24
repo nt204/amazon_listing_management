@@ -14,7 +14,7 @@ export async function GET(request: Request) {
     const endDate = searchParams.get("end_date") || undefined;
     const search = searchParams.get("search") || undefined;
     const sortField = searchParams.get("sort_field") || "date";
-    const sortDirection = (searchParams.get("sort_dir") as "asc" | "desc") || "desc";
+    const sortDirection = (searchParams.get("sort_dir") as "asc" | "desc") || "asc";
     const page = parseInt(searchParams.get("page") || "1", 10);
     const limit = parseInt(searchParams.get("limit") || "100", 10);
 

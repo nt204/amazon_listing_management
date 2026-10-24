@@ -114,21 +114,72 @@ export async function sendLarkTextNotification(
   return { sent: true };
 }
 
+export async function sendLarkCardNotification(
+  card: Record<string, any>,
+  recipient: { receiveId: string; receiveIdType: string },
+): Promise<LarkNotificationResult> {
+  const appId = process.env.LARK_APP_ID?.trim();
+  const appSecret = process.env.LARK_APP_SECRET?.trim();
+  const receiveId = recipient.receiveId.trim();
+  const receiveIdType = recipient.receiveIdType.trim();
+
+  if (!appId || !appSecret || !receiveId) return { sent: false, reason: "not_configured" };
+
+  const token = await getTenantAccessToken(appId, appSecret);
+  await fetchJson<LarkApiResponse>(
+    `${LARK_API_BASE_URL}/im/v1/messages?receive_id_type=${encodeURIComponent(receiveIdType)}`,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify({
+        receive_id: receiveId,
+        msg_type: "interactive",
+        content: JSON.stringify(card),
+      }),
+    },
+  );
+  return { sent: true };
+}
+
+export type LarkNotificationPayload =
+  | string
+  | string[]
+  | { card: Record<string, any>; fallbackText?: string };
+
 export async function notifyLarkEventBestEffort(
   scope: DataScope,
   category: LarkNotificationCategory,
-  text: string | string[],
+  payload: LarkNotificationPayload,
 ) {
   try {
     const recipients = await resolveLarkRecipients(scope, category);
     if (!recipients.length) return;
-    const messageText = Array.isArray(text) ? text.filter(Boolean).join("\n") : text;
-    const results = await Promise.allSettled(recipients.map((recipient) =>
-      sendLarkTextNotification(messageText, {
-        receiveId: recipient.receive_id,
-        receiveIdType: recipient.receive_id_type,
-      })
-    ));
+
+    const isCard = typeof payload === "object" && payload !== null && !Array.isArray(payload) && "card" in payload;
+
+    const results = await Promise.allSettled(
+      recipients.map(async (recipient) => {
+        const target = {
+          receiveId: recipient.receive_id,
+          receiveIdType: recipient.receive_id_type,
+        };
+        if (isCard) {
+          try {
+            return await sendLarkCardNotification(payload.card, target);
+          } catch (cardErr) {
+            if (payload.fallbackText) {
+              return await sendLarkTextNotification(payload.fallbackText, target);
+            }
+            throw cardErr;
+          }
+        }
+        const messageText = Array.isArray(payload) ? payload.filter(Boolean).join("\n") : String(payload);
+        return await sendLarkTextNotification(messageText, target);
+      }),
+    );
     for (const result of results) {
       if (result.status === "rejected") {
         console.warn("[Lark] Không thể gửi một thông báo:", result.reason instanceof Error ? result.reason.message : result.reason);

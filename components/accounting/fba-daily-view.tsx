@@ -74,7 +74,7 @@ export function FbaDailyView() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
   const [sortField, setSortField] = useState<string>("date");
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
   const [items, setItems] = useState<FbaDailyItem[]>([]);
   const [total, setTotal] = useState(0);
