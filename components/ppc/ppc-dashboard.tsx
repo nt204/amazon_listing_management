@@ -268,10 +268,12 @@ function SkuTrendSparkline({
     return <span className="text-[10px] text-slate-300 font-mono">-</span>;
   }
 
-  const maxVal = Math.max(...dailyTrend.map((d) => Math.max(d.spend || 0, d.sales || 0)), 1);
-  const totSpend = dailyTrend.reduce((s, d) => s + (d.spend || 0), 0);
-  const totSales = dailyTrend.reduce((s, d) => s + (d.sales || 0), 0);
-  const totOrders = dailyTrend.reduce((s, d) => s + (d.orders || 0), 0);
+  // The sparkline shows the last 7 days
+  const last7 = dailyTrend.slice(-7);
+  const maxVal = Math.max(...last7.map((d) => Math.max(d.spend || 0, d.sales || 0)), 1);
+  const totSpend = last7.reduce((s, d) => s + (d.spend || 0), 0);
+  const totSales = last7.reduce((s, d) => s + (d.sales || 0), 0);
+  const totOrders = last7.reduce((s, d) => s + (d.orders || 0), 0);
 
   return (
     <div
@@ -280,9 +282,9 @@ function SkuTrendSparkline({
         onOpenDetail?.({ sku, storeName, mockupUrl, dailyTrend });
       }}
       className="group/spark inline-flex items-end gap-[3px] h-6 px-1.5 py-0.5 rounded hover:bg-indigo-50/70 cursor-pointer transition select-none"
-      title={`7D: Spend $${totSpend.toFixed(1)} • Sales $${totSales.toFixed(1)} (${totOrders} orders) - Click to view trend`}
+      title={`7D: Spend $${totSpend.toFixed(1)} • Sales $${totSales.toFixed(1)} (${totOrders} orders) - Click to view 30D trend`}
     >
-      {dailyTrend.map((d, idx) => {
+      {last7.map((d, idx) => {
         const hasSales = (d.sales || 0) > 0;
         const hasSpend = (d.spend || 0) > 0;
         const val = hasSales ? d.sales : d.spend;

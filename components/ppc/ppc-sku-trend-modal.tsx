@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -31,14 +31,20 @@ export function PpcSkuTrendModal({
   mockupUrl,
   dailyTrend,
 }: PpcSkuTrendModalProps) {
+  const [timeframe, setTimeframe] = useState<"7D" | "14D" | "30D">("30D");
+
   if (!isOpen) return null;
 
+  const activeDays = timeframe === "7D" ? 7 : timeframe === "14D" ? 14 : 30;
+
   const { chartData, totals } = useMemo(() => {
+    const sliced = (dailyTrend || []).slice(-activeDays);
+
     let totSpend = 0;
     let totSales = 0;
     let totOrders = 0;
 
-    const data = (dailyTrend || []).map((d) => {
+    const data = sliced.map((d) => {
       totSpend += d.spend || 0;
       totSales += d.sales || 0;
       totOrders += d.orders || 0;
@@ -67,7 +73,7 @@ export function PpcSkuTrendModal({
         acos: blendedAcos,
       },
     };
-  }, [dailyTrend]);
+  }, [dailyTrend, activeDays]);
 
   return (
     <div
@@ -75,11 +81,11 @@ export function PpcSkuTrendModal({
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-2xl bg-white rounded-2xl p-5 shadow-2xl border border-slate-200 cursor-default animate-in zoom-in-95 duration-150"
+        className="relative w-full max-w-3xl bg-white rounded-2xl p-5 shadow-2xl border border-slate-200 cursor-default animate-in zoom-in-95 duration-150"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-start justify-between pb-3 border-b border-slate-100">
+        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
           <div className="flex items-center gap-3">
             {mockupUrl ? (
               <img
@@ -99,35 +105,57 @@ export function PpcSkuTrendModal({
                   {storeName}
                 </span>
               </div>
-              <p className="text-xs text-slate-400 mt-0.5">7-day spend & sales performance trend</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {timeframe} spend & sales performance trend
+              </p>
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer"
-          >
-            <X size={18} weight="bold" />
-          </button>
+          <div className="flex items-center gap-3">
+            {/* Timeframe Switcher */}
+            <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+              {(["7D", "14D", "30D"] as const).map((tf) => (
+                <button
+                  key={tf}
+                  type="button"
+                  onClick={() => setTimeframe(tf)}
+                  className={`px-2.5 py-1 rounded-md text-xs font-bold transition cursor-pointer ${
+                    timeframe === tf
+                      ? "bg-white text-indigo-700 shadow-2xs"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  {tf}
+                </button>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer"
+            >
+              <X size={18} weight="bold" />
+            </button>
+          </div>
         </div>
 
         {/* Minimal KPI Badges */}
         <div className="grid grid-cols-4 gap-2.5 my-4">
           <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-center">
-            <span className="block text-[11px] font-semibold text-slate-400">Spend (7D)</span>
+            <span className="block text-[11px] font-semibold text-slate-400">Spend ({timeframe})</span>
             <span className="font-mono text-sm font-black text-slate-900">${totals.spend.toFixed(2)}</span>
           </div>
           <div className="bg-emerald-50/60 p-2.5 rounded-xl border border-emerald-100 text-center">
-            <span className="block text-[11px] font-semibold text-emerald-600">Sales (7D)</span>
+            <span className="block text-[11px] font-semibold text-emerald-600">Sales ({timeframe})</span>
             <span className="font-mono text-sm font-black text-emerald-700">${totals.sales.toFixed(2)}</span>
           </div>
           <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-center">
-            <span className="block text-[11px] font-semibold text-slate-400">Orders (7D)</span>
+            <span className="block text-[11px] font-semibold text-slate-400">Orders ({timeframe})</span>
             <span className="font-mono text-sm font-black text-slate-900">{totals.orders}</span>
           </div>
           <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-center">
-            <span className="block text-[11px] font-semibold text-slate-400">ACoS (7D)</span>
+            <span className="block text-[11px] font-semibold text-slate-400">ACoS ({timeframe})</span>
             <span
               className={`font-mono text-sm font-black ${
                 totals.acos > 500
@@ -145,10 +173,10 @@ export function PpcSkuTrendModal({
         </div>
 
         {/* Minimal Chart */}
-        <div className="h-56 w-full pt-2">
+        <div className="h-64 w-full pt-2">
           {chartData.length === 0 ? (
             <div className="h-full flex items-center justify-center text-xs text-slate-400">
-              No 7-day data available for this SKU
+              No {timeframe} data available for this SKU
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
@@ -158,7 +186,8 @@ export function PpcSkuTrendModal({
                   dataKey="shortDate"
                   axisLine={false}
                   tickLine={false}
-                  tick={{ fontSize: 11, fill: "#64748b", fontWeight: 600 }}
+                  interval={timeframe === "30D" ? 2 : 0}
+                  tick={{ fontSize: 10, fill: "#64748b", fontWeight: 600 }}
                 />
                 <YAxis
                   axisLine={false}
@@ -197,14 +226,14 @@ export function PpcSkuTrendModal({
                     );
                   }}
                 />
-                <Bar dataKey="sales" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={28} />
+                <Bar dataKey="sales" fill="#10b981" radius={[3, 3, 0, 0]} maxBarSize={timeframe === "30D" ? 14 : 26} />
                 <Line
                   type="monotone"
                   dataKey="spend"
                   stroke="#6366f1"
-                  strokeWidth={2.5}
-                  dot={{ r: 3, fill: "#6366f1", strokeWidth: 0 }}
-                  activeDot={{ r: 5 }}
+                  strokeWidth={2}
+                  dot={timeframe === "30D" ? false : { r: 3, fill: "#6366f1", strokeWidth: 0 }}
+                  activeDot={{ r: 4 }}
                 />
               </ComposedChart>
             </ResponsiveContainer>

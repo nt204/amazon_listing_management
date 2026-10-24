@@ -160,7 +160,7 @@ export async function enrichSkuPerformanceWithAccounting(
       // Ignore cross store query error
     }
 
-    // 7-day daily trend enrichment from accounting_ads
+    // 30-day daily trend enrichment from accounting_ads
     const skuList = Array.from(new Set(skus.map((s) => s.sku.toUpperCase().trim()))).filter(Boolean);
     const trendBySku = new Map<string, Array<{ date: string; spend: number; sales: number; orders: number; clicks: number }>>();
     if (skuList.length > 0) {
@@ -170,37 +170,60 @@ export async function enrichSkuPerformanceWithAccounting(
         `;
         const latestDateStr = maxDateRow[0]?.max_date;
         if (latestDateStr) {
+          const [year, month, day] = latestDateStr.split("-").map(Number);
           const daysList: string[] = [];
-          const curr = new Date(latestDateStr);
-          for (let i = 6; i >= 0; i--) {
-            const d = new Date(curr);
-            d.setDate(d.getDate() - i);
+          for (let i = 29; i >= 0; i--) {
+            const d = new Date(Date.UTC(year, month - 1, day - i));
             daysList.push(d.toISOString().slice(0, 10));
           }
           const minDateStr = daysList[0];
 
-          const trendRows = await sql<{
-            sku: string;
-            date: string;
-            spend: string;
-            sales: string;
-            orders: number;
-            clicks: number;
-          }[]>`
-            SELECT 
-              upper(trim(sku)) as sku,
-              date::text as date,
-              COALESCE(SUM(spend), 0)::numeric as spend,
-              COALESCE(SUM(sales), 0)::numeric as sales,
-              COALESCE(SUM(orders), 0)::integer as orders,
-              COALESCE(SUM(clicks), 0)::integer as clicks
-            FROM accounting_ads
-            WHERE date >= ${minDateStr}::date
-              AND date <= ${latestDateStr}::date
-              AND upper(trim(sku)) IN ${sql(skuList)}
-            GROUP BY upper(trim(sku)), date
-            ORDER BY date ASC
-          `;
+          const trendRows = relevantStoreIds.length > 0
+            ? await sql<{
+                sku: string;
+                date: string;
+                spend: string;
+                sales: string;
+                orders: number;
+                clicks: number;
+              }[]>`
+                SELECT 
+                  upper(trim(sku)) as sku,
+                  date::text as date,
+                  COALESCE(SUM(spend), 0)::numeric as spend,
+                  COALESCE(SUM(sales), 0)::numeric as sales,
+                  COALESCE(SUM(orders), 0)::integer as orders,
+                  COALESCE(SUM(clicks), 0)::integer as clicks
+                FROM accounting_ads
+                WHERE date >= ${minDateStr}::date
+                  AND date <= ${latestDateStr}::date
+                  AND store_id IN ${sql(relevantStoreIds)}
+                  AND upper(trim(sku)) IN ${sql(skuList)}
+                GROUP BY upper(trim(sku)), date
+                ORDER BY date ASC
+              `
+            : await sql<{
+                sku: string;
+                date: string;
+                spend: string;
+                sales: string;
+                orders: number;
+                clicks: number;
+              }[]>`
+                SELECT 
+                  upper(trim(sku)) as sku,
+                  date::text as date,
+                  COALESCE(SUM(spend), 0)::numeric as spend,
+                  COALESCE(SUM(sales), 0)::numeric as sales,
+                  COALESCE(SUM(orders), 0)::integer as orders,
+                  COALESCE(SUM(clicks), 0)::integer as clicks
+                FROM accounting_ads
+                WHERE date >= ${minDateStr}::date
+                  AND date <= ${latestDateStr}::date
+                  AND upper(trim(sku)) IN ${sql(skuList)}
+                GROUP BY upper(trim(sku)), date
+                ORDER BY date ASC
+              `;
 
           const rawBySku = new Map<string, Map<string, { spend: number; sales: number; orders: number; clicks: number }>>();
           for (const r of trendRows) {
@@ -233,7 +256,7 @@ export async function enrichSkuPerformanceWithAccounting(
           }
         }
       } catch (err) {
-        console.warn("Could not enrich 7-day trend from accounting_ads:", err);
+        console.warn("Could not enrich 30-day trend from accounting_ads:", err);
       }
     }
 
