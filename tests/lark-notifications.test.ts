@@ -114,3 +114,74 @@ test("Lark card notification sends interactive message payload", async () => {
   }
 });
 
+test("Lark image upload returns image_key", async () => {
+  const { resetLarkNotificationStateForTests, uploadLarkImage } = await getModule();
+  const previousEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
+  const previousFetch = globalThis.fetch;
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  try {
+    process.env.LARK_APP_ID = "cli_test";
+    process.env.LARK_APP_SECRET = "secret_test";
+    resetLarkNotificationStateForTests();
+
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.includes("tenant_access_token")) {
+        return Response.json({ code: 0, tenant_access_token: "token_test", expire: 7200 });
+      }
+      return Response.json({ code: 0, data: { image_key: "img_test_123" } });
+    }) as typeof fetch;
+
+    const fakeBuffer = Buffer.from("fake_image_bytes");
+    const imageKey = await uploadLarkImage(fakeBuffer, "test.png");
+    assert.equal(imageKey, "img_test_123");
+    assert.equal(requests.length, 2);
+    assert.match(requests[1].url, /\/im\/v1\/images/);
+  } finally {
+    globalThis.fetch = previousFetch;
+    resetLarkNotificationStateForTests();
+    for (const key of ENV_KEYS) {
+      if (previousEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = previousEnv[key];
+    }
+  }
+});
+
+test("Lark image notification sends image message with image_key", async () => {
+  const { resetLarkNotificationStateForTests, sendLarkImageNotification } = await getModule();
+  const previousEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
+  const previousFetch = globalThis.fetch;
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  try {
+    process.env.LARK_APP_ID = "cli_test";
+    process.env.LARK_APP_SECRET = "secret_test";
+    resetLarkNotificationStateForTests();
+
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.includes("tenant_access_token")) {
+        return Response.json({ code: 0, tenant_access_token: "token_test", expire: 7200 });
+      }
+      return Response.json({ code: 0, data: { message_id: "om_img_test" } });
+    }) as typeof fetch;
+
+    const result = await sendLarkImageNotification("img_test_123", { receiveId: "ndtrince@gmail.com", receiveIdType: "email" });
+    assert.deepEqual(result, { sent: true });
+    assert.equal(requests.length, 2);
+    assert.match(requests[1].url, /receive_id_type=email/);
+    assert.deepEqual(JSON.parse(String(requests[1].init?.body)), {
+      receive_id: "ndtrince@gmail.com",
+      msg_type: "image",
+      content: JSON.stringify({ image_key: "img_test_123" }),
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+    resetLarkNotificationStateForTests();
+    for (const key of ENV_KEYS) {
+      if (previousEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = previousEnv[key];
+    }
+  }
+});
