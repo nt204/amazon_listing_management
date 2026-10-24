@@ -5397,7 +5397,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
         </div>
       )}
 
-      {/* MODAL XEM TREND 7 NGÀY CHO 1 SKU */}
+      {/* MODAL XEM TREND 30 NGÀY CHO 1 SKU */}
       {selectedSkuTrendModal && (
         <PpcSkuTrendModal
           isOpen={Boolean(selectedSkuTrendModal)}
@@ -5406,6 +5406,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
           storeName={selectedSkuTrendModal.storeName}
           mockupUrl={selectedSkuTrendModal.mockupUrl}
           dailyTrend={selectedSkuTrendModal.dailyTrend}
+          targetAcos={targetAcos}
         />
       )}
     </div>

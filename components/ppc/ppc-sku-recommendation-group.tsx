@@ -1368,9 +1368,6 @@ export function PpcSkuRecommendationGroupView({
 
           {/* Dạng chạy Filter Chips */}
           <div className="h-4 w-px bg-slate-200 mx-1 shrink-0 hidden sm:block" />
-          <span className="text-[11px] font-bold uppercase text-slate-400 tracking-wider flex items-center gap-1 mr-0.5">
-            <span>Dạng:</span>
-          </span>
 
           {/* SP03 */}
           <button
@@ -1911,7 +1908,6 @@ export function PpcSkuRecommendationGroupView({
 
                     {/* Modal Campaign Type filter pills */}
                     <div className="flex items-center gap-1 bg-white p-0.5 rounded-lg border border-slate-200 text-xs">
-                      <span className="text-[10px] uppercase font-bold text-slate-400 px-1">Dạng:</span>
                       {(["SP03", "SB05", "SB01"] as const).map((type) => {
                         const isActive = modalCampTypeFilter === type;
                         return (

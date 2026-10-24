@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -10,9 +10,12 @@ import {
   YAxis,
   Tooltip,
   CartesianGrid,
+  ReferenceLine,
 } from "recharts";
 import { X, Tag } from "@phosphor-icons/react";
 import type { PpcSkuDailyTrendPoint } from "@/lib/ppc/types";
+
+export type SkuTrendMetricMode = "spend_sales" | "acos";
 
 interface PpcSkuTrendModalProps {
   isOpen: boolean;
@@ -21,6 +24,7 @@ interface PpcSkuTrendModalProps {
   storeName: string;
   mockupUrl?: string | null;
   dailyTrend: PpcSkuDailyTrendPoint[];
+  targetAcos?: number;
 }
 
 export function PpcSkuTrendModal({
@@ -30,8 +34,59 @@ export function PpcSkuTrendModal({
   storeName,
   mockupUrl,
   dailyTrend,
+  targetAcos = 30,
 }: PpcSkuTrendModalProps) {
-  const [timeframe, setTimeframe] = useState<"7D" | "14D" | "30D">("30D");
+  // Sync timeframe across all SKUs via localStorage
+  const [timeframe, setTimeframeState] = useState<"7D" | "14D" | "30D">(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("ppc_sku_trend_timeframe");
+      if (saved === "7D" || saved === "14D" || saved === "30D") return saved;
+    }
+    return "30D";
+  });
+
+  // Sync metric mode across all SKUs / accounts via localStorage
+  const [metricMode, setMetricModeState] = useState<SkuTrendMetricMode>(() => {
+    if (typeof window !== "undefined") {
+      const savedStore = storeName ? localStorage.getItem(`ppc_sku_trend_metric_${storeName}`) : null;
+      if (savedStore === "spend_sales" || savedStore === "acos") return savedStore;
+      const savedGlobal = localStorage.getItem("ppc_sku_trend_metric");
+      if (savedGlobal === "spend_sales" || savedGlobal === "acos") return savedGlobal;
+    }
+    return "spend_sales";
+  });
+
+  // When sku or store changes, restore the user's saved preference
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const savedMode = (storeName && localStorage.getItem(`ppc_sku_trend_metric_${storeName}`)) || localStorage.getItem("ppc_sku_trend_metric");
+      if (savedMode === "spend_sales" || savedMode === "acos") {
+        setMetricModeState(savedMode);
+      }
+      const savedTf = localStorage.getItem("ppc_sku_trend_timeframe");
+      if (savedTf === "7D" || savedTf === "14D" || savedTf === "30D") {
+        setTimeframeState(savedTf);
+      }
+    } catch {}
+  }, [sku, storeName]);
+
+  const handleSetTimeframe = (tf: "7D" | "14D" | "30D") => {
+    setTimeframeState(tf);
+    try {
+      localStorage.setItem("ppc_sku_trend_timeframe", tf);
+    } catch {}
+  };
+
+  const handleSetMetricMode = (mode: SkuTrendMetricMode) => {
+    setMetricModeState(mode);
+    try {
+      localStorage.setItem("ppc_sku_trend_metric", mode);
+      if (storeName) {
+        localStorage.setItem(`ppc_sku_trend_metric_${storeName}`, mode);
+      }
+    } catch {}
+  };
 
   if (!isOpen) return null;
 
@@ -48,7 +103,8 @@ export function PpcSkuTrendModal({
       totSpend += d.spend || 0;
       totSales += d.sales || 0;
       totOrders += d.orders || 0;
-      const acos = d.sales > 0 ? (d.spend / d.sales) * 100 : (d.spend > 0 ? 999 : 0);
+      const rawAcos = d.sales > 0 ? (d.spend / d.sales) * 100 : (d.spend > 0 ? 999 : 0);
+      const acosNum = d.sales > 0 ? Math.round(((d.spend / d.sales) * 100) * 10) / 10 : null;
       const parts = d.date.split("-");
       const shortDate = parts.length >= 3 ? `${parts[2]}/${parts[1]}` : d.date;
 
@@ -58,7 +114,8 @@ export function PpcSkuTrendModal({
         spend: Math.round((d.spend || 0) * 100) / 100,
         sales: Math.round((d.sales || 0) * 100) / 100,
         orders: d.orders || 0,
-        acos: acos > 500 ? "0 sales" : `${acos.toFixed(1)}%`,
+        acosNum,
+        acosLabel: rawAcos > 500 ? "0 sales" : `${rawAcos.toFixed(1)}%`,
       };
     });
 
@@ -106,22 +163,50 @@ export function PpcSkuTrendModal({
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                {timeframe} spend & sales performance trend
+                {timeframe} performance trend • {metricMode === "spend_sales" ? "Spend & Sales" : "Sales & ACoS"}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
+            {/* Metric Mode Switcher */}
+            <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+              <button
+                type="button"
+                onClick={() => handleSetMetricMode("spend_sales")}
+                className={`px-2.5 py-1 rounded-md text-xs font-bold transition cursor-pointer ${
+                  metricMode === "spend_sales"
+                    ? "bg-white text-indigo-700 shadow-2xs"
+                    : "text-slate-500 hover:text-slate-800"
+                }`}
+                title="Biểu đồ Doanh số & Chi tiêu"
+              >
+                Spend & Sales
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSetMetricMode("acos")}
+                className={`px-2.5 py-1 rounded-md text-xs font-bold transition cursor-pointer ${
+                  metricMode === "acos"
+                    ? "bg-white text-amber-700 shadow-2xs"
+                    : "text-slate-500 hover:text-slate-800"
+                }`}
+                title="Biểu đồ Doanh số & Tỷ lệ ACoS"
+              >
+                ACoS
+              </button>
+            </div>
+
             {/* Timeframe Switcher */}
             <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
               {(["7D", "14D", "30D"] as const).map((tf) => (
                 <button
                   key={tf}
                   type="button"
-                  onClick={() => setTimeframe(tf)}
-                  className={`px-2.5 py-1 rounded-md text-xs font-bold transition cursor-pointer ${
+                  onClick={() => handleSetTimeframe(tf)}
+                  className={`px-2 py-1 rounded-md text-xs font-bold transition cursor-pointer ${
                     timeframe === tf
-                      ? "bg-white text-indigo-700 shadow-2xs"
+                      ? "bg-white text-slate-900 shadow-2xs"
                       : "text-slate-500 hover:text-slate-800"
                   }`}
                 >
@@ -146,7 +231,11 @@ export function PpcSkuTrendModal({
             <span className="block text-[11px] font-semibold text-slate-400">Spend ({timeframe})</span>
             <span className="font-mono text-sm font-black text-slate-900">${totals.spend.toFixed(2)}</span>
           </div>
-          <div className="bg-emerald-50/60 p-2.5 rounded-xl border border-emerald-100 text-center">
+          <div className={`p-2.5 rounded-xl border text-center transition ${
+            metricMode === "spend_sales"
+              ? "bg-emerald-50/60 border-emerald-200 ring-1 ring-emerald-200/60"
+              : "bg-slate-50 border-slate-100"
+          }`}>
             <span className="block text-[11px] font-semibold text-emerald-600">Sales ({timeframe})</span>
             <span className="font-mono text-sm font-black text-emerald-700">${totals.sales.toFixed(2)}</span>
           </div>
@@ -154,13 +243,17 @@ export function PpcSkuTrendModal({
             <span className="block text-[11px] font-semibold text-slate-400">Orders ({timeframe})</span>
             <span className="font-mono text-sm font-black text-slate-900">{totals.orders}</span>
           </div>
-          <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-center">
+          <div className={`p-2.5 rounded-xl border text-center transition ${
+            metricMode === "acos"
+              ? "bg-amber-50/70 border-amber-200 ring-1 ring-amber-200/60"
+              : "bg-slate-50 border-slate-100"
+          }`}>
             <span className="block text-[11px] font-semibold text-slate-400">ACoS ({timeframe})</span>
             <span
               className={`font-mono text-sm font-black ${
                 totals.acos > 500
                   ? "text-rose-600"
-                  : totals.acos <= 30
+                  : totals.acos <= targetAcos
                     ? "text-emerald-600"
                     : totals.acos <= 50
                       ? "text-amber-600"
@@ -172,7 +265,7 @@ export function PpcSkuTrendModal({
           </div>
         </div>
 
-        {/* Minimal Chart */}
+        {/* Chart */}
         <div className="h-64 w-full pt-2">
           {chartData.length === 0 ? (
             <div className="h-full flex items-center justify-center text-xs text-slate-400">
@@ -189,12 +282,49 @@ export function PpcSkuTrendModal({
                   interval={timeframe === "30D" ? 2 : 0}
                   tick={{ fontSize: 10, fill: "#64748b", fontWeight: 600 }}
                 />
-                <YAxis
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fontSize: 10, fill: "#94a3b8" }}
-                  tickFormatter={(val) => `$${val}`}
-                />
+
+                {metricMode === "spend_sales" ? (
+                  /* Single Axis for Spend & Sales ($) */
+                  <YAxis
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fontSize: 10, fill: "#94a3b8" }}
+                    tickFormatter={(val) => `$${val}`}
+                  />
+                ) : (
+                  /* Dual Axis: Left is Sales ($), Right is ACoS (%) */
+                  <>
+                    <YAxis
+                      yAxisId="salesAxis"
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fontSize: 10, fill: "#10b981" }}
+                      tickFormatter={(val) => `$${val}`}
+                    />
+                    <YAxis
+                      yAxisId="acosAxis"
+                      orientation="right"
+                      axisLine={false}
+                      tickLine={false}
+                      domain={[0, (dataMax: number) => Math.max(60, Math.ceil(dataMax / 10) * 10)]}
+                      tick={{ fontSize: 10, fill: "#f59e0b" }}
+                      tickFormatter={(val) => `${val}%`}
+                    />
+                    <ReferenceLine
+                      yAxisId="acosAxis"
+                      y={targetAcos}
+                      stroke="#94a3b8"
+                      strokeDasharray="4 4"
+                      label={{
+                        value: `Target: ${targetAcos}%`,
+                        fill: "#94a3b8",
+                        fontSize: 10,
+                        position: "insideTopRight",
+                      }}
+                    />
+                  </>
+                )}
+
                 <Tooltip
                   content={({ active, payload }) => {
                     if (!active || !payload || payload.length === 0) return null;
@@ -219,22 +349,47 @@ export function PpcSkuTrendModal({
                           </div>
                           <div className="flex justify-between gap-4 border-t border-slate-100 pt-1">
                             <span className="text-slate-500">Daily ACoS:</span>
-                            <span className="font-black text-slate-900">{d.acos}</span>
+                            <span className={`font-black ${d.acosNum === null ? "text-rose-500" : d.acosNum <= targetAcos ? "text-emerald-600" : "text-amber-600"}`}>
+                              {d.acosLabel}
+                            </span>
                           </div>
                         </div>
                       </div>
                     );
                   }}
                 />
-                <Bar dataKey="sales" fill="#10b981" radius={[3, 3, 0, 0]} maxBarSize={timeframe === "30D" ? 14 : 26} />
-                <Line
-                  type="monotone"
-                  dataKey="spend"
-                  stroke="#6366f1"
-                  strokeWidth={2}
-                  dot={timeframe === "30D" ? false : { r: 3, fill: "#6366f1", strokeWidth: 0 }}
-                  activeDot={{ r: 4 }}
+
+                {/* Bars for Sales */}
+                <Bar
+                  yAxisId={metricMode === "acos" ? "salesAxis" : undefined}
+                  dataKey="sales"
+                  fill="#10b981"
+                  radius={[3, 3, 0, 0]}
+                  maxBarSize={timeframe === "30D" ? 14 : 26}
                 />
+
+                {/* Line depending on metricMode */}
+                {metricMode === "spend_sales" ? (
+                  <Line
+                    type="monotone"
+                    dataKey="spend"
+                    stroke="#6366f1"
+                    strokeWidth={2}
+                    dot={timeframe === "30D" ? false : { r: 3, fill: "#6366f1", strokeWidth: 0 }}
+                    activeDot={{ r: 4 }}
+                  />
+                ) : (
+                  <Line
+                    yAxisId="acosAxis"
+                    type="monotone"
+                    dataKey="acosNum"
+                    stroke="#f59e0b"
+                    strokeWidth={2.5}
+                    connectNulls={false}
+                    dot={timeframe === "30D" ? false : { r: 3, fill: "#f59e0b", strokeWidth: 0 }}
+                    activeDot={{ r: 5 }}
+                  />
+                )}
               </ComposedChart>
             </ResponsiveContainer>
           )}
@@ -246,10 +401,17 @@ export function PpcSkuTrendModal({
             <span className="w-2.5 h-2.5 rounded-xs bg-emerald-500" />
             <span>Sales (Bar)</span>
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-0.5 bg-indigo-500" />
-            <span>Spend (Line)</span>
-          </div>
+          {metricMode === "spend_sales" ? (
+            <div className="flex items-center gap-1.5">
+              <span className="w-2.5 h-0.5 bg-indigo-500" />
+              <span>Spend (Line)</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5">
+              <span className="w-2.5 h-0.5 bg-amber-500" />
+              <span>Daily ACoS % (Line)</span>
+            </div>
+          )}
         </div>
       </div>
     </div>
