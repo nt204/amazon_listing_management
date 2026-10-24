@@ -469,6 +469,12 @@ export function ServiceFeeInputView({
 
   const totalPages = Math.max(1, Math.ceil(totalRows / limit));
 
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
   // Read-only cell renderer (Không cho sửa/xóa vì đây là dữ liệu đầu vào import)
   const renderCellContent = (item: ServiceFeeItem, colId: string, rowIndex: number) => {
     switch (colId) {

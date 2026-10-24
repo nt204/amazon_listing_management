@@ -115,3 +115,52 @@ export async function failAccountingImport(id: string, message: string, filePath
     WHERE id = ${id} AND status = 'RUNNING'
   `;
 }
+
+const stageLabels: Record<string, string> = {
+  orders: "Đang nạp sheet Đầu vào Order",
+  ads: "Đang nạp sheet ADS",
+  returns: "Đang nạp sheet RETURN",
+  serviceFees: "Đang nạp sheet Service Fees",
+  skuMaster: "Đang nạp sheet Bảng mã",
+  inbound: "Đang nạp sheet Chi tiết đi hàng",
+  checkShipment: "Đang nạp sheet Check Shipment Amazon",
+  monthlyBasecost: "Đang nạp sheet Basecost tháng",
+};
+
+export async function executeAccountingImportJob(job: AccountingImportJob) {
+  // Dynamic import to prevent circular dependency
+  const { importUnifiedAccountingExcel } = await import("./excel-unified-importer");
+  const { notifyLarkEventBestEffort } = await import("@/lib/lark-notifications");
+
+  let progressStep = 0;
+  let lastProgressWrite = 0;
+  try {
+    const result = await importUnifiedAccountingExcel(job.file_path, job.store_id, {
+      removeAfterDone: true,
+      chunkSize: 1000,
+      onProgress: (sheetName) => {
+        const now = Date.now();
+        if (now - lastProgressWrite < 1500) return;
+        lastProgressWrite = now;
+        progressStep = Math.min(progressStep + 1, 8);
+        void updateAccountingImportProgress(
+          job.id,
+          stageLabels[sheetName] || `Đang nạp ${sheetName}`,
+          10 + progressStep * 10,
+        ).catch((err) => console.error("[Accounting Import] Progress update failed:", err));
+      },
+    });
+    await completeAccountingImport(job.id, result);
+    await notifyLarkEventBestEffort(
+      { teamId: job.team_id, actorId: job.actor_id },
+      "accounting",
+      ["Import kế toán đã hoàn tất", `File: ${job.file_name}`, result.message],
+    ).catch(() => {});
+    console.log(`[Accounting Import] Completed ${job.id}: ${result.totalProcessed} rows`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[Accounting Import] Failed ${job.id}:`, message);
+    await failAccountingImport(job.id, message, job.file_path).catch((updateError) =>
+      console.error("[Accounting Import] Cannot persist failure:", updateError));
+  }
+}

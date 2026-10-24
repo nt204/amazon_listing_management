@@ -68,6 +68,8 @@ interface PpcSkuRecommendationGroupProps {
   isStoreSwitching?: boolean;
   includePausedCampaigns?: boolean;
   onIncludePausedCampaignsChange?: (include: boolean) => void;
+  targetSkuToOpen?: string | null;
+  onClearTargetSkuToOpen?: () => void;
 }
 
 export type QuickFilterType =
@@ -187,6 +189,8 @@ export function PpcSkuRecommendationGroupView({
   isStoreSwitching = false,
   includePausedCampaigns = false,
   onIncludePausedCampaignsChange,
+  targetSkuToOpen,
+  onClearTargetSkuToOpen,
 }: PpcSkuRecommendationGroupProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedPhôi, setSelectedPhôi] = useState("ALL");
@@ -252,6 +256,58 @@ export function PpcSkuRecommendationGroupView({
       return groups.find((group) => group.sku.toUpperCase() === current.sku.toUpperCase()) || null;
     });
   }, [groups]);
+
+  // Open SKU group detail modal when requested from external tab (e.g. Tab SKU)
+  useEffect(() => {
+    if (!targetSkuToOpen) return;
+    const norm = targetSkuToOpen.toUpperCase().trim();
+    const found = groups.find((group) => group.sku.toUpperCase() === norm);
+    if (found) {
+      void handleOpenSkuGroup(found);
+      onClearTargetSkuToOpen?.();
+    } else if (!isLoading && groups.length > 0) {
+      const fallbackGroup: SkuRecommendationGroup = {
+        sku: targetSkuToOpen,
+        asin: "",
+        productType: "Ornament",
+        mockupUrl: null,
+        picMkt: null,
+        niche: null,
+        spend: 0,
+        sales: 0,
+        orders: 0,
+        clicks: 0,
+        acos: 0,
+        breakEvenAcos: 0,
+        totalRecommendations: 0,
+        increaseCount: 0,
+        decreaseCount: 0,
+        pauseCount: 0,
+        budgetCount: 0,
+        campaignTypes: [],
+        campaignStates: [],
+        economics: {
+          id: targetSkuToOpen,
+          storeId: selectedStore || "",
+          sku: targetSkuToOpen,
+          productType: "Ornament",
+          asin: "",
+          sellingPrice: 15.99,
+          baseCost: 2.0,
+          amazonFee: 6.32,
+          taxRate: 0.03,
+          profitBeforeAds: 7.19,
+          breakEvenAcos: 45,
+          cr: 0.1,
+          crSource: "ASSUMED",
+          maxBid: 0.72,
+          costSource: "INHERITED",
+        },
+      };
+      void handleOpenSkuGroup(fallbackGroup);
+      onClearTargetSkuToOpen?.();
+    }
+  }, [targetSkuToOpen, groups, isLoading]);
 
   // AI explanations contain calculated values from one attribution window.
   // Close them on a window change so 7D copy can never be shown as 30D data.

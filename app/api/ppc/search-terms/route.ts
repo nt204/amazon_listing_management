@@ -23,6 +23,24 @@ export async function GET(request: Request) {
     const sortBy = searchParams.get("sortBy") || "spend";
     const sortDir = (searchParams.get("sortDir") || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
 
+    const minClicksParam = searchParams.get("minClicks")?.trim();
+    const maxClicksParam = searchParams.get("maxClicks")?.trim();
+    const minClicks = minClicksParam !== undefined && minClicksParam !== "" && !isNaN(Number(minClicksParam)) ? Number(minClicksParam) : null;
+    const maxClicks = maxClicksParam !== undefined && maxClicksParam !== "" && !isNaN(Number(maxClicksParam)) ? Number(maxClicksParam) : null;
+
+    const minOrdersParam = searchParams.get("minOrders")?.trim();
+    const maxOrdersParam = searchParams.get("maxOrders")?.trim();
+    const minOrders = minOrdersParam !== undefined && minOrdersParam !== "" && !isNaN(Number(minOrdersParam)) ? Number(minOrdersParam) : null;
+    const maxOrders = maxOrdersParam !== undefined && maxOrdersParam !== "" && !isNaN(Number(maxOrdersParam)) ? Number(maxOrdersParam) : null;
+
+    const minAcosParam = searchParams.get("minAcos")?.trim();
+    const maxAcosParam = searchParams.get("maxAcos")?.trim();
+    const minAcos = minAcosParam !== undefined && minAcosParam !== "" && !isNaN(Number(minAcosParam)) ? Number(minAcosParam) : null;
+    const maxAcos = maxAcosParam !== undefined && maxAcosParam !== "" && !isNaN(Number(maxAcosParam)) ? Number(maxAcosParam) : null;
+
+    const matchType = searchParams.get("matchType")?.trim() || "";
+    const performanceFilter = searchParams.get("performanceFilter")?.trim() || "";
+
     const startDateParam = searchParams.get("startDate")?.trim() || "";
     const endDateParam = searchParams.get("endDate")?.trim() || "";
     const startDate = /^\d{4}-\d{2}-\d{2}$/.test(startDateParam) ? startDateParam : undefined;
@@ -74,6 +92,34 @@ export async function GET(request: Request) {
           )`
         : sql``;
 
+      const clicksFilter = sql`
+        ${minClicks !== null ? sql`AND p.clicks >= ${minClicks}` : sql``}
+        ${maxClicks !== null ? sql`AND p.clicks <= ${maxClicks}` : sql``}
+      `;
+
+      const ordersFilter = sql`
+        ${minOrders !== null ? sql`AND p.orders >= ${minOrders}` : sql``}
+        ${maxOrders !== null ? sql`AND p.orders <= ${maxOrders}` : sql``}
+      `;
+
+      const acosFilter = sql`
+        ${minAcos !== null ? sql`AND (CASE WHEN p.sales > 0 THEN (p.spend / p.sales) * 100 WHEN p.spend > 0 THEN 999 ELSE 0 END) >= ${minAcos}` : sql``}
+        ${maxAcos !== null ? sql`AND (CASE WHEN p.sales > 0 THEN (p.spend / p.sales) * 100 WHEN p.spend > 0 THEN 999 ELSE 0 END) <= ${maxAcos}` : sql``}
+      `;
+
+      const matchTypeFilterClause = matchType && matchType !== "ALL"
+        ? sql`AND lower(p.match_type) = lower(${matchType})`
+        : sql``;
+
+      let performanceFilterClause = sql``;
+      if (performanceFilter === "WITH_ORDERS") {
+        performanceFilterClause = sql`AND p.orders > 0`;
+      } else if (performanceFilter === "ZERO_ORDERS_BLEEDING") {
+        performanceFilterClause = sql`AND p.orders = 0 AND p.clicks >= 9`;
+      } else if (performanceFilter === "HIGH_ACOS") {
+        performanceFilterClause = sql`AND p.orders > 0 AND p.sales > 0 AND (p.spend / p.sales) * 100 > 60`;
+      }
+
       // 1. Query Summary & Total Count trên TOÀN BỘ tập dữ liệu thỏa mãn bộ lọc
       const summaryRows = await sql<Array<{
         total_count: number;
@@ -114,6 +160,11 @@ export async function GET(request: Request) {
           ${searchFilter}
           ${campaignFilter}
           ${adGroupFilter}
+          ${clicksFilter}
+          ${ordersFilter}
+          ${acosFilter}
+          ${matchTypeFilterClause}
+          ${performanceFilterClause}
           AND (
             (
               p.report_granularity = 'DAILY'
@@ -231,6 +282,11 @@ export async function GET(request: Request) {
           ${searchFilter}
           ${campaignFilter}
           ${adGroupFilter}
+          ${clicksFilter}
+          ${ordersFilter}
+          ${acosFilter}
+          ${matchTypeFilterClause}
+          ${performanceFilterClause}
           AND (
             (
               p.report_granularity = 'DAILY'

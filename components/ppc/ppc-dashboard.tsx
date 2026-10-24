@@ -449,6 +449,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
   const childTermsCacheRef = useRef<Map<string, { confirmed: PpcSearchTermRow[]; inferred: PpcSearchTermRow[] }>>(new Map());
 
   // SKU-First Architecture state
+  const [targetSkuToOpen, setTargetSkuToOpen] = useState<string | null>(null);
   const [skuSubView, setSkuSubView] = useState<"economics" | "performance">("performance");
   const [syncingAccounting, setSyncingAccounting] = useState(false);
   const [skuEconomicsList, setSkuEconomicsList] = useState<SkuEconomics[]>([]);
@@ -1020,11 +1021,21 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
   useEffect(() => {
     if (activeTab !== "search_terms") return;
 
-    const currentParamsKey = `${selectedStore}:${selectedSku}:${selectedDays}:${termPage}:${termPageSize}:${searchTermQuery}:${termSortField}:${termSortDir}:${searchTermCampaignFilter}`;
+    const currentParamsKey = `${selectedStore}:${selectedSku}:${selectedDays}:${termPage}:${termPageSize}:${searchTermQuery}:${termSortField}:${termSortDir}:${searchTermCampaignFilter}:${matchTypeFilter}:${termPerformanceFilter}:${termMinClicks}:${termMaxClicks}:${termMinOrders}:${termMaxOrders}:${termMinAcos}:${termMaxAcos}`;
 
     if (lastLoadedSearchTermsParamsRef.current === currentParamsKey && serverSearchTerms !== null) {
       return;
     }
+
+    const hasInputFilter = Boolean(
+      searchTermQuery.trim() ||
+      termMinClicks.trim() ||
+      termMaxClicks.trim() ||
+      termMinOrders.trim() ||
+      termMaxOrders.trim() ||
+      termMinAcos.trim() ||
+      termMaxAcos.trim()
+    );
 
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
@@ -1040,6 +1051,14 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
           sortBy: termSortField,
           sortDir: termSortDir,
           ...(searchTermCampaignFilter !== "ALL" ? { campaignName: searchTermCampaignFilter } : {}),
+          ...(matchTypeFilter !== "ALL" ? { matchType: matchTypeFilter } : {}),
+          ...(termPerformanceFilter !== "ALL" ? { performanceFilter: termPerformanceFilter } : {}),
+          ...(termMinClicks.trim() ? { minClicks: termMinClicks.trim() } : {}),
+          ...(termMaxClicks.trim() ? { maxClicks: termMaxClicks.trim() } : {}),
+          ...(termMinOrders.trim() ? { minOrders: termMinOrders.trim() } : {}),
+          ...(termMaxOrders.trim() ? { maxOrders: termMaxOrders.trim() } : {}),
+          ...(termMinAcos.trim() ? { minAcos: termMinAcos.trim() } : {}),
+          ...(termMaxAcos.trim() ? { maxAcos: termMaxAcos.trim() } : {}),
         });
         const res = await fetch(`/api/ppc/search-terms?${params}`, {
           cache: "no-store",
@@ -1062,7 +1081,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
       } finally {
         if (!controller.signal.aborted) setLoadingSearchTermsServer(false);
       }
-    }, searchTermQuery ? 300 : 0);
+    }, hasInputFilter ? 300 : 0);
 
     return () => {
       window.clearTimeout(timer);
@@ -1079,6 +1098,14 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     termSortField,
     termSortDir,
     searchTermCampaignFilter,
+    matchTypeFilter,
+    termPerformanceFilter,
+    termMinClicks,
+    termMaxClicks,
+    termMinOrders,
+    termMaxOrders,
+    termMinAcos,
+    termMaxAcos,
   ]);
 
   // On-demand child search terms loader for expanded Target row
@@ -1326,6 +1353,35 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
       setSyncingAccounting(false);
     }
   };
+
+  const handleJumpToAutoBid = useCallback((sku: string) => {
+    if (!sku) return;
+    setTargetSkuToOpen(sku);
+    setMountedTabs((prev) => new Set([...prev, "recommendations"]));
+    setActiveTab("recommendations");
+    if (skuRecGroups.length === 0) {
+      void loadGroupedRecommendations(false);
+    }
+  }, [skuRecGroups.length, loadGroupedRecommendations]);
+
+  // Auto-sync accounting master data silently on store select (no manual button needed)
+  const lastAutoSyncedStoreRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!selectedStore || selectedStore === "ALL") return;
+    if (lastAutoSyncedStoreRef.current === selectedStore) return;
+    lastAutoSyncedStoreRef.current = selectedStore;
+    fetch("/api/ppc/sku-economics/sync-accounting", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ storeName: selectedStore }),
+    })
+      .then((res) => {
+        if (res.ok) {
+          void loadSkuEconomics();
+        }
+      })
+      .catch((err) => console.warn("[Auto-sync Accounting]", err));
+  }, [selectedStore, loadSkuEconomics]);
 
   const handleApproveToQueue = async (items: Array<{
     recommendation: PpcRecommendation;
@@ -4052,294 +4108,226 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
       )}
 
       {/* ========================================================================= */}
-      {/* VIEW 5: HIỆU SUẤT QUẢNG CÁO & THÔNG SỐ SKU */}
+      {/* VIEW 5: HIỆU SUẤT QUẢNG CÁO SKU */}
       {/* ========================================================================= */}
       {mountedTabs.has("skus") && (
         <div className={activeTab === "skus" ? "space-y-3" : "hidden"}>
-          {/* Subview Navigation */}
-          <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => setSkuSubView("performance")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                  skuSubView === "performance"
-                    ? "bg-indigo-600 text-white shadow-2xs"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                }`}
-              >
-                Hiệu suất Quảng cáo
-              </button>
-              {selectedStore !== "ALL" && (
-                <button
-                  type="button"
-                  onClick={() => setSkuSubView("economics")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                    skuSubView === "economics"
-                      ? "bg-indigo-600 text-white shadow-2xs"
-                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                  }`}
-                >
-                  Thông số Kinh tế Phôi ({skuEconomicsList.length})
-                </button>
-              )}
-            </div>
-
-            {selectedStore !== "ALL" && (
-              <button
-                type="button"
-                onClick={handleSyncFromAccounting}
-                disabled={syncingAccounting}
-                className="px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-xs font-bold text-indigo-700 transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-2xs"
-                title="Đồng bộ lại toàn bộ SKU, Product Type, Mockup, Base Cost từ Bảng mã Accounting"
-              >
-                <ArrowsClockwise size={14} className={syncingAccounting ? "animate-spin text-indigo-600" : "text-indigo-600"} />
-                <span>{syncingAccounting ? "Đang đồng bộ..." : "Đồng bộ Bảng mã (Accounting)"}</span>
-              </button>
-            )}
-          </div>
-
-          {/* Subview 1: Thông số Kinh tế Phôi */}
-          {skuSubView === "economics" && selectedStore !== "ALL" ? (
-            <div className="space-y-3">
-              <PpcSkuEconomicsTable
-                skuList={skuEconomicsList}
-                isLoading={loadingSkuEcon}
-                onRefresh={() => void loadSkuEconomics()}
-                onUpdateSku={handleUpdateSkuEconomics}
-                onSyncAccounting={handleSyncFromAccounting}
-                isSyncingAccounting={syncingAccounting}
+          {selectedStore !== "ALL" && (
+            <PpcSkuMappingPanel skuList={skuEconomicsList} onSave={handleSaveSkuMappings} />
+          )}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+            <div className="relative flex-1 sm:w-72">
+              <MagnifyingGlass size={14} className="absolute left-3 top-2.5 text-slate-400" />
+              <input
+                type="text"
+                value={skuQuery}
+                onChange={(e) => {
+                  setSkuQuery(e.target.value);
+                  setSkuPage(1);
+                }}
+                placeholder="Tìm SKU..."
+                className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs outline-none focus:bg-white focus:border-indigo-600"
               />
             </div>
-          ) : (
-            /* Subview 2: Hiệu suất Quảng cáo SKU */
-            <>
-              {selectedStore !== "ALL" && (
-                <PpcSkuMappingPanel skuList={skuEconomicsList} onSave={handleSaveSkuMappings} />
-              )}
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
-                <div className="relative flex-1 sm:w-72">
-                  <MagnifyingGlass size={14} className="absolute left-3 top-2.5 text-slate-400" />
-                  <input
-                    type="text"
-                    value={skuQuery}
-                    onChange={(e) => {
-                      setSkuQuery(e.target.value);
-                      setSkuPage(1);
-                    }}
-                    placeholder="Tìm SKU, ASIN hoặc Phôi..."
-                    className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs outline-none focus:bg-white focus:border-indigo-600"
-                  />
-                </div>
 
-                <div className="flex items-center gap-2.5 flex-wrap self-end sm:self-auto">
-                  {/* Dropdown Niche */}
-                  <div className="flex items-center gap-1.5 text-xs text-slate-600 font-semibold bg-slate-50 hover:bg-slate-100 px-2.5 py-1.5 rounded-lg border border-slate-200 transition">
-                    <Tag size={13} className="text-slate-400 shrink-0" />
-                    <span>Niche:</span>
-                    <select
-                      value={skuNicheFilter}
-                      onChange={(e) => {
-                        setSkuNicheFilter(e.target.value);
-                        setSkuPage(1);
-                      }}
-                      className="bg-transparent border-none text-xs text-slate-800 font-semibold focus:outline-none cursor-pointer pr-1"
-                    >
-                      <option value="ALL">Tất cả Niche ({activeSkuPerformance.length})</option>
-                      {skuNicheOptions.map((n) => (
-                        <option key={n.name} value={n.name}>
-                          {n.name} ({n.count})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+            <div className="flex items-center gap-2.5 flex-wrap self-end sm:self-auto">
+              {/* Dropdown Niche */}
+              <div className="flex items-center gap-1.5 text-xs text-slate-600 font-semibold bg-slate-50 hover:bg-slate-100 px-2.5 py-1.5 rounded-lg border border-slate-200 transition">
+                <Tag size={13} className="text-slate-400 shrink-0" />
+                <span>Niche:</span>
+                <select
+                  value={skuNicheFilter}
+                  onChange={(e) => {
+                    setSkuNicheFilter(e.target.value);
+                    setSkuPage(1);
+                  }}
+                  className="bg-transparent border-none text-xs text-slate-800 font-semibold focus:outline-none cursor-pointer pr-1"
+                >
+                  <option value="ALL">Tất cả Niche ({activeSkuPerformance.length})</option>
+                  {skuNicheOptions.map((n) => (
+                    <option key={n.name} value={n.name}>
+                      {n.name} ({n.count})
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-                  <label className="flex items-center gap-1.5 text-xs text-slate-600 font-semibold cursor-pointer select-none bg-slate-50 hover:bg-slate-100 px-2.5 py-1.5 rounded-lg border border-slate-200 transition">
-                    <input
-                      type="checkbox"
-                      checked={hidePausedSkus}
-                      onChange={(e) => setHidePausedSkus(e.target.checked)}
-                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                    />
-                    <span>Ẩn SKU tạm dừng (0 Imp)</span>
-                  </label>
+              <label className="flex items-center gap-1.5 text-xs text-slate-600 font-semibold cursor-pointer select-none bg-slate-50 hover:bg-slate-100 px-2.5 py-1.5 rounded-lg border border-slate-200 transition">
+                <input
+                  type="checkbox"
+                  checked={hidePausedSkus}
+                  onChange={(e) => setHidePausedSkus(e.target.checked)}
+                  className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                />
+                <span>Ẩn SKU tạm dừng (0 Imp)</span>
+              </label>
 
-                  <button
-                    type="button"
-                    onClick={() => handleExportCsv("skus")}
-                    className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 transition flex items-center gap-1.5 cursor-pointer"
+              <button
+                type="button"
+                onClick={() => handleExportCsv("skus")}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <Download size={14} /> Export CSV
+              </button>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
+            <table className="w-full text-left text-xs text-slate-700">
+              <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
+                <tr>
+                  <th className="py-3 px-2 text-center w-12">Ảnh</th>
+                  <th className="py-3 px-3.5">SKU</th>
+                  <th className="py-3 px-2.5">Store</th>
+                  <th
+                    className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
+                    onClick={() => handleSort("impressions", skuSortField, skuSortDir, setSkuSortField, setSkuSortDir)}
                   >
-                    <Download size={14} /> Export CSV
-                  </button>
-                </div>
-              </div>
-
-              <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
-                <table className="w-full text-left text-xs text-slate-700">
-                  <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
-                    <tr>
-                      <th className="py-3 px-2 text-center w-12">Ảnh</th>
-                      <th className="py-3 px-3.5">SKU & Phôi Accounting</th>
-                      <th className="py-3 px-2.5">Store</th>
-                      <th
-                        className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
-                        onClick={() => handleSort("impressions", skuSortField, skuSortDir, setSkuSortField, setSkuSortDir)}
-                      >
-                        Hiển Thị {skuSortField === "impressions" && (skuSortDir === "asc" ? "↑" : "↓")}
-                      </th>
-                      <th
-                        className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
-                        onClick={() => handleSort("clicks", skuSortField, skuSortDir, setSkuSortField, setSkuSortDir)}
-                      >
-                        Clicks {skuSortField === "clicks" && (skuSortDir === "asc" ? "↑" : "↓")}
-                      </th>
-                      <th
-                        className="py-3 px-2 text-right cursor-pointer hover:text-indigo-600"
-                        onClick={() => handleSort("ctr", skuSortField, skuSortDir, setSkuSortField, setSkuSortDir)}
-                      >
-                        CTR (%) {skuSortField === "ctr" && (skuSortDir === "asc" ? "↑" : "↓")}
-                      </th>
-                      <th
-                        className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
-                        onClick={() => handleSort("spend", skuSortField, skuSortDir, setSkuSortField, setSkuSortDir)}
-                      >
-                        Spend ($) {skuSortField === "spend" && (skuSortDir === "asc" ? "↑" : "↓")}
-                      </th>
-                      <th
-                        className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
-                        onClick={() => handleSort("sales", skuSortField, skuSortDir, setSkuSortField, setSkuSortDir)}
-                      >
-                        Sales ($) {skuSortField === "sales" && (skuSortDir === "asc" ? "↑" : "↓")}
-                      </th>
-                      <th
-                        className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
-                        onClick={() => handleSort("orders", skuSortField, skuSortDir, setSkuSortField, setSkuSortDir)}
-                      >
-                        Orders {skuSortField === "orders" && (skuSortDir === "asc" ? "↑" : "↓")}
-                      </th>
-                      <th className="py-3 px-3 text-right">CVR</th>
-                      <th
-                        className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
-                        onClick={() => handleSort("acos", skuSortField, skuSortDir, setSkuSortField, setSkuSortDir)}
-                      >
-                        ACOS (%) {skuSortField === "acos" && (skuSortDir === "asc" ? "↑" : "↓")}
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 font-medium">
-                    {(loading || isStoreSwitching || loadingSection === "skus" || loadingSkuEcon) ? (
-                      <tr>
-                        <td colSpan={11} className="p-12 text-center text-xs text-slate-500">
-                          <div className="flex flex-col items-center justify-center gap-2">
-                            <CircleNotch size={24} className="animate-spin text-indigo-600" />
-                            <span className="font-bold text-slate-700">Đang tải danh sách SKU cho {selectedStore === "ALL" ? "tất cả store" : selectedStore}...</span>
-                          </div>
-                        </td>
-                      </tr>
-                    ) : paginatedSkus.length === 0 ? (
-                      <tr>
-                        <td colSpan={11} className="p-8 text-center text-xs text-slate-400">
-                          Không tìm thấy SKU nào trong kỳ đang chọn.
-                        </td>
-                      </tr>
-                    ) : (
-                      paginatedSkus.map((s, i) => (
-                        <tr key={i} className="hover:bg-slate-50/80 transition">
-                          <td className="py-2.5 px-2 text-center">
-                            {s.mockupUrl ? (
-                              <div className="relative group/mockup inline-block">
-                                <img
-                                  src={getOptimizedThumbnailUrl(s.mockupUrl, 64) || s.mockupUrl}
-                                  alt={s.sku}
-                                  className="w-9 h-9 rounded-md object-cover border border-slate-200 shadow-2xs group-hover/mockup:ring-2 group-hover/mockup:ring-indigo-500 transition cursor-pointer"
-                                  loading="lazy"
-                                  onError={(e) => {
-                                    e.currentTarget.style.display = "none";
-                                    const fallback = e.currentTarget.parentElement?.querySelector(".mockup-fallback");
-                                    if (fallback) (fallback as HTMLElement).style.display = "flex";
-                                  }}
-                                />
-                                <div className="mockup-fallback hidden w-9 h-9 mx-auto rounded-md bg-slate-100 items-center justify-center text-slate-300">
-                                  <Tag size={14} />
-                                </div>
-                                <div className="hidden group-hover/mockup:block absolute left-11 top-1/2 -translate-y-1/2 z-50 p-1 bg-white rounded-xl shadow-2xl border border-slate-200 pointer-events-none w-48 h-48">
-                                  <img
-                                    src={getOptimizedThumbnailUrl(s.mockupUrl, 400) || s.mockupUrl}
-                                    alt={s.sku}
-                                    className="w-full h-full object-cover rounded-lg"
-                                  />
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="w-9 h-9 mx-auto rounded-md bg-slate-100 flex items-center justify-center text-slate-300">
-                                <Tag size={14} />
-                              </div>
-                            )}
-                          </td>
-                          <td className="py-2.5 px-3.5 font-bold text-slate-900 col-primary">
-                            <div className="flex flex-col gap-0.5">
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="truncate max-w-[260px] font-bold text-slate-900 font-mono" title={s.sku}>
-                                  {s.sku}
-                                </span>
-                                {s.asin && (
-                                  <span className="px-1.5 py-0.2 rounded text-[10px] font-mono font-semibold bg-slate-100 text-slate-600 border border-slate-200">
-                                    {s.asin}
-                                  </span>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-1.5 flex-wrap text-[11px] font-normal text-slate-500">
-                                {s.productType && (
-                                  <span className="font-medium text-slate-700">
-                                    {s.productType}
-                                  </span>
-                                )}
-                                {s.niche && (
-                                  <span className="text-slate-400">
-                                    • {s.niche}
-                                  </span>
-                                )}
-                              </div>
+                    Hiển Thị {skuSortField === "impressions" && (skuSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th
+                    className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
+                    onClick={() => handleSort("clicks", skuSortField, skuSortDir, setSkuSortField, setSkuSortDir)}
+                  >
+                    Clicks {skuSortField === "clicks" && (skuSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th
+                    className="py-3 px-2 text-right cursor-pointer hover:text-indigo-600"
+                    onClick={() => handleSort("ctr", skuSortField, skuSortDir, setSkuSortField, setSkuSortDir)}
+                  >
+                    CTR (%) {skuSortField === "ctr" && (skuSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th
+                    className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
+                    onClick={() => handleSort("spend", skuSortField, skuSortDir, setSkuSortField, setSkuSortDir)}
+                  >
+                    Spend ($) {skuSortField === "spend" && (skuSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th
+                    className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
+                    onClick={() => handleSort("sales", skuSortField, skuSortDir, setSkuSortField, setSkuSortDir)}
+                  >
+                    Sales ($) {skuSortField === "sales" && (skuSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th
+                    className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
+                    onClick={() => handleSort("orders", skuSortField, skuSortDir, setSkuSortField, setSkuSortDir)}
+                  >
+                    Orders {skuSortField === "orders" && (skuSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th className="py-3 px-3 text-right">CVR</th>
+                  <th
+                    className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
+                    onClick={() => handleSort("acos", skuSortField, skuSortDir, setSkuSortField, setSkuSortDir)}
+                  >
+                    ACOS (%) {skuSortField === "acos" && (skuSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 font-medium">
+                {(loading || isStoreSwitching || loadingSection === "skus" || loadingSkuEcon) ? (
+                  <tr>
+                    <td colSpan={11} className="p-12 text-center text-xs text-slate-500">
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <CircleNotch size={24} className="animate-spin text-indigo-600" />
+                        <span className="font-bold text-slate-700">Đang tải danh sách SKU cho {selectedStore === "ALL" ? "tất cả store" : selectedStore}...</span>
+                      </div>
+                    </td>
+                  </tr>
+                ) : paginatedSkus.length === 0 ? (
+                  <tr>
+                    <td colSpan={11} className="p-8 text-center text-xs text-slate-400">
+                      Không tìm thấy SKU nào trong kỳ đang chọn.
+                    </td>
+                  </tr>
+                ) : (
+                  paginatedSkus.map((s, i) => (
+                    <tr key={i} className="hover:bg-slate-50/80 transition">
+                      <td className="py-2.5 px-2 text-center">
+                        {s.mockupUrl ? (
+                          <div
+                            className="relative group/mockup inline-block cursor-pointer"
+                            onClick={() => handleJumpToAutoBid(s.sku)}
+                            title={`Mở đề xuất Auto Bid cho ${s.sku}`}
+                          >
+                            <img
+                              src={getOptimizedThumbnailUrl(s.mockupUrl, 64) || s.mockupUrl}
+                              alt={s.sku}
+                              className="w-9 h-9 rounded-md object-cover border border-slate-200 shadow-2xs group-hover/mockup:ring-2 group-hover/mockup:ring-indigo-500 transition"
+                              loading="lazy"
+                              onError={(e) => {
+                                e.currentTarget.style.display = "none";
+                                const fallback = e.currentTarget.parentElement?.querySelector(".mockup-fallback");
+                                if (fallback) (fallback as HTMLElement).style.display = "flex";
+                              }}
+                            />
+                            <div className="mockup-fallback hidden w-9 h-9 mx-auto rounded-md bg-slate-100 items-center justify-center text-slate-300">
+                              <Tag size={14} />
                             </div>
-                          </td>
-                          <td className="py-2.5 px-2.5 text-slate-600">{s.storeName}</td>
-                          <td className="py-2.5 px-3 text-right font-medium text-slate-700">
-                            {s.impressions ? s.impressions.toLocaleString() : "0"}
-                          </td>
-                          <td className={`py-2.5 px-3 text-right font-normal ${s.clicks === 0 ? "text-slate-400" : "text-slate-700"}`}>
-                            {s.clicks}
-                          </td>
-                          <td className="py-2.5 px-2 text-right text-slate-500 font-normal">
-                            {s.impressions > 0 ? `${(s.ctr || 0).toFixed(2)}%` : "-"}
-                          </td>
-                          <td className="py-2.5 px-3 text-right font-normal text-slate-800">${s.spend.toFixed(2)}</td>
-                          <td className="py-2.5 px-3 text-right font-normal text-emerald-600">${s.sales.toFixed(2)}</td>
-                          <td className="py-2.5 px-3 text-right font-normal text-slate-700">{s.orders}</td>
-                          <td className="py-2.5 px-3 text-right text-slate-700">{s.clicks > 0 ? `${s.cvr.toFixed(1)}%` : "-"}</td>
-                          <td className="py-2.5 px-3 text-right">
-                            <span
-                              className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${s.spend === 0
-                                ? "bg-slate-50 text-slate-400"
-                                : s.acos <= Math.min(20, targetAcos)
-                                  ? "bg-emerald-50 text-emerald-700"
-                                  : s.acos <= targetAcos
-                                    ? "bg-teal-50 text-teal-700"
-                                    : s.acos <= 50
-                                      ? "bg-amber-50 text-amber-700"
-                                      : "bg-rose-50 text-rose-700"
-                                }`}
-                            >
-                              {s.spend === 0 ? "-" : s.acos > 500 ? "0 sales" : `${s.acos.toFixed(1)}%`}
-                            </span>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
+                            <div className="hidden group-hover/mockup:block absolute left-11 top-1/2 -translate-y-1/2 z-50 p-1 bg-white rounded-xl shadow-2xl border border-slate-200 pointer-events-none w-48 h-48">
+                              <img
+                                src={getOptimizedThumbnailUrl(s.mockupUrl, 400) || s.mockupUrl}
+                                alt={s.sku}
+                                className="w-full h-full object-cover rounded-lg"
+                              />
+                            </div>
+                          </div>
+                        ) : (
+                          <div
+                            className="w-9 h-9 mx-auto rounded-md bg-slate-100 flex items-center justify-center text-slate-300 cursor-pointer hover:bg-slate-200 transition"
+                            onClick={() => handleJumpToAutoBid(s.sku)}
+                            title={`Mở đề xuất Auto Bid cho ${s.sku}`}
+                          >
+                            <Tag size={14} />
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3.5 font-bold text-slate-900 col-primary">
+                        <button
+                          type="button"
+                          onClick={() => handleJumpToAutoBid(s.sku)}
+                          className="truncate max-w-[280px] font-bold text-slate-900 font-mono hover:text-indigo-600 hover:underline cursor-pointer text-left transition inline-block"
+                          title={`Mở đề xuất Auto Bid cho SKU: ${s.sku}`}
+                        >
+                          {s.sku}
+                        </button>
+                      </td>
+                      <td className="py-2.5 px-2.5 text-slate-600">{s.storeName}</td>
+                      <td className="py-2.5 px-3 text-right font-medium text-slate-700">
+                        {s.impressions ? s.impressions.toLocaleString() : "0"}
+                      </td>
+                      <td className={`py-2.5 px-3 text-right font-normal ${s.clicks === 0 ? "text-slate-400" : "text-slate-700"}`}>
+                        {s.clicks}
+                      </td>
+                      <td className="py-2.5 px-2 text-right text-slate-500 font-normal">
+                        {s.impressions > 0 ? `${(s.ctr || 0).toFixed(2)}%` : "-"}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-normal text-slate-800">${s.spend.toFixed(2)}</td>
+                      <td className="py-2.5 px-3 text-right font-normal text-emerald-600">${s.sales.toFixed(2)}</td>
+                      <td className="py-2.5 px-3 text-right font-normal text-slate-700">{s.orders}</td>
+                      <td className="py-2.5 px-3 text-right text-slate-700">{s.clicks > 0 ? `${s.cvr.toFixed(1)}%` : "-"}</td>
+                      <td className="py-2.5 px-3 text-right">
+                        <span
+                          className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${s.spend === 0
+                            ? "bg-slate-50 text-slate-400"
+                            : s.acos <= Math.min(20, targetAcos)
+                              ? "bg-emerald-50 text-emerald-700"
+                              : s.acos <= targetAcos
+                                ? "bg-teal-50 text-teal-700"
+                                : s.acos <= 50
+                                  ? "bg-amber-50 text-amber-700"
+                                  : "bg-rose-50 text-rose-700"
+                            }`}
+                        >
+                          {s.spend === 0 ? "-" : s.acos > 500 ? "0 sales" : `${s.acos.toFixed(1)}%`}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
 
           {/* Pagination Controls */}
           <PpcPagination
@@ -4432,6 +4420,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   onChange={(e) => {
                     setTermMinClicks(e.target.value);
                     setTermPage(1);
+                    setSelectedTerms(new Set());
                   }}
                   className="w-12 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs text-center font-bold text-slate-800 outline-none focus:border-indigo-600"
                 />
@@ -4444,6 +4433,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   onChange={(e) => {
                     setTermMaxClicks(e.target.value);
                     setTermPage(1);
+                    setSelectedTerms(new Set());
                   }}
                   className="w-12 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs text-center font-bold text-slate-800 outline-none focus:border-indigo-600"
                 />
@@ -4460,6 +4450,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   onChange={(e) => {
                     setTermMinOrders(e.target.value);
                     setTermPage(1);
+                    setSelectedTerms(new Set());
                   }}
                   className="w-12 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs text-center font-bold text-slate-800 outline-none focus:border-indigo-600"
                 />
@@ -4472,6 +4463,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   onChange={(e) => {
                     setTermMaxOrders(e.target.value);
                     setTermPage(1);
+                    setSelectedTerms(new Set());
                   }}
                   className="w-12 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs text-center font-bold text-slate-800 outline-none focus:border-indigo-600"
                 />
@@ -4488,6 +4480,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   onChange={(e) => {
                     setTermMinAcos(e.target.value);
                     setTermPage(1);
+                    setSelectedTerms(new Set());
                   }}
                   className="w-12 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs text-center font-bold text-slate-800 outline-none focus:border-indigo-600"
                 />
@@ -4500,6 +4493,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   onChange={(e) => {
                     setTermMaxAcos(e.target.value);
                     setTermPage(1);
+                    setSelectedTerms(new Set());
                   }}
                   className="w-12 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs text-center font-bold text-slate-800 outline-none focus:border-indigo-600"
                 />
@@ -4863,6 +4857,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
               actionQueue={actionQueue}
               selectedStore={selectedStore}
               isStoreSwitching={isStoreSwitching}
+              targetSkuToOpen={targetSkuToOpen}
+              onClearTargetSkuToOpen={() => setTargetSkuToOpen(null)}
             />
           )}
         </div>

@@ -184,15 +184,13 @@ export function OrderInputView() {
       .catch(() => {});
   }, [selectedStoreId]);
 
-  // Pagination & Filtering
+  // Pagination & Filtering (Luôn mặc định 50 bản ghi khi vào lại để tránh lag)
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(() => {
     if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("acc_order_input_limit");
-      if (saved) {
-        const num = Number(saved);
-        if (!isNaN(num) && num > 0) return num;
-      }
+      try {
+        localStorage.removeItem("acc_order_input_limit");
+      } catch {}
     }
     return 50;
   });
@@ -861,6 +859,12 @@ export function OrderInputView() {
 
   const selectedStore = stores.find((s) => s.id === selectedStoreId);
   const totalPages = Math.max(1, Math.ceil(totalOrders / limit));
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
 
   // Cell renderer matching compact Inventory tab typography
   const renderCellContent = (item: OrderItem, colId: string, rowIndex: number) => {
@@ -2092,9 +2096,6 @@ export function OrderInputView() {
                   const val = Number(e.target.value);
                   setLimit(val);
                   setPage(1);
-                  try {
-                    localStorage.setItem("acc_order_input_limit", String(val));
-                  } catch {}
                 }}
                 className="rounded border border-slate-300 bg-white px-2 py-0.5 text-xs font-semibold text-slate-800"
               >

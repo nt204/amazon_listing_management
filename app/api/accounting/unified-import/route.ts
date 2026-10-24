@@ -5,7 +5,12 @@ import os from "node:os";
 import { Readable } from "node:stream";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { pipeline } from "node:stream/promises";
-import { enqueueAccountingImport, getAccountingImport } from "@/lib/accounting/import-jobs";
+import {
+  enqueueAccountingImport,
+  getAccountingImport,
+  claimAccountingImport,
+  executeAccountingImportJob,
+} from "@/lib/accounting/import-jobs";
 import { ApiError, authorize, dataScope, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
 
 export const maxDuration = 300; // Cho phép chạy tối đa 5 phút cho file lớn 50,000 dòng
@@ -18,6 +23,21 @@ export async function GET(request: NextRequest) {
     if (!jobId) throw new ApiError("Thiếu jobId.", 400);
     const job = await getAccountingImport(scope, jobId);
     if (!job) throw new ApiError("Không tìm thấy job nạp dữ liệu.", 404);
+
+    // Tự động kích hoạt in-process execution nếu job đang chờ mà worker chưa nhận
+    if (job.status === "QUEUED") {
+      void (async () => {
+        try {
+          const claimed = await claimAccountingImport(`inprocess-${process.pid}`);
+          if (claimed) {
+            void executeAccountingImportJob(claimed);
+          }
+        } catch (e) {
+          console.error("[UnifiedImportAPI] In-process claim error in GET:", e);
+        }
+      })();
+    }
+
     return NextResponse.json({ success: job.status === "COMPLETED", job });
   } catch (error) {
     return routeErrorResponse(error, "Lỗi khi đọc trạng thái nạp dữ liệu.", 500);
@@ -63,6 +83,18 @@ export async function POST(request: NextRequest) {
       fileSize: file.size,
     });
     tempFilePath = null; // Worker chịu trách nhiệm dọn file sau khi xử lý.
+
+    // Kích hoạt chạy ngầm in-process nếu sau 2 giây chưa có standalone worker claim
+    setTimeout(async () => {
+      try {
+        const claimed = await claimAccountingImport(`inprocess-${process.pid}`);
+        if (claimed) {
+          void executeAccountingImportJob(claimed);
+        }
+      } catch (err) {
+        console.error("[UnifiedImportAPI] In-process claim error in POST:", err);
+      }
+    }, 2000);
 
     return NextResponse.json({
       success: true,

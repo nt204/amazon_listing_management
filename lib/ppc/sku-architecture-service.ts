@@ -905,9 +905,9 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
   const crossStoreFallbackMap = new Map<string, any>();
   try {
     const crossRows = await sql<any[]>`
-      SELECT sku, product_type, loai, asin, mockup, mockup_url, niche, pic_mkt
+      SELECT sku, product_type, loai, asin, mockup, mockup_url
       FROM accounting_sku_master
-      WHERE (mockup_url IS NOT NULL OR mockup IS NOT NULL OR niche IS NOT NULL)
+      WHERE (mockup_url IS NOT NULL OR mockup IS NOT NULL)
         AND deleted_at IS NULL
     `;
     for (const c of crossRows) {
@@ -942,13 +942,13 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
     const cross = crossStoreFallbackMap.get(sku);
 
     const mockupUrl = acc?.mockup_url || acc?.mockup || cross?.mockup_url || cross?.mockup || null;
-    let picMkt = acc?.pic_mkt || cross?.pic_mkt || null;
-    let niche = acc?.niche || cross?.niche || null;
+    let picMkt = acc?.pic_mkt || null;
+    let niche = acc?.niche || null; // Store nào quét đúng niche store đó, không lấy chéo
     const skuStatus = acc?.status || null;
     const picIdea = acc?.pic_idea || null;
     const designPic = acc?.design_pic || null;
     const accountingProductType = acc?.product_type || acc?.loai || cross?.product_type || null;
-    const accountingMatched = Boolean(acc || cross);
+    const accountingMatched = Boolean(acc);
     const asin = (acc?.asin && String(acc.asin).trim())
       ? String(acc.asin).trim()
       : ((cross?.asin && String(cross.asin).trim())

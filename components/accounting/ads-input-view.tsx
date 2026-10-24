@@ -148,15 +148,13 @@ export function AdsInputView({
   });
   const [loading, setLoading] = useState(false);
 
-  // Pagination & Filtering
+  // Pagination & Filtering (Luôn mặc định 50 bản ghi khi vào lại để tránh lag)
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(() => {
     if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("acc_ads_input_limit");
-      if (saved) {
-        const num = Number(saved);
-        if (!isNaN(num) && num > 0) return num;
-      }
+      try {
+        localStorage.removeItem("acc_ads_input_limit");
+      } catch {}
     }
     return 50;
   });
@@ -698,6 +696,12 @@ export function AdsInputView({
 
   const totalPages = Math.max(1, Math.ceil(totalRows / limit));
 
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
   // Cell Content Renderer matching Order Input typography
   const renderCellContent = (item: AdsItem, colId: string, rowIndex: number) => {
     const isEditing = editingCell?.id === item.id && editingCell?.field === colId;
@@ -1109,9 +1113,6 @@ export function AdsInputView({
                 const newLimit = Number(e.target.value);
                 setLimit(newLimit);
                 setPage(1);
-                try {
-                  localStorage.setItem("acc_ads_input_limit", String(newLimit));
-                } catch {}
               }}
               className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-800 shadow-2xs outline-hidden focus:border-indigo-500 cursor-pointer"
             >
@@ -1119,6 +1120,8 @@ export function AdsInputView({
               <option value={50}>50</option>
               <option value={100}>100</option>
               <option value={200}>200</option>
+              <option value={500}>500</option>
+              <option value={1000}>1000</option>
             </select>
             <span>dòng / trang</span>
             <span className="text-slate-400 select-none">•</span>

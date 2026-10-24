@@ -97,6 +97,29 @@ export function cleanUrlCandidate(val: any): string | null {
   return null;
 }
 
+export function cleanTextVal(val: any): string | null {
+  if (val == null) return null;
+  let c = extractCellVal(val);
+  if (c && typeof c === "object") {
+    if ("text" in c && typeof c.text === "string") c = c.text;
+    else if ("result" in c && typeof c.result === "string") c = c.result;
+    else if ("hyperlink" in c && typeof c.hyperlink === "string") c = c.hyperlink;
+  }
+  if (c == null || typeof c === "object") return null;
+  const str = String(c).trim();
+  if (
+    !str ||
+    str === "[object Object]" ||
+    str.startsWith("=") ||
+    str.toUpperCase().startsWith("IFERROR(") ||
+    str.toUpperCase().startsWith("INDEX(") ||
+    str.toUpperCase().startsWith("_XLFN.")
+  ) {
+    return null;
+  }
+  return str;
+}
+
 export interface UnifiedImportResult {
   success: boolean;
   message: string;
@@ -937,8 +960,14 @@ export async function importUnifiedAccountingExcel(
                   ngay_di = COALESCE(${item.ngay_di}, accounting_inbound_shipments.ngay_di),
                   ngay_den = COALESCE(${item.ngay_den}, accounting_inbound_shipments.ngay_den),
                   amazon_received = COALESCE(${item.amazon_received}, accounting_inbound_shipments.amazon_received),
-                  tinh_trang_hang_den_kho = COALESCE(${item.tinh_trang_hang_den_kho}, accounting_inbound_shipments.tinh_trang_hang_den_kho),
-                  status = COALESCE(${item.status}, accounting_inbound_shipments.status),
+                  tinh_trang_hang_den_kho = CASE
+                    WHEN accounting_inbound_shipments.tinh_trang_hang_den_kho LIKE '%object Object%' THEN COALESCE(${item.tinh_trang_hang_den_kho}, ${item.status}, 'Working')
+                    ELSE COALESCE(${item.tinh_trang_hang_den_kho}, accounting_inbound_shipments.tinh_trang_hang_den_kho, ${item.status})
+                  END,
+                  status = CASE
+                    WHEN accounting_inbound_shipments.status LIKE '%object Object%' THEN COALESCE(${item.status}, 'Working')
+                    ELSE COALESCE(${item.status}, accounting_inbound_shipments.status, 'Working')
+                  END,
                   so_luong_amazon_nhan = COALESCE(${item.so_luong_amazon_nhan}, accounting_inbound_shipments.so_luong_amazon_nhan),
                   discrepancy = COALESCE(${item.discrepancy}, accounting_inbound_shipments.discrepancy),
                   note = COALESCE(${item.note}, accounting_inbound_shipments.note),
@@ -998,15 +1027,15 @@ export async function importUnifiedAccountingExcel(
             const sku = String(rawSku).trim();
             if (!sku || sku.toLowerCase() === "sku") continue;
 
-            const brand = (getColVal(["brand", "thương hiệu"]) ?? extractCellVal(vals[1]) ?? storeName) ? String(getColVal(["brand", "thương hiệu"]) ?? extractCellVal(vals[1]) ?? storeName).trim() : null;
-            const sup = (getColVal(["sup", "supplier", "nhà cung cấp"]) ?? extractCellVal(vals[2])) ? String(getColVal(["sup", "supplier", "nhà cung cấp"]) ?? extractCellVal(vals[2])).trim() : null;
+            const brand = cleanTextVal(getColVal(["brand", "thương hiệu"]) ?? extractCellVal(vals[1])) || storeName;
+            const sup = cleanTextVal(getColVal(["sup", "supplier", "nhà cung cấp"]) ?? extractCellVal(vals[2]));
             const ngay_request = cleanDateOnly(getColVal(["ngay_request", "ngày request", "ngay request"]) ?? extractCellVal(vals[3]));
-            const product_type = (getColVal(["product_type", "product type", "loại sản phẩm", "loai sp"]) ?? extractCellVal(vals[4])) ? String(getColVal(["product_type", "product type", "loại sản phẩm", "loai sp"]) ?? extractCellVal(vals[4])).trim() : null;
+            const product_type = cleanTextVal(getColVal(["product_type", "product type", "loại sản phẩm", "loai sp"]) ?? extractCellVal(vals[4]));
             const rawMockupUrl = getColVal(["mockup url", "mockup_url", "url mockup", "link mockup"]);
             const rawMockup = getColVal(["mockup", "hình ảnh", "ảnh"]) ?? extractCellVal(vals[5]);
             const mockup = cleanUrlCandidate(rawMockupUrl) || cleanUrlCandidate(rawMockup) || (sku ? skuMap.get(sku.toUpperCase())?.mockup : null) || null;
             const quantity = parseInteger(getColVal(["quantity", "số lượng", "so luong", "qty"]) ?? extractCellVal(vals[7])) || 0;
-            const line_ship = (getColVal(["line_ship", "line ship", "vận chuyển"]) ?? extractCellVal(vals[8])) ? String(getColVal(["line_ship", "line ship", "vận chuyển"]) ?? extractCellVal(vals[8])).trim() : null;
+            const line_ship = cleanTextVal(getColVal(["line_ship", "line ship", "vận chuyển"]) ?? extractCellVal(vals[8]));
             const base_cost_per_unit = parseNumeric(getColVal(["base_cost_per_unit", "base cost/unit", "base cost"]) ?? extractCellVal(vals[9]));
             const card = parseNumeric(getColVal(["card"]) ?? extractCellVal(vals[10]));
             const tag = parseNumeric(getColVal(["tag"]) ?? extractCellVal(vals[11]));
@@ -1017,22 +1046,22 @@ export async function importUnifiedAccountingExcel(
             const rawTotalBasecost = parseNumeric(getColVal(["total_basecost", "total basecost", "total base cost"]) ?? extractCellVal(vals[15]));
             const total_basecost = rawTotalBasecost ?? (final_basecost * quantity);
             const ngay_thanh_toan = cleanDateOnly(getColVal(["ngay_thanh_toan", "ngày thanh toán", "ngay thanh toan"]) ?? extractCellVal(vals[16]));
-            const ten_lo_hang = (getColVal(["ten_lo_hang", "tên lô hàng", "ten lo hang"]) ?? extractCellVal(vals[17])) ? String(getColVal(["ten_lo_hang", "tên lô hàng", "ten lo hang"]) ?? extractCellVal(vals[17])).trim() : null;
-            const shipment_id = (getColVal(["shipment_id", "shipment id", "mã shipment"]) ?? extractCellVal(vals[18])) ? String(getColVal(["shipment_id", "shipment id", "mã shipment"]) ?? extractCellVal(vals[18])).trim() : null;
+            const ten_lo_hang = cleanTextVal(getColVal(["ten_lo_hang", "tên lô hàng", "ten lo hang"]) ?? extractCellVal(vals[17]));
+            const shipment_id = cleanTextVal(getColVal(["shipment_id", "shipment id", "mã shipment"]) ?? extractCellVal(vals[18]));
             const ngay_di = cleanDateOnly(getColVal(["ngay_di", "ngày đi", "ngay di"]) ?? extractCellVal(vals[19]));
             const ngay_den = cleanDateOnly(getColVal(["ngay_den", "ngày đến", "ngay den"]) ?? extractCellVal(vals[20]));
             const amazon_received = parseInteger(getColVal(["amazon_received", "amazon received"]) ?? extractCellVal(vals[21]));
-            const rawTinhTrang = (getColVal(["tinh_trang_hang_den_kho", "tình trạng hàng đến kho"]) ?? extractCellVal(vals[22])) ? String(getColVal(["tinh_trang_hang_den_kho", "tình trạng hàng đến kho"]) ?? extractCellVal(vals[22])).trim() : null;
-            const rawStatus = (getColVal(["status", "trạng thái shipment"]) ?? extractCellVal(vals[23])) ? String(getColVal(["status", "trạng thái shipment"]) ?? extractCellVal(vals[23])).trim() : null;
-            const tinh_trang_hang_den_kho = rawTinhTrang || rawStatus || null;
+            const rawTinhTrang = cleanTextVal(getColVal(["tinh_trang_hang_den_kho", "tình trạng hàng đến kho"]) ?? extractCellVal(vals[22]));
+            const rawStatus = cleanTextVal(getColVal(["status", "trạng thái shipment"]) ?? extractCellVal(vals[23]));
             const status = rawStatus || rawTinhTrang || "Working";
+            const tinh_trang_hang_den_kho = rawTinhTrang || rawStatus || status;
             const isStar = Boolean(shipment_id?.toLowerCase().startsWith("star"));
             const rawSoLuongNhan = parseInteger(getColVal(["so_luong_amazon_nhan", "số lượng amazon nhận"]) ?? extractCellVal(vals[24]));
             const so_luong_amazon_nhan = isStar ? quantity : rawSoLuongNhan;
             const rawDiscrepancy = parseInteger(getColVal(["discrepancy", "chênh lệch"]) ?? extractCellVal(vals[25]));
             const discrepancy = isStar ? 0 : (rawDiscrepancy ?? ((quantity || 0) - (so_luong_amazon_nhan ?? amazon_received ?? 0)));
-            const note = (getColVal(["note", "ghi chú"]) ?? extractCellVal(vals[26])) ? String(getColVal(["note", "ghi chú"]) ?? extractCellVal(vals[26])).trim() : null;
-            const trang_thai = (getColVal(["trang_thai", "trạng thái"]) ?? extractCellVal(vals[27])) ? String(getColVal(["trang_thai", "trạng thái"]) ?? extractCellVal(vals[27])).trim() : "Phát triển";
+            const note = cleanTextVal(getColVal(["note", "ghi chú"]) ?? extractCellVal(vals[26]));
+            const trang_thai = cleanTextVal(getColVal(["trang_thai", "trạng thái"]) ?? extractCellVal(vals[27])) || "Phát triển";
 
             // Bỏ qua dòng placeholder nếu số lượng <= 0 và không có shipment_id
             if (quantity <= 0 && (!shipment_id || !shipment_id.trim())) continue;
@@ -1203,11 +1232,11 @@ export async function importUnifiedAccountingExcel(
             const rawShipmentName = getColVal(["shipment_name", "shipment name", "tên shipment"]) ?? extractCellVal(vals[3]);
             if (!rawShipmentId && !rawShipmentName) continue;
 
-            const shipment_id = String(rawShipmentId || `SHIP-${Date.now()}-${counts.checkShipment + 1}`).trim();
-            const shipment_name = rawShipmentName ? String(rawShipmentName).trim() : null;
+            const shipment_id = cleanTextVal(rawShipmentId) || `SHIP-${Date.now()}-${counts.checkShipment + 1}`;
+            const shipment_name = cleanTextVal(rawShipmentName);
 
             const rawBrand = getColVal(["brand", "store", "thương hiệu"]) ?? extractCellVal(vals[2]);
-            const brandStr = rawBrand ? String(rawBrand).trim() : "";
+            const brandStr = cleanTextVal(rawBrand) || "";
             let rowStoreId = storeId;
             if (brandStr && storeByName.has(brandStr.toLowerCase())) {
               rowStoreId = storeByName.get(brandStr.toLowerCase())!;
@@ -1217,13 +1246,13 @@ export async function importUnifiedAccountingExcel(
             const ngay_update = cleanDateOnly(getColVal(["ngay_update", "ngày update", "update date"]) ?? extractCellVal(vals[1]));
             const created_date = cleanDateOnly(getColVal(["created_date", "created", "ngày tạo"]) ?? extractCellVal(vals[5]));
             const last_updated_date = cleanDateOnly(getColVal(["last_updated_date", "last updated", "cập nhật lần cuối"]) ?? extractCellVal(vals[6]));
-            const ship_to = (getColVal(["ship_to", "ship to", "kho đến"]) ?? extractCellVal(vals[7])) ? String(getColVal(["ship_to", "ship to", "kho đến"]) ?? extractCellVal(vals[7])).trim() : null;
+            const ship_to = cleanTextVal(getColVal(["ship_to", "ship to", "kho đến"]) ?? extractCellVal(vals[7]));
             const skus_count = parseInteger(getColVal(["skus_count", "skus", "sku", "số sku"]) ?? extractCellVal(vals[8])) || 1;
             const units_expected = parseInteger(getColVal(["units_expected", "units expected", "dự kiến"]) ?? extractCellVal(vals[9])) || 0;
             const units_located = parseInteger(getColVal(["units_located", "units located", "thực nhận"]) ?? extractCellVal(vals[10])) || 0;
             const rawDiscrepancy = parseInteger(getColVal(["discrepancy", "chênh lệch"]) ?? extractCellVal(vals[12]));
             const discrepancy = rawDiscrepancy ?? (units_located - units_expected);
-            const status = (getColVal(["status", "trạng thái"]) ?? extractCellVal(vals[11])) ? String(getColVal(["status", "trạng thái"]) ?? extractCellVal(vals[11])).trim() : "Working";
+            const status = cleanTextVal(getColVal(["status", "trạng thái"]) ?? extractCellVal(vals[11])) || "Working";
 
             const key = `${rowStoreId}::${shipment_id.toLowerCase()}`;
             const targetId = checkShipmentMap.get(key);

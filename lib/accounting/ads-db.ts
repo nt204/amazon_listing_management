@@ -173,7 +173,7 @@ export async function listAds(
 }> {
   const sql = await getDatabaseClient();
   const page = Math.max(1, options?.page || 1);
-  const limit = Math.max(1, Math.min(500, options?.limit || 50));
+  const limit = Math.max(1, Math.min(1000, options?.limit || 50));
   const offset = (page - 1) * limit;
   const dateSort = options?.dateSort === "asc" ? "asc" : "desc";
 

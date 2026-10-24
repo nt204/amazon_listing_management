@@ -3185,8 +3185,15 @@ export async function syncCheckShipmentsToInbound(
         WHEN LOWER(TRIM(s.shipment_id)) LIKE 'star%' THEN COALESCE(s.quantity, 0)
         ELSE c.units_located
       END,
-      status = c.status,
-      tinh_trang_hang_den_kho = c.status,
+      status = CASE
+        WHEN c.status IS NOT NULL AND c.status != '' AND c.status NOT LIKE '%object Object%' THEN c.status
+        ELSE COALESCE(NULLIF(s.status, '[object Object]'), 'Working')
+      END,
+      tinh_trang_hang_den_kho = CASE
+        WHEN c.status IS NOT NULL AND c.status != '' AND c.status NOT LIKE '%object Object%' THEN c.status
+        WHEN s.tinh_trang_hang_den_kho LIKE '%object Object%' THEN COALESCE(NULLIF(s.status, '[object Object]'), 'Working')
+        ELSE COALESCE(s.tinh_trang_hang_den_kho, s.status, 'Working')
+      END,
       ngay_di = CASE
         WHEN c.created_date IS NOT NULL AND TRIM(c.created_date) != '' THEN c.created_date
         ELSE s.ngay_di

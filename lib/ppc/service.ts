@@ -142,13 +142,13 @@ export async function enrichSkuPerformanceWithAccounting(
       }
     }
 
-    // Cross-store fallback cho mockup_url, niche, pic_mkt nếu chưa tìm thấy ở store đích
+    // Cross-store fallback CHỈ dành cho mockup_url nếu store đích chưa có ảnh
     const crossStoreMap = new Map<string, any>();
     try {
       const allMasterItems = await sql<any[]>`
-        SELECT sku, product_type, loai, asin, fnsku, mockup, mockup_url, brand, status, niche, pic_mkt
+        SELECT sku, product_type, loai, asin, fnsku, mockup, mockup_url
         FROM accounting_sku_master
-        WHERE (mockup_url IS NOT NULL OR mockup IS NOT NULL OR niche IS NOT NULL) AND deleted_at IS NULL
+        WHERE (mockup_url IS NOT NULL OR mockup IS NOT NULL) AND deleted_at IS NULL
       `;
       for (const item of allMasterItems) {
         if (item.sku) {
@@ -164,20 +164,21 @@ export async function enrichSkuPerformanceWithAccounting(
       const ppcName = (s.storeName || "").toUpperCase().trim();
       const accName = ppcName === "HSOSTORE" ? "WARMSTOREY" : ppcName;
       const accStoreId = accStoreMap.get(accName);
-      const acc = (accStoreId ? itemMap.get(`${accStoreId}::${s.sku.toUpperCase().trim()}`) : null)
-        || crossStoreMap.get(s.sku.toUpperCase().trim());
+      const accSameStore = accStoreId ? itemMap.get(`${accStoreId}::${s.sku.toUpperCase().trim()}`) : null;
+      const cross = crossStoreMap.get(s.sku.toUpperCase().trim());
 
-      if (!acc) return s;
+      if (!accSameStore && !cross) return s;
 
+      // Niche và PIC phải chuẩn theo đúng Store đích (store nào quét niche store đó, tuyệt đối không lấy chéo)
       return {
         ...s,
-        asin: acc.asin || s.asin || null,
-        productType: acc.product_type || acc.loai || s.productType || null,
-        mockupUrl: acc.mockup_url || acc.mockup || null,
-        picMkt: acc.pic_mkt || s.picMkt || null,
-        niche: acc.niche || s.niche || null,
-        skuStatus: acc.status || null,
-        accountingMatched: true,
+        asin: accSameStore?.asin || cross?.asin || s.asin || null,
+        productType: accSameStore?.product_type || accSameStore?.loai || cross?.product_type || cross?.loai || s.productType || null,
+        mockupUrl: accSameStore?.mockup_url || accSameStore?.mockup || cross?.mockup_url || cross?.mockup || null,
+        picMkt: accSameStore?.pic_mkt || null,
+        niche: accSameStore?.niche || null,
+        skuStatus: accSameStore?.status || null,
+        accountingMatched: Boolean(accSameStore),
       };
     });
   } catch (error) {
