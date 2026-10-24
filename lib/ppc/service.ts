@@ -142,21 +142,40 @@ export async function enrichSkuPerformanceWithAccounting(
       }
     }
 
+    // Cross-store fallback cho mockup_url, niche, pic_mkt nếu chưa tìm thấy ở store đích
+    const crossStoreMap = new Map<string, any>();
+    try {
+      const allMasterItems = await sql<any[]>`
+        SELECT sku, product_type, loai, asin, fnsku, mockup, mockup_url, brand, status, niche, pic_mkt
+        FROM accounting_sku_master
+        WHERE (mockup_url IS NOT NULL OR mockup IS NOT NULL OR niche IS NOT NULL) AND deleted_at IS NULL
+      `;
+      for (const item of allMasterItems) {
+        if (item.sku) {
+          const k = String(item.sku).toUpperCase().trim();
+          if (!crossStoreMap.has(k)) crossStoreMap.set(k, item);
+        }
+      }
+    } catch {
+      // Ignore cross store query error
+    }
+
     return skus.map((s) => {
       const ppcName = (s.storeName || "").toUpperCase().trim();
       const accName = ppcName === "HSOSTORE" ? "WARMSTOREY" : ppcName;
       const accStoreId = accStoreMap.get(accName);
-      const acc = accStoreId ? itemMap.get(`${accStoreId}::${s.sku.toUpperCase().trim()}`) : null;
+      const acc = (accStoreId ? itemMap.get(`${accStoreId}::${s.sku.toUpperCase().trim()}`) : null)
+        || crossStoreMap.get(s.sku.toUpperCase().trim());
 
       if (!acc) return s;
 
       return {
         ...s,
         asin: acc.asin || s.asin || null,
-        productType: acc.product_type || acc.loai || null,
+        productType: acc.product_type || acc.loai || s.productType || null,
         mockupUrl: acc.mockup_url || acc.mockup || null,
-        picMkt: acc.pic_mkt || null,
-        niche: acc.niche || null,
+        picMkt: acc.pic_mkt || s.picMkt || null,
+        niche: acc.niche || s.niche || null,
         skuStatus: acc.status || null,
         accountingMatched: true,
       };

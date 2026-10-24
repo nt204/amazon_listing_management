@@ -23,6 +23,15 @@ import {
   SKU_PREFIX_ERROR_PRODUCT_TYPE,
 } from "@/lib/ppc/sku-architecture-types";
 
+function getOptimizedThumbnailUrl(url: string | null | undefined, w = 64): string | null {
+  if (!url) return null;
+  const trimmed = url.trim();
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    return `/api/accounting/inventory/mockup-proxy?w=${w}&url=${encodeURIComponent(trimmed)}`;
+  }
+  return trimmed;
+}
+
 interface PpcSkuEconomicsTableProps {
   skuList: SkuEconomics[];
   isLoading: boolean;
@@ -358,14 +367,22 @@ export function PpcSkuEconomicsTable({
                     {item.mockupUrl ? (
                       <div className="relative group/mockup inline-block">
                         <img
-                          src={item.mockupUrl}
+                          src={getOptimizedThumbnailUrl(item.mockupUrl, 64) || item.mockupUrl}
                           alt={item.sku}
                           className="w-9 h-9 rounded-md object-cover border border-slate-200 shadow-2xs group-hover/mockup:ring-2 group-hover/mockup:ring-indigo-500 transition cursor-pointer"
                           loading="lazy"
+                          onError={(e) => {
+                            e.currentTarget.style.display = "none";
+                            const fallback = e.currentTarget.parentElement?.querySelector(".mockup-fallback");
+                            if (fallback) (fallback as HTMLElement).style.display = "flex";
+                          }}
                         />
+                        <div className="mockup-fallback hidden w-9 h-9 mx-auto rounded-md bg-slate-100 items-center justify-center text-slate-300">
+                          <ImageIcon size={16} />
+                        </div>
                         <div className="hidden group-hover/mockup:block absolute left-11 top-1/2 -translate-y-1/2 z-50 p-1 bg-white rounded-xl shadow-2xl border border-slate-200 pointer-events-none w-48 h-48">
                           <img
-                            src={item.mockupUrl}
+                            src={getOptimizedThumbnailUrl(item.mockupUrl, 400) || item.mockupUrl}
                             alt={item.sku}
                             className="w-full h-full object-cover rounded-lg"
                           />
@@ -465,7 +482,7 @@ export function PpcSkuEconomicsTable({
                 <div className="flex items-center gap-3">
                   {selectedSku.mockupUrl && (
                     <img
-                      src={selectedSku.mockupUrl}
+                      src={getOptimizedThumbnailUrl(selectedSku.mockupUrl, 400) || selectedSku.mockupUrl}
                       alt={selectedSku.sku}
                       className="w-16 h-16 rounded-xl object-cover border border-slate-200 shadow-sm shrink-0"
                     />
