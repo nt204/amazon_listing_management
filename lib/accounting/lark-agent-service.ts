@@ -149,6 +149,7 @@ export interface RunAgentOptions {
   receiveId?: string;
   receiveIdType?: "email" | "chat_id" | "open_id";
   sessionId?: string; // Lưu và nhận diện ngữ cảnh trao đổi ngắn hạn
+  replyToMessageId?: string; // Reply đúng tin nhắn của người hỏi (tránh nhầm khi nhóm đông)
   sendToLark?: boolean;
 }
 
@@ -327,6 +328,8 @@ const TOOLS_SCHEMA = [
   },
 ];
 
+const SESSION_STATE_TOOLS = new Set(["listNegativeCandidates", "requestNegativeKeywordAction"]);
+
 async function executeTool(name: string, rawArgs: string, sessionId?: string): Promise<string> {
   try {
     const args = JSON.parse(rawArgs || "{}");
@@ -459,6 +462,7 @@ Hệ thống đã lưu vào Negative Hub${execResult.bulksheetCreated ? " và x�
           await sendLarkCardNotification(successCard, {
             receiveId: targetReceiveId,
             receiveIdType: targetReceiveIdType,
+            replyToMessageId: options.replyToMessageId,
           }).catch(console.error);
         }
 
@@ -497,6 +501,7 @@ Hệ thống đã lưu vào Negative Hub${execResult.bulksheetCreated ? " và x�
           await sendLarkCardNotification(cancelCard, {
             receiveId: targetReceiveId,
             receiveIdType: targetReceiveIdType,
+            replyToMessageId: options.replyToMessageId,
           }).catch(console.error);
         }
 
@@ -632,8 +637,11 @@ QUY TẮC BẮT BUỘC:
     throw lastErr;
   }
 
-  // Vòng lặp Function Calling (Tối đa 4 vòng)
-  for (let step = 0; step < 4; step++) {
+  // Vòng lặp Function Calling (Tối đa 4 vòng). Vòng cuối không gửi tools để
+  // model buộc phải trả lời, tránh kết thúc bằng "Không có phản hồi."
+  const maxSteps = 4;
+  for (let step = 0; step < maxSteps; step++) {
+    const allowTools = step < maxSteps - 1;
     const response = await fetchWithRetry(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
@@ -643,8 +651,7 @@ QUY TẮC BẮT BUỘC:
       body: JSON.stringify({
         model,
         messages,
-        tools: TOOLS_SCHEMA,
-        tool_choice: "auto",
+        ...(allowTools ? { tools: TOOLS_SCHEMA, tool_choice: "auto" } : {}),
         temperature: 0.2,
       }),
     });
@@ -666,20 +673,27 @@ QUY TẮC BẮT BUỘC:
       break;
     }
 
-    // Thực thi các tool
-    for (const toolCall of assistantMsg.tool_calls) {
-      const fnName = toolCall.function.name;
-      const fnArgs = toolCall.function.arguments;
-      toolsUsed.push(fnName);
-
-      const toolResult = await executeTool(fnName, fnArgs, options.sessionId);
+    // Tool chỉ đọc chạy song song cho nhanh; tool dùng state phiên (danh sách
+    // candidate -> yêu cầu phủ định) phải chạy tuần tự đúng thứ tự model gọi.
+    const toolCalls: ToolCall[] = assistantMsg.tool_calls;
+    toolsUsed.push(...toolCalls.map((toolCall) => toolCall.function.name));
+    const runTool = (toolCall: ToolCall) =>
+      executeTool(toolCall.function.name, toolCall.function.arguments, options.sessionId);
+    const hasSessionTool = toolCalls.some((toolCall) => SESSION_STATE_TOOLS.has(toolCall.function.name));
+    const toolResults: string[] = [];
+    if (hasSessionTool) {
+      for (const toolCall of toolCalls) toolResults.push(await runTool(toolCall));
+    } else {
+      toolResults.push(...(await Promise.all(toolCalls.map(runTool))));
+    }
+    toolCalls.forEach((toolCall, index) => {
       messages.push({
         role: "tool",
         tool_call_id: toolCall.id,
-        name: fnName,
-        content: toolResult,
+        name: toolCall.function.name,
+        content: toolResults[index],
       });
-    }
+    });
   }
 
   const lastMsg = messages[messages.length - 1];
@@ -853,6 +867,7 @@ QUY TẮC BẮT BUỘC:
         const sendRes = await sendLarkCardNotification(larkCard, {
           receiveId: targetReceiveId,
           receiveIdType: targetReceiveIdType,
+          replyToMessageId: options.replyToMessageId,
         });
         if (sendRes.sent) {
           larkSent = true;
@@ -865,6 +880,7 @@ QUY TẮC BẮT BUỘC:
         const textRes = await sendLarkTextNotification(replyText, {
           receiveId: targetReceiveId,
           receiveIdType: targetReceiveIdType,
+          replyToMessageId: options.replyToMessageId,
         });
         larkSent = textRes.sent;
         larkDetail = {
