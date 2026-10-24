@@ -517,7 +517,7 @@ Hệ thống đã lưu vào Negative Hub${execResult.bulksheetCreated ? " và x�
 
   const apiKey = (process.env.LARK_AGENT_KEY || process.env.CHEAPKEYAI_API_KEY || "").trim();
   const baseUrl = (process.env.LARK_AGENT_BASE_URL || "https://cheapkeyai.shop/v1").replace(/\/+$/, "");
-  const model = (process.env.LARK_AGENT_MODEL || "gemini-3.8-flash").trim();
+  const model = (process.env.LARK_AGENT_MODEL || "gemini-3.5-flash-lite").trim();
 
   if (!apiKey) {
     throw new Error("Chưa cấu hình LARK_AGENT_KEY trong file .env");
