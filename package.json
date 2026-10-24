@@ -29,6 +29,7 @@
     "ppc:memory-readiness": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/ppc-action-memory-readiness.ts",
     "ppc:shadow-decisions": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/ppc-shadow-decision-runner.ts",
     "ppc:ai-review": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/ppc-ai-reviewer-runner.ts",
+    "lark:ws-worker": "node --conditions=react-server --env-file-if-exists=.env --env-file-if-exists=.env.local --import tsx scripts/lark-ws-worker.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "node --conditions=react-server --import tsx --test tests/*.test.ts"
@@ -38,6 +39,7 @@
     "@aws-sdk/s3-request-presigner": "^3.1147.0",
     "@fastify/busboy": "^3.2.2",
     "@google/genai": "^2.15.0",
+    "@larksuiteoapi/node-sdk": "^1.76.0",
     "@modelcontextprotocol/client": "^2.0.0",
     "@phosphor-icons/react": "^2.1.10",
     "@tanstack/react-query": "^5.104.1",
