@@ -234,7 +234,7 @@ export async function clearPendingAction(sessionId: string): Promise<void> {
   inMemoryPendingActions.delete(sessionId);
 }
 
-// In-memory set để deduplicate tin nhắn tránh bot bị spam/lặp lại
+// In-memory map để deduplicate tin nhắn tránh race condition & lặp lại
 const inMemoryProcessedMessages = new Map<string, number>();
 
 /**
@@ -243,27 +243,36 @@ const inMemoryProcessedMessages = new Map<string, number>();
  */
 export async function checkAndMarkMessageProcessed(messageId: string): Promise<boolean> {
   if (!messageId) return false;
-  const redis = getRedisClient();
-  if (redis) {
-    try {
-      // SETNX với TTL 600 giây (10 phút)
-      const res = await redis.set(`lark:msg_dedup:${messageId}`, "1", "EX", 600, "NX");
-      // Nếu res là null -> key đã tồn tại -> TRÙNG LẶP
-      return res === null;
-    } catch (err) {
-      console.warn("[LarkMemory] Redis checkAndMarkMessageProcessed error, using in-memory:", err);
+
+  const now = Date.now();
+
+  // 1. KIỂM TRA & ĐÁNH DẤU ĐỒNG BỘ (SYNCHRONOUS) NGAY LẬP TỨC TRƯỚC BẤT KỲ AWAIT NÀO!
+  // Vì Node.js là đơn luồng (single-thread), thao tác đồng bộ này loại bỏ 100% race-condition khi 2 event đến cùng 1 mili-giây.
+  if (inMemoryProcessedMessages.has(messageId)) {
+    return true; // Đã thấy ID này -> TRÙNG LẶP 100%
+  }
+  inMemoryProcessedMessages.set(messageId, now);
+
+  // Dọn dẹp map nếu quá lớn
+  if (inMemoryProcessedMessages.size > 2000) {
+    for (const [id, ts] of inMemoryProcessedMessages.entries()) {
+      if (now - ts > 600000) inMemoryProcessedMessages.delete(id);
     }
   }
 
-  // Fallback in-memory map
-  const now = Date.now();
-  for (const [id, ts] of inMemoryProcessedMessages.entries()) {
-    if (now - ts > 600000) inMemoryProcessedMessages.delete(id);
+  // 2. Ghi tiếp vào Redis phân tán nếu client đã sẵn sàng
+  const redis = getRedisClient();
+  if (redis && redis.status === "ready") {
+    try {
+      const res = await redis.set(`lark:msg_dedup:${messageId}`, "1", "EX", 600, "NX");
+      if (res === null) {
+        return true;
+      }
+    } catch {
+      // Redis warning ignored, already locked in-memory above
+    }
   }
-  if (inMemoryProcessedMessages.has(messageId)) {
-    return true;
-  }
-  inMemoryProcessedMessages.set(messageId, now);
+
   return false;
 }
 

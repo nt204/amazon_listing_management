@@ -21,6 +21,8 @@ const wsClient = new lark.WSClient({
   loggerLevel: lark.LoggerLevel.info,
 });
 
+const inFlightSessions = new Set<string>();
+
 const eventDispatcher = new lark.EventDispatcher({}).register({
   "im.message.receive_v1": async (data: any) => {
     try {
@@ -69,16 +71,27 @@ const eventDispatcher = new lark.EventDispatcher({}).register({
       // Dùng chat_id (hoặc thread/root_id) làm sessionId để lưu ngữ cảnh 30 phút
       const sessionId = message.root_id || message.chat_id;
 
-      // Xử lý bằng AI Agent và tự động gửi lại Card phản hồi vào nhóm/chat
-      await runAccountingAgent({
-        message: cleanText,
-        receiveId: message.chat_id,
-        receiveIdType: "chat_id",
-        sessionId,
-        sendToLark: true,
-      });
+      // Khóa phiên đang xử lý (In-flight lock) để tránh 2 request song song cùng trả lời 1 lúc
+      if (inFlightSessions.has(sessionId)) {
+        console.log(`[LarkWS] Bỏ qua vì đang có câu hỏi đang được xử lý trong session ${sessionId}`);
+        return;
+      }
+      inFlightSessions.add(sessionId);
 
-      console.log(`[LarkWS] Đã gửi phản hồi thành công vào chat ${message.chat_id}`);
+      try {
+        // Xử lý bằng AI Agent và tự động gửi lại Card phản hồi vào nhóm/chat
+        await runAccountingAgent({
+          message: cleanText,
+          receiveId: message.chat_id,
+          receiveIdType: "chat_id",
+          sessionId,
+          sendToLark: true,
+        });
+
+        console.log(`[LarkWS] Đã gửi phản hồi thành công vào chat ${message.chat_id}`);
+      } finally {
+        inFlightSessions.delete(sessionId);
+      }
     } catch (err: any) {
       console.error("[LarkWS] Lỗi khi xử lý sự kiện im.message.receive_v1:", err);
     }

@@ -25,7 +25,7 @@ export function getRedisClient(): Redis | null {
       maxRetriesPerRequest: 1,
       connectTimeout: 2000,
       lazyConnect: true,
-      enableOfflineQueue: false,
+      enableOfflineQueue: true,
     });
 
     client.on("error", (err) => {
