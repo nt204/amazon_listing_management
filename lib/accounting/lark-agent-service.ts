@@ -51,23 +51,28 @@ export function resolveContextualReconciliationLinks(
     }
   }
 
-  // 1. Inbound Shipments / Lô hàng / Chuyển kho
-  if (
-    toolsUsed.includes("getInboundShipments") ||
-    /lô hàng|inbound|chuyển kho|en route|vận chuyển|kiện hàng|fba1|fba/i.test(q)
-  ) {
-    add("🚚 Đối soát Lô hàng Inbound", "https://ncehub.net/?view=accounting&section=inventory");
-  }
-
-  // 2. PPC Negative Keywords / Tối ưu Ads / Candidate
-  if (
+  // 1. PPC Negative Keywords / Tối ưu Ads / Search Term Candidate
+  // Nếu câu hỏi hoặc thao tác liên quan tới Negative Keywords -> CHỈ hiển thị link PPC Negative, không hiển thị Inbound hay PnL!
+  const isPpcNegative = (
     toolsUsed.includes("requestNegativeKeywordAction") ||
     toolsUsed.includes("executeConfirmNegativeKeyword") ||
     toolsUsed.includes("listNegativeKeywords") ||
     toolsUsed.includes("listNegativeCandidates") ||
-    /negative|phủ định|chặn từ khóa|search term/i.test(q)
-  ) {
+    /negative|phủ định|chặn từ khóa|search term/i.test(query)
+  );
+
+  if (isPpcNegative) {
     add("🎯 Quản lý Negative Keywords", "https://ncehub.net/?view=ppc&section=negative_keyword&subtab=registry");
+    add("📋 Xem Lịch Sử Auto Upload", "https://ncehub.net/?view=ppc&section=negative_keyword&drawer=history");
+    return buttons;
+  }
+
+  // 2. Inbound Shipments / Lô hàng / Chuyển kho (Chỉ kích hoạt khi hỏi cụ thể về lô hàng/kho, KHÔNG dùng regex fba đơn lẻ)
+  if (
+    toolsUsed.includes("getInboundShipments") ||
+    /(lô hàng|inbound shipment|hàng đang về|vận chuyển kho|kiện hàng|chuyển kho fba)/i.test(q)
+  ) {
+    add("🚚 Đối soát Lô hàng Inbound", "https://ncehub.net/?view=accounting&section=inventory");
   }
 
   // 3. Chi phí Quảng cáo / Ads / PPC / ACOS / TACOS
@@ -564,11 +569,18 @@ QUY TẮC BẮT BUỘC:
    - Không được tự tiện biến việc "chưa có dữ liệu" thành con số $0 khi ngày đó chưa được đối soát hoặc chưa import.
 
 6. QUY TRÌNH TRA CỨU & PHỦ ĐỊNH TỪ KHÓA (NEGATIVE KEYWORDS):
-   - KHI NGƯỜI DÙNG HỎI DANH SÁCH TỪ KHÓA PHỦ ĐỊNH:
+   - KHI NGƯỜI DÙNG HỎI DANH SÁCH TỪ KHÓA CẦN PHỦ ĐỊNH / LÃNG PHÍ CLICKS / ĐỐT TIỀN:
      * Nếu hỏi danh sách từ khóa ĐANG phủ định trong Hub -> Gọi tool "listNegativeKeywords".
-     * Nếu hỏi danh sách từ khóa CẦN phủ định / lãng phí clicks / đốt tiền không ra đơn -> Gọi tool "listNegativeCandidates".
-     * Hiển thị danh sách rõ ràng, ĐÁNH SỐ THỨ TỰ (STT: 1, 2, 3...) theo dạng bảng hoặc danh sách đẹp (STT, Từ khóa, Campaign, Clicks, Spend lãng phí).
-     * Gợi ý người dùng: "Bạn có thể nhắn tên từ khóa (1 hoặc nhiều từ) hoặc chọn theo số thứ tự (ví dụ: 'Phủ định từ số 1, 2') để yêu cầu auto đẩy."
+     * Nếu hỏi danh sách từ khóa CẦN phủ định / lãng phí -> Gọi tool "listNegativeCandidates" (lấy tối đa 5 từ khóa lãng phí nhất để nội dung ngắn gọn, súc tích).
+     * CÁCH TRÌNH BÀY DANH SÁCH TỪ KHÓA LÃNG PHÍ (GỌN GÀNG, ĐẸP MẮT):
+       - TUYỆT ĐỐI KHÔNG dùng bảng ngang nhiều cột (vì tên Campaign rất dài làm bảng bị tràn và vỡ giao diện trên điện thoại & máy tính).
+       - Trình bày dạng DANH SÁCH ĐÁNH SỐ (1, 2, 3...) GỌN GÀNG theo mẫu sau:
+         [STT]. **[Search Term]** ([Tên Store])
+         • Clicks: [Số clicks] | Lãng phí: $[Số tiền spend] (0 đơn)
+         • Campaign: [Tên campaign]
+       - Phía dưới danh sách có lời nhắc ngắn gọn:
+         "💡 Hướng dẫn tiếp theo:
+         Bạn có thể nhắn số thứ tự (ví dụ: 'Phủ định từ số 1, 2') hoặc gõ trực tiếp tên từ khóa để AI Agent tạo yêu cầu phủ định."
    - KHI NGƯỜI DÙNG YÊU CẦU PHỦ ĐỊNH (1 HOẶC NHIỀU TỪ KHÓA HOẶC THEO STT):
      * BẮT BUỘC gọi tool "requestNegativeKeywordAction".
      * KHI TOOL TRẢ VỀ: Thao tác CHƯA được ghi vào hệ thống ngay. AI Agent BẮT BUỘC hiển thị Thẻ Xác Nhận ĐƠN GIẢN, DỄ NHÌN với thông tin:

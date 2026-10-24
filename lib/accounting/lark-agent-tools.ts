@@ -579,7 +579,7 @@ export async function listNegativeCandidates(
   sessionId?: string
 ) {
   const sql = await getDatabaseClient();
-  const limit = Math.min(30, Math.max(1, params.limit || 10));
+  const limit = Math.min(30, Math.max(1, params.limit || 5));
   const minClicks = Math.max(1, params.minClicks || 10);
 
   let targetStore: { id: string; name: string } | null = null;
@@ -697,7 +697,7 @@ export async function listNegativeCandidates(
     hasData: true,
     storeName: targetStore ? targetStore.name : "Tất cả các store",
     totalCandidates: rows.length,
-    instructions: "Hiển thị danh sách đánh số STT rõ ràng (STT, Keyword, Campaign, Clicks, Spend lãng phí). Hướng dẫn người dùng có thể nhắn số thứ tự (ví dụ: 'phủ định từ số 1, 2') hoặc nhắn trực tiếp các từ khóa để yêu cầu phủ định.",
+    instructions: "Trình bày danh sách dạng đánh số gọn gàng (STT. **Search Term** (Store) / Clicks: N | Lãng phí: $X (0 đơn) / Campaign: ...). TUYỆT ĐỐI KHÔNG dùng bảng ngang nhiều cột vì tên Campaign dài làm tràn vỡ giao diện chat. Hướng dẫn người dùng có thể nhắn số thứ tự (ví dụ: 'phủ định từ số 1, 2') hoặc nhắn trực tiếp các từ khóa để yêu cầu phủ định.",
     candidates: rows.map((r, idx) => ({
       stt: idx + 1,
       store: r.store_name,

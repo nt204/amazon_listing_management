@@ -4,6 +4,9 @@ import { checkAndMarkMessageProcessed } from "@/lib/accounting/lark-conversation
 
 export const maxDuration = 60; // Hỗ trợ multi-step tool calls
 
+// Set để deduplicate in-flight requests theo sessionId hoặc chatId
+const inFlightRequests = new Set<string>();
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
@@ -16,12 +19,16 @@ export async function POST(request: NextRequest) {
     // 2. Xử lý Event Webhook từ Lark Bot (im.message.receive_v1)
     if (body.header?.event_type === "im.message.receive_v1" && body.event?.message) {
       const messageObj = body.event.message;
+      const eventId = body.header?.event_id;
+      const messageId = messageObj.message_id;
 
-      // Chống lặp / SPAM tin nhắn trùng lặp
-      if (messageObj.message_id) {
-        const isDuplicate = await checkAndMarkMessageProcessed(messageObj.message_id);
+      // Chống lặp / SPAM tin nhắn trùng lặp theo message_id hoặc event_id
+      const dedupKey = messageId || eventId;
+      if (dedupKey) {
+        const isDuplicate = await checkAndMarkMessageProcessed(dedupKey);
         if (isDuplicate) {
-          return Response.json({ code: 0, msg: "ignored: duplicate message_id" });
+          console.log(`[LarkWebhook] Bỏ qua tin nhắn trùng lặp: ${dedupKey}`);
+          return Response.json({ code: 0, msg: "ignored: duplicate message" });
         }
       }
 
@@ -55,23 +62,36 @@ export async function POST(request: NextRequest) {
       const chatId = messageObj.chat_id;
       const sessionId = messageObj.root_id || chatId;
 
-      const result = await runAccountingAgent({
-        message: cleanText,
-        receiveId: chatId,
-        receiveIdType: "chat_id",
-        sessionId,
-        sendToLark: true,
-      });
+      // Khóa phiên: Nếu request trước đó cho cùng session đang chạy thì bỏ qua để không lặp kết quả
+      if (inFlightRequests.has(sessionId)) {
+        console.log(`[LarkWebhook] Phiên ${sessionId} đang chạy, bỏ qua request retry.`);
+        return Response.json({ code: 0, msg: "ignored: session in-flight" });
+      }
 
-      return Response.json({
-        code: 0,
-        msg: "success",
-        data: {
-          query: cleanText,
-          toolsUsed: result.toolsUsed,
-          larkSent: result.larkSent,
-        },
-      });
+      // QUAN TRỌNG NHẤT:
+      // Lark Webhook yêu cầu phản hồi HTTP 200 trong 3 GIÂY! Nếu xử lý LLM đồng bộ (mất 5-8s), Lark sẽ coi là timeout và tự động retry gây lặp tin nhắn!
+      // Do đó, ta trả về HTTP 200 { code: 0 } ngay lập tức (<50ms) và chạy AI Agent trong background:
+      inFlightRequests.add(sessionId);
+
+      void (async () => {
+        try {
+          console.log(`[LarkWebhook] Bắt đầu xử lý cho chat ${chatId}: "${cleanText}"`);
+          const result = await runAccountingAgent({
+            message: cleanText,
+            receiveId: chatId,
+            receiveIdType: "chat_id",
+            sessionId,
+            sendToLark: true,
+          });
+          console.log(`[LarkWebhook] Hoàn tất gửi Lark cho chat ${chatId}. larkSent:`, result.larkSent);
+        } catch (agentErr) {
+          console.error(`[LarkWebhook] Lỗi xử lý runAccountingAgent:`, agentErr);
+        } finally {
+          inFlightRequests.delete(sessionId);
+        }
+      })();
+
+      return Response.json({ code: 0, msg: "success" });
     }
 
     // 3. Xử lý Event Card Action Trigger từ Lark Bot (khi bấm nút trên Thẻ)
@@ -83,24 +103,46 @@ export async function POST(request: NextRequest) {
       const chatId = body.event?.context?.open_chat_id || body.open_chat_id;
 
       if (actionType === "CONFIRM_NEGATIVE" && sessionId) {
-        await runAccountingAgent({
-          message: "Xác nhận",
-          receiveId: chatId || sessionId,
-          receiveIdType: "chat_id",
-          sessionId,
-          sendToLark: true,
-        });
+        if (!inFlightRequests.has(sessionId)) {
+          inFlightRequests.add(sessionId);
+          void (async () => {
+            try {
+              await runAccountingAgent({
+                message: "Xác nhận",
+                receiveId: chatId || sessionId,
+                receiveIdType: "chat_id",
+                sessionId,
+                sendToLark: true,
+              });
+            } catch (e) {
+              console.error("[LarkWebhook] Card confirm error:", e);
+            } finally {
+              inFlightRequests.delete(sessionId);
+            }
+          })();
+        }
         return Response.json({
-          toast: { type: "success", content: "Đã tự động đẩy từ khóa vào danh sách Negative thành công!" },
+          toast: { type: "success", content: "Đang tiến hành tạo Bulksheet và đẩy từ khóa..." },
         });
       } else if (actionType === "CANCEL_NEGATIVE" && sessionId) {
-        await runAccountingAgent({
-          message: "Hủy",
-          receiveId: chatId || sessionId,
-          receiveIdType: "chat_id",
-          sessionId,
-          sendToLark: true,
-        });
+        if (!inFlightRequests.has(sessionId)) {
+          inFlightRequests.add(sessionId);
+          void (async () => {
+            try {
+              await runAccountingAgent({
+                message: "Hủy",
+                receiveId: chatId || sessionId,
+                receiveIdType: "chat_id",
+                sessionId,
+                sendToLark: true,
+              });
+            } catch (e) {
+              console.error("[LarkWebhook] Card cancel error:", e);
+            } finally {
+              inFlightRequests.delete(sessionId);
+            }
+          })();
+        }
         return Response.json({
           toast: { type: "info", content: "Đã hủy thao tác phủ định từ khóa." },
         });
