@@ -357,15 +357,15 @@ export function TrelloBoardView({
 
   const [openDropdown, setOpenDropdown] = useState<"model" | "brand" | "template" | null>(null);
   const AI_MODEL_OPTIONS = useMemo(() => [
-    { value: "gemini-3.5-flash-lite-cheapkey", label: "Gemini 3.5 Flash-Lite", tag: "Mặc định (CheapKey AI)", icon: "💸" },
+    { value: "gemini-3.8-flash-cheapkey", label: "Gemini 3.8 Flash", tag: "Mặc định (CheapKey AI)", icon: "💸" },
+    { value: "gemini-3.7-flash-cheapkey", label: "Gemini 3.7 Flash", tag: "CheapKey AI", icon: "💸" },
     { value: "gemini-3.6-flash", label: "Gemini 3.6 Flash", tag: "Chất lượng cao", icon: "⚡" },
     { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash", tag: "Cân bằng", icon: "⚡" },
     { value: "gpt-4o", label: "GPT-4o", tag: "Chất lượng cao", icon: "🤖" },
     { value: "gpt-5.6-luna", label: "GPT-5.6 Luna", tag: "CheapKey AI", icon: "💸" },
-    { value: "gemini-3.7-flash-cheapkey", label: "Gemini 3.7 Flash", tag: "CheapKey AI", icon: "💸" },
   ], []);
 
-  const [selectedModel, setSelectedModel] = useState("gemini-3.5-flash-lite-cheapkey");
+  const [selectedModel, setSelectedModel] = useState("gemini-3.8-flash-cheapkey");
 
   // View Layout, Sort, Search, Filter & Pagination states
   const [reviewLayout, setReviewLayout] = useState<"cards" | "compact">("compact");

@@ -10,6 +10,11 @@ const DEFAULT_OPENAI_MODELS = [
   { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", note: "Balanced quality and cost" },
   { id: "gpt-5.6-luna", label: "GPT-5.6 Luna (CheapKey AI)", note: "Giá rẻ & tốc độ cao qua CheapKey AI" },
   {
+    id: "gemini-3.8-flash-cheapkey",
+    label: "Gemini 3.8 Flash (CheapKey AI)",
+    note: "Gemini 3.8 Flash qua cổng CheapKey AI",
+  },
+  {
     id: "gemini-3.7-flash-cheapkey",
     label: "Gemini 3.7 Flash (CheapKey AI)",
     note: "Gemini 3.7 Flash qua cổng CheapKey AI",
@@ -21,13 +26,16 @@ const DEFAULT_OPENAI_MODELS = [
   },
 ] as const;
 
+export const CHEAPKEY_GEMINI_3_8_FLASH_MODEL = "gemini-3.8-flash-cheapkey";
+export const CHEAPKEY_GEMINI_3_8_FLASH_UPSTREAM_MODEL = "gemini-3.8-flash";
 export const CHEAPKEY_GEMINI_3_7_FLASH_MODEL = "gemini-3.7-flash-cheapkey";
 export const CHEAPKEY_GEMINI_3_7_FLASH_UPSTREAM_MODEL = "gemini-3.7-flash";
 export const CHEAPKEY_GEMINI_3_5_FLASH_LITE_MODEL = "gemini-3.5-flash-lite-cheapkey";
 export const CHEAPKEY_GEMINI_3_5_FLASH_LITE_UPSTREAM_MODEL = "gemini-3.5-flash-lite";
 
 export function isCheapKeyGeminiTextModel(model: string) {
-  return model === CHEAPKEY_GEMINI_3_7_FLASH_MODEL ||
+  return model === CHEAPKEY_GEMINI_3_8_FLASH_MODEL ||
+    model === CHEAPKEY_GEMINI_3_7_FLASH_MODEL ||
     model === CHEAPKEY_GEMINI_3_5_FLASH_LITE_MODEL;
 }
 
@@ -36,6 +44,9 @@ export function isCheapKeyTextModel(model: string) {
 }
 
 export function resolveCheapKeyUpstreamTextModel(model: string) {
+  if (model === CHEAPKEY_GEMINI_3_8_FLASH_MODEL) {
+    return CHEAPKEY_GEMINI_3_8_FLASH_UPSTREAM_MODEL;
+  }
   if (model === CHEAPKEY_GEMINI_3_7_FLASH_MODEL) {
     return CHEAPKEY_GEMINI_3_7_FLASH_UPSTREAM_MODEL;
   }
@@ -49,8 +60,10 @@ export const DEFAULT_GEMINI_MODEL = DEFAULT_GEMINI_MODELS[0].id;
 export const DEFAULT_OPENAI_MODEL = "gpt-5.6-luna";
 export const DEFAULT_LISTING_FALLBACK_MODEL = CHEAPKEY_GEMINI_3_5_FLASH_LITE_MODEL;
 
-export function getListingFallbackModel(model: string) {
-  return model === DEFAULT_OPENAI_MODEL ? DEFAULT_LISTING_FALLBACK_MODEL : undefined;
+export function getListingFallbackModel(model: string): string | undefined {
+  if (model === CHEAPKEY_GEMINI_3_8_FLASH_MODEL) return CHEAPKEY_GEMINI_3_5_FLASH_LITE_MODEL;
+  if (model === DEFAULT_OPENAI_MODEL) return CHEAPKEY_GEMINI_3_8_FLASH_MODEL;
+  return undefined;
 }
 
 export interface ListingModelCandidate {
@@ -83,9 +96,15 @@ export function getListingModelCandidates(options: {
   };
 
   addCandidate(preferred, preferredModel);
-  const modelFallback = getListingFallbackModel(preferredModel);
-  if (preferred === "openai" && modelFallback) {
-    addCandidate("openai", modelFallback);
+  if (preferred === "openai") {
+    const modelFallback = getListingFallbackModel(preferredModel);
+    if (modelFallback) {
+      addCandidate("openai", modelFallback);
+      const secondaryFallback = getListingFallbackModel(modelFallback);
+      if (secondaryFallback) {
+        addCandidate("openai", secondaryFallback);
+      }
+    }
   }
   addCandidate(alternateProvider, alternateModel);
   return candidates;

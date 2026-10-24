@@ -45,11 +45,15 @@ test("listing catalog hides retired model options", () => {
   assert.equal(getOpenAIModels().some((option) => option.id === "gpt-4o-mini"), false);
 });
 
-test("listing defaults to Luna and falls back to CheapKey Gemini 3.5 Flash-Lite", () => {
+test("listing defaults to Luna and falls back to CheapKey Gemini 3.8 Flash and 3.5 Flash-Lite", () => {
   assert.equal(DEFAULT_OPENAI_MODEL, "gpt-5.6-luna");
   assert.equal(DEFAULT_LISTING_FALLBACK_MODEL, CHEAPKEY_GEMINI_3_5_FLASH_LITE_MODEL);
   assert.equal(
     getListingFallbackModel(DEFAULT_OPENAI_MODEL),
+    "gemini-3.8-flash-cheapkey",
+  );
+  assert.equal(
+    getListingFallbackModel("gemini-3.8-flash-cheapkey"),
     CHEAPKEY_GEMINI_3_5_FLASH_LITE_MODEL,
   );
   assert.deepEqual(
@@ -60,6 +64,7 @@ test("listing defaults to Luna and falls back to CheapKey Gemini 3.5 Flash-Lite"
     }),
     [
       { provider: "openai", model: DEFAULT_OPENAI_MODEL },
+      { provider: "openai", model: "gemini-3.8-flash-cheapkey" },
       { provider: "openai", model: CHEAPKEY_GEMINI_3_5_FLASH_LITE_MODEL },
       { provider: "gemini", model: "gemini-3.6-flash" },
     ],

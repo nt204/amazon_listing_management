@@ -123,7 +123,7 @@ export async function reportDailyBusinessData(
       template: "blue",
       title: {
         tag: "plain_text",
-        content: `Báo cáo Kinh doanh Ngày ${latestDate}`,
+        content: `Báo cáo Kinh doanh FBA Ngày ${latestDate}`,
       },
     },
     body: {
@@ -178,7 +178,7 @@ export async function reportDailyBusinessData(
   };
 
   const fallbackLines = [
-    `Báo cáo Kinh doanh Ngày ${latestDate}`,
+    `Báo cáo Kinh doanh FBA Ngày ${latestDate}`,
     `Store | Revenue | Quantity | Ads Fee | AMZ Fee | Refund | Profit`,
     ...reports.map((r) => {
       const it = r.item;

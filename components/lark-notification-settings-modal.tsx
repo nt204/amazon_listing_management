@@ -437,15 +437,15 @@ export function LarkNotificationSettingsModal({ open, onClose }: { open: boolean
                             />
                           </div>
 
-                          <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-slate-200/60">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <span className="text-[11px] font-bold text-slate-500 mr-1">Chức năng:</span>
+                          <div className="flex items-center justify-between gap-1.5 pt-1.5 border-t border-slate-200/60">
+                            <div className="flex items-center gap-1 shrink-0">
+                              <span className="text-[10px] font-bold text-slate-500 whitespace-nowrap mr-0.5">Chức năng:</span>
                               {categories.map((category) => {
                                 const isChecked = Boolean(channel.categories?.[category.id]);
                                 return (
                                   <label
                                     key={category.id}
-                                    className={`inline-flex items-center gap-1.5 cursor-pointer rounded-lg border px-2.5 py-1 text-xs font-bold transition select-none ${
+                                    className={`inline-flex items-center gap-1 cursor-pointer whitespace-nowrap rounded-md border px-1.5 py-0.5 text-[11px] font-bold transition select-none ${
                                       isChecked
                                         ? "border-indigo-300 bg-indigo-50 text-indigo-700"
                                         : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
@@ -462,7 +462,7 @@ export function LarkNotificationSettingsModal({ open, onClose }: { open: boolean
                                           },
                                         })
                                       }
-                                      className="h-3.5 w-3.5 accent-indigo-600 rounded"
+                                      className="h-3 w-3 accent-indigo-600 rounded"
                                     />
                                     {category.label}
                                   </label>
@@ -470,27 +470,38 @@ export function LarkNotificationSettingsModal({ open, onClose }: { open: boolean
                               })}
                             </div>
 
-                            <div className="flex items-center gap-2 ml-auto">
+                            <div className="flex items-center gap-1.5 shrink-0 ml-auto">
                               <button
                                 type="button"
                                 disabled={channel.id.startsWith("new:") || !channel.chatId || testing === channel.id}
                                 onClick={() => void sendTest("channel", channel.id)}
-                                className="inline-flex h-8 items-center justify-center gap-1 whitespace-nowrap rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-bold text-slate-700 hover:border-indigo-300 hover:text-indigo-700 disabled:opacity-50"
+                                className="inline-flex h-6 items-center justify-center gap-1 whitespace-nowrap rounded-md border border-slate-300 bg-white px-2 text-[11px] font-bold text-slate-700 hover:border-indigo-300 hover:text-indigo-700 disabled:opacity-50"
                               >
-                                <FlaskIcon size={13} /> {testing === channel.id ? "Đang gửi..." : "Gửi thử"}
+                                <FlaskIcon size={11} /> {testing === channel.id ? "Đang gửi..." : "Gửi thử"}
                               </button>
-                              <Toggle
-                                checked={channel.enabled}
-                                onChange={(enabled) => updateChannel(index, { enabled })}
-                                label="Bật/Tắt nhóm"
-                              />
+                              <button
+                                type="button"
+                                role="switch"
+                                aria-checked={channel.enabled}
+                                aria-label="Bật/Tắt nhóm"
+                                onClick={() => updateChannel(index, { enabled: !channel.enabled })}
+                                className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                                  channel.enabled ? "bg-indigo-600" : "bg-slate-300"
+                                }`}
+                              >
+                                <span
+                                  className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition duration-200 ease-in-out ${
+                                    channel.enabled ? "translate-x-4" : "translate-x-0"
+                                  }`}
+                                />
+                              </button>
                               <button
                                 type="button"
                                 onClick={() => removeChannel(index)}
                                 aria-label="Xóa nhóm"
-                                className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+                                className="grid h-6 w-6 place-items-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-600"
                               >
-                                <TrashIcon size={15} />
+                                <TrashIcon size={13} />
                               </button>
                             </div>
                           </div>
