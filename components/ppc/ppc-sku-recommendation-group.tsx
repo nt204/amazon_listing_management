@@ -100,6 +100,12 @@ function getOptimizedThumbnailUrl(url: string | null | undefined, w = 64): strin
   if (!url) return null;
   const trimmed = url.trim();
   if (trimmed.includes("media-amazon.com") || trimmed.includes("images-amazon.com")) {
+    if (/\._[A-Za-z0-9_,]+_\.([a-zA-Z]+)(?:\?.*)?$/.test(trimmed)) {
+      return trimmed.replace(/\._[A-Za-z0-9_,]+_\.([a-zA-Z]+)(?:\?.*)?$/, `._AC_SR${w},${w}_.$1`);
+    }
+    if (/\/images\/I\/[A-Za-z0-9%_+-]+\.([a-zA-Z]+)(?:\?.*)?$/.test(trimmed)) {
+      return trimmed.replace(/\.([a-zA-Z]+)(?:\?.*)?$/, `._AC_SR${w},${w}_.$1`);
+    }
     return trimmed;
   }
   if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {

@@ -160,6 +160,13 @@ function getOptimizedThumbnailUrl(url: string | null | undefined, w = 64): strin
   if (!url) return null;
   const trimmed = url.trim();
   if (trimmed.includes("media-amazon.com") || trimmed.includes("images-amazon.com")) {
+    // Amazon CDN dynamic resizing: replace existing modifier or insert before extension
+    if (/\._[A-Za-z0-9_,]+_\.([a-zA-Z]+)(?:\?.*)?$/.test(trimmed)) {
+      return trimmed.replace(/\._[A-Za-z0-9_,]+_\.([a-zA-Z]+)(?:\?.*)?$/, `._AC_SR${w},${w}_.$1`);
+    }
+    if (/\/images\/I\/[A-Za-z0-9%_+-]+\.([a-zA-Z]+)(?:\?.*)?$/.test(trimmed)) {
+      return trimmed.replace(/\.([a-zA-Z]+)(?:\?.*)?$/, `._AC_SR${w},${w}_.$1`);
+    }
     return trimmed;
   }
   if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
@@ -578,6 +585,15 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     acos: 0,
     skuGroups: [],
   });
+  const [hoveredMockup, setHoveredMockup] = useState<{
+    url: string;
+    sku?: string;
+    rect: { top: number; right: number };
+  } | null>(null);
+  const [previewModalMockup, setPreviewModalMockup] = useState<{
+    url: string;
+    sku?: string;
+  } | null>(null);
   const [loadingTargetsServer, setLoadingTargetsServer] = useState(false);
   const [expandedChildTerms, setExpandedChildTerms] = useState<
     Record<string, { loading: boolean; terms: PpcSearchTermRow[]; error?: string }>
@@ -3796,20 +3812,22 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                     <tr key={group.sku} className="hover:bg-slate-50/70">
                       <td className="px-3 py-3 text-center">
                         {group.mockupUrl ? (
-                          <div className="group/mockup relative inline-block">
+                          <div
+                            className="relative inline-block cursor-pointer group/thumb"
+                            onMouseEnter={(e) => {
+                              const r = e.currentTarget.getBoundingClientRect();
+                              setHoveredMockup({ url: group.mockupUrl!, sku: group.sku, rect: { top: r.top, right: r.right } });
+                            }}
+                            onMouseLeave={() => setHoveredMockup(null)}
+                            onClick={() => setPreviewModalMockup({ url: group.mockupUrl!, sku: group.sku })}
+                            title="Nhấn để xem ảnh phóng to"
+                          >
                             <img
                               src={getOptimizedThumbnailUrl(group.mockupUrl, 80) || group.mockupUrl}
                               alt={group.sku}
-                              className="h-12 w-12 rounded-lg border border-slate-200 object-cover shadow-2xs"
+                              className="h-12 w-12 rounded-lg border border-slate-200 object-cover shadow-2xs group-hover/thumb:border-indigo-500 group-hover/thumb:ring-2 group-hover/thumb:ring-indigo-200 transition-all"
                               loading="lazy"
                             />
-                            <div className="pointer-events-none absolute left-14 top-1/2 z-50 hidden h-52 w-52 -translate-y-1/2 rounded-xl border border-slate-200 bg-white p-1 shadow-2xl group-hover/mockup:block">
-                              <img
-                                src={getOptimizedThumbnailUrl(group.mockupUrl, 400) || group.mockupUrl}
-                                alt={group.sku}
-                                className="h-full w-full rounded-lg object-cover"
-                              />
-                            </div>
                           </div>
                         ) : (
                           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-slate-100 text-slate-300">
@@ -4385,14 +4403,19 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                       <td className="py-2.5 px-2 text-center">
                         {s.mockupUrl ? (
                           <div
-                            className="relative group/mockup inline-block cursor-pointer"
+                            className="relative inline-block cursor-pointer group/thumb"
+                            onMouseEnter={(e) => {
+                              const r = e.currentTarget.getBoundingClientRect();
+                              setHoveredMockup({ url: s.mockupUrl!, sku: s.sku, rect: { top: r.top, right: r.right } });
+                            }}
+                            onMouseLeave={() => setHoveredMockup(null)}
                             onClick={() => handleJumpToAutoBid(s.sku)}
                             title={`Mở đề xuất Auto Bid cho ${s.sku}`}
                           >
                             <img
                               src={getOptimizedThumbnailUrl(s.mockupUrl, 64) || s.mockupUrl}
                               alt={s.sku}
-                              className="w-9 h-9 rounded-md object-cover border border-slate-200 shadow-2xs group-hover/mockup:ring-2 group-hover/mockup:ring-indigo-500 transition"
+                              className="w-9 h-9 rounded-md object-cover border border-slate-200 shadow-2xs group-hover/thumb:ring-2 group-hover/thumb:ring-indigo-500 transition"
                               loading="lazy"
                               onError={(e) => {
                                 e.currentTarget.style.display = "none";
@@ -4402,13 +4425,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                             />
                             <div className="mockup-fallback hidden w-9 h-9 mx-auto rounded-md bg-slate-100 items-center justify-center text-slate-300">
                               <Tag size={14} />
-                            </div>
-                            <div className="hidden group-hover/mockup:block absolute left-11 top-1/2 -translate-y-1/2 z-50 p-1 bg-white rounded-xl shadow-2xl border border-slate-200 pointer-events-none w-48 h-48">
-                              <img
-                                src={getOptimizedThumbnailUrl(s.mockupUrl, 400) || s.mockupUrl}
-                                alt={s.sku}
-                                className="w-full h-full object-cover rounded-lg"
-                              />
                             </div>
                           </div>
                         ) : (
@@ -4696,20 +4712,22 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                     <tr key={group.sku} className="hover:bg-slate-50/70">
                       <td className="px-3 py-3 text-center">
                         {group.mockupUrl ? (
-                          <div className="group/mockup relative inline-block">
+                          <div
+                            className="relative inline-block cursor-pointer group/thumb"
+                            onMouseEnter={(e) => {
+                              const r = e.currentTarget.getBoundingClientRect();
+                              setHoveredMockup({ url: group.mockupUrl!, sku: group.sku, rect: { top: r.top, right: r.right } });
+                            }}
+                            onMouseLeave={() => setHoveredMockup(null)}
+                            onClick={() => setPreviewModalMockup({ url: group.mockupUrl!, sku: group.sku })}
+                            title="Nhấn để xem ảnh phóng to"
+                          >
                             <img
                               src={getOptimizedThumbnailUrl(group.mockupUrl, 80) || group.mockupUrl}
                               alt={group.sku}
-                              className="h-12 w-12 rounded-lg border border-slate-200 object-cover shadow-2xs"
+                              className="h-12 w-12 rounded-lg border border-slate-200 object-cover shadow-2xs group-hover/thumb:border-indigo-500 group-hover/thumb:ring-2 group-hover/thumb:ring-indigo-200 transition-all"
                               loading="lazy"
                             />
-                            <div className="pointer-events-none absolute left-14 top-1/2 z-50 hidden h-52 w-52 -translate-y-1/2 rounded-xl border border-slate-200 bg-white p-1 shadow-2xl group-hover/mockup:block">
-                              <img
-                                src={getOptimizedThumbnailUrl(group.mockupUrl, 400) || group.mockupUrl}
-                                alt={group.sku}
-                                className="h-full w-full rounded-lg object-cover"
-                              />
-                            </div>
                           </div>
                         ) : (
                           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-slate-100 text-slate-300">
@@ -5241,6 +5259,56 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
           pendingActionCount={pendingActionCount}
           selectedStore={selectedStore}
         />
+      )}
+
+      {/* FLOATING HOVER PREVIEW (Thoát khỏi table overflow-x-auto, không bao giờ bị che/cắt) */}
+      {hoveredMockup && (
+        <div
+          className="fixed z-[9999] pointer-events-none bg-white p-1.5 rounded-xl shadow-2xl border border-slate-200 w-52 h-52 animate-in fade-in zoom-in-95 duration-100"
+          style={{
+            top: Math.max(16, Math.min(hoveredMockup.rect.top - 20, typeof window !== "undefined" ? window.innerHeight - 224 : 0)),
+            left: Math.min(hoveredMockup.rect.right + 12, typeof window !== "undefined" ? window.innerWidth - 224 : 0),
+          }}
+        >
+          <img
+            src={getOptimizedThumbnailUrl(hoveredMockup.url, 400) || hoveredMockup.url}
+            alt={hoveredMockup.sku || "Mockup preview"}
+            className="w-full h-full object-cover rounded-lg"
+          />
+        </div>
+      )}
+
+      {/* LIGHTBOX MODAL KHI CLICK ẢNH */}
+      {previewModalMockup && (
+        <div
+          className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs animate-in fade-in duration-150 cursor-pointer"
+          onClick={() => setPreviewModalMockup(null)}
+        >
+          <div
+            className="relative max-w-lg w-full bg-white rounded-2xl p-4 shadow-2xl border border-slate-200 cursor-default"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
+              <span className="font-mono font-bold text-sm text-slate-900">
+                {previewModalMockup.sku || "Mockup Preview"}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPreviewModalMockup(null)}
+                className="text-slate-400 hover:text-slate-700 p-1 rounded-lg hover:bg-slate-100 cursor-pointer transition"
+              >
+                <X size={18} weight="bold" />
+              </button>
+            </div>
+            <div className="aspect-square w-full rounded-xl overflow-hidden bg-slate-50 flex items-center justify-center border border-slate-100">
+              <img
+                src={getOptimizedThumbnailUrl(previewModalMockup.url, 800) || previewModalMockup.url}
+                alt={previewModalMockup.sku || "Mockup preview"}
+                className="w-full h-full object-contain"
+              />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
