@@ -84,63 +84,91 @@ async function getTenantAccessToken(appId: string, appSecret: string) {
   }
 }
 
+export type LarkRecipient = {
+  receiveId: string;
+  receiveIdType: string;
+  /** Reply in-thread to this message instead of posting a new chat message. */
+  replyToMessageId?: string;
+};
+
+function larkSendRequest(recipient: LarkRecipient, msgType: string, content: string) {
+  const replyTo = recipient.replyToMessageId?.trim();
+  if (replyTo) {
+    return {
+      url: `${LARK_API_BASE_URL}/im/v1/messages/${encodeURIComponent(replyTo)}/reply`,
+      body: JSON.stringify({ msg_type: msgType, content }),
+    };
+  }
+  return {
+    url: `${LARK_API_BASE_URL}/im/v1/messages?receive_id_type=${encodeURIComponent(recipient.receiveIdType.trim())}`,
+    body: JSON.stringify({ receive_id: recipient.receiveId.trim(), msg_type: msgType, content }),
+  };
+}
+
+let cachedBotOpenId: string | null = null;
+
+/** open_id of this app's bot, used to tell "@bot" apart from mentions of other members. */
+export async function getLarkBotOpenId(): Promise<string | null> {
+  const configured = process.env.LARK_BOT_OPEN_ID?.trim();
+  if (configured) return configured;
+  if (cachedBotOpenId) return cachedBotOpenId;
+
+  const appId = process.env.LARK_APP_ID?.trim();
+  const appSecret = process.env.LARK_APP_SECRET?.trim();
+  if (!appId || !appSecret) return null;
+
+  const token = await getTenantAccessToken(appId, appSecret);
+  const result = await fetchJson<{ bot?: { open_id?: string } }>(
+    `${LARK_API_BASE_URL}/bot/v3/info`,
+    { method: "GET", headers: { authorization: `Bearer ${token}` } },
+  );
+  cachedBotOpenId = result.bot?.open_id || null;
+  return cachedBotOpenId;
+}
+
 export async function sendLarkTextNotification(
   text: string,
-  recipient: { receiveId: string; receiveIdType: string },
+  recipient: LarkRecipient,
 ): Promise<LarkNotificationResult> {
   const appId = process.env.LARK_APP_ID?.trim();
   const appSecret = process.env.LARK_APP_SECRET?.trim();
   const receiveId = recipient.receiveId.trim();
-  const receiveIdType = recipient.receiveIdType.trim();
 
   if (!appId || !appSecret || !receiveId) return { sent: false, reason: "not_configured" };
 
   const token = await getTenantAccessToken(appId, appSecret);
-  await fetchJson<LarkApiResponse>(
-    `${LARK_API_BASE_URL}/im/v1/messages?receive_id_type=${encodeURIComponent(receiveIdType)}`,
-    {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${token}`,
-        "content-type": "application/json; charset=utf-8",
-      },
-      body: JSON.stringify({
-        receive_id: receiveId,
-        msg_type: "text",
-        content: JSON.stringify({ text }),
-      }),
+  const request = larkSendRequest(recipient, "text", JSON.stringify({ text }));
+  await fetchJson<LarkApiResponse>(request.url, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json; charset=utf-8",
     },
-  );
+    body: request.body,
+  });
   return { sent: true };
 }
 
 export async function sendLarkCardNotification(
   card: Record<string, any>,
-  recipient: { receiveId: string; receiveIdType: string },
+  recipient: LarkRecipient,
 ): Promise<LarkNotificationResult> {
   const appId = process.env.LARK_APP_ID?.trim();
   const appSecret = process.env.LARK_APP_SECRET?.trim();
   const receiveId = recipient.receiveId.trim();
-  const receiveIdType = recipient.receiveIdType.trim();
 
   if (!appId || !appSecret || !receiveId) return { sent: false, reason: "not_configured" };
 
   const token = await getTenantAccessToken(appId, appSecret);
-  await fetchJson<LarkApiResponse>(
-    `${LARK_API_BASE_URL}/im/v1/messages?receive_id_type=${encodeURIComponent(receiveIdType)}`,
-    {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${token}`,
-        "content-type": "application/json; charset=utf-8",
-      },
-      body: JSON.stringify({
-        receive_id: receiveId,
-        msg_type: "interactive",
-        content: JSON.stringify(card),
-      }),
+  const request = larkSendRequest(recipient, "interactive", JSON.stringify(card));
+  await fetchJson<LarkApiResponse>(request.url, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json; charset=utf-8",
     },
-  );
+    body: request.body,
+  });
   return { sent: true };
 }
 
@@ -179,7 +207,7 @@ export async function uploadLarkImage(
 
 export async function sendLarkImageNotification(
   imageKey: string,
-  recipient: { receiveId: string; receiveIdType: string },
+  recipient: LarkRecipient,
 ): Promise<LarkNotificationResult> {
   const appId = process.env.LARK_APP_ID?.trim();
   const appSecret = process.env.LARK_APP_SECRET?.trim();
@@ -268,4 +296,5 @@ export async function notifyLarkEventBestEffort(
 export function resetLarkNotificationStateForTests() {
   cachedToken = null;
   pendingToken = null;
+  cachedBotOpenId = null;
 }
