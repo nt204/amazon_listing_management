@@ -105,6 +105,26 @@ function larkSendRequest(recipient: LarkRecipient, msgType: string, content: str
   };
 }
 
+/** Adds an emoji reaction (e.g. "OnIt") so the asker sees instantly that the bot picked the message up. */
+export async function addLarkMessageReaction(messageId: string, emojiType: string): Promise<void> {
+  const appId = process.env.LARK_APP_ID?.trim();
+  const appSecret = process.env.LARK_APP_SECRET?.trim();
+  if (!appId || !appSecret || !messageId.trim()) return;
+
+  const token = await getTenantAccessToken(appId, appSecret);
+  await fetchJson<LarkApiResponse>(
+    `${LARK_API_BASE_URL}/im/v1/messages/${encodeURIComponent(messageId.trim())}/reactions`,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify({ reaction_type: { emoji_type: emojiType } }),
+    },
+  );
+}
+
 let cachedBotOpenId: string | null = null;
 
 /** open_id of this app's bot, used to tell "@bot" apart from mentions of other members. */

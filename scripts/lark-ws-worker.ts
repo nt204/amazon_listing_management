@@ -1,8 +1,11 @@
 import "server-only";
 
 import * as lark from "@larksuiteoapi/node-sdk";
-import { runAccountingAgent } from "@/lib/accounting/lark-agent-service";
-import { checkAndMarkMessageProcessed } from "@/lib/accounting/lark-conversation-memory";
+import {
+  cardActionToast,
+  processLarkCardAction,
+  processLarkMessageEvent,
+} from "@/lib/accounting/lark-webhook";
 
 const appId = process.env.LARK_APP_ID?.trim();
 const appSecret = process.env.LARK_APP_SECRET?.trim();
@@ -21,141 +24,28 @@ const wsClient = new lark.WSClient({
   loggerLevel: lark.LoggerLevel.info,
 });
 
-const inFlightSessions = new Set<string>();
-
+// The socket only receives events and enqueues them; `npm run lark:agent-worker`
+// answers them. This keeps the WS path identical to the HTTP webhook (bot-only
+// mention filter, per-member sessions, Redis dedup, per-session ordering).
 const eventDispatcher = new lark.EventDispatcher({}).register({
   "im.message.receive_v1": async (data: any) => {
     try {
-      const message = data.message;
-      if (!message) return;
-
-      // 1. Chống lặp vòng bot: Chỉ xử lý tin nhắn từ người dùng thật
-      if (data.sender?.sender_type && data.sender.sender_type !== "user") {
-        return;
-      }
-
-      // 2. Chống SPAM / duplicate events: Kiểm tra message_id đã xử lý chưa
-      const messageId = message.message_id;
-      if (messageId) {
-        const isDuplicate = await checkAndMarkMessageProcessed(messageId);
-        if (isDuplicate) {
-          console.log(`[LarkWS] Bỏ qua tin nhắn trùng lặp (message_id: ${messageId})`);
-          return;
-        }
-      }
-
-      const chatType = message.chat_type; // "group" | "p2p"
-      const mentions = message.mentions || [];
-
-      // BẮT BUỘC: Nếu là nhóm chat, chỉ trả lời khi được tag @bot
-      if (chatType === "group" && mentions.length === 0) {
-        return;
-      }
-
-      let rawContent = "";
-      try {
-        const parsed = JSON.parse(message.content || "{}");
-        rawContent = parsed.text || "";
-      } catch {
-        rawContent = message.content || "";
-      }
-
-      // Xóa bỏ các placeholder tag (@_user_1, ...)
-      const cleanText = rawContent.replace(/@_user_\d+/g, "").trim();
-      if (!cleanText) {
-        return;
-      }
-
-      console.log(`[LarkWS] Nhận tin nhắn từ chat ${message.chat_id}: "${cleanText}"`);
-
-      // Dùng chat_id (hoặc thread/root_id) làm sessionId để lưu ngữ cảnh 30 phút
-      const sessionId = message.root_id || message.chat_id;
-
-      // Khóa phiên đang xử lý (In-flight lock) để tránh 2 request song song cùng trả lời 1 lúc
-      if (inFlightSessions.has(sessionId)) {
-        console.log(`[LarkWS] Bỏ qua vì đang có câu hỏi đang được xử lý trong session ${sessionId}`);
-        return;
-      }
-      inFlightSessions.add(sessionId);
-
-      try {
-        // Xử lý bằng AI Agent và tự động gửi lại Card phản hồi vào nhóm/chat
-        await runAccountingAgent({
-          message: cleanText,
-          receiveId: message.chat_id,
-          receiveIdType: "chat_id",
-          sessionId,
-          sendToLark: true,
-        });
-
-        console.log(`[LarkWS] Đã gửi phản hồi thành công vào chat ${message.chat_id}`);
-      } finally {
-        inFlightSessions.delete(sessionId);
-      }
-    } catch (err: any) {
-      console.error("[LarkWS] Lỗi khi xử lý sự kiện im.message.receive_v1:", err);
+      await processLarkMessageEvent(data);
+    } catch (err) {
+      console.error("[LarkWS] Lỗi khi xếp hàng im.message.receive_v1:", err);
     }
   },
   "card.action.trigger": async (data: any) => {
     try {
-      const action = data.action;
-      const value = action?.value || {};
-      const actionType = value.action;
-      const sessionId = value.sessionId;
-      const chatId = data.context?.open_chat_id || data.open_chat_id;
-
-      console.log(`[LarkWS] Nhận card.action.trigger: ${actionType} (session: ${sessionId}, chat: ${chatId})`);
-
-      if (actionType === "CONFIRM_NEGATIVE" && sessionId) {
-        await runAccountingAgent({
-          message: "Xác nhận",
-          receiveId: chatId || sessionId,
-          receiveIdType: "chat_id",
-          sessionId,
-          sendToLark: true,
-        });
-
-        return {
-          toast: {
-            type: "success",
-            content: "Đã tự động đẩy từ khóa vào danh sách Negative thành công!",
-          },
-        };
-      } else if (actionType === "CANCEL_NEGATIVE" && sessionId) {
-        await runAccountingAgent({
-          message: "Hủy",
-          receiveId: chatId || sessionId,
-          receiveIdType: "chat_id",
-          sessionId,
-          sendToLark: true,
-        });
-
-        return {
-          toast: {
-            type: "info",
-            content: "Đã hủy thao tác phủ định từ khóa.",
-          },
-        };
-      }
-
-      return {
-        toast: {
-          type: "info",
-          content: "Đã ghi nhận tương tác thẻ.",
-        },
-      };
+      return cardActionToast(await processLarkCardAction(data));
     } catch (err: any) {
       console.error("[LarkWS] Lỗi khi xử lý card.action.trigger:", err);
       return {
-        toast: {
-          type: "error",
-          content: "Lỗi xử lý: " + (err.message || "Unknown error"),
-        },
+        toast: { type: "error", content: "Lỗi xử lý: " + (err?.message || "Unknown error") },
       };
     }
   },
 });
-
 
 async function start() {
   console.log("[LarkWS] Đang kết nối Persistent WebSocket tới Lark...");

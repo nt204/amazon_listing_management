@@ -1,7 +1,7 @@
 import os from "node:os";
 import Redis from "ioredis";
 import { runAccountingAgent } from "../lib/accounting/lark-agent-service";
-import { sendLarkTextNotification } from "../lib/lark-notifications";
+import { addLarkMessageReaction, sendLarkTextNotification } from "../lib/lark-notifications";
 import {
   LARK_AGENT_FAILED_KEY,
   LARK_AGENT_PROCESSING_KEY,
@@ -13,6 +13,7 @@ import {
 const concurrency = Math.max(1, Math.min(10, Number(process.env.LARK_AGENT_CONCURRENCY || 4)));
 const maxAttempts = Math.max(1, Number(process.env.LARK_AGENT_MAX_ATTEMPTS || 3));
 const redisUrl = process.env.REDIS_URL || "redis://localhost:2413";
+const ackEmoji = process.env.LARK_AGENT_ACK_EMOJI?.trim() || "OnIt";
 const workerId = `${os.hostname()}:${process.pid}`;
 const activeSessions = new Set<string>();
 const pending: Array<{ raw: string; job: LarkAgentJob }> = [];
@@ -49,6 +50,13 @@ async function processJob(raw: string, job: LarkAgentJob) {
     console.info(
       `[LarkAgentWorker] Start ${job.id} session=${job.sessionId} attempt=${job.attempts + 1}`,
     );
+    // The LLM needs several seconds; react right away so the asker knows the
+    // bot is on it. Best-effort and not awaited, so it never delays the answer.
+    if (job.replyToMessageId && job.attempts === 0) {
+      void addLarkMessageReaction(job.replyToMessageId, ackEmoji).catch((error) => {
+        console.warn(`[LarkAgentWorker] Không thả được reaction ${job.id}:`, error?.message || error);
+      });
+    }
     await runAccountingAgent({
       message: job.message,
       receiveId: job.receiveId,
