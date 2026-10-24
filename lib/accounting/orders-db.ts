@@ -150,7 +150,7 @@ export async function listOrders(
 ): Promise<{ orders: OrderItem[]; total: number; stats: OrderStats }> {
   const sql = await getDatabaseClient();
   const page = Math.max(1, options.page || 1);
-  const limit = Math.min(200, Math.max(1, options.limit || 50));
+  const limit = Math.min(1000, Math.max(1, options.limit || 50));
   const offset = (page - 1) * limit;
   const search = options.search?.trim() || "";
   const dateSort = options.dateSort || "desc";

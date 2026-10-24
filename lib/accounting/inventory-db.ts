@@ -588,7 +588,11 @@ export async function upsertSkuMasterItem(
     ON CONFLICT (store_id, sku) DO UPDATE SET
       brand = EXCLUDED.brand,
       product_type = EXCLUDED.product_type,
-      mockup = COALESCE(EXCLUDED.mockup, accounting_sku_master.mockup),
+      mockup = CASE 
+        WHEN EXCLUDED.mockup IS NOT NULL AND EXCLUDED.mockup != '[object Object]' THEN EXCLUDED.mockup
+        WHEN accounting_sku_master.mockup = '[object Object]' THEN NULL
+        ELSE accounting_sku_master.mockup
+      END,
       asin = COALESCE(EXCLUDED.asin, accounting_sku_master.asin),
       fnsku = COALESCE(EXCLUDED.fnsku, accounting_sku_master.fnsku),
       amazon_fee = COALESCE(EXCLUDED.amazon_fee, accounting_sku_master.amazon_fee),
@@ -601,7 +605,11 @@ export async function upsertSkuMasterItem(
       event = COALESCE(EXCLUDED.event, accounting_sku_master.event),
       tinh_trang = COALESCE(EXCLUDED.tinh_trang, accounting_sku_master.tinh_trang),
       design_pic = COALESCE(EXCLUDED.design_pic, accounting_sku_master.design_pic),
-      mockup_url = COALESCE(EXCLUDED.mockup_url, accounting_sku_master.mockup_url),
+      mockup_url = CASE 
+        WHEN EXCLUDED.mockup_url IS NOT NULL AND EXCLUDED.mockup_url != '[object Object]' THEN EXCLUDED.mockup_url
+        WHEN accounting_sku_master.mockup_url = '[object Object]' THEN NULL
+        ELSE accounting_sku_master.mockup_url
+      END,
       thang_listing = COALESCE(EXCLUDED.thang_listing, accounting_sku_master.thang_listing),
       thang_danh_gia = COALESCE(EXCLUDED.thang_danh_gia, accounting_sku_master.thang_danh_gia),
       event_250th = COALESCE(EXCLUDED.event_250th, accounting_sku_master.event_250th),
@@ -2286,9 +2294,14 @@ export async function importSkuMasterFromWorkbook(
     const brand_logo_asset_id = (rowValues["brand_logo_asset_id"] as string) || null;
     const landing_page_url = (rowValues["landing_page_url"] as string) || null;
 
-    const resolvedMockup =
-      mockup_url ||
-      (typeof rawMockup === "string" && !rawMockup.startsWith("=") ? rawMockup : null);
+    const cleanUrl = (val: unknown): string | null => {
+      if (!val || typeof val !== "string") return null;
+      const str = val.trim();
+      if (!str || str === "[object Object]" || str.startsWith("=") || str.toUpperCase().startsWith("IMAGE(")) return null;
+      if (str.startsWith("http://") || str.startsWith("https://") || str.startsWith("/")) return str;
+      return null;
+    };
+    const resolvedMockup = cleanUrl(mockup_url) || cleanUrl(rawMockup) || null;
 
     skuBatch.push({
       store_id: storeId,
@@ -2296,6 +2309,7 @@ export async function importSkuMasterFromWorkbook(
       brand,
       product_type,
       mockup: resolvedMockup,
+      mockup_url: resolvedMockup,
       asin,
       fnsku,
       amazon_fee,
@@ -2308,7 +2322,6 @@ export async function importSkuMasterFromWorkbook(
       event,
       tinh_trang,
       design_pic,
-      mockup_url,
       thang_listing,
       thang_danh_gia,
       event_250th,

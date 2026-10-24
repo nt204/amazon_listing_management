@@ -47,10 +47,12 @@ export function extractCellVal(val: any): any {
   if (val == null) return null;
   let curr = val;
   while (curr && typeof curr === "object" && !(curr instanceof Date)) {
-    if ("result" in curr && curr.result !== undefined) {
+    if ("result" in curr && curr.result !== undefined && curr.result !== null) {
       curr = curr.result;
-    } else if ("text" in curr && curr.text !== undefined) {
+    } else if ("text" in curr && curr.text !== undefined && curr.text !== null) {
       curr = curr.text;
+    } else if ("hyperlink" in curr && curr.hyperlink !== undefined && curr.hyperlink !== null) {
+      curr = curr.hyperlink;
     } else if (Array.isArray(curr.richText)) {
       curr = curr.richText.map((t: any) => t.text || "").join("");
       break;
@@ -60,12 +62,39 @@ export function extractCellVal(val: any): any {
         curr = match[1];
         break;
       }
-      break;
+      return null;
     } else {
       break;
     }
   }
+  if (curr && typeof curr === "object" && !(curr instanceof Date)) {
+    return null;
+  }
   return curr;
+}
+
+export function cleanUrlCandidate(val: any): string | null {
+  if (val == null) return null;
+  let c = extractCellVal(val);
+  if (c && typeof c === "object") {
+    if ("hyperlink" in c && typeof c.hyperlink === "string") c = c.hyperlink;
+    else if ("text" in c && typeof c.text === "string") c = c.text;
+    else if ("result" in c && typeof c.result === "string") c = c.result;
+  }
+  if (!c || typeof c === "object") return null;
+  const str = String(c).trim();
+  if (
+    !str ||
+    str === "[object Object]" ||
+    str.startsWith("=") ||
+    str.toUpperCase().startsWith("IMAGE(")
+  ) {
+    return null;
+  }
+  if (str.startsWith("http://") || str.startsWith("https://") || str.startsWith("/")) {
+    return str;
+  }
+  return null;
 }
 
 export interface UnifiedImportResult {
@@ -192,12 +221,12 @@ export async function importUnifiedAccountingExcel(
   }
 
   // Chuẩn bị SKU Master & Store Metadata trước cho Ads, Return, Inbound & Basecost
-  const skuMasters = await sql<{ id: string; sku: string; brand: string | null; product_type: string | null; loai: string | null; pic_mkt: string | null; status: string | null; basecost_tb: string | null }[]>`
-    SELECT id, sku, brand, product_type, loai, pic_mkt, status, basecost_tb::text
+  const skuMasters = await sql<{ id: string; sku: string; brand: string | null; product_type: string | null; mockup: string | null; loai: string | null; pic_mkt: string | null; status: string | null; basecost_tb: string | null }[]>`
+    SELECT id, sku, brand, product_type, mockup, loai, pic_mkt, status, basecost_tb::text
     FROM accounting_sku_master
     WHERE store_id = ${storeId} AND deleted_at IS NULL
   `;
-  const skuMap = new Map<string, { id: string | null; brand: string; productType: string; loai: string; pic_mkt: string; pic: string; status: string; basecost: number }>();
+  const skuMap = new Map<string, { id: string | null; brand: string; productType: string; loai: string; pic_mkt: string; pic: string; status: string; basecost: number; mockup?: string | null }>();
   for (const s of skuMasters) {
     const skuKey = s.sku.trim().toUpperCase();
     skuMap.set(skuKey, {
@@ -209,6 +238,7 @@ export async function importUnifiedAccountingExcel(
       pic: s.pic_mkt || "",
       status: s.status || "Phát triển",
       basecost: parseFloat(s.basecost_tb || "0") || 0,
+      mockup: cleanUrlCandidate(s.mockup),
     });
   }
 
@@ -755,7 +785,9 @@ export async function importUnifiedAccountingExcel(
 
             const brand = String(getColVal(["brand", "thương hiệu"]) || vals[1] || "").trim() || null;
             const productType = String(getColVal(["product type", "loại sản phẩm", "loại sp"]) || vals[2] || "").trim() || null;
-            const mockup = String(getColVal(["mockup", "hình ảnh", "ảnh", "mockup url"]) || vals[3] || "").trim() || null;
+            const rawMockupUrl = getColVal(["mockup url", "mockup_url", "url mockup", "link mockup"]) ?? extractCellVal(vals[17]);
+            const rawMockup = getColVal(["mockup", "hình ảnh", "ảnh"]) ?? extractCellVal(vals[3]);
+            const resolvedMockup = cleanUrlCandidate(rawMockupUrl) || cleanUrlCandidate(rawMockup) || null;
             const asin = String(getColVal(["asin"]) || vals[5] || "").trim() || null;
             const fnsku = String(getColVal(["fnsku"]) || vals[6] || "").trim() || null;
             const rawAmzFee = getColVal(["amazon fee", "fba fee", "amazon fee (chưa có referal fee)"]) || vals[7];
@@ -776,7 +808,8 @@ export async function importUnifiedAccountingExcel(
               sku,
               brand,
               product_type: productType,
-              mockup,
+              mockup: resolvedMockup,
+              mockup_url: resolvedMockup,
               asin,
               fnsku,
               amazon_fee: amazonFee,
@@ -795,21 +828,33 @@ export async function importUnifiedAccountingExcel(
           for (const s of skuRows) {
             const upsertRes = await sql<{ id: string }[]>`
               INSERT INTO accounting_sku_master (
-                store_id, sku, brand, product_type, mockup, asin, fnsku, 
+                store_id, sku, brand, product_type, mockup, mockup_url, asin, fnsku, 
                 amazon_fee, referral_fee_pct, pic_mkt, loai, niche, pic_idea, status, basecost_tb, updated_at
               ) VALUES (
-                ${s.store_id}, ${s.sku}, ${s.brand}, ${s.product_type}, ${s.mockup}, ${s.asin}, ${s.fnsku},
+                ${s.store_id}, ${s.sku}, ${s.brand}, ${s.product_type}, ${s.mockup}, ${s.mockup_url}, ${s.asin}, ${s.fnsku},
                 ${s.amazon_fee}, ${s.referral_fee_pct}, ${s.pic_mkt}, ${s.loai}, ${s.niche}, ${s.pic_idea}, ${s.status}, ${s.basecost_tb}, NOW()
               )
               ON CONFLICT (store_id, sku) DO UPDATE SET
                 brand = COALESCE(EXCLUDED.brand, accounting_sku_master.brand),
                 product_type = COALESCE(EXCLUDED.product_type, accounting_sku_master.product_type),
+                mockup = CASE 
+                  WHEN EXCLUDED.mockup IS NOT NULL AND EXCLUDED.mockup != '[object Object]' THEN EXCLUDED.mockup
+                  WHEN accounting_sku_master.mockup = '[object Object]' THEN NULL
+                  ELSE accounting_sku_master.mockup
+                END,
+                mockup_url = CASE 
+                  WHEN EXCLUDED.mockup_url IS NOT NULL AND EXCLUDED.mockup_url != '[object Object]' THEN EXCLUDED.mockup_url
+                  WHEN accounting_sku_master.mockup_url = '[object Object]' THEN NULL
+                  ELSE accounting_sku_master.mockup_url
+                END,
                 asin = COALESCE(EXCLUDED.asin, accounting_sku_master.asin),
                 fnsku = COALESCE(EXCLUDED.fnsku, accounting_sku_master.fnsku),
                 amazon_fee = COALESCE(EXCLUDED.amazon_fee, accounting_sku_master.amazon_fee),
                 referral_fee_pct = COALESCE(EXCLUDED.referral_fee_pct, accounting_sku_master.referral_fee_pct),
                 pic_mkt = COALESCE(EXCLUDED.pic_mkt, accounting_sku_master.pic_mkt),
                 loai = COALESCE(EXCLUDED.loai, accounting_sku_master.loai),
+                niche = COALESCE(EXCLUDED.niche, accounting_sku_master.niche),
+                pic_idea = COALESCE(EXCLUDED.pic_idea, accounting_sku_master.pic_idea),
                 status = COALESCE(EXCLUDED.status, accounting_sku_master.status),
                 basecost_tb = COALESCE(EXCLUDED.basecost_tb, accounting_sku_master.basecost_tb),
                 deleted_at = NULL,
@@ -826,6 +871,7 @@ export async function importUnifiedAccountingExcel(
               pic: s.pic_mkt || "",
               status: s.status || "Phát triển",
               basecost: s.basecost_tb || 0,
+              mockup: s.mockup || null,
             });
           }
           counts.skuMaster = skuRows.length;
@@ -956,8 +1002,9 @@ export async function importUnifiedAccountingExcel(
             const sup = (getColVal(["sup", "supplier", "nhà cung cấp"]) ?? extractCellVal(vals[2])) ? String(getColVal(["sup", "supplier", "nhà cung cấp"]) ?? extractCellVal(vals[2])).trim() : null;
             const ngay_request = cleanDateOnly(getColVal(["ngay_request", "ngày request", "ngay request"]) ?? extractCellVal(vals[3]));
             const product_type = (getColVal(["product_type", "product type", "loại sản phẩm", "loai sp"]) ?? extractCellVal(vals[4])) ? String(getColVal(["product_type", "product type", "loại sản phẩm", "loai sp"]) ?? extractCellVal(vals[4])).trim() : null;
+            const rawMockupUrl = getColVal(["mockup url", "mockup_url", "url mockup", "link mockup"]);
             const rawMockup = getColVal(["mockup", "hình ảnh", "ảnh"]) ?? extractCellVal(vals[5]);
-            const mockup = (typeof rawMockup === "string" && !rawMockup.startsWith("=")) ? rawMockup.trim() : null;
+            const mockup = cleanUrlCandidate(rawMockupUrl) || cleanUrlCandidate(rawMockup) || (sku ? skuMap.get(sku.toUpperCase())?.mockup : null) || null;
             const quantity = parseInteger(getColVal(["quantity", "số lượng", "so luong", "qty"]) ?? extractCellVal(vals[7])) || 0;
             const line_ship = (getColVal(["line_ship", "line ship", "vận chuyển"]) ?? extractCellVal(vals[8])) ? String(getColVal(["line_ship", "line ship", "vận chuyển"]) ?? extractCellVal(vals[8])).trim() : null;
             const base_cost_per_unit = parseNumeric(getColVal(["base_cost_per_unit", "base cost/unit", "base cost"]) ?? extractCellVal(vals[9]));
