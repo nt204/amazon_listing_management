@@ -7,12 +7,98 @@ import {
   getReturnBreakdown,
   comparePerformancePeriods,
   getInboundShipments,
+  requestNegativeKeywordAction,
+  executeConfirmNegativeKeyword,
 } from "./lark-agent-tools";
 import {
   getConversationHistory,
   saveConversationTurn,
+  getPendingAction,
+  clearPendingAction,
+  PendingPpcAction,
 } from "./lark-conversation-memory";
 import { sendLarkCardNotification, sendLarkTextNotification } from "@/lib/lark-notifications";
+
+export interface ReconciliationButton {
+  label: string;
+  url: string;
+}
+
+/**
+ * Phân tích câu hỏi và kết quả để đưa link đối soát phù hợp trên ncehub.net:
+ * - Revenue: https://ncehub.net/?view=accounting&section=revenue
+ * - Ads: https://ncehub.net/?view=accounting&section=ads
+ * - PnL: https://ncehub.net/?view=accounting&section=pnl
+ * - Lô hàng Inbound / Kho: https://ncehub.net/?view=accounting&section=inventory
+ * - Đơn hàng: https://ncehub.net/?view=accounting&section=orders
+ * - PPC: https://ncehub.net/?view=ppc&section=negative_keyword
+ */
+export function resolveContextualReconciliationLinks(
+  query: string,
+  toolsUsed: string[],
+  replyText: string
+): ReconciliationButton[] {
+  const q = (query + " " + replyText).toLowerCase();
+  const buttons: ReconciliationButton[] = [];
+  const addedUrls = new Set<string>();
+
+  function add(label: string, url: string) {
+    if (!addedUrls.has(url)) {
+      addedUrls.add(url);
+      buttons.push({ label, url });
+    }
+  }
+
+  // 1. Inbound Shipments / Lô hàng / Chuyển kho
+  if (
+    toolsUsed.includes("getInboundShipments") ||
+    /lô hàng|inbound|chuyển kho|en route|vận chuyển|kiện hàng|fba1|fba/i.test(q)
+  ) {
+    add("🚚 Đối soát Lô hàng Inbound", "https://ncehub.net/?view=accounting&section=inventory");
+  }
+
+  // 2. PPC Negative Keywords / Tối ưu Ads
+  if (
+    toolsUsed.includes("requestNegativeKeywordAction") ||
+    toolsUsed.includes("executeConfirmNegativeKeyword") ||
+    /negative|phủ định|chặn từ khóa|search term/i.test(q)
+  ) {
+    add("🎯 Quản lý Negative Keywords", "https://ncehub.net/?view=ppc&section=negative_keyword");
+  }
+
+  // 3. Chi phí Quảng cáo / Ads / PPC / ACOS / TACOS
+  if (
+    /ads|quảng cáo|acos|tacos|chi phí ads|ads spend|ppc/i.test(q)
+  ) {
+    add("📢 Đối soát Chi phí Ads", "https://ncehub.net/?view=accounting&section=ads");
+  }
+
+  // 4. Lợi nhuận / PnL / Net Profit / Gross Profit / Margin
+  if (
+    /pnl|p&l|lợi nhuận|net profit|gross profit|margin|lãi ròng|lãi gộp/i.test(q)
+  ) {
+    add("💵 Bảng đối soát P&L", "https://ncehub.net/?view=accounting&section=pnl");
+  }
+
+  // 5. Đơn hàng / Hoàn hàng / Orders / Returns
+  if (
+    toolsUsed.includes("getOrderBreakdown") ||
+    toolsUsed.includes("getReturnBreakdown") ||
+    /đơn hàng|orders|units sold|hoàn tiền|refund|trả hàng|return/i.test(q)
+  ) {
+    add("📦 Chi tiết Đơn hàng", "https://ncehub.net/?view=accounting&section=orders");
+  }
+
+  // 6. Doanh thu / Revenue (Mặc định nếu hỏi doanh thu hoặc chưa có nút nào)
+  if (
+    buttons.length === 0 ||
+    /doanh thu|revenue|bán hàng|sales/i.test(q)
+  ) {
+    add("📊 Đối soát Revenue", "https://ncehub.net/?view=accounting&section=revenue");
+  }
+
+  return buttons.slice(0, 2);
+}
 
 /**
  * Chuẩn hóa đồng bộ font chữ trên Lark:
@@ -62,6 +148,7 @@ export interface AgentResult {
   toolsUsed: string[];
   larkSent: boolean;
   larkDetail?: any;
+  actionLinks?: ReconciliationButton[];
 }
 
 const TOOLS_SCHEMA = [
@@ -101,7 +188,7 @@ const TOOLS_SCHEMA = [
           startDate: { type: "string", description: "Ngày bắt đầu (YYYY-MM-DD)." },
           endDate: { type: "string", description: "Ngày kết thúc (YYYY-MM-DD)." },
           sku: { type: "string", description: "Mã SKU cần lọc cụ thể (tùy chọn)." },
-          limit: { type: "number", description: "Số lượng top SKU cần lấy (mặc định 10)." },
+          limit: { type: "number", description: "Số lượng bản ghi tối đa (mặc định 10)." },
         },
         required: ["startDate", "endDate"],
       },
@@ -111,14 +198,14 @@ const TOOLS_SCHEMA = [
     type: "function",
     function: {
       name: "getReturnBreakdown",
-      description: "Tra cứu chi tiết hoàn hàng (returns), tổng tiền hoàn (refund cost), và danh sách top SKU bị hoàn nhiều nhất.",
+      description: "Tra cứu chi tiết hoàn hàng / trả hàng (refund cost, return units, lý do hoàn tiền) theo store và khoảng ngày.",
       parameters: {
         type: "object",
         properties: {
           storeQuery: { type: "string", description: "Tên store hoặc để trống." },
           startDate: { type: "string", description: "Ngày bắt đầu (YYYY-MM-DD)." },
           endDate: { type: "string", description: "Ngày kết thúc (YYYY-MM-DD)." },
-          sku: { type: "string", description: "Mã SKU cần lọc cụ thể (tùy chọn)." },
+          limit: { type: "number", description: "Số lượng bản ghi tối đa." },
         },
         required: ["startDate", "endDate"],
       },
@@ -172,9 +259,27 @@ const TOOLS_SCHEMA = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "requestNegativeKeywordAction",
+      description: "Khởi tạo yêu cầu phủ định từ khóa (Negative Exact hoặc Negative Phrase) cho store trong hệ thống PPC. Lưu ý: Thao tác này sẽ hiển thị Thẻ Xác Nhận hỏi người dùng và chỉ được auto đẩy sau khi người dùng bấm nút xác nhận hoặc nhắn 'Xác nhận'.",
+      parameters: {
+        type: "object",
+        properties: {
+          storeQuery: { type: "string", description: "Tên store (VD: BOZSPACER, LIMIMA, FASTPEACE,...)" },
+          keyword: { type: "string", description: "Từ khóa cần phủ định (VD: running shoes cheap)" },
+          matchType: { type: "string", enum: ["negativeExact", "negativePhrase"], description: "Loại phủ định: 'negativeExact' (mặc định) hoặc 'negativePhrase'." },
+          campaignName: { type: "string", description: "Tên chiến dịch cần áp dụng hoặc để trống cho toàn bộ chiến dịch store." },
+          reason: { type: "string", description: "Lý do phủ định (VD: ACOS quá cao 130%, Click nhiều không ra sale,...)" },
+        },
+        required: ["storeQuery", "keyword"],
+      },
+    },
+  },
 ];
 
-async function executeTool(name: string, rawArgs: string): Promise<string> {
+async function executeTool(name: string, rawArgs: string, sessionId?: string): Promise<string> {
   try {
     const args = JSON.parse(rawArgs || "{}");
     switch (name) {
@@ -190,6 +295,8 @@ async function executeTool(name: string, rawArgs: string): Promise<string> {
         return JSON.stringify(await comparePerformancePeriods(args));
       case "getInboundShipments":
         return JSON.stringify(await getInboundShipments(args));
+      case "requestNegativeKeywordAction":
+        return JSON.stringify(await requestNegativeKeywordAction(args, sessionId));
       default:
         return JSON.stringify({ error: `Không tìm thấy công cụ: ${name}` });
     }
@@ -199,9 +306,105 @@ async function executeTool(name: string, rawArgs: string): Promise<string> {
 }
 
 /**
- * Xử lý tin nhắn hỏi đáp Kế toán qua AI Agent (Gemini 3.8 Flash via CheapKey)
+ * Xử lý tin nhắn hỏi đáp Kế toán & Vận hành qua AI Agent (Gemini 3.8 Flash via CheapKey)
  */
 export async function runAccountingAgent(options: RunAgentOptions): Promise<AgentResult> {
+  const targetReceiveId = (options.receiveId || options.recipientEmail || "").trim();
+  const targetReceiveIdType = (options.receiveIdType || (targetReceiveId.includes("@") ? "email" : "chat_id")).trim();
+
+  // 1. KIỂM TRA THAO TÁC PPC ĐANG CHỜ XÁC NHẬN (NẾU CÓ SESSION ID)
+  if (options.sessionId) {
+    const pending = await getPendingAction(options.sessionId);
+    if (pending) {
+      const trimmed = options.message.trim().toLowerCase();
+      const isConfirm = /^(xác nhận|xac nhan|đồng ý|dong y|ok|đẩy đi|day di|yes|y|confirm|duyệt|duyet|tiến hành|tien hanh)/i.test(trimmed);
+      const isCancel = /^(hủy|huy|cancel|bỏ qua|bo qua|không|khong|stop|dừng|dung)/i.test(trimmed);
+
+      if (isConfirm) {
+        await executeConfirmNegativeKeyword(pending);
+        await clearPendingAction(options.sessionId);
+
+        const successText = `🟢 ĐÃ TỰ ĐỘNG ĐẨY THÀNH CÔNG!\nĐã thêm từ khóa **${pending.keyword}** (${pending.matchType}) vào danh sách Phủ định của store **${pending.storeName}**.\n\nHệ thống PPC sẽ tự động áp dụng để chặn các lượt click không chuyển đổi.`;
+        await saveConversationTurn(options.sessionId, options.message, successText);
+
+        if (options.sendToLark && targetReceiveId) {
+          const successCard = {
+            schema: "2.0",
+            config: { width_mode: "fill" },
+            header: {
+              template: "green",
+              title: { tag: "plain_text", content: "🟢 Tự Động Đẩy Negative Thành Công" },
+            },
+            body: {
+              elements: [
+                { tag: "markdown", content: successText },
+                {
+                  tag: "button",
+                  text: { tag: "plain_text", content: "🎯 Xem Bảng Quản Lý Negative Keywords" },
+                  type: "primary",
+                  multi_url: {
+                    url: "https://ncehub.net/?view=ppc&section=negative_keyword",
+                    pc_url: "https://ncehub.net/?view=ppc&section=negative_keyword",
+                    android_url: "https://ncehub.net/?view=ppc&section=negative_keyword",
+                    ios_url: "https://ncehub.net/?view=ppc&section=negative_keyword",
+                  },
+                },
+                { tag: "hr" },
+                { tag: "markdown", content: "AI Agent | Tự động hóa PPC Amazon FBA" },
+              ],
+            },
+          };
+          await sendLarkCardNotification(successCard, {
+            receiveId: targetReceiveId,
+            receiveIdType: targetReceiveIdType,
+          }).catch(console.error);
+        }
+
+        return {
+          replyText: successText,
+          toolsUsed: ["executeConfirmNegativeKeyword"],
+          larkSent: true,
+          larkDetail: { status: "confirmed_negative", keyword: pending.keyword },
+          actionLinks: [{ label: "🎯 Xem Negative Keywords", url: "https://ncehub.net/?view=ppc&section=negative_keyword" }],
+        };
+      } else if (isCancel) {
+        await clearPendingAction(options.sessionId);
+
+        const cancelText = `❌ ĐÃ HỦY THAO TÁC\nĐã hủy yêu cầu phủ định từ khóa **${pending.keyword}** của store **${pending.storeName}**. Không có thay đổi nào được ghi vào hệ thống.`;
+        await saveConversationTurn(options.sessionId, options.message, cancelText);
+
+        if (options.sendToLark && targetReceiveId) {
+          const cancelCard = {
+            schema: "2.0",
+            config: { width_mode: "fill" },
+            header: {
+              template: "grey",
+              title: { tag: "plain_text", content: "❌ Đã Hủy Thao Tác Phủ Định" },
+            },
+            body: {
+              elements: [
+                { tag: "markdown", content: cancelText },
+                { tag: "hr" },
+                { tag: "markdown", content: "AI Agent | Tự động hóa PPC Amazon FBA" },
+              ],
+            },
+          };
+          await sendLarkCardNotification(cancelCard, {
+            receiveId: targetReceiveId,
+            receiveIdType: targetReceiveIdType,
+          }).catch(console.error);
+        }
+
+        return {
+          replyText: cancelText,
+          toolsUsed: ["cancelPendingAction"],
+          larkSent: true,
+          larkDetail: { status: "cancelled_negative" },
+        };
+      }
+    }
+  }
+
   const apiKey = (process.env.LARK_AGENT_KEY || process.env.CHEAPKEYAI_API_KEY || "").trim();
   const baseUrl = (process.env.LARK_AGENT_BASE_URL || "https://cheapkeyai.shop/v1").replace(/\/+$/, "");
   const model = (process.env.LARK_AGENT_MODEL || "gemini-3.8-flash").trim();
@@ -258,7 +461,13 @@ QUY TẮC BẮT BUỘC:
      * Nếu store không tồn tại: "Không tìm thấy store trong hệ thống."
      * Nếu không có lô hàng: "Hiện không có lô hàng nào đang vận chuyển."
      * Nếu không có đơn hàng cho SKU: "Không có dữ liệu đơn hàng cho SKU này."
-   - Không được tự tiện biến việc "chưa có dữ liệu" thành con số $0 khi ngày đó chưa được đối soát hoặc chưa import.`;
+   - Không được tự tiện biến việc "chưa có dữ liệu" thành con số $0 khi ngày đó chưa được đối soát hoặc chưa import.
+
+6. BẮT BUỘC HỎI XÁC NHẬN KHI PHỦ ĐỊNH TỪ KHÓA (NEGATIVE KEYWORDS):
+   - Khi người dùng muốn phủ định từ khóa hoặc auto đẩy negative keyword (VD: "Phủ định từ khóa X cho store Y"), BẮT BUỘC gọi tool "requestNegativeKeywordAction".
+   - KHI TOOL TRẢ VỀ: Thao tác CHƯA được ghi vào database ngay. AI Agent BẮT BUỘC hiển thị Thẻ Xác Nhận thông báo thông tin chi tiết (Store, Từ khóa, Match Type, Lý do), và hỏi người dùng có xác nhận auto đẩy không.
+   - Hướng dẫn người dùng bấm nút [Xác nhận đẩy ngay] bên dưới hoặc nhắn tin "Xác nhận" để đẩy ngay, hoặc "Hủy" để bỏ qua.
+   - TUYỆT ĐỐI KHÔNG tự tiện báo "Đã phủ định thành công" ở bước này!`;
 
   // Tải lịch sử hội thoại gần đây (nếu có sessionId)
   const conversationHistory = options.sessionId
@@ -334,7 +543,7 @@ QUY TẮC BẮT BUỘC:
       const fnArgs = toolCall.function.arguments;
       toolsUsed.push(fnName);
 
-      const toolResult = await executeTool(fnName, fnArgs);
+      const toolResult = await executeTool(fnName, fnArgs, options.sessionId);
       messages.push({
         role: "tool",
         tool_call_id: toolCall.id,
@@ -348,7 +557,17 @@ QUY TẮC BẮT BUỘC:
   const rawReplyText = lastMsg.role === "assistant" && lastMsg.content ? lastMsg.content : "Không có phản hồi.";
   
   // Chuẩn hóa đồng bộ font chữ (loại bỏ inline code backticks và italics gây lệch font trên Lark)
-  const replyText = sanitizeUniformTypography(rawReplyText);
+  let replyText = sanitizeUniformTypography(rawReplyText);
+
+  // Xác định các link đối soát phù hợp dựa trên nội dung câu hỏi và tools được gọi
+  const isAwaitingNegativeConfirmation = toolsUsed.includes("requestNegativeKeywordAction");
+  const recButtons = resolveContextualReconciliationLinks(options.message, toolsUsed, replyText);
+
+  // Đính kèm link markdown vào cuối text đối với các câu hỏi báo cáo dữ liệu
+  if (!isAwaitingNegativeConfirmation && recButtons.length > 0) {
+    const linkStr = recButtons.map((b) => `[${b.label}](${b.url})`).join("  •  ");
+    replyText += `\n\n🔗 **Link đối soát hệ thống:**\n${linkStr}`;
+  }
 
   // Lưu lượt trao đổi vào bộ nhớ ngắn hạn
   if (options.sessionId) {
@@ -358,40 +577,142 @@ QUY TẮC BẮT BUỘC:
   let larkSent = false;
   let larkDetail: any = null;
 
-  // Xác định người nhận trên Lark
-  const targetReceiveId = (options.receiveId || options.recipientEmail || "").trim();
-  const targetReceiveIdType = (options.receiveIdType || (targetReceiveId.includes("@") ? "email" : "chat_id")).trim();
-
   // Gửi thông báo đến Lark nếu được yêu cầu
   if (options.sendToLark && targetReceiveId) {
     try {
-      // Xây dựng Interactive Card chuẩn Schema 2.0 đồng bộ font chữ
+      let cardElements: any[] = [
+        {
+          tag: "markdown",
+          content: replyText,
+        },
+      ];
+
+      let cardTemplate = "blue";
+      let cardTitle = "📊 AI Agent - Accounting & Operations";
+
+      if (isAwaitingNegativeConfirmation && options.sessionId) {
+        // Render 2 nút bấm Xác nhận / Hủy cạnh nhau
+        cardTemplate = "orange";
+        cardTitle = "⚠️ Yêu Cầu Xác Nhận Phủ Định Từ Khóa (PPC)";
+        cardElements.push({
+          tag: "column_set",
+          flex_mode: "bisect",
+          background_style: "default",
+          columns: [
+            {
+              tag: "column",
+              width: "weighted",
+              weight: 1,
+              elements: [
+                {
+                  tag: "button",
+                  text: {
+                    tag: "plain_text",
+                    content: "✅ Xác nhận đẩy ngay",
+                  },
+                  type: "primary",
+                  width: "fill",
+                  value: {
+                    action: "CONFIRM_NEGATIVE",
+                    sessionId: options.sessionId,
+                  },
+                },
+              ],
+            },
+            {
+              tag: "column",
+              width: "weighted",
+              weight: 1,
+              elements: [
+                {
+                  tag: "button",
+                  text: {
+                    tag: "plain_text",
+                    content: "❌ Hủy bỏ",
+                  },
+                  type: "danger",
+                  width: "fill",
+                  value: {
+                    action: "CANCEL_NEGATIVE",
+                    sessionId: options.sessionId,
+                  },
+                },
+              ],
+            },
+          ],
+        });
+      } else if (recButtons.length > 0) {
+        // Render nút bấm mở Link đối soát tương ứng
+        if (recButtons.length === 1) {
+          cardElements.push({
+            tag: "button",
+            text: {
+              tag: "plain_text",
+              content: recButtons[0].label,
+            },
+            type: "primary",
+            multi_url: {
+              url: recButtons[0].url,
+              pc_url: recButtons[0].url,
+              android_url: recButtons[0].url,
+              ios_url: recButtons[0].url,
+            },
+          });
+        } else {
+          cardElements.push({
+            tag: "column_set",
+            flex_mode: "bisect",
+            background_style: "default",
+            columns: recButtons.map((btn) => ({
+              tag: "column",
+              width: "weighted",
+              weight: 1,
+              elements: [
+                {
+                  tag: "button",
+                  text: {
+                    tag: "plain_text",
+                    content: btn.label,
+                  },
+                  type: "primary",
+                  width: "fill",
+                  multi_url: {
+                    url: btn.url,
+                    pc_url: btn.url,
+                    android_url: btn.url,
+                    ios_url: btn.url,
+                  },
+                },
+              ],
+            })),
+          });
+        }
+      }
+
+      cardElements.push(
+        { tag: "hr" },
+        {
+          tag: "markdown",
+          content: isAwaitingNegativeConfirmation
+            ? "AI Agent | Tự động hóa PPC Amazon FBA"
+            : "AI Agent | Dữ liệu thời gian thực từ Amazon Database",
+        }
+      );
+
       const larkCard = {
         schema: "2.0",
         config: {
           width_mode: "fill",
         },
         header: {
-          template: "blue",
+          template: cardTemplate,
           title: {
             tag: "plain_text",
-            content: "📊 AI Agent - Accounting & Operations",
+            content: cardTitle,
           },
         },
         body: {
-          elements: [
-            {
-              tag: "markdown",
-              content: replyText,
-            },
-            {
-              tag: "hr",
-            },
-            {
-              tag: "markdown",
-              content: `*AI Agent | Dữ liệu thời gian thực từ Amazon Database*`,
-            },
-          ],
+          elements: cardElements,
         },
       };
 
@@ -431,5 +752,6 @@ QUY TẮC BẮT BUỘC:
     toolsUsed,
     larkSent,
     larkDetail,
+    actionLinks: recButtons,
   };
 }

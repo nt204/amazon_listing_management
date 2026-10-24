@@ -61,6 +61,39 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // 2.1 Xử lý Event Card Action Trigger từ Lark Bot
+    if (body.header?.event_type === "card.action.trigger" || body.action?.value) {
+      const action = body.action || body.event?.action;
+      const value = action?.value || {};
+      const actionType = value.action;
+      const sessionId = value.sessionId;
+      const chatId = body.event?.context?.open_chat_id || body.open_chat_id;
+
+      if (actionType === "CONFIRM_NEGATIVE" && sessionId) {
+        await runAccountingAgent({
+          message: "Xác nhận",
+          receiveId: chatId || sessionId,
+          receiveIdType: "chat_id",
+          sessionId,
+          sendToLark: true,
+        });
+        return Response.json({
+          toast: { type: "success", content: "Đã tự động đẩy từ khóa vào danh sách Negative thành công!" },
+        });
+      } else if (actionType === "CANCEL_NEGATIVE" && sessionId) {
+        await runAccountingAgent({
+          message: "Hủy",
+          receiveId: chatId || sessionId,
+          receiveIdType: "chat_id",
+          sessionId,
+          sendToLark: true,
+        });
+        return Response.json({
+          toast: { type: "info", content: "Đã hủy thao tác phủ định từ khóa." },
+        });
+      }
+    }
+
     // 3. Xử lý Direct API Request (dành cho frontend test hoặc curl)
     const directMessage = body.message?.trim();
     if (!directMessage) {

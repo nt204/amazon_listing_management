@@ -88,3 +88,83 @@ export async function saveConversationTurn(
     expiresAt: now + MEMORY_TTL_SECONDS * 1000,
   });
 }
+
+export interface PendingPpcAction {
+  action: "NEGATIVE_KEYWORD";
+  storeId: string;
+  storeName: string;
+  campaignName: string;
+  keyword: string;
+  matchType: string;
+  reason?: string;
+  createdAt: number;
+}
+
+const PENDING_ACTION_TTL_SECONDS = 900; // 15 phút chờ xác nhận
+const inMemoryPendingActions = new Map<string, { action: PendingPpcAction; expiresAt: number }>();
+
+/**
+ * Lưu trạng thái thao tác đang chờ người dùng bấm nút / nhắn tin xác nhận
+ */
+export async function setPendingAction(sessionId: string, action: PendingPpcAction): Promise<void> {
+  if (!sessionId) return;
+  const redis = getRedisClient();
+  if (redis) {
+    try {
+      await redis.setex(
+        `lark:pending_action:${sessionId}`,
+        PENDING_ACTION_TTL_SECONDS,
+        JSON.stringify(action)
+      );
+      return;
+    } catch (err) {
+      console.warn("[LarkMemory] Redis setPendingAction error, using in-memory:", err);
+    }
+  }
+
+  inMemoryPendingActions.set(sessionId, {
+    action,
+    expiresAt: Date.now() + PENDING_ACTION_TTL_SECONDS * 1000,
+  });
+}
+
+/**
+ * Lấy thao tác đang chờ xác nhận của phiên hội thoại
+ */
+export async function getPendingAction(sessionId: string): Promise<PendingPpcAction | null> {
+  if (!sessionId) return null;
+  const redis = getRedisClient();
+  if (redis) {
+    try {
+      const data = await redis.get(`lark:pending_action:${sessionId}`);
+      if (data) {
+        return JSON.parse(data) as PendingPpcAction;
+      }
+    } catch (err) {
+      console.warn("[LarkMemory] Redis getPendingAction error, using in-memory:", err);
+    }
+  }
+
+  const item = inMemoryPendingActions.get(sessionId);
+  if (item && item.expiresAt > Date.now()) {
+    return item.action;
+  }
+  return null;
+}
+
+/**
+ * Xóa thao tác chờ xác nhận sau khi đã thực thi hoặc hủy bỏ
+ */
+export async function clearPendingAction(sessionId: string): Promise<void> {
+  if (!sessionId) return;
+  const redis = getRedisClient();
+  if (redis) {
+    try {
+      await redis.del(`lark:pending_action:${sessionId}`);
+    } catch (err) {
+      console.warn("[LarkMemory] Redis clearPendingAction error:", err);
+    }
+  }
+  inMemoryPendingActions.delete(sessionId);
+}
+

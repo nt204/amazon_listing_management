@@ -67,7 +67,66 @@ const eventDispatcher = new lark.EventDispatcher({}).register({
       console.error("[LarkWS] Lỗi khi xử lý sự kiện im.message.receive_v1:", err);
     }
   },
+  "card.action.trigger": async (data: any) => {
+    try {
+      const action = data.action;
+      const value = action?.value || {};
+      const actionType = value.action;
+      const sessionId = value.sessionId;
+      const chatId = data.context?.open_chat_id || data.open_chat_id;
+
+      console.log(`[LarkWS] Nhận card.action.trigger: ${actionType} (session: ${sessionId}, chat: ${chatId})`);
+
+      if (actionType === "CONFIRM_NEGATIVE" && sessionId) {
+        await runAccountingAgent({
+          message: "Xác nhận",
+          receiveId: chatId || sessionId,
+          receiveIdType: "chat_id",
+          sessionId,
+          sendToLark: true,
+        });
+
+        return {
+          toast: {
+            type: "success",
+            content: "Đã tự động đẩy từ khóa vào danh sách Negative thành công!",
+          },
+        };
+      } else if (actionType === "CANCEL_NEGATIVE" && sessionId) {
+        await runAccountingAgent({
+          message: "Hủy",
+          receiveId: chatId || sessionId,
+          receiveIdType: "chat_id",
+          sessionId,
+          sendToLark: true,
+        });
+
+        return {
+          toast: {
+            type: "info",
+            content: "Đã hủy thao tác phủ định từ khóa.",
+          },
+        };
+      }
+
+      return {
+        toast: {
+          type: "info",
+          content: "Đã ghi nhận tương tác thẻ.",
+        },
+      };
+    } catch (err: any) {
+      console.error("[LarkWS] Lỗi khi xử lý card.action.trigger:", err);
+      return {
+        toast: {
+          type: "error",
+          content: "Lỗi xử lý: " + (err.message || "Unknown error"),
+        },
+      };
+    }
+  },
 });
+
 
 async function start() {
   console.log("[LarkWS] Đang kết nối Persistent WebSocket tới Lark...");

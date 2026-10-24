@@ -3,6 +3,7 @@ import "server-only";
 import { getDatabaseClient } from "@/lib/db";
 import { listStores } from "./accounting-db";
 import { listFbaDaily } from "./fba-daily-db";
+import { setPendingAction, PendingPpcAction } from "./lark-conversation-memory";
 
 export interface StoreInfo {
   id: string;
@@ -447,3 +448,154 @@ export async function getInboundShipments(params: {
     }),
   };
 }
+
+/**
+ * Tra cứu hoặc khởi tạo store PPC theo tên
+ */
+export async function resolvePpcStore(storeQuery?: string): Promise<{ id: string; name: string; team_id: string } | null> {
+  const sql = await getDatabaseClient();
+  if (!storeQuery || !storeQuery.trim()) return null;
+  const q = storeQuery.trim().toLowerCase();
+
+  const ppcStores = await sql<Array<{ id: string; name: string; team_id: string }>>`
+    SELECT id, name, team_id FROM ppc_stores
+  `;
+
+  let found = ppcStores.find(
+    (s) =>
+      s.id === storeQuery ||
+      s.name.toLowerCase() === q ||
+      s.name.toLowerCase().includes(q) ||
+      q.includes(s.name.toLowerCase())
+  );
+
+  if (!found) {
+    const accStore = await resolveStore(storeQuery);
+    if (accStore) {
+      const inserted = await sql<Array<{ id: string; name: string; team_id: string }>>`
+        INSERT INTO ppc_stores (name, team_id, marketplace)
+        VALUES (${accStore.name}, 'default', ${accStore.marketplace || 'US'})
+        ON CONFLICT (team_id, name) DO UPDATE SET updated_at = NOW()
+        RETURNING id, name, team_id
+      `;
+      if (inserted.length > 0) {
+        found = inserted[0];
+      }
+    }
+  }
+
+  return found || null;
+}
+
+/**
+ * 6. Khởi tạo yêu cầu Phủ định Từ khóa (Negative Keyword) cho chiến dịch PPC
+ * BẮT BUỘC: Thao tác này KHÔNG đẩy trực tiếp vào DB ngay, mà tạo trạng thái chờ xác nhận.
+ */
+export async function requestNegativeKeywordAction(
+  params: {
+    storeQuery: string;
+    keyword: string;
+    matchType?: string;
+    campaignName?: string;
+    reason?: string;
+  },
+  sessionId?: string
+) {
+  const store = await resolvePpcStore(params.storeQuery);
+  if (!store) {
+    const allStores = await getAllStores();
+    return {
+      status: "ERROR",
+      message: `Không tìm thấy store "${params.storeQuery}". Vui lòng chọn một trong các store: ${allStores.map((s) => s.name).join(", ")}.`,
+    };
+  }
+
+  const cleanKeyword = (params.keyword || "").trim();
+  if (!cleanKeyword) {
+    return {
+      status: "ERROR",
+      message: "Từ khóa cần phủ định không được để trống.",
+    };
+  }
+
+  const matchType = params.matchType === "negativePhrase" ? "negativePhrase" : "negativeExact";
+  const campaignName = params.campaignName?.trim() || `${store.name} - Auto All Campaigns`;
+  const reason = params.reason?.trim() || "Tối ưu hóa chi phí PPC từ Lark AI Agent";
+
+  const sql = await getDatabaseClient();
+  const existing = await sql<Array<{ id: string; state: string }>>`
+    SELECT id, state FROM ppc_negative_registry
+    WHERE store_id = ${store.id}
+      AND LOWER(keyword_text) = LOWER(${cleanKeyword})
+      AND match_type = ${matchType}
+    LIMIT 1
+  `;
+
+  if (existing.length > 0 && existing[0].state === "enabled") {
+    return {
+      status: "ALREADY_EXISTS",
+      message: `Từ khóa "${cleanKeyword}" đã có trong danh sách Negative (${matchType}) của store ${store.name} từ trước.`,
+      storeName: store.name,
+      keyword: cleanKeyword,
+      matchType,
+    };
+  }
+
+  const pendingAction: PendingPpcAction = {
+    action: "NEGATIVE_KEYWORD",
+    storeId: store.id,
+    storeName: store.name,
+    campaignName,
+    keyword: cleanKeyword,
+    matchType,
+    reason,
+    createdAt: Date.now(),
+  };
+
+  if (sessionId) {
+    await setPendingAction(sessionId, pendingAction);
+  }
+
+  return {
+    status: "AWAITING_CONFIRMATION",
+    requiresConfirmation: true,
+    storeName: store.name,
+    storeId: store.id,
+    keyword: cleanKeyword,
+    matchType,
+    campaignName,
+    reason,
+    instructionForAgent: `BẮT BUỘC: Thao tác chưa được ghi vào hệ thống. Hãy hiển thị Thẻ Xác Nhận thông báo thông tin chi tiết (Store: ${store.name}, Từ khóa: ${cleanKeyword}, Match Type: ${matchType}, Lý do: ${reason}), và hỏi người dùng có xác nhận auto đẩy lên hệ thống PPC không. Hướng dẫn người dùng nhấn nút 'Xác nhận đẩy ngay' hoặc phản hồi tin nhắn 'Xác nhận' để tiến hành, hoặc 'Hủy' để bỏ qua.`,
+  };
+}
+
+/**
+ * 7. Thực thi đẩy từ khóa vào bảng Phủ định sau khi người dùng đã bấm nút hoặc gõ "Xác nhận"
+ */
+export async function executeConfirmNegativeKeyword(action: PendingPpcAction) {
+  const sql = await getDatabaseClient();
+  await sql`
+    INSERT INTO ppc_negative_registry (
+      team_id, store_id, store_name, ad_type,
+      campaign_name, keyword_text, match_type, level,
+      state, source, clicks, spend, reason, created_at, updated_at
+    ) VALUES (
+      'default', ${action.storeId}, ${action.storeName}, 'SP',
+      ${action.campaignName}, ${action.keyword}, ${action.matchType}, 'CAMPAIGN',
+      'enabled', 'LARK_BOT', 0, 0, ${action.reason || 'Phủ định qua AI Agent Lark'}, NOW(), NOW()
+    )
+    ON CONFLICT (store_id, campaign_name, keyword_text, match_type) DO UPDATE SET
+      updated_at = NOW(),
+      state = 'enabled',
+      reason = EXCLUDED.reason;
+  `;
+
+  return {
+    success: true,
+    storeName: action.storeName,
+    keyword: action.keyword,
+    matchType: action.matchType,
+    campaignName: action.campaignName,
+  };
+}
+
