@@ -159,6 +159,9 @@ import { PpcOverviewSkeleton } from "./ppc-overview-skeleton";
 function getOptimizedThumbnailUrl(url: string | null | undefined, w = 64): string | null {
   if (!url) return null;
   const trimmed = url.trim();
+  if (trimmed.includes("media-amazon.com") || trimmed.includes("images-amazon.com")) {
+    return trimmed;
+  }
   if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
     return `/api/accounting/inventory/mockup-proxy?w=${w}&url=${encodeURIComponent(trimmed)}`;
   }
@@ -4285,20 +4288,15 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                                   </span>
                                 )}
                               </div>
-                              <div className="flex items-center gap-1.5 flex-wrap text-[10px] font-normal">
+                              <div className="flex items-center gap-1.5 flex-wrap text-[11px] font-normal text-slate-500">
                                 {s.productType && (
-                                  <span className="px-1.5 py-0.2 rounded font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                  <span className="font-medium text-slate-700">
                                     {s.productType}
-                                  </span>
-                                )}
-                                {s.picMkt && (
-                                  <span className="text-slate-500">
-                                    PIC: <strong className="text-slate-700 font-semibold">{s.picMkt}</strong>
                                   </span>
                                 )}
                                 {s.niche && (
                                   <span className="text-slate-400">
-                                    • Niche: <span className="text-slate-600">{s.niche}</span>
+                                    • {s.niche}
                                   </span>
                                 )}
                               </div>

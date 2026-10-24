@@ -97,6 +97,9 @@ export type SortOrder = "asc" | "desc";
 function getOptimizedThumbnailUrl(url: string | null | undefined, w = 64): string | null {
   if (!url) return null;
   const trimmed = url.trim();
+  if (trimmed.includes("media-amazon.com") || trimmed.includes("images-amazon.com")) {
+    return trimmed;
+  }
   if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
     return `/api/accounting/inventory/mockup-proxy?w=${w}&url=${encodeURIComponent(trimmed)}`;
   }
@@ -1512,24 +1515,11 @@ export function PpcSkuRecommendationGroupView({
                       )}
                     </td>
                     <td className="py-2.5 px-3 font-bold text-slate-900 group-hover:text-indigo-600 transition col-primary">
-                      <div className="flex flex-col">
-                        <span>{group.sku}</span>
-                        {(group.picMkt || group.niche) && (
-                          <span className="text-[10px] text-slate-400 font-normal">
-                            {group.picMkt && <span>PIC: {group.picMkt}</span>}
-                            {group.niche && <span> • {group.niche}</span>}
-                          </span>
-                        )}
-                      </div>
+                      {group.sku}
                     </td>
                     <td className="py-3 px-3 text-slate-500">{group.asin || "—"}</td>
-                    <td className="py-3 px-3">
-                      <span className={`px-2 py-0.5 rounded text-[11px] border ${group.productType === SKU_PREFIX_ERROR_PRODUCT_TYPE || group.productType === "Lỗi Prefix" || !group.productType || group.productType === "Chưa xác định"
-                          ? "bg-rose-100 text-rose-800 border-rose-300 font-semibold"
-                          : "bg-slate-100 text-slate-700 border-slate-200 font-normal"
-                        }`}>
-                        {group.productType || "Chưa xác định"}
-                      </span>
+                    <td className="py-3 px-3 text-slate-700 font-medium">
+                      {group.productType || "—"}
                     </td>
                     <td className="py-3 px-3 text-right text-slate-800 font-normal">
                       ${group.spend.toFixed(2)}

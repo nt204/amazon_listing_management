@@ -955,29 +955,7 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
         ? String(cross.asin).trim()
         : (existing?.asin || p.asin || "B0XXXX"));
 
-    // Fallback extraction cho niche từ portfolio / campaign nếu chưa có
-    if (!niche && (p.sample_portfolio || p.sample_campaign)) {
-      const port = (p.sample_portfolio || "").trim();
-      if (port && !port.startsWith("#")) {
-        let clean = port.replace(/^(OFF\.\s*)?(Quynh(\s+test)?|Dung|Truong|Manh)\s+/i, "");
-        clean = clean.replace(new RegExp(`\\s*${sku}\\s*$`, "i"), "");
-        clean = clean.replace(/^(Blanket|Banner|Oodie|Flag|Wood\s+Sign|Glass\s+Ornament|Ornament|Resin)\s+/i, "").trim();
-        if (clean) niche = clean;
-      }
-      if (!niche && p.sample_campaign) {
-        const parenMatch = p.sample_campaign.match(/\(([^)]+)\)/);
-        if (parenMatch && !/tong\s*hop|auto|close\s*match|complements|loose\s*match|substitutes|broad/i.test(parenMatch[1])) {
-          niche = parenMatch[1].trim();
-        }
-      }
-    }
-
-    // Fallback extraction cho picMkt từ campaign/portfolio nếu chưa có
-    if (!picMkt && (p.sample_portfolio || p.sample_campaign)) {
-      const m = `${p.sample_portfolio || ""} ${p.sample_campaign || ""}`.match(/\b(Quynh|Dung|Truong|Manh)\b/i);
-      if (m) picMkt = m[1];
-    }
-
+    // Niche và PIC được lấy chính xác từ Bảng mã Accounting
     const spend = Number(p.total_spend || 0);
     const sales = Number(p.total_sales || 0);
     const orders = Number(p.total_orders || 0);
