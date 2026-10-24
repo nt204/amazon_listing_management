@@ -92,6 +92,7 @@ export async function GET(request: Request) {
             cvr: 0,
             acos: 0,
           },
+          exactSkuSummaries: [],
         };
       }
 
@@ -181,6 +182,123 @@ export async function GET(request: Request) {
       cvr,
       acos,
     };
+
+    let exactSkuRows = search ? await sql<Array<{
+      sku: string;
+      impressions: string;
+      clicks: number;
+      spend: string;
+      sales: string;
+      orders: number;
+    }>>`
+      SELECT
+        upper(COALESCE(
+          NULLIF(trim(p.sku), ''),
+          substring(p.campaign_name from '([A-Za-z]{2,5}[0-9]{4,8}[A-Za-z0-9]*)'),
+          'UNKNOWN_SKU'
+        )) AS sku,
+        COALESCE(SUM(p.impressions), 0)::bigint AS impressions,
+        COALESCE(SUM(p.clicks), 0)::integer AS clicks,
+        COALESCE(SUM(p.spend), 0)::numeric AS spend,
+        COALESCE(SUM(p.sales), 0)::numeric AS sales,
+        COALESCE(SUM(p.orders), 0)::integer AS orders
+      FROM ppc_performance_facts p
+      JOIN ppc_stores s ON s.id = p.store_id
+      WHERE s.team_id = ${scope.teamId}
+        AND p.grain = 'TARGET'
+        AND NOT p.is_negative
+        AND (p.spend > 0 OR p.clicks > 0 OR p.impressions > 0)
+        AND (${combinedSnaps})
+        AND lower(trim(p.target_expression)) = lower(trim(${search}))
+        ${campaignFilter}
+        ${adGroupFilter}
+        ${skuFilter}
+      GROUP BY upper(COALESCE(
+        NULLIF(trim(p.sku), ''),
+        substring(p.campaign_name from '([A-Za-z]{2,5}[0-9]{4,8}[A-Za-z0-9]*)'),
+        'UNKNOWN_SKU'
+      ))
+      ORDER BY SUM(p.spend) DESC
+    ` : [];
+
+    if (search && exactSkuRows.length === 0) {
+      exactSkuRows = await sql<Array<{
+        sku: string;
+        impressions: string;
+        clicks: number;
+        spend: string;
+        sales: string;
+        orders: number;
+      }>>`
+        SELECT
+          upper(COALESCE(
+            NULLIF(trim(p.sku), ''),
+            substring(p.campaign_name from '([A-Za-z]{2,5}[0-9]{4,8}[A-Za-z0-9]*)'),
+            'UNKNOWN_SKU'
+          )) AS sku,
+          COALESCE(SUM(p.impressions), 0)::bigint AS impressions,
+          COALESCE(SUM(p.clicks), 0)::integer AS clicks,
+          COALESCE(SUM(p.spend), 0)::numeric AS spend,
+          COALESCE(SUM(p.sales), 0)::numeric AS sales,
+          COALESCE(SUM(p.orders), 0)::integer AS orders
+        FROM ppc_performance_facts p
+        JOIN ppc_stores s ON s.id = p.store_id
+        WHERE s.team_id = ${scope.teamId}
+          AND p.grain = 'TARGET'
+          AND NOT p.is_negative
+          AND (p.spend > 0 OR p.clicks > 0 OR p.impressions > 0)
+          AND (${combinedSnaps})
+          ${searchFilter}
+          ${campaignFilter}
+          ${adGroupFilter}
+          ${skuFilter}
+        GROUP BY upper(COALESCE(
+          NULLIF(trim(p.sku), ''),
+          substring(p.campaign_name from '([A-Za-z]{2,5}[0-9]{4,8}[A-Za-z0-9]*)'),
+          'UNKNOWN_SKU'
+        ))
+        ORDER BY SUM(p.spend) DESC
+      `;
+    }
+
+    let exactSkuSummaries = exactSkuRows.map((row) => {
+      const impressions = Number(row.impressions || 0);
+      const clicks = Number(row.clicks || 0);
+      const spend = Math.round(Number(row.spend || 0) * 100) / 100;
+      const sales = Math.round(Number(row.sales || 0) * 100) / 100;
+      const orders = Number(row.orders || 0);
+      return {
+        sku: row.sku,
+        totalImpressions: impressions,
+        totalClicks: clicks,
+        totalSpend: spend,
+        totalSales: sales,
+        totalOrders: orders,
+        acos: sales > 0 ? Math.round((spend / sales) * 1000) / 10 : (spend > 0 ? 999 : 0),
+        mockupUrl: null as string | null,
+      };
+    });
+
+    if (exactSkuSummaries.length > 0) {
+      const skuKeys = exactSkuSummaries.map((group) => group.sku.toUpperCase()).filter((s) => s && s !== "UNKNOWN_SKU");
+      if (skuKeys.length > 0) {
+        const imageRows = await sql<Array<{ sku: string; mockup_url: string | null }>>`
+          SELECT DISTINCT ON (upper(trim(sku)))
+            upper(trim(sku)) AS sku,
+            COALESCE(NULLIF(trim(mockup_url), ''), NULLIF(trim(mockup), '')) AS mockup_url
+          FROM accounting_sku_master
+          WHERE deleted_at IS NULL
+            AND upper(trim(sku)) IN ${sql(skuKeys)}
+            AND (NULLIF(trim(mockup_url), '') IS NOT NULL OR NULLIF(trim(mockup), '') IS NOT NULL)
+          ORDER BY upper(trim(sku)), (NULLIF(trim(mockup_url), '') IS NOT NULL) DESC
+        `;
+        const imageBySku = new Map(imageRows.map((row) => [row.sku, row.mockup_url]));
+        exactSkuSummaries = exactSkuSummaries.map((group) => ({
+          ...group,
+          mockupUrl: imageBySku.get(group.sku.toUpperCase()) || null,
+        }));
+      }
+    }
 
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
     const offset = (page - 1) * pageSize;
@@ -309,6 +427,7 @@ export async function GET(request: Request) {
         pageSize,
         totalPages,
         summary,
+        exactSkuSummaries,
       };
     });
 

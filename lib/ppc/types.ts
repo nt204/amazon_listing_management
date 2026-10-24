@@ -44,14 +44,10 @@ export interface PpcSearchTermRow {
   adType?: PpcAdType;
   portfolioName?: string;
   campaignName: string;
-  campaignNames?: string[];
   adGroupName: string;
-  adGroupNames?: string[];
   targetKeyword: string;
   customerSearchTerm: string;
   matchType: MatchType;
-  matchTypes?: string[];
-  adTypes?: string[];
   impressions: number;
   clicks: number;
   spend: number;

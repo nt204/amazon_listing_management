@@ -42,7 +42,6 @@ import {
   extractSkuFromText,
   extractCampaignDate,
   formatPpcExportFilename,
-  resolveSkuForSearchTerm,
 } from "@/lib/ppc/sku-extractor";
 import { PpcSkuEconomicsTable } from "./ppc-sku-economics-table";
 import { PpcSkuMappingPanel } from "./ppc-sku-mapping-panel";
@@ -175,6 +174,17 @@ function searchTermKey(term: PpcSearchTermRow): string {
     term.adGroupName, term.targetKeyword, term.customerSearchTerm, term.matchType,
   ].filter(Boolean).join("\u0000");
 }
+
+type SearchTermSkuSummary = {
+  sku: string;
+  totalImpressions: number;
+  totalClicks: number;
+  totalSpend: number;
+  totalSales: number;
+  totalOrders: number;
+  acos: number;
+  mockupUrl?: string | null;
+};
 
 function formatSyncTime(isoString: string | null): string {
   if (!isoString) return "--:--:--";
@@ -543,7 +553,19 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
   const [serverTargets, setServerTargets] = useState<PpcTargetPerformance[]>([]);
   const [serverTargetTotal, setServerTargetTotal] = useState(0);
   const [serverTargetTotalPages, setServerTargetTotalPages] = useState(1);
-  const [serverTargetSummary, setServerTargetSummary] = useState({
+  const [serverTargetSummary, setServerTargetSummary] = useState<{
+    count: number;
+    impressions: number;
+    clicks: number;
+    spend: number;
+    sales: number;
+    orders: number;
+    ctr: number;
+    cpc: number;
+    cvr: number;
+    acos: number;
+    skuGroups?: SearchTermSkuSummary[];
+  }>({
     count: 0,
     impressions: 0,
     clicks: 0,
@@ -554,6 +576,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     cpc: 0,
     cvr: 0,
     acos: 0,
+    skuGroups: [],
   });
   const [loadingTargetsServer, setLoadingTargetsServer] = useState(false);
   const [expandedChildTerms, setExpandedChildTerms] = useState<
@@ -947,7 +970,10 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
             : current);
           setServerTargetTotalPages(Math.max(1, Number(json.data.totalPages || 1)));
           if (json.data.summary) {
-            setServerTargetSummary(json.data.summary);
+            setServerTargetSummary({
+              ...json.data.summary,
+              skuGroups: json.data.exactSkuSummaries || [],
+            });
           }
         }
       } catch (error) {
@@ -1074,7 +1100,10 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
           setServerSearchTermTotal(exactTotal);
           setDetailCounts((current) => current ? { ...current, searchTerms: exactTotal } : current);
           setServerSearchTermTotalPages(Math.max(1, Number(json.data.totalPages || 1)));
-          setServerSearchTermSummary(json.data.summary);
+          setServerSearchTermSummary({
+            ...(json.data.exactSummary || json.data.summary),
+            skuGroups: json.data.exactSkuSummaries || [],
+          });
         }
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
@@ -1752,27 +1781,20 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     }
   };
 
-  // Aggregate by SKU + Search Term across every campaign in the selected period.
+  // Aggregated Search Terms by Campaign + Search Term + Match Type (Tổng hợp cả kỳ)
   const aggregatedSearchTerms = useMemo(() => {
     if (!searchTerms || searchTerms.length === 0) return [];
     const map = new Map<string, PpcSearchTermRow>();
 
     for (const t of searchTerms) {
+      const camp = (t.campaignName || "").trim();
       const term = (t.customerSearchTerm || "").trim();
-      const sku = resolveSkuForSearchTerm(t, selectedSku);
-      const key = `${sku.toLowerCase()}|||${term.toLowerCase()}`;
+      const match = t.matchType || "Unknown";
+      const key = `${camp.toLowerCase()}|||${term.toLowerCase()}|||${match.toLowerCase()}`;
 
       const existing = map.get(key);
       if (!existing) {
-        map.set(key, {
-          ...t,
-          sku,
-          portfolioName: sku,
-          campaignNames: [t.campaignName].filter(Boolean),
-          adGroupNames: [t.adGroupName].filter(Boolean),
-          adTypes: t.adType ? [t.adType] : [],
-          matchTypes: t.matchType ? [t.matchType] : [],
-        });
+        map.set(key, { ...t });
       } else {
         existing.impressions = (existing.impressions || 0) + (t.impressions || 0);
         existing.clicks = (existing.clicks || 0) + (t.clicks || 0);
@@ -1780,10 +1802,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
         existing.sales = (existing.sales || 0) + (t.sales || 0);
         existing.orders = (existing.orders || 0) + (t.orders || 0);
         existing.units = (existing.units || 0) + (t.units || 0);
-        existing.campaignNames = Array.from(new Set([...(existing.campaignNames || []), t.campaignName].filter(Boolean))).sort();
-        existing.adGroupNames = Array.from(new Set([...(existing.adGroupNames || []), t.adGroupName].filter(Boolean))).sort();
-        existing.adTypes = Array.from(new Set([...(existing.adTypes || []), ...(t.adType ? [t.adType] : [])])).sort();
-        existing.matchTypes = Array.from(new Set([...(existing.matchTypes || []), ...(t.matchType ? [t.matchType] : [])])).sort();
       }
     }
 
@@ -1796,7 +1814,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
       r.roas = r.spend > 0 ? Math.round((r.sales / r.spend) * 100) / 100 : 0;
     }
     return list;
-  }, [searchTerms, selectedSku]);
+  }, [searchTerms]);
 
   // Unique campaigns for Search Terms filter (rút ngắn theo từ khóa đang tìm trong ô search)
   const searchTermCampaigns = useMemo(() => {
@@ -1804,11 +1822,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     if (searchTermQuery.trim()) {
       const tokens = searchTermQuery.toLowerCase().split(/\s+/).filter(Boolean);
       source = source.filter((t) => {
-        const text = `${t.customerSearchTerm} ${(t.campaignNames || [t.campaignName]).join(" ")} ${t.portfolioName || ""}`.toLowerCase();
+        const text = `${t.customerSearchTerm} ${t.campaignName} ${t.portfolioName || ""}`.toLowerCase();
         return tokens.every((tok) => text.includes(tok));
       });
     }
-    return Array.from(new Set(source.flatMap((t) => t.campaignNames || [t.campaignName]).filter(Boolean))).sort();
+    return Array.from(new Set(source.map((t) => t.campaignName).filter(Boolean))).sort();
   }, [aggregatedSearchTerms, searchTermQuery]);
 
   // Tự động đưa về ALL nếu campaign đã chọn không còn trong danh sách campaign liên quan
@@ -1827,7 +1845,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     let list = [...aggregatedSearchTerms];
 
     if (searchTermCampaignFilter !== "ALL") {
-      list = list.filter((t) => (t.campaignNames || [t.campaignName]).includes(searchTermCampaignFilter));
+      list = list.filter((t) => t.campaignName === searchTermCampaignFilter);
     }
 
     if (matchTypeFilter !== "ALL") {
@@ -1872,7 +1890,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     if (searchTermQuery.trim()) {
       const tokens = searchTermQuery.toLowerCase().split(/\s+/).filter(Boolean);
       list = list.filter((t) => {
-        const text = `${t.customerSearchTerm} ${(t.campaignNames || [t.campaignName]).join(" ")} ${t.portfolioName || ""}`.toLowerCase();
+        const text = `${t.customerSearchTerm} ${t.campaignName} ${t.portfolioName || ""}`.toLowerCase();
         return tokens.every((tok) => text.includes(tok));
       });
     }
@@ -2370,7 +2388,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
   };
 
   const toggleSelectAllVisible = () => {
-    const visibleKeys = (serverSearchTerms || paginatedSearchTerms).map(searchTermKey);
+    const visibleKeys = paginatedSearchTerms.map(searchTermKey);
     if (visibleKeys.length > 0 && visibleKeys.every((key) => selectedTerms.has(key))) {
       const next = new Set(selectedTerms);
       visibleKeys.forEach((key) => next.delete(key));
@@ -2404,7 +2422,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
       rows = filteredSortedSearchTerms.map((t) => {
         const termSafe = `"${t.customerSearchTerm.replace(/"/g, '""')}"`;
         const portSafe = `"${(t.portfolioName || "").replace(/"/g, '""')}"`;
-        const campSafe = `"${(t.campaignNames || [t.campaignName]).join(" | ").replace(/"/g, '""')}"`;
+        const campSafe = `"${t.campaignName.replace(/"/g, '""')}"`;
         return `${termSafe},"${t.matchType}",${portSafe},${campSafe},${t.clicks},${t.spend.toFixed(2)},${t.sales.toFixed(2)},${t.orders},${(t.ctr * 100).toFixed(2)},${(t.cvr * 100).toFixed(1)},${t.acos.toFixed(1)}`;
       });
       const cleanStore = (selectedStore && selectedStore !== "ALL" ? selectedStore : "ALL").replace(/[/\\?%*:|"<>]/g, "_").trim().replace(/\s+/g, "_");
@@ -3607,44 +3625,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
             </div>
           )}
 
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
-            <div className="flex items-center gap-2">
-              <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
-                Target / Keyword Performance
-              </h3>
-              <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
-                {serverTargetTotal > 0 ? `${serverTargetTotal.toLocaleString("vi-VN")} mục` : "0 mục"}
-              </span>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-              {/* Dropdown chọn nhanh chiến dịch để chỉ tìm kiếm trong chiến dịch đó */}
-              <select
-                value={selectedCampaignForDrilldown || "ALL"}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  if (val === "ALL") {
-                    setSelectedCampaignForDrilldown(null);
-                    setSelectedCampaignIdForDrilldown(null);
-                  } else {
-                    const found = campaignPerformance.find((c) => c.campaignName === val);
-                    setSelectedCampaignForDrilldown(val);
-                    setSelectedCampaignIdForDrilldown(found?.campaignId || null);
-                  }
-                  setTargetPage(1);
-                }}
-                className="max-w-[240px] px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-medium text-slate-700 outline-none focus:bg-white focus:border-indigo-600 transition truncate"
-                title="Lọc nhanh target theo chiến dịch để tìm kiếm tức thì"
-              >
-                <option value="ALL">Tất cả chiến dịch ({campaignPerformance.length})</option>
-                {campaignPerformance.map((c) => (
-                  <option key={c.campaignId || c.campaignName} value={c.campaignName}>
-                    {c.campaignName}
-                  </option>
-                ))}
-              </select>
-
-              <div className="relative flex-1 sm:w-72">
+          {/* Filter Bar */}
+          <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Keyword Search */}
+              <div className="relative flex-1 sm:min-w-[200px] max-w-xs">
                 <MagnifyingGlass size={14} className="absolute left-3 top-2.5 text-slate-400" />
                 <input
                   type="text"
@@ -3669,6 +3654,59 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                     <X size={13} weight="bold" />
                   </button>
                 )}
+              </div>
+
+              {/* Dropdown chọn nhanh chiến dịch để chỉ tìm kiếm trong chiến dịch đó */}
+              <select
+                value={selectedCampaignForDrilldown || "ALL"}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === "ALL") {
+                    setSelectedCampaignForDrilldown(null);
+                    setSelectedCampaignIdForDrilldown(null);
+                  } else {
+                    const found = campaignPerformance.find((c) => c.campaignName === val);
+                    setSelectedCampaignForDrilldown(val);
+                    setSelectedCampaignIdForDrilldown(found?.campaignId || null);
+                  }
+                  setTargetPage(1);
+                }}
+                className="py-1.5 px-2.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 outline-none cursor-pointer max-w-[240px] truncate"
+                title="Lọc nhanh target theo chiến dịch để tìm kiếm tức thì"
+              >
+                <option value="ALL">Tất cả chiến dịch ({campaignPerformance.length})</option>
+                {campaignPerformance.map((c) => (
+                  <option key={c.campaignId || c.campaignName} value={c.campaignName}>
+                    {c.campaignName}
+                  </option>
+                ))}
+              </select>
+
+              {/* Reset Filters */}
+              {(targetQuery || selectedCampaignForDrilldown) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTargetQuery("");
+                    setSelectedCampaignForDrilldown(null);
+                    setSelectedCampaignIdForDrilldown(null);
+                    setSelectedAdGroupForDrilldown(null);
+                    setTargetPage(1);
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                  title="Đặt lại tất cả bộ lọc"
+                >
+                  <X size={13} weight="bold" /> Đặt lại
+                </button>
+              )}
+
+              {/* Results count indicator */}
+              <div className="ml-auto text-xs text-slate-500 font-medium">
+                Khớp <span className="font-extrabold text-slate-900">{serverTargetTotal.toLocaleString("vi-VN")}</span>
+                {detailCounts?.targets && (targetQuery || selectedCampaignForDrilldown)
+                  ? ` / ${detailCounts.targets.toLocaleString("vi-VN")}`
+                  : ""}{" "}
+                mục
               </div>
             </div>
           </div>
@@ -3719,6 +3757,94 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   Bỏ chọn tất cả
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* Totals for the current Target query; detail rows stay separated by campaign. */}
+          {targetQuery.trim() && serverTargetSummary && (
+            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
+              <table className="w-full min-w-[1100px] text-left">
+                <thead className="border-b border-slate-200 bg-slate-50 text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+                  <tr>
+                    <th className="w-16 px-3 py-3 text-center">Ảnh</th>
+                    <th className="px-3 py-3">SKU</th>
+                    <th className="min-w-[240px] px-3 py-3">Target / Keyword</th>
+                    <th className="px-3 py-3 text-right">Hiển thị</th>
+                    <th className="px-3 py-3 text-right">Clicks</th>
+                    <th className="px-3 py-3 text-right">CTR</th>
+                    <th className="px-3 py-3 text-right">Spend</th>
+                    <th className="px-3 py-3 text-right">Sales</th>
+                    <th className="px-3 py-3 text-right">Orders</th>
+                    <th className="px-3 py-3 text-right">CVR</th>
+                    <th className="px-3 py-3 text-right">ACOS</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {((serverTargetSummary.skuGroups?.length
+                    ? serverTargetSummary.skuGroups
+                    : [{
+                        sku: selectedSku !== "ALL" ? selectedSku : "TẤT CẢ SKU",
+                        totalImpressions: serverTargetSummary.impressions,
+                        totalClicks: serverTargetSummary.clicks,
+                        totalSpend: serverTargetSummary.spend,
+                        totalSales: serverTargetSummary.sales,
+                        totalOrders: serverTargetSummary.orders,
+                        acos: serverTargetSummary.acos,
+                        mockupUrl: null,
+                      }]
+                  ) as SearchTermSkuSummary[]).map((group) => (
+                    <tr key={group.sku} className="hover:bg-slate-50/70">
+                      <td className="px-3 py-3 text-center">
+                        {group.mockupUrl ? (
+                          <div className="group/mockup relative inline-block">
+                            <img
+                              src={getOptimizedThumbnailUrl(group.mockupUrl, 80) || group.mockupUrl}
+                              alt={group.sku}
+                              className="h-12 w-12 rounded-lg border border-slate-200 object-cover shadow-2xs"
+                              loading="lazy"
+                            />
+                            <div className="pointer-events-none absolute left-14 top-1/2 z-50 hidden h-52 w-52 -translate-y-1/2 rounded-xl border border-slate-200 bg-white p-1 shadow-2xl group-hover/mockup:block">
+                              <img
+                                src={getOptimizedThumbnailUrl(group.mockupUrl, 400) || group.mockupUrl}
+                                alt={group.sku}
+                                className="h-full w-full rounded-lg object-cover"
+                              />
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-slate-100 text-slate-300">
+                            <Tag size={17} />
+                          </div>
+                        )}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-3 font-mono text-sm font-black text-slate-900">{group.sku}</td>
+                      <td className="px-3 py-3 text-sm font-bold text-slate-900">{targetQuery.trim()}</td>
+                      <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{Number(group.totalImpressions || 0).toLocaleString("vi-VN")}</td>
+                      <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{Number(group.totalClicks || 0).toLocaleString("vi-VN")}</td>
+                      <td className="px-3 py-3 text-right font-mono text-sm text-slate-700">{group.totalImpressions > 0 ? ((group.totalClicks / group.totalImpressions) * 100).toFixed(2) : "0.00"}%</td>
+                      <td className="px-3 py-3 text-right font-mono text-sm font-black text-slate-900">${Number(group.totalSpend || 0).toFixed(2)}</td>
+                      <td className="px-3 py-3 text-right font-mono text-sm font-black text-emerald-600">${Number(group.totalSales || 0).toFixed(2)}</td>
+                      <td className="px-3 py-3 text-right font-mono text-sm font-black text-slate-900">{Number(group.totalOrders || 0).toLocaleString("vi-VN")}</td>
+                      <td className="px-3 py-3 text-right font-mono text-sm text-slate-700">{group.totalClicks > 0 ? ((group.totalOrders / group.totalClicks) * 100).toFixed(1) : "0.0"}%</td>
+                      <td className="px-3 py-3 text-right">
+                        <span
+                          className={`inline-flex min-w-[68px] justify-center rounded-md px-2 py-1 font-mono text-sm font-black ${
+                            group.acos > 500
+                              ? "bg-rose-100 text-rose-700"
+                              : group.acos < 30
+                                ? "bg-emerald-100 text-emerald-700"
+                                : group.acos <= 50
+                                  ? "bg-amber-200 text-amber-900"
+                                  : "bg-rose-100 text-rose-700"
+                          }`}
+                        >
+                          {group.acos > 500 ? "0 sales" : `${Number(group.acos || 0).toFixed(1)}%`}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
 
@@ -3879,8 +4005,22 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                       <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-600 whitespace-nowrap">
                         ${serverTargetSummary.sales.toFixed(2)}
                       </td>
-                      <td className={`px-3 py-2.5 text-right font-mono font-black whitespace-nowrap ${serverTargetSummary.acos <= targetAcos ? "text-emerald-700" : "text-rose-700"}`}>
-                        {serverTargetSummary.sales > 0 ? `${serverTargetSummary.acos.toFixed(1)}%` : serverTargetSummary.spend > 0 ? "0 sales" : "0.0%"}
+                      <td className="px-3 py-2.5 text-right font-mono font-black whitespace-nowrap">
+                        <span
+                          className={`inline-flex min-w-[68px] justify-center rounded-md px-2 py-1 font-mono text-xs font-black ${
+                            serverTargetSummary.spend > 0 && serverTargetSummary.sales <= 0
+                              ? "bg-rose-100 text-rose-700"
+                              : serverTargetSummary.acos < 30
+                                ? "bg-emerald-100 text-emerald-700"
+                                : serverTargetSummary.acos <= 50
+                                  ? "bg-amber-200 text-amber-900"
+                                  : "bg-rose-100 text-rose-700"
+                          }`}
+                        >
+                          {serverTargetSummary.spend > 0 && serverTargetSummary.sales <= 0
+                            ? "0 sales"
+                            : `${serverTargetSummary.acos.toFixed(1)}%`}
+                        </span>
                       </td>
                       <td className="px-3 py-2.5 text-right font-mono font-black text-slate-800 whitespace-nowrap">
                         ${serverTargetSummary.cpc.toFixed(2)}
@@ -3945,36 +4085,23 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                             <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-600 whitespace-nowrap">${target.sales.toFixed(2)}</td>
                             <td className="px-3 py-2.5 text-right font-mono whitespace-nowrap">
                               {target.orders === 0 || target.sales === 0 ? (
-                                target.spend >= 15 ? (
-                                  <span
-                                    className="inline-block px-1.5 py-0.5 rounded text-[11px] font-black text-rose-700 bg-rose-50 border border-rose-300"
-                                    title="Chưa có sale, chi tiêu cao vượt ngưỡng"
-                                  >
-                                    0 sales
-                                  </span>
-                                ) : (
-                                  <span className="text-slate-400 text-xs">
-                                    {target.spend > 0 ? "0 sales" : "—"}
-                                  </span>
-                                )
-                              ) : target.acos > 50 ? (
                                 <span
-                                  className="inline-block px-1.5 py-0.5 rounded text-[11px] font-black text-rose-700 bg-rose-50 border border-rose-300"
-                                  title={`ACOS cao vượt ngưỡng (${target.acos.toFixed(1)}% > 50%)`}
+                                  className={`inline-flex min-w-[64px] justify-center rounded-md px-2 py-0.5 font-mono text-[11px] font-black ${
+                                    target.spend > 0 ? "bg-rose-100 text-rose-700" : "text-slate-400"
+                                  }`}
                                 >
-                                  {target.acos.toFixed(1)}%
-                                </span>
-                              ) : target.acos <= targetAcos ? (
-                                <span
-                                  className="inline-block px-1.5 py-0.5 rounded text-[11px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200"
-                                  title={`ACOS tốt trong ngưỡng mục tiêu (≤ ${targetAcos}%)`}
-                                >
-                                  {target.acos.toFixed(1)}%
+                                  {target.spend > 0 ? "0 sales" : "—"}
                                 </span>
                               ) : (
                                 <span
-                                  className="inline-block px-1.5 py-0.5 rounded text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200"
-                                  title={`ACOS chấp nhận được (${target.acos.toFixed(1)}%)`}
+                                  className={`inline-flex min-w-[64px] justify-center rounded-md px-2 py-0.5 font-mono text-[11px] font-black ${
+                                    target.acos < 30
+                                      ? "bg-emerald-100 text-emerald-700"
+                                      : target.acos <= 50
+                                        ? "bg-amber-200 text-amber-900"
+                                        : "bg-rose-100 text-rose-700"
+                                  }`}
+                                  title={`ACOS: ${target.acos.toFixed(1)}%`}
                                 >
                                   {target.acos.toFixed(1)}%
                                 </span>
@@ -4542,6 +4669,85 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
             </div>
           </div>
 
+          {/* Totals for the current Search Term query; detail rows stay separated by campaign. */}
+          {searchTermQuery.trim() && serverSearchTermSummary && (
+            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
+              <table className="w-full min-w-[1100px] text-left">
+                <thead className="border-b border-slate-200 bg-slate-50 text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+                  <tr>
+                    <th className="w-16 px-3 py-3 text-center">Ảnh</th>
+                    <th className="px-3 py-3">SKU</th>
+                    <th className="min-w-[240px] px-3 py-3">Search Term</th>
+                    <th className="px-3 py-3 text-right">Hiển thị</th>
+                    <th className="px-3 py-3 text-right">Clicks</th>
+                    <th className="px-3 py-3 text-right">CTR</th>
+                    <th className="px-3 py-3 text-right">Spend</th>
+                    <th className="px-3 py-3 text-right">Sales</th>
+                    <th className="px-3 py-3 text-right">Orders</th>
+                    <th className="px-3 py-3 text-right">CVR</th>
+                    <th className="px-3 py-3 text-right">ACOS</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {((serverSearchTermSummary.skuGroups?.length
+                    ? serverSearchTermSummary.skuGroups
+                    : [{ ...serverSearchTermSummary, sku: selectedSku !== "ALL" ? selectedSku : "TẤT CẢ SKU" }]
+                  ) as SearchTermSkuSummary[]).map((group) => (
+                    <tr key={group.sku} className="hover:bg-slate-50/70">
+                      <td className="px-3 py-3 text-center">
+                        {group.mockupUrl ? (
+                          <div className="group/mockup relative inline-block">
+                            <img
+                              src={getOptimizedThumbnailUrl(group.mockupUrl, 80) || group.mockupUrl}
+                              alt={group.sku}
+                              className="h-12 w-12 rounded-lg border border-slate-200 object-cover shadow-2xs"
+                              loading="lazy"
+                            />
+                            <div className="pointer-events-none absolute left-14 top-1/2 z-50 hidden h-52 w-52 -translate-y-1/2 rounded-xl border border-slate-200 bg-white p-1 shadow-2xl group-hover/mockup:block">
+                              <img
+                                src={getOptimizedThumbnailUrl(group.mockupUrl, 400) || group.mockupUrl}
+                                alt={group.sku}
+                                className="h-full w-full rounded-lg object-cover"
+                              />
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-slate-100 text-slate-300">
+                            <Tag size={17} />
+                          </div>
+                        )}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-3 font-mono text-sm font-black text-slate-900">{group.sku}</td>
+                      <td className="px-3 py-3 text-sm font-bold text-slate-900">{searchTermQuery.trim()}</td>
+                      <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{Number(group.totalImpressions || 0).toLocaleString("vi-VN")}</td>
+                      <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{Number(group.totalClicks || 0).toLocaleString("vi-VN")}</td>
+                      <td className="px-3 py-3 text-right font-mono text-sm text-slate-700">{group.totalImpressions > 0 ? ((group.totalClicks / group.totalImpressions) * 100).toFixed(2) : "0.00"}%</td>
+                      <td className="px-3 py-3 text-right font-mono text-sm font-black text-slate-900">${Number(group.totalSpend || 0).toFixed(2)}</td>
+                      <td className="px-3 py-3 text-right font-mono text-sm font-black text-emerald-600">${Number(group.totalSales || 0).toFixed(2)}</td>
+                      <td className="px-3 py-3 text-right font-mono text-sm font-black text-slate-900">{Number(group.totalOrders || 0).toLocaleString("vi-VN")}</td>
+                      <td className="px-3 py-3 text-right font-mono text-sm text-slate-700">{group.totalClicks > 0 ? ((group.totalOrders / group.totalClicks) * 100).toFixed(1) : "0.0"}%</td>
+                      <td className="px-3 py-3 text-right">
+                        <span
+                          className={`inline-flex min-w-[68px] justify-center rounded-md px-2 py-1 font-mono text-sm font-black ${
+                            group.acos > 500
+                              ? "bg-rose-100 text-rose-700"
+                              : group.acos < 30
+                                ? "bg-emerald-100 text-emerald-700"
+                                : group.acos <= 50
+                                  ? "bg-amber-200 text-amber-900"
+                                  : "bg-rose-100 text-rose-700"
+                          }`}
+                        >
+                          {group.acos > 500 ? "0 sales" : `${Number(group.acos || 0).toFixed(1)}%`}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           {/* Table */}
           <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
             <table className="w-full text-left text-xs text-slate-700">
@@ -4646,9 +4852,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                 ) : (
                   (serverSearchTerms || paginatedSearchTerms).map((t, idx) => {
                     const isSelected = selectedTerms.has(searchTermKey(t));
-                    const campaignNames = t.campaignNames?.length ? t.campaignNames : [t.campaignName].filter(Boolean);
-                    const adTypes = t.adTypes?.length ? t.adTypes : [t.adType || "?"];
-                    const matchTypes = t.matchTypes?.length ? t.matchTypes : [t.matchType];
                     let rowBg = isSelected ? "bg-indigo-50/50" : "";
                     if (t.orders >= 2 && t.acos <= targetAcos) rowBg = isSelected ? "bg-emerald-100/50" : "bg-emerald-50/30";
                     else if (t.clicks >= 9 && t.orders === 0) rowBg = isSelected ? "bg-rose-100/50" : "bg-rose-50/30";
@@ -4666,23 +4869,23 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                         <td className="py-2.5 px-3 font-sans font-bold text-slate-900 min-w-[180px] break-words">
                           {t.customerSearchTerm}
                         </td>
-                        <td className="py-2.5 px-3 font-sans text-[10px] font-black text-indigo-700">
-                          {adTypes.join(" / ")}
-                        </td>
+                        <td className="py-2.5 px-3 font-sans text-[10px] font-black text-indigo-700">{t.adType || "?"}</td>
                         <td className="py-2.5 px-3 font-sans">
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
-                            {matchTypes.join(" / ")}
+                            {t.matchType}
                           </span>
                         </td>
                         <td className="py-2.5 px-3 text-slate-600 font-sans min-w-[280px] max-w-[420px] align-top leading-snug">
-                          <div className="space-y-1.5">
-                            {campaignNames.map((campaign) => (
-                              <div key={campaign} className="flex items-start gap-1.5">
-                                <span className="min-w-0 flex-1 whitespace-normal break-words">{campaign}</span>
-                                <PpcCopyButton value={campaign} label="campaign" />
-                              </div>
-                            ))}
+                          <div className="flex items-start gap-1">
+                            <span className="min-w-0 flex-1 whitespace-normal break-words">{t.campaignName}</span>
+                            <PpcCopyButton value={t.campaignName} label="campaign" />
                           </div>
+                          {t.adGroupName && t.adGroupName !== t.campaignName && (
+                            <div className="mt-1 flex items-start gap-1 text-[10px] text-slate-400">
+                              <span className="min-w-0 flex-1 whitespace-normal break-words">Nhóm: {t.adGroupName}</span>
+                              <PpcCopyButton value={t.adGroupName} label="ad group" />
+                            </div>
+                          )}
                         </td>
                         <td className="py-2.5 px-3 text-right font-bold text-slate-700">{(t.impressions || 0).toLocaleString()}</td>
                         <td className="py-2.5 px-3 text-right font-bold text-slate-800">{t.clicks}</td>
