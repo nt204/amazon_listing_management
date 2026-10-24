@@ -2867,6 +2867,23 @@ function InventoryViewInner() {
     };
   }, [selectedStoreId]);
 
+  useEffect(() => {
+    const handleImportCompleted = (event: Event) => {
+      const type = (event as CustomEvent<{ type?: string }>).detail?.type;
+      if (type !== "success") return;
+      if (activeTab === "sku") fetchSkus();
+      else if (activeTab === "inbound") fetchShipments();
+      else if (activeTab === "check_shipment") {
+        fetchCheckShipments();
+        fetchShipments();
+      } else if (activeTab === "monthly_base_cost") {
+        monthlyBaseCostRef.current?.reload();
+      }
+    };
+    window.addEventListener("accounting-import-completed", handleImportCompleted);
+    return () => window.removeEventListener("accounting-import-completed", handleImportCompleted);
+  }, [activeTab, fetchSkus, fetchShipments, fetchCheckShipments]);
+
   const [syncingLatestFiles, setSyncingLatestFiles] = useState(false);
 
   // Reload tab: Khi ấn làm mới ở bảng Check Shipment, tự động nạp file mới nhất cho tất cả các store từ Cloudflare R2 / lưu trữ rồi refetch

@@ -1079,7 +1079,7 @@ export function OrderInputView() {
                 ) : (
                   stores.map((s) => (
                     <option key={s.id} value={s.id}>
-                      {s.name} ({s.marketplace || "US"})
+                      {s.name}
                     </option>
                   ))
                 )}

@@ -853,7 +853,7 @@ export function SkuWinView() {
               ) : (
                 stores.map((s) => (
                   <option key={s.id} value={s.id}>
-                    {s.name} ({s.marketplace || "US"})
+                    {s.name}
                   </option>
                 ))
               )}
