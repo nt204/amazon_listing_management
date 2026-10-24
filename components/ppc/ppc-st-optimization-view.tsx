@@ -74,7 +74,28 @@ export function PpcStOptimizationView({
   onCandidateCountChange,
 }: PpcStOptimizationViewProps) {
   // 0. Sub-tab state (Tab 1: Candidates, Tab 2: Negative Hub)
-  const [subTab, setSubTab] = useState<"candidates" | "registry">("candidates");
+  const [subTab, setSubTab] = useState<"candidates" | "registry">(() => {
+    if (typeof window !== "undefined") {
+      const p = new URLSearchParams(window.location.search);
+      const st = p.get("subtab");
+      if (st === "registry" || st === "hub") return "registry";
+    }
+    return "candidates";
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const p = new URLSearchParams(window.location.search);
+    const st = p.get("subtab");
+    if (st === "registry" || st === "hub") {
+      setSubTab("registry");
+    } else if (st === "candidates") {
+      setSubTab("candidates");
+    }
+    if (p.get("drawer") === "history" || p.get("history") === "1" || p.get("action_queue") === "1") {
+      if (onOpenActionQueue) onOpenActionQueue();
+    }
+  }, [onOpenActionQueue]);
 
   // Negative Registry state
   const [registryItems, setRegistryItems] = useState<NegativeRegistryItem[]>([]);

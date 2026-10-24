@@ -67,7 +67,7 @@ export function resolveContextualReconciliationLinks(
     toolsUsed.includes("listNegativeCandidates") ||
     /negative|phủ định|chặn từ khóa|search term/i.test(q)
   ) {
-    add("🎯 Quản lý Negative Keywords", "https://ncehub.net/?view=ppc&section=negative_keyword");
+    add("🎯 Quản lý Negative Keywords", "https://ncehub.net/?view=ppc&section=negative_keyword&subtab=registry");
   }
 
   // 3. Chi phí Quảng cáo / Ads / PPC / ACOS / TACOS
@@ -417,10 +417,10 @@ Hệ thống đã lưu vào Negative Hub${execResult.bulksheetCreated ? " và x�
                           type: "primary",
                           width: "fill",
                           multi_url: {
-                            url: "https://ncehub.net/?view=ppc&section=negative_keyword",
-                            pc_url: "https://ncehub.net/?view=ppc&section=negative_keyword",
-                            android_url: "https://ncehub.net/?view=ppc&section=negative_keyword",
-                            ios_url: "https://ncehub.net/?view=ppc&section=negative_keyword",
+                            url: "https://ncehub.net/?view=ppc&section=negative_keyword&subtab=registry",
+                            pc_url: "https://ncehub.net/?view=ppc&section=negative_keyword&subtab=registry",
+                            android_url: "https://ncehub.net/?view=ppc&section=negative_keyword&subtab=registry",
+                            ios_url: "https://ncehub.net/?view=ppc&section=negative_keyword&subtab=registry",
                           },
                         },
                       ],
@@ -436,10 +436,10 @@ Hệ thống đã lưu vào Negative Hub${execResult.bulksheetCreated ? " và x�
                           type: "default",
                           width: "fill",
                           multi_url: {
-                            url: "https://ncehub.net/?view=ppc&section=auto_bid",
-                            pc_url: "https://ncehub.net/?view=ppc&section=auto_bid",
-                            android_url: "https://ncehub.net/?view=ppc&section=auto_bid",
-                            ios_url: "https://ncehub.net/?view=ppc&section=auto_bid",
+                            url: "https://ncehub.net/?view=ppc&section=negative_keyword&drawer=history",
+                            pc_url: "https://ncehub.net/?view=ppc&section=negative_keyword&drawer=history",
+                            android_url: "https://ncehub.net/?view=ppc&section=negative_keyword&drawer=history",
+                            ios_url: "https://ncehub.net/?view=ppc&section=negative_keyword&drawer=history",
                           },
                         },
                       ],
@@ -463,8 +463,8 @@ Hệ thống đã lưu vào Negative Hub${execResult.bulksheetCreated ? " và x�
           larkSent: true,
           larkDetail: { status: "confirmed_negative", count: execResult.count },
           actionLinks: [
-            { label: "🎯 Xem Negative Keywords", url: "https://ncehub.net/?view=ppc&section=negative_keyword" },
-            { label: "📋 Xem Lịch Sử Auto Upload", url: "https://ncehub.net/?view=ppc&section=auto_bid" },
+            { label: "🎯 Xem Negative Hub", url: "https://ncehub.net/?view=ppc&section=negative_keyword&subtab=registry" },
+            { label: "📋 Xem Lịch Sử Auto Upload", url: "https://ncehub.net/?view=ppc&section=negative_keyword&drawer=history" },
           ],
         };
       } else if (isCancel) {

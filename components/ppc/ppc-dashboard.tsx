@@ -559,7 +559,22 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     end: customEndDate,
   });
   const pendingActionCount = actionQueue.length > 0 ? actionQueue.length : actionQueueCount;
-  const [isActionQueueOpen, setIsActionQueueOpen] = useState(false);
+  const [isActionQueueOpen, setIsActionQueueOpen] = useState(() => {
+    if (typeof window !== "undefined") {
+      const p = new URLSearchParams(window.location.search);
+      return p.get("drawer") === "history" || p.get("history") === "1" || p.get("action_queue") === "1";
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const p = new URLSearchParams(window.location.search);
+    if (p.get("drawer") === "history" || p.get("history") === "1" || p.get("action_queue") === "1") {
+      setIsActionQueueOpen(true);
+    }
+  }, []);
+
   const [costMasters, setCostMasters] = useState<ProductCostMaster[]>([]);
   const [ruleVersions, setRuleVersions] = useState<PpcRuleVersion[]>([]);
   const [bulkHistory, setBulkHistory] = useState<BulkExport[]>([]);
