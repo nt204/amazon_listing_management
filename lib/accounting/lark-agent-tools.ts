@@ -594,32 +594,76 @@ export async function listNegativeCandidates(
     campaign_id: string | null;
     ad_group_name: string | null;
     ad_group_id: string | null;
+    ad_type: string | null;
     customer_search_term: string;
     clicks: number;
     spend: number;
   }>>`
+    WITH daily_counts AS (
+      SELECT store_id, ad_type, COUNT(*) as cnt
+      FROM ppc_search_terms
+      WHERE report_granularity = 'DAILY'
+      GROUP BY store_id, ad_type
+    ),
+    latest_range AS (
+      SELECT store_id, ad_type, MAX(report_end_date) as max_end_date
+      FROM ppc_search_terms
+      WHERE report_granularity = 'RANGE'
+      GROUP BY store_id, ad_type
+    ),
+    raw_filtered AS (
+      SELECT
+        st.store_id,
+        s.name AS store_name,
+        st.campaign_id,
+        st.campaign_name,
+        st.ad_group_id,
+        st.ad_group_name,
+        st.customer_search_term,
+        st.ad_type,
+        st.clicks,
+        st.spend,
+        st.orders
+      FROM ppc_search_terms st
+      JOIN ppc_stores s ON s.id = st.store_id
+      LEFT JOIN daily_counts dc ON dc.store_id = st.store_id AND dc.ad_type = st.ad_type
+      LEFT JOIN latest_range lr ON lr.store_id = st.store_id AND lr.ad_type = st.ad_type
+      WHERE 1=1
+        ${targetStore ? sql`AND st.store_id = ${targetStore.id}` : sql``}
+        AND (
+          (st.report_granularity = 'DAILY')
+          OR
+          (st.report_granularity = 'RANGE' AND (dc.cnt IS NULL OR dc.cnt = 0) AND st.report_end_date = lr.max_end_date)
+        )
+    )
     SELECT 
-      st.store_id,
-      s.name AS store_name,
-      st.campaign_name,
-      st.campaign_id,
-      st.ad_group_name,
-      st.ad_group_id,
-      st.customer_search_term,
-      SUM(st.clicks) as clicks,
-      SUM(st.spend) as spend
-    FROM ppc_search_terms st
-    JOIN ppc_stores s ON s.id = st.store_id
-    WHERE st.orders = 0
-      ${targetStore ? sql`AND st.store_id = ${targetStore.id}` : sql``}
-      AND NOT EXISTS (
-        SELECT 1 FROM ppc_negative_registry nr
-        WHERE nr.store_id = st.store_id
-          AND LOWER(nr.keyword_text) = LOWER(st.customer_search_term)
-          AND nr.state = 'enabled'
-      )
-    GROUP BY st.store_id, s.name, st.campaign_name, st.campaign_id, st.ad_group_name, st.ad_group_id, st.customer_search_term
-    HAVING SUM(st.clicks) >= ${minClicks}
+      rf.store_id,
+      rf.store_name,
+      rf.campaign_name,
+      MIN(rf.campaign_id) as campaign_id,
+      MIN(rf.ad_group_name) as ad_group_name,
+      MIN(rf.ad_group_id) as ad_group_id,
+      MIN(rf.ad_type) as ad_type,
+      rf.customer_search_term,
+      SUM(rf.clicks)::integer as clicks,
+      ROUND(SUM(rf.spend)::numeric, 2)::float as spend
+    FROM raw_filtered rf
+    WHERE NOT EXISTS (
+      SELECT 1 FROM ppc_negative_registry nr
+      WHERE nr.store_id = rf.store_id
+        AND LOWER(TRIM(nr.campaign_name)) = LOWER(TRIM(rf.campaign_name))
+        AND LOWER(TRIM(nr.keyword_text)) = LOWER(TRIM(rf.customer_search_term))
+        AND nr.state = 'enabled'
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM ppc_performance_facts pf
+      WHERE pf.store_id = rf.store_id
+        AND pf.grain = 'TARGET'
+        AND pf.is_negative = true
+        AND LOWER(TRIM(pf.target_expression)) = LOWER(TRIM(rf.customer_search_term))
+    )
+    GROUP BY rf.store_id, rf.store_name, rf.campaign_name, rf.customer_search_term
+    HAVING SUM(rf.orders) = 0 AND SUM(rf.clicks) >= ${minClicks}
     ORDER BY clicks DESC, spend DESC
     LIMIT ${limit}
   `;

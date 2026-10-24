@@ -668,12 +668,13 @@ QUY TẮC BẮT BUỘC:
   
   // Chuẩn hóa đồng bộ font chữ (loại bỏ inline code backticks và italics gây lệch font trên Lark)
   let replyText = sanitizeUniformTypography(rawReplyText);
+  const cleanReportContent = replyText;
 
   // Xác định các link đối soát phù hợp dựa trên nội dung câu hỏi và tools được gọi
   const isAwaitingNegativeConfirmation = toolsUsed.includes("requestNegativeKeywordAction");
   const recButtons = resolveContextualReconciliationLinks(options.message, toolsUsed, replyText);
 
-  // Đính kèm link markdown vào cuối text đối với các câu hỏi báo cáo dữ liệu
+  // Đính kèm link markdown vào cuối text (cho text notification hoặc API response)
   if (!isAwaitingNegativeConfirmation && recButtons.length > 0) {
     const linkStr = recButtons.map((b) => `[${b.label}](${b.url})`).join("  •  ");
     replyText += `\n\n🔗 **Link đối soát hệ thống:**\n${linkStr}`;
@@ -690,10 +691,13 @@ QUY TẮC BẮT BUỘC:
   // Gửi thông báo đến Lark nếu được yêu cầu
   if (options.sendToLark && targetReceiveId) {
     try {
+      // Khi đã có nút bấm ở dưới thẻ, dùng cleanReportContent để tránh bị lặp đôi link
+      const cardMarkdownContent = recButtons.length > 0 ? cleanReportContent : replyText;
+
       let cardElements: any[] = [
         {
           tag: "markdown",
-          content: replyText,
+          content: cardMarkdownContent,
         },
       ];
 

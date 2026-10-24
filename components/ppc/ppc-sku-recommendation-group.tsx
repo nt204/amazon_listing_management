@@ -1189,10 +1189,10 @@ export function PpcSkuRecommendationGroupView({
           </div>
         </div>
 
-        {/* Row 2: Quick Filter Chips (Gọn gàng, tối giản chú thích) */}
-        <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-100">
-          <span className="text-[11px] font-bold uppercase text-slate-400 tracking-wider flex items-center gap-1 mr-1">
-            <Funnel size={12} weight="bold" className="text-slate-500" />
+        {/* Row 2: Quick Filter Chips (Gọn gàng trên 1 hàng, không bị rớt dòng lẻ loi) */}
+        <div className="flex items-center gap-1 pt-2 border-t border-slate-100 overflow-x-auto no-scrollbar">
+          <span className="text-[11px] font-bold uppercase text-slate-400 tracking-wider flex items-center gap-1 mr-0.5 shrink-0">
+            <Funnel size={11} weight="bold" className="text-slate-500" />
             <span>Lọc:</span>
           </span>
 
@@ -1200,7 +1200,7 @@ export function PpcSkuRecommendationGroupView({
           <button
             type="button"
             onClick={() => setQuickFilter("ALL")}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border shrink-0 ${
               quickFilter === "ALL"
                 ? "bg-slate-900 text-white border-slate-900 shadow-2xs"
                 : "bg-white text-slate-700 hover:bg-slate-50 border-slate-200/80"
@@ -1218,13 +1218,13 @@ export function PpcSkuRecommendationGroupView({
           <button
             type="button"
             onClick={() => setQuickFilter(quickFilter === "INCREASE" ? "ALL" : "INCREASE")}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border shrink-0 ${
               quickFilter === "INCREASE"
                 ? "bg-emerald-700 text-white border-emerald-700 shadow-2xs"
                 : "bg-white text-slate-700 hover:bg-emerald-50/50 hover:text-emerald-800 border-slate-200/80"
             }`}
           >
-            <ArrowUpRight size={13} weight="bold" className={quickFilter === "INCREASE" ? "text-white" : "text-emerald-600"} />
+            <ArrowUpRight size={12} weight="bold" className={quickFilter === "INCREASE" ? "text-white" : "text-emerald-600"} />
             <span>Tăng Bid</span>
             <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
               quickFilter === "INCREASE" ? "bg-emerald-800 text-emerald-100" : "bg-emerald-50 text-emerald-700"
@@ -1237,13 +1237,13 @@ export function PpcSkuRecommendationGroupView({
           <button
             type="button"
             onClick={() => setQuickFilter(quickFilter === "DECREASE" ? "ALL" : "DECREASE")}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border shrink-0 ${
               quickFilter === "DECREASE"
                 ? "bg-rose-700 text-white border-rose-700 shadow-2xs"
                 : "bg-white text-slate-700 hover:bg-rose-50/50 hover:text-rose-800 border-slate-200/80"
             }`}
           >
-            <ArrowDownRight size={13} weight="bold" className={quickFilter === "DECREASE" ? "text-white" : "text-rose-600"} />
+            <ArrowDownRight size={12} weight="bold" className={quickFilter === "DECREASE" ? "text-white" : "text-rose-600"} />
             <span>Giảm Bid</span>
             <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
               quickFilter === "DECREASE" ? "bg-rose-800 text-rose-100" : "bg-rose-50 text-rose-700"
@@ -1256,13 +1256,13 @@ export function PpcSkuRecommendationGroupView({
           <button
             type="button"
             onClick={() => setQuickFilter(quickFilter === "PAUSE" ? "ALL" : "PAUSE")}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border shrink-0 ${
               quickFilter === "PAUSE"
                 ? "bg-amber-700 text-white border-amber-700 shadow-2xs"
                 : "bg-white text-slate-700 hover:bg-amber-50/50 hover:text-amber-800 border-slate-200/80"
             }`}
           >
-            <Pause size={13} weight="bold" className={quickFilter === "PAUSE" ? "text-white" : "text-amber-600"} />
+            <Pause size={12} weight="bold" className={quickFilter === "PAUSE" ? "text-white" : "text-amber-600"} />
             <span>Pause</span>
             <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
               quickFilter === "PAUSE" ? "bg-amber-800 text-amber-100" : "bg-amber-50 text-amber-700"
@@ -1275,13 +1275,13 @@ export function PpcSkuRecommendationGroupView({
           <button
             type="button"
             onClick={() => setQuickFilter(quickFilter === "BLEEDING" ? "ALL" : "BLEEDING")}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border shrink-0 ${
               quickFilter === "BLEEDING"
                 ? "bg-red-700 text-white border-red-700 shadow-2xs"
                 : "bg-white text-slate-700 hover:bg-red-50/50 hover:text-red-800 border-slate-200/80"
             }`}
           >
-            <WarningCircle size={13} weight="bold" className={quickFilter === "BLEEDING" ? "text-white" : "text-red-600"} />
+            <WarningCircle size={12} weight="bold" className={quickFilter === "BLEEDING" ? "text-white" : "text-red-600"} />
             <span>Lỗ ACoS</span>
             <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
               quickFilter === "BLEEDING" ? "bg-red-800 text-red-100" : "bg-red-50 text-red-700"
@@ -1294,13 +1294,13 @@ export function PpcSkuRecommendationGroupView({
           <button
             type="button"
             onClick={() => setQuickFilter(quickFilter === "PROFITABLE" ? "ALL" : "PROFITABLE")}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border shrink-0 ${
               quickFilter === "PROFITABLE"
                 ? "bg-teal-700 text-white border-teal-700 shadow-2xs"
                 : "bg-white text-slate-700 hover:bg-teal-50/50 hover:text-teal-800 border-slate-200/80"
             }`}
           >
-            <CheckCircle size={13} weight="bold" className={quickFilter === "PROFITABLE" ? "text-white" : "text-teal-600"} />
+            <CheckCircle size={12} weight="bold" className={quickFilter === "PROFITABLE" ? "text-white" : "text-teal-600"} />
             <span>ACoS Tốt</span>
             <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
               quickFilter === "PROFITABLE" ? "bg-teal-800 text-teal-100" : "bg-teal-50 text-teal-700"
@@ -1313,13 +1313,13 @@ export function PpcSkuRecommendationGroupView({
           <button
             type="button"
             onClick={() => setQuickFilter(quickFilter === "ZERO_SPEND" ? "ALL" : "ZERO_SPEND")}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border shrink-0 ${
               quickFilter === "ZERO_SPEND"
                 ? "bg-sky-700 text-white border-sky-700 shadow-2xs"
                 : "bg-white text-slate-700 hover:bg-sky-50/50 hover:text-sky-800 border-slate-200/80"
             }`}
           >
-            <Clock size={13} weight="bold" className={quickFilter === "ZERO_SPEND" ? "text-white" : "text-sky-600"} />
+            <Clock size={12} weight="bold" className={quickFilter === "ZERO_SPEND" ? "text-white" : "text-sky-600"} />
             <span>Chưa cắn tiền</span>
             <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
               quickFilter === "ZERO_SPEND" ? "bg-sky-800 text-sky-100" : "bg-sky-50 text-sky-700"
@@ -1332,13 +1332,13 @@ export function PpcSkuRecommendationGroupView({
           <button
             type="button"
             onClick={() => setQuickFilter(quickFilter === "ZERO_SALES" ? "ALL" : "ZERO_SALES")}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border shrink-0 ${
               quickFilter === "ZERO_SALES"
                 ? "bg-violet-700 text-white border-violet-700 shadow-2xs"
                 : "bg-white text-slate-700 hover:bg-violet-50/50 hover:text-violet-800 border-slate-200/80"
             }`}
           >
-            <Fire size={13} weight="bold" className={quickFilter === "ZERO_SALES" ? "text-white" : "text-violet-600"} />
+            <Fire size={12} weight="bold" className={quickFilter === "ZERO_SALES" ? "text-white" : "text-violet-600"} />
             <span>Chưa ra đơn</span>
             <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
               quickFilter === "ZERO_SALES" ? "bg-violet-800 text-violet-100" : "bg-violet-50 text-violet-700"
@@ -1351,13 +1351,13 @@ export function PpcSkuRecommendationGroupView({
           <button
             type="button"
             onClick={() => setQuickFilter(quickFilter === "PREFIX_ERROR" ? "ALL" : "PREFIX_ERROR")}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border shrink-0 ${
               quickFilter === "PREFIX_ERROR"
                 ? "bg-rose-700 text-white border-rose-700 shadow-2xs"
                 : "bg-white text-slate-700 hover:bg-rose-50/50 hover:text-rose-800 border-slate-200/80"
             }`}
           >
-            <WarningCircle size={13} weight="bold" className={quickFilter === "PREFIX_ERROR" ? "text-white" : "text-rose-600"} />
+            <WarningCircle size={12} weight="bold" className={quickFilter === "PREFIX_ERROR" ? "text-white" : "text-rose-600"} />
             <span>Lỗi Prefix</span>
             <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
               quickFilter === "PREFIX_ERROR" ? "bg-rose-800 text-rose-100" : "bg-rose-50 text-rose-700"
@@ -1367,13 +1367,13 @@ export function PpcSkuRecommendationGroupView({
           </button>
 
           {/* Dạng chạy Filter Chips */}
-          <div className="h-4 w-px bg-slate-200 mx-1 shrink-0 hidden sm:block" />
+          <div className="h-3.5 w-px bg-slate-200 mx-0.5 shrink-0" />
 
           {/* SP03 */}
           <button
             type="button"
             onClick={() => setSelectedCampType(selectedCampType === "SP03" ? "ALL" : "SP03")}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border shrink-0 ${
               selectedCampType === "SP03"
                 ? "bg-indigo-700 text-white border-indigo-700 shadow-2xs"
                 : "bg-white text-slate-700 hover:bg-indigo-50/50 hover:text-indigo-800 border-slate-200/80"
@@ -1391,7 +1391,7 @@ export function PpcSkuRecommendationGroupView({
           <button
             type="button"
             onClick={() => setSelectedCampType(selectedCampType === "SB05" ? "ALL" : "SB05")}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border shrink-0 ${
               selectedCampType === "SB05"
                 ? "bg-purple-700 text-white border-purple-700 shadow-2xs"
                 : "bg-white text-slate-700 hover:bg-purple-50/50 hover:text-purple-800 border-slate-200/80"
@@ -1409,7 +1409,7 @@ export function PpcSkuRecommendationGroupView({
           <button
             type="button"
             onClick={() => setSelectedCampType(selectedCampType === "SB01" ? "ALL" : "SB01")}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border shrink-0 ${
               selectedCampType === "SB01"
                 ? "bg-blue-700 text-white border-blue-700 shadow-2xs"
                 : "bg-white text-slate-700 hover:bg-blue-50/50 hover:text-blue-800 border-slate-200/80"

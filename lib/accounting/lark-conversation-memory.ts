@@ -234,4 +234,37 @@ export async function clearPendingAction(sessionId: string): Promise<void> {
   inMemoryPendingActions.delete(sessionId);
 }
 
+// In-memory set để deduplicate tin nhắn tránh bot bị spam/lặp lại
+const inMemoryProcessedMessages = new Map<string, number>();
+
+/**
+ * Kiểm tra và đánh dấu message_id đã xử lý hay chưa (tránh spam / duplicate events)
+ * @returns true nếu là tin nhắn TRÙNG LẶP (đã xử lý trong vòng 10 phút), false nếu là tin nhắn mới
+ */
+export async function checkAndMarkMessageProcessed(messageId: string): Promise<boolean> {
+  if (!messageId) return false;
+  const redis = getRedisClient();
+  if (redis) {
+    try {
+      // SETNX với TTL 600 giây (10 phút)
+      const res = await redis.set(`lark:msg_dedup:${messageId}`, "1", "EX", 600, "NX");
+      // Nếu res là null -> key đã tồn tại -> TRÙNG LẶP
+      return res === null;
+    } catch (err) {
+      console.warn("[LarkMemory] Redis checkAndMarkMessageProcessed error, using in-memory:", err);
+    }
+  }
+
+  // Fallback in-memory map
+  const now = Date.now();
+  for (const [id, ts] of inMemoryProcessedMessages.entries()) {
+    if (now - ts > 600000) inMemoryProcessedMessages.delete(id);
+  }
+  if (inMemoryProcessedMessages.has(messageId)) {
+    return true;
+  }
+  inMemoryProcessedMessages.set(messageId, now);
+  return false;
+}
+
 

@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { runAccountingAgent } from "@/lib/accounting/lark-agent-service";
+import { checkAndMarkMessageProcessed } from "@/lib/accounting/lark-conversation-memory";
 
 export const maxDuration = 60; // Hỗ trợ multi-step tool calls
 
@@ -15,6 +16,15 @@ export async function POST(request: NextRequest) {
     // 2. Xử lý Event Webhook từ Lark Bot (im.message.receive_v1)
     if (body.header?.event_type === "im.message.receive_v1" && body.event?.message) {
       const messageObj = body.event.message;
+
+      // Chống lặp / SPAM tin nhắn trùng lặp giữa Webhook và WebSocket
+      if (messageObj.message_id) {
+        const isDuplicate = await checkAndMarkMessageProcessed(messageObj.message_id);
+        if (isDuplicate) {
+          return Response.json({ code: 0, msg: "ignored: duplicate message_id" });
+        }
+      }
+
       const isGroup = messageObj.chat_type === "group";
       const mentions = messageObj.mentions || [];
 

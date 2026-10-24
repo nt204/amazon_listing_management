@@ -2,6 +2,7 @@ import "server-only";
 
 import * as lark from "@larksuiteoapi/node-sdk";
 import { runAccountingAgent } from "@/lib/accounting/lark-agent-service";
+import { checkAndMarkMessageProcessed } from "@/lib/accounting/lark-conversation-memory";
 
 const appId = process.env.LARK_APP_ID?.trim();
 const appSecret = process.env.LARK_APP_SECRET?.trim();
@@ -25,6 +26,21 @@ const eventDispatcher = new lark.EventDispatcher({}).register({
     try {
       const message = data.message;
       if (!message) return;
+
+      // 1. Chống lặp vòng bot: Chỉ xử lý tin nhắn từ người dùng thật
+      if (data.sender?.sender_type && data.sender.sender_type !== "user") {
+        return;
+      }
+
+      // 2. Chống SPAM / duplicate events: Kiểm tra message_id đã xử lý chưa
+      const messageId = message.message_id;
+      if (messageId) {
+        const isDuplicate = await checkAndMarkMessageProcessed(messageId);
+        if (isDuplicate) {
+          console.log(`[LarkWS] Bỏ qua tin nhắn trùng lặp (message_id: ${messageId})`);
+          return;
+        }
+      }
 
       const chatType = message.chat_type; // "group" | "p2p"
       const mentions = message.mentions || [];
