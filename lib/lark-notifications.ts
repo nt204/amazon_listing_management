@@ -144,9 +144,73 @@ export async function sendLarkCardNotification(
   return { sent: true };
 }
 
+export async function uploadLarkImage(
+  imageBuffer: Buffer,
+  filename = "report.png",
+): Promise<string> {
+  const appId = process.env.LARK_APP_ID?.trim();
+  const appSecret = process.env.LARK_APP_SECRET?.trim();
+  if (!appId || !appSecret) throw new Error("Lark credentials not configured");
+
+  const token = await getTenantAccessToken(appId, appSecret);
+  const formData = new FormData();
+  formData.append("image_type", "message");
+  formData.append("image", new Blob([new Uint8Array(imageBuffer)], { type: "image/png" }), filename);
+
+  const res = await fetch(`${LARK_API_BASE_URL}/im/v1/images`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: formData,
+  });
+
+  const data = (await res.json().catch(() => ({}))) as {
+    code?: number;
+    msg?: string;
+    data?: { image_key?: string };
+  };
+
+  if (data.code !== 0 || !data.data?.image_key) {
+    throw new Error(`Upload image to Lark failed (${data.code}): ${data.msg || "unknown error"}`);
+  }
+  return data.data.image_key;
+}
+
+export async function sendLarkImageNotification(
+  imageKey: string,
+  recipient: { receiveId: string; receiveIdType: string },
+): Promise<LarkNotificationResult> {
+  const appId = process.env.LARK_APP_ID?.trim();
+  const appSecret = process.env.LARK_APP_SECRET?.trim();
+  const receiveId = recipient.receiveId.trim();
+  const receiveIdType = recipient.receiveIdType.trim();
+
+  if (!appId || !appSecret || !receiveId) return { sent: false, reason: "not_configured" };
+
+  const token = await getTenantAccessToken(appId, appSecret);
+  await fetchJson<LarkApiResponse>(
+    `${LARK_API_BASE_URL}/im/v1/messages?receive_id_type=${encodeURIComponent(receiveIdType)}`,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify({
+        receive_id: receiveId,
+        msg_type: "image",
+        content: JSON.stringify({ image_key: imageKey }),
+      }),
+    },
+  );
+  return { sent: true };
+}
+
 export type LarkNotificationPayload =
   | string
   | string[]
+  | { imageKey: string; fallbackText?: string }
   | { card: Record<string, any>; fallbackText?: string };
 
 export async function notifyLarkEventBestEffort(
@@ -159,6 +223,7 @@ export async function notifyLarkEventBestEffort(
     if (!recipients.length) return;
 
     const isCard = typeof payload === "object" && payload !== null && !Array.isArray(payload) && "card" in payload;
+    const isImage = typeof payload === "object" && payload !== null && !Array.isArray(payload) && "imageKey" in payload;
 
     const results = await Promise.allSettled(
       recipients.map(async (recipient) => {
@@ -166,11 +231,21 @@ export async function notifyLarkEventBestEffort(
           receiveId: recipient.receive_id,
           receiveIdType: recipient.receive_id_type,
         };
+        if (isImage) {
+          try {
+            return await sendLarkImageNotification((payload as { imageKey: string }).imageKey, target);
+          } catch (imgErr) {
+            if ("fallbackText" in payload && payload.fallbackText) {
+              return await sendLarkTextNotification(payload.fallbackText, target);
+            }
+            throw imgErr;
+          }
+        }
         if (isCard) {
           try {
-            return await sendLarkCardNotification(payload.card, target);
+            return await sendLarkCardNotification((payload as { card: Record<string, any> }).card, target);
           } catch (cardErr) {
-            if (payload.fallbackText) {
+            if ("fallbackText" in payload && payload.fallbackText) {
               return await sendLarkTextNotification(payload.fallbackText, target);
             }
             throw cardErr;
