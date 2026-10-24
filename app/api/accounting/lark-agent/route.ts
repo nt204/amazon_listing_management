@@ -8,7 +8,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
 
-    // 1. Xử lý Challenge URL Verification từ Lark Open Platform
+    // 1. Xử lý Challenge URL Verification từ Lark Open Platform (Bắt buộc khi đổi sang Webhook)
     if (body.type === "url_verification" && body.challenge) {
       return Response.json({ challenge: body.challenge });
     }
@@ -17,12 +17,17 @@ export async function POST(request: NextRequest) {
     if (body.header?.event_type === "im.message.receive_v1" && body.event?.message) {
       const messageObj = body.event.message;
 
-      // Chống lặp / SPAM tin nhắn trùng lặp giữa Webhook và WebSocket
+      // Chống lặp / SPAM tin nhắn trùng lặp
       if (messageObj.message_id) {
         const isDuplicate = await checkAndMarkMessageProcessed(messageObj.message_id);
         if (isDuplicate) {
           return Response.json({ code: 0, msg: "ignored: duplicate message_id" });
         }
+      }
+
+      // Chỉ xử lý tin nhắn từ người dùng thật
+      if (body.event?.sender?.sender_type && body.event.sender.sender_type !== "user") {
+        return Response.json({ code: 0, msg: "ignored: not user sender" });
       }
 
       const isGroup = messageObj.chat_type === "group";
@@ -44,12 +49,10 @@ export async function POST(request: NextRequest) {
 
       const cleanText = rawText.replace(/@_user_\d+/g, "").trim();
       if (!cleanText) {
-        // Chỉ tag bot mà không có nội dung câu hỏi
         return Response.json({ code: 0, msg: "empty message after mention strip" });
       }
 
       const chatId = messageObj.chat_id;
-      // Dùng chat_id (hoặc root_id nếu là thread) làm sessionId để lưu lịch sử hội thoại ngắn (30 phút)
       const sessionId = messageObj.root_id || chatId;
 
       const result = await runAccountingAgent({
@@ -71,7 +74,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // 2.1 Xử lý Event Card Action Trigger từ Lark Bot
+    // 3. Xử lý Event Card Action Trigger từ Lark Bot (khi bấm nút trên Thẻ)
     if (body.header?.event_type === "card.action.trigger" || body.action?.value) {
       const action = body.action || body.event?.action;
       const value = action?.value || {};
@@ -104,7 +107,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 3. Xử lý Direct API Request (dành cho frontend test hoặc curl)
+    // 4. Xử lý Direct API Request (dành cho frontend test hoặc curl)
     const directMessage = body.message?.trim();
     if (!directMessage) {
       return Response.json(
@@ -133,10 +136,11 @@ export async function POST(request: NextRequest) {
       larkSent: result.larkSent,
       larkDetail: result.larkDetail,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Accounting Lark Agent error:", error);
+    const message = error instanceof Error ? error.message : "Lỗi xử lý yêu cầu kế toán.";
     return Response.json(
-      { error: error.message || "Lỗi xử lý yêu cầu kế toán." },
+      { error: message },
       { status: 500 }
     );
   }
