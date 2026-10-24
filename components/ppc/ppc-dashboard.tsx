@@ -280,7 +280,7 @@ function SkuTrendSparkline({
         onOpenDetail?.({ sku, storeName, mockupUrl, dailyTrend });
       }}
       className="group/spark inline-flex items-end gap-[3px] h-6 px-1.5 py-0.5 rounded hover:bg-indigo-50/70 cursor-pointer transition select-none"
-      title={`7N: Chi $${totSpend.toFixed(1)} • Thu $${totSales.toFixed(1)} (${totOrders} đơn) - Nhấn xem chi tiết`}
+      title={`7D: Spend $${totSpend.toFixed(1)} • Sales $${totSales.toFixed(1)} (${totOrders} orders) - Click to view trend`}
     >
       {dailyTrend.map((d, idx) => {
         const hasSales = (d.sales || 0) > 0;
@@ -4453,7 +4453,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   >
                     ACOS (%) {skuSortField === "acos" && (skuSortDir === "asc" ? "↑" : "↓")}
                   </th>
-                  <th className="py-3 px-3 text-center w-24">Trend (7N)</th>
+                  <th className="py-3 px-3 text-center w-24">Trend (7D)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium">

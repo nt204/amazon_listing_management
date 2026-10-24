@@ -99,7 +99,7 @@ export function PpcSkuTrendModal({
                   {storeName}
                 </span>
               </div>
-              <p className="text-xs text-slate-400 mt-0.5">Xu hướng chi tiêu & doanh số 7 ngày gần nhất</p>
+              <p className="text-xs text-slate-400 mt-0.5">7-day spend & sales performance trend</p>
             </div>
           </div>
 
@@ -115,19 +115,19 @@ export function PpcSkuTrendModal({
         {/* Minimal KPI Badges */}
         <div className="grid grid-cols-4 gap-2.5 my-4">
           <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-center">
-            <span className="block text-[11px] font-semibold text-slate-400">Chi tiêu (7N)</span>
+            <span className="block text-[11px] font-semibold text-slate-400">Spend (7D)</span>
             <span className="font-mono text-sm font-black text-slate-900">${totals.spend.toFixed(2)}</span>
           </div>
           <div className="bg-emerald-50/60 p-2.5 rounded-xl border border-emerald-100 text-center">
-            <span className="block text-[11px] font-semibold text-emerald-600">Doanh số (7N)</span>
+            <span className="block text-[11px] font-semibold text-emerald-600">Sales (7D)</span>
             <span className="font-mono text-sm font-black text-emerald-700">${totals.sales.toFixed(2)}</span>
           </div>
           <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-center">
-            <span className="block text-[11px] font-semibold text-slate-400">Đơn hàng (7N)</span>
+            <span className="block text-[11px] font-semibold text-slate-400">Orders (7D)</span>
             <span className="font-mono text-sm font-black text-slate-900">{totals.orders}</span>
           </div>
           <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-center">
-            <span className="block text-[11px] font-semibold text-slate-400">ACoS (7N)</span>
+            <span className="block text-[11px] font-semibold text-slate-400">ACoS (7D)</span>
             <span
               className={`font-mono text-sm font-black ${
                 totals.acos > 500
@@ -148,7 +148,7 @@ export function PpcSkuTrendModal({
         <div className="h-56 w-full pt-2">
           {chartData.length === 0 ? (
             <div className="h-full flex items-center justify-center text-xs text-slate-400">
-              Không có dữ liệu 7 ngày cho SKU này
+              No 7-day data available for this SKU
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
@@ -177,19 +177,19 @@ export function PpcSkuTrendModal({
                         </p>
                         <div className="space-y-1 font-mono text-[11px]">
                           <div className="flex justify-between gap-4">
-                            <span className="text-slate-500">Chi tiêu ads:</span>
+                            <span className="text-slate-500">Spend:</span>
                             <span className="font-black text-indigo-600">${d.spend.toFixed(2)}</span>
                           </div>
                           <div className="flex justify-between gap-4">
-                            <span className="text-slate-500">Doanh số ads:</span>
+                            <span className="text-slate-500">Sales:</span>
                             <span className="font-black text-emerald-600">${d.sales.toFixed(2)}</span>
                           </div>
                           <div className="flex justify-between gap-4">
-                            <span className="text-slate-500">Đơn hàng:</span>
+                            <span className="text-slate-500">Orders:</span>
                             <span className="font-bold text-slate-800">{d.orders}</span>
                           </div>
                           <div className="flex justify-between gap-4 border-t border-slate-100 pt-1">
-                            <span className="text-slate-500">ACoS ngày:</span>
+                            <span className="text-slate-500">Daily ACoS:</span>
                             <span className="font-black text-slate-900">{d.acos}</span>
                           </div>
                         </div>
@@ -215,11 +215,11 @@ export function PpcSkuTrendModal({
         <div className="flex items-center justify-center gap-6 mt-2 pt-2 border-t border-slate-100 text-[11px] text-slate-500 font-semibold">
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-xs bg-emerald-500" />
-            <span>Doanh số (Cột)</span>
+            <span>Sales (Bar)</span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-0.5 bg-indigo-500" />
-            <span>Chi tiêu ads (Đường)</span>
+            <span>Spend (Line)</span>
           </div>
         </div>
       </div>
