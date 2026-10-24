@@ -7,6 +7,8 @@ import {
   getReturnBreakdown,
   comparePerformancePeriods,
   getInboundShipments,
+  listNegativeKeywords,
+  listNegativeCandidates,
   requestNegativeKeywordAction,
   executeConfirmNegativeKeyword,
 } from "./lark-agent-tools";
@@ -57,10 +59,12 @@ export function resolveContextualReconciliationLinks(
     add("🚚 Đối soát Lô hàng Inbound", "https://ncehub.net/?view=accounting&section=inventory");
   }
 
-  // 2. PPC Negative Keywords / Tối ưu Ads
+  // 2. PPC Negative Keywords / Tối ưu Ads / Candidate
   if (
     toolsUsed.includes("requestNegativeKeywordAction") ||
     toolsUsed.includes("executeConfirmNegativeKeyword") ||
+    toolsUsed.includes("listNegativeKeywords") ||
+    toolsUsed.includes("listNegativeCandidates") ||
     /negative|phủ định|chặn từ khóa|search term/i.test(q)
   ) {
     add("🎯 Quản lý Negative Keywords", "https://ncehub.net/?view=ppc&section=negative_keyword");
@@ -262,18 +266,57 @@ const TOOLS_SCHEMA = [
   {
     type: "function",
     function: {
+      name: "listNegativeKeywords",
+      description: "Tra cứu danh sách các từ khóa ĐANG nằm trong danh sách phủ định (Negative Registry / Hub) của một store hoặc tất cả store.",
+      parameters: {
+        type: "object",
+        properties: {
+          storeQuery: { type: "string", description: "Tên store (VD: BOZSPACER, LIMIMA, FASTPEACE) hoặc để trống để lấy tất cả." },
+          search: { type: "string", description: "Từ khóa hoặc tên campaign cần lọc tìm kiếm." },
+          limit: { type: "number", description: "Số lượng từ khóa tối đa hiển thị (mặc định 15)." },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "listNegativeCandidates",
+      description: "Tra cứu danh sách các Search Terms lãng phí tiền (Clicks cao, 0 đơn) CẦN phủ định của một store hoặc tất cả store. Trả về danh sách có số thứ tự (STT) để người dùng có thể chọn phủ định.",
+      parameters: {
+        type: "object",
+        properties: {
+          storeQuery: { type: "string", description: "Tên store (VD: BOZSPACER, LIMIMA, FASTPEACE) hoặc để trống." },
+          minClicks: { type: "number", description: "Số lượng clicks tối thiểu không ra đơn (mặc định 10)." },
+          limit: { type: "number", description: "Số lượng search terms tối đa hiển thị (mặc định 10)." },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "requestNegativeKeywordAction",
-      description: "Khởi tạo yêu cầu phủ định từ khóa (Negative Exact hoặc Negative Phrase) cho store trong hệ thống PPC. Lưu ý: Thao tác này sẽ hiển thị Thẻ Xác Nhận hỏi người dùng và chỉ được auto đẩy sau khi người dùng bấm nút xác nhận hoặc nhắn 'Xác nhận'.",
+      description: "Khởi tạo yêu cầu phủ định một hoặc nhiều từ khóa (Negative Exact) cho store trong hệ thống PPC. Hỗ trợ truyền danh sách tên từ khóa ('keywords') hoặc chọn theo số thứ tự ('itemIndices') từ danh sách vừa tra cứu. Thao tác này sẽ hiển thị Thẻ Xác Nhận Đơn Giản, Dễ Nhìn để người dùng bấm nút hoặc nhắn 'Xác nhận' trước khi auto upload.",
       parameters: {
         type: "object",
         properties: {
           storeQuery: { type: "string", description: "Tên store (VD: BOZSPACER, LIMIMA, FASTPEACE,...)" },
-          keyword: { type: "string", description: "Từ khóa cần phủ định (VD: running shoes cheap)" },
+          keyword: { type: "string", description: "Từ khóa cần phủ định (nếu chỉ có 1 từ)." },
+          keywords: {
+            type: "array",
+            items: { type: "string" },
+            description: "Danh sách một hoặc nhiều từ khóa cần phủ định cùng lúc.",
+          },
+          itemIndices: {
+            type: "array",
+            items: { type: "number" },
+            description: "Danh sách số thứ tự (STT) từ bảng search terms vừa được gợi ý (ví dụ: [1, 2, 3]).",
+          },
           matchType: { type: "string", enum: ["negativeExact", "negativePhrase"], description: "Loại phủ định: 'negativeExact' (mặc định) hoặc 'negativePhrase'." },
-          campaignName: { type: "string", description: "Tên chiến dịch cần áp dụng hoặc để trống cho toàn bộ chiến dịch store." },
+          campaignName: { type: "string", description: "Tên chiến dịch cần áp dụng hoặc để trống để tự động map theo campaign gốc." },
           reason: { type: "string", description: "Lý do phủ định (VD: ACOS quá cao 130%, Click nhiều không ra sale,...)" },
         },
-        required: ["storeQuery", "keyword"],
       },
     },
   },
@@ -295,6 +338,10 @@ async function executeTool(name: string, rawArgs: string, sessionId?: string): P
         return JSON.stringify(await comparePerformancePeriods(args));
       case "getInboundShipments":
         return JSON.stringify(await getInboundShipments(args));
+      case "listNegativeKeywords":
+        return JSON.stringify(await listNegativeKeywords(args));
+      case "listNegativeCandidates":
+        return JSON.stringify(await listNegativeCandidates(args, sessionId));
       case "requestNegativeKeywordAction":
         return JSON.stringify(await requestNegativeKeywordAction(args, sessionId));
       default:
@@ -321,10 +368,26 @@ export async function runAccountingAgent(options: RunAgentOptions): Promise<Agen
       const isCancel = /^(hủy|huy|cancel|bỏ qua|bo qua|không|khong|stop|dừng|dung)/i.test(trimmed);
 
       if (isConfirm) {
-        await executeConfirmNegativeKeyword(pending);
+        const execResult = await executeConfirmNegativeKeyword(pending);
         await clearPendingAction(options.sessionId);
 
-        const successText = `🟢 ĐÃ TỰ ĐỘNG ĐẨY THÀNH CÔNG!\nĐã thêm từ khóa **${pending.keyword}** (${pending.matchType}) vào danh sách Phủ định của store **${pending.storeName}**.\n\nHệ thống PPC sẽ tự động áp dụng để chặn các lượt click không chuyển đổi.`;
+        const items = pending.items && pending.items.length > 0 
+          ? pending.items 
+          : [{ keyword: pending.keyword || "", campaignName: pending.campaignName || pending.storeName }];
+
+        const kwListFormatted = items
+          .map((it, idx) => `${idx + 1}. **${it.keyword}** *(Camp: ${it.campaignName})*`)
+          .join("\n");
+
+        const successText = `🟢 **ĐÃ AUTO UPLOAD PHỦ ĐỊNH THÀNH CÔNG!**
+- **Store:** ${pending.storeName}
+- **Số lượng:** ${execResult.count} từ khóa
+${execResult.fileName ? `- **File Bulksheet:** ${execResult.fileName}\n` : ""}
+**Danh sách từ khóa đã phủ định:**
+${kwListFormatted}
+
+Hệ thống đã lưu vào Negative Hub${execResult.bulksheetCreated ? " và xếp hàng Auto Upload qua Mac mini worker đẩy lên Amazon Seller Central" : ""}.`;
+
         await saveConversationTurn(options.sessionId, options.message, successText);
 
         if (options.sendToLark && targetReceiveId) {
@@ -333,21 +396,55 @@ export async function runAccountingAgent(options: RunAgentOptions): Promise<Agen
             config: { width_mode: "fill" },
             header: {
               template: "green",
-              title: { tag: "plain_text", content: "🟢 Tự Động Đẩy Negative Thành Công" },
+              title: { tag: "plain_text", content: "🟢 Auto Upload Negative Thành Công" },
             },
             body: {
               elements: [
                 { tag: "markdown", content: successText },
                 {
-                  tag: "button",
-                  text: { tag: "plain_text", content: "🎯 Xem Bảng Quản Lý Negative Keywords" },
-                  type: "primary",
-                  multi_url: {
-                    url: "https://ncehub.net/?view=ppc&section=negative_keyword",
-                    pc_url: "https://ncehub.net/?view=ppc&section=negative_keyword",
-                    android_url: "https://ncehub.net/?view=ppc&section=negative_keyword",
-                    ios_url: "https://ncehub.net/?view=ppc&section=negative_keyword",
-                  },
+                  tag: "column_set",
+                  flex_mode: "bisect",
+                  background_style: "default",
+                  columns: [
+                    {
+                      tag: "column",
+                      width: "weighted",
+                      weight: 1,
+                      elements: [
+                        {
+                          tag: "button",
+                          text: { tag: "plain_text", content: "🎯 Xem Negative Hub" },
+                          type: "primary",
+                          width: "fill",
+                          multi_url: {
+                            url: "https://ncehub.net/?view=ppc&section=negative_keyword",
+                            pc_url: "https://ncehub.net/?view=ppc&section=negative_keyword",
+                            android_url: "https://ncehub.net/?view=ppc&section=negative_keyword",
+                            ios_url: "https://ncehub.net/?view=ppc&section=negative_keyword",
+                          },
+                        },
+                      ],
+                    },
+                    {
+                      tag: "column",
+                      width: "weighted",
+                      weight: 1,
+                      elements: [
+                        {
+                          tag: "button",
+                          text: { tag: "plain_text", content: "📋 Xem Lịch Sử Auto Upload" },
+                          type: "default",
+                          width: "fill",
+                          multi_url: {
+                            url: "https://ncehub.net/?view=ppc&section=auto_bid",
+                            pc_url: "https://ncehub.net/?view=ppc&section=auto_bid",
+                            android_url: "https://ncehub.net/?view=ppc&section=auto_bid",
+                            ios_url: "https://ncehub.net/?view=ppc&section=auto_bid",
+                          },
+                        },
+                      ],
+                    },
+                  ],
                 },
                 { tag: "hr" },
                 { tag: "markdown", content: "AI Agent | Tự động hóa PPC Amazon FBA" },
@@ -364,13 +461,16 @@ export async function runAccountingAgent(options: RunAgentOptions): Promise<Agen
           replyText: successText,
           toolsUsed: ["executeConfirmNegativeKeyword"],
           larkSent: true,
-          larkDetail: { status: "confirmed_negative", keyword: pending.keyword },
-          actionLinks: [{ label: "🎯 Xem Negative Keywords", url: "https://ncehub.net/?view=ppc&section=negative_keyword" }],
+          larkDetail: { status: "confirmed_negative", count: execResult.count },
+          actionLinks: [
+            { label: "🎯 Xem Negative Keywords", url: "https://ncehub.net/?view=ppc&section=negative_keyword" },
+            { label: "📋 Xem Lịch Sử Auto Upload", url: "https://ncehub.net/?view=ppc&section=auto_bid" },
+          ],
         };
       } else if (isCancel) {
         await clearPendingAction(options.sessionId);
 
-        const cancelText = `❌ ĐÃ HỦY THAO TÁC\nĐã hủy yêu cầu phủ định từ khóa **${pending.keyword}** của store **${pending.storeName}**. Không có thay đổi nào được ghi vào hệ thống.`;
+        const cancelText = `❌ **ĐÃ HỦY THAO TÁC**\nĐã hủy yêu cầu phủ định từ khóa của store **${pending.storeName}**. Không có thay đổi nào được ghi vào hệ thống.`;
         await saveConversationTurn(options.sessionId, options.message, cancelText);
 
         if (options.sendToLark && targetReceiveId) {
@@ -463,11 +563,21 @@ QUY TẮC BẮT BUỘC:
      * Nếu không có đơn hàng cho SKU: "Không có dữ liệu đơn hàng cho SKU này."
    - Không được tự tiện biến việc "chưa có dữ liệu" thành con số $0 khi ngày đó chưa được đối soát hoặc chưa import.
 
-6. BẮT BUỘC HỎI XÁC NHẬN KHI PHỦ ĐỊNH TỪ KHÓA (NEGATIVE KEYWORDS):
-   - Khi người dùng muốn phủ định từ khóa hoặc auto đẩy negative keyword (VD: "Phủ định từ khóa X cho store Y"), BẮT BUỘC gọi tool "requestNegativeKeywordAction".
-   - KHI TOOL TRẢ VỀ: Thao tác CHƯA được ghi vào database ngay. AI Agent BẮT BUỘC hiển thị Thẻ Xác Nhận thông báo thông tin chi tiết (Store, Từ khóa, Match Type, Lý do), và hỏi người dùng có xác nhận auto đẩy không.
-   - Hướng dẫn người dùng bấm nút [Xác nhận đẩy ngay] bên dưới hoặc nhắn tin "Xác nhận" để đẩy ngay, hoặc "Hủy" để bỏ qua.
-   - TUYỆT ĐỐI KHÔNG tự tiện báo "Đã phủ định thành công" ở bước này!`;
+6. QUY TRÌNH TRA CỨU & PHỦ ĐỊNH TỪ KHÓA (NEGATIVE KEYWORDS):
+   - KHI NGƯỜI DÙNG HỎI DANH SÁCH TỪ KHÓA PHỦ ĐỊNH:
+     * Nếu hỏi danh sách từ khóa ĐANG phủ định trong Hub -> Gọi tool "listNegativeKeywords".
+     * Nếu hỏi danh sách từ khóa CẦN phủ định / lãng phí clicks / đốt tiền không ra đơn -> Gọi tool "listNegativeCandidates".
+     * Hiển thị danh sách rõ ràng, ĐÁNH SỐ THỨ TỰ (STT: 1, 2, 3...) theo dạng bảng hoặc danh sách đẹp (STT, Từ khóa, Campaign, Clicks, Spend lãng phí).
+     * Gợi ý người dùng: "Bạn có thể nhắn tên từ khóa (1 hoặc nhiều từ) hoặc chọn theo số thứ tự (ví dụ: 'Phủ định từ số 1, 2') để yêu cầu auto đẩy."
+   - KHI NGƯỜI DÙNG YÊU CẦU PHỦ ĐỊNH (1 HOẶC NHIỀU TỪ KHÓA HOẶC THEO STT):
+     * BẮT BUỘC gọi tool "requestNegativeKeywordAction".
+     * KHI TOOL TRẢ VỀ: Thao tác CHƯA được ghi vào hệ thống ngay. AI Agent BẮT BUỘC hiển thị Thẻ Xác Nhận ĐƠN GIẢN, DỄ NHÌN với thông tin:
+       - Store: [Tên Store]
+       - Số lượng từ khóa: [N] từ
+       - Liệt kê danh sách từng từ khóa kèm Campaign tương ứng.
+       - Hỏi người dùng có xác nhận auto đẩy (tạo Bulksheet & lưu vào Hub) không.
+       - Hướng dẫn bấm nút [Xác nhận đẩy ngay] hoặc nhắn "Xác nhận", hoặc "Hủy" để bỏ qua.
+     * TUYỆT ĐỐI KHÔNG tự tiện báo "Đã phủ định thành công" ở bước này!`;
 
   // Tải lịch sử hội thoại gần đây (nếu có sessionId)
   const conversationHistory = options.sessionId
@@ -591,9 +701,9 @@ QUY TẮC BẮT BUỘC:
       let cardTitle = "📊 AI Agent - Accounting & Operations";
 
       if (isAwaitingNegativeConfirmation && options.sessionId) {
-        // Render 2 nút bấm Xác nhận / Hủy cạnh nhau
+        // Hộp thoại xác nhận đơn giản, dễ nhìn với 2 nút bấm Xác nhận / Hủy
         cardTemplate = "orange";
-        cardTitle = "⚠️ Yêu Cầu Xác Nhận Phủ Định Từ Khóa (PPC)";
+        cardTitle = "⚠️ Xác Nhận Auto Upload Phủ Định (PPC)";
         cardElements.push({
           tag: "column_set",
           flex_mode: "bisect",
@@ -694,7 +804,7 @@ QUY TẮC BẮT BUỘC:
         {
           tag: "markdown",
           content: isAwaitingNegativeConfirmation
-            ? "AI Agent | Tự động hóa PPC Amazon FBA"
+            ? "AI Agent | Tự động hóa PPC Amazon FBA (Mac mini worker)"
             : "AI Agent | Dữ liệu thời gian thực từ Amazon Database",
         }
       );

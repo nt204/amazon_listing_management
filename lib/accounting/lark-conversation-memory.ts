@@ -89,19 +89,85 @@ export async function saveConversationTurn(
   });
 }
 
+export interface PendingNegativeItem {
+  keyword: string;
+  campaignName: string;
+  campaignId?: string;
+  adGroupName?: string;
+  adGroupId?: string;
+  adType?: string;
+  clicks?: number;
+  spend?: number;
+  matchType?: string;
+  reason?: string;
+}
+
 export interface PendingPpcAction {
   action: "NEGATIVE_KEYWORD";
   storeId: string;
   storeName: string;
-  campaignName: string;
-  keyword: string;
+  campaignName?: string;
+  keyword?: string; // Tương thích ngược với 1 từ khóa
   matchType: string;
   reason?: string;
+  items?: PendingNegativeItem[]; // Hỗ trợ 1 hoặc nhiều từ khóa cùng lúc
   createdAt: number;
 }
 
 const PENDING_ACTION_TTL_SECONDS = 900; // 15 phút chờ xác nhận
 const inMemoryPendingActions = new Map<string, { action: PendingPpcAction; expiresAt: number }>();
+
+// Cache danh sách Search Terms vừa gợi ý gần đây nhất để hỗ trợ người dùng chọn theo STT (ví dụ: "phủ định từ số 1, 3")
+const inMemoryCandidateCache = new Map<string, { items: PendingNegativeItem[]; expiresAt: number }>();
+
+/**
+ * Lưu danh sách Search Terms vừa gợi ý để hỗ trợ người dùng chọn theo STT
+ */
+export async function setLastListedCandidates(sessionId: string, items: PendingNegativeItem[]): Promise<void> {
+  if (!sessionId) return;
+  const redis = getRedisClient();
+  if (redis) {
+    try {
+      await redis.setex(
+        `lark:last_candidates:${sessionId}`,
+        PENDING_ACTION_TTL_SECONDS,
+        JSON.stringify(items)
+      );
+      return;
+    } catch (err) {
+      console.warn("[LarkMemory] Redis setLastListedCandidates error:", err);
+    }
+  }
+
+  inMemoryCandidateCache.set(sessionId, {
+    items,
+    expiresAt: Date.now() + PENDING_ACTION_TTL_SECONDS * 1000,
+  });
+}
+
+/**
+ * Lấy danh sách Search Terms vừa gợi ý gần đây nhất
+ */
+export async function getLastListedCandidates(sessionId: string): Promise<PendingNegativeItem[]> {
+  if (!sessionId) return [];
+  const redis = getRedisClient();
+  if (redis) {
+    try {
+      const data = await redis.get(`lark:last_candidates:${sessionId}`);
+      if (data) {
+        return JSON.parse(data) as PendingNegativeItem[];
+      }
+    } catch (err) {
+      console.warn("[LarkMemory] Redis getLastListedCandidates error:", err);
+    }
+  }
+
+  const cached = inMemoryCandidateCache.get(sessionId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.items;
+  }
+  return [];
+}
 
 /**
  * Lưu trạng thái thao tác đang chờ người dùng bấm nút / nhắn tin xác nhận
@@ -167,4 +233,5 @@ export async function clearPendingAction(sessionId: string): Promise<void> {
   }
   inMemoryPendingActions.delete(sessionId);
 }
+
 
