@@ -34,13 +34,15 @@ export async function reportDailyBusinessData(
   }
 
   // 2. Kiểm tra xem ngày mới nhất này đã được báo cáo chưa (tránh spam lặp lại)
+  const settingKey = `lark_accounting_last_reported_date:${scope.teamId}`;
   if (!options.force) {
-    const settingRows = await sql<Array<{ value: string }>>`
+    const settingRows = await sql<Array<{ value: any }>>`
       SELECT value FROM app_settings
-      WHERE team_id = ${scope.teamId} AND key = 'lark_accounting_last_reported_date'
+      WHERE key = ${settingKey}
       LIMIT 1
     `;
-    const lastReportedDate = settingRows[0]?.value;
+    const val = settingRows[0]?.value;
+    const lastReportedDate = typeof val === "string" ? val : val?.date;
     if (lastReportedDate === latestDate) {
       return {
         success: true,
@@ -126,9 +128,9 @@ export async function reportDailyBusinessData(
 
   // 7. Lưu lại ngày đã báo cáo vào app_settings
   await sql`
-    INSERT INTO app_settings (team_id, key, value, updated_at)
-    VALUES (${scope.teamId}, 'lark_accounting_last_reported_date', ${latestDate}, NOW())
-    ON CONFLICT (team_id, key) DO UPDATE SET
+    INSERT INTO app_settings (key, value, updated_at)
+    VALUES (${settingKey}, ${JSON.stringify({ date: latestDate })}, NOW())
+    ON CONFLICT (key) DO UPDATE SET
       value = EXCLUDED.value, updated_at = NOW()
   `;
 
