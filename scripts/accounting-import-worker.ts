@@ -18,6 +18,8 @@ const stageLabels: Record<string, string> = {
   returns: "Đang nạp sheet RETURN",
   serviceFees: "Đang nạp sheet Service Fees",
   skuMaster: "Đang nạp sheet Bảng mã",
+  inbound: "Đang nạp sheet Chi tiết đi hàng",
+  checkShipment: "Đang nạp sheet Check Shipment Amazon",
   monthlyBasecost: "Đang nạp sheet Basecost tháng",
 };
 

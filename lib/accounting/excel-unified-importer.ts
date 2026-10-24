@@ -34,6 +34,39 @@ import {
   batchUpsertServiceFees,
   type ServiceFeeItem,
 } from "./service-fees-db";
+import {
+  cleanDateOnly,
+  parseInteger,
+  parseNumeric,
+  syncCheckShipmentsToInbound,
+  INBOUND_HEADER_MAP,
+  CHECK_SHIPMENT_HEADER_MAP,
+} from "./inventory-db";
+
+export function extractCellVal(val: any): any {
+  if (val == null) return null;
+  let curr = val;
+  while (curr && typeof curr === "object" && !(curr instanceof Date)) {
+    if ("result" in curr && curr.result !== undefined) {
+      curr = curr.result;
+    } else if ("text" in curr && curr.text !== undefined) {
+      curr = curr.text;
+    } else if (Array.isArray(curr.richText)) {
+      curr = curr.richText.map((t: any) => t.text || "").join("");
+      break;
+    } else if ("formula" in curr && typeof curr.formula === "string") {
+      const match = curr.formula.match(/,\s*"([^"]+)"\s*\)$/);
+      if (match) {
+        curr = match[1];
+        break;
+      }
+      break;
+    } else {
+      break;
+    }
+  }
+  return curr;
+}
 
 export interface UnifiedImportResult {
   success: boolean;
@@ -45,6 +78,8 @@ export interface UnifiedImportResult {
     returns: number;
     serviceFees: number;
     skuMaster: number;
+    inbound?: number;
+    checkShipment?: number;
     monthlyBasecost?: number;
   };
   totalProcessed: number;
@@ -58,7 +93,7 @@ export interface UnifiedImportOptions {
 }
 
 /**
- * Đọc file Excel kế toán đa sheet (Orders, Ads, Returns, Service Fees)
+ * Đọc file Excel kế toán đa sheet (Orders, Ads, Returns, Service Fees, Bảng Mã, Đi Hàng, Check Shipment, Basecost Tháng)
  * Trực tiếp bằng stream 1 lượt (Single-Pass Stream) từ đĩa và commit từng chunk (1000 dòng) vào PostgreSQL.
  * Giải phóng RAM liên tục, không bao giờ gom toàn bộ mảng dữ liệu vào bộ nhớ, tránh OOM tuyệt đối.
  * Tự động xóa file tạm sau khi nạp xong.
@@ -70,7 +105,16 @@ export async function importUnifiedAccountingExcel(
 ): Promise<UnifiedImportResult> {
   const startTime = Date.now();
   const chunkSize = options.chunkSize || 1000;
-  const counts = { orders: 0, ads: 0, returns: 0, serviceFees: 0, skuMaster: 0, monthlyBasecost: 0 };
+  const counts = {
+    orders: 0,
+    ads: 0,
+    returns: 0,
+    serviceFees: 0,
+    skuMaster: 0,
+    inbound: 0,
+    checkShipment: 0,
+    monthlyBasecost: 0,
+  };
   const processedSheets: string[] = [];
 
   if (!fs.existsSync(filePath)) {
@@ -110,6 +154,8 @@ export async function importUnifiedAccountingExcel(
   const targetReturnSheet = findSheet(["return", "returns"]);
   const targetServiceFeeSheet = findSheet(["service fees", "service fee", "servicefees"]);
   const targetSkuMasterSheet = findSheet(["bảng mã", "bang ma", "sku master", "bang_ma", "danh mục sku", "bảng mã sku"]);
+  const targetInboundSheet = findSheet(["chi tiết đi hàng", "chi tiet di hang", "inbound shipments", "inbound", "di hang"]);
+  const targetCheckShipmentSheet = findSheet(["check shipment amazon", "check shipment", "check_shipment", "shipment amazon", "check shipment amz"]);
   const targetBasecostThangSheet = findSheet(["basecost tháng", "basecost thang", "basecost_thang", "monthly basecost", "base cost tháng"]);
 
   const targetSheetsToFind = new Set([
@@ -118,6 +164,8 @@ export async function importUnifiedAccountingExcel(
     targetReturnSheet, 
     targetServiceFeeSheet, 
     targetSkuMasterSheet,
+    targetInboundSheet,
+    targetCheckShipmentSheet,
     targetBasecostThangSheet
   ].filter(Boolean) as string[]);
   let completedSheetsCount = 0;
@@ -127,19 +175,35 @@ export async function importUnifiedAccountingExcel(
     targetAdsSheet,
     targetReturnSheet,
     targetServiceFeeSheet,
+    targetSkuMasterSheet,
+    targetInboundSheet,
+    targetCheckShipmentSheet,
+    targetBasecostThangSheet,
     totalTargetSheets: targetSheetsToFind.size,
   });
 
-  // Chuẩn bị SKU Master & Store Metadata trước cho Ads & Return
-  const skuMasters = await sql<{ sku: string; loai: string | null; pic_mkt: string | null; status: string | null; basecost_tb: string | null }[]>`
-    SELECT sku, loai, pic_mkt, status, basecost_tb::text
+  // Pre-load all stores to route brands in Check Shipment
+  const allStores = await sql<{ id: string; name: string }[]>`
+    SELECT id, name FROM stores
+  `;
+  const storeByName = new Map<string, string>();
+  for (const st of allStores) {
+    if (st.name) storeByName.set(st.name.trim().toLowerCase(), st.id);
+  }
+
+  // Chuẩn bị SKU Master & Store Metadata trước cho Ads, Return, Inbound & Basecost
+  const skuMasters = await sql<{ id: string; sku: string; brand: string | null; product_type: string | null; loai: string | null; pic_mkt: string | null; status: string | null; basecost_tb: string | null }[]>`
+    SELECT id, sku, brand, product_type, loai, pic_mkt, status, basecost_tb::text
     FROM accounting_sku_master
     WHERE store_id = ${storeId} AND deleted_at IS NULL
   `;
-  const skuMap = new Map<string, { loai: string; pic_mkt: string; pic: string; status: string; basecost: number }>();
+  const skuMap = new Map<string, { id: string | null; brand: string; productType: string; loai: string; pic_mkt: string; pic: string; status: string; basecost: number }>();
   for (const s of skuMasters) {
     const skuKey = s.sku.trim().toUpperCase();
     skuMap.set(skuKey, {
+      id: s.id,
+      brand: s.brand || "",
+      productType: s.product_type || "",
       loai: s.loai || "",
       pic_mkt: s.pic_mkt || "",
       pic: s.pic_mkt || "",
@@ -704,7 +768,7 @@ export async function importUnifiedAccountingExcel(
             const niche = String(getColVal(["niche"]) || vals[11] || "").trim() || null;
             const picIdea = String(getColVal(["pic idea", "idea pic"]) || vals[12] || "").trim() || null;
             const status = String(getColVal(["trạng thái", "status"]) || vals[13] || "Phát triển").trim() || "Phát triển";
-            const rawBasecost = getColVal(["basecost", "basecost_tb", "chi phí gốc"]) || vals[24];
+            const rawBasecost = getColVal(["basecost trung bình", "basecost", "basecost_tb", "chi phí gốc"]) || extractCellVal(vals[24]);
             const basecostTb = rawBasecost != null && !isNaN(Number(rawBasecost)) ? Number(rawBasecost) : null;
 
             skuRows.push({
@@ -729,7 +793,7 @@ export async function importUnifiedAccountingExcel(
 
         if (skuRows.length > 0) {
           for (const s of skuRows) {
-            await sql`
+            const upsertRes = await sql<{ id: string }[]>`
               INSERT INTO accounting_sku_master (
                 store_id, sku, brand, product_type, mockup, asin, fnsku, 
                 amazon_fee, referral_fee_pct, pic_mkt, loai, niche, pic_idea, status, basecost_tb, updated_at
@@ -750,9 +814,13 @@ export async function importUnifiedAccountingExcel(
                 basecost_tb = COALESCE(EXCLUDED.basecost_tb, accounting_sku_master.basecost_tb),
                 deleted_at = NULL,
                 updated_at = NOW()
+              RETURNING id
             `;
             const skuKey = s.sku.trim().toUpperCase();
             skuMap.set(skuKey, {
+              id: upsertRes[0]?.id || skuMap.get(skuKey)?.id || null,
+              brand: s.brand || "",
+              productType: s.product_type || "",
               loai: s.loai || "",
               pic_mkt: s.pic_mkt || "",
               pic: s.pic_mkt || "",
@@ -761,6 +829,7 @@ export async function importUnifiedAccountingExcel(
             });
           }
           counts.skuMaster = skuRows.length;
+          options.onProgress?.("skuMaster", counts.skuMaster);
         }
         processedSheets.push(`BẢNG MÃ (${currentSheetName}): ${counts.skuMaster.toLocaleString()} SKU`);
         console.log(`[ExcelUnifiedImporter] ✅ Hoàn thành Sheet Bảng Mã: ${counts.skuMaster} SKU`);
@@ -773,20 +842,89 @@ export async function importUnifiedAccountingExcel(
       }
 
       // ==========================================
-      // SHEET 6: BASECOST THÁNG
+      // SHEET 6: CHI TIẾT ĐI HÀNG
       // ==========================================
-      else if (currentSheetName === targetBasecostThangSheet) {
-        console.log(`[ExcelUnifiedImporter] 🚀 Đang đọc Sheet Basecost Tháng: "${currentSheetName}"`);
+      else if (currentSheetName === targetInboundSheet) {
+        console.log(`[ExcelUnifiedImporter] 🚀 Đang đọc Sheet Chi Tiết Đi Hàng: "${currentSheetName}"`);
+        options.onProgress?.("inbound", counts.inbound);
+
+        // Pre-load existing inbound shipments for this store to do fast O(1) matching
+        const existingInbound = await sql<{ id: string; sku: string; shipment_id: string | null; ten_lo_hang: string | null }[]>`
+          SELECT id, LOWER(TRIM(sku)) as sku, LOWER(TRIM(COALESCE(shipment_id, ''))) as shipment_id, LOWER(TRIM(COALESCE(ten_lo_hang, ''))) as ten_lo_hang
+          FROM accounting_inbound_shipments
+          WHERE store_id = ${storeId} AND deleted_at IS NULL
+        `;
+        const inboundByShipment = new Map<string, string>();
+        const inboundByTenLoHang = new Map<string, string>();
+        for (const row of existingInbound) {
+          if (row.shipment_id) inboundByShipment.set(`${row.sku}::${row.shipment_id}`, row.id);
+          if (row.ten_lo_hang) inboundByTenLoHang.set(`${row.sku}::${row.ten_lo_hang}`, row.id);
+        }
+
         const headers: string[] = [];
         let isHeaderRow = true;
-        const baseRows: Array<{
-          store_id: string;
-          sku: string;
-          period: string;
-          basecost_thang: number;
-          brand?: string | null;
-          asin?: string | null;
-        }> = [];
+        let inboundChunk: any[] = [];
+
+        const flushInboundChunk = async (chunk: any[]) => {
+          for (const item of chunk) {
+            if (item.targetId) {
+              await sql`
+                UPDATE accounting_inbound_shipments SET
+                  sku_id = COALESCE(${item.sku_id}, accounting_inbound_shipments.sku_id),
+                  brand = COALESCE(${item.brand}, accounting_inbound_shipments.brand),
+                  sup = COALESCE(${item.sup}, accounting_inbound_shipments.sup),
+                  ngay_request = COALESCE(${item.ngay_request}, accounting_inbound_shipments.ngay_request),
+                  product_type = COALESCE(${item.product_type}, accounting_inbound_shipments.product_type),
+                  mockup = COALESCE(${item.mockup}, accounting_inbound_shipments.mockup),
+                  quantity = ${item.quantity},
+                  line_ship = COALESCE(${item.line_ship}, accounting_inbound_shipments.line_ship),
+                  base_cost_per_unit = COALESCE(${item.base_cost_per_unit}, accounting_inbound_shipments.base_cost_per_unit),
+                  card = COALESCE(${item.card}, accounting_inbound_shipments.card),
+                  tag = COALESCE(${item.tag}, accounting_inbound_shipments.tag),
+                  shipping_fee = COALESCE(${item.shipping_fee}, accounting_inbound_shipments.shipping_fee),
+                  hop_tui = COALESCE(${item.hop_tui}, accounting_inbound_shipments.hop_tui),
+                  final_basecost = ${item.final_basecost},
+                  total_basecost = ${item.total_basecost},
+                  ngay_thanh_toan = COALESCE(${item.ngay_thanh_toan}, accounting_inbound_shipments.ngay_thanh_toan),
+                  ten_lo_hang = COALESCE(${item.ten_lo_hang}, accounting_inbound_shipments.ten_lo_hang),
+                  shipment_id = COALESCE(${item.shipment_id}, accounting_inbound_shipments.shipment_id),
+                  ngay_di = COALESCE(${item.ngay_di}, accounting_inbound_shipments.ngay_di),
+                  ngay_den = COALESCE(${item.ngay_den}, accounting_inbound_shipments.ngay_den),
+                  amazon_received = COALESCE(${item.amazon_received}, accounting_inbound_shipments.amazon_received),
+                  tinh_trang_hang_den_kho = COALESCE(${item.tinh_trang_hang_den_kho}, accounting_inbound_shipments.tinh_trang_hang_den_kho),
+                  status = COALESCE(${item.status}, accounting_inbound_shipments.status),
+                  so_luong_amazon_nhan = COALESCE(${item.so_luong_amazon_nhan}, accounting_inbound_shipments.so_luong_amazon_nhan),
+                  discrepancy = COALESCE(${item.discrepancy}, accounting_inbound_shipments.discrepancy),
+                  note = COALESCE(${item.note}, accounting_inbound_shipments.note),
+                  trang_thai = COALESCE(${item.trang_thai}, accounting_inbound_shipments.trang_thai),
+                  deleted_at = NULL,
+                  updated_at = NOW()
+                WHERE id = ${item.targetId}
+              `;
+            } else {
+              const res = await sql<{ id: string }[]>`
+                INSERT INTO accounting_inbound_shipments (
+                  store_id, sku_id, brand, sup, ngay_request, product_type, mockup, sku,
+                  quantity, line_ship, base_cost_per_unit, card, tag, shipping_fee, hop_tui,
+                  final_basecost, total_basecost, ngay_thanh_toan, ten_lo_hang, shipment_id,
+                  ngay_di, ngay_den, amazon_received, tinh_trang_hang_den_kho, status,
+                  so_luong_amazon_nhan, discrepancy, note, trang_thai, created_at, updated_at
+                ) VALUES (
+                  ${item.store_id}, ${item.sku_id}, ${item.brand}, ${item.sup}, ${item.ngay_request}, ${item.product_type}, ${item.mockup}, ${item.sku},
+                  ${item.quantity}, ${item.line_ship}, ${item.base_cost_per_unit}, ${item.card}, ${item.tag}, ${item.shipping_fee}, ${item.hop_tui},
+                  ${item.final_basecost}, ${item.total_basecost}, ${item.ngay_thanh_toan}, ${item.ten_lo_hang}, ${item.shipment_id},
+                  ${item.ngay_di}, ${item.ngay_den}, ${item.amazon_received}, ${item.tinh_trang_hang_den_kho}, ${item.status},
+                  ${item.so_luong_amazon_nhan}, ${item.discrepancy}, ${item.note}, ${item.trang_thai}, NOW(), NOW()
+                ) RETURNING id
+              `;
+              const newId = res[0]?.id;
+              if (newId) {
+                if (item.keyShipment) inboundByShipment.set(item.keyShipment, newId);
+                if (item.keyTenLo) inboundByTenLoHang.set(item.keyTenLo, newId);
+              }
+            }
+          }
+        };
 
         for await (const row of ws) {
           const vals = (row.values as any[]) || [];
@@ -794,13 +932,8 @@ export async function importUnifiedAccountingExcel(
             isHeaderRow = false;
             vals.forEach((v, idx) => {
               if (v != null) {
-                let str = "";
-                if (typeof v === "object") {
-                  str = String((v as any).result || (v as any).text || (v as any).formula || "").trim().toLowerCase().replace(/\s+/g, " ");
-                } else {
-                  str = String(v).trim().toLowerCase().replace(/\s+/g, " ");
-                }
-                headers[idx] = str;
+                const raw = String(extractCellVal(v)).trim().toLowerCase().replace(/\s+/g, " ");
+                headers[idx] = INBOUND_HEADER_MAP[raw] || raw;
               }
             });
           } else {
@@ -808,36 +941,368 @@ export async function importUnifiedAccountingExcel(
               for (const p of patterns) {
                 const idx = headers.indexOf(p.toLowerCase());
                 if (idx !== -1 && vals[idx] !== undefined) {
-                  let cellVal = vals[idx];
-                  while (cellVal && typeof cellVal === "object" && !(cellVal instanceof Date)) {
-                    if ("result" in cellVal) cellVal = cellVal.result;
-                    else if ("text" in cellVal) cellVal = cellVal.text;
-                    else break;
-                  }
-                  return cellVal;
+                  return extractCellVal(vals[idx]);
                 }
               }
               return null;
             };
 
-            let rawMonth = getColVal(["month", "tháng", "thang"]) ?? vals[1];
-            while (rawMonth && typeof rawMonth === "object" && !(rawMonth instanceof Date)) {
-              if ("result" in rawMonth) rawMonth = rawMonth.result;
-              else if ("text" in rawMonth) rawMonth = rawMonth.text;
-              else break;
+            const rawSku = getColVal(["sku", "mã sku", "ma sku"]) ?? extractCellVal(vals[6]);
+            if (!rawSku) continue;
+            const sku = String(rawSku).trim();
+            if (!sku || sku.toLowerCase() === "sku") continue;
+
+            const brand = (getColVal(["brand", "thương hiệu"]) ?? extractCellVal(vals[1]) ?? storeName) ? String(getColVal(["brand", "thương hiệu"]) ?? extractCellVal(vals[1]) ?? storeName).trim() : null;
+            const sup = (getColVal(["sup", "supplier", "nhà cung cấp"]) ?? extractCellVal(vals[2])) ? String(getColVal(["sup", "supplier", "nhà cung cấp"]) ?? extractCellVal(vals[2])).trim() : null;
+            const ngay_request = cleanDateOnly(getColVal(["ngay_request", "ngày request", "ngay request"]) ?? extractCellVal(vals[3]));
+            const product_type = (getColVal(["product_type", "product type", "loại sản phẩm", "loai sp"]) ?? extractCellVal(vals[4])) ? String(getColVal(["product_type", "product type", "loại sản phẩm", "loai sp"]) ?? extractCellVal(vals[4])).trim() : null;
+            const rawMockup = getColVal(["mockup", "hình ảnh", "ảnh"]) ?? extractCellVal(vals[5]);
+            const mockup = (typeof rawMockup === "string" && !rawMockup.startsWith("=")) ? rawMockup.trim() : null;
+            const quantity = parseInteger(getColVal(["quantity", "số lượng", "so luong", "qty"]) ?? extractCellVal(vals[7])) || 0;
+            const line_ship = (getColVal(["line_ship", "line ship", "vận chuyển"]) ?? extractCellVal(vals[8])) ? String(getColVal(["line_ship", "line ship", "vận chuyển"]) ?? extractCellVal(vals[8])).trim() : null;
+            const base_cost_per_unit = parseNumeric(getColVal(["base_cost_per_unit", "base cost/unit", "base cost"]) ?? extractCellVal(vals[9]));
+            const card = parseNumeric(getColVal(["card"]) ?? extractCellVal(vals[10]));
+            const tag = parseNumeric(getColVal(["tag"]) ?? extractCellVal(vals[11]));
+            const shipping_fee = parseNumeric(getColVal(["shipping_fee", "shipping fee", "phí ship"]) ?? extractCellVal(vals[12]));
+            const hop_tui = parseNumeric(getColVal(["hop_tui", "hộp/túi", "hop/tui", "hộp", "túi"]) ?? extractCellVal(vals[13]));
+            const rawFinalBasecost = parseNumeric(getColVal(["final_basecost", "final basecose", "final basecost"]) ?? extractCellVal(vals[14]));
+            const final_basecost = rawFinalBasecost ?? ((base_cost_per_unit || 0) + (card || 0) + (tag || 0) + (shipping_fee || 0) + (hop_tui || 0));
+            const rawTotalBasecost = parseNumeric(getColVal(["total_basecost", "total basecost", "total base cost"]) ?? extractCellVal(vals[15]));
+            const total_basecost = rawTotalBasecost ?? (final_basecost * quantity);
+            const ngay_thanh_toan = cleanDateOnly(getColVal(["ngay_thanh_toan", "ngày thanh toán", "ngay thanh toan"]) ?? extractCellVal(vals[16]));
+            const ten_lo_hang = (getColVal(["ten_lo_hang", "tên lô hàng", "ten lo hang"]) ?? extractCellVal(vals[17])) ? String(getColVal(["ten_lo_hang", "tên lô hàng", "ten lo hang"]) ?? extractCellVal(vals[17])).trim() : null;
+            const shipment_id = (getColVal(["shipment_id", "shipment id", "mã shipment"]) ?? extractCellVal(vals[18])) ? String(getColVal(["shipment_id", "shipment id", "mã shipment"]) ?? extractCellVal(vals[18])).trim() : null;
+            const ngay_di = cleanDateOnly(getColVal(["ngay_di", "ngày đi", "ngay di"]) ?? extractCellVal(vals[19]));
+            const ngay_den = cleanDateOnly(getColVal(["ngay_den", "ngày đến", "ngay den"]) ?? extractCellVal(vals[20]));
+            const amazon_received = parseInteger(getColVal(["amazon_received", "amazon received"]) ?? extractCellVal(vals[21]));
+            const rawTinhTrang = (getColVal(["tinh_trang_hang_den_kho", "tình trạng hàng đến kho"]) ?? extractCellVal(vals[22])) ? String(getColVal(["tinh_trang_hang_den_kho", "tình trạng hàng đến kho"]) ?? extractCellVal(vals[22])).trim() : null;
+            const rawStatus = (getColVal(["status", "trạng thái shipment"]) ?? extractCellVal(vals[23])) ? String(getColVal(["status", "trạng thái shipment"]) ?? extractCellVal(vals[23])).trim() : null;
+            const tinh_trang_hang_den_kho = rawTinhTrang || rawStatus || null;
+            const status = rawStatus || rawTinhTrang || "Working";
+            const isStar = Boolean(shipment_id?.toLowerCase().startsWith("star"));
+            const rawSoLuongNhan = parseInteger(getColVal(["so_luong_amazon_nhan", "số lượng amazon nhận"]) ?? extractCellVal(vals[24]));
+            const so_luong_amazon_nhan = isStar ? quantity : rawSoLuongNhan;
+            const rawDiscrepancy = parseInteger(getColVal(["discrepancy", "chênh lệch"]) ?? extractCellVal(vals[25]));
+            const discrepancy = isStar ? 0 : (rawDiscrepancy ?? ((quantity || 0) - (so_luong_amazon_nhan ?? amazon_received ?? 0)));
+            const note = (getColVal(["note", "ghi chú"]) ?? extractCellVal(vals[26])) ? String(getColVal(["note", "ghi chú"]) ?? extractCellVal(vals[26])).trim() : null;
+            const trang_thai = (getColVal(["trang_thai", "trạng thái"]) ?? extractCellVal(vals[27])) ? String(getColVal(["trang_thai", "trạng thái"]) ?? extractCellVal(vals[27])).trim() : "Phát triển";
+
+            // Bỏ qua dòng placeholder nếu số lượng <= 0 và không có shipment_id
+            if (quantity <= 0 && (!shipment_id || !shipment_id.trim())) continue;
+
+            const skuKey = sku.toUpperCase();
+            const skuMeta = skuMap.get(skuKey);
+            const sku_id = skuMeta?.id || null;
+
+            // Match existing record
+            const keyShipment = shipment_id ? `${sku.toLowerCase()}::${shipment_id.toLowerCase()}` : "";
+            const keyTenLo = ten_lo_hang ? `${sku.toLowerCase()}::${ten_lo_hang.toLowerCase()}` : "";
+            const targetId = (keyShipment ? inboundByShipment.get(keyShipment) : null) || (keyTenLo ? inboundByTenLoHang.get(keyTenLo) : null);
+
+            inboundChunk.push({
+              targetId,
+              store_id: storeId,
+              sku_id,
+              brand,
+              sup,
+              ngay_request,
+              product_type: product_type || skuMeta?.productType || null,
+              mockup,
+              sku,
+              quantity,
+              line_ship,
+              base_cost_per_unit,
+              card,
+              tag,
+              shipping_fee,
+              hop_tui,
+              final_basecost,
+              total_basecost,
+              ngay_thanh_toan,
+              ten_lo_hang,
+              shipment_id,
+              ngay_di,
+              ngay_den,
+              amazon_received,
+              tinh_trang_hang_den_kho,
+              status,
+              so_luong_amazon_nhan,
+              discrepancy,
+              note,
+              trang_thai,
+              keyShipment,
+              keyTenLo
+            });
+
+            if (inboundChunk.length >= chunkSize) {
+              await flushInboundChunk(inboundChunk);
+              counts.inbound += inboundChunk.length;
+              options.onProgress?.("inbound", counts.inbound);
+              inboundChunk = [];
             }
-            let rawSku = getColVal(["sku", "mã sku", "ma sku"]) ?? vals[5];
-            while (rawSku && typeof rawSku === "object" && !(rawSku instanceof Date)) {
-              if ("result" in rawSku) rawSku = rawSku.result;
-              else if ("text" in rawSku) rawSku = rawSku.text;
-              else break;
+          }
+        }
+
+        if (inboundChunk.length > 0) {
+          await flushInboundChunk(inboundChunk);
+          counts.inbound += inboundChunk.length;
+          inboundChunk = [];
+        }
+
+        // Tự động đồng bộ ngay Check Shipment sang Chi Tiết Đi Hàng
+        await syncCheckShipmentsToInbound(storeId, undefined, "unified-importer").catch(() => {});
+
+        processedSheets.push(`CHI TIẾT ĐI HÀNG (${currentSheetName}): ${counts.inbound.toLocaleString()} lô`);
+        console.log(`[ExcelUnifiedImporter] ✅ Hoàn thành Sheet Chi Tiết Đi Hàng: ${counts.inbound} lô`);
+        completedSheetsCount++;
+        if (completedSheetsCount >= targetSheetsToFind.size) {
+          console.log(`[ExcelUnifiedImporter] 🎯 Đã nạp đủ ${completedSheetsCount}/${targetSheetsToFind.size} sheet. Đóng stream.`);
+          try { stream.destroy(); } catch {}
+          break;
+        }
+      }
+
+      // ==========================================
+      // SHEET 7: CHECK SHIPMENT AMAZON
+      // ==========================================
+      else if (currentSheetName === targetCheckShipmentSheet) {
+        console.log(`[ExcelUnifiedImporter] 🚀 Đang đọc Sheet Check Shipment: "${currentSheetName}"`);
+        options.onProgress?.("checkShipment", counts.checkShipment);
+
+        // Pre-load all check shipments
+        const existingCheck = await sql<{ id: string; store_id: string; shipment_id: string }[]>`
+          SELECT id, store_id, LOWER(TRIM(shipment_id)) as shipment_id
+          FROM accounting_amazon_check_shipments
+          WHERE deleted_at IS NULL
+        `;
+        const checkShipmentMap = new Map<string, string>();
+        for (const row of existingCheck) {
+          checkShipmentMap.set(`${row.store_id}::${row.shipment_id}`, row.id);
+        }
+
+        const headers: string[] = [];
+        let isHeaderRow = true;
+        let checkChunk: any[] = [];
+        const affectedStoreIds = new Set<string>([storeId]);
+
+        const flushCheckChunk = async (chunk: any[]) => {
+          for (const item of chunk) {
+            if (item.targetId) {
+              await sql`
+                UPDATE accounting_amazon_check_shipments SET
+                  ngay_update = COALESCE(${item.ngay_update}, accounting_amazon_check_shipments.ngay_update),
+                  brand = COALESCE(${item.brand}, accounting_amazon_check_shipments.brand),
+                  shipment_name = COALESCE(${item.shipment_name}, accounting_amazon_check_shipments.shipment_name),
+                  shipment_id = ${item.shipment_id},
+                  created_date = COALESCE(${item.created_date}, accounting_amazon_check_shipments.created_date),
+                  last_updated_date = COALESCE(${item.last_updated_date}, accounting_amazon_check_shipments.last_updated_date),
+                  ship_to = COALESCE(${item.ship_to}, accounting_amazon_check_shipments.ship_to),
+                  skus_count = COALESCE(${item.skus_count}, accounting_amazon_check_shipments.skus_count),
+                  units_expected = COALESCE(${item.units_expected}, accounting_amazon_check_shipments.units_expected),
+                  units_located = COALESCE(${item.units_located}, accounting_amazon_check_shipments.units_located),
+                  discrepancy = COALESCE(${item.discrepancy}, accounting_amazon_check_shipments.discrepancy),
+                  status = COALESCE(${item.status}, accounting_amazon_check_shipments.status),
+                  deleted_at = NULL,
+                  last_changed_by = 'unified-importer',
+                  updated_at = NOW()
+                WHERE id = ${item.targetId}
+              `;
+            } else {
+              const res = await sql<{ id: string }[]>`
+                INSERT INTO accounting_amazon_check_shipments (
+                  store_id, ngay_update, brand, shipment_name, shipment_id,
+                  created_date, last_updated_date, ship_to, skus_count,
+                  units_expected, units_located, discrepancy, status,
+                  last_changed_by, created_at, updated_at
+                ) VALUES (
+                  ${item.store_id}, ${item.ngay_update}, ${item.brand}, ${item.shipment_name}, ${item.shipment_id},
+                  ${item.created_date}, ${item.last_updated_date}, ${item.ship_to}, ${item.skus_count},
+                  ${item.units_expected}, ${item.units_located}, ${item.discrepancy}, ${item.status},
+                  'unified-importer', NOW(), NOW()
+                ) RETURNING id
+              `;
+              const newId = res[0]?.id;
+              if (newId && item.key) {
+                checkShipmentMap.set(item.key, newId);
+              }
             }
-            let rawBasecost = getColVal(["basecost tính/tháng", "basecost", "basecost tính / tháng", "basecost thang"]) ?? vals[13];
-            while (rawBasecost && typeof rawBasecost === "object" && !(rawBasecost instanceof Date)) {
-              if ("result" in rawBasecost) rawBasecost = rawBasecost.result;
-              else if ("text" in rawBasecost) rawBasecost = rawBasecost.text;
-              else break;
+          }
+        };
+
+        for await (const row of ws) {
+          const vals = (row.values as any[]) || [];
+          if (isHeaderRow) {
+            isHeaderRow = false;
+            vals.forEach((v, idx) => {
+              if (v != null) {
+                const raw = String(extractCellVal(v)).trim().toLowerCase().replace(/\s+/g, " ");
+                headers[idx] = CHECK_SHIPMENT_HEADER_MAP[raw] || raw;
+              }
+            });
+            // Default col 2 to brand if not mapped
+            if (!headers[2] || headers[2] === "") headers[2] = "brand";
+          } else {
+            const getColVal = (patterns: string[]): any => {
+              for (const p of patterns) {
+                const idx = headers.indexOf(p.toLowerCase());
+                if (idx !== -1 && vals[idx] !== undefined) {
+                  return extractCellVal(vals[idx]);
+                }
+              }
+              return null;
+            };
+
+            const rawShipmentId = getColVal(["shipment_id", "shipment id", "mã shipment"]) ?? extractCellVal(vals[4]);
+            const rawShipmentName = getColVal(["shipment_name", "shipment name", "tên shipment"]) ?? extractCellVal(vals[3]);
+            if (!rawShipmentId && !rawShipmentName) continue;
+
+            const shipment_id = String(rawShipmentId || `SHIP-${Date.now()}-${counts.checkShipment + 1}`).trim();
+            const shipment_name = rawShipmentName ? String(rawShipmentName).trim() : null;
+
+            const rawBrand = getColVal(["brand", "store", "thương hiệu"]) ?? extractCellVal(vals[2]);
+            const brandStr = rawBrand ? String(rawBrand).trim() : "";
+            let rowStoreId = storeId;
+            if (brandStr && storeByName.has(brandStr.toLowerCase())) {
+              rowStoreId = storeByName.get(brandStr.toLowerCase())!;
             }
+            affectedStoreIds.add(rowStoreId);
+
+            const ngay_update = cleanDateOnly(getColVal(["ngay_update", "ngày update", "update date"]) ?? extractCellVal(vals[1]));
+            const created_date = cleanDateOnly(getColVal(["created_date", "created", "ngày tạo"]) ?? extractCellVal(vals[5]));
+            const last_updated_date = cleanDateOnly(getColVal(["last_updated_date", "last updated", "cập nhật lần cuối"]) ?? extractCellVal(vals[6]));
+            const ship_to = (getColVal(["ship_to", "ship to", "kho đến"]) ?? extractCellVal(vals[7])) ? String(getColVal(["ship_to", "ship to", "kho đến"]) ?? extractCellVal(vals[7])).trim() : null;
+            const skus_count = parseInteger(getColVal(["skus_count", "skus", "sku", "số sku"]) ?? extractCellVal(vals[8])) || 1;
+            const units_expected = parseInteger(getColVal(["units_expected", "units expected", "dự kiến"]) ?? extractCellVal(vals[9])) || 0;
+            const units_located = parseInteger(getColVal(["units_located", "units located", "thực nhận"]) ?? extractCellVal(vals[10])) || 0;
+            const rawDiscrepancy = parseInteger(getColVal(["discrepancy", "chênh lệch"]) ?? extractCellVal(vals[12]));
+            const discrepancy = rawDiscrepancy ?? (units_located - units_expected);
+            const status = (getColVal(["status", "trạng thái"]) ?? extractCellVal(vals[11])) ? String(getColVal(["status", "trạng thái"]) ?? extractCellVal(vals[11])).trim() : "Working";
+
+            const key = `${rowStoreId}::${shipment_id.toLowerCase()}`;
+            const targetId = checkShipmentMap.get(key);
+
+            checkChunk.push({
+              targetId,
+              store_id: rowStoreId,
+              ngay_update,
+              brand: brandStr || (rowStoreId === storeId ? storeName : null),
+              shipment_name,
+              shipment_id,
+              created_date,
+              last_updated_date,
+              ship_to,
+              skus_count,
+              units_expected,
+              units_located,
+              discrepancy,
+              status,
+              key
+            });
+
+            if (checkChunk.length >= chunkSize) {
+              await flushCheckChunk(checkChunk);
+              counts.checkShipment += checkChunk.filter(c => c.store_id === storeId).length;
+              options.onProgress?.("checkShipment", counts.checkShipment);
+              checkChunk = [];
+            }
+          }
+        }
+
+        if (checkChunk.length > 0) {
+          await flushCheckChunk(checkChunk);
+          counts.checkShipment += checkChunk.filter(c => c.store_id === storeId).length;
+          checkChunk = [];
+        }
+
+        // Đồng bộ check shipment sang inbound cho tất cả store bị ảnh hưởng
+        for (const sId of affectedStoreIds) {
+          await syncCheckShipmentsToInbound(sId, undefined, "unified-importer").catch(() => {});
+        }
+
+        processedSheets.push(`CHECK SHIPMENT (${currentSheetName}): ${counts.checkShipment.toLocaleString()} lô`);
+        console.log(`[ExcelUnifiedImporter] ✅ Hoàn thành Sheet Check Shipment: ${counts.checkShipment} lô`);
+        completedSheetsCount++;
+        if (completedSheetsCount >= targetSheetsToFind.size) {
+          console.log(`[ExcelUnifiedImporter] 🎯 Đã nạp đủ ${completedSheetsCount}/${targetSheetsToFind.size} sheet. Đóng stream.`);
+          try { stream.destroy(); } catch {}
+          break;
+        }
+      }
+
+      // ==========================================
+      // SHEET 8: BASECOST THÁNG
+      // ==========================================
+      else if (currentSheetName === targetBasecostThangSheet) {
+        console.log(`[ExcelUnifiedImporter] 🚀 Đang đọc Sheet Basecost Tháng: "${currentSheetName}"`);
+        options.onProgress?.("monthlyBasecost", counts.monthlyBasecost);
+
+        const headers: string[] = [];
+        let isHeaderRow = true;
+        let baseChunk: any[] = [];
+
+        const flushBasecostChunk = async (chunk: any[]) => {
+          for (const b of chunk) {
+            await sql`
+              INSERT INTO accounting_monthly_base_cost (
+                store_id, period, sku, sku_id, brand, product_type,
+                sl_ton_dau_ky, basecost_dau_ky, gtri_ton_dau_ky,
+                sl_nhap, gtri_nhap, don_gia_nhap_tb,
+                tong_sl_kha_dung, tong_gtri_kha_dung, basecost_thang,
+                calculation_rule, is_overridden, last_changed_by, updated_at
+              ) VALUES (
+                ${b.store_id}, ${b.period}, ${b.sku}, ${b.sku_id}, ${b.brand}, ${b.product_type},
+                ${b.sl_ton_dau_ky}, ${b.basecost_dau_ky}, ${b.gtri_ton_dau_ky},
+                ${b.sl_nhap}, ${b.gtri_nhap}, ${b.don_gia_nhap_tb},
+                ${b.tong_sl_kha_dung}, ${b.tong_gtri_kha_dung}, ${b.basecost_thang},
+                ${b.calculation_rule}, false, 'unified-importer', NOW()
+              )
+              ON CONFLICT (store_id, period, sku) DO UPDATE SET
+                sku_id = COALESCE(EXCLUDED.sku_id, accounting_monthly_base_cost.sku_id),
+                brand = COALESCE(EXCLUDED.brand, accounting_monthly_base_cost.brand),
+                product_type = COALESCE(EXCLUDED.product_type, accounting_monthly_base_cost.product_type),
+                sl_ton_dau_ky = EXCLUDED.sl_ton_dau_ky,
+                basecost_dau_ky = EXCLUDED.basecost_dau_ky,
+                gtri_ton_dau_ky = EXCLUDED.gtri_ton_dau_ky,
+                sl_nhap = EXCLUDED.sl_nhap,
+                gtri_nhap = EXCLUDED.gtri_nhap,
+                don_gia_nhap_tb = EXCLUDED.don_gia_nhap_tb,
+                tong_sl_kha_dung = EXCLUDED.tong_sl_kha_dung,
+                tong_gtri_kha_dung = EXCLUDED.tong_gtri_kha_dung,
+                basecost_thang = CASE 
+                  WHEN accounting_monthly_base_cost.is_overridden THEN accounting_monthly_base_cost.basecost_thang
+                  ELSE EXCLUDED.basecost_thang
+                END,
+                calculation_rule = EXCLUDED.calculation_rule,
+                last_changed_by = 'unified-importer',
+                deleted_at = NULL,
+                updated_at = NOW()
+            `;
+          }
+        };
+
+        for await (const row of ws) {
+          const vals = (row.values as any[]) || [];
+          if (isHeaderRow) {
+            isHeaderRow = false;
+            vals.forEach((v, idx) => {
+              if (v != null) {
+                headers[idx] = String(extractCellVal(v)).trim().toLowerCase().replace(/\s+/g, " ");
+              }
+            });
+          } else {
+            const getColVal = (patterns: string[]): any => {
+              for (const p of patterns) {
+                const idx = headers.indexOf(p.toLowerCase());
+                if (idx !== -1 && vals[idx] !== undefined) {
+                  return extractCellVal(vals[idx]);
+                }
+              }
+              return null;
+            };
+
+            const rawMonth = getColVal(["month", "tháng", "thang"]) ?? extractCellVal(vals[1]);
+            const rawSku = getColVal(["sku", "mã sku", "ma sku"]) ?? extractCellVal(vals[5]);
+            const rawBasecost = getColVal(["basecost tính/tháng", "basecost", "basecost tính / tháng", "basecost thang"]) ?? extractCellVal(vals[13]);
 
             if (!rawSku || rawMonth == null || rawBasecost == null) continue;
             const sku = String(rawSku).trim();
@@ -850,49 +1315,64 @@ export async function importUnifiedAccountingExcel(
             if (isNaN(basecostNum)) continue;
 
             const period = `2026-${String(monthNum).padStart(2, "0")}`;
-            let brandVal = getColVal(["brand", "thương hiệu"]) ?? vals[4];
-            while (brandVal && typeof brandVal === "object" && !(brandVal instanceof Date)) {
-              if ("result" in brandVal) brandVal = brandVal.result;
-              else if ("text" in brandVal) brandVal = brandVal.text;
-              else break;
-            }
-            const brand = String(brandVal || "").trim() || null;
+            const brandVal = getColVal(["brand", "thương hiệu"]) ?? extractCellVal(vals[4]);
+            const brand = String(brandVal || storeName || "").trim() || null;
 
-            let asinVal = getColVal(["asin"]) ?? vals[6];
-            while (asinVal && typeof asinVal === "object" && !(asinVal instanceof Date)) {
-              if ("result" in asinVal) asinVal = asinVal.result;
-              else if ("text" in asinVal) asinVal = asinVal.text;
-              else break;
+            // Brand filter: Nếu dòng ghi rõ brand của store khác trong hệ thống thì bỏ qua
+            if (brand && storeName && brand.toLowerCase() !== storeName.toLowerCase()) {
+              if (storeByName.has(brand.toLowerCase()) && storeByName.get(brand.toLowerCase()) !== storeId) {
+                continue;
+              }
             }
-            const asin = String(asinVal || "").trim() || null;
 
-            baseRows.push({
+            const rawSlTon = parseNumeric(getColVal(["hàng tồn đầu tháng", "tồn đầu tháng", "sl tồn đầu kỳ"]) ?? extractCellVal(vals[7])) || 0;
+            const rawBasecostDauKy = parseNumeric(getColVal(["trung bình giá đầu tháng", "giá đầu tháng", "basecost đầu kỳ"]) ?? extractCellVal(vals[8])) || 0;
+            const rawSlNhap = parseNumeric(getColVal(["số hàng nhập kho/tháng", "hàng nhập", "sl nhập"]) ?? extractCellVal(vals[9])) || 0;
+            const rawGtriNhap = parseNumeric(getColVal(["tổng tiền đã đi", "giá trị nhập", "gtri nhập"]) ?? extractCellVal(vals[10])) || 0;
+            const rawDonGiaNhapTb = parseNumeric(getColVal(["trung bình giá", "đơn giá nhập tb"]) ?? extractCellVal(vals[11])) || 0;
+
+            const gtriTonDauKy = rawSlTon * rawBasecostDauKy;
+            const tongSlKhaDung = rawSlTon + rawSlNhap;
+            const tongGtriKhaDung = gtriTonDauKy + rawGtriNhap;
+
+            const skuMeta = skuMap.get(sku.toUpperCase());
+            const sku_id = skuMeta?.id || null;
+            const product_type = skuMeta?.productType || null;
+
+            baseChunk.push({
               store_id: storeId,
-              sku,
               period,
-              basecost_thang: basecostNum,
+              sku,
+              sku_id,
               brand,
-              asin,
+              product_type,
+              sl_ton_dau_ky: rawSlTon,
+              basecost_dau_ky: rawBasecostDauKy,
+              gtri_ton_dau_ky: gtriTonDauKy,
+              sl_nhap: rawSlNhap,
+              gtri_nhap: rawGtriNhap,
+              don_gia_nhap_tb: rawDonGiaNhapTb,
+              tong_sl_kha_dung: tongSlKhaDung,
+              tong_gtri_kha_dung: tongGtriKhaDung,
+              basecost_thang: basecostNum,
+              calculation_rule: "carry_over",
             });
+
+            if (baseChunk.length >= chunkSize) {
+              await flushBasecostChunk(baseChunk);
+              counts.monthlyBasecost += baseChunk.length;
+              options.onProgress?.("monthlyBasecost", counts.monthlyBasecost);
+              baseChunk = [];
+            }
           }
         }
 
-        if (baseRows.length > 0) {
-          for (const b of baseRows) {
-            await sql`
-              INSERT INTO accounting_monthly_base_cost (
-                store_id, sku, period, basecost_thang, brand, updated_at
-              ) VALUES (
-                ${b.store_id}, ${b.sku}, ${b.period}, ${b.basecost_thang}, ${b.brand ?? null}, NOW()
-              )
-              ON CONFLICT (store_id, period, sku) DO UPDATE SET
-                basecost_thang = EXCLUDED.basecost_thang,
-                brand = COALESCE(EXCLUDED.brand, accounting_monthly_base_cost.brand),
-                updated_at = NOW()
-            `;
-          }
-          counts.monthlyBasecost = baseRows.length;
+        if (baseChunk.length > 0) {
+          await flushBasecostChunk(baseChunk);
+          counts.monthlyBasecost += baseChunk.length;
+          baseChunk = [];
         }
+
         processedSheets.push(`BASECOST THÁNG (${currentSheetName}): ${counts.monthlyBasecost.toLocaleString()} dòng`);
         console.log(`[ExcelUnifiedImporter] ✅ Hoàn thành Sheet Basecost Tháng: ${counts.monthlyBasecost} dòng`);
         completedSheetsCount++;
@@ -927,7 +1407,6 @@ export async function importUnifiedAccountingExcel(
   }
 
   // 5. Tự động đồng bộ ngược SKU Master sang Ads & Returns
-  // Đảm bảo dữ liệu luôn nhất quán 100% cho dù thứ tự các sheet trong file Excel nằm ở bất kỳ đâu
   try {
     await sql`
       UPDATE accounting_ads a
@@ -962,10 +1441,20 @@ export async function importUnifiedAccountingExcel(
   }
 
   const durationMs = Date.now() - startTime;
-  const totalProcessed = counts.orders + counts.ads + counts.returns + counts.serviceFees + counts.skuMaster + counts.monthlyBasecost;
+  const totalProcessed =
+    counts.orders +
+    counts.ads +
+    counts.returns +
+    counts.serviceFees +
+    counts.skuMaster +
+    counts.inbound +
+    counts.checkShipment +
+    counts.monthlyBasecost;
 
   const msgParts: string[] = [];
   if (counts.skuMaster > 0) msgParts.push(`${counts.skuMaster.toLocaleString()} SKU Bảng Mã`);
+  if (counts.inbound > 0) msgParts.push(`${counts.inbound.toLocaleString()} lô Chi tiết đi hàng`);
+  if (counts.checkShipment > 0) msgParts.push(`${counts.checkShipment.toLocaleString()} Check Shipment`);
   if (counts.monthlyBasecost > 0) msgParts.push(`${counts.monthlyBasecost.toLocaleString()} dòng Basecost Tháng`);
   if (counts.orders > 0) msgParts.push(`${counts.orders.toLocaleString()} đơn hàng`);
   if (counts.ads > 0) msgParts.push(`${counts.ads.toLocaleString()} dòng Ads`);

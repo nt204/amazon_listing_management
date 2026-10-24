@@ -2871,18 +2871,14 @@ function InventoryViewInner() {
     const handleImportCompleted = (event: Event) => {
       const type = (event as CustomEvent<{ type?: string }>).detail?.type;
       if (type !== "success") return;
-      if (activeTab === "sku") fetchSkus();
-      else if (activeTab === "inbound") fetchShipments();
-      else if (activeTab === "check_shipment") {
-        fetchCheckShipments();
-        fetchShipments();
-      } else if (activeTab === "monthly_base_cost") {
-        monthlyBaseCostRef.current?.reload();
-      }
+      fetchSkus();
+      fetchShipments();
+      fetchCheckShipments();
+      monthlyBaseCostRef.current?.reload();
     };
     window.addEventListener("accounting-import-completed", handleImportCompleted);
     return () => window.removeEventListener("accounting-import-completed", handleImportCompleted);
-  }, [activeTab, fetchSkus, fetchShipments, fetchCheckShipments]);
+  }, [fetchSkus, fetchShipments, fetchCheckShipments]);
 
   const [syncingLatestFiles, setSyncingLatestFiles] = useState(false);
 
@@ -3732,7 +3728,7 @@ function InventoryViewInner() {
     }
   };
 
-  // Import Action (Hỗ trợ đọc 1 hoặc nhiều file cùng lúc)
+  // Import Action (Hỗ trợ nạp 1 file quét tất cả 4 sheet chạy ẩn ở nền hoặc file CSV)
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = e.target.files;
     if (!fileList || fileList.length === 0 || !selectedStoreId) return;
@@ -3742,79 +3738,55 @@ function InventoryViewInner() {
       setImporting(true);
       setImportResult(null);
 
-      let totalCount = 0;
-      let totalCreated = 0;
-      let totalUpdated = 0;
-      let totalCascade = 0;
-      const allErrors: string[] = [];
-
       for (const file of files) {
-        const formData = new FormData();
-        formData.append("store_id", selectedStoreId);
-        formData.append("type", activeTab);
-        if (activeTab === "monthly_base_cost") {
-          formData.append("year", String(monthlyBaseCostYear));
-        }
-        formData.append("file", file);
+        const isExcel = file.name.toLowerCase().endsWith(".xlsx") || file.name.toLowerCase().endsWith(".xls");
+        if (isExcel) {
+          const formData = new FormData();
+          formData.append("store_id", selectedStoreId);
+          formData.append("file", file);
 
-        const res = await fetch("/api/accounting/inventory/import", {
-          method: "POST",
-          body: formData,
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          allErrors.push(`${file.name}: ${data.error || "Lỗi khi import file"}`);
+          const res = await fetch("/api/accounting/unified-import", {
+            method: "POST",
+            body: formData,
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || "Tải lên thất bại");
+
+          if (data.job?.id) {
+            const trackedJob = { id: data.job.id, fileName: file.name };
+            localStorage.setItem("accounting_import_active_job", JSON.stringify(trackedJob));
+            window.dispatchEvent(new CustomEvent("accounting-import-queued", { detail: trackedJob }));
+            setShowImportModal(false);
+            notify(`Đã bắt đầu nạp ngầm file ${file.name}. Hệ thống đang quét các sheet và phân bổ dữ liệu ở chế độ nền.`, "success");
+            return;
+          }
         } else {
-          totalCount += data.count || 0;
-          totalCreated += data.created_count || 0;
-          totalUpdated += data.updated_count || 0;
-          totalCascade += data.cascade_updated_count || 0;
-          if (data.errors && data.errors.length > 0) {
-            allErrors.push(
-              ...data.errors.map((err: string) => `${file.name}: ${err}`),
-            );
+          // CSV file fallback (ví dụ check shipment CSV)
+          const formData = new FormData();
+          formData.append("store_id", selectedStoreId);
+          formData.append("type", activeTab);
+          formData.append("file", file);
+
+          const res = await fetch("/api/accounting/inventory/import", {
+            method: "POST",
+            body: formData,
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || "Lỗi khi import file CSV");
+          notify(data.message || `Đã import thành công file CSV!`, "success");
+          if (activeTab === "check_shipment") {
+            fetchCheckShipments();
+            fetchShipments();
           }
         }
       }
-
-      setImportResult({
-        success: allErrors.length === 0 || totalCount > 0,
-        count: totalCount,
-        errors: allErrors,
-      });
-
-      const label =
-        activeTab === "sku"
-          ? "SKU"
-          : activeTab === "inbound"
-          ? "lô hàng"
-          : activeTab === "monthly_base_cost"
-          ? "SKU Basecost"
-          : "check shipment";
-      const stats =
-        activeTab === "check_shipment" && (totalUpdated > 0 || totalCreated > 0)
-          ? ` (${totalUpdated} cập nhật mới, ${totalCreated} thêm mới)`
-          : "";
-      const cascadeMsg =
-        totalCascade > 0
-          ? ` — Đã tự động cập nhật ${totalCascade} lô sang Chi Tiết Đi Hàng`
-          : "";
-      notify(`Đã xử lý xong ${totalCount} ${label}${stats}!${cascadeMsg}`, "success");
-      if (activeTab === "sku") fetchSkus();
-      else if (activeTab === "inbound") fetchShipments();
-      else if (activeTab === "monthly_base_cost") {
-        monthlyBaseCostRef.current?.reload();
-      } else {
-        fetchCheckShipments();
-        fetchShipments();
-      }
-    } catch (err) {
+    } catch (err: any) {
       setImportResult({
         success: false,
         count: 0,
         errors: [(err as Error).message],
       });
-      notify((err as Error).message, "error");
+      notify((err as Error).message || "Lỗi khi nạp file", "error");
     } finally {
       setImporting(false);
       e.target.value = "";
@@ -7083,13 +7055,7 @@ function InventoryViewInner() {
                   <FileXlsIcon size={18} weight="bold" />
                 </span>
                 <h3 className="text-base font-extrabold text-slate-900">
-                  {activeTab === "sku"
-                    ? "Nhập Dữ Liệu Bảng Mã (Excel)"
-                    : activeTab === "inbound"
-                    ? "Nhập Dữ Liệu Chi Tiết Đi Hàng (Excel)"
-                    : activeTab === "monthly_base_cost"
-                    ? `Nhập Dữ Liệu Basecost Tháng ${monthlyBaseCostYear} (Excel)`
-                    : "Nhập Dữ Liệu Check Shipment (CSV / Excel)"}
+                  Nhập File Quản Lý Kho (Inventory)
                 </h3>
               </div>
               <button
@@ -7104,9 +7070,10 @@ function InventoryViewInner() {
             <div className="space-y-3">
               <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3 text-xs text-indigo-900">
                 <p className="font-semibold text-indigo-800">
-                  {activeTab === "monthly_base_cost"
-                    ? `Đọc trực tiếp sheet BASECOST THÁNG: giữ nguyên tồn đầu, giá đầu tháng, hàng nhập, tổng tiền, Basecost chốt và tồn cuối. Hệ thống chỉ tự tính các tháng chưa có trong file.`
-                    : "Hỗ trợ đọc nhiều file cùng lúc."}
+                  ⚡ Hệ thống tự động quét 1 lần toàn bộ file và phân bổ nạp đủ cho cả 4 sheet: BẢNG MÃ, CHI TIẾT ĐI HÀNG, CHECK SHIPMENT AMAZON, BASECOST THÁNG.
+                </p>
+                <p className="mt-1 text-[11px] text-indigo-600">
+                  Tiến trình chạy ngầm tiết kiệm RAM tuyệt đối, không đơ trình duyệt. Tiến độ và thông báo hoàn tất sẽ hiển thị ở góc trên bên phải màn hình.
                 </p>
               </div>
 
