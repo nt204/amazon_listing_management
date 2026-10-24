@@ -171,13 +171,21 @@ export async function resolveLarkRecipients(scope: DataScope, category: LarkNoti
     ORDER BY CASE WHEN user_id = ${scope.actorId} THEN 0 ELSE 1 END LIMIT 1
   `;
   const actorId = actors[0]?.actor_id || scope.actorId;
+  const isSystemActor = scope.actorId === "system" || scope.actorId === "worker" || !actors.length;
+
   const rows = await sql<Array<{ receive_id: string; receive_id_type: string }>>`
     SELECT connection.receive_id, connection.receive_id_type
     FROM lark_user_connections connection
     LEFT JOIN lark_notification_preferences preference
       ON preference.team_id = connection.team_id AND preference.actor_id = connection.actor_id
       AND preference.category = ${category}
-    WHERE connection.team_id = ${scope.teamId} AND connection.actor_id = ${actorId}
+    WHERE connection.team_id = ${scope.teamId}
+      AND (
+        connection.actor_id = ${actorId}
+        OR (${isSystemActor} AND connection.actor_id IN (
+          SELECT user_id FROM app_users WHERE team_id = ${scope.teamId} AND role = 'admin' AND status = 'approved'
+        ))
+      )
       AND connection.enabled = TRUE AND COALESCE(preference.personal_enabled, FALSE) = TRUE
     UNION
     SELECT channel.chat_id AS receive_id, 'chat_id' AS receive_id_type

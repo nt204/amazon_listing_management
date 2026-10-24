@@ -151,11 +151,10 @@ export async function executeAccountingImportJob(job: AccountingImportJob) {
       },
     });
     await completeAccountingImport(job.id, result);
-    await notifyLarkEventBestEffort(
-      { teamId: job.team_id, actorId: job.actor_id },
-      "accounting",
-      ["Import kế toán đã hoàn tất", `File: ${job.file_name}`, result.message],
-    ).catch(() => {});
+    const { reportDailyBusinessData } = await import("./daily-business-reporter");
+    await reportDailyBusinessData({ teamId: job.team_id, actorId: job.actor_id }).catch((reportErr) =>
+      console.warn("[Accounting Report] Báo cáo ngày tự động gặp lỗi:", reportErr)
+    );
     console.log(`[Accounting Import] Completed ${job.id}: ${result.totalProcessed} rows`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

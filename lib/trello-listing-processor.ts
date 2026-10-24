@@ -129,20 +129,23 @@ export async function executeSingleTrelloListing(
     }
   };
 
-  throwIfListingCancelled(signal);
+  let cardDetail: any = null;
+  try {
+    throwIfListingCancelled(signal);
 
-  const { apiKey, token } = getTrelloServerCredentials();
-  const trelloSettings = await getUserTrelloSettings(scope);
-  if (!trelloSettings.boardId || !trelloSettings.listingTargetListId) {
-    throw new ApiError("Vui lòng cấu hình cột đích cho chức năng Listing.", 400);
-  }
+    const { apiKey, token } = getTrelloServerCredentials();
+    const trelloSettings = await getUserTrelloSettings(scope);
+    if (!trelloSettings.boardId || !trelloSettings.listingTargetListId) {
+      throw new ApiError("Vui lòng cấu hình cột đích cho chức năng Listing.", 400);
+    }
 
-  // 1. Fetch card details & attachments from Trello
-  const card = await runStage("card", () => fetchTrelloCardDetail(cardId, apiKey, token, signal));
-  const { sku, itemName } = parseTrelloCardTitle(card.name);
+    // 1. Fetch card details & attachments from Trello
+    const card = await runStage("card", () => fetchTrelloCardDetail(cardId, apiKey, token, signal));
+    cardDetail = card;
+    const { sku, itemName } = parseTrelloCardTitle(card.name);
 
-  // 2. Load the Trello "Make cover" attachment
-  const imageAttachments = selectTrelloListingImageAttachments(card);
+    // 2. Load the Trello "Make cover" attachment
+    const imageAttachments = selectTrelloListingImageAttachments(card);
   const loadedImages: Array<{ name: string; type: string; data_url: string }> = [];
 
   emitProgress("image_download", "started");
@@ -430,4 +433,13 @@ export async function executeSingleTrelloListing(
     excelFileName,
     timings_ms: timings,
   };
+  } catch (error) {
+    if (!options.skipNotification) {
+      await notifyLarkEventBestEffort(scope, "listing", [
+        `❌ **Listing thất bại: ${cardDetail?.name || cardId}**`,
+        `• Lỗi: ${error instanceof Error ? error.message : String(error)}`,
+      ]).catch(() => {});
+    }
+    throw error;
+  }
 }

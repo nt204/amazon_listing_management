@@ -187,7 +187,7 @@ export function isSystemAdminEmail(email: string): boolean {
     .split(",")
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
-  const adminSet = new Set(["ndtrince@gmail.com", "nguyendangtri2507@gmail.com", ...configured]);
+  const adminSet = new Set(["ndtrince@gmail.com", ...configured]);
   return adminSet.has(normalized);
 }
 

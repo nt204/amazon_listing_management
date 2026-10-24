@@ -64,6 +64,13 @@ export async function POST(request: Request) {
     }
   } catch (error) {
     console.error("[PPC Upload Route Error]", error);
+    try {
+      const actor = await authorize(request, "write", "ppc");
+      await notifyLarkEventBestEffort(dataScope(actor), "ppc", [
+        "❌ **Upload file PPC thất bại**",
+        `• Lỗi: ${error instanceof Error ? error.message : String(error)}`,
+      ]);
+    } catch {}
     if (error instanceof MultipartUploadError) {
       return routeErrorResponse(new ApiError(error.message, error.status), "File upload không hợp lệ.");
     }

@@ -23,6 +23,13 @@ export async function POST(request: NextRequest) {
 
     const result = await syncLatestFilesForAllStores(type as any);
 
+    if (type === "02_ALL_ORDERS" || type === "05_CAMPAIGNS") {
+      const { reportDailyBusinessData } = await import("@/lib/accounting/daily-business-reporter");
+      void reportDailyBusinessData({ teamId: "default", actorId: "system" }).catch((err) =>
+        console.warn("[syncLatestFilesForAllStores] Báo cáo ngày tự động gặp lỗi:", err)
+      );
+    }
+
     const typeLabel =
       type === "07_SHIPMENTS"
         ? "Check Shipment"

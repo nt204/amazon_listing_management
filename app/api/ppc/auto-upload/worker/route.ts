@@ -138,19 +138,26 @@ export async function PATCH(request: Request) {
 
       let featureName = "Bulk Sheet";
       const actionIds = Array.isArray(jobRecord.action_ids) ? jobRecord.action_ids : [];
+      const actionsPayload = Array.isArray(jobRecord.actions_payload) ? jobRecord.actions_payload : [];
+      const fileNameLower = String(jobRecord.file_name || "").toLowerCase();
+
+      const payloadTypes = new Set(actionsPayload.map((it: any) => String(it.actionType || it.type || "").toUpperCase()));
+
       if (actionIds.length > 0) {
         const actionTypeRows = await sql<{ action_type: string }[]>`
           SELECT DISTINCT action_type FROM ppc_actions WHERE id = ANY(${actionIds}::uuid[])
         `;
-        const types = new Set(actionTypeRows.map((r) => r.action_type));
-        const hasNeg = types.has("NEGATIVE_KEYWORD") || types.has("PAUSE_TARGET");
-        const hasBid = types.has("UPDATE_BID") || types.has("BID_INCREASE") || types.has("BID_DECREASE");
-        const hasCamp = types.has("CREATE_CAMPAIGN") || types.has("ENABLE_KEYWORD");
-        if (hasNeg && !hasBid && !hasCamp) featureName = "Phủ định từ khóa (Negative KW)";
-        else if (hasBid && !hasNeg && !hasCamp) featureName = "Tối ưu giá thầu (Auto Bid)";
-        else if (hasCamp && !hasNeg && !hasBid) featureName = "Lên campaign Sales KW";
-        else if (hasNeg || hasBid || hasCamp) featureName = "Tối ưu PPC tổng hợp";
+        for (const r of actionTypeRows) payloadTypes.add(r.action_type.toUpperCase());
       }
+
+      const hasNeg = payloadTypes.has("NEGATIVE_KEYWORD") || payloadTypes.has("PAUSE_TARGET") || fileNameLower.includes("neg");
+      const hasBid = payloadTypes.has("UPDATE_BID") || payloadTypes.has("BID_INCREASE") || payloadTypes.has("BID_DECREASE") || fileNameLower.includes("bid") || fileNameLower.includes("zero_spend");
+      const hasCamp = payloadTypes.has("CREATE_CAMPAIGN") || payloadTypes.has("CREATE_CAMPAIGN_KW") || payloadTypes.has("ENABLE_KEYWORD") || fileNameLower.includes("sale_kw");
+
+      if (hasNeg && !hasBid && !hasCamp) featureName = "Phủ định từ khóa (Upload File NEG)";
+      else if (hasBid && !hasNeg && !hasCamp) featureName = "Tối ưu giá thầu (Auto Bid)";
+      else if (hasCamp && !hasNeg && !hasBid) featureName = "Lên campaign (Bulk File)";
+      else if (hasNeg || hasBid || hasCamp) featureName = "Tối ưu PPC tổng hợp (Bulk File)";
 
       let statusIcon = "✅";
       let statusText = "Thành công";

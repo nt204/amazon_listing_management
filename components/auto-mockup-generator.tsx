@@ -1366,6 +1366,20 @@ export function AutoMockupGenerator({
           ? `${completedImages}/${requestedImages} ảnh AI hoàn tất. ${partial + failed} thẻ cần kiểm tra lại.`
           : `${completedImages}/${requestedImages} ảnh AI đã hoàn tất và được lưu trên Trello.`,
       });
+
+      // Gửi thông báo Lark bot cho batch mockup
+      void fetch("/api/trello/mockup-jobs/batch-notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          successful,
+          total: selectedCards.length,
+          completedImages,
+          requestedImages,
+          failed: partial + failed,
+          cardNames: selectedCards.map((c) => c.name),
+        }),
+      }).catch((err) => console.warn("[Batch Mockup] Lỗi gửi thông báo Lark:", err));
     }
   };
 
