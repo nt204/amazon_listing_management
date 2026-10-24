@@ -38,16 +38,16 @@ export function generateDailyReportSvg(
   const parts = date.split("-");
   const displayDate = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : date;
 
-  const margin = 20;
-  const colWidths = [180, 115, 105, 115, 115, 105, 125];
-  const tableWidth = colWidths.reduce((a, b) => a + b, 0);
-  const totalWidth = tableWidth + margin * 2;
+  const margin = 40;
+  const colWidths = [380, 260, 220, 260, 260, 240, 300];
+  const tableWidth = colWidths.reduce((a, b) => a + b, 0); // 1920
+  const totalWidth = tableWidth + margin * 2; // 2000
 
-  const titleHeight = 56;
+  const titleHeight = 110;
   const tableStartY = margin + titleHeight;
 
-  const headerHeight = 44;
-  const rowHeight = 42;
+  const headerHeight = 90;
+  const rowHeight = 84;
   const totalRows = reports.length + 1;
   const tableHeight = headerHeight + totalRows * rowHeight;
   const totalHeight = tableStartY + tableHeight + margin;
@@ -62,15 +62,15 @@ export function generateDailyReportSvg(
   let vLinesSvg = "";
   for (let i = 1; i < colWidths.length; i++) {
     const x = colX[i];
-    vLinesSvg += `<line x1="${x}" y1="${tableStartY}" x2="${x}" y2="${tableStartY + tableHeight}" stroke="#e2e8f0" stroke-width="1"/>`;
+    vLinesSvg += `<line x1="${x}" y1="${tableStartY}" x2="${x}" y2="${tableStartY + tableHeight}" stroke="#cbd5e1" stroke-width="2"/>`;
   }
 
   const headers = ["Store", "Revenue", "Quantity", "Ads Fee", "AMZ Fee", "Refund", "Profit"];
   let headerCellsSvg = "";
   headers.forEach((h, i) => {
-    const x = i === 0 ? colX[i] + 16 : colX[i] + colWidths[i] - 16;
+    const x = i === 0 ? colX[i] + 32 : colX[i] + colWidths[i] - 32;
     const anchor = i === 0 ? "start" : "end";
-    headerCellsSvg += `<text x="${x}" y="${tableStartY + 28}" text-anchor="${anchor}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#0f172a">${h}</text>`;
+    headerCellsSvg += `<text x="${x}" y="${tableStartY + 56}" text-anchor="${anchor}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="28" font-weight="700" fill="#0f172a">${h}</text>`;
   });
 
   let rowsSvg = "";
@@ -78,49 +78,49 @@ export function generateDailyReportSvg(
     const it = r.item;
     const y = tableStartY + headerHeight + idx * rowHeight;
     rowsSvg += `
-      <line x1="${margin}" y1="${y}" x2="${margin + tableWidth}" y2="${y}" stroke="#e2e8f0" stroke-width="1"/>
-      <text x="${colX[0] + 16}" y="${y + 26}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#1e293b">${r.storeName}</text>
-      <text x="${colX[1] + colWidths[1] - 16}" y="${y + 26}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" fill="#1e293b">${formatCurrency(it.revenue)}</text>
-      <text x="${colX[2] + colWidths[2] - 16}" y="${y + 26}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" fill="#1e293b">${formatQuantity(it.quantity)}</text>
-      <text x="${colX[3] + colWidths[3] - 16}" y="${y + 26}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" fill="#1e293b">${formatCurrency(it.ads_fee)}</text>
-      <text x="${colX[4] + colWidths[4] - 16}" y="${y + 26}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" fill="#1e293b">${formatCurrency(it.amazon_fee)}</text>
-      <text x="${colX[5] + colWidths[5] - 16}" y="${y + 26}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" fill="#1e293b">${formatCurrency(it.return_cost)}</text>
-      <text x="${colX[6] + colWidths[6] - 16}" y="${y + 26}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#0f172a">${formatCurrency(it.profit)}</text>
+      <line x1="${margin}" y1="${y}" x2="${margin + tableWidth}" y2="${y}" stroke="#e2e8f0" stroke-width="2"/>
+      <text x="${colX[0] + 32}" y="${y + 53}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="28" font-weight="600" fill="#1e293b">${r.storeName}</text>
+      <text x="${colX[1] + colWidths[1] - 32}" y="${y + 53}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="28" font-weight="500" fill="#1e293b">${formatCurrency(it.revenue)}</text>
+      <text x="${colX[2] + colWidths[2] - 32}" y="${y + 53}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="28" font-weight="500" fill="#1e293b">${formatQuantity(it.quantity)}</text>
+      <text x="${colX[3] + colWidths[3] - 32}" y="${y + 53}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="28" font-weight="500" fill="#1e293b">${formatCurrency(it.ads_fee)}</text>
+      <text x="${colX[4] + colWidths[4] - 32}" y="${y + 53}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="28" font-weight="500" fill="#1e293b">${formatCurrency(it.amazon_fee)}</text>
+      <text x="${colX[5] + colWidths[5] - 32}" y="${y + 53}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="28" font-weight="500" fill="#1e293b">${formatCurrency(it.return_cost)}</text>
+      <text x="${colX[6] + colWidths[6] - 32}" y="${y + 53}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="28" font-weight="800" fill="#0f172a">${formatCurrency(it.profit)}</text>
     `;
   });
 
   const totalY = tableStartY + headerHeight + reports.length * rowHeight;
   rowsSvg += `
-    <line x1="${margin}" y1="${totalY}" x2="${margin + tableWidth}" y2="${totalY}" stroke="#cbd5e1" stroke-width="1.5"/>
-    <text x="${colX[0] + 16}" y="${totalY + 26}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="800" fill="#0f172a">TỔNG CỘNG</text>
-    <text x="${colX[1] + colWidths[1] - 16}" y="${totalY + 26}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="800" fill="#0f172a">${formatCurrency(totalRev)}</text>
-    <text x="${colX[2] + colWidths[2] - 16}" y="${totalY + 26}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="800" fill="#0f172a">${formatQuantity(totalQty)}</text>
-    <text x="${colX[3] + colWidths[3] - 16}" y="${totalY + 26}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="800" fill="#0f172a">${formatCurrency(totalAds)}</text>
-    <text x="${colX[4] + colWidths[4] - 16}" y="${totalY + 26}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="800" fill="#0f172a">${formatCurrency(totalAmz)}</text>
-    <text x="${colX[5] + colWidths[5] - 16}" y="${totalY + 26}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="800" fill="#0f172a">${formatCurrency(totalRefund)}</text>
-    <text x="${colX[6] + colWidths[6] - 16}" y="${totalY + 26}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="800" fill="#0f172a">${formatCurrency(totalProfit)}</text>
+    <line x1="${margin}" y1="${totalY}" x2="${margin + tableWidth}" y2="${totalY}" stroke="#94a3b8" stroke-width="3"/>
+    <text x="${colX[0] + 32}" y="${totalY + 53}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="29" font-weight="900" fill="#0f172a">TỔNG CỘNG</text>
+    <text x="${colX[1] + colWidths[1] - 32}" y="${totalY + 53}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="29" font-weight="900" fill="#0f172a">${formatCurrency(totalRev)}</text>
+    <text x="${colX[2] + colWidths[2] - 32}" y="${totalY + 53}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="29" font-weight="900" fill="#0f172a">${formatQuantity(totalQty)}</text>
+    <text x="${colX[3] + colWidths[3] - 32}" y="${totalY + 53}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="29" font-weight="900" fill="#0f172a">${formatCurrency(totalAds)}</text>
+    <text x="${colX[4] + colWidths[4] - 32}" y="${totalY + 53}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="29" font-weight="900" fill="#0f172a">${formatCurrency(totalAmz)}</text>
+    <text x="${colX[5] + colWidths[5] - 32}" y="${totalY + 53}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="29" font-weight="900" fill="#0f172a">${formatCurrency(totalRefund)}</text>
+    <text x="${colX[6] + colWidths[6] - 32}" y="${totalY + 53}" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="29" font-weight="900" fill="#0f172a">${formatCurrency(totalProfit)}</text>
   `;
 
   return `
   <svg width="${totalWidth}" height="${totalHeight}" viewBox="0 0 ${totalWidth} ${totalHeight}" xmlns="http://www.w3.org/2000/svg">
     <rect width="${totalWidth}" height="${totalHeight}" fill="#FFFFFF"/>
 
-    <!-- Clean Header Title -->
-    <text x="${margin}" y="${margin + 26}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="18" font-weight="800" fill="#0f172a" letter-spacing="-0.3">Báo cáo Kinh doanh FBA</text>
-    <text x="${margin}" y="${margin + 44}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="500" fill="#64748b">Ngày ${displayDate}</text>
+    <!-- Large Header Title -->
+    <text x="${margin}" y="${margin + 44}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="38" font-weight="900" fill="#0f172a" letter-spacing="-0.5">Báo cáo Kinh doanh FBA</text>
+    <text x="${margin}" y="${margin + 84}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="24" font-weight="600" fill="#64748b">Ngày ${displayDate}</text>
 
     <!-- Table Container Card with rounded corners -->
-    <rect x="${margin}" y="${tableStartY}" width="${tableWidth}" height="${tableHeight}" rx="8" fill="#FFFFFF" stroke="#e2e8f0" stroke-width="1.2"/>
+    <rect x="${margin}" y="${tableStartY}" width="${tableWidth}" height="${tableHeight}" rx="14" fill="#FFFFFF" stroke="#cbd5e1" stroke-width="2.5"/>
 
     <defs>
       <clipPath id="tableClip">
-        <rect x="${margin}" y="${tableStartY}" width="${tableWidth}" height="${tableHeight}" rx="8"/>
+        <rect x="${margin}" y="${tableStartY}" width="${tableWidth}" height="${tableHeight}" rx="14"/>
       </clipPath>
     </defs>
 
     <g clip-path="url(#tableClip)">
       <rect x="${margin}" y="${tableStartY}" width="${tableWidth}" height="${headerHeight}" fill="#F8FAFC"/>
-      <line x1="${margin}" y1="${tableStartY + headerHeight}" x2="${margin + tableWidth}" y2="${tableStartY + headerHeight}" stroke="#e2e8f0" stroke-width="1.2"/>
+      <line x1="${margin}" y1="${tableStartY + headerHeight}" x2="${margin + tableWidth}" y2="${tableStartY + headerHeight}" stroke="#cbd5e1" stroke-width="2.5"/>
       ${vLinesSvg}
       ${headerCellsSvg}
       ${rowsSvg}
