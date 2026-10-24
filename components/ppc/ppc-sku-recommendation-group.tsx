@@ -1712,9 +1712,10 @@ export function PpcSkuRecommendationGroupView({
               <div className="flex items-center gap-3">
                 {selectedSkuGroup.mockupUrl && (
                   <img
-                    src={selectedSkuGroup.mockupUrl}
+                    src={getOptimizedThumbnailUrl(selectedSkuGroup.mockupUrl, 96) || selectedSkuGroup.mockupUrl}
                     alt={selectedSkuGroup.sku}
                     className="w-12 h-12 rounded-xl object-cover border border-slate-200 shadow-xs shrink-0"
+                    loading="lazy"
                   />
                 )}
                 <div>

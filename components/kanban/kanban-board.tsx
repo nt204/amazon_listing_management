@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatCircleDotsIcon, CopyIcon } from "@phosphor-icons/react";
+import { getOptimizedThumbnailUrl } from "@/lib/image-client";
 
 export type UrgencyLevel = "low" | "medium" | "high" | "urgent";
 export type CardStatus = "todo" | "in_progress" | "done";
@@ -822,9 +823,10 @@ export function KanbanBoard({ currentUser }: KanbanBoardProps) {
                                 >
                                   {/* eslint-disable-next-line @next/next/no-img-element */}
                                   <img
-                                    src={imgUrl}
+                                    src={getOptimizedThumbnailUrl(imgUrl, 96) || imgUrl}
                                     alt="Ảnh đính kèm"
                                     className="h-full w-full object-cover"
+                                    loading="lazy"
                                   />
                                 </button>
                               ))}
@@ -1038,9 +1040,10 @@ export function KanbanBoard({ currentUser }: KanbanBoardProps) {
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
-                        src={imgUrl}
+                        src={getOptimizedThumbnailUrl(imgUrl, 112) || imgUrl}
                         alt="Đính kèm"
                         className="h-full w-full object-cover"
+                        loading="lazy"
                       />
                       <button
                         type="button"
@@ -1174,9 +1177,10 @@ export function KanbanBoard({ currentUser }: KanbanBoardProps) {
                         >
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
-                            src={imgUrl}
+                            src={getOptimizedThumbnailUrl(imgUrl, 240) || imgUrl}
                             alt={`Ảnh đính kèm ${idx + 1}`}
                             className="h-28 w-full object-cover"
+                            loading="lazy"
                           />
                         </button>
                         <button
@@ -1330,7 +1334,7 @@ export function KanbanBoard({ currentUser }: KanbanBoardProps) {
             </div>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={previewImage}
+              src={getOptimizedThumbnailUrl(previewImage, 1000) || previewImage}
               alt="Phóng to ảnh"
               className="max-h-[80vh] max-w-full rounded object-contain"
             />

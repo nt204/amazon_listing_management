@@ -63,6 +63,7 @@ import type {
 } from "@/lib/ppc/sku-architecture-types";
 import { PpcMultiStoreView } from "./ppc-multi-store-view";
 import { PpcCopyButton } from "./ppc-copy-button";
+import { PpcSkuTrendModal } from "./ppc-sku-trend-modal";
 import type {
   PpcAlert,
   PpcAdTypeBreakdown,
@@ -81,6 +82,7 @@ import type {
   PpcTargetTypeBreakdown,
   PpcVelocityComparison,
   PpcDailyTrendPoint,
+  PpcSkuDailyTrendPoint,
 } from "@/lib/ppc/types";
 
 import type { RequestActor } from "@/lib/auth";
@@ -242,6 +244,72 @@ export function getTargetDisplayType(target: {
   }
 
   return { label, badgeColor, matchType: match || "Unknown" };
+}
+
+function SkuTrendSparkline({
+  dailyTrend,
+  sku,
+  storeName,
+  mockupUrl,
+  onOpenDetail,
+}: {
+  dailyTrend?: PpcSkuDailyTrendPoint[];
+  sku: string;
+  storeName: string;
+  mockupUrl?: string | null;
+  onOpenDetail?: (data: {
+    sku: string;
+    storeName: string;
+    mockupUrl?: string | null;
+    dailyTrend: PpcSkuDailyTrendPoint[];
+  }) => void;
+}) {
+  if (!dailyTrend || dailyTrend.length === 0) {
+    return <span className="text-[10px] text-slate-300 font-mono">-</span>;
+  }
+
+  const maxVal = Math.max(...dailyTrend.map((d) => Math.max(d.spend || 0, d.sales || 0)), 1);
+  const totSpend = dailyTrend.reduce((s, d) => s + (d.spend || 0), 0);
+  const totSales = dailyTrend.reduce((s, d) => s + (d.sales || 0), 0);
+  const totOrders = dailyTrend.reduce((s, d) => s + (d.orders || 0), 0);
+
+  return (
+    <div
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpenDetail?.({ sku, storeName, mockupUrl, dailyTrend });
+      }}
+      className="group/spark inline-flex items-end gap-[3px] h-6 px-1.5 py-0.5 rounded hover:bg-indigo-50/70 cursor-pointer transition select-none"
+      title={`7N: Chi $${totSpend.toFixed(1)} • Thu $${totSales.toFixed(1)} (${totOrders} đơn) - Nhấn xem chi tiết`}
+    >
+      {dailyTrend.map((d, idx) => {
+        const hasSales = (d.sales || 0) > 0;
+        const hasSpend = (d.spend || 0) > 0;
+        const val = hasSales ? d.sales : d.spend;
+        const heightPx = Math.max(3, Math.min(18, Math.round((val / maxVal) * 18)));
+
+        let bgClass = "bg-slate-200";
+        if (hasSales) {
+          bgClass = "bg-emerald-500 group-hover/spark:bg-emerald-600";
+        } else if (hasSpend) {
+          bgClass = "bg-rose-400 group-hover/spark:bg-rose-500";
+        }
+
+        return (
+          <div
+            key={idx}
+            className="flex flex-col items-center justify-end h-full"
+            style={{ width: "6px" }}
+          >
+            <div
+              style={{ height: `${heightPx}px` }}
+              className={`w-full rounded-xs ${bgClass} transition-all`}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, initialStore, actor, navNonce, standaloneTab, activeTabProp, onTabChange }: PpcDashboardProps) {
@@ -593,6 +661,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
   const [previewModalMockup, setPreviewModalMockup] = useState<{
     url: string;
     sku?: string;
+  } | null>(null);
+  const [selectedSkuTrendModal, setSelectedSkuTrendModal] = useState<{
+    sku: string;
+    storeName: string;
+    mockupUrl?: string | null;
+    dailyTrend: PpcSkuDailyTrendPoint[];
   } | null>(null);
   const [loadingTargetsServer, setLoadingTargetsServer] = useState(false);
   const [expandedChildTerms, setExpandedChildTerms] = useState<
@@ -4379,12 +4453,13 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   >
                     ACOS (%) {skuSortField === "acos" && (skuSortDir === "asc" ? "↑" : "↓")}
                   </th>
+                  <th className="py-3 px-3 text-center w-24">Trend (7N)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium">
                 {(loading || isStoreSwitching || loadingSection === "skus" || loadingSkuEcon) ? (
                   <tr>
-                    <td colSpan={11} className="p-12 text-center text-xs text-slate-500">
+                    <td colSpan={12} className="p-12 text-center text-xs text-slate-500">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <CircleNotch size={24} className="animate-spin text-indigo-600" />
                         <span className="font-bold text-slate-700">Đang tải danh sách SKU cho {selectedStore === "ALL" ? "tất cả store" : selectedStore}...</span>
@@ -4393,7 +4468,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   </tr>
                 ) : paginatedSkus.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="p-8 text-center text-xs text-slate-400">
+                    <td colSpan={12} className="p-8 text-center text-xs text-slate-400">
                       Không tìm thấy SKU nào trong kỳ đang chọn.
                     </td>
                   </tr>
@@ -4476,6 +4551,15 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                         >
                           {s.spend === 0 ? "-" : s.acos > 500 ? "0 sales" : `${s.acos.toFixed(1)}%`}
                         </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        <SkuTrendSparkline
+                          dailyTrend={s.dailyTrend}
+                          sku={s.sku}
+                          storeName={s.storeName}
+                          mockupUrl={s.mockupUrl}
+                          onOpenDetail={(data) => setSelectedSkuTrendModal(data)}
+                        />
                       </td>
                     </tr>
                   ))
@@ -5309,6 +5393,18 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
             </div>
           </div>
         </div>
+      )}
+
+      {/* MODAL XEM TREND 7 NGÀY CHO 1 SKU */}
+      {selectedSkuTrendModal && (
+        <PpcSkuTrendModal
+          isOpen={Boolean(selectedSkuTrendModal)}
+          onClose={() => setSelectedSkuTrendModal(null)}
+          sku={selectedSkuTrendModal.sku}
+          storeName={selectedSkuTrendModal.storeName}
+          mockupUrl={selectedSkuTrendModal.mockupUrl}
+          dailyTrend={selectedSkuTrendModal.dailyTrend}
+        />
       )}
     </div>
   );

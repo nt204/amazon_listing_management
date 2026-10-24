@@ -160,14 +160,98 @@ export async function enrichSkuPerformanceWithAccounting(
       // Ignore cross store query error
     }
 
+    // 7-day daily trend enrichment from accounting_ads
+    const skuList = Array.from(new Set(skus.map((s) => s.sku.toUpperCase().trim()))).filter(Boolean);
+    const trendBySku = new Map<string, Array<{ date: string; spend: number; sales: number; orders: number; clicks: number }>>();
+    if (skuList.length > 0) {
+      try {
+        const maxDateRow = await sql<{ max_date: string }[]>`
+          SELECT MAX(date)::text as max_date FROM accounting_ads WHERE date >= (CURRENT_DATE - INTERVAL '60 days')
+        `;
+        const latestDateStr = maxDateRow[0]?.max_date;
+        if (latestDateStr) {
+          const daysList: string[] = [];
+          const curr = new Date(latestDateStr);
+          for (let i = 6; i >= 0; i--) {
+            const d = new Date(curr);
+            d.setDate(d.getDate() - i);
+            daysList.push(d.toISOString().slice(0, 10));
+          }
+          const minDateStr = daysList[0];
+
+          const trendRows = await sql<{
+            sku: string;
+            date: string;
+            spend: string;
+            sales: string;
+            orders: number;
+            clicks: number;
+          }[]>`
+            SELECT 
+              upper(trim(sku)) as sku,
+              date::text as date,
+              COALESCE(SUM(spend), 0)::numeric as spend,
+              COALESCE(SUM(sales), 0)::numeric as sales,
+              COALESCE(SUM(orders), 0)::integer as orders,
+              COALESCE(SUM(clicks), 0)::integer as clicks
+            FROM accounting_ads
+            WHERE date >= ${minDateStr}::date
+              AND date <= ${latestDateStr}::date
+              AND upper(trim(sku)) IN ${sql(skuList)}
+            GROUP BY upper(trim(sku)), date
+            ORDER BY date ASC
+          `;
+
+          const rawBySku = new Map<string, Map<string, { spend: number; sales: number; orders: number; clicks: number }>>();
+          for (const r of trendRows) {
+            let m = rawBySku.get(r.sku);
+            if (!m) {
+              m = new Map();
+              rawBySku.set(r.sku, m);
+            }
+            m.set(r.date, {
+              spend: Math.round(Number(r.spend || 0) * 100) / 100,
+              sales: Math.round(Number(r.sales || 0) * 100) / 100,
+              orders: Number(r.orders || 0),
+              clicks: Number(r.clicks || 0),
+            });
+          }
+
+          for (const skuCode of skuList) {
+            const m = rawBySku.get(skuCode);
+            const fullDays = daysList.map((d) => {
+              const val = m?.get(d);
+              return {
+                date: d,
+                spend: val?.spend ?? 0,
+                sales: val?.sales ?? 0,
+                orders: val?.orders ?? 0,
+                clicks: val?.clicks ?? 0,
+              };
+            });
+            trendBySku.set(skuCode, fullDays);
+          }
+        }
+      } catch (err) {
+        console.warn("Could not enrich 7-day trend from accounting_ads:", err);
+      }
+    }
+
     return skus.map((s) => {
+      const skuKey = s.sku.toUpperCase().trim();
       const ppcName = (s.storeName || "").toUpperCase().trim();
       const accName = ppcName === "HSOSTORE" ? "WARMSTOREY" : ppcName;
       const accStoreId = accStoreMap.get(accName);
-      const accSameStore = accStoreId ? itemMap.get(`${accStoreId}::${s.sku.toUpperCase().trim()}`) : null;
-      const cross = crossStoreMap.get(s.sku.toUpperCase().trim());
+      const accSameStore = accStoreId ? itemMap.get(`${accStoreId}::${skuKey}`) : null;
+      const cross = crossStoreMap.get(skuKey);
+      const dailyTrend = trendBySku.get(skuKey) || [];
 
-      if (!accSameStore && !cross) return s;
+      if (!accSameStore && !cross) {
+        return {
+          ...s,
+          dailyTrend,
+        };
+      }
 
       // Niche và PIC phải chuẩn theo đúng Store đích (store nào quét niche store đó, tuyệt đối không lấy chéo)
       return {
@@ -179,6 +263,7 @@ export async function enrichSkuPerformanceWithAccounting(
         niche: accSameStore?.niche || null,
         skuStatus: accSameStore?.status || null,
         accountingMatched: Boolean(accSameStore),
+        dailyTrend,
       };
     });
   } catch (error) {

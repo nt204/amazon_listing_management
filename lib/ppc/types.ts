@@ -184,6 +184,14 @@ export interface PpcSummaryMetrics {
   pendingRecsCount: number;
 }
 
+export interface PpcSkuDailyTrendPoint {
+  date: string;
+  spend: number;
+  sales: number;
+  orders: number;
+  clicks?: number;
+}
+
 export interface PpcSkuPerformance {
   sku: string;
   storeName: string;
@@ -212,6 +220,7 @@ export interface PpcSkuPerformance {
   niche?: string | null;
   skuStatus?: string | null;
   accountingMatched?: boolean;
+  dailyTrend?: PpcSkuDailyTrendPoint[];
 }
 
 export interface PpcCampaignPerformance {

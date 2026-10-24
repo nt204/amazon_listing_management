@@ -34,6 +34,7 @@ import {
   type ColumnConfig,
   DEFAULT_SKU_TEST_COLUMNS,
 } from "./column-manager-modal";
+import { getOptimizedThumbnailUrl } from "@/lib/image-client";
 import {
   PpcAmazonDatePicker,
   type DateRange,
@@ -1389,7 +1390,7 @@ export function SkuTestView() {
                                       title="Nhấn để xem ảnh phóng to"
                                     >
                                       <img
-                                        src={item.mockup_url || item.mockup || ""}
+                                        src={getOptimizedThumbnailUrl(item.mockup_url || item.mockup, 64) || item.mockup_url || item.mockup || ""}
                                         alt={item.sku}
                                         className="h-full w-full object-cover"
                                         loading="lazy"
@@ -1880,7 +1881,7 @@ export function SkuTestView() {
               </button>
             </div>
             <img
-              src={previewImage.url}
+              src={getOptimizedThumbnailUrl(previewImage.url, 800) || previewImage.url}
               alt={previewImage.title}
               className="max-h-[75vh] max-w-[80vw] object-contain rounded-lg mx-auto"
             />

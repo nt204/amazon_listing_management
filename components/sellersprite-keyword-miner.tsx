@@ -32,6 +32,7 @@ import type {
 import type { UnifiedReverseKeywordItem } from "@/app/api/keywords/reverse/route";
 import { SellerSpriteSettingsModal } from "./sellersprite-settings-modal";
 import { Helium10SettingsModal } from "./helium10-settings-modal";
+import { getOptimizedThumbnailUrl } from "@/lib/image-client";
 
 interface SellerSpriteKeywordMinerProps {
   onImportKeywords?: (keywords: string[]) => void;
@@ -1489,9 +1490,10 @@ export function SellerSpriteKeywordMiner({ onImportKeywords }: SellerSpriteKeywo
                         <td className="p-3 text-center">
                           {item.img ? (
                             <img
-                              src={item.img}
+                              src={getOptimizedThumbnailUrl(item.img, 80) || item.img}
                               alt={item.title}
                               className="w-10 h-10 object-contain rounded-md border border-slate-200 bg-white p-0.5 mx-auto"
+                              loading="lazy"
                             />
                           ) : (
                             <div className="w-10 h-10 rounded-md bg-slate-100 flex items-center justify-center text-slate-300 text-[10px] mx-auto">

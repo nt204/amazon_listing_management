@@ -30,6 +30,7 @@ import {
   parseHelium10XrayCSV,
 } from "@/lib/amazon-asin-types";
 import { decodeHtml } from "@/lib/competitor-discovery/domain/normalize";
+import { getOptimizedThumbnailUrl } from "@/lib/image-client";
 
 interface AmazonCompetitorAsinSelectorProps {
   initialQuery?: string;
@@ -462,9 +463,10 @@ export function AmazonCompetitorAsinSelector({
                       <td className="p-3 text-center">
                         {item.img ? (
                           <img
-                            src={item.img}
+                            src={getOptimizedThumbnailUrl(item.img, 88) || item.img}
                             alt={item.title}
                             className="w-11 h-11 object-contain rounded-md border border-slate-200 bg-white p-0.5 mx-auto"
+                            loading="lazy"
                           />
                         ) : (
                           <div className="w-11 h-11 rounded-md bg-slate-100 flex items-center justify-center text-slate-300 text-[10px] mx-auto">

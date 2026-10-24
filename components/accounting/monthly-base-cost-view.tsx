@@ -25,6 +25,7 @@ import {
   ColumnHeaderCell,
   createTextWidthMeasurer,
 } from "./column-manager-modal";
+import { getOptimizedThumbnailUrl } from "@/lib/image-client";
 
 export interface MonthlyBaseCostViewRef {
   syncYear: () => void;
@@ -752,7 +753,7 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
                                   title="Xem ảnh lớn"
                                 >
                                   <img
-                                    src={mockupSrc}
+                                    src={getOptimizedThumbnailUrl(mockupSrc, 72) || mockupSrc}
                                     alt={r.sku}
                                     className="w-full h-full object-cover"
                                     loading="lazy"
@@ -1016,7 +1017,7 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
               <XIcon className="w-4 h-4" />
             </button>
             <img
-              src={previewImage.url}
+              src={getOptimizedThumbnailUrl(previewImage.url, 800) || previewImage.url}
               alt={previewImage.title}
               className="w-full h-auto max-h-[75vh] object-contain rounded-lg"
             />
