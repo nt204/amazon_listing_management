@@ -286,16 +286,29 @@ export function GlobalListingBatchBar() {
             {/* Right: Actions */}
             <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
               {isCompleted && (
-                <button
-                  type="button"
-                  onClick={handleDownloadZip}
-                  disabled={downloadingZip}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-xs font-black text-emerald-800 shadow hover:bg-emerald-50 transition cursor-pointer disabled:opacity-50"
-                  title="Tải toàn bộ file Excel của Batch dưới dạng file ZIP"
-                >
-                  <DownloadSimpleIcon size={14} weight="bold" />
-                  <span>{downloadingZip ? "Đang tải ZIP..." : "Tải ZIP Batch"}</span>
-                </button>
+                <>
+                  <a
+                    href={currentBatch.excel_combined_url || `/api/trello/batch-jobs/${currentBatch.id}/excel`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-xs font-black text-emerald-800 shadow hover:bg-emerald-50 transition cursor-pointer"
+                    title="Tải 1 file Excel tổng hợp tất cả SKU của Batch"
+                  >
+                    <DownloadSimpleIcon size={14} weight="bold" />
+                    <span>Tải Excel Tổng Hợp</span>
+                  </a>
+
+                  <button
+                    type="button"
+                    onClick={handleDownloadZip}
+                    disabled={downloadingZip}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-white/20 px-3 py-1.5 text-xs font-bold text-white hover:bg-white/30 transition cursor-pointer disabled:opacity-50"
+                    title="Tải toàn bộ file Excel của Batch dưới dạng file ZIP"
+                  >
+                    <FileZipIcon size={14} weight="bold" />
+                    <span>{downloadingZip ? "Đang tải ZIP..." : "Tải ZIP Batch"}</span>
+                  </button>
+                </>
               )}
 
               {!isCompleted && !isCancelled && (

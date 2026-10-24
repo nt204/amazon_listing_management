@@ -42,6 +42,7 @@ import {
   extractSkuFromText,
   extractCampaignDate,
   formatPpcExportFilename,
+  resolveSkuForSearchTerm,
 } from "@/lib/ppc/sku-extractor";
 import { PpcSkuEconomicsTable } from "./ppc-sku-economics-table";
 import { PpcSkuMappingPanel } from "./ppc-sku-mapping-panel";
@@ -1751,20 +1752,27 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     }
   };
 
-  // Aggregated Search Terms by Campaign + Search Term + Match Type (Tổng hợp cả kỳ)
+  // Aggregate by SKU + Search Term across every campaign in the selected period.
   const aggregatedSearchTerms = useMemo(() => {
     if (!searchTerms || searchTerms.length === 0) return [];
     const map = new Map<string, PpcSearchTermRow>();
 
     for (const t of searchTerms) {
-      const camp = (t.campaignName || "").trim();
       const term = (t.customerSearchTerm || "").trim();
-      const match = t.matchType || "Unknown";
-      const key = `${camp.toLowerCase()}|||${term.toLowerCase()}|||${match.toLowerCase()}`;
+      const sku = resolveSkuForSearchTerm(t, selectedSku);
+      const key = `${sku.toLowerCase()}|||${term.toLowerCase()}`;
 
       const existing = map.get(key);
       if (!existing) {
-        map.set(key, { ...t });
+        map.set(key, {
+          ...t,
+          sku,
+          portfolioName: sku,
+          campaignNames: [t.campaignName].filter(Boolean),
+          adGroupNames: [t.adGroupName].filter(Boolean),
+          adTypes: t.adType ? [t.adType] : [],
+          matchTypes: t.matchType ? [t.matchType] : [],
+        });
       } else {
         existing.impressions = (existing.impressions || 0) + (t.impressions || 0);
         existing.clicks = (existing.clicks || 0) + (t.clicks || 0);
@@ -1772,6 +1780,10 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
         existing.sales = (existing.sales || 0) + (t.sales || 0);
         existing.orders = (existing.orders || 0) + (t.orders || 0);
         existing.units = (existing.units || 0) + (t.units || 0);
+        existing.campaignNames = Array.from(new Set([...(existing.campaignNames || []), t.campaignName].filter(Boolean))).sort();
+        existing.adGroupNames = Array.from(new Set([...(existing.adGroupNames || []), t.adGroupName].filter(Boolean))).sort();
+        existing.adTypes = Array.from(new Set([...(existing.adTypes || []), ...(t.adType ? [t.adType] : [])])).sort();
+        existing.matchTypes = Array.from(new Set([...(existing.matchTypes || []), ...(t.matchType ? [t.matchType] : [])])).sort();
       }
     }
 
@@ -1784,7 +1796,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
       r.roas = r.spend > 0 ? Math.round((r.sales / r.spend) * 100) / 100 : 0;
     }
     return list;
-  }, [searchTerms]);
+  }, [searchTerms, selectedSku]);
 
   // Unique campaigns for Search Terms filter (rút ngắn theo từ khóa đang tìm trong ô search)
   const searchTermCampaigns = useMemo(() => {
@@ -1792,11 +1804,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     if (searchTermQuery.trim()) {
       const tokens = searchTermQuery.toLowerCase().split(/\s+/).filter(Boolean);
       source = source.filter((t) => {
-        const text = `${t.customerSearchTerm} ${t.campaignName} ${t.portfolioName || ""}`.toLowerCase();
+        const text = `${t.customerSearchTerm} ${(t.campaignNames || [t.campaignName]).join(" ")} ${t.portfolioName || ""}`.toLowerCase();
         return tokens.every((tok) => text.includes(tok));
       });
     }
-    return Array.from(new Set(source.map((t) => t.campaignName).filter(Boolean))).sort();
+    return Array.from(new Set(source.flatMap((t) => t.campaignNames || [t.campaignName]).filter(Boolean))).sort();
   }, [aggregatedSearchTerms, searchTermQuery]);
 
   // Tự động đưa về ALL nếu campaign đã chọn không còn trong danh sách campaign liên quan
@@ -1815,7 +1827,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     let list = [...aggregatedSearchTerms];
 
     if (searchTermCampaignFilter !== "ALL") {
-      list = list.filter((t) => t.campaignName === searchTermCampaignFilter);
+      list = list.filter((t) => (t.campaignNames || [t.campaignName]).includes(searchTermCampaignFilter));
     }
 
     if (matchTypeFilter !== "ALL") {
@@ -1860,7 +1872,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     if (searchTermQuery.trim()) {
       const tokens = searchTermQuery.toLowerCase().split(/\s+/).filter(Boolean);
       list = list.filter((t) => {
-        const text = `${t.customerSearchTerm} ${t.campaignName} ${t.portfolioName || ""}`.toLowerCase();
+        const text = `${t.customerSearchTerm} ${(t.campaignNames || [t.campaignName]).join(" ")} ${t.portfolioName || ""}`.toLowerCase();
         return tokens.every((tok) => text.includes(tok));
       });
     }
@@ -2358,7 +2370,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
   };
 
   const toggleSelectAllVisible = () => {
-    const visibleKeys = paginatedSearchTerms.map(searchTermKey);
+    const visibleKeys = (serverSearchTerms || paginatedSearchTerms).map(searchTermKey);
     if (visibleKeys.length > 0 && visibleKeys.every((key) => selectedTerms.has(key))) {
       const next = new Set(selectedTerms);
       visibleKeys.forEach((key) => next.delete(key));
@@ -2392,7 +2404,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
       rows = filteredSortedSearchTerms.map((t) => {
         const termSafe = `"${t.customerSearchTerm.replace(/"/g, '""')}"`;
         const portSafe = `"${(t.portfolioName || "").replace(/"/g, '""')}"`;
-        const campSafe = `"${t.campaignName.replace(/"/g, '""')}"`;
+        const campSafe = `"${(t.campaignNames || [t.campaignName]).join(" | ").replace(/"/g, '""')}"`;
         return `${termSafe},"${t.matchType}",${portSafe},${campSafe},${t.clicks},${t.spend.toFixed(2)},${t.sales.toFixed(2)},${t.orders},${(t.ctr * 100).toFixed(2)},${(t.cvr * 100).toFixed(1)},${t.acos.toFixed(1)}`;
       });
       const cleanStore = (selectedStore && selectedStore !== "ALL" ? selectedStore : "ALL").replace(/[/\\?%*:|"<>]/g, "_").trim().replace(/\s+/g, "_");
@@ -4634,8 +4646,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                 ) : (
                   (serverSearchTerms || paginatedSearchTerms).map((t, idx) => {
                     const isSelected = selectedTerms.has(searchTermKey(t));
-                    const rowSku = extractSkuFromText(t.campaignName)
-                      || extractSkuFromText(t.adGroupName);
+                    const campaignNames = t.campaignNames?.length ? t.campaignNames : [t.campaignName].filter(Boolean);
+                    const adTypes = t.adTypes?.length ? t.adTypes : [t.adType || "?"];
+                    const matchTypes = t.matchTypes?.length ? t.matchTypes : [t.matchType];
                     let rowBg = isSelected ? "bg-indigo-50/50" : "";
                     if (t.orders >= 2 && t.acos <= targetAcos) rowBg = isSelected ? "bg-emerald-100/50" : "bg-emerald-50/30";
                     else if (t.clicks >= 9 && t.orders === 0) rowBg = isSelected ? "bg-rose-100/50" : "bg-rose-50/30";
@@ -4653,29 +4666,23 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                         <td className="py-2.5 px-3 font-sans font-bold text-slate-900 min-w-[180px] break-words">
                           {t.customerSearchTerm}
                         </td>
-                        <td className="py-2.5 px-3 font-sans text-[10px] font-black text-indigo-700">{t.adType || "?"}</td>
+                        <td className="py-2.5 px-3 font-sans text-[10px] font-black text-indigo-700">
+                          {adTypes.join(" / ")}
+                        </td>
                         <td className="py-2.5 px-3 font-sans">
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
-                            {t.matchType}
+                            {matchTypes.join(" / ")}
                           </span>
                         </td>
-                        <td className="py-2.5 px-3 text-slate-600 font-sans min-w-[240px] leading-snug">
-                          <div className="flex items-center gap-1 max-w-[320px]">
-                            <span className="truncate" title={t.campaignName}>{t.campaignName}</span>
-                            <PpcCopyButton value={t.campaignName} label="campaign" />
+                        <td className="py-2.5 px-3 text-slate-600 font-sans min-w-[280px] max-w-[420px] align-top leading-snug">
+                          <div className="space-y-1.5">
+                            {campaignNames.map((campaign) => (
+                              <div key={campaign} className="flex items-start gap-1.5">
+                                <span className="min-w-0 flex-1 whitespace-normal break-words">{campaign}</span>
+                                <PpcCopyButton value={campaign} label="campaign" />
+                              </div>
+                            ))}
                           </div>
-                          {t.adGroupName && t.adGroupName !== t.campaignName && (
-                            <div className="flex items-center gap-1 max-w-[320px] mt-0.5 text-[10px] text-slate-400">
-                              <span className="truncate" title={t.adGroupName}>Nhóm: {t.adGroupName}</span>
-                              <PpcCopyButton value={t.adGroupName} label="ad group" />
-                            </div>
-                          )}
-                          {rowSku && (
-                            <div className="flex items-center gap-1 mt-0.5 text-[10px] text-indigo-600 font-mono">
-                              <span>SKU: {rowSku}</span>
-                              <PpcCopyButton value={rowSku} label="SKU" />
-                            </div>
-                          )}
                         </td>
                         <td className="py-2.5 px-3 text-right font-bold text-slate-700">{(t.impressions || 0).toLocaleString()}</td>
                         <td className="py-2.5 px-3 text-right font-bold text-slate-800">{t.clicks}</td>

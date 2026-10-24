@@ -75,6 +75,7 @@ export async function putStoredObject(input: {
   bytes: Uint8Array;
   contentType: string;
   sha256: string;
+  contentDisposition?: string;
   metadata?: Record<string, string>;
 }) {
   const config = r2Configuration();
@@ -85,6 +86,7 @@ export async function putStoredObject(input: {
       Key: input.key,
       Body: input.bytes,
       ContentType: input.contentType,
+      ContentDisposition: input.contentDisposition,
       ContentLength: input.bytes.byteLength,
       Metadata: {
         sha256: input.sha256,

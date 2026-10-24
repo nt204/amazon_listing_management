@@ -1,8 +1,15 @@
-import { getDatabaseClient, type DataScope } from "@/lib/db";
+import { getDatabaseClient, getLatestListingForTrelloCard, getListingTemplate, type DataScope } from "@/lib/db";
 import { executeSingleTrelloListing } from "@/lib/trello-listing-processor";
 import { notifyLarkEventBestEffort } from "@/lib/lark-notifications";
 import JSZip from "jszip";
-import { parseTrelloCardTitle } from "@/lib/trello";
+import { fetchTrelloCardDetail, selectTrelloListingImageAttachments, parseTrelloCardTitle } from "@/lib/trello";
+import { resolveListingTemplateForBrand } from "@/lib/listing-template-resolver";
+import { createAmazonTemplate } from "@/lib/excel-automation";
+import { getTrelloServerCredentials } from "@/lib/trello-server-config";
+import { publicRequestOrigin, publishTrelloListingImages } from "@/lib/amazon-listing-image-publisher";
+import { runWithConcurrency } from "@/lib/run-with-concurrency";
+import { objectStorageDriver, putStoredObject, r2KeyPrefix } from "@/lib/object-storage";
+import type { AmazonTemplateItem } from "@/lib/excel-batch";
 
 export interface TrelloListingBatchRecord {
   id: string;
@@ -446,6 +453,159 @@ async function executeBatchItemTask(params: {
   }
 }
 
+interface ResolvedBatchItem {
+  item: AmazonTemplateItem;
+  templateId: string;
+  template: NonNullable<Awaited<ReturnType<typeof getListingTemplate>>>;
+}
+
+function safeFilePart(value: string) {
+  return value.replace(/[^A-Za-z0-9_-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+}
+
+/**
+ * Tự động tạo file Excel tổng hợp cho Batch và lưu trữ lên Cloudflare R2 (nếu có cấu hình)
+ */
+export async function generateAndSaveBatchExcel(batchId: string, signal?: AbortSignal): Promise<{
+  fileName: string;
+  bytes: Uint8Array;
+  contentType: string;
+  publicUrl: string;
+}> {
+  const { batch, items } = await getListingBatchDetail(batchId);
+  if (!batch) {
+    throw new Error("Không tìm thấy batch listing.");
+  }
+
+  const completedCards = items.filter((i) => i.status === "completed");
+  if (completedCards.length === 0) {
+    throw new Error("Batch chưa có thẻ nào hoàn tất thành công.");
+  }
+
+  const scope = { teamId: batch.team_id, actorId: batch.actor_id };
+  const { apiKey, token } = getTrelloServerCredentials();
+  const resolvedItems: Array<ResolvedBatchItem | null> = Array(completedCards.length).fill(null);
+  const errors: string[] = [];
+
+  await runWithConcurrency(completedCards, 6, async (item, index) => {
+    try {
+      const stored = await getLatestListingForTrelloCard(scope, item.card_id, item.sku || undefined);
+      if (!stored) throw new Error("không tìm thấy listing đã lưu");
+      if (!stored.input.brand || !stored.input.brand_profile_id) {
+        throw new Error("listing chưa có Brand hợp lệ");
+      }
+
+      const resolvedTemplate = await resolveListingTemplateForBrand(scope, batch.template_id, {
+        id: stored.input.brand_profile_id,
+        name: stored.input.brand,
+      });
+      if (!resolvedTemplate) {
+        throw new Error(`Brand ${stored.input.brand} chưa có template`);
+      }
+
+      let imageUrls: string[] = [];
+      if (/^[a-fA-F0-9]{24}$/.test(item.card_id)) {
+        const card = await fetchTrelloCardDetail(item.card_id, apiKey, token, signal).catch(() => null);
+        if (card) {
+          imageUrls = await publishTrelloListingImages({
+            scope,
+            cardId: card.id,
+            attachments: selectTrelloListingImageAttachments(card),
+            apiKey,
+            token,
+            publicOrigin: publicRequestOrigin(),
+            signal,
+          }).catch(() => []);
+        }
+      }
+
+      if (imageUrls.length === 0) {
+        imageUrls = (stored.input.images || []).slice(0, 7).map((image) =>
+          typeof image === "string" ? image : image.download_url || image.data_url || "",
+        ).filter(Boolean);
+      }
+
+      const listing = stored.current_listing || stored.result.listing;
+      resolvedItems[index] = {
+        templateId: resolvedTemplate.id,
+        template: resolvedTemplate,
+        item: {
+          sku: stored.input.internal_name || item.sku || "SKU",
+          image_urls: imageUrls,
+          brand: stored.input.brand,
+          listing: {
+            title: listing.title,
+            bullet_points: listing.bullet_points,
+            description: listing.description,
+            backend_search_terms: listing.backend_search_terms,
+          },
+          product_information: stored.input.product_information,
+        },
+      };
+    } catch (err: any) {
+      errors.push(`${item.card_name || item.card_id}: ${err?.message || "lỗi"}`);
+    }
+  });
+
+  const successful = resolvedItems.filter((entry): entry is ResolvedBatchItem => Boolean(entry));
+  if (successful.length === 0) {
+    throw new Error(`Không thể tạo file Excel tổng hợp: ${errors.join("; ")}`);
+  }
+
+  const destination = successful[0].template;
+  const result = await createAmazonTemplate(
+    destination.workbook,
+    destination.original_filename,
+    successful.map((entry) => entry.item),
+  );
+
+  const safeBatchId = safeFilePart(batch.id);
+  const shopPart = safeFilePart(batch.shop_name || "shop");
+  const fileName = `batch-${safeBatchId}-${shopPart}-combined${result.extension}`;
+  const isMacro = result.extension === ".xlsm";
+  const contentType = isMacro
+    ? "application/vnd.ms-excel.sheet.macroEnabled.12"
+    : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+  const bytes = new Uint8Array(result.workbook);
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || (process.env.NODE_ENV === "production" ? "https://ncehub.net" : "http://localhost:2411");
+  let publicUrl = `${baseUrl}/api/trello/batch-jobs/${batchId}/excel`;
+  let objectKey: string | null = null;
+
+  try {
+    if (objectStorageDriver() === "r2") {
+      const { createHash } = await import("node:crypto");
+      const sha256 = createHash("sha256").update(bytes).digest("hex");
+      objectKey = `${r2KeyPrefix()}/public/batch-excels/${safeBatchId}/${fileName}`;
+      await putStoredObject({
+        key: objectKey,
+        bytes,
+        contentType,
+        sha256,
+        contentDisposition: `attachment; filename="${fileName}"`,
+        metadata: { purpose: "batch-excel-combined", batchId },
+      });
+      const customR2PublicUrl = process.env.R2_PUBLIC_URL?.trim() || process.env.R2_PUBLIC_DEV_URL?.trim();
+      if (customR2PublicUrl) {
+        publicUrl = `${customR2PublicUrl.replace(/\/+$/, "")}/${objectKey}`;
+      }
+    }
+  } catch (storageErr) {
+    console.error("[Batch Excel] Lỗi khi upload lên R2, fallback về API route:", storageErr);
+  }
+
+  const sql = await getDatabaseClient();
+  await sql`
+    UPDATE trello_listing_batches
+    SET excel_combined_r2_key = ${objectKey},
+        excel_combined_url = ${publicUrl},
+        updated_at = NOW()
+    WHERE id = ${batchId};
+  `;
+
+  return { fileName, bytes, contentType, publicUrl };
+}
+
 /**
  * Đóng gói hoàn tất Batch (tạo file ZIP tổng hợp nếu có các file Excel)
  */
@@ -485,8 +645,19 @@ async function finalizeBatchCompletion(batchId: string): Promise<void> {
     .map((i) => i.sku as string);
   const skuPreview = skuList.slice(0, 5).join(", ");
   const remaining = skuList.length > 5 ? ` (+${skuList.length - 5} SKU)` : "";
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:2411";
-  const downloadUrl = `${baseUrl}/api/trello/batch-jobs/${batchId}/excel`;
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || (process.env.NODE_ENV === "production" ? "https://ncehub.net" : "http://localhost:2411");
+  let downloadUrl = `${baseUrl}/api/trello/batch-jobs/${batchId}/excel`;
+
+  if (completedCount > 0) {
+    try {
+      const generated = await generateAndSaveBatchExcel(batchId);
+      if (generated?.publicUrl) {
+        downloadUrl = generated.publicUrl;
+      }
+    } catch (excelErr) {
+      console.error(`[Batch Worker ${batchId}] Không thể tự động tạo file Excel tổng hợp:`, excelErr);
+    }
+  }
 
   if (completedCount > 0 && failedCount === 0) {
     await notifyLarkEventBestEffort(

@@ -43,15 +43,18 @@ export function verifyPublicListingImageToken(token: string) {
   }
 }
 
-export function publicRequestOrigin(request: Request) {
-  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
-  const host = forwardedHost || request.headers.get("host")?.trim();
-  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
-  const requestUrl = new URL(request.url);
-  const protocol = forwardedProto || requestUrl.protocol.replace(":", "");
-  const origin = host ? `${protocol}://${host}` : requestUrl.origin;
-  if (process.env.NODE_ENV === "production" && !origin.startsWith("https://")) {
-    throw new Error("URL ảnh Amazon ở production bắt buộc phải dùng HTTPS.");
+export function publicRequestOrigin(request?: Request | null) {
+  let origin = "";
+  if (request) {
+    const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+    const host = forwardedHost || request.headers.get("host")?.trim();
+    const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+    const requestUrl = new URL(request.url);
+    const protocol = forwardedProto || requestUrl.protocol.replace(":", "");
+    origin = host ? `${protocol}://${host}` : requestUrl.origin;
+  }
+  if (!origin || (process.env.NODE_ENV === "production" && !origin.startsWith("https://"))) {
+    origin = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || (process.env.NODE_ENV === "production" ? "https://ncehub.net" : "http://localhost:2411");
   }
   return origin.replace(/\/+$/, "");
 }
