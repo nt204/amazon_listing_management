@@ -192,17 +192,23 @@ async function processJob(job: MockupJob, workerId: string) {
     await completeMockupJob(job.id, workerId, result);
     await appendMockupJobEvent(job.id, { type: "complete", data: result });
     await cleanupTemporaryPromptImages(job);
+    const resData = result as Record<string, any> | null;
+    const sku = (resData?.sku as string) || "SKU";
+    const itemName = (resData?.itemName as string) || (resData?.cardName as string) || "";
+    const cardId = (resData?.cardId as string) || job.cardId;
+    const cardUrl = (resData?.cardUrl as string) || `https://trello.com/c/${cardId}`;
+    const cardName = (resData?.cardName as string) || cardId;
+    const count = (resData?.newlyGeneratedMockupsCount as number) ?? (resData?.generatedMockupsCount as number) ?? 7;
+
     await notifyLarkEventBestEffort(
       { teamId: job.teamId, actorId: job.actorId },
       "mockups",
       [
-        "🎨 **Mockup: Hoàn thành tạo ảnh**",
-        `• Tác vụ: \`${job.id}\``,
-        job.cardId ? `• Thẻ Trello: ${job.cardId}` : "",
-        "• Trạng thái: Thành công",
-      ]
-        .filter(Boolean)
-        .join("\n"),
+        `🎨 **Mockup: Đã tạo xong ảnh cho SKU ${sku}**`,
+        itemName ? `• Sản phẩm: ${itemName}` : "",
+        `• Thẻ Trello: ${cardName} (${cardUrl})`,
+        `• Số ảnh: ${count} ảnh mockup đã upload lên Trello`,
+      ].filter(Boolean),
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -237,17 +243,17 @@ async function processJob(job: MockupJob, workerId: string) {
         error: message,
       });
       await cleanupTemporaryPromptImages(job);
+      const cardId = job.cardId;
+      const cardUrl = `https://trello.com/c/${cardId}`;
       await notifyLarkEventBestEffort(
         { teamId: job.teamId, actorId: job.actorId },
         "mockups",
         [
           "❌ **Mockup: Tạo ảnh thất bại**",
+          `• Thẻ Trello: ${cardUrl}`,
           `• Tác vụ: \`${job.id}\``,
-          job.cardId ? `• Thẻ Trello: ${job.cardId}` : "",
           `• Lỗi: ${message}`,
-        ]
-          .filter(Boolean)
-          .join("\n"),
+        ].filter(Boolean),
       );
     }
   } finally {

@@ -48,6 +48,15 @@ export interface SkuEconomics {
   suggestedProductType?: string | null;
   suggestionReason?: string | null;
   ppcStatus?: PpcStatus;
+  // Accounting metadata from Bảng mã
+  mockupUrl?: string | null;
+  picMkt?: string | null;
+  niche?: string | null;
+  skuStatus?: string | null;
+  picIdea?: string | null;
+  designPic?: string | null;
+  accountingProductType?: string | null;
+  accountingMatched?: boolean;
   // Performance aggregations
   spend?: number;
   sales?: number;
@@ -210,6 +219,9 @@ export interface SkuRecommendationGroup {
   budgetCount: number;
   campaignTypes?: string[];
   campaignStates?: string[];
+  mockupUrl?: string | null;
+  picMkt?: string | null;
+  niche?: string | null;
   economics: SkuEconomics;
 }
 

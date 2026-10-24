@@ -54,6 +54,49 @@ export async function resolveStoreId(storeIdOrName?: string | null): Promise<str
   return anyStore.length > 0 ? anyStore[0].id : "00000000-0000-0000-0000-000000000000";
 }
 
+export const PPC_TO_ACCOUNTING_STORE_NAME_MAP: Record<string, string> = {
+  HSOSTORE: "WARMSTOREY",
+};
+
+export async function getAccountingStoreForPpcStore(ppcStoreIdOrName?: string | null): Promise<{
+  accountingStoreId: string;
+  accountingStoreName: string;
+  ppcStoreId: string;
+  ppcStoreName: string;
+} | null> {
+  const sql = await getDatabaseClient();
+  let ppcStore: { id: string; name: string } | null = null;
+
+  if (ppcStoreIdOrName && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ppcStoreIdOrName)) {
+    const rows = await sql<{ id: string; name: string }[]>`
+      SELECT id, name FROM ppc_stores WHERE id = ${ppcStoreIdOrName} LIMIT 1
+    `;
+    if (rows.length > 0) ppcStore = rows[0];
+  } else if (ppcStoreIdOrName && ppcStoreIdOrName !== "ALL") {
+    const rows = await sql<{ id: string; name: string }[]>`
+      SELECT id, name FROM ppc_stores WHERE lower(name) = lower(${ppcStoreIdOrName}) LIMIT 1
+    `;
+    if (rows.length > 0) ppcStore = rows[0];
+  }
+
+  if (!ppcStore) return null;
+
+  const ppcUpper = ppcStore.name.toUpperCase().trim();
+  const targetAccName = PPC_TO_ACCOUNTING_STORE_NAME_MAP[ppcUpper] || ppcUpper;
+
+  const accRows = await sql<{ id: string; name: string }[]>`
+    SELECT id, name FROM stores WHERE upper(trim(name)) = ${targetAccName} LIMIT 1
+  `;
+  if (accRows.length === 0) return null;
+
+  return {
+    accountingStoreId: accRows[0].id,
+    accountingStoreName: accRows[0].name,
+    ppcStoreId: ppcStore.id,
+    ppcStoreName: ppcStore.name,
+  };
+}
+
 /* =========================================================================
    1. QUẢN LÝ PHÔI (PRODUCT COST MASTER)
    ========================================================================= */
@@ -783,6 +826,7 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
       SELECT
         NULLIF(TRIM(p.sku), '') as sku,
         MAX(NULLIF(TRIM(p.asin), '')) as asin,
+        STRING_AGG(DISTINCT NULLIF(TRIM(p.portfolio_name), ''), ' ') as sample_portfolio,
         STRING_AGG(DISTINCT NULLIF(TRIM(p.campaign_name), ''), ' ') as sample_campaign,
         SUM(p.spend) as total_spend,
         SUM(p.sales) as total_sales,
@@ -813,6 +857,7 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
       SELECT
         NULLIF(TRIM(sku), '') as sku,
         MAX(NULLIF(TRIM(asin), '')) as asin,
+        STRING_AGG(DISTINCT NULLIF(TRIM(portfolio_name), ''), ' ') as sample_portfolio,
         STRING_AGG(DISTINCT NULLIF(TRIM(campaign_name), ''), ' ') as sample_campaign,
         SUM(spend) as total_spend,
         SUM(sales) as total_sales,
@@ -839,6 +884,44 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
   `;
   const econMap = new Map<string, any>(existingEconomics.map((e: any) => [String(e.sku).toUpperCase(), e]));
 
+  // Lấy dữ liệu Bảng mã từ module Accounting cho Store tương ứng
+  // Quy tắc: HSOSTORE bên PPC -> WARMSTOREY bên Accounting, các store khác theo tên
+  const accStoreInfo = await getAccountingStoreForPpcStore(storeId);
+  const accountingSkuMap = new Map<string, any>();
+  if (accStoreInfo?.accountingStoreId) {
+    const accSkus = await sql<any[]>`
+      SELECT sku, product_type, loai, asin, fnsku, mockup, mockup_url, brand, status, niche, pic_mkt, pic_idea, design_pic, basecost_tb, amazon_fee
+      FROM accounting_sku_master
+      WHERE store_id = ${accStoreInfo.accountingStoreId} AND deleted_at IS NULL
+    `;
+    for (const a of accSkus) {
+      if (a.sku) {
+        accountingSkuMap.set(String(a.sku).trim().toUpperCase(), a);
+      }
+    }
+  }
+
+  // Cross-store fallback map cho mockup_url, niche, pic_mkt từ accounting_sku_master
+  const crossStoreFallbackMap = new Map<string, any>();
+  try {
+    const crossRows = await sql<any[]>`
+      SELECT sku, product_type, loai, asin, mockup, mockup_url, niche, pic_mkt
+      FROM accounting_sku_master
+      WHERE (mockup_url IS NOT NULL OR mockup IS NOT NULL OR niche IS NOT NULL)
+        AND deleted_at IS NULL
+    `;
+    for (const c of crossRows) {
+      if (c.sku) {
+        const key = String(c.sku).trim().toUpperCase();
+        if (!crossStoreFallbackMap.has(key)) {
+          crossStoreFallbackMap.set(key, c);
+        }
+      }
+    }
+  } catch (crossErr) {
+    console.warn("[getSkuEconomicsList] crossStoreFallback query warning:", crossErr);
+  }
+
   // Build store-level prefix rules based on configured cost masters
   const storePrefixRules: SkuPrefixRule[] = [];
   for (const m of masters) {
@@ -855,6 +938,45 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
   for (const p of perfRows) {
     const sku = (p.sku || "").toUpperCase();
     const existing = econMap.get(sku);
+    const acc = accountingSkuMap.get(sku);
+    const cross = crossStoreFallbackMap.get(sku);
+
+    const mockupUrl = acc?.mockup_url || acc?.mockup || cross?.mockup_url || cross?.mockup || null;
+    let picMkt = acc?.pic_mkt || cross?.pic_mkt || null;
+    let niche = acc?.niche || cross?.niche || null;
+    const skuStatus = acc?.status || null;
+    const picIdea = acc?.pic_idea || null;
+    const designPic = acc?.design_pic || null;
+    const accountingProductType = acc?.product_type || acc?.loai || cross?.product_type || null;
+    const accountingMatched = Boolean(acc || cross);
+    const asin = (acc?.asin && String(acc.asin).trim())
+      ? String(acc.asin).trim()
+      : ((cross?.asin && String(cross.asin).trim())
+        ? String(cross.asin).trim()
+        : (existing?.asin || p.asin || "B0XXXX"));
+
+    // Fallback extraction cho niche từ portfolio / campaign nếu chưa có
+    if (!niche && (p.sample_portfolio || p.sample_campaign)) {
+      const port = (p.sample_portfolio || "").trim();
+      if (port && !port.startsWith("#")) {
+        let clean = port.replace(/^(OFF\.\s*)?(Quynh(\s+test)?|Dung|Truong|Manh)\s+/i, "");
+        clean = clean.replace(new RegExp(`\\s*${sku}\\s*$`, "i"), "");
+        clean = clean.replace(/^(Blanket|Banner|Oodie|Flag|Wood\s+Sign|Glass\s+Ornament|Ornament|Resin)\s+/i, "").trim();
+        if (clean) niche = clean;
+      }
+      if (!niche && p.sample_campaign) {
+        const parenMatch = p.sample_campaign.match(/\(([^)]+)\)/);
+        if (parenMatch && !/tong\s*hop|auto|close\s*match|complements|loose\s*match|substitutes|broad/i.test(parenMatch[1])) {
+          niche = parenMatch[1].trim();
+        }
+      }
+    }
+
+    // Fallback extraction cho picMkt từ campaign/portfolio nếu chưa có
+    if (!picMkt && (p.sample_portfolio || p.sample_campaign)) {
+      const m = `${p.sample_portfolio || ""} ${p.sample_campaign || ""}`.match(/\b(Quynh|Dung|Truong|Manh)\b/i);
+      if (m) picMkt = m[1];
+    }
 
     const spend = Number(p.total_spend || 0);
     const sales = Number(p.total_sales || 0);
@@ -878,14 +1000,26 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
     const priceSuggestion = !hasSavedMapping && match.status === "AMBIGUOUS"
       ? suggestProductTypeFromPrice(dynamicPrice, match.candidateProductTypes, defaultPriceMap)
       : { productType: null, reason: null };
+
+    // Ưu tiên:
+    // 1. Saved override từ người dùng
+    // 2. Product type chuẩn từ Bảng mã Accounting
+    // 3. Gợi ý từ giá bán dynamic
+    // 4. Phát hiện qua prefix
     const productType = hasSavedMapping
       ? existing.product_type
-      : (priceSuggestion.productType || detected);
+      : accountingProductType
+        ? accountingProductType
+        : (priceSuggestion.productType || detected);
+
     const mappingStatus = hasSavedMapping
-      ? "RESOLVED" as const
-      : priceSuggestion.productType
-        ? "RESOLVED" as const
-        : match.status;
+      ? ("RESOLVED" as const)
+      : accountingProductType
+        ? ("RESOLVED" as const)
+        : priceSuggestion.productType
+          ? ("RESOLVED" as const)
+          : match.status;
+
     const suggestion = priceSuggestion.productType
       ? priceSuggestion
       : mappingStatus === "AMBIGUOUS"
@@ -922,14 +1056,18 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
             : (master.defaultPrice > 0 ? master.defaultPrice : 15.99);
     let baseCost = existing && existing.cost_source === "OVERRIDE"
       ? Number(existing.base_cost)
-      : master.baseCost;
+      : (acc?.basecost_tb && Number(acc.basecost_tb) > 0)
+        ? Number(acc.basecost_tb)
+        : master.baseCost;
     let amazonFee = existing && existing.cost_source === "OVERRIDE"
       ? Number(existing.amazon_fee)
-      : master.defaultAmazonFee;
+      : (acc?.amazon_fee && Number(acc.amazon_fee) > 0)
+        ? Number(acc.amazon_fee)
+        : master.defaultAmazonFee;
     let taxRate = existing && existing.cost_source === "OVERRIDE"
       ? Number(existing.tax_rate)
       : master.taxRate;
-    let costSource: CostSource = existing?.cost_source || "INHERITED";
+    let costSource: CostSource = existing?.cost_source || (accountingMatched ? "INHERITED" : "INHERITED");
 
     // CR mục tiêu cố định 10% (0.10) cho tất cả các phôi. Max Bid luôn tính theo phôi (Max Bid = 10% * Profit Before Ads).
     // Chỉ thay đổi khi người dùng chủ động OVERRIDE.
@@ -988,7 +1126,7 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
       id: existing?.id || `sku-econ-${sku}`,
       storeId,
       sku,
-      asin: existing?.asin || p.asin || "B0XXXX",
+      asin,
       productType,
       sellingPrice,
       baseCost,
@@ -1006,6 +1144,14 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
       suggestedProductType: suggestion.productType,
       suggestionReason: suggestion.reason,
       ppcStatus,
+      mockupUrl,
+      picMkt,
+      niche,
+      skuStatus,
+      picIdea,
+      designPic,
+      accountingProductType,
+      accountingMatched,
       spend,
       sales,
       orders,
@@ -1173,6 +1319,135 @@ export async function getRuleVersions(): Promise<PpcRuleVersion[]> {
     effectiveFrom: r.effective_from ? new Date(r.effective_from).toISOString().split("T")[0] : "",
     createdAt: r.created_at ? new Date(r.created_at).toISOString() : "",
   }));
+}
+
+export async function syncSkuEconomicsFromAccounting(storeIdOrName: string): Promise<{
+  success: boolean;
+  storeName: string;
+  accountingStoreName: string;
+  totalAccountingSkus: number;
+  syncedCount: number;
+  updatedCount: number;
+  insertedCount: number;
+}> {
+  const sql = await getDatabaseClient();
+  const storeId = await resolveStoreId(storeIdOrName);
+  const accStoreInfo = await getAccountingStoreForPpcStore(storeId);
+
+  if (!accStoreInfo) {
+    throw new Error(`Không tìm thấy Store tương ứng bên Accounting cho PPC Store "${storeIdOrName}".`);
+  }
+
+  const accSkus = await sql<any[]>`
+    SELECT sku, product_type, loai, asin, fnsku, mockup, mockup_url, brand, status, niche, pic_mkt, pic_idea, design_pic, basecost_tb, amazon_fee
+    FROM accounting_sku_master
+    WHERE store_id = ${accStoreInfo.accountingStoreId} AND deleted_at IS NULL
+  `;
+
+  const masters = await getCostMasters(storeId);
+  const masterMap = new Map(masters.map((m) => [m.productType, m]));
+  const defaultMaster = masters[0] || {
+    baseCost: 2.0,
+    defaultAmazonFee: 6.32,
+    taxRate: 0.03,
+    defaultPrice: 15.99,
+  };
+
+  const existingRows = await sql<any[]>`
+    SELECT * FROM sku_economics WHERE store_id = ${storeId}
+  `;
+  const existingMap = new Map<string, any>(existingRows.map((r) => [String(r.sku).toUpperCase().trim(), r]));
+
+  let insertedCount = 0;
+  let updatedCount = 0;
+
+  for (const acc of accSkus) {
+    const rawSku = (acc.sku || "").trim();
+    if (!rawSku) continue;
+    const normSku = rawSku.toUpperCase();
+    const existing = existingMap.get(normSku);
+
+    const pType = acc.product_type || acc.loai || existing?.product_type || "Ornament";
+    const master = masterMap.get(pType) || defaultMaster;
+
+    const asin = (acc.asin || existing?.asin || "").trim();
+    const isOverride = existing?.cost_source === "OVERRIDE";
+
+    const baseCost = isOverride
+      ? Number(existing.base_cost)
+      : (acc.basecost_tb && Number(acc.basecost_tb) > 0 ? Number(acc.basecost_tb) : master.baseCost);
+    const amazonFee = isOverride
+      ? Number(existing.amazon_fee)
+      : (acc.amazon_fee && Number(acc.amazon_fee) > 0 ? Number(acc.amazon_fee) : master.defaultAmazonFee);
+    const taxRate = isOverride ? Number(existing.tax_rate) : (master.taxRate || 0.03);
+    const sellingPrice = isOverride
+      ? Number(existing.selling_price)
+      : (Number(existing?.selling_price) > 0 ? Number(existing.selling_price) : (master.defaultPrice || 15.99));
+    const cr = existing?.cr_source === "OVERRIDE" ? Number(existing.cr) : (Number(existing?.cr) || 0.10);
+    const crSource = existing?.cr_source || "ASSUMED";
+    const costSource = existing?.cost_source || "INHERITED";
+
+    const profitBeforeAds = calculateProfitBeforeAds(sellingPrice, amazonFee, baseCost, taxRate);
+    const breakEvenAcos = calculateBreakEvenAcos(profitBeforeAds, sellingPrice);
+    const maxBid = calculateMaxBid(cr, profitBeforeAds);
+
+    if (existing) {
+      if (isOverride) {
+        // Giữ nguyên các thông số chi phí đã bị override thủ công, chỉ bổ sung ASIN nếu chưa có
+        if (!existing.asin && asin) {
+          await sql`
+            UPDATE sku_economics
+            SET asin = ${asin}, updated_at = NOW()
+            WHERE id = ${existing.id}
+          `;
+          updatedCount++;
+        }
+      } else {
+        await sql`
+          UPDATE sku_economics
+          SET product_type = ${pType},
+              asin = COALESCE(NULLIF(${asin}, ''), asin),
+              base_cost = ${baseCost},
+              amazon_fee = ${amazonFee},
+              tax_rate = ${taxRate},
+              profit_before_ads = ${profitBeforeAds},
+              break_even_acos = ${breakEvenAcos},
+              max_bid = ${maxBid},
+              updated_at = NOW()
+          WHERE id = ${existing.id}
+        `;
+        updatedCount++;
+      }
+    } else {
+      await sql`
+        INSERT INTO sku_economics (
+          store_id, sku, asin, product_type, selling_price, base_cost,
+          amazon_fee, tax_rate, profit_before_ads, break_even_acos,
+          cr, cr_source, max_bid, cost_source, updated_at
+        ) VALUES (
+          ${storeId}, ${normSku}, ${asin}, ${pType},
+          ${sellingPrice}, ${baseCost}, ${amazonFee}, ${taxRate},
+          ${profitBeforeAds}, ${breakEvenAcos}, ${cr}, ${crSource},
+          ${maxBid}, ${costSource}, NOW()
+        )
+      `;
+      insertedCount++;
+    }
+  }
+
+  // Invalidate Redis cache
+  await invalidateCachePattern(`sku_economics:${storeId}:*`).catch(() => {});
+  invalidateGroupedRecommendationsCache(storeId);
+
+  return {
+    success: true,
+    storeName: accStoreInfo.ppcStoreName,
+    accountingStoreName: accStoreInfo.accountingStoreName,
+    totalAccountingSkus: accSkus.length,
+    syncedCount: insertedCount + updatedCount,
+    updatedCount,
+    insertedCount,
+  };
 }
 
 export async function getAmazonPpcCommonRuleSet(): Promise<AmazonPpcCommonRuleSet> {
@@ -1464,6 +1739,9 @@ export async function getGroupedRecommendations(
       sku,
       asin: econ.asin || "B0XXXX",
       productType: econ.productType,
+      mockupUrl: econ.mockupUrl,
+      picMkt: econ.picMkt,
+      niche: econ.niche,
       spend: econ.spend || 0,
       sales: econ.sales || 0,
       orders: econ.orders || 0,
@@ -1536,6 +1814,9 @@ export async function getGroupedRecommendations(
       sku,
       asin: econ.asin || "B0XXXX",
       productType: econ.productType,
+      mockupUrl: econ.mockupUrl,
+      picMkt: econ.picMkt,
+      niche: econ.niche,
       spend: econ.spend || 0,
       sales: econ.sales || 0,
       orders: econ.orders || 0,

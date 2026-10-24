@@ -834,6 +834,7 @@ async function executeMockupGeneration(
     success: requestedUploadsSucceeded,
     cardId: card.id,
     cardName: card.name,
+    cardUrl: card.url || `https://trello.com/c/${card.id}`,
     sku: parsedTitle.sku,
     itemName: parsedTitle.itemName,
     dimensions,

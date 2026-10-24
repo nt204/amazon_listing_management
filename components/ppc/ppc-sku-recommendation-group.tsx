@@ -94,6 +94,15 @@ export type SortField =
 
 export type SortOrder = "asc" | "desc";
 
+function getOptimizedThumbnailUrl(url: string | null | undefined, w = 64): string | null {
+  if (!url) return null;
+  const trimmed = url.trim();
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    return `/api/accounting/inventory/mockup-proxy?w=${w}&url=${encodeURIComponent(trimmed)}`;
+  }
+  return trimmed;
+}
+
 interface RecFinalBidInputProps {
   initialValue: number;
   onCommit: (val: number) => void;
@@ -178,6 +187,7 @@ export function PpcSkuRecommendationGroupView({
 }: PpcSkuRecommendationGroupProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedPhôi, setSelectedPhôi] = useState("ALL");
+  const [selectedNiche, setSelectedNiche] = useState("ALL");
   const [quickFilter, setQuickFilter] = useState<QuickFilterType>("ALL");
   const [selectedCampType, setSelectedCampType] = useState<"ALL" | "SP03" | "SB05" | "SB01">("ALL");
   const [sortField, setSortField] = useState<SortField>("totalRecommendations");
@@ -221,6 +231,7 @@ export function PpcSkuRecommendationGroupView({
       setRuleExplanationModal(null);
       setSearchTerm("");
       setSelectedPhôi("ALL");
+      setSelectedNiche("ALL");
       setQuickFilter("ALL");
       setSelectedCampType("ALL");
       setModalCampTypeFilter("ALL");
@@ -411,6 +422,20 @@ export function PpcSkuRecommendationGroupView({
       .map(([name, count]) => ({ name, count }));
   }, [groups]);
 
+  // Dynamic available Niche list with counts
+  const nicheOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const g of groups) {
+      const n = (g.niche || "").trim();
+      if (n) {
+        counts.set(n, (counts.get(n) || 0) + 1);
+      }
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count]) => ({ name, count }));
+  }, [groups]);
+
   // Quick Filter Counts for badges
   const filterCounts = useMemo(() => {
     let increase = 0;
@@ -486,7 +511,9 @@ export function PpcSkuRecommendationGroupView({
         const q = searchTerm.toLowerCase().trim();
         const matchSku = g.sku.toLowerCase().includes(q);
         const matchAsin = g.asin.toLowerCase().includes(q);
-        if (!matchSku && !matchAsin) return false;
+        const matchNiche = (g.niche || "").toLowerCase().includes(q);
+        const matchPhôi = (g.productType || "").toLowerCase().includes(q);
+        if (!matchSku && !matchAsin && !matchNiche && !matchPhôi) return false;
       }
 
       // 2. Phôi filter
@@ -494,7 +521,12 @@ export function PpcSkuRecommendationGroupView({
         return false;
       }
 
-      // 3. Quick Filter
+      // 3. Niche filter
+      if (selectedNiche !== "ALL" && (g.niche || "").trim() !== selectedNiche) {
+        return false;
+      }
+
+      // 4. Quick Filter
       switch (quickFilter) {
         case "INCREASE":
           if (g.increaseCount <= 0) return false;
@@ -530,7 +562,7 @@ export function PpcSkuRecommendationGroupView({
           break;
       }
 
-      // 4. Dạng chạy filter
+      // 5. Dạng chạy filter
       if (selectedCampType !== "ALL") {
         const types = g.campaignTypes;
         if (!types || !types.includes(selectedCampType)) {
@@ -541,7 +573,7 @@ export function PpcSkuRecommendationGroupView({
       return true;
     });
 
-    // 5. Sort
+    // 6. Sort
     return result.sort((a, b) => {
       const valA = a[sortField];
       const valB = b[sortField];
@@ -554,7 +586,7 @@ export function PpcSkuRecommendationGroupView({
       const numB = typeof valB === "number" ? valB : 0;
       return sortOrder === "asc" ? numA - numB : numB - numA;
     });
-  }, [groups, searchTerm, selectedPhôi, quickFilter, selectedCampType, sortField, sortOrder]);
+  }, [groups, searchTerm, selectedPhôi, selectedNiche, quickFilter, selectedCampType, sortField, sortOrder]);
 
   const totalPages = Math.max(1, Math.ceil(filteredGroups.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -565,7 +597,7 @@ export function PpcSkuRecommendationGroupView({
     // Filters and sorting describe a new result set; show it from the first page.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPage(1);
-  }, [searchTerm, selectedPhôi, quickFilter, selectedCampType, sortField, sortOrder]);
+  }, [searchTerm, selectedPhôi, selectedNiche, quickFilter, selectedCampType, sortField, sortOrder]);
 
   const selectedVisibleSkuCount = filteredGroups.reduce(
     (count, group) => count + (selectedSkus.has(group.sku) ? 1 : 0),
@@ -934,6 +966,7 @@ export function PpcSkuRecommendationGroupView({
   const isFilterActive =
     searchTerm !== "" ||
     selectedPhôi !== "ALL" ||
+    selectedNiche !== "ALL" ||
     quickFilter !== "ALL" ||
     selectedCampType !== "ALL";
 
@@ -964,7 +997,7 @@ export function PpcSkuRecommendationGroupView({
               />
               <input
                 type="text"
-                placeholder="Tìm SKU hoặc ASIN..."
+                placeholder="Tìm SKU, ASIN, Niche..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-7.5 pr-6 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600/20 w-48 shadow-2xs"
@@ -997,35 +1030,27 @@ export function PpcSkuRecommendationGroupView({
               </select>
             </div>
 
-            {/* 7D / 30D Window Selector */}
-            <div className="flex items-center rounded-lg border border-slate-200 bg-slate-100 p-0.5 text-xs shadow-2xs" role="group" aria-label="Chọn kỳ dữ liệu chỉnh bid">
-              {([7, 30] as const).map((days) => {
-                const isSelected = recommendationWindowDays === days;
-                const isLoaded = loadedRecommendationWindowDays === days;
-                return (
-                  <button
-                    key={days}
-                    type="button"
-                    onClick={() => onRecommendationWindowChange(days)}
-                    disabled={isLoading || isSelected}
-                    aria-pressed={isSelected}
-                    className={`rounded px-2.5 py-1 text-xs font-bold transition-all ${
-                      isSelected
-                        ? "bg-white text-indigo-700 shadow-2xs font-extrabold cursor-default"
-                        : "text-slate-600 hover:text-slate-900 cursor-pointer"
-                    } disabled:opacity-100`}
-                    title={`Kỳ dữ liệu ${days} ngày`}
-                  >
-                    {isLoading && isSelected && !isLoaded ? "…" : `${days}D`}
-                  </button>
-                );
-              })}
+            {/* Dynamic Niche Dropdown */}
+            <div className="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 shadow-2xs">
+              <Sparkle size={13} className="text-slate-400 shrink-0" />
+              <select
+                value={selectedNiche}
+                onChange={(e) => setSelectedNiche(e.target.value)}
+                className="bg-transparent border-none text-xs text-slate-800 font-semibold focus:outline-none cursor-pointer pr-1 max-w-[200px]"
+              >
+                <option value="ALL">Tất cả Niche ({groups.length})</option>
+                {nicheOptions.map((n) => (
+                  <option key={n.name} value={n.name}>
+                    {n.name} ({n.count})
+                  </option>
+                ))}
+              </select>
             </div>
 
-            {/* Checkbox nhỏ: Bao gồm Camp Paused */}
+            {/* Checkbox: Bao gồm Camp Paused */}
             {onIncludePausedCampaignsChange && (
               <label
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs text-slate-700 font-semibold cursor-pointer select-none transition shadow-2xs"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs text-slate-700 font-semibold cursor-pointer select-none transition shadow-2xs"
                 title="Mặc định chỉ tải campaign enable. Tích chọn để tải thêm đề xuất cho các campaign đang paused."
               >
                 <input
@@ -1035,7 +1060,7 @@ export function PpcSkuRecommendationGroupView({
                   onChange={(e) => onIncludePausedCampaignsChange(e.target.checked)}
                   className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
                 />
-                <span>Bao gồm Camp Paused</span>
+                <span>Camp Paused</span>
               </label>
             )}
 
@@ -1046,10 +1071,11 @@ export function PpcSkuRecommendationGroupView({
                 onClick={() => {
                   setSearchTerm("");
                   setSelectedPhôi("ALL");
+                  setSelectedNiche("ALL");
                   setQuickFilter("ALL");
                   setSelectedCampType("ALL");
                 }}
-                className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-semibold text-slate-500 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 transition cursor-pointer shadow-2xs"
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-500 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 transition cursor-pointer shadow-2xs"
                 title="Đặt lại bộ lọc"
               >
                 <X size={12} weight="bold" />
@@ -1391,6 +1417,7 @@ export function PpcSkuRecommendationGroupView({
                   className="h-4 w-4 cursor-pointer rounded border-slate-300 accent-indigo-600 disabled:cursor-not-allowed"
                 />
               </th>
+              <th className="w-12 py-3 px-2 text-center text-xs font-bold text-slate-500">Ảnh</th>
               {renderSortHeader("SKU", "sku", "left")}
               <th className="py-3 px-3">ASIN</th>
               <th className="py-3 px-3">Phôi</th>
@@ -1408,7 +1435,7 @@ export function PpcSkuRecommendationGroupView({
           <tbody className="divide-y divide-slate-100 text-slate-700">
             {isLoading ? (
               <tr>
-                <td colSpan={13} className="py-16 text-center text-slate-500">
+                <td colSpan={14} className="py-16 text-center text-slate-500">
                   <div className="flex flex-col items-center justify-center gap-2.5">
                     <CircleNotch size={30} className="animate-spin text-indigo-600" />
                     <span className="font-bold text-sm text-slate-800">
@@ -1422,7 +1449,7 @@ export function PpcSkuRecommendationGroupView({
               </tr>
             ) : filteredGroups.length === 0 ? (
               <tr>
-                <td colSpan={13} className="py-12 text-center text-slate-400 font-medium">
+                <td colSpan={14} className="py-12 text-center text-slate-400 font-medium">
                   Không tìm thấy SKU nào phù hợp với bộ lọc hiện tại.
                 </td>
               </tr>
@@ -1453,8 +1480,47 @@ export function PpcSkuRecommendationGroupView({
                         className="h-4 w-4 cursor-pointer rounded border-slate-300 accent-indigo-600 disabled:cursor-not-allowed"
                       />
                     </td>
-                    <td className="py-3 px-3 font-bold text-slate-900 group-hover:text-indigo-600 transition col-primary">
-                      {group.sku}
+                    <td className="py-2.5 px-2 text-center" onClick={(e) => e.stopPropagation()}>
+                      {group.mockupUrl ? (
+                        <div className="relative group/mockup inline-block">
+                          <img
+                            src={getOptimizedThumbnailUrl(group.mockupUrl, 64) || group.mockupUrl}
+                            alt={group.sku}
+                            className="w-9 h-9 rounded-md object-cover border border-slate-200 shadow-2xs group-hover/mockup:ring-2 group-hover/mockup:ring-indigo-500 transition cursor-pointer"
+                            loading="lazy"
+                            onError={(e) => {
+                              e.currentTarget.style.display = "none";
+                              const fallback = e.currentTarget.parentElement?.querySelector(".mockup-fallback");
+                              if (fallback) (fallback as HTMLElement).style.display = "flex";
+                            }}
+                          />
+                          <div className="mockup-fallback hidden w-9 h-9 mx-auto rounded-md bg-slate-100 items-center justify-center text-slate-300">
+                            <Tag size={14} />
+                          </div>
+                          <div className="hidden group-hover/mockup:block absolute left-12 top-1/2 -translate-y-1/2 z-50 p-1 bg-white rounded-xl shadow-2xl border border-slate-200 pointer-events-none w-48 h-48">
+                            <img
+                              src={getOptimizedThumbnailUrl(group.mockupUrl, 400) || group.mockupUrl}
+                              alt={group.sku}
+                              className="w-full h-full object-cover rounded-lg"
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="w-9 h-9 mx-auto rounded-md bg-slate-100 flex items-center justify-center text-slate-300">
+                          <Tag size={14} />
+                        </div>
+                      )}
+                    </td>
+                    <td className="py-2.5 px-3 font-bold text-slate-900 group-hover:text-indigo-600 transition col-primary">
+                      <div className="flex flex-col">
+                        <span>{group.sku}</span>
+                        {(group.picMkt || group.niche) && (
+                          <span className="text-[10px] text-slate-400 font-normal">
+                            {group.picMkt && <span>PIC: {group.picMkt}</span>}
+                            {group.niche && <span> • {group.niche}</span>}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="py-3 px-3 text-slate-500">{group.asin || "—"}</td>
                     <td className="py-3 px-3">
@@ -1591,27 +1657,38 @@ export function PpcSkuRecommendationGroupView({
           >
             {/* Modal Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/70">
-              <div>
-                <div className="flex items-center gap-3">
-                  <h2 className="text-base font-black text-slate-900">
-                    ĐỀ XUẤT CHO SKU: <span className="text-indigo-600">{selectedSkuGroup.sku}</span>
-                  </h2>
-                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                    {selectedSkuGroup.productType}
-                  </span>
-                </div>
-                <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1.5">
-                  <span>ASIN: {selectedSkuGroup.asin}</span>
-                  <span>•</span>
-                  {loadingSkuDetails ? (
-                    <span className="inline-flex items-center gap-1 text-indigo-600 font-semibold animate-pulse">
-                      <CircleNotch size={12} className="animate-spin" />
-                      Đang tải và tính toán chi tiết đề xuất...
+              <div className="flex items-center gap-3">
+                {selectedSkuGroup.mockupUrl && (
+                  <img
+                    src={selectedSkuGroup.mockupUrl}
+                    alt={selectedSkuGroup.sku}
+                    className="w-12 h-12 rounded-xl object-cover border border-slate-200 shadow-xs shrink-0"
+                  />
+                )}
+                <div>
+                  <div className="flex items-center gap-3">
+                    <h2 className="text-base font-black text-slate-900">
+                      ĐỀ XUẤT CHO SKU: <span className="text-indigo-600 font-mono">{selectedSkuGroup.sku}</span>
+                    </h2>
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                      {selectedSkuGroup.productType}
                     </span>
-                  ) : (
-                    <span>Tổng cộng {currentSkuRecs.length} đề xuất tối ưu hóa</span>
-                  )}
-                </p>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                    <span>ASIN: {selectedSkuGroup.asin}</span>
+                    {selectedSkuGroup.picMkt && <span>• PIC: <strong className="text-slate-700">{selectedSkuGroup.picMkt}</strong></span>}
+                    {selectedSkuGroup.niche && <span>• Niche: <strong className="text-slate-700">{selectedSkuGroup.niche}</strong></span>}
+                    <span>•</span>
+                    {loadingSkuDetails ? (
+                      <span className="inline-flex items-center gap-1 text-indigo-600 font-semibold animate-pulse">
+                        <CircleNotch size={12} className="animate-spin" />
+                        Đang tải và tính toán chi tiết đề xuất...
+                      </span>
+                    ) : (
+                      <span>Tổng cộng {currentSkuRecs.length} đề xuất tối ưu hóa</span>
+                    )}
+                  </p>
+                </div>
               </div>
               <button
                 onClick={() => {

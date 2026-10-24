@@ -3,6 +3,130 @@
 import { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 
+const ACCOUNTING_IMPORT_JOB_KEY = "accounting_import_active_job";
+
+type TrackedAccountingImport = {
+  id: string;
+  fileName: string;
+};
+
+function AccountingImportTracker() {
+  const [trackedJob, setTrackedJob] = useState<TrackedAccountingImport | null>(null);
+  const [stage, setStage] = useState("Đang chờ worker nhận job");
+  const [progress, setProgress] = useState(0);
+  const [notice, setNotice] = useState<{ message: string; type: "success" | "error" } | null>(null);
+
+  useEffect(() => {
+    const restore = () => {
+      try {
+        const raw = localStorage.getItem(ACCOUNTING_IMPORT_JOB_KEY);
+        setTrackedJob(raw ? JSON.parse(raw) : null);
+      } catch {
+        localStorage.removeItem(ACCOUNTING_IMPORT_JOB_KEY);
+      }
+    };
+    const handleQueued = (event: Event) => {
+      const detail = (event as CustomEvent<TrackedAccountingImport>).detail;
+      if (detail?.id) setTrackedJob(detail);
+    };
+    restore();
+    window.addEventListener("accounting-import-queued", handleQueued);
+    return () => window.removeEventListener("accounting-import-queued", handleQueued);
+  }, []);
+
+  useEffect(() => {
+    if (!trackedJob?.id) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const finish = (message: string, type: "success" | "error") => {
+      localStorage.removeItem(ACCOUNTING_IMPORT_JOB_KEY);
+      setTrackedJob(null);
+      setNotice({ message, type });
+      window.dispatchEvent(new CustomEvent("accounting-import-completed", { detail: { type } }));
+      window.setTimeout(() => setNotice(null), 30_000);
+    };
+
+    const poll = async () => {
+      try {
+        const response = await fetch(
+          `/api/accounting/unified-import?jobId=${encodeURIComponent(trackedJob.id)}`,
+          { cache: "no-store" },
+        );
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || `Không đọc được trạng thái (${response.status})`);
+        if (cancelled) return;
+        const job = payload.job || {};
+        setStage(job.stage || "Đang xử lý dữ liệu");
+        setProgress(Number(job.progress_pct) || 0);
+        if (job.status === "COMPLETED") {
+          finish(job.result?.message || "Đã nạp thành công toàn bộ dữ liệu kế toán!", "success");
+          return;
+        }
+        if (job.status === "FAILED") {
+          finish(job.error_message || "Nạp dữ liệu kế toán thất bại.", "error");
+          return;
+        }
+        timer = setTimeout(poll, 2500);
+      } catch (error) {
+        if (cancelled) return;
+        // Lỗi mạng tạm thời không làm mất job; tiếp tục hỏi lại sau 5 giây.
+        setStage(error instanceof Error ? error.message : "Đang kết nối lại…");
+        timer = setTimeout(poll, 5000);
+      }
+    };
+
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [trackedJob]);
+
+  if (!trackedJob && !notice) return null;
+  return (
+    <div className="fixed right-5 top-5 z-[100] w-[min(390px,calc(100vw-2.5rem))]" aria-live="polite">
+      {trackedJob && (
+        <div className="rounded-xl border border-indigo-200 bg-white p-4 shadow-2xl">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-indigo-100 border-t-indigo-600" />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-3 text-sm font-bold text-slate-900">
+                <span>Đang nạp file kế toán</span>
+                <span className="text-indigo-700">{progress}%</span>
+              </div>
+              <p className="mt-0.5 truncate text-xs text-slate-500" title={trackedJob.fileName}>{trackedJob.fileName}</p>
+              <p className="mt-2 text-xs font-semibold text-indigo-800">{stage}</p>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-indigo-100">
+                <div className="h-full rounded-full bg-indigo-600 transition-all duration-500" style={{ width: `${Math.max(3, progress)}%` }} />
+              </div>
+              <p className="mt-2 text-[11px] text-slate-500">Bạn có thể chuyển sang tab khác; job vẫn tiếp tục chạy nền.</p>
+            </div>
+          </div>
+        </div>
+      )}
+      {notice && (
+        <div className={`flex items-start gap-3 rounded-xl p-4 text-white shadow-2xl ${notice.type === "success" ? "bg-emerald-600" : "bg-rose-600"}`}>
+          <span className="mt-0.5 text-lg leading-none">{notice.type === "success" ? "✓" : "!"}</span>
+          <p className="flex-1 text-sm font-bold leading-5">{notice.message}</p>
+          <button type="button" onClick={() => setNotice(null)} className="rounded p-0.5 text-white/80 hover:bg-white/15 hover:text-white" aria-label="Đóng thông báo">
+            ×
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AccountingSectionShell({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="font-accounting-system h-full w-full text-slate-900 bg-slate-50">
+      <AccountingImportTracker />
+      {children}
+    </div>
+  );
+}
+
 function AccountingSectionLoading() {
   return (
     <div className="grid h-full min-h-[420px] place-items-center bg-slate-50" role="status" aria-label="Đang tải mục Accounting">
@@ -206,45 +330,45 @@ export function AccountingWorkspace({
   // Section 2: Stores (Existing Full UI)
   if (effectiveSection === "stores") {
     return (
-      <div className="font-accounting-system h-full w-full text-slate-900 bg-slate-50">
+      <AccountingSectionShell>
         <StoreManagementView />
-      </div>
+      </AccountingSectionShell>
     );
   }
 
   // Section 3: Inventory (Full Multi-Store UI with SKU Master & Inbound Shipments)
   if (effectiveSection === "inventory") {
     return (
-      <div className="font-accounting-system h-full w-full text-slate-900 bg-slate-50">
+      <AccountingSectionShell>
         <InventoryView />
-      </div>
+      </AccountingSectionShell>
     );
   }
 
   // Section 4: Import (Đầu Vào Order, Ads, Return, Service Fee)
   if (effectiveSection === "orders" || effectiveSection === "import") {
     return (
-      <div className="font-accounting-system h-full w-full text-slate-900 bg-slate-50">
+      <AccountingSectionShell>
         <OrderInputView />
-      </div>
+      </AccountingSectionShell>
     );
   }
 
   // Section 7: System Admin & Quản lý file Kế toán theo Ngày & Store
   if (effectiveSection === "admin" || effectiveSection === "files") {
     return (
-      <div className="font-accounting-system h-full w-full text-slate-900 bg-slate-50">
+      <AccountingSectionShell>
         <AccountingFileManager />
-      </div>
+      </AccountingSectionShell>
     );
   }
 
   // Section 5: Financials - Lọc SKU Win & FBA (như file ketoan_limima.xlsx)
   if (effectiveSection === "financials") {
     return (
-      <div className="font-accounting-system h-full w-full text-slate-900 bg-slate-50">
+      <AccountingSectionShell>
         <FinancialsWorkspace />
-      </div>
+      </AccountingSectionShell>
     );
   }
 
@@ -260,6 +384,7 @@ export function AccountingWorkspace({
 
     return (
       <div className="w-full max-w-5xl mx-auto py-3 sm:py-6 space-y-4 sm:space-y-6">
+        <AccountingImportTracker />
         <div className="bg-white rounded-2xl border border-slate-200/90 p-4 sm:p-7 shadow-2xs space-y-4 sm:space-y-6">
           <div className="space-y-3 sm:space-y-4">
             <div className="flex items-center justify-between">
@@ -310,6 +435,7 @@ export function AccountingWorkspace({
 
   return (
     <div className="w-full max-w-4xl mx-auto py-4 sm:py-8">
+      <AccountingImportTracker />
       <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-8 shadow-2xs text-center space-y-4">
         <div className="inline-flex items-center justify-center h-10 w-10 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-600 font-extrabold text-sm">
           {moduleInfo.number}

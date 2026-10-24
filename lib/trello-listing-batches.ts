@@ -1,5 +1,6 @@
 import { getDatabaseClient, type DataScope } from "@/lib/db";
 import { executeSingleTrelloListing } from "@/lib/trello-listing-processor";
+import { notifyLarkEventBestEffort } from "@/lib/lark-notifications";
 import JSZip from "jszip";
 import { parseTrelloCardTitle } from "@/lib/trello";
 
@@ -381,6 +382,7 @@ async function executeBatchItemTask(params: {
       scope,
       publicOrigin,
       signal,
+      skipNotification: true,
       emit: (event) => {
         if (event.type === "progress") {
           void sql`
@@ -477,4 +479,25 @@ async function finalizeBatchCompletion(batchId: string): Promise<void> {
   `;
 
   console.log(`[Batch Worker ${batchId}] Đã hoàn tất: ${completedCount}/${items.length} thẻ thành công, ${failedCount} lỗi.`);
+
+  if (completedCount > 0) {
+    const skuList = items
+      .filter((i) => i.status === "completed" && i.sku)
+      .map((i) => i.sku as string);
+    const skuPreview = skuList.slice(0, 5).join(", ");
+    const remaining = skuList.length > 5 ? ` (+${skuList.length - 5} SKU)` : "";
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:2411";
+    const downloadUrl = `${baseUrl}/api/trello/batch-jobs/${batchId}/excel`;
+
+    await notifyLarkEventBestEffort(
+      { teamId: batch.team_id, actorId: batch.actor_id },
+      "listing",
+      [
+        `🎉 **Batch Listing đã hoàn tất: ${completedCount}/${items.length} thẻ thành công**`,
+        batch.shop_name || batch.template_name ? `• Shop: ${batch.shop_name || "Mặc định"} | Template: ${batch.template_name || "Mặc định"}` : "",
+        skuList.length > 0 ? `• SKU: ${skuPreview}${remaining}` : "",
+        `• 📥 **Link tải Excel tổng hợp:** ${downloadUrl}`,
+      ].filter(Boolean),
+    );
+  }
 }

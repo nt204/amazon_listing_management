@@ -2,6 +2,7 @@ import "server-only";
 import crypto from "node:crypto";
 import type postgres from "postgres";
 import { getDatabaseClient, type DataScope } from "@/lib/db";
+import { notifyLarkEventBestEffort } from "@/lib/lark-notifications";
 
 export interface PpcIngestionJob {
   id: string; team_id: string; actor_id: string; batch_id: string; batch_date: string; store_names: string[];
@@ -168,14 +169,15 @@ export async function claimPpcIngestion(workerId:string,leaseSeconds=120){const 
 export async function heartbeatPpcIngestion(id:string,token:string,seconds=120){const sql=await getDatabaseClient();await sql`
   UPDATE ppc_ingestion_jobs SET heartbeat_at=NOW(),lease_expires_at=NOW()+${seconds}*INTERVAL '1 second',updated_at=NOW()
   WHERE id=${id} AND status='RUNNING' AND lease_token=${token}::uuid`;}
+
 export async function completePpcIngestion(id:string,token:string,result:unknown){
   const sql=await getDatabaseClient();
-  await sql.begin(async(tx)=>{
-    const rows=await tx<Array<{crawler_job_id:string|null;team_id:string;batch_id:string}>>`
+  const completedJob = await sql.begin(async(tx)=>{
+    const rows=await tx<Array<{crawler_job_id:string|null;team_id:string;actor_id:string;batch_id:string;batch_date:string|null;store_names:string[]|null}>>`
       UPDATE ppc_ingestion_jobs SET status='COMPLETED',stage='COMPLETED',progress_pct=100,
       result=${tx.json(result as postgres.JSONValue)},error_message=NULL,lease_token=NULL,lease_expires_at=NULL,
       completed_at=NOW(),updated_at=NOW() WHERE id=${id} AND status='RUNNING' AND lease_token=${token}::uuid
-      RETURNING crawler_job_id,team_id,batch_id`;
+      RETURNING crawler_job_id,team_id,actor_id,batch_id,batch_date,store_names`;
     if(!rows.length) throw new Error("Ingestion lease không hợp lệ khi hoàn tất job.");
     const linked=rows[0];
     if(linked.crawler_job_id){
@@ -186,7 +188,23 @@ export async function completePpcIngestion(id:string,token:string,result:unknown
           AND status='INGESTING' RETURNING id`;
       if(!crawlerRows.length) throw new Error("Crawler job liên kết không còn ở trạng thái INGESTING.");
     }
+    return linked;
   });
+
+  if (completedJob) {
+    const stores = Array.isArray(completedJob.store_names) ? completedJob.store_names : [];
+    const storeCountText = stores.length > 0 ? ` (${stores.length} store: ${stores.join(", ")})` : "";
+    await notifyLarkEventBestEffort(
+      { teamId: completedJob.team_id, actorId: completedJob.actor_id },
+      "ppc",
+      [
+        "📊 **Dữ liệu PPC hôm nay đã sẵn sàng**",
+        `• Đã hoàn tất đồng bộ toàn bộ dữ liệu PPC lên server${storeCountText}.`,
+        completedJob.batch_date ? `• Ngày dữ liệu: ${completedJob.batch_date}` : "",
+        `• Mã đợt: \`${completedJob.batch_id}\``,
+      ].filter(Boolean),
+    );
+  }
 }
 export async function failPpcIngestion(id:string,token:string,message:string){
   const sql=await getDatabaseClient();

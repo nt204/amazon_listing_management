@@ -204,6 +204,14 @@ export interface PpcSkuPerformance {
   skuCategory: "HERO" | "BLEEDING" | "POTENTIAL" | "NEUTRAL" | "ZERO_CLICKS";
   revenueShare: number; // % of total store sales
   spendShare: number;   // % of total store spend
+  // Accounting metadata from Bảng mã
+  asin?: string | null;
+  productType?: string | null;
+  mockupUrl?: string | null;
+  picMkt?: string | null;
+  niche?: string | null;
+  skuStatus?: string | null;
+  accountingMatched?: boolean;
 }
 
 export interface PpcCampaignPerformance {

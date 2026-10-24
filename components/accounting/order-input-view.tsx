@@ -221,7 +221,7 @@ export function OrderInputView() {
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const notify = useCallback((message: string, type: "success" | "error" = "success") => {
     setToast({ message, type });
-    setTimeout(() => setToast((prev) => (prev?.message === message ? null : prev)), 4000);
+    setTimeout(() => setToast((prev) => (prev?.message === message ? null : prev)), 30_000);
   }, []);
 
   // Columns & Freezing
@@ -471,6 +471,21 @@ export function OrderInputView() {
 
   useEffect(() => {
     fetchOrders();
+  }, [fetchOrders]);
+
+  useEffect(() => {
+    const handleImportCompleted = (event: Event) => {
+      const type = (event as CustomEvent<{ type?: string }>).detail?.type;
+      if (type !== "success") return;
+      void fetchOrders();
+      setReloadAdsSignal((signal) => signal + 1);
+      setReloadReturnSignal((signal) => signal + 1);
+      setReloadServiceFeeSignal((signal) => signal + 1);
+      setImportDateRange({ startDate: "", endDate: "" });
+      setPage(1);
+    };
+    window.addEventListener("accounting-import-completed", handleImportCompleted);
+    return () => window.removeEventListener("accounting-import-completed", handleImportCompleted);
   }, [fetchOrders]);
 
   // Close context menu on outside click
@@ -1015,12 +1030,15 @@ export function OrderInputView() {
       {/* Toast Alert */}
       {toast && (
         <div
-          className={`fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-bold text-white shadow-2xl transition-all ${
+          className={`fixed bottom-5 right-5 z-[100] flex max-w-md items-center gap-2 rounded-xl px-4 py-3 text-sm font-bold text-white shadow-2xl transition-all ${
             toast.type === "success" ? "bg-emerald-600" : "bg-rose-600"
           }`}
         >
           {toast.type === "success" ? <CheckCircleIcon size={20} /> : <WarningCircleIcon size={20} />}
-          <span>{toast.message}</span>
+          <span className="flex-1">{toast.message}</span>
+          <button type="button" onClick={() => setToast(null)} className="rounded p-0.5 text-white/80 hover:bg-white/15 hover:text-white" aria-label="Đóng thông báo">
+            <XIcon size={16} weight="bold" />
+          </button>
         </div>
       )}
 
@@ -2607,8 +2625,16 @@ function OrderImportModal({
         body: formData,
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Tải lên thất bại");
+
+      if (useUnified && data.job?.id) {
+        const trackedJob = { id: data.job.id, fileName: file.name };
+        localStorage.setItem("accounting_import_active_job", JSON.stringify(trackedJob));
+        window.dispatchEvent(new CustomEvent("accounting-import-queued", { detail: trackedJob }));
+        onClose();
+        return;
+      }
 
       notify(data.message || `Đã nhập thành công toàn bộ dữ liệu!`, "success");
       setFile(null);
@@ -2636,8 +2662,8 @@ function OrderImportModal({
           </div>
           <button
             type="button"
-            onClick={onClose}
-            className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition"
+          onClick={onClose}
+          className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition"
           >
             <XIcon size={18} />
           </button>

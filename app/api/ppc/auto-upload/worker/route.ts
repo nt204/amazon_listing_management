@@ -84,7 +84,7 @@ export async function PATCH(request: Request) {
             duration_ms = CASE WHEN ${terminal} THEN GREATEST(0, (EXTRACT(EPOCH FROM (NOW() - created_at)) * 1000)::integer) ELSE duration_ms END
         WHERE id = ${jobId} AND team_id = ${actor.teamId}
           AND status = 'RUNNING' AND lease_token = ${leaseToken}
-        RETURNING id, status, stage, file_name, created_by
+        RETURNING id, status, stage, file_name, created_by, store_id, action_count, skus, action_ids
       `;
       if (!updated.length) throw new ApiError("Lease upload Bulk không còn hợp lệ.", 409);
 
@@ -129,14 +129,58 @@ export async function PATCH(request: Request) {
         invalidateCachePattern(`ppc:query:st-opt:${actor.teamId}:*`).catch(() => {}),
         invalidateCachePattern(`ppc:query:sale-kw:${actor.teamId}:*`).catch(() => {}),
       ]);
-    }
-    if (status === "SUCCESS" || status === "PARTIAL_SUCCESS") {
-      await notifyLarkEventBestEffort({ teamId: actor.teamId, actorId: rows[0].created_by || actor.userId }, "ppc", [
-        "✅ Upload PPC lên Amazon Ads đã hoàn tất",
-        `File: ${rows[0].file_name}`,
-        `Trạng thái: ${status === "SUCCESS" ? "Thành công" : "Thành công một phần"}`,
-        body?.result_summary ? `Kết quả: ${String(body.result_summary).slice(0, 1_000)}` : "",
-      ].filter(Boolean).join("\n"));
+
+      const jobRecord = rows[0];
+      const storeRows = await sql<{ name: string }[]>`
+        SELECT name FROM ppc_stores WHERE id = ${jobRecord.store_id} LIMIT 1
+      `;
+      const storeName = storeRows[0]?.name || "Store";
+
+      let featureName = "Bulk Sheet";
+      const actionIds = Array.isArray(jobRecord.action_ids) ? jobRecord.action_ids : [];
+      if (actionIds.length > 0) {
+        const actionTypeRows = await sql<{ action_type: string }[]>`
+          SELECT DISTINCT action_type FROM ppc_actions WHERE id = ANY(${actionIds}::uuid[])
+        `;
+        const types = new Set(actionTypeRows.map((r) => r.action_type));
+        const hasNeg = types.has("NEGATIVE_KEYWORD") || types.has("PAUSE_TARGET");
+        const hasBid = types.has("UPDATE_BID") || types.has("BID_INCREASE") || types.has("BID_DECREASE");
+        const hasCamp = types.has("CREATE_CAMPAIGN") || types.has("ENABLE_KEYWORD");
+        if (hasNeg && !hasBid && !hasCamp) featureName = "Phủ định từ khóa (Negative KW)";
+        else if (hasBid && !hasNeg && !hasCamp) featureName = "Tối ưu giá thầu (Auto Bid)";
+        else if (hasCamp && !hasNeg && !hasBid) featureName = "Lên campaign Sales KW";
+        else if (hasNeg || hasBid || hasCamp) featureName = "Tối ưu PPC tổng hợp";
+      }
+
+      let statusIcon = "✅";
+      let statusText = "Thành công";
+      if (status === "PARTIAL_SUCCESS") {
+        statusIcon = "⚠️";
+        statusText = "Thành công một phần (có dòng lỗi từ Amazon Ads)";
+      } else if (status === "FAILED") {
+        statusIcon = "❌";
+        statusText = `Thất bại: ${body?.error_message || "Lỗi xử lý file từ Amazon Ads"}`;
+      } else if (status === "RESULT_TIMEOUT") {
+        statusIcon = "⏳";
+        statusText = "Hết thời gian chờ phản hồi kết quả từ Amazon Ads";
+      }
+
+      const skuText = Array.isArray(jobRecord.skus) && jobRecord.skus.length > 0
+        ? ` (SKU: ${jobRecord.skus.slice(0, 3).join(", ")}${jobRecord.skus.length > 3 ? ` +${jobRecord.skus.length - 3}` : ""})`
+        : "";
+
+      await notifyLarkEventBestEffort(
+        { teamId: actor.teamId, actorId: jobRecord.created_by || actor.userId },
+        "ppc",
+        [
+          `${statusIcon} **Kết quả Upload Bulk PPC: ${featureName}**`,
+          `• Store: ${storeName}`,
+          `• File: ${jobRecord.file_name || "bulk-upload.xlsx"}`,
+          `• Trạng thái: ${statusText}`,
+          jobRecord.action_count ? `• Số hành động: ${jobRecord.action_count}${skuText}` : "",
+          body?.result_summary ? `• Tóm tắt kết quả Amazon Ads:\n${String(body.result_summary).slice(0, 500)}` : "",
+        ].filter(Boolean),
+      );
     }
     return Response.json({ success: true, job: rows[0] });
   } catch (error) {

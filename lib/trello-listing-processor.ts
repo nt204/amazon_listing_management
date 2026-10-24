@@ -64,6 +64,7 @@ export interface SingleTrelloListingOptions {
   publicOrigin?: string;
   emit?: ProgressEmitter;
   signal?: AbortSignal;
+  skipNotification?: boolean;
 }
 
 export interface SingleTrelloListingResult {
@@ -405,12 +406,18 @@ export async function executeSingleTrelloListing(
   emitProgress("complete", "completed", 0);
   console.info("[listing timing]", JSON.stringify({ card_id: cardId, sku, timings_ms: timings }));
 
-  await notifyLarkEventBestEffort(scope, "listing", [
-    "🎉 Listing đã hoàn tất",
-    `SKU: ${sku}`,
-    `Sản phẩm: ${itemName}`,
-    `Trello: ${updatedCard.name || card.name}`,
-  ].join("\n"));
+  if (!options.skipNotification) {
+    const baseUrl = publicOrigin || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:2411";
+    const uploadedAttachment = attachment as TrelloAttachment | null;
+    const downloadUrl = uploadedAttachment?.url || `${baseUrl}/api/trello/download-card-excel?cardId=${encodeURIComponent(card.id)}&shopId=${encodeURIComponent(shopId)}&templateId=${encodeURIComponent(templateId)}`;
+
+    await notifyLarkEventBestEffort(scope, "listing", [
+      `🎉 **Listing đã hoàn tất: ${sku}**`,
+      `• Sản phẩm: ${itemName}`,
+      `• Thẻ Trello: ${updatedCard.name || card.name} (${updatedCard.url || card.url || `https://trello.com/c/${card.id}`})`,
+      `• 📥 **Link tải Excel:** ${downloadUrl}`,
+    ]);
+  }
 
   return {
     success: true,

@@ -10,6 +10,10 @@ import {
   Tag,
   ArrowsClockwise,
   Info,
+  Image as ImageIcon,
+  Database,
+  Check,
+  Sparkle,
 } from "@phosphor-icons/react";
 import type { SkuEconomics, CrSource } from "@/lib/ppc/sku-architecture-types";
 import {
@@ -24,6 +28,8 @@ interface PpcSkuEconomicsTableProps {
   isLoading: boolean;
   onRefresh: () => void;
   onUpdateSku: (sku: string, data: Partial<SkuEconomics>) => Promise<void>;
+  onSyncAccounting?: () => Promise<void>;
+  isSyncingAccounting?: boolean;
 }
 
 export function PpcSkuEconomicsTable({
@@ -31,9 +37,12 @@ export function PpcSkuEconomicsTable({
   isLoading,
   onRefresh,
   onUpdateSku,
+  onSyncAccounting,
+  isSyncingAccounting = false,
 }: PpcSkuEconomicsTableProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedPhôi, setSelectedPhôi] = useState("ALL");
+  const [selectedNiche, setSelectedNiche] = useState("ALL");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [selectedSku, setSelectedSku] = useState<SkuEconomics | null>(null);
 
@@ -46,18 +55,35 @@ export function PpcSkuEconomicsTable({
   const [editCr, setEditCr] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
+  // Dynamic Niche options
+  const nicheOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of skuList) {
+      const n = (item.niche || "").trim();
+      if (n) {
+        counts.set(n, (counts.get(n) || 0) + 1);
+      }
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count]) => ({ name, count }));
+  }, [skuList]);
+
   // Filtered SKUs
   const filteredList = useMemo(() => {
     return skuList.filter((item) => {
       const matchSearch =
         !searchTerm ||
         item.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.asin.toLowerCase().includes(searchTerm.toLowerCase());
+        item.asin.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (item.niche || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (item.productType || "").toLowerCase().includes(searchTerm.toLowerCase());
       const matchPhôi = selectedPhôi === "ALL" || item.productType === selectedPhôi;
+      const matchNiche = selectedNiche === "ALL" || (item.niche || "").trim() === selectedNiche;
       const matchStatus = statusFilter === "ALL" || item.ppcStatus === statusFilter;
-      return matchSearch && matchPhôi && matchStatus;
+      return matchSearch && matchPhôi && matchNiche && matchStatus;
     });
-  }, [skuList, searchTerm, selectedPhôi, statusFilter]);
+  }, [skuList, searchTerm, selectedPhôi, selectedNiche, statusFilter]);
 
   // Open drawer
   const handleOpenDrawer = (item: SkuEconomics) => {
@@ -248,9 +274,38 @@ export function PpcSkuEconomicsTable({
               <option value="Zero Clicks">Zero Clicks</option>
             </select>
           </div>
+
+          {/* Niche filter */}
+          <div className="flex items-center gap-1.5 text-xs text-slate-600 font-semibold">
+            <Sparkle size={14} className="text-slate-400" />
+            <span>Niche:</span>
+            <select
+              value={selectedNiche}
+              onChange={(e) => setSelectedNiche(e.target.value)}
+              className="bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs text-slate-800 font-medium focus:outline-none focus:border-indigo-600 cursor-pointer"
+            >
+              <option value="ALL">Tất cả Niche ({skuList.length})</option>
+              {nicheOptions.map((n) => (
+                <option key={n.name} value={n.name}>
+                  {n.name} ({n.count})
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
+          {onSyncAccounting && (
+            <button
+              onClick={() => void onSyncAccounting()}
+              disabled={isSyncingAccounting || isLoading}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition disabled:opacity-50 cursor-pointer shadow-2xs"
+              title="Đồng bộ lại toàn bộ SKU từ Bảng mã Accounting"
+            >
+              <ArrowsClockwise size={14} className={isSyncingAccounting ? "animate-spin text-indigo-600" : "text-indigo-600"} />
+              <span>{isSyncingAccounting ? "Đang đồng bộ..." : "Đồng bộ Bảng mã"}</span>
+            </button>
+          )}
           <span className="text-xs text-slate-500 font-medium">
             Hiển thị <strong className="text-slate-900 font-bold">{filteredList.length}</strong> / {skuList.length} SKU
           </span>
@@ -270,6 +325,7 @@ export function PpcSkuEconomicsTable({
         <table className="w-full text-left text-xs">
           <thead className="bg-slate-50/90 text-slate-600 border-b border-slate-200 font-bold">
             <tr>
+              <th className="py-3 px-2 text-center w-12">Ảnh</th>
               <th className="py-3 px-3">SKU</th>
               <th className="py-3 px-3">ASIN</th>
               <th className="py-3 px-3">Phôi</th>
@@ -287,7 +343,7 @@ export function PpcSkuEconomicsTable({
           <tbody className="divide-y divide-slate-100 text-slate-700">
             {filteredList.length === 0 ? (
               <tr>
-                <td colSpan={12} className="py-10 text-center text-slate-400 font-medium">
+                <td colSpan={13} className="py-10 text-center text-slate-400 font-medium">
                   Không tìm thấy SKU nào phù hợp với bộ lọc.
                 </td>
               </tr>
@@ -298,18 +354,56 @@ export function PpcSkuEconomicsTable({
                   onClick={() => handleOpenDrawer(item)}
                   className="hover:bg-indigo-50/30 transition cursor-pointer group"
                 >
+                  <td className="py-2.5 px-2 text-center" onClick={(e) => e.stopPropagation()}>
+                    {item.mockupUrl ? (
+                      <div className="relative group/mockup inline-block">
+                        <img
+                          src={item.mockupUrl}
+                          alt={item.sku}
+                          className="w-9 h-9 rounded-md object-cover border border-slate-200 shadow-2xs group-hover/mockup:ring-2 group-hover/mockup:ring-indigo-500 transition cursor-pointer"
+                          loading="lazy"
+                        />
+                        <div className="hidden group-hover/mockup:block absolute left-11 top-1/2 -translate-y-1/2 z-50 p-1 bg-white rounded-xl shadow-2xl border border-slate-200 pointer-events-none w-48 h-48">
+                          <img
+                            src={item.mockupUrl}
+                            alt={item.sku}
+                            className="w-full h-full object-cover rounded-lg"
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="w-9 h-9 mx-auto rounded-md bg-slate-100 flex items-center justify-center text-slate-300">
+                        <ImageIcon size={16} />
+                      </div>
+                    )}
+                  </td>
                   <td className="py-3 px-3 font-bold text-slate-900 group-hover:text-indigo-600 transition">
-                    {item.sku}
+                    <div className="flex flex-col gap-0.5">
+                      <span className="font-mono">{item.sku}</span>
+                      {(item.picMkt || item.niche) && (
+                        <div className="flex items-center gap-1.5 text-[10px] font-normal text-slate-500">
+                          {item.picMkt && <span>PIC: <strong className="text-slate-700">{item.picMkt}</strong></span>}
+                          {item.niche && <span>• {item.niche}</span>}
+                        </div>
+                      )}
+                    </div>
                   </td>
                   <td className="py-3 px-3 text-slate-500 font-mono">{item.asin || "—"}</td>
                   <td className="py-3 px-3">
-                    <span className={`px-2 py-0.5 rounded text-[11px] font-bold border ${
-                      item.productType === SKU_PREFIX_ERROR_PRODUCT_TYPE
-                        ? "bg-rose-50 text-rose-700 border-rose-200"
-                        : "bg-slate-100 text-slate-700 border-slate-200"
-                    }`}>
-                      {item.productType}
-                    </span>
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <span className={`px-2 py-0.5 rounded text-[11px] font-bold border ${
+                        item.productType === SKU_PREFIX_ERROR_PRODUCT_TYPE
+                          ? "bg-rose-50 text-rose-700 border-rose-200"
+                          : "bg-slate-100 text-slate-700 border-slate-200"
+                      }`}>
+                        {item.productType}
+                      </span>
+                      {item.accountingMatched && (
+                        <span className="inline-flex items-center gap-0.5 px-1 py-0.2 rounded text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200" title="Khớp với Bảng mã Accounting">
+                          <Check size={10} weight="bold" /> Bảng mã
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="py-3 px-3 text-right text-slate-900 font-bold font-mono">
                     ${item.sellingPrice.toFixed(2)}
@@ -368,13 +462,30 @@ export function PpcSkuEconomicsTable({
             <div className="space-y-6">
               {/* Header */}
               <div className="flex items-start justify-between border-b border-slate-100 pb-4">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-base font-black text-slate-900">SKU OVERVIEW</h2>
-                    {renderPpcStatusBadge(selectedSku.ppcStatus)}
+                <div className="flex items-center gap-3">
+                  {selectedSku.mockupUrl && (
+                    <img
+                      src={selectedSku.mockupUrl}
+                      alt={selectedSku.sku}
+                      className="w-16 h-16 rounded-xl object-cover border border-slate-200 shadow-sm shrink-0"
+                    />
+                  )}
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-base font-black text-slate-900">SKU OVERVIEW</h2>
+                      {renderPpcStatusBadge(selectedSku.ppcStatus)}
+                    </div>
+                    <p className="text-sm font-black text-indigo-600 mt-0.5">{selectedSku.sku}</p>
+                    <p className="text-xs text-slate-500">
+                      ASIN: {selectedSku.asin || "Chưa gán"} • Phôi: {selectedSku.productType}
+                    </p>
+                    {(selectedSku.picMkt || selectedSku.niche) && (
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        {selectedSku.picMkt && <span>PIC: <strong className="text-slate-700">{selectedSku.picMkt}</strong></span>}
+                        {selectedSku.niche && <span> • Niche: {selectedSku.niche}</span>}
+                      </p>
+                    )}
                   </div>
-                  <p className="text-sm font-black text-indigo-600 mt-1">{selectedSku.sku}</p>
-                  <p className="text-xs text-slate-500">ASIN: {selectedSku.asin || "Chưa gán"} • Phôi: {selectedSku.productType}</p>
                 </div>
                 <button
                   onClick={() => setSelectedSku(null)}

@@ -2,7 +2,7 @@ import "server-only";
 
 import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 import crypto from "node:crypto";
-import type { DataScope } from "@/lib/db";
+import { getDatabaseClient, type DataScope } from "@/lib/db";
 import {
   adTypeBreakdownFromFacts,
   adGroupPerformanceFromFacts,
@@ -95,6 +95,76 @@ export function canonicalStoreName(value?: string | null): string {
     return "HSOSTORE";
   }
   return cleaned;
+}
+
+export async function enrichSkuPerformanceWithAccounting(
+  skus: PpcSkuPerformance[],
+): Promise<PpcSkuPerformance[]> {
+  if (skus.length === 0) return skus;
+  try {
+    const sql = await getDatabaseClient();
+    const accStores = await sql<{ id: string; name: string }[]>`
+      SELECT id, name FROM stores
+    `;
+    const accStoreMap = new Map<string, string>();
+    for (const s of accStores) {
+      accStoreMap.set(s.name.toUpperCase().trim(), s.id);
+    }
+
+    const targetStoreNames = new Set(
+      skus
+        .map((s) => {
+          const ppcName = (s.storeName || "").toUpperCase().trim();
+          return ppcName === "HSOSTORE" ? "WARMSTOREY" : ppcName;
+        })
+        .filter(Boolean),
+    );
+
+    const relevantStoreIds = targetStoreNames.size > 0
+      ? Array.from(targetStoreNames)
+          .map((name) => accStoreMap.get(name))
+          .filter((id): id is string => Boolean(id))
+      : Array.from(accStoreMap.values());
+
+    if (relevantStoreIds.length === 0) return skus;
+
+    const accItems = await sql<any[]>`
+      SELECT store_id, sku, product_type, loai, asin, fnsku, mockup, mockup_url, brand, status, niche, pic_mkt
+      FROM accounting_sku_master
+      WHERE store_id IN ${sql(relevantStoreIds)} AND deleted_at IS NULL
+    `;
+
+    const itemMap = new Map<string, any>();
+    for (const item of accItems) {
+      if (item.sku) {
+        const key = `${item.store_id}::${String(item.sku).toUpperCase().trim()}`;
+        itemMap.set(key, item);
+      }
+    }
+
+    return skus.map((s) => {
+      const ppcName = (s.storeName || "").toUpperCase().trim();
+      const accName = ppcName === "HSOSTORE" ? "WARMSTOREY" : ppcName;
+      const accStoreId = accStoreMap.get(accName);
+      const acc = accStoreId ? itemMap.get(`${accStoreId}::${s.sku.toUpperCase().trim()}`) : null;
+
+      if (!acc) return s;
+
+      return {
+        ...s,
+        asin: acc.asin || s.asin || null,
+        productType: acc.product_type || acc.loai || null,
+        mockupUrl: acc.mockup_url || acc.mockup || null,
+        picMkt: acc.pic_mkt || null,
+        niche: acc.niche || null,
+        skuStatus: acc.status || null,
+        accountingMatched: true,
+      };
+    });
+  } catch (error) {
+    console.error("Lỗi khi làm giàu thông tin SKU từ Bảng mã Accounting:", error);
+    return skus;
+  }
 }
 
 function resolveStoreName(objectKey: string, knownStoreNames: string[]): string | null {
@@ -401,7 +471,7 @@ export async function getPpcAnalyticsData(
 
     const campaignPerformance = campaignPerformanceFromFacts(aggregates.topCampaigns, targetAcos);
 
-    const skuPerformance: PpcSkuPerformance[] = aggregates.topSkus.map((row) => {
+    const baseSkuPerformance: PpcSkuPerformance[] = aggregates.topSkus.map((row) => {
       const metrics = roundedPerformanceMetrics(row);
       const statusBadge: PpcSkuPerformance["statusBadge"] = metrics.clicks === 0 ? (metrics.impressions > 0 ? "ZERO_CLICKS" : "INACTIVE")
         : metrics.orders === 0 || metrics.acos > targetAcos * 2 ? "CRITICAL"
@@ -421,6 +491,7 @@ export async function getPpcAnalyticsData(
         spendShare: totalSpend > 0 ? Math.round((metrics.spend / totalSpend) * 1000) / 10 : 0,
       };
     });
+    const skuPerformance = await enrichSkuPerformanceWithAccounting(baseSkuPerformance);
 
     let dateRangeStart = startDate || aggregates.snapshotDates?.startDate || "";
     let dateRangeEnd = endDate || aggregates.snapshotDates?.endDate || "";
@@ -590,9 +661,12 @@ export async function getPpcAnalyticsData(
     const adGroups = section === "ad_groups" ? adGroupPerformanceFromFacts(performanceRows) : [];
     const targets = section === "targets" ? targetPerformanceFromFacts(performanceRows) : [];
     const allSkuPerformance = section === "skus" ? skuPerformanceFromFacts(performanceRows, targetAcos) : [];
-    const skuPerformance = section === "skus"
+    let skuPerformance = section === "skus"
       ? (sku === "ALL" ? allSkuPerformance : allSkuPerformance.filter((row) => row.sku.toLowerCase() === sku.toLowerCase()))
       : [];
+    if (section === "skus" && skuPerformance.length > 0) {
+      skuPerformance = await enrichSkuPerformanceWithAccounting(skuPerformance);
+    }
 
     const samplePerf = performanceRows.find((r) => r.reportStartDate && r.reportEndDate);
     const detailDateStart = startDate || samplePerf?.reportStartDate || (rows.length > 0 ? rows[rows.length - 1]?.reportDate : "") || "";
@@ -686,9 +760,12 @@ export async function getPpcAnalyticsData(
       wastedSpend: searchTermSummary.wastedSpend,
     });
   const allSkuPerformance = skuPerformanceFromFacts(performanceRows, targetAcos);
-  const skuPerformance = sku === "ALL"
+  let skuPerformance = sku === "ALL"
     ? allSkuPerformance
     : allSkuPerformance.filter((row) => row.sku.toLowerCase() === sku.toLowerCase());
+  if (skuPerformance.length > 0) {
+    skuPerformance = await enrichSkuPerformanceWithAccounting(skuPerformance);
+  }
   const campaignPerformance = campaignPerformanceFromFacts(performanceRows, targetAcos);
   const adGroups = adGroupPerformanceFromFacts(performanceRows);
   const targets = targetPerformanceFromFacts(performanceRows);
