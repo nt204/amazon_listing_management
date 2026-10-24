@@ -3,7 +3,12 @@ import "server-only";
 import { getDatabaseClient, type DataScope } from "@/lib/db";
 import { listFbaDaily, type FbaDailyItem } from "@/lib/accounting/fba-daily-db";
 import sharp from "sharp";
-import { notifyLarkEventBestEffort, sendLarkCardNotification, uploadLarkImage } from "@/lib/lark-notifications";
+import {
+  notifyLarkEventBestEffort,
+  sendLarkCardNotification,
+  sendLarkImageNotification,
+  uploadLarkImage,
+} from "@/lib/lark-notifications";
 
 function formatCurrency(val: number | null | undefined): string {
   if (val == null || isNaN(val)) return "$0";
@@ -20,7 +25,7 @@ function formatQuantity(val: number | null | undefined): string {
 }
 
 export function generateDailyReportSvg(
-  _date: string,
+  date: string,
   reports: Array<{ storeName: string; item: FbaDailyItem }>,
 ): string {
   const totalRev = reports.reduce((sum, r) => sum + Number(r.item.revenue || 0), 0);
@@ -30,16 +35,22 @@ export function generateDailyReportSvg(
   const totalRefund = reports.reduce((sum, r) => sum + Number(r.item.return_cost || 0), 0);
   const totalProfit = reports.reduce((sum, r) => sum + Number(r.item.profit || 0), 0);
 
-  const margin = 16;
-  const colWidths = [170, 110, 100, 110, 110, 100, 120];
+  const parts = date.split("-");
+  const displayDate = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : date;
+
+  const margin = 20;
+  const colWidths = [180, 115, 105, 115, 115, 105, 125];
   const tableWidth = colWidths.reduce((a, b) => a + b, 0);
   const totalWidth = tableWidth + margin * 2;
+
+  const titleHeight = 56;
+  const tableStartY = margin + titleHeight;
 
   const headerHeight = 44;
   const rowHeight = 42;
   const totalRows = reports.length + 1;
   const tableHeight = headerHeight + totalRows * rowHeight;
-  const totalHeight = tableHeight + margin * 2;
+  const totalHeight = tableStartY + tableHeight + margin;
 
   const colX: number[] = [];
   let currX = margin;
@@ -51,7 +62,7 @@ export function generateDailyReportSvg(
   let vLinesSvg = "";
   for (let i = 1; i < colWidths.length; i++) {
     const x = colX[i];
-    vLinesSvg += `<line x1="${x}" y1="${margin}" x2="${x}" y2="${margin + tableHeight}" stroke="#e2e8f0" stroke-width="1"/>`;
+    vLinesSvg += `<line x1="${x}" y1="${tableStartY}" x2="${x}" y2="${tableStartY + tableHeight}" stroke="#e2e8f0" stroke-width="1"/>`;
   }
 
   const headers = ["Store", "Revenue", "Quantity", "Ads Fee", "AMZ Fee", "Refund", "Profit"];
@@ -59,13 +70,13 @@ export function generateDailyReportSvg(
   headers.forEach((h, i) => {
     const x = i === 0 ? colX[i] + 16 : colX[i] + colWidths[i] - 16;
     const anchor = i === 0 ? "start" : "end";
-    headerCellsSvg += `<text x="${x}" y="${margin + 28}" text-anchor="${anchor}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#0f172a">${h}</text>`;
+    headerCellsSvg += `<text x="${x}" y="${tableStartY + 28}" text-anchor="${anchor}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#0f172a">${h}</text>`;
   });
 
   let rowsSvg = "";
   reports.forEach((r, idx) => {
     const it = r.item;
-    const y = margin + headerHeight + idx * rowHeight;
+    const y = tableStartY + headerHeight + idx * rowHeight;
     rowsSvg += `
       <line x1="${margin}" y1="${y}" x2="${margin + tableWidth}" y2="${y}" stroke="#e2e8f0" stroke-width="1"/>
       <text x="${colX[0] + 16}" y="${y + 26}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#1e293b">${r.storeName}</text>
@@ -78,7 +89,7 @@ export function generateDailyReportSvg(
     `;
   });
 
-  const totalY = margin + headerHeight + reports.length * rowHeight;
+  const totalY = tableStartY + headerHeight + reports.length * rowHeight;
   rowsSvg += `
     <line x1="${margin}" y1="${totalY}" x2="${margin + tableWidth}" y2="${totalY}" stroke="#cbd5e1" stroke-width="1.5"/>
     <text x="${colX[0] + 16}" y="${totalY + 26}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="800" fill="#0f172a">TỔNG CỘNG</text>
@@ -93,17 +104,23 @@ export function generateDailyReportSvg(
   return `
   <svg width="${totalWidth}" height="${totalHeight}" viewBox="0 0 ${totalWidth} ${totalHeight}" xmlns="http://www.w3.org/2000/svg">
     <rect width="${totalWidth}" height="${totalHeight}" fill="#FFFFFF"/>
-    <rect x="${margin}" y="${margin}" width="${tableWidth}" height="${tableHeight}" rx="10" fill="#FFFFFF" stroke="#e2e8f0" stroke-width="1.2"/>
+
+    <!-- Clean Header Title -->
+    <text x="${margin}" y="${margin + 26}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="18" font-weight="800" fill="#0f172a" letter-spacing="-0.3">Báo cáo Kinh doanh FBA</text>
+    <text x="${margin}" y="${margin + 44}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="500" fill="#64748b">Ngày ${displayDate}</text>
+
+    <!-- Table Container Card with rounded corners -->
+    <rect x="${margin}" y="${tableStartY}" width="${tableWidth}" height="${tableHeight}" rx="8" fill="#FFFFFF" stroke="#e2e8f0" stroke-width="1.2"/>
 
     <defs>
       <clipPath id="tableClip">
-        <rect x="${margin}" y="${margin}" width="${tableWidth}" height="${tableHeight}" rx="10"/>
+        <rect x="${margin}" y="${tableStartY}" width="${tableWidth}" height="${tableHeight}" rx="8"/>
       </clipPath>
     </defs>
 
     <g clip-path="url(#tableClip)">
-      <rect x="${margin}" y="${margin}" width="${tableWidth}" height="${headerHeight}" fill="#F8FAFC"/>
-      <line x1="${margin}" y1="${margin + headerHeight}" x2="${margin + tableWidth}" y2="${margin + headerHeight}" stroke="#e2e8f0" stroke-width="1.2"/>
+      <rect x="${margin}" y="${tableStartY}" width="${tableWidth}" height="${headerHeight}" fill="#F8FAFC"/>
+      <line x1="${margin}" y1="${tableStartY + headerHeight}" x2="${margin + tableWidth}" y2="${tableStartY + headerHeight}" stroke="#e2e8f0" stroke-width="1.2"/>
       ${vLinesSvg}
       ${headerCellsSvg}
       ${rowsSvg}
@@ -323,15 +340,27 @@ export async function reportDailyBusinessData(
     `TỔNG CỘNG | ${formatCurrency(totalRev)} | ${formatQuantity(totalQty)} | ${formatCurrency(totalAds)} | ${formatCurrency(totalAmzFee)} | ${formatCurrency(totalRefund)} | ${formatCurrency(totalProfit)}`,
   ];
 
-  // 6. Gửi thông báo Lark bot
-  if (options.recipient) {
-    await sendLarkCardNotification(card, options.recipient);
+  // 6. Gửi thông báo Lark bot: Ưu tiên gửi ảnh bảng (không kèm text), fallback nếu tạo ảnh lỗi
+  if (imageKey) {
+    if (options.recipient) {
+      await sendLarkImageNotification(imageKey, options.recipient);
+    } else {
+      await notifyLarkEventBestEffort(scope, "accounting", {
+        imageKey,
+      });
+    }
   } else {
-    await notifyLarkEventBestEffort(scope, "accounting", {
-      card,
-      fallbackText: fallbackLines.join("\n"),
-    });
+    if (options.recipient) {
+      await sendLarkCardNotification(card, options.recipient);
+    } else {
+      await notifyLarkEventBestEffort(scope, "accounting", {
+        card,
+        fallbackText: fallbackLines.join("\n"),
+      });
+    }
+  }
 
+  if (!options.recipient) {
     // 7. Lưu lại ngày đã báo cáo vào app_settings
     await sql`
       INSERT INTO app_settings (key, value, updated_at)
