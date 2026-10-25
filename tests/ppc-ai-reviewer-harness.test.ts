@@ -99,3 +99,17 @@ test("Harness: invokeAiReviewer records the harness version as prompt_version", 
   });
   assert.equal(candidate.prompt_version, "v1.1-cand-1");
 });
+
+test("Harness candidates: v1.1-cand-1 only extends the critique section and keeps locked sections", async () => {
+  const { HARNESS_V1_1_CANDIDATE_1, resolveReviewerHarness } = await import("../lib/ppc/ai-reviewer-harness-candidates");
+  const baseline = renderHarnessPrompt(BASELINE_HARNESS);
+  const candidate = renderHarnessPrompt(HARNESS_V1_1_CANDIDATE_1);
+  assert.equal(resolveReviewerHarness(undefined), BASELINE_HARNESS);
+  assert.equal(resolveReviewerHarness("v1.1-cand-1"), HARNESS_V1_1_CANDIDATE_1);
+  assert.throws(() => resolveReviewerHarness("v9"), /Không có harness v9/);
+  assert.match(candidate, /CRITIQUE IS INDEPENDENT OF HISTORICAL EVIDENCE/);
+  const [before, after] = baseline.split("IMPORTANT: This critique is for auditing");
+  assert.ok(candidate.startsWith(before));
+  assert.ok(candidate.endsWith(after.slice(after.indexOf("\n\nOUTPUT JSON SCHEMA"))));
+  assert.equal(buildAiReviewerSystemPrompt(), GOLDEN_V1_PROMPT);
+});

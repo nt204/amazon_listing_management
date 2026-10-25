@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { closeDatabaseConnection } from "../lib/db";
 import { buildAiReviewerSystemPrompt, invokeAiReviewer } from "../lib/ppc/ai-reviewer";
-import { BASELINE_HARNESS } from "../lib/ppc/ai-reviewer-harness";
+import { resolveReviewerHarness } from "../lib/ppc/ai-reviewer-harness-candidates";
 import {
   buildReplayDataset,
   loadReplaySourceRows,
@@ -19,7 +19,7 @@ import { runWithConcurrency } from "../lib/run-with-concurrency";
 // writes datasets, a response cache and reports under output/ppc-harness/.
 //
 //   npm run ppc:harness-eval -- --build-only
-//   npm run ppc:harness-eval -- --split=dev [--limit=50] [--model=...] [--concurrency=3]
+//   npm run ppc:harness-eval -- --split=dev [--harness=v1.1-cand-1] [--limit=50] [--model=...] [--concurrency=3]
 //   npm run ppc:harness-eval -- --split=test --release-test   (held-out window, see ledger below)
 
 const OUTPUT_DIR = path.join(process.cwd(), "output", "ppc-harness");
@@ -67,7 +67,7 @@ async function main() {
   const concurrency = Number(argValue("concurrency") || 3);
   const model = argValue("model") || undefined;
   const datasetArg = argValue("dataset");
-  const harness = BASELINE_HARNESS;
+  const harness = resolveReviewerHarness(argValue("harness"));
   const today = new Date().toISOString().slice(0, 10);
 
   const dataset = datasetArg
