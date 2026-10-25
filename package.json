@@ -29,6 +29,7 @@
     "ppc:memory-readiness": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/ppc-action-memory-readiness.ts",
     "ppc:shadow-decisions": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/ppc-shadow-decision-runner.ts",
     "ppc:ai-review": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/ppc-ai-reviewer-runner.ts",
+    "ppc:harness-eval": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/ppc-harness-eval.ts",
     "lark:ws-worker": "node --conditions=react-server --env-file-if-exists=.env --env-file-if-exists=.env.local --import tsx scripts/lark-ws-worker.ts",
     "lark:agent-worker": "node --conditions=react-server --env-file-if-exists=.env --env-file-if-exists=.env.local --import tsx scripts/lark-agent-worker.ts",
     "lint": "eslint .",

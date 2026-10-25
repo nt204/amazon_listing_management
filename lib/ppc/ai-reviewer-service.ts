@@ -19,7 +19,7 @@ import { BASELINE_HARNESS, type ReviewerHarness } from "./ai-reviewer-harness";
 type JsonRecord = Record<string, unknown>;
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
-interface ShadowSourceRow {
+export interface ShadowSourceRow {
   action_id: string;
   store_id: string;
   campaign_id: string;
@@ -34,7 +34,7 @@ interface ShadowSourceRow {
   context: JsonRecord | string;
 }
 
-interface HistoricalRow {
+export interface HistoricalRow {
   campaign_type: string;
   match_type: string;
   old_value: string | number;
@@ -44,11 +44,11 @@ interface HistoricalRow {
   context: JsonRecord | string | null;
 }
 
-function record(value: unknown): JsonRecord {
+export function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {};
 }
 
-function parseContext(value: JsonRecord | string): JsonRecord {
+export function parseContext(value: JsonRecord | string): JsonRecord {
   if (typeof value !== "string") return value;
   try {
     return record(JSON.parse(value));
@@ -57,7 +57,7 @@ function parseContext(value: JsonRecord | string): JsonRecord {
   }
 }
 
-function finite(value: unknown, fallback = 0): number {
+export function finite(value: unknown, fallback = 0): number {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
 }
@@ -66,7 +66,7 @@ function toJsonValue(value: unknown): JsonValue {
   return JSON.parse(JSON.stringify(value)) as JsonValue;
 }
 
-function directionFor(row: ShadowSourceRow): ShadowDirection {
+export function directionFor(row: ShadowSourceRow): ShadowDirection {
   if (row.action_type === "PAUSE_TARGET") return "PAUSE";
   const oldValue = finite(row.old_value);
   const ruleValue = finite(row.system_suggested_value);
@@ -82,7 +82,7 @@ function median(values: number[]): number | null {
   return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
 }
 
-function historicalCandidateId(row: HistoricalRow): string | null {
+export function historicalCandidateId(row: Pick<HistoricalRow, "old_value" | "final_value" | "context">): string | null {
   const context = row.context ? parseContext(row.context) : {};
   const metrics = record(context.metrics);
   const oldBid = finite(row.old_value);
@@ -228,6 +228,60 @@ export function buildAiReviewerPayload(params: {
   };
 }
 
+export function selectSimilarCases<T extends HistoricalRow & { store_id: string }>(
+  row: ShadowSourceRow,
+  context: JsonRecord,
+  historicalRows: T[],
+): T[] {
+  const productType = String(record(context.target).product_type || "").toLowerCase();
+  return historicalRows.filter((historical) => {
+    if (historical.store_id !== row.store_id) return false;
+    if (historical.campaign_type !== row.campaign_type || historical.match_type !== row.match_type) return false;
+    if (!productType) return true;
+    const historicalContext = historical.context ? parseContext(historical.context) : {};
+    return String(record(historicalContext.target).product_type || "").toLowerCase() === productType;
+  });
+}
+
+// Shared by the shadow runner and the offline replay so both build identical reviewer inputs.
+export function buildReviewerInputs(params: {
+  row: ShadowSourceRow;
+  context: JsonRecord;
+  similarCases: HistoricalRow[];
+}): { evidence: CandidateEvidence[]; candidates: ShadowCandidate[]; payload: AiReviewerPayload } {
+  const { row, context, similarCases } = params;
+  const metrics = record(context.metrics);
+  const economics = record(context.economics);
+  const currentBid = finite(row.old_value);
+  const averageCpc = finite(metrics.avg_cpc, currentBid);
+  const ruleBid = finite(row.system_suggested_value, currentBid);
+  const campaignType = row.campaign_type.toUpperCase();
+
+  const evidence = summarizeEvidence(similarCases);
+  const rawMaxBid = finite(economics.max_bid);
+  const maxBid = rawMaxBid > 0 && campaignType.startsWith("SB") ? rawMaxBid * 0.8 : rawMaxBid;
+
+  const candidates = buildShadowCandidates({
+    currentBid,
+    averageCpc,
+    ruleBid,
+    ruleDirection: directionFor(row),
+    maxBid: maxBid || null,
+    evidence,
+    minimumEvidence: 20,
+  });
+
+  const payload = buildAiReviewerPayload({
+    row,
+    context,
+    candidates,
+    evidence,
+    effectiveMaxBid: maxBid || null,
+  });
+
+  return { evidence, candidates, payload };
+}
+
 export async function runAiReviewerShadowDecisions(options: {
   storeId?: string | null;
   limit?: number;
@@ -282,44 +336,9 @@ export async function runAiReviewerShadowDecisions(options: {
 
   for (const row of rows) {
     const context = parseContext(row.context);
-    const metrics = record(context.metrics);
-    const economics = record(context.economics);
     const currentBid = finite(row.old_value);
-    const averageCpc = finite(metrics.avg_cpc, currentBid);
-    const ruleBid = finite(row.system_suggested_value, currentBid);
-    const target = record(context.target);
-    const campaignType = row.campaign_type.toUpperCase();
-    const productType = String(target.product_type || "").toLowerCase();
-
-    const similarCases = historicalRows.filter((historical) => {
-      if (historical.store_id !== row.store_id) return false;
-      if (historical.campaign_type !== row.campaign_type || historical.match_type !== row.match_type) return false;
-      if (!productType) return true;
-      const historicalContext = historical.context ? parseContext(historical.context) : {};
-      return String(record(historicalContext.target).product_type || "").toLowerCase() === productType;
-    });
-
-    const evidence = summarizeEvidence(similarCases);
-    const rawMaxBid = finite(economics.max_bid);
-    const maxBid = rawMaxBid > 0 && campaignType.startsWith("SB") ? rawMaxBid * 0.8 : rawMaxBid;
-
-    const candidates = buildShadowCandidates({
-      currentBid,
-      averageCpc,
-      ruleBid,
-      ruleDirection: directionFor(row),
-      maxBid: maxBid || null,
-      evidence,
-      minimumEvidence: 20,
-    });
-
-    const payload = buildAiReviewerPayload({
-      row,
-      context,
-      candidates,
-      evidence,
-      effectiveMaxBid: maxBid || null,
-    });
+    const similarCases = selectSimilarCases(row, context, historicalRows);
+    const { evidence, candidates, payload } = buildReviewerInputs({ row, context, similarCases });
 
     // Check if we should short-circuit when zero evidence exists
     const hasAnyEvidence = evidence.some((e) => e.sampleCount > 0);

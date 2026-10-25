@@ -18,3 +18,6 @@ __pycache__/
 *.pyc
 .agents/
 config/helium10-cookies.json
+
+# PPC reviewer harness replay datasets, response cache and reports (contain store data)
+output/ppc-harness/
