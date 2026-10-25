@@ -1027,7 +1027,9 @@ export function ListingWorkspace({
     try {
       const url = new URL(window.location.href);
       const urlView = url.searchParams.get("view") as WorkspaceView | null;
-      const urlSection = url.searchParams.get("section") as PpcSection | null;
+      const rawSection = url.searchParams.get("section");
+      const normalizedPpcSection = (rawSection === "scale_kw" ? "sale_kw" : rawSection) as PpcSection | null;
+      const urlSection = normalizedPpcSection;
       const urlTab = url.searchParams.get("tab") as PpcDashboardTab | null;
       const savedView = localStorage.getItem("nce_last_active_view") as WorkspaceView | null;
       const savedSection = localStorage.getItem("nce_last_ppc_section") as PpcSection | null;
@@ -1080,11 +1082,13 @@ export function ListingWorkspace({
               effectiveAccSection === "revenue" ||
               effectiveAccSection === "costs" ||
               effectiveAccSection === "amazon_fees" ||
-              effectiveAccSection === "ads"
+              effectiveAccSection === "ads" ||
+              effectiveAccSection === "pnl" ||
+              effectiveAccSection === "financials"
             ) {
               setAccountingSection("financials");
-              setAccountingSubTab(effectiveAccSection);
-            } else if (effectiveAccSection === "pnl" || effectiveAccSection === "settlements") {
+              setAccountingSubTab(effectiveAccSection === "pnl" ? "fba" : effectiveAccSection);
+            } else if (effectiveAccSection === "settlements") {
               setAccountingSection("reports");
               setAccountingSubTab(effectiveAccSection);
             } else {

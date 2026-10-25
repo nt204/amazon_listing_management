@@ -155,6 +155,21 @@ export function PpcSaleKwView({
   // 0. Sub-tab state
   const [subTab, setSubTab] = useState<"candidates" | "registry">("candidates");
 
+  // Restore subtab or open history drawer from URL search parameters on mount
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const p = new URLSearchParams(window.location.search);
+    const st = p.get("subtab");
+    if (st === "registry" || st === "hub") {
+      setSubTab("registry");
+    } else if (st === "candidates") {
+      setSubTab("candidates");
+    }
+    if (p.get("drawer") === "history" || p.get("history") === "1" || p.get("action_queue") === "1") {
+      if (onOpenActionQueue) onOpenActionQueue();
+    }
+  }, [onOpenActionQueue]);
+
   // Registry state
   const [registryItems, setRegistryItems] = useState<SaleKwRegistryItem[]>([]);
   const [registrySummary, setRegistrySummary] = useState<{

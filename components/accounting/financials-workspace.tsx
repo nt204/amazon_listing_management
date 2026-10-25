@@ -39,6 +39,11 @@ export type FinancialsSubTab = "sku_win" | "sku_test" | "fba";
 export function FinancialsWorkspace() {
   const [activeTab, setActiveTab] = useState<FinancialsSubTab>(() => {
     if (typeof window !== "undefined") {
+      const p = new URLSearchParams(window.location.search);
+      const urlSubTab = p.get("subtab");
+      if (urlSubTab === "sku_win" || urlSubTab === "sku_test" || urlSubTab === "fba") {
+        return urlSubTab;
+      }
       const saved = window.sessionStorage.getItem("accounting_financials_sub_tab") as FinancialsSubTab;
       if (saved === "sku_win" || saved === "sku_test" || saved === "fba") {
         return saved;

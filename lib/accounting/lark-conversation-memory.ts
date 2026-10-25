@@ -1,6 +1,7 @@
 import "server-only";
 
-import { getRedisClient } from "@/lib/redis";
+import { getReadyRedisClient, getRedisClient } from "@/lib/redis";
+import type { PpcRecommendation } from "@/lib/ppc/types";
 
 export interface ConversationTurn {
   role: "user" | "assistant";
@@ -90,6 +91,8 @@ export async function saveConversationTurn(
 }
 
 export interface PendingNegativeItem {
+  storeId?: string;
+  storeName?: string;
   keyword: string;
   campaignName: string;
   campaignId?: string;
@@ -102,15 +105,49 @@ export interface PendingNegativeItem {
   reason?: string;
 }
 
+export interface PendingSaleKwItem {
+  storeId?: string;
+  storeName?: string;
+  keyword: string;
+  sku: string;
+  orders: number;
+  clicks: number;
+  spend: number;
+  sales: number;
+  cpc?: number;
+  bid?: number;
+  sourceCampaignName?: string;
+  sourceCampaignId?: string;
+  sourceAdGroupId?: string;
+  sourceAdGroupName?: string;
+}
+
+export interface PendingBidItem {
+  recommendation: PpcRecommendation;
+  finalBid: number | null; // null = pause target
+  bidSource: "RULE_ENGINE" | "USER_EDIT" | "AI_AGENT";
+}
+
 export interface PendingPpcAction {
-  action: "NEGATIVE_KEYWORD";
+  action: "NEGATIVE_KEYWORD" | "LAUNCH_SALE_KW" | "AUTO_BID";
   storeId: string;
   storeName: string;
+  // Dành cho NEGATIVE_KEYWORD
   campaignName?: string;
   keyword?: string; // Tương thích ngược với 1 từ khóa
-  matchType: string;
+  matchType?: string;
   reason?: string;
   items?: PendingNegativeItem[]; // Hỗ trợ 1 hoặc nhiều từ khóa cùng lúc
+  // Dành cho LAUNCH_SALE_KW
+  saleKwItems?: PendingSaleKwItem[];
+  campaignTriads?: Array<{ sku: string; exact: string; phrase: string; broad: string; keywordsCount: number }>;
+  dailyBudget?: number;
+  defaultBid?: number;
+  userName?: string;
+  dateStr?: string;
+  negateInSource?: boolean;
+  // Dành cho AUTO_BID
+  bidItems?: PendingBidItem[];
   createdAt: number;
 }
 
@@ -119,6 +156,49 @@ const inMemoryPendingActions = new Map<string, { action: PendingPpcAction; expir
 
 // Cache danh sách Search Terms vừa gợi ý gần đây nhất để hỗ trợ người dùng chọn theo STT (ví dụ: "phủ định từ số 1, 3")
 const inMemoryCandidateCache = new Map<string, { items: PendingNegativeItem[]; expiresAt: number }>();
+const inMemorySaleKwCache = new Map<string, { items: PendingSaleKwItem[]; expiresAt: number }>();
+const inMemoryBidRecCache = new Map<string, { items: PpcRecommendation[]; expiresAt: number }>();
+
+/**
+ * Lưu danh sách đề xuất Auto Bid vừa hiển thị để người dùng chọn theo STT
+ */
+export async function setLastBidRecommendations(sessionId: string, items: PpcRecommendation[]): Promise<void> {
+  if (!sessionId) return;
+  const redis = getRedisClient();
+  if (redis) {
+    try {
+      await redis.setex(`lark:last_bid_recs:${sessionId}`, PENDING_ACTION_TTL_SECONDS, JSON.stringify(items));
+      return;
+    } catch (err) {
+      console.warn("[LarkMemory] Redis setLastBidRecommendations error:", err);
+    }
+  }
+
+  inMemoryBidRecCache.set(sessionId, {
+    items,
+    expiresAt: Date.now() + PENDING_ACTION_TTL_SECONDS * 1000,
+  });
+}
+
+/**
+ * Lấy danh sách đề xuất Auto Bid vừa hiển thị
+ */
+export async function getLastBidRecommendations(sessionId: string): Promise<PpcRecommendation[]> {
+  if (!sessionId) return [];
+  const redis = getRedisClient();
+  if (redis) {
+    try {
+      const data = await redis.get(`lark:last_bid_recs:${sessionId}`);
+      if (data) return JSON.parse(data) as PpcRecommendation[];
+    } catch (err) {
+      console.warn("[LarkMemory] Redis getLastBidRecommendations error:", err);
+    }
+  }
+
+  const cached = inMemoryBidRecCache.get(sessionId);
+  if (cached && cached.expiresAt > Date.now()) return cached.items;
+  return [];
+}
 
 /**
  * Lưu danh sách Search Terms vừa gợi ý để hỗ trợ người dùng chọn theo STT
@@ -163,6 +243,55 @@ export async function getLastListedCandidates(sessionId: string): Promise<Pendin
   }
 
   const cached = inMemoryCandidateCache.get(sessionId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.items;
+  }
+  return [];
+}
+
+/**
+ * Lưu danh sách Sale KW Search Terms vừa gợi ý để chọn theo STT
+ */
+export async function setLastSaleKwCandidates(sessionId: string, items: PendingSaleKwItem[]): Promise<void> {
+  if (!sessionId) return;
+  const redis = getRedisClient();
+  if (redis) {
+    try {
+      await redis.setex(
+        `lark:last_sale_kw:${sessionId}`,
+        PENDING_ACTION_TTL_SECONDS,
+        JSON.stringify(items)
+      );
+      return;
+    } catch (err) {
+      console.warn("[LarkMemory] Redis setLastSaleKwCandidates error:", err);
+    }
+  }
+
+  inMemorySaleKwCache.set(sessionId, {
+    items,
+    expiresAt: Date.now() + PENDING_ACTION_TTL_SECONDS * 1000,
+  });
+}
+
+/**
+ * Lấy danh sách Sale KW Search Terms vừa gợi ý
+ */
+export async function getLastSaleKwCandidates(sessionId: string): Promise<PendingSaleKwItem[]> {
+  if (!sessionId) return [];
+  const redis = getRedisClient();
+  if (redis) {
+    try {
+      const data = await redis.get(`lark:last_sale_kw:${sessionId}`);
+      if (data) {
+        return JSON.parse(data) as PendingSaleKwItem[];
+      }
+    } catch (err) {
+      console.warn("[LarkMemory] Redis getLastSaleKwCandidates error:", err);
+    }
+  }
+
+  const cached = inMemorySaleKwCache.get(sessionId);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.items;
   }
@@ -234,6 +363,24 @@ export async function clearPendingAction(sessionId: string): Promise<void> {
   inMemoryPendingActions.delete(sessionId);
 }
 
+/**
+ * Giành quyền thực thi thao tác chờ: xóa nguyên tử, chỉ một lần xác nhận (bấm nút 2 lần, Lark gửi lại sự kiện) được chạy.
+ */
+export async function claimPendingAction(sessionId: string): Promise<boolean> {
+  if (!sessionId) return false;
+  const redis = getRedisClient();
+  if (redis) {
+    try {
+      const deleted = await redis.del(`lark:pending_action:${sessionId}`);
+      inMemoryPendingActions.delete(sessionId);
+      return deleted > 0;
+    } catch (err) {
+      console.warn("[LarkMemory] Redis claimPendingAction error, using in-memory:", err);
+    }
+  }
+  return inMemoryPendingActions.delete(sessionId);
+}
+
 // In-memory map để deduplicate tin nhắn tránh race condition & lặp lại
 const inMemoryProcessedMessages = new Map<string, number>();
 
@@ -260,9 +407,10 @@ export async function checkAndMarkMessageProcessed(messageId: string): Promise<b
     }
   }
 
-  // 2. Ghi tiếp vào Redis phân tán nếu client đã sẵn sàng
-  const redis = getRedisClient();
-  if (redis && redis.status === "ready") {
+  // 2. Luôn chờ lần kết nối Redis ban đầu hoàn tất. Webhook và WSS có thể là
+  // hai process khác nhau, nên chỉ dựa vào Map trong process sẽ vẫn trả lời đôi.
+  const redis = await getReadyRedisClient();
+  if (redis) {
     try {
       const res = await redis.set(`lark:msg_dedup:${messageId}`, "1", "EX", 600, "NX");
       if (res === null) {
@@ -275,5 +423,4 @@ export async function checkAndMarkMessageProcessed(messageId: string): Promise<b
 
   return false;
 }
-
 
