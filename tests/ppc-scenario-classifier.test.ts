@@ -215,3 +215,20 @@ test("performHierarchicalRetrieval fallbacks to Level C when Product Type is spa
   assert.equal(res.specificity, "BROAD");
   assert.equal(res.sampleCount, 22);
 });
+
+test("deriveTargetScenario: no-order rules are classified by clicks, not by the rule name or reason text", () => {
+  const lowTraffic = deriveTargetScenario({
+    clicks: 0,
+    orders: 0,
+    spend: 0,
+    sales: 0,
+    reason: "[SP03] SP03_NO_ORDER_LOW_TRAFFIC: 0 clicks, không có đơn -> current_bid * 1.05.",
+  });
+  assert.equal(lowTraffic.scenario, "STARVED_TRAFFIC");
+
+  const justBelow = deriveTargetScenario({ clicks: 6, orders: 0, spend: 4, reason: "[SP03] SP03_BLEED_7_CLICKS: 6 clicks, không có đơn" });
+  assert.equal(justBelow.scenario, "STARVED_TRAFFIC");
+
+  const bleeding = deriveTargetScenario({ clicks: 7, orders: 0, spend: 6, reason: "[SP03] SP03_NO_ORDER_LOW_TRAFFIC: 7 clicks, không có đơn" });
+  assert.equal(bleeding.scenario, "ZERO_ORDER_BLEED");
+});

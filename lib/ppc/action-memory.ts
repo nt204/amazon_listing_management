@@ -2,6 +2,7 @@ import "server-only";
 
 import { getDatabaseClient } from "@/lib/db";
 import type { PpcRecommendation } from "./types";
+import { ZERO_ORDER_BLEED_MIN_CLICKS } from "./scenario-classifier";
 
 export const PPC_ACTION_CONTEXT_SCHEMA_VERSION = "v1";
 
@@ -158,8 +159,8 @@ export function buildActionDecisionContext(
   const clicks = Number(rec.clicks || 0);
   let scenario = "OTHER";
   if (orders === 0) {
-    const isBleed = /không có đơn|zero order|bleed|clicks,\s*không có đơn/i.test(rec.reason || "") || clicks >= 7;
-    scenario = isBleed ? "ZERO_ORDER_BLEED" : "STARVED_TRAFFIC";
+    // By traffic, not by reason text: every no-order rule reason contains "không có đơn".
+    scenario = clicks >= ZERO_ORDER_BLEED_MIN_CLICKS ? "ZERO_ORDER_BLEED" : "STARVED_TRAFFIC";
   } else if (acosBeRatio !== null) {
     if (acosBeRatio > 1.0) {
       scenario = "HIGH_ACOS_TRIM";

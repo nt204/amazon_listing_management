@@ -51,6 +51,10 @@ export interface HierarchicalRetrievalOutput {
  * Derives the scenario at action time from recommendation or context snapshot.
  * Single source of truth: respects Rule Engine matched reason, BE ACoS ratio, and click threshold.
  */
+// A zero-order target is "bleeding" only after this many clicks; below it the sample is too small
+// to blame the target (STARVED_TRAFFIC). Same threshold the reviewer prompt uses.
+export const ZERO_ORDER_BLEED_MIN_CLICKS = 7;
+
 export function deriveTargetScenario(input: {
   clicks?: number | null;
   orders?: number | null;
@@ -86,11 +90,13 @@ export function deriveTargetScenario(input: {
     }
   }
 
-  // 1. TOP PRIORITY: Single Source of Truth from Rule Engine (matchedRuleId / reason)
-  if (detectedRuleId) {
-    if (/BLEED|ZERO_ORDER|NO_ORDER/i.test(detectedRuleId)) {
-      scenario = "ZERO_ORDER_BLEED";
-    } else if (/HIGH_ACOS|ABOVE_BE|OVER_BE/i.test(detectedRuleId)) {
+  // 1. Zero-order targets are classified by traffic, not by rule name: every no-order rule reason
+  //    says "không có đơn", including low-traffic rules with 0 clicks.
+  if (orders === 0) {
+    scenario = clicks >= ZERO_ORDER_BLEED_MIN_CLICKS ? "ZERO_ORDER_BLEED" : "STARVED_TRAFFIC";
+  } else if (detectedRuleId) {
+    // 2. Converting targets: the Rule Engine's matched rule is the source of truth.
+    if (/HIGH_ACOS|ABOVE_BE|OVER_BE/i.test(detectedRuleId)) {
       scenario = "HIGH_ACOS_TRIM";
     } else if (/MARGINAL|NEAR_BE/i.test(detectedRuleId)) {
       scenario = "MARGINAL_ACOS";
@@ -99,12 +105,9 @@ export function deriveTargetScenario(input: {
     }
   }
 
-  // 2. FALLBACK to metrics if Rule ID did not classify explicitly
+  // 3. FALLBACK to metrics if Rule ID did not classify explicitly
   if (scenario === "OTHER") {
-    if (orders === 0) {
-      const isExplicitBleed = /không có đơn|zero order|bleed|clicks,\s*không có đơn/i.test(reason) || clicks >= 7;
-      scenario = isExplicitBleed ? "ZERO_ORDER_BLEED" : "STARVED_TRAFFIC";
-    } else if (actualAcos !== null) {
+    if (actualAcos !== null) {
       if (actualAcos > breakEvenAcos) {
         scenario = "HIGH_ACOS_TRIM";
       } else if (actualAcos > targetAcos) {
