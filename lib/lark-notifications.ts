@@ -125,6 +125,21 @@ export async function addLarkMessageReaction(messageId: string, emojiType: strin
   );
 }
 
+/** Creation time (ms) of a Lark message, or null when it cannot be looked up. */
+export async function getLarkMessageCreatedAt(messageId: string): Promise<number | null> {
+  const appId = process.env.LARK_APP_ID?.trim();
+  const appSecret = process.env.LARK_APP_SECRET?.trim();
+  if (!appId || !appSecret || !messageId.trim()) return null;
+
+  const token = await getTenantAccessToken(appId, appSecret);
+  const result = await fetchJson<{ data?: { items?: Array<{ create_time?: string }> } }>(
+    `${LARK_API_BASE_URL}/im/v1/messages/${encodeURIComponent(messageId.trim())}`,
+    { method: "GET", headers: { authorization: `Bearer ${token}` } },
+  );
+  const createdAt = Number(result.data?.items?.[0]?.create_time);
+  return Number.isFinite(createdAt) && createdAt > 0 ? createdAt : null;
+}
+
 let cachedBotOpenId: string | null = null;
 
 /** open_id of this app's bot, used to tell "@bot" apart from mentions of other members. */

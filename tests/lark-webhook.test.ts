@@ -85,3 +85,18 @@ test("group sessions are isolated per member", async () => {
     buildLarkSessionId({ ...base, senderId: "ou_b" }),
   );
 });
+
+test("late Lark redelivery of an old message is not answered", async () => {
+  const { processLarkMessageEvent } = await getModule();
+  const event = groupEvent("@_user_1 doanh thu hôm nay", [BOT_MENTION]);
+  event.message.create_time = String(Date.now() - 3 * 60 * 60 * 1000);
+  // Resolves without reaching Redis: the stale message is dropped before enqueue.
+  await processLarkMessageEvent(event);
+});
+
+test("recent tagged message is still queued", async () => {
+  const { processLarkMessageEvent } = await getModule();
+  const event = groupEvent("@_user_1 doanh thu hôm nay", [BOT_MENTION]);
+  event.message.create_time = String(Date.now() - 60 * 1000);
+  await assert.rejects(processLarkMessageEvent(event), /Redis chưa sẵn sàng/);
+});

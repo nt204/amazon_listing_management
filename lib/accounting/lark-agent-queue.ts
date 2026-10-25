@@ -15,14 +15,28 @@ export interface LarkAgentJob {
   sessionId: string;
   /** Original Lark message to reply to, so answers stay attached to the asker. */
   replyToMessageId?: string;
+  /** When the user sent the Lark message (ms). Stale jobs are dropped by the worker. */
+  messageCreatedAt?: number;
   createdAt: number;
   attempts: number;
 }
 
 export type NewLarkAgentJob = Pick<
   LarkAgentJob,
-  "message" | "receiveId" | "receiveIdType" | "sessionId" | "replyToMessageId"
+  "message" | "receiveId" | "receiveIdType" | "sessionId" | "replyToMessageId" | "messageCreatedAt"
 >;
+
+const DEFAULT_MAX_MESSAGE_AGE_MINUTES = 30;
+
+/** Messages older than this are never answered (Lark keeps retrying failed deliveries for hours). */
+export function larkMessageMaxAgeMs(): number {
+  const minutes = Number(process.env.LARK_AGENT_MAX_MESSAGE_AGE_MINUTES || DEFAULT_MAX_MESSAGE_AGE_MINUTES);
+  return (Number.isFinite(minutes) && minutes > 0 ? minutes : DEFAULT_MAX_MESSAGE_AGE_MINUTES) * 60_000;
+}
+
+export function isStaleLarkMessage(messageCreatedAt: number | undefined, now = Date.now()): boolean {
+  return typeof messageCreatedAt === "number" && messageCreatedAt > 0 && now - messageCreatedAt > larkMessageMaxAgeMs();
+}
 
 export async function enqueueLarkAgentJob(input: NewLarkAgentJob): Promise<LarkAgentJob> {
   const redis = await getReadyRedisClient();
@@ -44,7 +58,8 @@ export async function enqueueLarkAgentJob(input: NewLarkAgentJob): Promise<LarkA
 export async function enqueueLarkAgentJobOnce(
   dedupKey: string,
   input: NewLarkAgentJob,
-  dedupTtlSeconds = 600,
+  // Lark retries failed deliveries for many hours, so remember message ids for a day.
+  dedupTtlSeconds = 24 * 60 * 60,
 ): Promise<{ job: LarkAgentJob; enqueued: boolean }> {
   const redis = await getReadyRedisClient();
   if (!redis) throw new Error("Redis chưa sẵn sàng để nhận Lark agent job.");

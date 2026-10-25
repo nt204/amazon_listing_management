@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getLarkBotOpenId } from "@/lib/lark-notifications";
-import { enqueueLarkAgentJobOnce } from "./lark-agent-queue";
+import { enqueueLarkAgentJobOnce, isStaleLarkMessage } from "./lark-agent-queue";
 
 type LarkMessageEvent = {
   tenant_key?: string;
@@ -15,6 +15,7 @@ type LarkMessageEvent = {
   };
   message?: {
     message_id?: string;
+    create_time?: string;
     chat_id?: string;
     chat_type?: "group" | "p2p" | string;
     message_type?: string;
@@ -147,10 +148,17 @@ export async function processLarkMessageEvent(
     receiveIdType: "chat_id" as const,
     sessionId,
     replyToMessageId: message.message_id,
+    messageCreatedAt: Number(message.create_time) || undefined,
   };
   // Without a message_id Lark retries cannot be told apart, so drop the event
   // rather than risk answering twice.
   if (!message.message_id) return;
+  // Late redeliveries of old messages (e.g. after the endpoint was down) must
+  // not trigger answers to questions asked hours ago.
+  if (isStaleLarkMessage(jobInput.messageCreatedAt)) {
+    console.info(`[LarkWebhook] Bỏ qua tin nhắn cũ ${message.message_id} (gửi lúc ${new Date(jobInput.messageCreatedAt!).toISOString()}).`);
+    return;
+  }
   const result = await enqueueLarkAgentJobOnce(message.message_id, jobInput);
   if (!result.enqueued) {
     console.info(`[LarkWebhook] ACK message trùng: ${message.message_id}`);

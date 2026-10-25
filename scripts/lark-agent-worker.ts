@@ -1,11 +1,16 @@
 import os from "node:os";
 import Redis from "ioredis";
 import { runAccountingAgent } from "../lib/accounting/lark-agent-service";
-import { addLarkMessageReaction, sendLarkTextNotification } from "../lib/lark-notifications";
+import {
+  addLarkMessageReaction,
+  getLarkMessageCreatedAt,
+  sendLarkTextNotification,
+} from "../lib/lark-notifications";
 import {
   LARK_AGENT_FAILED_KEY,
   LARK_AGENT_PROCESSING_KEY,
   LARK_AGENT_QUEUE_KEY,
+  isStaleLarkMessage,
   type LarkAgentJob,
   parseLarkAgentJob,
 } from "../lib/accounting/lark-agent-queue";
@@ -46,6 +51,19 @@ async function finishRaw(raw: string) {
 
 async function processJob(raw: string, job: LarkAgentJob) {
   const startedAt = Date.now();
+  // Jobs queued by an older webhook build carry no timestamp; ask Lark.
+  if (!job.messageCreatedAt && job.replyToMessageId) {
+    job.messageCreatedAt = (await getLarkMessageCreatedAt(job.replyToMessageId).catch(() => null)) ?? undefined;
+  }
+  // A job can sit in the queue (worker down, backlog); never answer a question
+  // the user asked long ago.
+  if (isStaleLarkMessage(job.messageCreatedAt, startedAt)) {
+    await finishRaw(raw);
+    console.warn(`[LarkAgentWorker] Bỏ qua job cũ ${job.id} (message ${job.replyToMessageId || "unknown"}).`);
+    activeSessions.delete(job.sessionId);
+    activeCount -= 1;
+    return;
+  }
   try {
     console.info(
       `[LarkAgentWorker] Start ${job.id} session=${job.sessionId} attempt=${job.attempts + 1}`,
