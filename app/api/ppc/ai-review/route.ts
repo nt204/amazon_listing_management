@@ -9,6 +9,7 @@ import {
 } from "@/lib/ppc/shadow-decision-engine";
 import {
   buildAiReviewerPayload,
+  extractCampaignFamily,
 } from "@/lib/ppc/ai-reviewer-service";
 import {
   invokeAiReviewer,
@@ -92,12 +93,6 @@ function summarizeScenarioEvidence(cases: HistoricalScenarioContext[]): Candidat
 
 import { getSkuEconomicsList, getCostMasters } from "@/lib/ppc/sku-architecture-service";
 import { extractSkuFromText } from "@/lib/ppc/sku-extractor";
-
-function extractCampaignFamily(text: string | undefined, defaultType = "SP03"): string {
-  const match = String(text || "").match(/\b(SP03|SB01|SB05|SP01)\b/i);
-  if (match) return match[1].toUpperCase();
-  return defaultType;
-}
 
 export async function POST(req: Request) {
   try {

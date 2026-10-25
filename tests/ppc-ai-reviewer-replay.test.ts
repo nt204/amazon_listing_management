@@ -204,3 +204,52 @@ test("Scorer: Wilson interval", () => {
   const [low, high] = wilson(5, 10) as [number, number];
   assert.ok(Math.abs(low - 0.2366) < 0.001 && Math.abs(high - 0.7634) < 0.001);
 });
+
+test("Payload: runner rows get campaign family and decision-time economics from the context snapshot", () => {
+  const snapshotRow = row("snap", {
+    campaign_type: "SP",
+    context: {
+      target: { product_type: "Garden Flag Banner", campaign_name: "FL050650 SP03 KW Exact Garden Flag" },
+      metrics: { clicks: 79, orders: 3, spend: 105, sales: 137.6, avg_cpc: 1.33, acos: 76.3 },
+      decision: { reason: "[SP03] SP03_HAS_ORDER_STRONG_DECREASE: ACoS 76.3% vượt ACoS hòa vốn 63.5%", rule_version: "SP03 v1.0" },
+      scenario_at_action: "HIGH_ACOS_TRIM",
+      state_at_action: { scenario: "HIGH_ACOS_TRIM", acos_be_ratio: 1.2, break_even_acos_at_action: 63.5 },
+    },
+  });
+  const { payload } = buildReplayDataset([snapshotRow]).cases[0];
+  assert.equal(payload.target.campaign_type, "SP03");
+  assert.equal(payload.performance.break_even_acos, 63.5);
+  assert.equal(payload.scenario_evaluation.target_scenario, "HIGH_ACOS_TRIM");
+  assert.equal(payload.scenario_evaluation.acos_be_ratio, 1.2);
+});
+
+test("Payload: explicit evaluation wins, unknown numbers stay null instead of 0, SB defaults to SB05", () => {
+  const explicit = row("explicit", {
+    context: {
+      target: { campaign_name: "SP01 Auto" },
+      metrics: { clicks: 10, orders: 0, spend: 8, sales: 0, avg_cpc: 0.8 },
+      economics: { break_even_acos: 40, max_bid: 2 },
+      decision: { reason: "rule" },
+      scenario_evaluation: { target_scenario: "ZERO_ORDER_BLEED", acos_be_ratio: null },
+      state_at_action: { scenario: "OTHER", acos_be_ratio: 9, break_even_acos_at_action: 99 },
+    },
+  });
+  const unknown = row("unknown", {
+    campaign_type: "SB",
+    context: {
+      target: { campaign_name: "Brand video" },
+      metrics: { clicks: 3, orders: 0, spend: 2, sales: 0, avg_cpc: 0.7 },
+      economics: { break_even_acos: null },
+      decision: { reason: "rule" },
+    },
+  });
+  const byId = Object.fromEntries(buildReplayDataset([explicit, unknown]).cases.map((item) => [item.actionId, item.payload]));
+  assert.equal(byId.explicit.target.campaign_type, "SP01");
+  assert.equal(byId.explicit.performance.break_even_acos, 40);
+  assert.equal(byId.explicit.scenario_evaluation.target_scenario, "ZERO_ORDER_BLEED");
+  assert.equal(byId.explicit.scenario_evaluation.acos_be_ratio, 9);
+  assert.equal(byId.unknown.target.campaign_type, "SB05");
+  assert.equal(byId.unknown.performance.break_even_acos, null);
+  assert.equal(byId.unknown.scenario_evaluation.acos_be_ratio, null);
+  assert.equal(byId.unknown.scenario_evaluation.target_scenario, "OTHER");
+});

@@ -62,6 +62,23 @@ export function finite(value: unknown, fallback = 0): number {
   return Number.isFinite(number) ? number : fallback;
 }
 
+// Treats null/undefined/"" as missing; Number(null) would otherwise turn an unknown value into 0.
+function optionalNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    if (value === null || value === undefined || value === "") continue;
+    const number = Number(value);
+    if (Number.isFinite(number)) return number;
+  }
+  return null;
+}
+
+/** Campaign architecture (SP01/SP03/SB01/SB05) from rule profile, reason or campaign name; ad type alone is "SP"/"SB". */
+export function extractCampaignFamily(text: string | undefined, defaultType = "SP03"): string {
+  const match = String(text || "").match(/\b(SP03|SB01|SB05|SP01)\b/i);
+  if (match) return match[1].toUpperCase();
+  return defaultType;
+}
+
 function toJsonValue(value: unknown): JsonValue {
   return JSON.parse(JSON.stringify(value)) as JsonValue;
 }
@@ -131,6 +148,8 @@ export function buildAiReviewerPayload(params: {
   const economics = record(context.economics);
   const decision = record(context.decision);
   const scenarioEvaluation = record(context.scenario_evaluation);
+  // Decision-time snapshot written by action memory; used when no explicit evaluation was supplied.
+  const stateAtAction = record(context.state_at_action);
 
   const clicks = finite(metrics.clicks);
   const orders = finite(metrics.orders);
@@ -172,7 +191,10 @@ export function buildAiReviewerPayload(params: {
 
   return {
     target: {
-      campaign_type: row.campaign_type,
+      campaign_type: extractCampaignFamily(
+        `${decision.rule_version || ""} ${decision.reason || ""} ${target.campaign_name || ""}`,
+        row.campaign_type.toUpperCase().startsWith("SB") ? "SB05" : "SP03",
+      ),
       match_type: row.match_type,
       product_type: String(target.product_type || "GENERIC"),
       campaign_name: String(target.campaign_name || ""),
@@ -190,9 +212,9 @@ export function buildAiReviewerPayload(params: {
       spend,
       sales,
       actual_acos: Number.isFinite(Number(metrics.acos)) ? Number(metrics.acos) : null,
-      break_even_acos: Number.isFinite(Number(economics.break_even_acos)) ? Number(economics.break_even_acos) : null,
-      selling_price: Number.isFinite(Number(economics.selling_price)) ? Number(economics.selling_price) : null,
-      profit_before_ads: Number.isFinite(Number(economics.profit_before_ads)) ? Number(economics.profit_before_ads) : null,
+      break_even_acos: optionalNumber(economics.break_even_acos, stateAtAction.break_even_acos_at_action),
+      selling_price: optionalNumber(economics.selling_price),
+      profit_before_ads: optionalNumber(economics.profit_before_ads),
     },
     rule_evaluation: {
       branch: orders > 0 ? "HAS_ORDER" : "NO_ORDER",
@@ -203,10 +225,10 @@ export function buildAiReviewerPayload(params: {
       rule_direction: ruleDir,
     },
     scenario_evaluation: {
-      target_scenario: String(scenarioEvaluation.target_scenario || "OTHER"),
-      acos_be_ratio: Number.isFinite(Number(scenarioEvaluation.acos_be_ratio))
-        ? Number(scenarioEvaluation.acos_be_ratio)
-        : null,
+      target_scenario: String(
+        scenarioEvaluation.target_scenario || context.scenario_at_action || stateAtAction.scenario || "OTHER",
+      ),
+      acos_be_ratio: optionalNumber(scenarioEvaluation.acos_be_ratio, stateAtAction.acos_be_ratio),
       retrieval_level: String(
         scenarioEvaluation.retrieval_level || (inferredSampleCount >= 20 ? "LEGACY_EVIDENCE" : "INSUFFICIENT"),
       ),
