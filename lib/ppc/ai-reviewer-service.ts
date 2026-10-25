@@ -11,10 +11,10 @@ import {
   invokeAiReviewer,
   PPC_AI_REVIEWER_AGENT_VERSION,
   PPC_AI_REVIEWER_POLICY_VERSION,
-  PPC_AI_REVIEWER_PROMPT_VERSION,
   type AiReviewerPayload,
   type AvailableCandidateView,
 } from "./ai-reviewer";
+import { BASELINE_HARNESS, type ReviewerHarness } from "./ai-reviewer-harness";
 
 type JsonRecord = Record<string, unknown>;
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
@@ -234,12 +234,14 @@ export async function runAiReviewerShadowDecisions(options: {
   apply?: boolean;
   model?: string;
   skipLlmIfNoEvidence?: boolean;
+  harness?: ReviewerHarness;
 } = {}) {
   const sql = await getDatabaseClient();
   const storeId = options.storeId || null;
   const limit = Math.max(1, Math.min(100, Math.floor(options.limit || 5)));
   const agentVersion = PPC_AI_REVIEWER_AGENT_VERSION;
   const policyVersion = PPC_AI_REVIEWER_POLICY_VERSION;
+  const harness = options.harness || BASELINE_HARNESS;
 
   const rows = await sql<ShadowSourceRow[]>`
     SELECT action.id AS action_id, action.store_id, action.campaign_id, action.campaign_type,
@@ -326,7 +328,7 @@ export async function runAiReviewerShadowDecisions(options: {
     if (options.skipLlmIfNoEvidence && !hasAnyEvidence) {
       const ruleCandidateId = payload.rule_evaluation.rule_selected_candidate;
       executionResult = {
-        prompt_version: PPC_AI_REVIEWER_PROMPT_VERSION,
+        prompt_version: harness.version,
         model: options.model || process.env.PPC_AI_REVIEWER_MODEL || "gpt-5.6-terra",
         agent_version: agentVersion,
         policy_version: policyVersion,
@@ -354,6 +356,7 @@ export async function runAiReviewerShadowDecisions(options: {
     } else {
       executionResult = await invokeAiReviewer(payload, {
         model: options.model,
+        harness,
       });
     }
 
