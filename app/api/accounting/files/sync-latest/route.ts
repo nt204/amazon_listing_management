@@ -21,14 +21,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = await syncLatestFilesForAllStores(type as any);
-
-    if (type === "02_ALL_ORDERS" || type === "05_CAMPAIGNS") {
-      const { reportDailyBusinessData } = await import("@/lib/accounting/daily-business-reporter");
-      void reportDailyBusinessData({ teamId: "default", actorId: "system" }).catch((err) =>
-        console.warn("[syncLatestFilesForAllStores] Báo cáo ngày tự động gặp lỗi:", err)
-      );
-    }
+    const result = await syncLatestFilesForAllStores(
+      type as "07_SHIPMENTS" | "02_ALL_ORDERS" | "05_CAMPAIGNS" | "01_PORTFOLIOS" | "03_RETURNS" | "04_SERVICE_FEES",
+    );
 
     const typeLabel =
       type === "07_SHIPMENTS"
@@ -46,10 +41,10 @@ export async function POST(request: NextRequest) {
       ...result,
       message,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("POST /api/accounting/files/sync-latest error:", error);
     return NextResponse.json(
-      { error: error.message || "Lỗi khi đồng bộ file mới nhất cho các Store" },
+      { error: error instanceof Error ? error.message : "Lỗi khi đồng bộ file mới nhất cho các Store" },
       { status: 500 }
     );
   }

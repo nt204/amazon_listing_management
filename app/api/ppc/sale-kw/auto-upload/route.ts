@@ -3,6 +3,7 @@ import { getDatabaseClient } from "@/lib/db";
 import { invalidateCachePattern } from "@/lib/redis";
 import { objectStorageDriver, putStoredObject, r2KeyPrefix } from "@/lib/object-storage";
 import { exportSaleKwBulksheetExcel, type SaleKwCampaignPayload } from "@/lib/ppc/service";
+import { assertActorPpcStoreActionAccess } from "@/lib/ppc/store-user-access";
 import {
   isAsinProductTarget,
   generateSaleKwCampaignTriad,
@@ -128,6 +129,9 @@ export async function POST(request: Request) {
 
     const storeId = storeRow.id;
     const storeName = storeRow.name;
+
+    // Kiểm tra quyền phụ trách store: Chỉ người được phân quyền phụ trách store mới có thể action lên camp Sale KW
+    await assertActorPpcStoreActionAccess(actor.teamId, actor.userId, storeId);
 
     // Cross-validate that all items actually belong to this resolved store
     const conflictingItem = rawItems.find((item) => {

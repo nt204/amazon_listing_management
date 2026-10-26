@@ -197,6 +197,37 @@ export async function resolveLarkRecipients(
   const isSystemActor = scope.actorId === "system" || scope.actorId === "worker";
 
   const ppcStoreId = options.ppcStoreId?.trim() || null;
+
+  if (category === "ppc") {
+    // Thông báo Action PPC: Chỉ thông báo cho CHÍNH người thực hiện action (nếu có thiết lập Lark + nhận PPC)
+    // VÀ người đó phải được phân quyền phụ trách store đó (hoặc là admin).
+    // Tuyệt đối không gửi cho người khác, không gửi vào nhóm chat.
+    const rows = await sql<Array<{ receive_id: string; receive_id_type: string }>>`
+      SELECT connection.receive_id, connection.receive_id_type
+      FROM lark_user_connections connection
+      JOIN app_users app_user
+        ON app_user.team_id = connection.team_id AND app_user.user_id = connection.actor_id
+      LEFT JOIN lark_notification_preferences preference
+        ON preference.team_id = connection.team_id AND preference.actor_id = connection.actor_id
+        AND preference.category = 'ppc'
+      WHERE connection.team_id = ${scope.teamId}
+        AND connection.actor_id = ${actorId}
+        AND connection.enabled = TRUE
+        AND COALESCE(preference.personal_enabled, FALSE) = TRUE
+        AND (
+          ${ppcStoreId}::uuid IS NULL
+          OR EXISTS (
+            SELECT 1 FROM ppc_store_user_access access
+            WHERE access.team_id = ${scope.teamId}
+              AND access.store_id = ${ppcStoreId}::uuid
+              AND access.actor_id = ${actorId}
+              AND access.receive_action_notifications = TRUE
+          )
+        )
+    `;
+    return rows;
+  }
+
   const rows = await sql<Array<{ receive_id: string; receive_id_type: string }>>`
     SELECT connection.receive_id, connection.receive_id_type
     FROM lark_user_connections connection
@@ -205,17 +236,8 @@ export async function resolveLarkRecipients(
       AND preference.category = ${category}
     WHERE connection.team_id = ${scope.teamId}
       AND (
-        (${ppcStoreId}::uuid IS NOT NULL AND connection.actor_id IN (
-          SELECT access.actor_id FROM ppc_store_user_access access
-          WHERE access.team_id = ${scope.teamId} AND access.store_id = ${ppcStoreId}::uuid
-            AND access.receive_action_notifications = TRUE
-        ))
-        OR (${ppcStoreId}::uuid IS NULL AND (
-          connection.actor_id = ${actorId}
-          OR (${isSystemActor} AND connection.actor_id IN (
-            SELECT user_id FROM app_users WHERE team_id = ${scope.teamId} AND role = 'admin' AND status = 'approved'
-          ))
-        ))
+        connection.actor_id = ${actorId}
+        OR ${isSystemActor}
       )
       AND connection.enabled = TRUE AND COALESCE(preference.personal_enabled, FALSE) = TRUE
     UNION

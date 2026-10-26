@@ -4,12 +4,13 @@ import {
   approveRecommendationsToActionQueue,
   getActionQueue,
   getActionQueueCount,
-  removeActionFromQueue,
   removeActionsFromQueue,
   resolveStoreId,
   updateActionBid,
   updateActionsBids,
 } from "@/lib/ppc/sku-architecture-service";
+import { getDatabaseClient } from "@/lib/db";
+import { assertActorPpcStoreActionAccess } from "@/lib/ppc/store-user-access";
 
 export const runtime = "nodejs";
 
@@ -61,6 +62,19 @@ export async function POST(request: Request) {
       ? "ALL"
       : await resolveStoreId(storeTarget);
 
+    if (storeId && storeId !== "ALL") {
+      await assertActorPpcStoreActionAccess(actor.teamId, actor.userId, storeId);
+    } else {
+      const distinctStoreTargets = new Set<string>();
+      for (const item of items) {
+        const sTarget = item?.recommendation?.storeId || item?.recommendation?.storeName;
+        if (sTarget && sTarget !== "ALL") distinctStoreTargets.add(String(sTarget).trim());
+      }
+      for (const target of distinctStoreTargets) {
+        await assertActorPpcStoreActionAccess(actor.teamId, actor.userId, target);
+      }
+    }
+
     const defaultApprovedBy = actor.displayName || actor.userId || "User";
     const res = await approveRecommendationsToActionQueue(storeId, items, defaultApprovedBy);
     return Response.json({
@@ -75,7 +89,7 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    await authorize(request, "write", "ppc");
+    const actor = await authorize(request, "write", "ppc");
     const { searchParams } = new URL(request.url);
     const storeTarget = searchParams.get("storeId") || searchParams.get("storeName");
     const isAllStores = !storeTarget || storeTarget === "ALL";
@@ -91,7 +105,7 @@ export async function DELETE(request: Request) {
       if (body?.mode === "ALL_FILTERED") {
         isAllFiltered = true;
         if (Array.isArray(body?.excludedIds)) {
-          excludedIds = body.excludedIds.map((s: any) => String(s).trim()).filter(Boolean);
+          excludedIds = body.excludedIds.map((s: unknown) => String(s).trim()).filter(Boolean);
         }
         skuFilter = body?.filters?.sku || body?.sku;
       } else if (Array.isArray(body?.actionIds)) {
@@ -102,6 +116,10 @@ export async function DELETE(request: Request) {
         bodyActionIds = [body.actionId];
       }
     } catch { }
+
+    if (storeId && storeId !== "ALL") {
+      await assertActorPpcStoreActionAccess(actor.teamId, actor.userId, storeId);
+    }
 
     if (isAllFiltered) {
       const count = await removeActionsFromQueue(storeId, [], {
@@ -127,6 +145,16 @@ export async function DELETE(request: Request) {
       throw new ApiError("Thiếu actionId hoặc actionIds cần xóa.", 400);
     }
 
+    if (storeId === "ALL") {
+      const sql = await getDatabaseClient();
+      const actionStoreRows = await sql<{ store_id: string }[]>`
+        SELECT DISTINCT store_id FROM ppc_actions WHERE id = ANY(${actionIds})
+      `;
+      for (const row of actionStoreRows) {
+        await assertActorPpcStoreActionAccess(actor.teamId, actor.userId, row.store_id);
+      }
+    }
+
     const count = await removeActionsFromQueue(storeId, actionIds);
     return Response.json({
       success: true,
@@ -140,7 +168,7 @@ export async function DELETE(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    await authorize(request, "write", "ppc");
+    const actor = await authorize(request, "write", "ppc");
     enforceRequestSize(request);
 
     const body = await request.json();
@@ -150,8 +178,22 @@ export async function PATCH(request: Request) {
     const isAllStores = !storeTarget || storeTarget === "ALL";
     const storeId = isAllStores ? "ALL" : await resolveStoreId(storeTarget);
 
+    if (storeId && storeId !== "ALL") {
+      await assertActorPpcStoreActionAccess(actor.teamId, actor.userId, storeId);
+    }
+
     // Support batch updates: { updates: [{ id, finalValue }] }
     if (Array.isArray(body?.updates) && body.updates.length > 0) {
+      if (storeId === "ALL") {
+        const sql = await getDatabaseClient();
+        const actionIds = body.updates.map((u: { id: string }) => u.id);
+        const actionStoreRows = await sql<{ store_id: string }[]>`
+          SELECT DISTINCT store_id FROM ppc_actions WHERE id = ANY(${actionIds})
+        `;
+        for (const row of actionStoreRows) {
+          await assertActorPpcStoreActionAccess(actor.teamId, actor.userId, row.store_id);
+        }
+      }
       const res = await updateActionsBids(storeId, body.updates);
       return Response.json({
         success: true,
@@ -166,6 +208,16 @@ export async function PATCH(request: Request) {
 
     if (!actionId || finalValue === undefined || finalValue === null) {
       throw new ApiError("Thiếu actionId hoặc giá trị bid mới (finalValue).", 400);
+    }
+
+    if (storeId === "ALL") {
+      const sql = await getDatabaseClient();
+      const actionStoreRows = await sql<{ store_id: string }[]>`
+        SELECT store_id FROM ppc_actions WHERE id = ${actionId} LIMIT 1
+      `;
+      if (actionStoreRows.length > 0) {
+        await assertActorPpcStoreActionAccess(actor.teamId, actor.userId, actionStoreRows[0].store_id);
+      }
     }
 
     const res = await updateActionBid(storeId, String(actionId), Number(finalValue));

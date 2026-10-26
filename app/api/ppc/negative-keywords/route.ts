@@ -1,6 +1,6 @@
-// app/api/ppc/negative-keywords/route.ts
-import { ApiError, authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
+import { ApiError, authorize, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
+import { assertActorPpcStoreActionAccess } from "@/lib/ppc/store-user-access";
 
 export const runtime = "nodejs";
 
@@ -112,12 +112,12 @@ export async function DELETE(request: Request) {
         isAllFiltered = true;
         filters = body.filters || {};
         if (Array.isArray(body.excludedIds)) {
-          excludedIds = body.excludedIds.map((s: any) => String(s).trim()).filter(Boolean);
+          excludedIds = body.excludedIds.map((s: unknown) => String(s).trim()).filter(Boolean);
         }
       } else if (body?.selectedIds && Array.isArray(body.selectedIds)) {
-        ids = body.selectedIds.map((s: any) => String(s).trim()).filter(Boolean);
+        ids = body.selectedIds.map((s: unknown) => String(s).trim()).filter(Boolean);
       } else if (body?.ids && Array.isArray(body.ids)) {
-        ids = body.ids.map((s: any) => String(s).trim()).filter(Boolean);
+        ids = body.ids.map((s: unknown) => String(s).trim()).filter(Boolean);
       } else if (body?.id) {
         ids = [String(body.id).trim()];
       }
@@ -130,6 +130,12 @@ export async function DELETE(request: Request) {
       const storeName = filters.storeName?.trim() || "";
       const adType = filters.adType?.trim().toUpperCase() || "";
       const search = filters.search?.trim().toLowerCase() || "";
+
+      if (storeId && storeId !== "ALL") {
+        await assertActorPpcStoreActionAccess(actor.teamId, actor.userId, storeId);
+      } else if (storeName && storeName !== "ALL") {
+        await assertActorPpcStoreActionAccess(actor.teamId, actor.userId, storeName);
+      }
 
       const result = await sql`
         DELETE FROM ppc_negative_registry
@@ -156,6 +162,16 @@ export async function DELETE(request: Request) {
 
     if (ids.length === 0) {
       throw new ApiError("Vui lòng cung cấp ít nhất một ID cần xóa.", 400);
+    }
+
+    const storeRows = await sql<{ store_id: string }[]>`
+      SELECT DISTINCT store_id FROM ppc_negative_registry
+      WHERE id = ANY(${ids}::uuid[]) AND team_id = ${actor.teamId}
+    `;
+    for (const row of storeRows) {
+      if (row.store_id) {
+        await assertActorPpcStoreActionAccess(actor.teamId, actor.userId, row.store_id);
+      }
     }
 
     const result = await sql`

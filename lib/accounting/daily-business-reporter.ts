@@ -6,7 +6,6 @@ import sharp from "sharp";
 import {
   notifyLarkEventBestEffort,
   sendLarkCardNotification,
-  sendLarkImageNotification,
   uploadLarkImage,
 } from "@/lib/lark-notifications";
 
@@ -154,23 +153,15 @@ export async function reportDailyBusinessData(
     return { success: false, reportedDate: null, message: "Chưa có dữ liệu ngày hợp lệ trong hệ thống." };
   }
 
-  // 2. Kiểm tra xem ngày mới nhất này đã được báo cáo chưa (tránh spam lặp lại)
+  // 2. Chế độ tự động broadcast báo cáo kế toán hàng ngày qua Lark đã được tắt theo cấu hình.
+  // Chỉ gửi khi được kích hoạt thủ công (force = true) hoặc gửi cho đích danh recipient.
   const settingKey = `lark_accounting_last_reported_date:${scope.teamId}`;
   if (!options.force && !options.recipient) {
-    const settingRows = await sql<Array<{ value: any }>>`
-      SELECT value FROM app_settings
-      WHERE key = ${settingKey}
-      LIMIT 1
-    `;
-    const val = settingRows[0]?.value;
-    const lastReportedDate = typeof val === "string" ? val : val?.date;
-    if (lastReportedDate === latestDate) {
-      return {
-        success: true,
-        reportedDate: latestDate,
-        message: `Dữ liệu ngày ${latestDate} đã được báo cáo trước đó.`,
-      };
-    }
+    return {
+      success: true,
+      reportedDate: latestDate,
+      message: "Chế độ tự động gửi báo cáo kế toán qua Lark đã được tắt theo cấu hình.",
+    };
   }
 
   // 3. Lấy danh sách Store đang hoạt động
@@ -193,10 +184,7 @@ export async function reportDailyBusinessData(
   let totalRev = 0;
   let totalQty = 0;
   let totalAds = 0;
-  let totalBaseCost = 0;
   let totalAmzFee = 0;
-  let totalThue = 0;
-  let totalPromotion = 0;
   let totalRefund = 0;
   let totalProfit = 0;
 
@@ -214,10 +202,7 @@ export async function reportDailyBusinessData(
         totalRev += Number(item.revenue || 0);
         totalQty += Number(item.quantity || 0);
         totalAds += Number(item.ads_fee || 0);
-        totalBaseCost += Number(item.basecost || 0);
         totalAmzFee += Number(item.amazon_fee || 0);
-        totalThue += Number(item.thue || 0);
-        totalPromotion += Number(item.promotion || 0);
         totalRefund += Number(item.return_cost || 0);
         totalProfit += Number(item.profit || 0);
       }
@@ -243,7 +228,7 @@ export async function reportDailyBusinessData(
   const displayDate = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : latestDate;
 
   // Soạn nội dung thông báo bot Lark dạng Card 2.0 (ưu tiên hiển thị bảng ảnh trực quan)
-  const cardElements: any[] = [];
+  const cardElements: Array<Record<string, unknown>> = [];
   if (imageKey) {
     cardElements.push({
       tag: "img",

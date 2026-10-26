@@ -3,6 +3,7 @@ import { getDatabaseClient } from "@/lib/db";
 import { invalidateCachePattern } from "@/lib/redis";
 import { objectStorageDriver, putStoredObject, r2KeyPrefix } from "@/lib/object-storage";
 import { exportBulksheetUpdateExcel } from "@/lib/ppc/service";
+import { assertActorPpcStoreActionAccess } from "@/lib/ppc/store-user-access";
 import type { PpcRecommendation } from "@/lib/ppc/types";
 import crypto from "node:crypto";
 
@@ -114,6 +115,9 @@ export async function POST(request: Request) {
     const storeId = storeRow.id;
     const storeName = storeRow.name;
 
+    // Kiểm tra quyền phụ trách store: Chỉ người được phân quyền phụ trách store mới có thể action phủ định từ khóa
+    await assertActorPpcStoreActionAccess(actor.teamId, actor.userId, storeId);
+
     // Cross-validate that all items actually belong to this resolved store
     const conflictingItem = rawItems.find((item) => {
       if (item.storeId && item.storeId !== storeId && item.storeId !== "ALL") return true;
@@ -213,7 +217,7 @@ export async function POST(request: Request) {
         id: `st-auto-neg-${idx}-${Date.now()}`,
         storeId,
         storeName,
-        adType: (resolvedAdType as any) || "SP",
+        adType: (resolvedAdType as PpcRecommendation["adType"]) || "SP",
         recType: "NEGATIVE_KEYWORD",
         targetType: isProduct ? "PRODUCT" : "EXACT",
         keyword: term,

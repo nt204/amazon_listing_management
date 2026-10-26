@@ -1,5 +1,5 @@
-// app/api/ppc/stores/route.ts
 import { ApiError, authorize, dataScope, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
+import { getDatabaseClient } from "@/lib/db";
 import {
   createPpcStore,
   deletePpcStore,
@@ -18,9 +18,20 @@ const VALID_MARKETPLACES = new Set([
 
 export async function GET(request: Request) {
   try {
-    const scope = dataScope(await authorize(request, "read", "ppc"));
+    const actor = await authorize(request, "read", "ppc");
+    const scope = dataScope(actor);
     const stores = await listPpcStores(scope);
-    return Response.json({ success: true, data: stores });
+    const sql = await getDatabaseClient();
+    const grants = await sql<Array<{ store_id: string }>>`
+      SELECT store_id FROM ppc_store_user_access
+      WHERE team_id = ${scope.teamId} AND actor_id = ${actor.userId} AND receive_action_notifications = TRUE
+    `;
+    const allowedStoreIdSet = new Set(grants.map((g) => g.store_id));
+    const enrichedStores = stores.map((store) => ({
+      ...store,
+      canManageActions: allowedStoreIdSet.has(store.id),
+    }));
+    return Response.json({ success: true, data: enrichedStores });
   } catch (error) {
     return routeErrorResponse(error, "Lỗi khi lấy danh sách store PPC.", 500);
   }

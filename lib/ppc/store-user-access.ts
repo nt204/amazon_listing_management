@@ -1,5 +1,6 @@
 import "server-only";
 
+import { ApiError } from "@/lib/api-guard";
 import { getDatabaseClient, type DataScope } from "@/lib/db";
 
 export interface PpcStoreAccessGrant {
@@ -104,4 +105,51 @@ export async function resolveLarkActorStoreAccess(larkSenderId: string) {
     ORDER BY store.name ASC
   `;
   return { teamId, actorId, stores };
+}
+
+export async function assertActorPpcStoreActionAccess(
+  teamId: string,
+  actorId: string,
+  storeIdOrName: string,
+): Promise<void> {
+  const target = String(storeIdOrName || "").trim();
+  if (!target || target === "ALL") {
+    throw new ApiError(
+      "Vui lòng chọn một Store cụ thể bạn được phân quyền để thực hiện hành động PPC.",
+      400,
+    );
+  }
+  const sql = await getDatabaseClient();
+  const rows = await sql<Array<{ store_id: string }>>`
+    SELECT access.store_id
+    FROM ppc_store_user_access access
+    JOIN ppc_stores store ON store.id = access.store_id AND store.team_id = access.team_id
+    WHERE access.team_id = ${teamId}
+      AND access.actor_id = ${actorId}
+      AND (
+        access.store_id::text = ${target}
+        OR LOWER(store.name) = LOWER(${target})
+      )
+      AND access.receive_action_notifications = TRUE
+    LIMIT 1
+  `;
+  if (rows.length === 0) {
+    throw new ApiError(
+      "Bạn không được phân quyền phụ trách store này để thực hiện hành động PPC (negative keyword, chỉnh bid, lên camp).",
+      403,
+    );
+  }
+}
+
+export async function assertActorPpcStoresActionAccess(
+  teamId: string,
+  actorId: string,
+  storeIdsOrNames: string[],
+): Promise<void> {
+  const distinctTargets = Array.from(
+    new Set(storeIdsOrNames.map((s) => String(s || "").trim()).filter(Boolean)),
+  );
+  for (const target of distinctTargets) {
+    await assertActorPpcStoreActionAccess(teamId, actorId, target);
+  }
 }

@@ -132,7 +132,6 @@ const stageLabels: Record<string, string> = {
 export async function executeAccountingImportJob(job: AccountingImportJob) {
   // Dynamic import to prevent circular dependency
   const { importUnifiedAccountingExcel } = await import("./excel-unified-importer");
-  const { notifyLarkEventBestEffort } = await import("@/lib/lark-notifications");
 
   let progressStep = 0;
   let lastProgressWrite = 0;
@@ -153,10 +152,6 @@ export async function executeAccountingImportJob(job: AccountingImportJob) {
       },
     });
     await completeAccountingImport(job.id, result);
-    const { reportDailyBusinessData } = await import("./daily-business-reporter");
-    await reportDailyBusinessData({ teamId: job.team_id, actorId: job.actor_id }).catch((reportErr) =>
-      console.warn("[Accounting Report] Báo cáo ngày tự động gặp lỗi:", reportErr)
-    );
     console.log(`[Accounting Import] Completed ${job.id}: ${result.totalProcessed} rows`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

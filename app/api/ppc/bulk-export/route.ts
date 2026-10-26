@@ -2,6 +2,7 @@
 import { ApiError, authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import { exportBulkFromQueue, getBulkExportHistory, resolveStoreId } from "@/lib/ppc/sku-architecture-service";
+import { assertActorPpcStoreActionAccess } from "@/lib/ppc/store-user-access";
 
 export const runtime = "nodejs";
 
@@ -94,6 +95,9 @@ export async function POST(request: Request) {
       if (!storeRows.length) throw new ApiError(`Không tìm thấy Store "${storeTarget}".`, 404);
       finalStoreId = storeRows[0].id;
     }
+
+    // Kiểm tra quyền phụ trách store: Chỉ người được phân quyền phụ trách store mới có thể xuất file Bulk action
+    await assertActorPpcStoreActionAccess(actor.teamId, actor.userId, finalStoreId);
 
     const result = await exportBulkFromQueue(
       finalStoreId,

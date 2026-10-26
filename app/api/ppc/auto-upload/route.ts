@@ -9,6 +9,7 @@ import {
   getAutoUploadLogs,
   resolveStoreId,
 } from "@/lib/ppc/sku-architecture-service";
+import { assertActorPpcStoreActionAccess } from "@/lib/ppc/store-user-access";
 
 export const runtime = "nodejs";
 
@@ -135,6 +136,9 @@ export async function POST(request: Request) {
 
       finalStoreId = storeRows[0].id;
     }
+
+    // Kiểm tra quyền phụ trách store: Chỉ người được phân quyền phụ trách store mới có thể action
+    await assertActorPpcStoreActionAccess(actor.teamId, actor.userId, finalStoreId);
 
     const result = await executeAutoUploadZeroSpendActions(finalStoreId, actionIds, actor.teamId, {
       allowAllSkus,
