@@ -153,15 +153,28 @@ export async function reportDailyBusinessData(
     return { success: false, reportedDate: null, message: "Chưa có dữ liệu ngày hợp lệ trong hệ thống." };
   }
 
-  // 2. Chế độ tự động broadcast báo cáo kế toán hàng ngày qua Lark đã được tắt theo cấu hình.
-  // Chỉ gửi khi được kích hoạt thủ công (force = true) hoặc gửi cho đích danh recipient.
+  // 2. Kiểm tra xem ngày mới nhất này đã được báo cáo chưa (tránh gửi lặp lại)
   const settingKey = `lark_accounting_last_reported_date:${scope.teamId}`;
   if (!options.force && !options.recipient) {
-    return {
-      success: true,
-      reportedDate: latestDate,
-      message: "Chế độ tự động gửi báo cáo kế toán qua Lark đã được tắt theo cấu hình.",
-    };
+    const settingRows = await sql<Array<{ value: string }>>`
+      SELECT value FROM app_settings
+      WHERE key = ${settingKey}
+      LIMIT 1
+    `;
+    const rawVal = settingRows[0]?.value;
+    let lastReportedDate = "";
+    try {
+      lastReportedDate = rawVal ? JSON.parse(rawVal)?.date : "";
+    } catch {
+      lastReportedDate = rawVal || "";
+    }
+    if (lastReportedDate === latestDate) {
+      return {
+        success: true,
+        reportedDate: latestDate,
+        message: `Dữ liệu ngày ${latestDate} đã được gửi báo cáo trước đó.`,
+      };
+    }
   }
 
   // 3. Lấy danh sách Store đang hoạt động

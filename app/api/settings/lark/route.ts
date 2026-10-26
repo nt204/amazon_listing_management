@@ -158,7 +158,12 @@ export async function POST(request: Request) {
       recipient = { receiveId: channel.chatId, receiveIdType: "chat_id" };
     }
 
-    await sendLarkTextNotification(`Tin nhắn thử từ NCE HUB\nTài khoản: ${actor.displayName}`, recipient);
+    const testMessage =
+      body.target === "personal" && recipient.receiveIdType === "email"
+        ? `👋 Xin chào ${actor.displayName}!\n\nĐây là tin nhắn thử nghiệm từ NCE HUB.\n\n👉 Để kích hoạt quyền hỏi đáp dữ liệu Store với bot, bạn chỉ cần trả lời ngay tin nhắn này theo cú pháp:\n**kết nối ${recipient.receiveId}**`
+        : `Tin nhắn thử từ NCE HUB\nTài khoản: ${actor.displayName}`;
+
+    await sendLarkTextNotification(testMessage, recipient);
     return Response.json({ success: true, message: "Đã gửi tin nhắn thử thành công qua Lark!" });
   } catch (error) {
     return routeErrorResponse(error, "Không thể gửi tin nhắn thử.", 500);

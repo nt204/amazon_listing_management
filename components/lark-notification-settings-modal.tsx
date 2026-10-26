@@ -345,8 +345,8 @@ export function LarkNotificationSettingsModal({ open, onClose }: { open: boolean
                   </button>
                 </div>
                 {settings.personal.receiveIdType === "email" ? (
-                  <p className="text-[10px] font-medium leading-4 text-amber-700">
-                    Email dùng được để nhận thông báo. Muốn hỏi đáp theo quyền store, hãy chọn Open ID hoặc User ID để hệ thống nhận diện đúng người gửi.
+                  <p className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] font-medium leading-4 text-amber-800">
+                    💡 <strong>Điền Email:</strong> Dùng tốt để <strong>nhận thông báo</strong>. Nếu muốn <strong>chat hỏi đáp với bot</strong>, bạn chỉ cần mở Lark nhắn tin cho bot: <code className="rounded bg-amber-100 px-1 font-bold">kết nối &lt;email&gt;</code> (hoặc đổi mục chọn sang <strong>Open ID</strong>) để bot nhận diện bạn.
                   </p>
                 ) : null}
 
