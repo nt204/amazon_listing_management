@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getDatabaseClient } from "@/lib/db";
+import { monthlyBasecostJoin, returnsEffectiveCte } from "@/lib/accounting/workbook-parity-sql";
 
 export interface SkuWinItem {
   id: string;
@@ -163,16 +164,8 @@ export async function listSkuWin(
             END
           )
         ) as total_rev,
-        SUM(
-          (COALESCE(o.item_promotion_discount, 0) + COALESCE(o.ship_promotion_discount, 0)) * (
-            CASE 
-              WHEN o.currency = 'CAD' THEN 0.738 
-              WHEN o.currency = 'MXN' THEN 0.051
-              WHEN o.currency = 'USD' THEN 1.0
-              ELSE 0
-            END
-          )
-        ) as total_promo,
+        -- Workbook cộng promotion nguyên tệ (không quy đổi CAD/MXN)
+        SUM(COALESCE(o.item_promotion_discount, 0) + COALESCE(o.ship_promotion_discount, 0)) as total_promo,
         SUM(
           CASE 
             WHEN o.amazon_order_id NOT LIKE 'S0%' THEN COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, sm.basecost_tb, 0)
@@ -182,7 +175,7 @@ export async function listSkuWin(
         SUM(
           CASE 
             WHEN COALESCE(o.item_price, 0) = 0 THEN 0
-            ELSE COALESCE(sm.amazon_fee, af.amazon_fee, 0) + (COALESCE(sm.referral_fee_pct, af.referral_fee_pct, 0) * COALESCE(o.item_price, 0) * (
+            ELSE (COALESCE(sm.amazon_fee, af.amazon_fee, 0) * COALESCE(o.quantity, 1)) + (COALESCE(sm.referral_fee_pct, af.referral_fee_pct, 0) * COALESCE(o.item_price, 0) * (
               CASE 
                 WHEN o.currency = 'CAD' THEN 0.738 
                 WHEN o.currency = 'MXN' THEN 0.051
@@ -195,10 +188,7 @@ export async function listSkuWin(
       FROM accounting_orders o
       LEFT JOIN asin_fees af ON af.store_id = o.store_id AND af.asin = o.asin
       LEFT JOIN accounting_sku_master sm ON sm.store_id = o.store_id AND sm.sku = o.sku
-      LEFT JOIN accounting_monthly_base_cost mbc 
-        ON mbc.store_id = o.store_id 
-        AND mbc.sku = o.sku 
-        AND mbc.period = to_char(o.date, 'YYYY-MM')
+      ${monthlyBasecostJoin(sql)}
       WHERE o.store_id = ${storeId}
         AND o.fulfillment_channel = 'Amazon'
         AND (o.currency IN ('USD', 'CAD', 'MXN') OR o.amazon_order_id LIKE 'S0%')
@@ -206,35 +196,44 @@ export async function listSkuWin(
         ${hasDateFilter ? sql`AND o.date >= ${startDate}::date AND o.date <= ${endDate}::date` : sql``}
       GROUP BY o.sku
     ),
+    -- Lượng bán tổng = SUMIFS('Orders -FBA'!P, sku): mọi dòng FBA, không lọc trạng thái
     all_time_orders AS (
       SELECT sku, SUM(COALESCE(quantity, 1)) as all_time_qty
       FROM accounting_orders
       WHERE store_id = ${storeId}
-        AND LOWER(COALESCE(order_status, '')) NOT IN ('cancelled', 'canceled')
-        AND (currency IN ('USD', 'CAD', 'MXN') OR amazon_order_id LIKE 'S0%')
+        AND fulfillment_channel = 'Amazon'
       GROUP BY sku
     ),
+    -- Workbook: SUMIFS(ADS!L, ADS!B, "*"&SKU&"*") — portfolio chứa SKU, không lọc Loại
     ads_filtered AS (
       SELECT 
-        sku,
-        SUM(spend) as total_spend,
-        SUM(sales) as total_ad_sales
-      FROM accounting_ads
-      WHERE store_id = ${storeId}
-        AND UPPER(TRIM(loai)) = 'FBA'
-        ${hasDateFilter ? sql`AND date >= ${startDate}::date AND date <= ${endDate}::date` : sql``}
-      GROUP BY sku
+        ads_sm.sku,
+        SUM(ad.spend) as total_spend,
+        SUM(ad.sales) as total_ad_sales
+      FROM (
+        SELECT DISTINCT sku FROM accounting_sku_master
+        WHERE store_id = ${storeId} AND deleted_at IS NULL
+      ) ads_sm
+      JOIN accounting_ads ad
+        ON ad.store_id = ${storeId}
+        AND strpos(LOWER(ad.portfolio), LOWER(ads_sm.sku)) > 0
+      WHERE TRUE
+        ${hasDateFilter ? sql`AND ad.date >= ${startDate}::date AND ad.date <= ${endDate}::date` : sql``}
+      GROUP BY ads_sm.sku
     ),
+    ${returnsEffectiveCte(
+      sql,
+      storeId,
+      hasDateFilter ? sql`AND r.date >= ${startDate}::date AND r.date <= ${endDate}::date` : sql``
+    )},
     returns_filtered AS (
       SELECT 
-        r.sku,
+        re.sku,
         COUNT(*) as return_count,
-        -SUM(COALESCE(r.return_sau_basecost, 0)) as return_total
-      FROM accounting_returns r
-      WHERE r.store_id = ${storeId}
-        AND UPPER(TRIM(COALESCE(r.loai, 'FBA'))) = 'FBA'
-        ${hasDateFilter ? sql`AND r.date >= ${startDate}::date AND r.date <= ${endDate}::date` : sql``}
-      GROUP BY r.sku
+        -SUM(re.return_value) as return_total
+      FROM returns_effective re
+      WHERE re.sku IS NOT NULL
+      GROUP BY re.sku
     ),
     inbound_filtered AS (
       SELECT 
@@ -257,19 +256,11 @@ export async function listSkuWin(
             ELSE 0
           END
         ) as compare_basecost,
-        SUM(
-          (COALESCE(o.item_promotion_discount, 0) + COALESCE(o.ship_promotion_discount, 0)) * (
-            CASE 
-              WHEN o.currency = 'CAD' THEN 0.738 
-              WHEN o.currency = 'MXN' THEN 0.051
-              ELSE 1.0 
-            END
-          )
-        ) as compare_promo,
+        SUM(COALESCE(o.item_promotion_discount, 0) + COALESCE(o.ship_promotion_discount, 0)) as compare_promo,
         SUM(
           CASE 
             WHEN COALESCE(o.item_price, 0) = 0 THEN 0
-            ELSE COALESCE(sm.amazon_fee, af_cmp.amazon_fee, 0) + (COALESCE(sm.referral_fee_pct, af_cmp.referral_fee_pct, 0) * COALESCE(o.item_price, 0) * (
+            ELSE (COALESCE(sm.amazon_fee, af_cmp.amazon_fee, 0) * COALESCE(o.quantity, 1)) + (COALESCE(sm.referral_fee_pct, af_cmp.referral_fee_pct, 0) * COALESCE(o.item_price, 0) * (
               CASE 
                 WHEN o.currency = 'CAD' THEN 0.738 
                 WHEN o.currency = 'MXN' THEN 0.051
@@ -282,10 +273,7 @@ export async function listSkuWin(
       FROM accounting_orders o
       LEFT JOIN asin_fees af_cmp ON af_cmp.store_id = o.store_id AND af_cmp.asin = o.asin
       LEFT JOIN accounting_sku_master sm ON sm.store_id = o.store_id AND sm.sku = o.sku
-      LEFT JOIN accounting_monthly_base_cost mbc 
-        ON mbc.store_id = o.store_id 
-        AND mbc.sku = o.sku 
-        AND mbc.period = to_char(o.date, 'YYYY-MM')
+      ${monthlyBasecostJoin(sql)}
       WHERE o.store_id = ${storeId}
         AND o.fulfillment_channel = 'Amazon'
         AND (o.currency IN ('USD', 'CAD', 'MXN') OR o.amazon_order_id LIKE 'S0%')
@@ -295,12 +283,16 @@ export async function listSkuWin(
       GROUP BY o.sku
     ),
     ads_compare AS (
-      SELECT sku, SUM(spend) as compare_spend
-      FROM accounting_ads
-      WHERE store_id = ${storeId}
-        AND UPPER(TRIM(loai)) = 'FBA'
-        AND date >= ${compareStartDate}::date AND date <= ${compareEndDate}::date
-      GROUP BY sku
+      SELECT ads_sm.sku, SUM(ad.spend) as compare_spend
+      FROM (
+        SELECT DISTINCT sku FROM accounting_sku_master
+        WHERE store_id = ${storeId} AND deleted_at IS NULL
+      ) ads_sm
+      JOIN accounting_ads ad
+        ON ad.store_id = ${storeId}
+        AND strpos(LOWER(ad.portfolio), LOWER(ads_sm.sku)) > 0
+      WHERE ad.date >= ${compareStartDate}::date AND ad.date <= ${compareEndDate}::date
+      GROUP BY ads_sm.sku
     )
     ` : sql``}
     SELECT 

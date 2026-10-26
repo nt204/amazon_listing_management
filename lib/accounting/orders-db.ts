@@ -283,7 +283,7 @@ export async function listOrders(
     SELECT
       COUNT(DISTINCT amazon_order_id)::text as total_orders,
       COALESCE(SUM(quantity), 0)::text as total_units,
-      COALESCE(SUM(item_price * quantity), 0)::text as total_revenue,
+      COALESCE(SUM(item_price), 0)::text as total_revenue,
       COUNT(*) FILTER (WHERE LOWER(order_status) = 'pending')::text as pending_count,
       COUNT(*) FILTER (WHERE LOWER(order_status) = 'shipped')::text as shipped_count,
       COUNT(*) FILTER (WHERE LOWER(order_status) = 'canceled' OR LOWER(order_status) = 'cancelled')::text as canceled_count
@@ -708,8 +708,11 @@ export async function batchUpsertOrders(
     "item_promotion_discount", "ship_promotion_discount", "ship_city", "ship_state",
     "ship_postal_code", "ship_country", "promotion_ids", "is_business_order",
     "purchase_order_number", "price_designation", "customized_url", "customized_page",
-    "signature_confirmation_recommended"
+    "signature_confirmation_recommended", "line_no"
   ] as const;
+
+  // Thứ tự dòng trong file: RETURN của workbook lấy SKU/Basecost theo dòng order đầu tiên (XLOOKUP).
+  const lineNoBase = Date.now() * 1_000;
 
   const snapshotDates = Array.from(new Set(orders.map((order) => order.date).filter(Boolean))) as string[];
 
@@ -735,7 +738,8 @@ export async function batchUpsertOrders(
     const validRows = chunk.filter((o) => o.amazon_order_id && o.sku);
     if (validRows.length === 0) continue;
 
-    const rowsToInsert = validRows.map((o) => ({
+    const rowsToInsert = validRows.map((o, idx) => ({
+      line_no: lineNoBase + i + idx,
       store_id: storeId,
       date: o.date ? o.date : null,
       amazon_order_id: o.amazon_order_id!,
@@ -822,6 +826,7 @@ export async function batchUpsertOrders(
         customized_url = COALESCE(EXCLUDED.customized_url, accounting_orders.customized_url),
         customized_page = COALESCE(EXCLUDED.customized_page, accounting_orders.customized_page),
         signature_confirmation_recommended = COALESCE(EXCLUDED.signature_confirmation_recommended, accounting_orders.signature_confirmation_recommended),
+        line_no = EXCLUDED.line_no,
         updated_at = NOW();
     `;
 

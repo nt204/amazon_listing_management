@@ -219,3 +219,56 @@ export async function deleteLegalEntity(id: string): Promise<boolean> {
   `;
   return result.count > 0;
 }
+
+let cachedLatestDbDate: { date: string; expiresAt: number } | null = null;
+
+/**
+ * Tự động kiểm tra ngày mới nhất có đủ dữ liệu thực tế từ database server.
+ * Tuyệt đối không phỏng đoán hay mặc định mốc giờ (như 15h).
+ */
+export async function getLatestAvailableAccountingDate(storeId?: string): Promise<string> {
+  const now = Date.now();
+  if (!storeId && cachedLatestDbDate && cachedLatestDbDate.expiresAt > now) {
+    return cachedLatestDbDate.date;
+  }
+
+  try {
+    const sql = await getDatabaseClient();
+    if (storeId) {
+      // Orders về trước ads vài phút: chỉ tính ngày đã có cả hai (store chưa từng có ads thì theo orders).
+      const rows = await sql<Array<{ max_date: string | null }>>`
+        SELECT LEAST(o.max_date, COALESCE(a.max_date, o.max_date))::text AS max_date
+        FROM (SELECT MAX(date) AS max_date FROM accounting_orders WHERE store_id = ${storeId}) o,
+             (SELECT MAX(date) AS max_date FROM accounting_ads WHERE store_id = ${storeId}) a
+      `;
+      const maxDate = rows[0]?.max_date?.slice(0, 10);
+      if (maxDate) return maxDate;
+      // Store chưa có dữ liệu: dùng ngày chung của hệ thống (theo dữ liệu), không rơi xuống fallback T-1.
+      return getLatestAvailableAccountingDate();
+    } else {
+      const rows = await sql<Array<{ max_date: string | null }>>`
+        WITH per_store AS (
+          SELECT o.store_id, LEAST(o.max_date, COALESCE(a.max_date, o.max_date)) AS latest
+          FROM (SELECT store_id, MAX(date) AS max_date FROM accounting_orders GROUP BY store_id) o
+          LEFT JOIN (SELECT store_id, MAX(date) AS max_date FROM accounting_ads GROUP BY store_id) a
+            ON a.store_id = o.store_id
+        )
+        SELECT MIN(latest)::text AS max_date
+        FROM per_store
+        WHERE latest >= (SELECT MAX(latest) FROM per_store) - 7
+      `;
+      const maxDate = rows[0]?.max_date?.slice(0, 10);
+      if (maxDate) {
+        cachedLatestDbDate = { date: maxDate, expiresAt: now + 60_000 };
+        return maxDate;
+      }
+    }
+  } catch (err) {
+    console.warn("[getLatestAvailableAccountingDate] DB query error:", err);
+  }
+
+  // Fallback nếu lỗi DB: lấy ngày hôm qua theo giờ VN (T-1), KHÔNG đoán giờ 15h
+  const date = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  return date.toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
+}
+

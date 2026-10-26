@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getDatabaseClient } from "@/lib/db";
+import { monthlyBasecostJoin, returnsEffectiveCte } from "@/lib/accounting/workbook-parity-sql";
 
 export interface FbaDailyItem {
   id: string; // date string YYYY-MM-DD
@@ -127,16 +128,8 @@ export async function listFbaDaily(
             END
           )
         ) as total_rev,
-        SUM(
-          (COALESCE(o.item_promotion_discount, 0) + COALESCE(o.ship_promotion_discount, 0)) * (
-            CASE 
-              WHEN o.currency = 'CAD' THEN 0.738 
-              WHEN o.currency = 'MXN' THEN 0.051
-              WHEN o.currency = 'USD' THEN 1.0
-              ELSE 0
-            END
-          )
-        ) as total_promo,
+        -- Workbook cộng promotion nguyên tệ (không quy đổi CAD/MXN)
+        SUM(COALESCE(o.item_promotion_discount, 0) + COALESCE(o.ship_promotion_discount, 0)) as total_promo,
         SUM(
           CASE 
             WHEN o.amazon_order_id NOT LIKE 'S0%' THEN COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, sm.basecost_tb, 0)
@@ -146,7 +139,7 @@ export async function listFbaDaily(
         SUM(
           CASE 
             WHEN COALESCE(o.item_price, 0) = 0 THEN 0
-            ELSE COALESCE(sm.amazon_fee, af.amazon_fee, 0) + (COALESCE(sm.referral_fee_pct, af.referral_fee_pct, 0) * COALESCE(o.item_price, 0) * (
+            ELSE (COALESCE(sm.amazon_fee, af.amazon_fee, 0) * COALESCE(o.quantity, 1)) + (COALESCE(sm.referral_fee_pct, af.referral_fee_pct, 0) * COALESCE(o.item_price, 0) * (
               CASE 
                 WHEN o.currency = 'CAD' THEN 0.738 
                 WHEN o.currency = 'MXN' THEN 0.051
@@ -169,10 +162,7 @@ export async function listFbaDaily(
       FROM accounting_orders o
       LEFT JOIN asin_fees af ON af.store_id = o.store_id AND af.asin = o.asin
       LEFT JOIN accounting_sku_master sm ON sm.store_id = o.store_id AND sm.sku = o.sku
-      LEFT JOIN accounting_monthly_base_cost mbc 
-        ON mbc.store_id = o.store_id 
-        AND mbc.sku = o.sku 
-        AND mbc.period = to_char(o.date, 'YYYY-MM')
+      ${monthlyBasecostJoin(sql)}
       WHERE o.store_id = ${storeId}
         AND o.fulfillment_channel = 'Amazon'
         AND o.date < CURRENT_DATE
@@ -195,17 +185,19 @@ export async function listFbaDaily(
         ${hasDateFilter ? sql`AND date >= ${startDate}::date AND date <= ${endDate}::date` : sql``}
       GROUP BY date
     ),
+    ${returnsEffectiveCte(
+      sql,
+      storeId,
+      sql`AND r.date < CURRENT_DATE ${hasDateFilter ? sql`AND r.date >= ${startDate}::date AND r.date <= ${endDate}::date` : sql``}`
+    )},
     daily_returns AS (
       SELECT 
-        r.date,
+        re.date,
         COUNT(*) as return_count,
-        -SUM(COALESCE(r.return_sau_basecost, 0)) as return_total
-      FROM accounting_returns r
-      WHERE r.store_id = ${storeId}
-        AND UPPER(TRIM(COALESCE(r.loai, 'FBA'))) = 'FBA'
-        AND r.date < CURRENT_DATE
-        ${hasDateFilter ? sql`AND r.date >= ${startDate}::date AND r.date <= ${endDate}::date` : sql``}
-      GROUP BY r.date
+        -SUM(re.return_value) as return_total
+      FROM returns_effective re
+      WHERE UPPER(TRIM(COALESCE(re.loai, ''))) = 'FBA'
+      GROUP BY re.date
     ),
     all_dates AS (
       SELECT date FROM daily_orders
