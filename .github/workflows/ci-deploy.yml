@@ -137,6 +137,9 @@ jobs:
 
           cd "$app_dir"
 
+          # next build rewrites this generated file; it is not a manual server change.
+          git checkout -- next-env.d.ts 2>/dev/null || true
+
           if [ -n "$(git status --porcelain)" ]; then
             echo "Production worktree is not clean; refusing to overwrite server changes."
             git status --short
@@ -168,7 +171,8 @@ jobs:
           pm2 save
 
           for attempt in $(seq 1 20); do
-            if curl -fsS --max-time 5 http://127.0.0.1:2411/api/health | grep -q '"redis":"ready"'; then
+            # /api/health answers 503 when disk usage is critical; the app is still up if it reports Redis ready.
+            if curl -sS --max-time 5 http://127.0.0.1:2411/api/health | grep -q '"redis":"ready"'; then
               echo "Production health check passed."
               exit 0
             fi

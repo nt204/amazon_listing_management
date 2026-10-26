@@ -5,6 +5,7 @@ import {
   ArrowClockwiseIcon,
   BellRingingIcon,
   GearSixIcon,
+  HeartbeatIcon,
   ShieldCheckIcon,
   SignOutIcon,
   UserCircleIcon,
@@ -12,6 +13,7 @@ import {
 import { useEffect, useState } from "react";
 import type { RequestActor } from "@/lib/auth";
 import { LarkNotificationSettingsModal } from "@/components/lark-notification-settings-modal";
+import { ServerHealthModal } from "@/components/server-health-modal";
 
 function initials(name: string) {
   return name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase() || "").join("") || "U";
@@ -27,6 +29,7 @@ export function AccountMenu({
   const [isOpen, setIsOpen] = useState(false);
   const [loadedPendingUserCount, setLoadedPendingUserCount] = useState(0);
   const [larkSettingsOpen, setLarkSettingsOpen] = useState(false);
+  const [serverHealthOpen, setServerHealthOpen] = useState(false);
 
   useEffect(() => {
     if (actor.role !== "admin" || pendingUserCount !== undefined) return;
@@ -138,6 +141,19 @@ export function AccountMenu({
                 </Link>
               ) : null}
 
+              {actor.role === "admin" ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsOpen(false);
+                    setServerHealthOpen(true);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:text-indigo-900 transition cursor-pointer"
+                >
+                  <HeartbeatIcon size={16} className="text-indigo-600" /> Sức khỏe server
+                </button>
+              ) : null}
+
               <button
                 type="button"
                 onClick={() => {
@@ -170,6 +186,9 @@ export function AccountMenu({
         </>
       )}
       <LarkNotificationSettingsModal open={larkSettingsOpen} onClose={() => setLarkSettingsOpen(false)} />
+      {actor.role === "admin" ? (
+        <ServerHealthModal open={serverHealthOpen} onClose={() => setServerHealthOpen(false)} />
+      ) : null}
     </div>
   );
 }
