@@ -59,8 +59,8 @@ const COMPARE_OPTIONS: { value: DashboardCompareMode; label: string }[] = [
 
 const SERIES = [
   { key: "revenue", label: "Revenue", color: "#3b82f6" },
-  { key: "netProfit", label: "Net Profit", color: "#22c55e" },
-  { key: "profit", label: "Profit", color: "#14b8a6" },
+  { key: "profit", label: "Profit", color: "#22c55e" },
+  { key: "netProfit", label: "Net Profit", color: "#14b8a6" },
   { key: "adsFee", label: "Ad Spend", color: "#f59e0b" },
 ] as const;
 type SeriesKey = (typeof SERIES)[number]["key"];
@@ -446,8 +446,8 @@ function TrendChart({
   const [compareOpen, setCompareOpen] = useState(false);
   const [visible, setVisible] = useState<Record<SeriesKey, boolean>>({
     revenue: true,
-    netProfit: true,
-    profit: false,
+    profit: true,
+    netProfit: false,
     adsFee: false,
   });
 
@@ -487,7 +487,7 @@ function TrendChart({
   return (
     <Card delay={delay} className="flex h-full flex-col p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-base font-bold text-slate-900">Revenue &amp; Net Profit</h2>
+        <h2 className="text-base font-bold text-slate-900">Revenue &amp; Profit</h2>
         <div className="flex items-center gap-2">
           <DropdownShell
             label={compare === "none" ? "Compare" : `vs. ${COMPARE_SHORT[compare]}`}
@@ -716,7 +716,6 @@ const COST_ITEMS = [
   { key: "amazonFee", label: "Amazon Fees", color: "#fb923c" },
   { key: "adsFee", label: "Ad Spend", color: "#8b5cf6" },
   { key: "taxOthers", label: "Tax & Others", color: "#f472b6" },
-  { key: "serviceCost", label: "Service Fee", color: "#2dd4bf" },
 ] as const;
 type CostKey = (typeof COST_ITEMS)[number]["key"];
 
@@ -726,7 +725,6 @@ function costValues(t: DashboardTotals): Record<CostKey, number> {
     amazonFee: t.amazonFee,
     adsFee: t.adsFee,
     taxOthers: t.tax + t.promotion + t.returnCost,
-    serviceCost: t.serviceCost,
   };
 }
 
@@ -784,7 +782,7 @@ function PnlStatement({ current, delay }: { current: DashboardTotals; delay: num
   const revenue = current.revenue;
   const costs = costValues(current);
   const maxCost = Math.max(0, ...Object.values(costs));
-  const netNegative = current.netProfit < 0;
+  const negative = current.profit < 0;
   const row = (key: CostKey, title?: string) => {
     const item = COST_ITEMS.find((c) => c.key === key)!;
     return (
@@ -811,34 +809,37 @@ function PnlStatement({ current, delay }: { current: DashboardTotals; delay: num
           "taxOthers",
           `Tax ${money(current.tax)} · Promotions ${money(current.promotion)} · Returns ${money(current.returnCost)}`,
         )}
-        <PnlTotalRow label="Profit" value={current.profit} revenue={revenue} showPct />
-        {row("serviceCost")}
       </div>
       <div
         className={`mt-3 flex items-center justify-between rounded-xl px-4 py-3 transition-colors duration-300 ${
-          netNegative ? "bg-rose-50" : "bg-emerald-50"
+          negative ? "bg-rose-50" : "bg-emerald-50"
         }`}
       >
-        <span className="text-sm font-bold text-slate-900">Net Profit</span>
-        <span className={`flex items-baseline gap-2 tabular-nums ${netNegative ? "text-rose-600" : "text-emerald-600"}`}>
+        <span className="text-sm font-bold text-slate-900">Profit</span>
+        <span className={`flex items-baseline gap-2 tabular-nums ${negative ? "text-rose-600" : "text-emerald-600"}`}>
           <span className="text-base font-bold">
-            <AnimatedNumber value={current.netProfit} format={money} />
+            <AnimatedNumber value={current.profit} format={money} />
           </span>
-          <span className="text-[11px] font-medium">({ratioOrDash(current.netMargin, revenue)})</span>
+          <span className="text-[11px] font-medium">({ratioOrDash(current.margin, revenue)})</span>
         </span>
       </div>
+      {current.serviceCost > 0 && (
+        <p className="mt-2 px-1 text-right text-[11px] tabular-nums text-slate-500">
+          After service fee {money(-current.serviceCost)}: {money(current.netProfit)}
+        </p>
+      )}
     </Card>
   );
 }
 
 // ---------- store table ----------
 
-type StoreSortKey = "store" | "revenue" | "netProfit" | "margin" | "tacos" | "acos" | "units";
+type StoreSortKey = "store" | "revenue" | "profit" | "margin" | "tacos" | "acos" | "units";
 
 const STORE_COLUMNS: { key: StoreSortKey; label: string }[] = [
   { key: "store", label: "Store" },
   { key: "revenue", label: "Revenue" },
-  { key: "netProfit", label: "Net Profit" },
+  { key: "profit", label: "Profit" },
   { key: "margin", label: "Margin" },
   { key: "tacos", label: "TACOS" },
   { key: "acos", label: "ACOS" },
@@ -853,10 +854,10 @@ function storeSortValue(row: DashboardStoreRow, key: StoreSortKey): number | str
       return row.storeName.toLowerCase();
     case "revenue":
       return c.revenue;
-    case "netProfit":
-      return c.netProfit;
+    case "profit":
+      return c.profit;
     case "margin":
-      return c.revenue > 0 ? c.netMargin : null;
+      return c.revenue > 0 ? c.margin : null;
     case "tacos":
       return c.revenue > 0 ? c.tacos : null;
     case "acos":
@@ -879,7 +880,7 @@ function StoresPerformance({
 }) {
   const mounted = useMounted();
   // Mặc định store lỗ nặng nhất lên đầu
-  const [sort, setSort] = useState<{ key: StoreSortKey; dir: "asc" | "desc" }>({ key: "netProfit", dir: "asc" });
+  const [sort, setSort] = useState<{ key: StoreSortKey; dir: "asc" | "desc" }>({ key: "profit", dir: "asc" });
   const rows = useMemo(() => {
     const sign = sort.dir === "asc" ? 1 : -1;
     return [...data.byStore].sort((a, b) => {
@@ -925,8 +926,8 @@ function StoresPerformance({
                 </div>
               </div>
               <div className="shrink-0 text-right">
-                <div className={`text-sm font-semibold tabular-nums ${c.netProfit < 0 ? "text-rose-600" : "text-slate-900"}`}>
-                  {money(c.netProfit)}
+                <div className={`text-sm font-semibold tabular-nums ${c.profit < 0 ? "text-rose-600" : "text-slate-900"}`}>
+                  {money(c.profit)}
                 </div>
                 <div className="mt-1 text-xs">
                   {c.revenue <= 0 ? (
@@ -934,10 +935,10 @@ function StoresPerformance({
                   ) : (
                     <span
                       className={`rounded-md px-1.5 py-0.5 font-semibold tabular-nums ${
-                        c.netMargin >= 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-600"
+                        c.margin >= 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-600"
                       }`}
                     >
-                      {pct(c.netMargin)}
+                      {pct(c.margin)}
                     </span>
                   )}
                 </div>
@@ -946,10 +947,14 @@ function StoresPerformance({
           );
         })}
         {rows.length > 1 && (
-          <div className="flex items-center justify-between gap-3 pt-3 text-xs font-semibold tabular-nums">
-            <span className="text-slate-900">Total · {money(total.revenue)}</span>
-            <span className={total.netProfit < 0 ? "text-rose-600" : "text-slate-900"}>
-              {money(total.netProfit)} ({ratioOrDash(total.netMargin, total.revenue)})
+          <div
+            className={`mt-2 flex items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-xs font-semibold tabular-nums ${
+              total.profit < 0 ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-800"
+            }`}
+          >
+            <span>Total · {money(total.revenue)}</span>
+            <span>
+              {money(total.profit)} ({ratioOrDash(total.margin, total.revenue)})
             </span>
           </div>
         )}
@@ -1021,8 +1026,8 @@ function StoresPerformance({
                       />
                     </div>
                   </td>
-                  <td className={`border-b border-slate-100 px-3 py-2.5 text-right tabular-nums ${c.netProfit < 0 ? "!font-semibold !text-rose-600" : ""}`}>
-                    {money(c.netProfit)}
+                  <td className={`border-b border-slate-100 px-3 py-2.5 text-right tabular-nums ${c.profit < 0 ? "!font-semibold !text-rose-600" : ""}`}>
+                    {money(c.profit)}
                   </td>
                   <td className="border-b border-slate-100 px-3 py-2.5 text-right">
                     {c.revenue <= 0 ? (
@@ -1030,10 +1035,10 @@ function StoresPerformance({
                     ) : (
                       <span
                         className={`inline-block rounded-md px-2 py-0.5 text-xs font-semibold tabular-nums ${
-                          c.netMargin >= 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-600"
+                          c.margin >= 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-600"
                         }`}
                       >
-                        {pct(c.netMargin)}
+                        {pct(c.margin)}
                       </span>
                     )}
                   </td>
@@ -1046,18 +1051,19 @@ function StoresPerformance({
           </tbody>
           {rows.length > 1 && (
             <tfoot>
-              <tr>
-                <td className="py-2.5 pl-4 pr-3 text-xs font-semibold text-slate-900">Total</td>
-                <td className="px-3 py-2.5 text-right text-xs font-semibold tabular-nums">{money(total.revenue)}</td>
-                <td className={`px-3 py-2.5 text-right text-xs font-semibold tabular-nums ${total.netProfit < 0 ? "!text-rose-600" : ""}`}>
-                  {money(total.netProfit)}
-                </td>
-                <td className={`px-3 py-2.5 text-right text-xs font-semibold tabular-nums ${total.netMargin < 0 ? "!text-rose-600" : ""}`}>
-                  {ratioOrDash(total.netMargin, total.revenue)}
-                </td>
-                <td className="px-3 py-2.5 text-right text-xs font-semibold tabular-nums">{ratioOrDash(total.tacos, total.revenue)}</td>
-                <td className="px-3 py-2.5 text-right text-xs font-semibold tabular-nums">{ratioOrDash(total.acos, total.revenueAds)}</td>
-                <td className="px-3 py-2.5 pr-4 text-right text-xs font-semibold tabular-nums">{int.format(total.quantity)}</td>
+              {/* Dòng tổng nổi bật: xanh khi có lãi, đỏ khi lỗ */}
+              <tr
+                className={`text-xs font-semibold tabular-nums ${
+                  total.profit < 0 ? "bg-rose-50 [&>td]:!text-rose-700" : "bg-emerald-50 [&>td]:!text-emerald-800"
+                }`}
+              >
+                <td className="rounded-l-lg py-2.5 pl-4 pr-3">Total</td>
+                <td className="px-3 py-2.5 text-right">{money(total.revenue)}</td>
+                <td className="px-3 py-2.5 text-right">{money(total.profit)}</td>
+                <td className="px-3 py-2.5 text-right">{ratioOrDash(total.margin, total.revenue)}</td>
+                <td className="px-3 py-2.5 text-right">{ratioOrDash(total.tacos, total.revenue)}</td>
+                <td className="px-3 py-2.5 text-right">{ratioOrDash(total.acos, total.revenueAds)}</td>
+                <td className="rounded-r-lg px-3 py-2.5 pr-4 text-right">{int.format(total.quantity)}</td>
               </tr>
             </tfoot>
           )}
@@ -1327,23 +1333,23 @@ export function AccountingDashboardView() {
         ratio: changeRatio(c.revenue, p?.revenue),
       },
       {
-        id: "net",
-        label: "Net Profit",
+        id: "profit",
+        label: "Profit",
         icon: <PiggyBankIcon size={20} weight="duotone" />,
         tone: TONES.violet,
-        value: c.netProfit,
+        value: c.profit,
         format: money,
-        ratio: changeRatio(c.netProfit, p?.netProfit),
+        ratio: changeRatio(c.profit, p?.profit),
         negativeRed: true,
       },
       {
         id: "margin",
-        label: "Net Margin",
+        label: "Margin",
         icon: <ChartLineUpIcon size={20} weight="duotone" />,
         tone: TONES.rose,
-        value: c.netMargin,
+        value: c.margin,
         format: (v) => pct(v),
-        ratio: ppDelta(c.netMargin, p?.netMargin, p?.revenue),
+        ratio: ppDelta(c.margin, p?.margin, p?.revenue),
         points: true,
         negativeRed: true,
       },

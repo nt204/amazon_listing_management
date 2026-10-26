@@ -162,8 +162,13 @@ jobs:
 
           git checkout main
           git merge --ff-only "$target_sha"
+          # The production disk is small: drop rebuildable caches before and after installing/building.
+          rm -rf .next/cache
+          npm cache clean --force
           npm ci
           npm run build
+          rm -rf .next/cache
+          npm cache clean --force
           npm run db:migrate
           pm2 restart amazon-listing --update-env
           pm2 restart ppc-ingestion-worker --update-env
