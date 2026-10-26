@@ -4,7 +4,12 @@ import crypto from "node:crypto";
 import { getDatabaseClient } from "@/lib/db";
 import { invalidateCachePattern } from "@/lib/redis";
 import { objectStorageDriver, putStoredObject, r2KeyPrefix } from "@/lib/object-storage";
-import { exportBulksheetUpdateExcel, exportSaleKwBulksheetExcel, type SaleKwCampaignPayload } from "@/lib/ppc/service";
+import {
+  canonicalStoreName,
+  exportBulksheetUpdateExcel,
+  exportSaleKwBulksheetExcel,
+  type SaleKwCampaignPayload,
+} from "@/lib/ppc/service";
 import {
   isAsinProductTarget,
   generateSaleKwCampaignTriad,
@@ -653,6 +658,7 @@ export async function resolvePpcStore(storeQuery?: string): Promise<{ id: string
   const sql = await getDatabaseClient();
   if (!storeQuery || !storeQuery.trim()) return null;
   const q = storeQuery.trim().toLowerCase();
+  const canonical = canonicalStoreName(storeQuery).toLowerCase();
 
   const ppcStores = await sql<Array<{ id: string; name: string; team_id: string }>>`
     SELECT id, name, team_id FROM ppc_stores
@@ -661,6 +667,7 @@ export async function resolvePpcStore(storeQuery?: string): Promise<{ id: string
   let found = ppcStores.find(
     (s) =>
       s.id === storeQuery ||
+      s.name.toLowerCase() === canonical ||
       s.name.toLowerCase() === q ||
       s.name.toLowerCase().includes(q) ||
       q.includes(s.name.toLowerCase())
@@ -669,14 +676,18 @@ export async function resolvePpcStore(storeQuery?: string): Promise<{ id: string
   if (!found) {
     const accStore = await resolveStore(storeQuery);
     if (accStore) {
-      const inserted = await sql<Array<{ id: string; name: string; team_id: string }>>`
-        INSERT INTO ppc_stores (name, team_id, marketplace)
-        VALUES (${accStore.name}, 'default', ${accStore.marketplace || 'US'})
-        ON CONFLICT (team_id, name) DO UPDATE SET updated_at = NOW()
-        RETURNING id, name, team_id
-      `;
-      if (inserted.length > 0) {
-        found = inserted[0];
+      const targetName = canonicalStoreName(accStore.name);
+      found = ppcStores.find((s) => s.name.toLowerCase() === targetName.toLowerCase()) || null;
+      if (!found) {
+        const inserted = await sql<Array<{ id: string; name: string; team_id: string }>>`
+          INSERT INTO ppc_stores (name, team_id, marketplace)
+          VALUES (${targetName}, 'default', ${accStore.marketplace || 'US'})
+          ON CONFLICT (team_id, name) DO UPDATE SET updated_at = NOW()
+          RETURNING id, name, team_id
+        `;
+        if (inserted.length > 0) {
+          found = inserted[0];
+        }
       }
     }
   }
