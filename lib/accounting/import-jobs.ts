@@ -3,6 +3,7 @@ import "server-only";
 import fs from "node:fs";
 import type postgres from "postgres";
 import { getDatabaseClient, type DataScope } from "@/lib/db";
+import { invalidateAccountingDashboardCache } from "@/lib/accounting/dashboard-db";
 
 export type AccountingImportStatus = "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED";
 
@@ -101,6 +102,7 @@ export async function completeAccountingImport(id: string, result: unknown) {
         completed_at = NOW(), updated_at = NOW()
     WHERE id = ${id} AND status = 'RUNNING'
   `;
+  await invalidateAccountingDashboardCache().catch(() => {});
 }
 
 export async function failAccountingImport(id: string, message: string, filePath?: string) {

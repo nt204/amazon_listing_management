@@ -158,6 +158,10 @@ const FinancialsWorkspace = dynamic(
   () => import("./financials-workspace").then((module) => module.FinancialsWorkspace),
   { loading: AccountingSectionLoading },
 );
+const AccountingDashboardView = dynamic(
+  () => import("./accounting-dashboard-view").then((module) => module.AccountingDashboardView),
+  { loading: AccountingSectionLoading },
+);
 
 
 export type AccountingModuleKey =
@@ -326,6 +330,15 @@ export function AccountingWorkspace({
       setReportsTab(activeSubTab as ReportsTabKey);
     }
   }, [activeSection, activeSubTab]);
+
+  // Section 1: Overview - Dashboard tổng quan P&L đa store
+  if (effectiveSection === "overview") {
+    return (
+      <AccountingSectionShell>
+        <AccountingDashboardView />
+      </AccountingSectionShell>
+    );
+  }
 
   // Section 2: Stores (Existing Full UI)
   if (effectiveSection === "stores") {
