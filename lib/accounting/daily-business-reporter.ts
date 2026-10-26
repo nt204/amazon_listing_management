@@ -138,19 +138,30 @@ export async function reportDailyBusinessData(
 
   let latestDate = options.targetDate?.trim();
 
-  // 1. Nếu không chỉ định targetDate, tìm ngày mới nhất có đơn hàng trong hệ thống (< CURRENT_DATE)
+  // 1. Nếu không chỉ định targetDate, tìm ngày mới nhất mà TẤT CẢ các store hoạt động đều đã hoàn tất nạp đơn hàng (< CURRENT_DATE)
   if (!latestDate) {
-    const maxDateRows = await sql<Array<{ latest_date: string }>>`
-      SELECT MAX(date)::text as latest_date
-      FROM accounting_orders
-      WHERE date IS NOT NULL AND date < CURRENT_DATE
-        AND LOWER(COALESCE(order_status, '')) NOT IN ('cancelled', 'canceled')
+    const completeDateRows = await sql<Array<{ latest_date: string }>>`
+      SELECT o.date::text as latest_date
+      FROM accounting_orders o
+      WHERE o.date IS NOT NULL AND o.date < CURRENT_DATE
+        AND LOWER(COALESCE(o.order_status, '')) NOT IN ('cancelled', 'canceled')
+      GROUP BY o.date
+      HAVING COUNT(DISTINCT o.store_id) >= (
+        SELECT COUNT(*) FROM stores
+        WHERE EXISTS (SELECT 1 FROM accounting_orders ao WHERE ao.store_id = stores.id)
+      )
+      ORDER BY o.date DESC
+      LIMIT 1
     `;
-    latestDate = maxDateRows[0]?.latest_date;
+    latestDate = completeDateRows[0]?.latest_date;
   }
 
   if (!latestDate) {
-    return { success: false, reportedDate: null, message: "Chưa có dữ liệu ngày hợp lệ trong hệ thống." };
+    return {
+      success: false,
+      reportedDate: null,
+      message: "Chưa có ngày nào hoàn tất đầy đủ dữ liệu cho tất cả các Store trong hệ thống.",
+    };
   }
 
   // 2. Kiểm tra xem ngày mới nhất này đã được báo cáo chưa (tránh gửi lặp lại)
@@ -256,6 +267,25 @@ export async function reportDailyBusinessData(
     return { success: false, reportedDate: latestDate, message: `Không có dữ liệu kinh doanh cho ngày ${latestDate}.` };
   }
 
+  const parts = latestDate.split("-");
+  const displayDate = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : latestDate;
+
+  // KIỂM TRA CHẶT CHẼ:
+  // Nếu có bất kỳ store nào trong các store kinh doanh chưa có dữ liệu (revenue = 0 và quantity = 0),
+  // tuyệt đối không gửi báo cáo thiếu (trừ khi có chỉ định ép gửi force = true).
+  // Đợi cho đến khi tất cả các Store đều đã hoàn tất nạp số liệu ngày đó thì mới phát hành báo cáo.
+  const incompleteStores = reports.filter(
+    (r) => Number(r.item.revenue || 0) === 0 && Number(r.item.quantity || 0) === 0,
+  );
+  if (incompleteStores.length > 0 && !options.force) {
+    const missingNames = incompleteStores.map((s) => s.storeName).join(", ");
+    return {
+      success: false,
+      reportedDate: latestDate,
+      message: `Chưa gửi báo cáo ngày ${displayDate}: Còn store (${missingNames}) chưa có đủ số liệu đơn hàng. Hệ thống sẽ đợi khi tất cả Store hoàn tất nạp dữ liệu mới tự động gửi.`,
+    };
+  }
+
   // 5. Thử render bảng ra ảnh chất lượng cao và upload lên Lark
   let imageKey: string | null = null;
   try {
@@ -264,9 +294,6 @@ export async function reportDailyBusinessData(
   } catch (err) {
     console.warn("[Accounting Report] Không thể tạo hoặc upload ảnh bảng báo cáo:", err);
   }
-
-  const parts = latestDate.split("-");
-  const displayDate = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : latestDate;
 
   // Soạn nội dung thông báo bot Lark dạng Card 2.0 (ưu tiên hiển thị bảng ảnh trực quan)
   const cardElements: Array<Record<string, unknown>> = [];
