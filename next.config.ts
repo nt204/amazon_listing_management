@@ -18,6 +18,8 @@ const securityHeaders = isDev
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // Ẩn nút "N" (Next.js dev indicator) che sidebar; lỗi compile/runtime vẫn được hiển thị.
+  devIndicators: false,
   serverExternalPackages: ["tesseract.js", "@tesseract.js-data/eng"],
   outputFileTracingIncludes: {
     "/api/template-mockup/generate": [

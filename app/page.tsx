@@ -2,6 +2,7 @@ import { headers } from "next/headers";
 import { AccessStatusScreen } from "@/components/access-status-screen";
 import { ListingWorkspace } from "@/components/listing-workspace";
 import { resolveActorFromHeaders } from "@/lib/auth-server";
+import { DEFAULT_UI_PREFERENCES, getUiPreferences } from "@/lib/ui-preferences";
 
 type WorkspaceView = "listing" | "mockups" | "sellersprite" | "ppc" | "accounting" | "kanban";
 
@@ -51,5 +52,7 @@ export default async function Home({
 
   const initialView = resolveAllowedView((await searchParams).view, features) || "listing";
 
-  return <ListingWorkspace actor={actor} initialView={initialView} />;
+  const uiPreferences = await getUiPreferences(actor).catch(() => DEFAULT_UI_PREFERENCES);
+
+  return <ListingWorkspace actor={actor} initialView={initialView} initialSidebarDark={uiPreferences.sidebarDark} />;
 }

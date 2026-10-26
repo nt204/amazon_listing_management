@@ -74,6 +74,8 @@ interface ListingWorkspaceProps {
   initialBrands?: BrandProfile[];
   actor?: RequestActor;
   initialView?: WorkspaceView;
+  /** Sidebar nền tối có ảnh — lưu theo từng tài khoản (ui_prefs trong app_settings). */
+  initialSidebarDark?: boolean;
 }
 
 type WorkspaceView = "listing" | "mockups" | "sellersprite" | "ppc" | "accounting" | "kanban";
@@ -116,6 +118,8 @@ interface WorkspaceSidebarProps {
   handleOpenGuides: () => void;
   isMobile?: boolean;
   onClose?: () => void;
+  dark: boolean;
+  onToggleDark: () => void;
 }
 
 function WorkspaceSidebar({
@@ -137,14 +141,25 @@ function WorkspaceSidebar({
   handleOpenGuides,
   isMobile,
   onClose,
+  dark,
+  onToggleDark,
 }: WorkspaceSidebarProps) {
   return (
     <div className="flex h-full flex-col justify-between">
       <div>
         {/* Logo & App Info */}
         <div className="mb-5 flex items-center justify-between px-1 pt-1">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-50 border border-slate-200/80 p-1 shadow-xs">
+          <button
+            type="button"
+            onClick={onToggleDark}
+            title={dark ? "Tắt nền sidebar" : "Bật nền sidebar"}
+            className="flex cursor-pointer items-center gap-2.5 rounded-xl text-left !outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-indigo-300"
+          >
+            <div
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl p-1 shadow-xs ${
+                dark ? "bg-white" : "bg-slate-50 border border-slate-200/80"
+              }`}
+            >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src="/logo.png" alt="NCE HUB Logo" className="h-full w-full object-contain" />
             </div>
@@ -152,7 +167,7 @@ function WorkspaceSidebar({
               <h1 className="text-sm font-black tracking-tight text-slate-900 leading-tight">NCE HUB</h1>
               <p className="text-[10px] font-semibold text-slate-400">Workflow &amp; Trello Automation</p>
             </div>
-          </div>
+          </button>
           {isMobile && onClose && (
             <button
               type="button"
@@ -585,7 +600,7 @@ function WorkspaceSidebar({
                       selectAccountingSection("overview");
                       onClose?.();
                     }}
-                    className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
+                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
                       accountingSection === "overview" || accountingSection === "dashboard"
                         ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
                         : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
@@ -594,7 +609,7 @@ function WorkspaceSidebar({
                     <SquaresFourIcon
                       size={17}
                       weight={accountingSection === "overview" || accountingSection === "dashboard" ? "fill" : "duotone"}
-                      className={`shrink-0 mt-0.5 ${
+                      className={`shrink-0 ${
                         accountingSection === "overview" || accountingSection === "dashboard"
                           ? "text-indigo-600"
                           : "text-slate-400"
@@ -602,7 +617,6 @@ function WorkspaceSidebar({
                     />
                     <div className="flex min-w-0 flex-1 flex-col leading-tight">
                       <span className="text-xs font-bold text-slate-800">Overview</span>
-                      <span className="text-[10.5px] font-normal text-slate-400 leading-snug">Dashboard tổng quan</span>
                     </div>
                   </button>
 
@@ -613,7 +627,7 @@ function WorkspaceSidebar({
                       selectAccountingSection("stores");
                       onClose?.();
                     }}
-                    className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
+                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
                       accountingSection === "stores"
                         ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
                         : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
@@ -622,11 +636,10 @@ function WorkspaceSidebar({
                     <StorefrontIcon
                       size={17}
                       weight={accountingSection === "stores" ? "fill" : "duotone"}
-                      className={`shrink-0 mt-0.5 ${accountingSection === "stores" ? "text-indigo-600" : "text-slate-400"}`}
+                      className={`shrink-0 ${accountingSection === "stores" ? "text-indigo-600" : "text-slate-400"}`}
                     />
                     <div className="flex min-w-0 flex-1 flex-col leading-tight">
                       <span className="text-xs font-bold text-slate-800">Stores</span>
-                      <span className="text-[10.5px] font-normal text-slate-400 leading-snug">Quản lý Store</span>
                     </div>
                   </button>
 
@@ -637,7 +650,7 @@ function WorkspaceSidebar({
                       selectAccountingSection("inventory");
                       onClose?.();
                     }}
-                    className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
+                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
                       accountingSection === "inventory"
                         ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
                         : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
@@ -646,11 +659,10 @@ function WorkspaceSidebar({
                     <PackageIcon
                       size={17}
                       weight={accountingSection === "inventory" ? "fill" : "duotone"}
-                      className={`shrink-0 mt-0.5 ${accountingSection === "inventory" ? "text-indigo-600" : "text-slate-400"}`}
+                      className={`shrink-0 ${accountingSection === "inventory" ? "text-indigo-600" : "text-slate-400"}`}
                     />
                     <div className="flex min-w-0 flex-1 flex-col leading-tight">
                       <span className="text-xs font-bold text-slate-800">Inventory</span>
-                      <span className="text-[10.5px] font-normal text-slate-400 leading-snug break-words">SKU, phôi, lô hàng, shipment</span>
                     </div>
                   </button>
 
@@ -661,7 +673,7 @@ function WorkspaceSidebar({
                       selectAccountingSection("orders");
                       onClose?.();
                     }}
-                    className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
+                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
                       accountingSection === "orders" || accountingSection === "import"
                         ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
                         : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
@@ -670,13 +682,12 @@ function WorkspaceSidebar({
                     <UploadSimpleIcon
                       size={17}
                       weight={accountingSection === "orders" || accountingSection === "import" ? "bold" : "regular"}
-                      className={`shrink-0 mt-0.5 ${
+                      className={`shrink-0 ${
                         accountingSection === "orders" || accountingSection === "import" ? "text-indigo-600" : "text-slate-400"
                       }`}
                     />
                     <div className="flex min-w-0 flex-1 flex-col leading-tight">
                       <span className="text-xs font-bold text-slate-800">Import</span>
-                      <span className="text-[10.5px] font-normal text-slate-400 leading-snug break-words">Orders, Ads, Return, Service Fee</span>
                     </div>
                   </button>
 
@@ -687,7 +698,7 @@ function WorkspaceSidebar({
                       selectAccountingSection("financials");
                       onClose?.();
                     }}
-                    className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
+                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
                       accountingSection === "financials" ||
                       accountingSection === "revenue" ||
                       accountingSection === "costs" ||
@@ -708,7 +719,7 @@ function WorkspaceSidebar({
                           ? "fill"
                           : "duotone"
                       }
-                      className={`shrink-0 mt-0.5 ${
+                      className={`shrink-0 ${
                         accountingSection === "financials" ||
                         accountingSection === "revenue" ||
                         accountingSection === "costs" ||
@@ -720,7 +731,6 @@ function WorkspaceSidebar({
                     />
                     <div className="flex min-w-0 flex-1 flex-col leading-tight">
                       <span className="text-xs font-bold text-slate-800">Financials</span>
-                      <span className="text-[10.5px] font-normal text-slate-400 leading-snug break-words">Doanh thu, chi phí, Amazon Fees, Ads</span>
                     </div>
                   </button>
 
@@ -731,7 +741,7 @@ function WorkspaceSidebar({
                       selectAccountingSection("reports");
                       onClose?.();
                     }}
-                    className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
+                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
                       accountingSection === "reports" ||
                       accountingSection === "pnl" ||
                       accountingSection === "settlements"
@@ -748,7 +758,7 @@ function WorkspaceSidebar({
                           ? "fill"
                           : "duotone"
                       }
-                      className={`shrink-0 mt-0.5 ${
+                      className={`shrink-0 ${
                         accountingSection === "reports" ||
                         accountingSection === "pnl" ||
                         accountingSection === "settlements"
@@ -758,7 +768,6 @@ function WorkspaceSidebar({
                     />
                     <div className="flex min-w-0 flex-1 flex-col leading-tight">
                       <span className="text-xs font-bold text-slate-800">Reports</span>
-                      <span className="text-[10.5px] font-normal text-slate-400 leading-snug break-words">P&L, Settlement, đối soát</span>
                     </div>
                   </button>
 
@@ -772,7 +781,7 @@ function WorkspaceSidebar({
                       selectAccountingSection("admin");
                       onClose?.();
                     }}
-                    className={`flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
+                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-all cursor-pointer ${
                       accountingSection === "admin" || accountingSection === "files"
                         ? "bg-indigo-50/80 text-indigo-950 shadow-2xs ring-1 ring-indigo-200/60"
                         : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
@@ -781,13 +790,12 @@ function WorkspaceSidebar({
                     <GearIcon
                       size={17}
                       weight={accountingSection === "admin" || accountingSection === "files" ? "fill" : "duotone"}
-                      className={`shrink-0 mt-0.5 ${
+                      className={`shrink-0 ${
                         accountingSection === "admin" || accountingSection === "files" ? "text-indigo-600" : "text-slate-400"
                       }`}
                     />
                     <div className="flex min-w-0 flex-1 flex-col leading-tight">
                       <span className="text-xs font-bold text-slate-800">System Admin</span>
-                      <span className="text-[10.5px] font-normal text-slate-400 leading-snug break-words">Quản lý file tải về & hệ thống</span>
                     </div>
                   </button>
                 </div>
@@ -834,9 +842,15 @@ function WorkspaceSidebar({
       {/* SIDEBAR BOTTOM WIDGETS */}
       <div className="space-y-3 pt-3 border-t border-slate-100">
         {/* Need Help Box */}
-        <div className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50/80 via-white to-sky-50/60 p-3 shadow-2xs">
+        <div
+          className={`rounded-2xl p-3 shadow-2xs ${
+            dark
+              ? "border border-white/15 bg-white/10 backdrop-blur-md"
+              : "border border-indigo-100 bg-gradient-to-br from-indigo-50/80 via-white to-sky-50/60"
+          }`}
+        >
           <div className="flex items-center gap-2 mb-1.5">
-            <div className="flex h-5 w-5 items-center justify-center rounded-full bg-indigo-600 text-white text-[10px] font-bold shadow-xs">
+            <div className="flex h-5 w-5 items-center justify-center rounded-full bg-indigo-500 text-white text-[10px] font-bold shadow-xs">
               ?
             </div>
             <h4 className="text-xs font-extrabold text-slate-900">Cần hỗ trợ?</h4>
@@ -851,7 +865,11 @@ function WorkspaceSidebar({
               void handleOpenGuides();
               onClose?.();
             }}
-            className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-indigo-200 bg-white px-3 py-1.5 text-[11px] font-extrabold text-indigo-700 shadow-2xs hover:bg-indigo-50/80 hover:border-indigo-300 transition cursor-pointer disabled:opacity-60"
+            className={`flex w-full items-center justify-center gap-1.5 rounded-xl px-3 py-1.5 text-[11px] font-extrabold shadow-2xs transition cursor-pointer disabled:opacity-60 ${
+              dark
+                ? "border border-white/20 bg-white/10 text-white hover:bg-white/20"
+                : "border border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50/80 hover:border-indigo-300"
+            }`}
           >
             <span>{loadingGuides ? "Đang mở..." : "📖 Xem hướng dẫn"}</span>
           </button>
@@ -865,6 +883,7 @@ export function ListingWorkspace({
   initialBrands = [],
   actor,
   initialView = "listing",
+  initialSidebarDark = false,
 }: ListingWorkspaceProps) {
   const allowedFeatureSet = useMemo(
     () => new Set<WorkspaceView>([...((actor?.allowedFeatures as WorkspaceView[] | undefined) ?? ["listing", "mockups", "sellersprite", "ppc", "accounting"]), "kanban"]),
@@ -891,6 +910,21 @@ export function ListingWorkspace({
   const [toast, setToast] = useState<string | null>(null);
   const [kanbanPendingCount, setKanbanPendingCount] = useState<number>(0);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [sidebarDark, setSidebarDark] = useState(initialSidebarDark);
+  // Bấm logo NCE: đổi ngay trên giao diện rồi lưu vào tài khoản; lưu lỗi thì trả lại như cũ.
+  const toggleSidebarDark = useCallback(() => {
+    const next = !sidebarDark;
+    setSidebarDark(next);
+    fetch("/api/settings/ui-preferences", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sidebarDark: next }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      })
+      .catch(() => setSidebarDark(!next));
+  }, [sidebarDark]);
 
   const fetchKanbanCount = useCallback(async () => {
     try {
@@ -1193,7 +1227,11 @@ export function ListingWorkspace({
   return (
     <div className="flex h-[100dvh] w-full max-w-full overflow-hidden bg-slate-50 text-slate-800 font-sans">
       {/* LEFT SIDEBAR NAVIGATION (Desktop: lg+) */}
-      <aside className="hidden lg:flex w-64 shrink-0 flex-col justify-between border-r border-slate-200/80 bg-white p-3.5 shadow-xs select-none overflow-y-auto">
+      <aside
+        className={`${
+          sidebarDark ? "nce-sidebar" : "border-slate-200/80 bg-white"
+        } hidden lg:flex w-64 shrink-0 flex-col justify-between border-r p-3.5 shadow-xs select-none overflow-y-auto transition-colors duration-300`}
+      >
         <WorkspaceSidebar
           actor={actor}
           sidebarTab={sidebarTab}
@@ -1211,6 +1249,8 @@ export function ListingWorkspace({
           kanbanPendingCount={kanbanPendingCount}
           loadingGuides={loadingGuides}
           handleOpenGuides={handleOpenGuides}
+          dark={sidebarDark}
+          onToggleDark={toggleSidebarDark}
         />
       </aside>
 
@@ -1222,7 +1262,11 @@ export function ListingWorkspace({
             onClick={() => setMobileNavOpen(false)}
             aria-hidden="true"
           />
-          <aside className="relative flex w-72 max-w-[85vw] flex-col justify-between bg-white p-4 shadow-2xl z-10 overflow-y-auto animate-in slide-in-from-left duration-200 select-none">
+          <aside
+            className={`${
+              sidebarDark ? "nce-sidebar" : "bg-white"
+            } relative flex w-72 max-w-[85vw] flex-col justify-between p-4 shadow-2xl z-10 overflow-y-auto animate-in slide-in-from-left duration-200 select-none`}
+          >
             <WorkspaceSidebar
               actor={actor}
               sidebarTab={sidebarTab}
@@ -1242,6 +1286,8 @@ export function ListingWorkspace({
               handleOpenGuides={handleOpenGuides}
               isMobile={true}
               onClose={() => setMobileNavOpen(false)}
+              dark={sidebarDark}
+              onToggleDark={toggleSidebarDark}
             />
           </aside>
         </div>

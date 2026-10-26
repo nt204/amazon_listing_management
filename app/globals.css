@@ -263,3 +263,74 @@ tr.inventory-row {
   content-visibility: auto;
   contain-intrinsic-size: auto 34px;
 }
+/* Accounting Dashboard: hiệu ứng xuất hiện nhẹ (stagger qua animation-delay) */
+@keyframes acc-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.acc-rise {
+  animation: acc-rise 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes acc-progress {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
+.acc-progress {
+  animation: acc-progress 1.1s ease-in-out infinite;
+}
+
+/* Sidebar tối với ảnh núi: định nghĩa lại bảng màu Tailwind trong phạm vi sidebar
+   để các class sáng sẵn có (text-slate-*, bg-indigo-50…) tự chuyển sang tông tối. */
+.nce-sidebar {
+  position: relative;
+  isolation: isolate;
+  background: #182151;
+  border-color: transparent;
+  --color-slate-50: rgb(255 255 255 / 0.06);
+  --color-slate-100: rgb(255 255 255 / 0.1);
+  --color-slate-200: rgb(255 255 255 / 0.14);
+  --color-slate-300: rgb(255 255 255 / 0.28);
+  /* Chữ menu trắng sáng; icon/chú thích trắng mờ để vẫn có thứ bậc */
+  --color-slate-400: rgb(255 255 255 / 0.68);
+  --color-slate-500: rgb(255 255 255 / 0.78);
+  --color-slate-600: rgb(255 255 255 / 0.94);
+  --color-slate-700: #ffffff;
+  --color-slate-800: #ffffff;
+  --color-slate-900: #ffffff;
+  --color-slate-950: #ffffff;
+  --color-indigo-50: #5b5fe8;
+  --color-indigo-100: rgb(255 255 255 / 0.14);
+  --color-indigo-200: rgb(255 255 255 / 0.22);
+  --color-indigo-300: rgb(255 255 255 / 0.32);
+  --color-indigo-600: #ffffff;
+  --color-indigo-700: #ffffff;
+  --color-indigo-800: #ffffff;
+  --color-indigo-900: #ffffff;
+  --color-indigo-950: #ffffff;
+}
+
+/* Ảnh chỉ chiếm ~35% phía dưới, có gradient hòa vào nền để không nằm sau các mục menu. */
+.nce-sidebar::before {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 35%;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    linear-gradient(to bottom, #182151 0%, rgb(24 33 81 / 0.6) 25%, rgb(24 33 81 / 0) 55%),
+    url("/sidebar-bg.webp") no-repeat center bottom / cover;
+}
