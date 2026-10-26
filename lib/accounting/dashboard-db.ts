@@ -11,28 +11,9 @@ import {
   shiftMonths,
   type DashboardCompareMode,
 } from "@/lib/accounting/dashboard-periods";
+import { summarizeDays, type DashboardDay, type DashboardTotals } from "@/lib/accounting/dashboard-totals";
 
-export interface DashboardTotals {
-  days: number;
-  revenue: number;
-  quantity: number;
-  adsFee: number;
-  basecost: number;
-  amazonFee: number;
-  tax: number;
-  promotion: number;
-  returnCost: number;
-  serviceCost: number;
-  profit: number;
-  netProfit: number;
-  revenueAds: number;
-  clicks: number;
-  margin: number;
-  netMargin: number;
-  roi: number;
-  tacos: number;
-  acos: number;
-}
+export type { DashboardDay, DashboardTotals };
 
 export interface DashboardSeriesPoint {
   key: string; // YYYY-MM-DD (ngày) hoặc YYYY-MM (tháng)
@@ -65,50 +46,46 @@ export interface AccountingDashboardData {
   /** Số tháng lùi của chuỗi so sánh theo tháng (0 = không có). */
   monthlyCompareShift: number;
   byStore: DashboardStoreRow[];
+  /** Số liệu từng ngày (cộng các store) của kỳ hiện tại + kỳ so sánh, để client tóm tắt theo ngày / tuần / tháng. */
+  days: DashboardDay[];
 }
 
-function summarize(items: FbaDailyItem[]): DashboardTotals {
-  const t = {
-    revenue: 0,
-    quantity: 0,
-    adsFee: 0,
-    basecost: 0,
-    amazonFee: 0,
-    tax: 0,
-    promotion: 0,
-    returnCost: 0,
-    profit: 0,
-    netProfit: 0,
-    revenueAds: 0,
-    clicks: 0,
-  };
-  const days = new Set<string>();
-  for (const it of items) {
-    days.add(it.date);
-    t.revenue += it.revenue;
-    t.quantity += it.quantity;
-    t.adsFee += it.ads_fee;
-    t.basecost += it.basecost;
-    t.amazonFee += it.amazon_fee;
-    t.tax += it.thue;
-    t.promotion += it.promotion;
-    t.returnCost += it.return_cost;
-    t.profit += it.profit;
-    t.netProfit += it.net_profit;
-    t.revenueAds += it.revenue_ads;
-    t.clicks += it.clicks;
-  }
+function toDay(it: FbaDailyItem): DashboardDay {
   return {
-    ...t,
-    days: days.size,
-    // net_profit = profit - chi phí dịch vụ phân bổ theo ngày (xem listFbaDaily)
-    serviceCost: t.profit - t.netProfit,
-    margin: t.revenue > 0 ? t.profit / t.revenue : 0,
-    netMargin: t.revenue > 0 ? t.netProfit / t.revenue : 0,
-    roi: t.basecost > 0 ? t.profit / t.basecost : 0,
-    tacos: t.revenue > 0 ? t.adsFee / t.revenue : 0,
-    acos: t.revenueAds > 0 ? t.adsFee / t.revenueAds : 0,
+    date: it.date,
+    revenue: it.revenue,
+    quantity: it.quantity,
+    orders: it.orders ?? 0,
+    adsFee: it.ads_fee,
+    basecost: it.basecost,
+    amazonFee: it.amazon_fee,
+    tax: it.thue,
+    promotion: it.promotion,
+    returnCost: it.return_cost,
+    profit: it.profit,
+    netProfit: it.net_profit,
+    revenueAds: it.revenue_ads,
+    clicks: it.clicks,
   };
+}
+
+const summarize = (items: FbaDailyItem[]): DashboardTotals => summarizeDays(items.map(toDay));
+
+/** Cộng dồn các store theo ngày. */
+function sumByDate(items: FbaDailyItem[]): DashboardDay[] {
+  const map = new Map<string, DashboardDay>();
+  for (const it of items) {
+    const day = toDay(it);
+    const existing = map.get(day.date);
+    if (!existing) {
+      map.set(day.date, day);
+      continue;
+    }
+    for (const k of Object.keys(day) as (keyof DashboardDay)[]) {
+      if (k !== "date") existing[k] += day[k];
+    }
+  }
+  return [...map.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
 function bucket(items: FbaDailyItem[], keyOf: (date: string) => string): DashboardSeriesPoint[] {
@@ -135,7 +112,8 @@ const emptyPoint = (key: string): DashboardSeriesPoint => ({
   quantity: 0,
 });
 
-const DASHBOARD_CACHE_PREFIX = "acc:dashboard:v1:";
+// v2: FbaDailyItem có thêm trường orders
+const DASHBOARD_CACHE_PREFIX = "acc:dashboard:v2:";
 const DASHBOARD_CACHE_TTL_SECONDS = 300;
 
 /** Xóa cache Dashboard (gọi sau khi nạp dữ liệu kế toán mới). */
@@ -245,5 +223,8 @@ export async function getAccountingDashboard(options: {
       current: summarize(items.filter((it) => inRange(it.date, periods.current))),
       previous: periods.previous ? summarize(items.filter((it) => inRange(it.date, periods.previous!))) : null,
     })),
+    days: sumByDate(
+      allItems.filter((it) => inRange(it.date, periods.current) || (periods.previous && inRange(it.date, periods.previous))),
+    ),
   };
 }

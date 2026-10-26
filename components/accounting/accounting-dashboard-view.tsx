@@ -20,14 +20,9 @@ import {
   ArrowDownRightIcon,
   ArrowUpRightIcon,
   CaretDownIcon,
-  ChartLineUpIcon,
   CheckIcon,
-  CoinsIcon,
-  MegaphoneIcon,
-  PercentIcon,
-  PiggyBankIcon,
   StorefrontIcon,
-  TargetIcon,
+  UsersThreeIcon,
   WarningCircleIcon,
   WarningIcon,
 } from "@phosphor-icons/react";
@@ -39,34 +34,24 @@ import type {
   DashboardTotals,
 } from "@/lib/accounting/dashboard-db";
 import type { DashboardCompareMode } from "@/lib/accounting/dashboard-periods";
+import { summarizeRange } from "@/lib/accounting/dashboard-totals";
 import { PpcAmazonDatePicker, type DateRange } from "@/components/ppc/ppc-amazon-date-picker";
 import { getAmazonLatestAvailableDate, getThisMonthDateRange } from "./financials-date-utils";
 
 const STORE_IDS_KEY = "acc_dashboard_store_ids";
-const RANGE_KEY = "acc_dashboard_range";
-// v2: mặc định chuyển sang "No comparison", bỏ lựa chọn cũ đã lưu
-const COMPARE_KEY = "acc_dashboard_compare_v2";
+// v3: chỉ giữ các kiểu so sánh có ý nghĩa ở mọi cấp độ ngày / tuần / tháng.
+const COMPARE_KEY = "acc_dashboard_compare_v3";
 
 const STORE_COLORS = ["#8b5cf6", "#f59e0b", "#10b981", "#ef4444", "#3b82f6", "#ec4899", "#14b8a6", "#6366f1"];
-
-const COMPARE_OPTIONS: { value: DashboardCompareMode; label: string }[] = [
-  { value: "prev", label: "vs. Previous Period" },
-  { value: "week", label: "vs. Previous Week" },
-  { value: "month", label: "vs. Previous Month" },
-  { value: "yoy", label: "vs. Last Year" },
-  { value: "none", label: "No comparison" },
-];
 
 const SERIES = [
   { key: "revenue", label: "Revenue", color: "#3b82f6" },
   { key: "profit", label: "Profit", color: "#22c55e" },
-  { key: "netProfit", label: "Net Profit", color: "#14b8a6" },
-  { key: "adsFee", label: "Ad Spend", color: "#f59e0b" },
 ] as const;
 type SeriesKey = (typeof SERIES)[number]["key"];
 
 // Chuỗi có thể âm: phần dưới $0 tô đỏ để nhận ra ngày lỗ ngay.
-const SIGNED_SERIES = new Set<SeriesKey>(["netProfit", "profit"]);
+const SIGNED_SERIES = new Set<SeriesKey>(["profit"]);
 const NEGATIVE_COLOR = "#ef4444";
 
 /** Vị trí $0 (0–1 từ trên xuống) trong bounding box của nét và vùng tô, cho gradient tách màu. */
@@ -99,7 +84,6 @@ function signedDot(key: SeriesKey, color: string, active: boolean) {
 
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const int = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function money(v: number): string {
   return usd.format(Math.round(v) || 0);
@@ -122,18 +106,19 @@ function ratioOrDash(v: number, base: number): string {
   return base > 0 ? pct(v) : "—";
 }
 
+// Định dạng ngày kiểu Việt: 1/10, 1/10/2026, T10
 function shortDate(d: string): string {
   const [, m, day] = d.split("-");
-  return `${MONTHS[Number(m) - 1]} ${Number(day)}`;
+  return `${Number(day)}/${Number(m)}`;
 }
 
 function longDate(d: string): string {
-  return `${shortDate(d)}, ${d.slice(0, 4)}`;
+  return `${shortDate(d)}/${d.slice(0, 4)}`;
 }
 
 function monthLabel(key: string, withYear: boolean): string {
   const [y, m] = key.split("-");
-  return withYear ? `${MONTHS[Number(m) - 1]} ${y.slice(2)}` : MONTHS[Number(m) - 1];
+  return withYear ? `T${Number(m)}/${y}` : `T${Number(m)}`;
 }
 
 function changeRatio(cur: number, prev: number | undefined): number | null {
@@ -224,7 +209,7 @@ function Card({ children, className = "", delay = 0 }: { children: React.ReactNo
 
 function DeltaPill({ ratio, inverse = false, points = false }: { ratio: number | null; inverse?: boolean; points?: boolean }) {
   if (ratio == null || !Number.isFinite(ratio)) {
-    return <span className="text-sm font-medium text-slate-400">—</span>;
+    return <span className="text-[15px] font-medium text-slate-400">—</span>;
   }
   const up = ratio >= 0;
   const good = inverse ? !up : up;
@@ -232,7 +217,7 @@ function DeltaPill({ ratio, inverse = false, points = false }: { ratio: number |
   return (
     <span
       title="vs. comparison period"
-      className={`inline-flex items-center gap-0.5 whitespace-nowrap rounded-md px-1.5 py-0.5 text-xs font-semibold tabular-nums ${
+      className={`inline-flex items-center gap-0.5 whitespace-nowrap rounded-md px-1.5 py-0.5 text-[13px] font-semibold tabular-nums ${
         good ? "bg-emerald-50 text-emerald-600" : "bg-orange-50 text-orange-600"
       }`}
     >
@@ -284,7 +269,7 @@ function DropdownShell({
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className={`flex cursor-pointer items-center justify-between gap-2 border border-slate-200 bg-white text-xs font-semibold text-slate-800 transition-colors hover:border-slate-300 ${
+        className={`flex cursor-pointer items-center justify-between gap-2 border border-slate-200 bg-white text-[13px] font-semibold text-slate-800 transition-colors hover:border-slate-300 ${
           variant === "chip" ? "rounded-full px-3 py-1" : "w-full min-w-0 rounded-xl px-3 py-2 shadow-2xs @min-[640px]:min-w-[150px]"
         }`}
       >
@@ -318,12 +303,12 @@ function MenuItem({
     <button
       type="button"
       onClick={onClick}
-      className={`flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium transition-colors ${
-        active ? "bg-indigo-50 text-indigo-700" : "text-slate-700 hover:bg-slate-50"
+      className={`flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] font-medium transition-colors ${
+        active ? "bg-indigo-50 text-indigo-700 font-semibold" : "text-slate-700 hover:bg-slate-50"
       }`}
     >
-      <span className="flex min-w-0 items-center gap-2">{children}</span>
-      {active && <CheckIcon size={13} weight="bold" className="shrink-0" />}
+      <span className="flex min-w-0 flex-1 items-center gap-2">{children}</span>
+      {active && <CheckIcon size={13} weight="bold" className="shrink-0 text-indigo-600" />}
     </button>
   );
 }
@@ -333,8 +318,7 @@ function MenuItem({
 interface KpiDef {
   id: string;
   label: string;
-  icon: React.ReactNode;
-  tone: { from: string; tile: string; fg: string };
+  tone: string;
   value: number;
   format: (v: number) => string;
   ratio: number | null;
@@ -344,42 +328,36 @@ interface KpiDef {
 }
 
 const TONES = {
-  green: { from: "from-emerald-50/90", tile: "bg-emerald-100/80", fg: "text-emerald-600" },
-  violet: { from: "from-violet-50/90", tile: "bg-violet-100/80", fg: "text-violet-600" },
-  rose: { from: "from-rose-50/90", tile: "bg-rose-100/80", fg: "text-rose-500" },
-  blue: { from: "from-sky-50/90", tile: "bg-sky-100/80", fg: "text-sky-600" },
-  orange: { from: "from-orange-50/90", tile: "bg-orange-100/80", fg: "text-orange-500" },
-  cyan: { from: "from-cyan-50/70", tile: "bg-cyan-100/70", fg: "text-cyan-600" },
+  green: "from-emerald-50/90",
+  violet: "from-violet-50/90",
+  rose: "from-rose-50/90",
+  blue: "from-sky-50/90",
+  orange: "from-orange-50/90",
+  cyan: "from-cyan-50/70",
+  indigo: "from-indigo-50/80",
 };
 
 function KpiCard({ kpi, delay, showDelta }: { kpi: KpiDef; delay: number; showDelta: boolean }) {
   return (
     <Card
       delay={delay}
-      className={`@container group bg-gradient-to-br ${kpi.tone.from} to-white p-3.5 transition-shadow duration-300 hover:shadow-lg @min-[190px]:p-4`}
+      className={`@container bg-gradient-to-br ${kpi.tone} to-white p-3.5 transition-shadow duration-300 hover:shadow-lg @min-[190px]:p-4`}
     >
-      {/* Thẻ hẹp (lưới 6 cột hoặc mobile nhỏ): icon và số nhỏ lại để không bị cắt */}
-      <div className="flex items-start gap-2.5 @min-[190px]:gap-3">
-        <span
-          className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${kpi.tone.tile} ${kpi.tone.fg} transition-transform duration-300 group-hover:scale-105 @min-[190px]:h-10 @min-[190px]:w-10`}
+      {/* Thẻ hẹp (lưới 7 cột hoặc mobile nhỏ): số nhỏ lại để không bị cắt */}
+      <div className="min-w-0">
+        <div className="text-[13px] font-medium text-slate-600">{kpi.label}</div>
+        <div
+          className={`mt-0.5 truncate text-2xl font-bold leading-tight tracking-tight tabular-nums @min-[190px]:text-[26px] ${
+            kpi.negativeRed && kpi.value < 0 ? "text-rose-600" : "text-slate-900"
+          }`}
         >
-          {kpi.icon}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="text-xs font-medium text-slate-600">{kpi.label}</div>
-          <div
-            className={`mt-0.5 truncate text-xl font-bold leading-tight tracking-tight tabular-nums @min-[190px]:text-[22px] ${
-              kpi.negativeRed && kpi.value < 0 ? "text-rose-600" : "text-slate-900"
-            }`}
-          >
-            <AnimatedNumber value={kpi.value} format={kpi.format} />
-          </div>
-          {showDelta && (
-            <div className="mt-1.5">
-              <DeltaPill ratio={kpi.ratio} inverse={kpi.inverse} points={kpi.points} />
-            </div>
-          )}
+          <AnimatedNumber value={kpi.value} format={kpi.format} />
         </div>
+        {showDelta && (
+          <div className="mt-1.5">
+            <DeltaPill ratio={kpi.ratio} inverse={kpi.inverse} points={kpi.points} />
+          </div>
+        )}
       </div>
     </Card>
   );
@@ -387,15 +365,163 @@ function KpiCard({ kpi, delay, showDelta }: { kpi: KpiDef; delay: number; showDe
 
 // ---------- trend chart ----------
 
-const COMPARE_SHORT: Record<DashboardCompareMode, string> = {
-  prev: "Previous Period",
-  week: "Previous Week",
-  month: "Previous Month",
-  yoy: "Last Year",
-  none: "Compare",
+const GRANULARITY_LABELS: Record<ChartGranularity, string> = {
+  day: "Theo ngày",
+  week: "Theo tuần",
+  month: "Theo tháng",
 };
 
 type ChartPoint = DashboardSeriesPoint & Partial<Record<`cmp_${SeriesKey}`, number>>;
+type ChartGranularity = "day" | "week" | "month";
+
+const GRANULARITY_UNIT: Record<ChartGranularity, string> = {
+  day: "Ngày",
+  week: "Tuần",
+  month: "Tháng",
+};
+
+const COMPARE_PERIOD_LABELS: Record<ChartGranularity, string> = {
+  day: "Kỳ trước",
+  week: "Tuần trước",
+  month: "Tháng trước",
+};
+
+/** Nhãn khoảng ngày của 1 ô trên biểu đồ (ngày / tuần / tháng). */
+function bucketRangeLabel(start: string, end: string): string {
+  return start === end ? shortDate(start) : `${shortDate(start)} – ${shortDate(end)}`;
+}
+
+/** Ngày → kỳ liền trước, tuần → tuần trước, tháng → tháng trước. */
+const compareModeFor = (granularity: ChartGranularity): DashboardCompareMode =>
+  granularity === "week" ? "week" : granularity === "month" ? "month" : "prev";
+
+/** Đặt trong biểu đồ nhưng điều khiển chung cho KPI, biểu đồ và P&L: bật/tắt so sánh + chọn ngày / tuần / tháng. */
+function PeriodControls({
+  granularity,
+  onGranularityChange,
+  compareOn,
+  onToggleCompare,
+}: {
+  granularity: ChartGranularity;
+  onGranularityChange: (granularity: ChartGranularity) => void;
+  compareOn: boolean;
+  onToggleCompare: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        aria-pressed={compareOn}
+        onClick={onToggleCompare}
+        className={`inline-flex h-[34px] cursor-pointer items-center gap-2 rounded-full border px-3 text-[13px] font-semibold transition-colors ${
+          compareOn
+            ? "border-indigo-300 bg-indigo-50 text-indigo-700"
+            : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+        }`}
+      >
+        <span
+          className={`grid h-4 w-4 place-items-center rounded border transition-colors ${
+            compareOn ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-300 bg-white"
+          }`}
+        >
+          {compareOn && <CheckIcon size={11} weight="bold" />}
+        </span>
+        So sánh
+      </button>
+      <DropdownShell
+        label={GRANULARITY_LABELS[granularity]}
+        open={open}
+        setOpen={setOpen}
+        widthClass="w-36"
+        variant="chip"
+        align="right"
+      >
+        {(["day", "week", "month"] as const).map((item) => (
+          <MenuItem
+            key={item}
+            active={granularity === item}
+            onClick={() => {
+              onGranularityChange(item);
+              setOpen(false);
+            }}
+          >
+            {GRANULARITY_LABELS[item]}
+          </MenuItem>
+        ))}
+      </DropdownShell>
+    </div>
+  );
+}
+type AggregatedChartPoint = DashboardSeriesPoint & {
+  rangeStart: string;
+  rangeEnd: string;
+  compareRangeStart?: string;
+  compareRangeEnd?: string;
+};
+
+function startOfWeek(date: string): string {
+  const value = new Date(`${date}T00:00:00Z`);
+  const day = value.getUTCDay() || 7;
+  value.setUTCDate(value.getUTCDate() - day + 1);
+  return value.toISOString().slice(0, 10);
+}
+
+function aggregateTrend(points: DashboardSeriesPoint[], granularity: ChartGranularity): AggregatedChartPoint[] {
+  const groups = new Map<string, AggregatedChartPoint>();
+  for (const point of points) {
+    const groupKey =
+      granularity === "day" ? point.key : granularity === "week" ? startOfWeek(point.key) : point.key.slice(0, 7);
+    const existing = groups.get(groupKey);
+    const compare = point.compare;
+    if (!existing) {
+      groups.set(groupKey, {
+        key: groupKey,
+        rangeStart: point.key,
+        rangeEnd: point.key,
+        revenue: point.revenue,
+        profit: point.profit,
+        netProfit: point.netProfit,
+        adsFee: point.adsFee,
+        quantity: point.quantity,
+        compare: compare
+          ? {
+              key: compare.key,
+              revenue: compare.revenue,
+              profit: compare.profit,
+              netProfit: compare.netProfit,
+              adsFee: compare.adsFee,
+              quantity: compare.quantity,
+            }
+          : null,
+        compareRangeStart: compare?.key,
+        compareRangeEnd: compare?.key,
+      });
+      continue;
+    }
+
+    existing.rangeEnd = point.key;
+    existing.revenue += point.revenue;
+    existing.profit += point.profit;
+    existing.netProfit += point.netProfit;
+    existing.adsFee += point.adsFee;
+    existing.quantity += point.quantity;
+    if (compare) {
+      existing.compareRangeEnd = compare.key;
+      if (!existing.compare) {
+        existing.compare = { ...compare };
+        existing.compareRangeStart = compare.key;
+      } else {
+        existing.compare.revenue += compare.revenue;
+        existing.compare.profit += compare.profit;
+        existing.compare.netProfit += compare.netProfit;
+        existing.compare.adsFee += compare.adsFee;
+        existing.compare.quantity += compare.quantity;
+      }
+    }
+  }
+  return Array.from(groups.values());
+}
 
 /** Nhãn giá trị trên điểm: số dương phía trên, số âm phía dưới (màu đỏ); thưa bớt khi nhiều điểm. */
 function valueLabel(key: SeriesKey, color: string, every: number, lastIndex: number) {
@@ -409,7 +535,7 @@ function valueLabel(key: SeriesKey, color: string, every: number, lastIndex: num
         x={Number(props.x)}
         y={Number(props.y) + (negative ? 17 : -10)}
         textAnchor="middle"
-        fontSize={10.5}
+        fontSize={11.5}
         fontWeight={600}
         fill={negative && SIGNED_SERIES.has(key) ? NEGATIVE_COLOR : color}
         stroke="#fff"
@@ -424,34 +550,30 @@ function valueLabel(key: SeriesKey, color: string, every: number, lastIndex: num
 }
 
 function TrendChart({
-  daily,
-  monthly,
-  monthlyCompareShift,
+  data,
   previousPeriod,
-  compare,
-  onCompareChange,
+  controls,
+  selectedKey,
+  onSelect,
   delay,
 }: {
-  daily: DashboardSeriesPoint[];
-  monthly: DashboardSeriesPoint[];
-  monthlyCompareShift: number;
+  /** Các ô ngày / tuần / tháng đã gộp sẵn (dùng chung với P&L). */
+  data: AggregatedChartPoint[];
   previousPeriod: { startDate: string; endDate: string } | null;
-  compare: DashboardCompareMode;
-  onCompareChange: (mode: DashboardCompareMode) => void;
+  controls: React.ComponentProps<typeof PeriodControls>;
+  /** Ô đang hiển thị trong P&L bên cạnh. */
+  selectedKey: string | null;
+  onSelect: (key: string) => void;
   delay: number;
 }) {
+  const mode = controls.granularity;
   const mounted = useMounted();
   const [chartBoxRef, chartWidth] = useElementWidth<HTMLDivElement>();
-  const [mode, setMode] = useState<"day" | "month">("day");
-  const [compareOpen, setCompareOpen] = useState(false);
   const [visible, setVisible] = useState<Record<SeriesKey, boolean>>({
     revenue: true,
     profit: true,
-    netProfit: false,
-    adsFee: false,
   });
 
-  const data = mode === "day" ? daily : monthly;
   const chartData = useMemo<ChartPoint[]>(
     () =>
       data.map((p) =>
@@ -459,77 +581,40 @@ function TrendChart({
           ? {
               ...p,
               cmp_revenue: p.compare.revenue,
-              cmp_netProfit: p.compare.netProfit,
               cmp_profit: p.compare.profit,
-              cmp_adsFee: p.compare.adsFee,
             }
           : p,
       ),
     [data],
   );
   const hasCompare = data.some((p) => p.compare);
-  const spansYears = new Set(monthly.map((p) => p.key.slice(0, 4))).size > 1;
+  const spansYears = new Set(data.map((p) => p.rangeStart.slice(0, 4))).size > 1;
   const pointMap = useMemo(() => new Map(data.map((p) => [p.key, p])), [data]);
   const splits = useMemo(
-    () => ({ netProfit: zeroSplit(data.map((p) => p.netProfit)), profit: zeroSplit(data.map((p) => p.profit)) }),
+    () => ({ profit: zeroSplit(data.map((p) => p.profit)) }),
     [data],
   );
-  const formatTick = (key: string) => (mode === "day" ? shortDate(key) : monthLabel(key, spansYears));
+  const formatTick = (key: string) => {
+    const point = data.find((item) => item.key === key);
+    if (!point) return key;
+    if (mode === "day") return shortDate(point.rangeStart);
+    if (mode === "month") return monthLabel(point.rangeStart.slice(0, 7), spansYears);
+    return point.rangeStart === point.rangeEnd
+      ? shortDate(point.rangeStart)
+      : `${shortDate(point.rangeStart)} - ${shortDate(point.rangeEnd)}`;
+  };
+  const selectedBandWidth = Math.max(4, Math.min(56, (((chartWidth || 800) - 70) / Math.max(1, data.length)) * 0.7));
   // ~1 nhãn mỗi 58px chiều ngang để số không chồng nhau trên màn hẹp
   const labelEvery = Math.max(1, Math.ceil(data.length / Math.max(3, Math.floor((chartWidth || 800) / 58))));
-  const compareRangeLabel =
-    mode === "day" && previousPeriod
-      ? `${shortDate(previousPeriod.startDate)} – ${shortDate(previousPeriod.endDate)}`
-      : monthlyCompareShift === 12
-      ? "Same months last year"
-      : "Previous month";
+  const compareRangeLabel = previousPeriod
+    ? `${shortDate(previousPeriod.startDate)} - ${shortDate(previousPeriod.endDate)}`
+    : "";
 
   return (
     <Card delay={delay} className="flex h-full flex-col p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-base font-bold text-slate-900">Revenue &amp; Profit</h2>
-        <div className="flex items-center gap-2">
-          <DropdownShell
-            label={compare === "none" ? "Compare" : `vs. ${COMPARE_SHORT[compare]}`}
-            open={compareOpen}
-            setOpen={setCompareOpen}
-            widthClass="w-48"
-            variant="chip"
-            align="left"
-            icon={<span className="h-0 w-4 border-t-2 border-dashed border-slate-400" />}
-          >
-            {COMPARE_OPTIONS.map((o) => (
-              <MenuItem
-                key={o.value}
-                active={compare === o.value}
-                onClick={() => {
-                  onCompareChange(o.value);
-                  setCompareOpen(false);
-                }}
-              >
-                {o.label}
-              </MenuItem>
-            ))}
-          </DropdownShell>
-          <div className="relative grid grid-cols-2 rounded-full border border-slate-200 bg-white p-0.5 text-xs font-semibold">
-            <span
-              className="absolute inset-y-0.5 left-0.5 w-[calc(50%-2px)] rounded-full bg-indigo-100 ring-1 ring-indigo-200 transition-transform duration-300 ease-out"
-              style={{ transform: mode === "month" ? "translateX(100%)" : "none" }}
-            />
-            {(["day", "month"] as const).map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => setMode(m)}
-                className={`relative z-10 cursor-pointer px-4 py-1 transition-colors duration-200 ${
-                  mode === m ? "text-indigo-700" : "text-slate-500 hover:text-slate-700"
-                }`}
-              >
-                {m === "day" ? "Daily" : "Monthly"}
-              </button>
-            ))}
-          </div>
-        </div>
+        <h2 className="text-lg font-bold text-slate-900">Revenue &amp; Profit</h2>
+        <PeriodControls {...controls} />
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 pl-1">
@@ -540,7 +625,7 @@ function TrendChart({
               key={s.key}
               type="button"
               onClick={() => setVisible((v) => ({ ...v, [s.key]: !v[s.key] }))}
-              className={`inline-flex cursor-pointer items-center gap-1.5 text-xs font-medium transition-opacity duration-200 ${
+              className={`inline-flex cursor-pointer items-center gap-1.5 text-[13px] font-medium transition-opacity duration-200 ${
                 on ? "text-slate-700" : "text-slate-400 opacity-60 hover:opacity-100"
               }`}
             >
@@ -550,37 +635,42 @@ function TrendChart({
           );
         })}
         {hasCompare ? (
-          <span className="acc-rise inline-flex items-center gap-1.5 text-xs font-medium text-slate-500">
+          <span className="acc-rise inline-flex items-center gap-1.5 text-[13px] font-medium text-slate-500">
             <span className="h-0 w-4 border-t-2 border-dashed border-slate-400" />
             {compareRangeLabel}
           </span>
-        ) : (
-          mode === "month" &&
-          compare !== "none" && <span className="text-xs text-slate-400">Monthly view compares by Month or Year</span>
-        )}
+        ) : null}
       </div>
 
       <div ref={chartBoxRef} className="mt-2 h-[260px] w-full @min-[420px]:h-[300px] @min-[900px]:h-auto @min-[900px]:min-h-[300px] @min-[900px]:flex-1">
         {!mounted ? null : data.length === 0 ? (
-          <div className="grid h-full place-items-center rounded-xl border border-dashed border-slate-200 text-xs text-slate-400">
+          <div className="grid h-full place-items-center rounded-xl border border-dashed border-slate-200 text-[13px] text-slate-400">
             No data for this period
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart key={mode} data={chartData} margin={{ top: 20, right: 12, bottom: 0, left: 0 }}>
+            <ComposedChart
+              key={mode}
+              data={chartData}
+              margin={{ top: 20, right: 12, bottom: 0, left: 0 }}
+              onClick={(state) => {
+                if (state?.activeLabel != null) onSelect(String(state.activeLabel));
+              }}
+              style={{ cursor: "pointer" }}
+            >
               <defs>
                 {SERIES.map((s) =>
                   SIGNED_SERIES.has(s.key) ? (
                     <g key={s.key}>
                       <linearGradient id={`trend-${s.key}`} x1="0" y1="0" x2="0" y2="1">
                         <stop offset={0} stopColor={s.color} stopOpacity={0.22} />
-                        <stop offset={splits[s.key as "netProfit" | "profit"].fill} stopColor={s.color} stopOpacity={0.03} />
-                        <stop offset={splits[s.key as "netProfit" | "profit"].fill} stopColor={NEGATIVE_COLOR} stopOpacity={0.03} />
+                        <stop offset={splits.profit.fill} stopColor={s.color} stopOpacity={0.03} />
+                        <stop offset={splits.profit.fill} stopColor={NEGATIVE_COLOR} stopOpacity={0.03} />
                         <stop offset={1} stopColor={NEGATIVE_COLOR} stopOpacity={0.2} />
                       </linearGradient>
                       <linearGradient id={`stroke-${s.key}`} x1="0" y1="0" x2="0" y2="1">
-                        <stop offset={splits[s.key as "netProfit" | "profit"].stroke} stopColor={s.color} />
-                        <stop offset={splits[s.key as "netProfit" | "profit"].stroke} stopColor={NEGATIVE_COLOR} />
+                        <stop offset={splits.profit.stroke} stopColor={s.color} />
+                        <stop offset={splits.profit.stroke} stopColor={NEGATIVE_COLOR} />
                       </linearGradient>
                     </g>
                   ) : (
@@ -595,7 +685,7 @@ function TrendChart({
               <XAxis
                 dataKey="key"
                 tickFormatter={formatTick}
-                tick={{ fontSize: 11, fill: "#64748b" }}
+                tick={{ fontSize: 12, fill: "#64748b" }}
                 axisLine={false}
                 tickLine={false}
                 minTickGap={24}
@@ -604,11 +694,15 @@ function TrendChart({
               />
               <YAxis
                 tickFormatter={compactMoney}
-                tick={{ fontSize: 11, fill: "#64748b" }}
+                tick={{ fontSize: 12, fill: "#64748b" }}
                 axisLine={false}
                 tickLine={false}
                 width={chartWidth > 0 && chartWidth < 420 ? 44 : 52}
               />
+              {/* Dải nền đánh dấu ô đang xem trong P&L */}
+              {selectedKey && data.length > 1 && (
+                <ReferenceLine x={selectedKey} stroke="#6366f1" strokeOpacity={0.08} strokeWidth={selectedBandWidth} />
+              )}
               <ReferenceLine y={0} stroke="#94a3b8" strokeWidth={1.25} />
               <Tooltip
                 cursor={{ stroke: "#cbd5e1", strokeDasharray: "3 3" }}
@@ -616,17 +710,24 @@ function TrendChart({
                   const point = active && label != null ? pointMap.get(String(label)) : undefined;
                   if (!point) return null;
                   const cmp = point.compare;
-                  const tacos = point.revenue > 0 ? point.adsFee / point.revenue : 0;
-                  const fmtKey = (k: string) => (mode === "day" ? longDate(k) : monthLabel(k, true));
+                  const formatRange = (start: string, end: string) => {
+                    if (mode === "day" || start === end) return longDate(start);
+                    if (mode === "month") return monthLabel(start.slice(0, 7), true);
+                    return `${shortDate(start)} - ${longDate(end)}`;
+                  };
                   return (
-                    <div className="min-w-[200px] rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs shadow-lg">
+                    <div className="min-w-[200px] rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-[13px] shadow-lg">
                       <p className="mb-1.5 font-semibold text-slate-900">
-                        {fmtKey(point.key)}
-                        {cmp && <span className="font-normal text-slate-400"> vs {fmtKey(cmp.key)}</span>}
+                        {formatRange(point.rangeStart, point.rangeEnd)}
+                        {cmp && point.compareRangeStart && point.compareRangeEnd && (
+                          <span className="font-normal text-slate-400">
+                            {" "}vs {formatRange(point.compareRangeStart, point.compareRangeEnd)}
+                          </span>
+                        )}
                       </p>
                       {SERIES.map((s) => {
                         const change = cmp ? changeRatio(point[s.key], cmp[s.key]) : null;
-                        const good = s.key === "adsFee" ? (change ?? 0) <= 0 : (change ?? 0) >= 0;
+                        const good = (change ?? 0) >= 0;
                         return (
                           <div key={s.key} className="flex items-center justify-between gap-3 py-0.5">
                             <span className="flex items-center gap-1.5 text-slate-500">
@@ -653,10 +754,9 @@ function TrendChart({
                           </div>
                         );
                       })}
-                      <div className="mt-1 flex items-center justify-between gap-4 border-t border-slate-100 pt-1.5">
-                        <span className="text-slate-500">TACOS</span>
-                        <span className="font-semibold tabular-nums text-slate-900">{ratioOrDash(tacos, point.revenue)}</span>
-                      </div>
+                      {point.key !== selectedKey && (
+                        <p className="mt-1.5 border-t border-slate-100 pt-1.5 text-xs text-slate-400">Bấm để xem P&amp;L của kỳ này</p>
+                      )}
                     </div>
                   );
                 }}
@@ -681,7 +781,7 @@ function TrendChart({
               {SERIES.filter((s) => visible[s.key]).map((s) => {
                 const signed = SIGNED_SERIES.has(s.key);
                 // Gradient objectBoundingBox không vẽ được nét phẳng tuyệt đối → dùng màu đơn.
-                const flat = signed && splits[s.key as "netProfit" | "profit"].flat;
+                const flat = signed && splits.profit.flat;
                 const stroke = signed && !flat ? `url(#stroke-${s.key})` : flat && data[0]?.[s.key] < 0 ? NEGATIVE_COLOR : s.color;
                 return (
                   <Area
@@ -729,6 +829,8 @@ function costValues(t: DashboardTotals): Record<CostKey, number> {
 }
 
 const PNL_GRID = "grid grid-cols-[minmax(0,7rem)_minmax(0,1fr)_auto_3.5rem] items-center gap-3";
+// Khi so sánh, cột cuối là % thay đổi (rộng hơn cột % doanh thu)
+const PNL_GRID_CMP = "grid grid-cols-[minmax(0,7rem)_minmax(0,1fr)_auto_4.75rem] items-center gap-3";
 
 function PnlCostRow({
   label,
@@ -737,6 +839,8 @@ function PnlCostRow({
   revenue,
   maxCost,
   title,
+  grid,
+  delta,
 }: {
   label: string;
   value: number;
@@ -744,87 +848,124 @@ function PnlCostRow({
   revenue: number;
   maxCost: number;
   title?: string;
+  grid: string;
+  /** Có khi so sánh: thay cho % doanh thu. */
+  delta?: React.ReactNode;
 }) {
   const mounted = useMounted();
   // Thanh so với khoản chi lớn nhất để dễ so sánh; % bên phải vẫn là % doanh thu.
   const width = maxCost > 0 ? Math.min(100, Math.max(0, (value / maxCost) * 100)) : 0;
   return (
-    <div className={`${PNL_GRID} border-b border-slate-100 py-2.5`} title={title}>
-      <span className="truncate text-[13px] text-slate-700">{label}</span>
+    <div className={`${grid} border-b border-slate-100 py-2.5`} title={title}>
+      <span className="truncate text-sm text-slate-700">{label}</span>
       <div className="h-3 overflow-hidden rounded-full bg-slate-100/70">
         <div
           className="h-full rounded-full transition-[width] duration-700 ease-out"
           style={{ width: mounted ? `${Math.max(width, value > 0 ? 2 : 0)}%` : "0%", backgroundColor: color }}
         />
       </div>
-      <span className="text-right text-[13px] font-semibold tabular-nums text-slate-800">{money(-value)}</span>
-      <span className="text-right text-[11px] tabular-nums text-slate-500">({ratioOrDash(value / (revenue || 1), revenue)})</span>
+      <span className="text-right text-sm font-semibold tabular-nums text-slate-800">{money(-value)}</span>
+      {delta ?? (
+        <span className="text-right text-xs tabular-nums text-slate-500">({ratioOrDash(value / (revenue || 1), revenue)})</span>
+      )}
     </div>
   );
 }
 
-function PnlTotalRow({ label, value, revenue, showPct = false }: { label: string; value: number; revenue: number; showPct?: boolean }) {
-  return (
-    <div className={`${PNL_GRID} border-b border-slate-200 py-2.5`}>
-      <span className="text-[13px] font-semibold text-slate-900">{label}</span>
-      <span />
-      <span className={`text-right text-[13px] font-bold tabular-nums ${value < 0 ? "text-rose-600" : "text-slate-900"}`}>
-        {money(value)}
-      </span>
-      <span className="text-right text-[11px] tabular-nums text-slate-500">
-        {showPct ? `(${ratioOrDash(value / (revenue || 1), revenue)})` : ""}
-      </span>
-    </div>
-  );
-}
-
-function PnlStatement({ current, delay }: { current: DashboardTotals; delay: number }) {
+function PnlStatement({
+  current,
+  previous,
+  periodLabel,
+  compareLabel,
+  onResetLatest,
+  delay,
+}: {
+  current: DashboardTotals;
+  previous: DashboardTotals | null;
+  /** Ô đang xem trên biểu đồ, vd "Tuần 6/10 – 11/10". */
+  periodLabel: string;
+  compareLabel: string;
+  /** Có khi đang xem một ô cũ hơn ô mới nhất. */
+  onResetLatest?: () => void;
+  delay: number;
+}) {
   const revenue = current.revenue;
   const costs = costValues(current);
+  const prevCosts = previous ? costValues(previous) : null;
   const maxCost = Math.max(0, ...Object.values(costs));
   const negative = current.profit < 0;
-  const row = (key: CostKey, title?: string) => {
-    const item = COST_ITEMS.find((c) => c.key === key)!;
-    return (
-      <PnlCostRow
-        label={item.label}
-        value={costs[key]}
-        color={item.color}
-        revenue={revenue}
-        maxCost={maxCost}
-        title={title}
-      />
-    );
-  };
+  const grid = previous ? PNL_GRID_CMP : PNL_GRID;
+  const taxTitle = `Tax ${money(current.tax)} · Promotions ${money(current.promotion)} · Returns ${money(current.returnCost)}`;
+  const deltaCell = (cur: number, prev: number, inverse = false) => (
+    <span className="flex justify-end" title={`${compareLabel}: ${money(inverse ? -prev : prev)}`}>
+      <DeltaPill ratio={changeRatio(cur, prev)} inverse={inverse} />
+    </span>
+  );
 
   return (
     <Card delay={delay} className="flex h-full flex-col p-5">
-      <h2 className="text-base font-bold text-slate-900">Profit &amp; Loss</h2>
-      <div className="mt-2 flex flex-1 flex-col justify-center">
-        <PnlTotalRow label="Revenue" value={revenue} revenue={revenue} />
-        {row("basecost")}
-        {row("amazonFee")}
-        {row("adsFee")}
-        {row(
-          "taxOthers",
-          `Tax ${money(current.tax)} · Promotions ${money(current.promotion)} · Returns ${money(current.returnCost)}`,
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-lg font-bold text-slate-900">Profit &amp; Loss</h2>
+          <p key={`${periodLabel}|${compareLabel}`} className="acc-rise mt-0.5 text-[13px] font-semibold text-indigo-600">
+            {periodLabel}
+            {previous && <span className="font-medium text-slate-500"> · vs {compareLabel}</span>}
+          </p>
+        </div>
+        {onResetLatest && (
+          <button
+            type="button"
+            onClick={onResetLatest}
+            className="shrink-0 cursor-pointer rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900"
+          >
+            Mới nhất
+          </button>
         )}
+      </div>
+      <div className="mt-2 flex flex-1 flex-col justify-center">
+        <div className={`${grid} border-b border-slate-200 py-2.5`}>
+          <span className="text-sm font-semibold text-slate-900">Revenue</span>
+          <span />
+          <span className={`text-right text-sm font-bold tabular-nums ${revenue < 0 ? "text-rose-600" : "text-slate-900"}`}>
+            {money(revenue)}
+          </span>
+          {previous ? deltaCell(revenue, previous.revenue) : <span />}
+        </div>
+        {COST_ITEMS.map((item) => (
+          <PnlCostRow
+            key={item.key}
+            label={item.label}
+            value={costs[item.key]}
+            color={item.color}
+            revenue={revenue}
+            maxCost={maxCost}
+            title={item.key === "taxOthers" ? taxTitle : undefined}
+            grid={grid}
+            delta={prevCosts ? deltaCell(costs[item.key], prevCosts[item.key], true) : undefined}
+          />
+        ))}
       </div>
       <div
         className={`mt-3 flex items-center justify-between rounded-xl px-4 py-3 transition-colors duration-300 ${
           negative ? "bg-rose-50" : "bg-emerald-50"
         }`}
       >
-        <span className="text-sm font-bold text-slate-900">Profit</span>
-        <span className={`flex items-baseline gap-2 tabular-nums ${negative ? "text-rose-600" : "text-emerald-600"}`}>
-          <span className="text-base font-bold">
+        <span className="text-[15px] font-bold text-slate-900">Profit</span>
+        <span className={`flex items-center gap-2 tabular-nums ${negative ? "text-rose-600" : "text-emerald-600"}`}>
+          <span className="text-lg font-bold">
             <AnimatedNumber value={current.profit} format={money} />
           </span>
-          <span className="text-[11px] font-medium">({ratioOrDash(current.margin, revenue)})</span>
+          {previous ? (
+            <span title={`${compareLabel}: ${money(previous.profit)}`}>
+              <DeltaPill ratio={changeRatio(current.profit, previous.profit)} />
+            </span>
+          ) : (
+            <span className="text-xs font-medium">({ratioOrDash(current.margin, revenue)})</span>
+          )}
         </span>
       </div>
       {current.serviceCost > 0 && (
-        <p className="mt-2 px-1 text-right text-[11px] tabular-nums text-slate-500">
+        <p className="mt-2 px-1 text-right text-xs tabular-nums text-slate-500">
           After service fee {money(-current.serviceCost)}: {money(current.netProfit)}
         </p>
       )}
@@ -834,7 +975,7 @@ function PnlStatement({ current, delay }: { current: DashboardTotals; delay: num
 
 // ---------- store table ----------
 
-type StoreSortKey = "store" | "revenue" | "profit" | "margin" | "tacos" | "acos" | "units";
+type StoreSortKey = "store" | "revenue" | "profit" | "margin" | "tacos" | "acos" | "orders" | "units";
 
 const STORE_COLUMNS: { key: StoreSortKey; label: string }[] = [
   { key: "store", label: "Store" },
@@ -843,6 +984,7 @@ const STORE_COLUMNS: { key: StoreSortKey; label: string }[] = [
   { key: "margin", label: "Margin" },
   { key: "tacos", label: "TACOS" },
   { key: "acos", label: "ACOS" },
+  { key: "orders", label: "Orders" },
   { key: "units", label: "Units" },
 ];
 
@@ -862,6 +1004,8 @@ function storeSortValue(row: DashboardStoreRow, key: StoreSortKey): number | str
       return c.revenue > 0 ? c.tacos : null;
     case "acos":
       return c.revenueAds > 0 ? c.acos : null;
+    case "orders":
+      return c.orders;
     case "units":
       return c.quantity;
   }
@@ -899,7 +1043,7 @@ function StoresPerformance({
 
   return (
     <Card delay={delay} className="flex h-full flex-col p-5">
-      <h2 className="text-base font-bold text-slate-900">Stores Performance</h2>
+      <h2 className="text-lg font-bold text-slate-900">Stores Performance</h2>
       {/* Màn hẹp: danh sách thẻ thay cho bảng để không phải cuộn ngang */}
       <div className="mt-2 divide-y divide-slate-100 @min-[600px]:hidden">
         {rows.map((row) => {
@@ -915,21 +1059,22 @@ function StoresPerformance({
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: colorOf(row.storeId) }} />
-                  <span className="truncate text-sm font-semibold text-slate-900">{row.storeName}</span>
+                  <span className="truncate text-[15px] font-semibold text-slate-900">{row.storeName}</span>
                   {suspicious && <WarningIcon size={14} weight="fill" className="shrink-0 text-amber-500" />}
                 </div>
-                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 pl-[18px] text-[11px] tabular-nums text-slate-500">
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 pl-[18px] text-xs tabular-nums text-slate-500">
                   <span>Rev {money(c.revenue)}</span>
                   <span>TACOS {ratioOrDash(c.tacos, c.revenue)}</span>
                   <span>ACOS {ratioOrDash(c.acos, c.revenueAds)}</span>
+                  <span>{int.format(c.orders)} orders</span>
                   <span>{int.format(c.quantity)} units</span>
                 </div>
               </div>
               <div className="shrink-0 text-right">
-                <div className={`text-sm font-semibold tabular-nums ${c.profit < 0 ? "text-rose-600" : "text-slate-900"}`}>
+                <div className={`text-[15px] font-semibold tabular-nums ${c.profit < 0 ? "text-rose-600" : "text-slate-900"}`}>
                   {money(c.profit)}
                 </div>
-                <div className="mt-1 text-xs">
+                <div className="mt-1 text-[13px]">
                   {c.revenue <= 0 ? (
                     <span className="text-slate-400">—</span>
                   ) : (
@@ -948,7 +1093,7 @@ function StoresPerformance({
         })}
         {rows.length > 1 && (
           <div
-            className={`mt-2 flex items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-xs font-semibold tabular-nums ${
+            className={`mt-2 flex items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-[13px] font-semibold tabular-nums ${
               total.profit < 0 ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-800"
             }`}
           >
@@ -960,7 +1105,7 @@ function StoresPerformance({
         )}
       </div>
       <div className="mt-3 hidden overflow-x-auto @min-[600px]:block">
-        <table className="w-full min-w-[560px] border-separate border-spacing-0 text-left">
+        <table className="w-full min-w-[620px] border-separate border-spacing-0 text-left">
           <thead>
             <tr>
               {STORE_COLUMNS.map((col, i) => {
@@ -968,14 +1113,14 @@ function StoresPerformance({
                 return (
                   <th
                     key={col.key}
-                    className={`bg-slate-50 px-3 py-2 !text-xs !font-medium !tracking-normal !text-slate-600 ${
+                    className={`bg-slate-50 px-3 py-2 !text-[13px] !font-medium !tracking-normal !text-slate-600 ${
                       i === 0 ? "rounded-l-lg pl-4" : "text-right"
                     } ${i === STORE_COLUMNS.length - 1 ? "rounded-r-lg pr-4" : ""}`}
                   >
                     <button
                       type="button"
                       onClick={() => toggleSort(col.key)}
-                      className={`inline-flex cursor-pointer items-center gap-1 !text-xs !tracking-normal transition-colors hover:!text-slate-900 ${
+                      className={`inline-flex cursor-pointer items-center gap-1 !text-[13px] !tracking-normal transition-colors hover:!text-slate-900 ${
                         active ? "!font-semibold !text-slate-900" : "!font-medium !text-slate-600"
                       }`}
                     >
@@ -1034,7 +1179,7 @@ function StoresPerformance({
                       <span className="text-slate-400">—</span>
                     ) : (
                       <span
-                        className={`inline-block rounded-md px-2 py-0.5 text-xs font-semibold tabular-nums ${
+                        className={`inline-block rounded-md px-2 py-0.5 text-[13px] font-semibold tabular-nums ${
                           c.margin >= 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-600"
                         }`}
                       >
@@ -1044,6 +1189,7 @@ function StoresPerformance({
                   </td>
                   <td className="border-b border-slate-100 px-3 py-2.5 text-right tabular-nums">{ratioOrDash(c.tacos, c.revenue)}</td>
                   <td className="border-b border-slate-100 px-3 py-2.5 text-right tabular-nums">{ratioOrDash(c.acos, c.revenueAds)}</td>
+                  <td className="border-b border-slate-100 px-3 py-2.5 text-right tabular-nums">{int.format(c.orders)}</td>
                   <td className="border-b border-slate-100 px-3 py-2.5 pr-4 text-right tabular-nums">{int.format(c.quantity)}</td>
                 </tr>
               );
@@ -1053,7 +1199,7 @@ function StoresPerformance({
             <tfoot>
               {/* Dòng tổng nổi bật: xanh khi có lãi, đỏ khi lỗ */}
               <tr
-                className={`text-xs font-semibold tabular-nums ${
+                className={`text-[13px] font-semibold tabular-nums ${
                   total.profit < 0 ? "bg-rose-50 [&>td]:!text-rose-700" : "bg-emerald-50 [&>td]:!text-emerald-800"
                 }`}
               >
@@ -1063,6 +1209,7 @@ function StoresPerformance({
                 <td className="px-3 py-2.5 text-right">{ratioOrDash(total.margin, total.revenue)}</td>
                 <td className="px-3 py-2.5 text-right">{ratioOrDash(total.tacos, total.revenue)}</td>
                 <td className="px-3 py-2.5 text-right">{ratioOrDash(total.acos, total.revenueAds)}</td>
+                <td className="px-3 py-2.5 text-right">{int.format(total.orders)}</td>
                 <td className="rounded-r-lg px-3 py-2.5 pr-4 text-right">{int.format(total.quantity)}</td>
               </tr>
             </tfoot>
@@ -1085,9 +1232,9 @@ function CostBreakdown({ current, delay }: { current: DashboardTotals; delay: nu
 
   return (
     <Card delay={delay} className="@container flex h-full flex-col p-5">
-      <h2 className="text-base font-bold text-slate-900">Cost Breakdown</h2>
+      <h2 className="text-lg font-bold text-slate-900">Cost Breakdown</h2>
       {totalCost <= 0 ? (
-        <div className="mt-3 grid flex-1 place-items-center rounded-xl border border-dashed border-slate-200 py-10 text-xs text-slate-400">
+        <div className="mt-3 grid flex-1 place-items-center rounded-xl border border-dashed border-slate-200 py-10 text-[13px] text-slate-400">
           No costs in this period
         </div>
       ) : (
@@ -1114,22 +1261,22 @@ function CostBreakdown({ current, delay }: { current: DashboardTotals; delay: nu
             )}
             <div className="pointer-events-none absolute inset-0 grid place-items-center text-center">
               <div>
-                <div className="text-lg font-bold tabular-nums text-slate-900">
+                <div className="text-xl font-bold tabular-nums text-slate-900">
                   <AnimatedNumber value={totalCost} format={money} />
                 </div>
-                <div className="text-xs text-slate-500">Total Costs</div>
+                <div className="text-[13px] text-slate-500">Total Costs</div>
               </div>
             </div>
           </div>
           <div className="w-full flex-1 space-y-2">
             {slices.map((s) => (
-              <div key={s.name} className="flex items-center justify-between gap-3 border-b border-slate-100 pb-2 text-[13px]">
+              <div key={s.name} className="flex items-center justify-between gap-3 border-b border-slate-100 pb-2 text-sm">
                 <span className="flex min-w-0 items-center gap-2 text-slate-700">
                   <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: s.fill }} />
                   <span className="truncate">{s.name}</span>
                 </span>
                 <span className="flex items-baseline gap-2 tabular-nums">
-                  <span className="text-xs text-slate-500">{money(s.value)}</span>
+                  <span className="text-[13px] text-slate-500">{money(s.value)}</span>
                   <span className="w-12 text-right font-semibold text-slate-900">{pct(s.value / totalCost)}</span>
                 </span>
               </div>
@@ -1146,8 +1293,8 @@ function CostBreakdown({ current, delay }: { current: DashboardTotals; delay: nu
 function DashboardSkeleton() {
   return (
     <div className="space-y-4" role="status" aria-label="Loading dashboard">
-      <div className="grid grid-cols-2 gap-3 @min-[560px]:grid-cols-3 @min-[1000px]:grid-cols-6">
-        {Array.from({ length: 6 }).map((_, i) => (
+      <div className="grid grid-cols-2 gap-3 @min-[560px]:grid-cols-4 @min-[1100px]:grid-cols-7">
+        {Array.from({ length: 7 }).map((_, i) => (
           <div key={i} className="h-[104px] animate-pulse rounded-2xl border border-slate-200/70 bg-white" />
         ))}
       </div>
@@ -1171,23 +1318,13 @@ function readSavedStoreIds(): string[] {
   }
 }
 
-function readSavedRange(maxDate: string): DateRange {
-  if (typeof window !== "undefined") {
-    try {
-      const parsed = JSON.parse(sessionStorage.getItem(RANGE_KEY) || "null");
-      if (parsed && typeof parsed.startDate === "string" && typeof parsed.endDate === "string") return parsed;
-    } catch {
-      // ignore
-    }
-  }
-  return getThisMonthDateRange(maxDate);
-}
-
 function readSavedCompare(): DashboardCompareMode {
   if (typeof window === "undefined") return "none";
   try {
     const saved = localStorage.getItem(COMPARE_KEY);
-    return COMPARE_OPTIONS.some((o) => o.value === saved) ? (saved as DashboardCompareMode) : "none";
+    // Khi tải lại trang, biểu đồ mặc định ở chế độ tháng. Chỉ cần khôi phục trạng thái bật/tắt;
+    // kỳ so sánh cụ thể luôn được suy ra từ chế độ ngày / tuần / tháng.
+    return saved && saved !== "none" ? "month" : "none";
   } catch {
     return "none";
   }
@@ -1197,10 +1334,14 @@ export function AccountingDashboardView() {
   const maxDate = useMemo(() => getAmazonLatestAvailableDate(), []);
   const [stores, setStores] = useState<Store[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>(readSavedStoreIds);
-  const [dateRange, setDateRange] = useState<DateRange>(() => readSavedRange(maxDate));
+  // Mỗi lần mở Dashboard luôn bắt đầu từ "This month"
+  const [dateRange, setDateRange] = useState<DateRange>(() => getThisMonthDateRange(maxDate));
   const [compare, setCompare] = useState<DashboardCompareMode>(readSavedCompare);
+  // Một bộ điều khiển chung: ngày / tuần / tháng quyết định cả cách gộp biểu đồ lẫn kỳ so sánh.
+  const [granularity, setGranularity] = useState<ChartGranularity>("month");
+  // Ô (ngày / tuần / tháng) đang xem trong P&L; null = ô mới nhất.
+  const [pickedBucket, setPickedBucket] = useState<string | null>(null);
   const [storeMenuOpen, setStoreMenuOpen] = useState(false);
-  const [compareMenuOpen, setCompareMenuOpen] = useState(false);
   // Cache phản hồi theo bộ lọc: quay lại lựa chọn cũ hiển thị ngay, rồi làm mới ngầm.
   const [responses, setResponses] = useState<Record<string, AccountingDashboardData>>({});
   const [lastKey, setLastKey] = useState<string | null>(null);
@@ -1289,23 +1430,21 @@ export function AccountingDashboardView() {
     updateSelection(base.includes(id) ? base.filter((x) => x !== id) : [...base, id]);
   };
 
-  const handleRangeChange = (next: DateRange) => {
-    setDateRange(next);
-    try {
-      sessionStorage.setItem(RANGE_KEY, JSON.stringify(next));
-    } catch {
-      // ignore
-    }
-  };
+  const handleRangeChange = (next: DateRange) => setDateRange(next);
 
   const handleCompareChange = (next: DashboardCompareMode) => {
     setCompare(next);
-    setCompareMenuOpen(false);
     try {
       localStorage.setItem(COMPARE_KEY, next);
     } catch {
       // ignore
     }
+  };
+
+  const handleGranularityChange = (next: ChartGranularity) => {
+    setGranularity(next);
+    setPickedBucket(null);
+    if (compare !== "none") handleCompareChange(compareModeFor(next));
   };
 
   const colorOf = useCallback(
@@ -1326,16 +1465,22 @@ export function AccountingDashboardView() {
       {
         id: "revenue",
         label: "Revenue",
-        icon: <CoinsIcon size={20} weight="duotone" />,
         tone: TONES.green,
         value: c.revenue,
         format: money,
         ratio: changeRatio(c.revenue, p?.revenue),
       },
       {
+        id: "orders",
+        label: "Orders",
+        tone: TONES.indigo,
+        value: c.orders,
+        format: (v) => int.format(Math.round(v)),
+        ratio: changeRatio(c.orders, p?.orders),
+      },
+      {
         id: "profit",
         label: "Profit",
-        icon: <PiggyBankIcon size={20} weight="duotone" />,
         tone: TONES.violet,
         value: c.profit,
         format: money,
@@ -1345,7 +1490,6 @@ export function AccountingDashboardView() {
       {
         id: "margin",
         label: "Margin",
-        icon: <ChartLineUpIcon size={20} weight="duotone" />,
         tone: TONES.rose,
         value: c.margin,
         format: (v) => pct(v),
@@ -1356,7 +1500,6 @@ export function AccountingDashboardView() {
       {
         id: "ads",
         label: "Ad Spend",
-        icon: <MegaphoneIcon size={20} weight="duotone" />,
         tone: TONES.blue,
         value: c.adsFee,
         format: money,
@@ -1366,7 +1509,6 @@ export function AccountingDashboardView() {
       {
         id: "tacos",
         label: "TACOS",
-        icon: <PercentIcon size={20} weight="duotone" />,
         tone: TONES.orange,
         value: c.tacos,
         format: (v) => pct(v),
@@ -1377,7 +1519,6 @@ export function AccountingDashboardView() {
       {
         id: "acos",
         label: "ACOS",
-        icon: <TargetIcon size={20} weight="duotone" />,
         tone: TONES.cyan,
         value: c.acos,
         format: (v) => pct(v),
@@ -1388,13 +1529,57 @@ export function AccountingDashboardView() {
     ];
   }, [data]);
 
+  const teams = useMemo(() => {
+    const map = new Map<string, Store[]>();
+    for (const s of stores) {
+      const t = s.team?.trim() || "Chưa phân team";
+      if (!map.has(t)) map.set(t, []);
+      map.get(t)!.push(s);
+    }
+    return Array.from(map.entries())
+      .map(([name, storeList]) => ({
+        name,
+        stores: storeList,
+        storeIds: storeList.map((s) => s.id),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [stores]);
+
+  const matchingTeam = useMemo(() => {
+    if (validSelectedIds.length === 0) return null;
+    return teams.find(
+      (t) =>
+        t.storeIds.length === validSelectedIds.length &&
+        t.storeIds.every((id) => validSelectedIds.includes(id)),
+    );
+  }, [teams, validSelectedIds]);
+
   const allSelected = validSelectedIds.length === 0;
   const storeLabel = allSelected
     ? "All Stores"
+    : matchingTeam
+    ? `Team ${matchingTeam.name}`
     : validSelectedIds.length === 1
     ? stores.find((s) => s.id === validSelectedIds[0])?.name || "1 store"
     : `${validSelectedIds.length} stores`;
-  const compareLabel = COMPARE_OPTIONS.find((o) => o.value === compare)?.label || "No comparison";
+  // Biểu đồ và P&L dùng chung các ô đã gộp: P&L luôn tóm tắt đúng ô đang chọn trên biểu đồ.
+  const buckets = useMemo(() => (data ? aggregateTrend(data.daily, granularity) : []), [data, granularity]);
+  const latestBucket = buckets.at(-1) ?? null;
+  const selectedBucket = buckets.find((b) => b.key === pickedBucket) ?? latestBucket;
+  const bucketPnl = useMemo(() => {
+    if (!data || !selectedBucket) return null;
+    const days = data.days ?? [];
+    const { rangeStart, rangeEnd, compareRangeStart, compareRangeEnd } = selectedBucket;
+    const hasCompare = Boolean(data.previous && compareRangeStart && compareRangeEnd);
+    return {
+      current: summarizeRange(days, rangeStart, rangeEnd),
+      previous: hasCompare ? summarizeRange(days, compareRangeStart!, compareRangeEnd!) : null,
+      periodLabel: `${GRANULARITY_UNIT[granularity]} ${bucketRangeLabel(rangeStart, rangeEnd)}`,
+      compareLabel: hasCompare
+        ? `${COMPARE_PERIOD_LABELS[granularity]} (${bucketRangeLabel(compareRangeStart!, compareRangeEnd!)})`
+        : "",
+    };
+  }, [data, selectedBucket, granularity]);
   const dataClamped = Boolean(data?.period.endDate && dateRange.endDate && data.period.endDate < dateRange.endDate);
 
   return (
@@ -1411,7 +1596,7 @@ export function AccountingDashboardView() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-[28px]">Finance Overview</h1>
             {data?.period.startDate && (
-              <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+              <p className="mt-1 flex flex-wrap items-center gap-2 text-[13px] text-slate-600">
                 <span>
                   Showing {shortDate(data.period.startDate)} – {longDate(data.period.endDate)}
                 </span>
@@ -1423,43 +1608,83 @@ export function AccountingDashboardView() {
               </p>
             )}
           </div>
-          {/* Hẹp: [Stores][Compare][↻] rồi khoảng ngày một hàng riêng; rộng: một hàng */}
+          {/* Hẹp: [Stores][↻] rồi khoảng ngày một hàng riêng; rộng: một hàng */}
           <div className="flex w-full flex-wrap items-center gap-2 @min-[640px]:w-auto">
             <DropdownShell
               className="min-w-0 flex-1 @min-[640px]:flex-none"
+              widthClass="w-72 sm:w-80"
               align="left"
               label={storeLabel}
-              icon={<StorefrontIcon size={15} weight="bold" className="text-slate-400" />}
+              icon={
+                matchingTeam ? (
+                  <UsersThreeIcon size={15} weight="bold" className="text-indigo-600" />
+                ) : (
+                  <StorefrontIcon size={15} weight="bold" className="text-slate-400" />
+                )
+              }
               open={storeMenuOpen}
               setOpen={setStoreMenuOpen}
             >
-              <MenuItem active={allSelected} onClick={() => updateSelection([])}>
-                All Stores
-              </MenuItem>
-              <div className="my-1 h-px bg-slate-100" />
-              {stores.map((s) => (
-                <MenuItem key={s.id} active={validSelectedIds.includes(s.id)} onClick={() => toggleStore(s.id)}>
-                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: colorOf(s.id) }} />
-                  <span className="truncate">{s.name}</span>
+              <div className="max-h-[420px] overflow-y-auto p-1 text-[13px]">
+                {/* CẤP 1: TẤT CẢ STORE */}
+                <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  Cấp 1: Toàn bộ
+                </div>
+                <MenuItem active={allSelected} onClick={() => updateSelection([])}>
+                  <span className="font-semibold text-slate-800">All Stores</span>
+                  <span className="ml-auto text-[11px] font-normal text-slate-400">
+                    {stores.length} stores
+                  </span>
                 </MenuItem>
-              ))}
+
+                <div className="my-1.5 h-px bg-slate-100" />
+
+                {/* CẤP 2: THEO STORE CỤ THỂ */}
+                <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  Cấp 2: Theo Store cụ thể
+                </div>
+                {stores.map((s) => (
+                  <MenuItem key={s.id} active={validSelectedIds.includes(s.id)} onClick={() => toggleStore(s.id)}>
+                    <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: colorOf(s.id) }} />
+                    <span className="truncate">{s.name}</span>
+                    {s.team && (
+                      <span className="ml-auto shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
+                        {s.team}
+                      </span>
+                    )}
+                  </MenuItem>
+                ))}
+
+                <div className="my-1.5 h-px bg-slate-100" />
+
+                {/* CẤP 3: THEO TEAM */}
+                <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  Cấp 3: Theo Team
+                </div>
+                {teams.map((t) => {
+                  const isTeamActive =
+                    t.storeIds.length > 0 &&
+                    t.storeIds.every((id) => validSelectedIds.includes(id)) &&
+                    validSelectedIds.length === t.storeIds.length;
+                  return (
+                    <MenuItem
+                      key={t.name}
+                      active={isTeamActive}
+                      onClick={() => updateSelection(isTeamActive ? [] : t.storeIds)}
+                    >
+                      <UsersThreeIcon size={14} weight="bold" className="shrink-0 text-indigo-500" />
+                      <span className="truncate font-medium">Team {t.name}</span>
+                      <span className="ml-auto shrink-0 text-[11px] font-normal text-slate-400">
+                        ({t.stores.length} store)
+                      </span>
+                    </MenuItem>
+                  );
+                })}
+              </div>
             </DropdownShell>
             <div className="order-last w-full @min-[640px]:order-none @min-[640px]:w-auto">
               <PpcAmazonDatePicker value={dateRange} onChange={handleRangeChange} maxDate={maxDate} align="right" />
             </div>
-            <DropdownShell
-              className="min-w-0 flex-1 @min-[640px]:flex-none"
-              label={compareLabel}
-              open={compareMenuOpen}
-              setOpen={setCompareMenuOpen}
-              widthClass="w-48"
-            >
-              {COMPARE_OPTIONS.map((o) => (
-                <MenuItem key={o.value} active={compare === o.value} onClick={() => handleCompareChange(o.value)}>
-                  {o.label}
-                </MenuItem>
-              ))}
-            </DropdownShell>
             <button
               type="button"
               onClick={refresh}
@@ -1474,7 +1699,7 @@ export function AccountingDashboardView() {
         </div>
 
         {error && (
-          <div className="acc-rise flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700">
+          <div className="acc-rise flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700">
             <span className="flex items-center gap-2 font-semibold">
               <WarningCircleIcon size={16} weight="bold" />
               {error}
@@ -1493,7 +1718,7 @@ export function AccountingDashboardView() {
           <DashboardSkeleton />
         ) : data ? (
           <div className={`space-y-4 transition-opacity duration-300 ${loading ? "opacity-70" : "opacity-100"}`}>
-            <div className="grid grid-cols-2 gap-3 @min-[560px]:grid-cols-3 @min-[1000px]:grid-cols-6">
+            <div className="grid grid-cols-2 gap-3 @min-[560px]:grid-cols-4 @min-[1100px]:grid-cols-7">
               {kpis.map((kpi, i) => (
                 <KpiCard key={kpi.id} kpi={kpi} delay={i * 30} showDelta={Boolean(data.previous)} />
               ))}
@@ -1502,16 +1727,29 @@ export function AccountingDashboardView() {
             <div className="grid gap-4 @min-[900px]:grid-cols-3">
               <div className="min-w-0 @min-[900px]:col-span-2">
                 <TrendChart
-                  daily={data.daily}
-                  monthly={data.monthly}
-                  monthlyCompareShift={data.monthlyCompareShift ?? 0}
+                  data={buckets}
+                  selectedKey={selectedBucket?.key ?? null}
+                  onSelect={setPickedBucket}
                   previousPeriod={data.previousPeriod}
-                  compare={compare}
-                  onCompareChange={handleCompareChange}
+                  controls={{
+                    granularity,
+                    onGranularityChange: handleGranularityChange,
+                    compareOn: compare !== "none",
+                    onToggleCompare: () => handleCompareChange(compare === "none" ? compareModeFor(granularity) : "none"),
+                  }}
                   delay={120}
                 />
               </div>
-              <PnlStatement current={data.current} delay={150} />
+              <PnlStatement
+                current={bucketPnl?.current ?? data.current}
+                previous={bucketPnl ? bucketPnl.previous : data.previous}
+                periodLabel={bucketPnl?.periodLabel ?? ""}
+                compareLabel={bucketPnl?.compareLabel ?? ""}
+                onResetLatest={
+                  selectedBucket && latestBucket && selectedBucket.key !== latestBucket.key ? () => setPickedBucket(null) : undefined
+                }
+                delay={150}
+              />
             </div>
 
             <div className="grid gap-4 @min-[900px]:grid-cols-3">
