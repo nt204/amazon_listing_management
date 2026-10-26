@@ -7,8 +7,6 @@ import {
   ComposedChart,
   LabelList,
   Line,
-  Pie,
-  PieChart,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -36,6 +34,7 @@ import type {
 } from "@/lib/accounting/dashboard-db";
 import type { DashboardCompareMode } from "@/lib/accounting/dashboard-periods";
 import { summarizeRange } from "@/lib/accounting/dashboard-totals";
+import { listTeams, parseStoreTeams, storeHasTeam } from "@/lib/accounting/store-teams";
 import { PpcAmazonDatePicker, type DateRange } from "@/components/ppc/ppc-amazon-date-picker";
 import { getAmazonLatestAvailableDate, getThisMonthDateRange } from "./financials-date-utils";
 
@@ -809,20 +808,25 @@ function TrendChart({
 
 // ---------- P&L ----------
 
+// Cùng tên + thứ tự với các cột chi phí của tab Financials (FBA theo ngày)
 const COST_ITEMS = [
-  { key: "basecost", label: "Base Cost", color: "#64748b" },
-  { key: "amazonFee", label: "Amazon Fees", color: "#fb923c" },
-  { key: "adsFee", label: "Ad Spend", color: "#8b5cf6" },
-  { key: "taxOthers", label: "Tax & Others", color: "#f472b6" },
+  { key: "adsFee", label: "Ads Fee", color: "#8b5cf6" },
+  { key: "basecost", label: "Base Cost", color: "#0d9488" },
+  { key: "amazonFee", label: "AMZ Fee", color: "#fb923c" },
+  { key: "tax", label: "Thuế", color: "#f472b6" },
+  { key: "promotion", label: "Promotion", color: "#ca8a04" },
+  { key: "returnCost", label: "Refund", color: "#06b6d4" },
 ] as const;
 type CostKey = (typeof COST_ITEMS)[number]["key"];
 
 function costValues(t: DashboardTotals): Record<CostKey, number> {
   return {
+    adsFee: t.adsFee,
     basecost: t.basecost,
     amazonFee: t.amazonFee,
-    adsFee: t.adsFee,
-    taxOthers: t.tax + t.promotion + t.returnCost,
+    tax: t.tax,
+    promotion: t.promotion,
+    returnCost: t.returnCost,
   };
 }
 
@@ -907,7 +911,6 @@ function PnlStatement({
   const maxCost = Math.max(0, ...Object.values(costs));
   const negative = current.profit < 0;
   const grid = previous ? PNL_GRID_CMP : PNL_GRID;
-  const taxTitle = `Tax ${money(current.tax)} · Promotions ${money(current.promotion)} · Returns ${money(current.returnCost)}`;
   // 2 ô cuối của dòng khi so sánh: số kỳ trước mờ + % thay đổi
   // cost = khoản chi: hiển thị số âm như các dòng chi phí
   const compareCells = (cur: number, prev: number, cost = false) => (
@@ -956,7 +959,6 @@ function PnlStatement({
             color={item.color}
             revenue={revenue}
             maxCost={maxCost}
-            title={item.key === "taxOthers" ? taxTitle : undefined}
             grid={grid}
             compare={prevCosts ? compareCells(costs[item.key], prevCosts[item.key], true) : undefined}
           />
@@ -1096,13 +1098,7 @@ function StoresPerformance({
                   {c.revenue <= 0 ? (
                     <span className="text-slate-400">—</span>
                   ) : (
-                    <span
-                      className={`rounded-md px-1.5 py-0.5 font-semibold tabular-nums ${
-                        c.margin >= 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-600"
-                      }`}
-                    >
-                      {pct(c.margin)}
-                    </span>
+                    <span className="tabular-nums text-slate-900">{pct(c.margin)}</span>
                   )}
                 </div>
               </div>
@@ -1193,13 +1189,7 @@ function StoresPerformance({
                     {c.revenue <= 0 ? (
                       <span className="text-slate-400">—</span>
                     ) : (
-                      <span
-                        className={`inline-block rounded-md px-2 py-0.5 text-[13px] font-semibold tabular-nums ${
-                          c.margin >= 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-600"
-                        }`}
-                      >
-                        {pct(c.margin)}
-                      </span>
+                      <span className="tabular-nums text-slate-900">{pct(c.margin)}</span>
                     )}
                   </td>
                   <td className="border-b border-slate-100 px-3 py-2.5 text-right tabular-nums">{ratioOrDash(c.tacos, c.revenue)}</td>
@@ -1240,67 +1230,140 @@ function StoresPerformance({
 
 // ---------- cost breakdown ----------
 
-function CostBreakdown({ current, delay }: { current: DashboardTotals; delay: number }) {
+const PROFIT_SEGMENT = { key: "profit", label: "Profit", color: "#22c55e" } as const;
+
+interface CostRow {
+  id: string;
+  name: string;
+  totals: DashboardTotals;
+  isTotal?: boolean;
+}
+
+/** 1 thanh = 100% doanh thu: các khoản chi + phần còn lại là Profit. Lỗ → chi phí vượt doanh thu, có vạch mốc doanh thu. */
+function CostStructureBar({ totals }: { totals: DashboardTotals }) {
   const mounted = useMounted();
-  const costs = costValues(current);
-  const slices = COST_ITEMS.map((c) => ({ name: c.label, value: Math.max(0, costs[c.key]), fill: c.color })).filter(
-    (s) => s.value > 0,
+  const costs = costValues(totals);
+  const costSum = COST_ITEMS.reduce((sum, c) => sum + Math.max(0, costs[c.key]), 0);
+  const profit = Math.max(0, totals.revenue - costSum);
+  const scale = Math.max(totals.revenue, costSum);
+  const segments = [
+    ...COST_ITEMS.map((c) => ({ key: c.key, color: c.color, value: Math.max(0, costs[c.key]) })),
+    { key: PROFIT_SEGMENT.key, color: PROFIT_SEGMENT.color, value: profit },
+  ].filter((seg) => seg.value > 0);
+  const revenueMark = costSum > totals.revenue && scale > 0 ? (totals.revenue / scale) * 100 : null;
+  return (
+    <div className="relative h-3">
+      <div
+        className="flex h-full gap-[2px] overflow-hidden rounded-full bg-slate-100 transition-[clip-path] duration-700 ease-out"
+        style={{ clipPath: mounted ? "inset(0 0 0 0)" : "inset(0 100% 0 0)" }}
+      >
+        {segments.map((seg) => (
+          <div key={seg.key} className="h-full" style={{ flexGrow: seg.value, flexBasis: 0, backgroundColor: seg.color }} />
+        ))}
+      </div>
+      {revenueMark != null && (
+        <span
+          className="absolute -top-1 -bottom-1 w-0.5 rounded-full bg-slate-900"
+          style={{ left: `calc(${revenueMark}% - 1px)` }}
+          aria-hidden
+        />
+      )}
+    </div>
   );
-  const totalCost = slices.reduce((sum, s) => sum + s.value, 0);
+}
+
+function CostBreakdown({ data, delay }: { data: AccountingDashboardData; delay: number }) {
+  const [hovered, setHovered] = useState<string | null>(null);
+  const storeRows: CostRow[] = data.byStore
+    .filter((r) => r.current.revenue > 0)
+    .sort((a, b) => b.current.revenue - a.current.revenue)
+    .map((r) => ({ id: r.storeId, name: r.storeName, totals: r.current }));
+  const idleStores = data.byStore.length - storeRows.length;
+  const rows: CostRow[] = [
+    ...(storeRows.length > 1 ? [{ id: "__total", name: "Total", totals: data.current, isTotal: true }] : []),
+    ...storeRows,
+  ];
+  const legend = [...COST_ITEMS, PROFIT_SEGMENT];
 
   return (
-    <Card delay={delay} className="@container flex h-full flex-col p-5">
+    <Card delay={delay} className="flex h-full flex-col p-5">
       <h2 className="text-lg font-bold text-slate-900">Cost Breakdown</h2>
-      {totalCost <= 0 ? (
+      <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1">
+        {legend.map((l) => (
+          <span key={l.key} className="inline-flex items-center gap-1.5 text-xs text-slate-600">
+            <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: l.color }} />
+            {l.label}
+          </span>
+        ))}
+      </div>
+
+      {rows.length === 0 ? (
         <div className="mt-3 grid flex-1 place-items-center rounded-xl border border-dashed border-slate-200 py-10 text-[13px] text-slate-400">
-          No costs in this period
+          No revenue in this period
         </div>
       ) : (
-        <div className="flex flex-1 flex-col items-center gap-5 pt-3 @min-[360px]:flex-row">
-          <div className="relative h-[180px] w-[180px] shrink-0">
-            {mounted && (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={slices}
-                    dataKey="value"
-                    innerRadius="72%"
-                    outerRadius="100%"
-                    startAngle={90}
-                    endAngle={-270}
-                    paddingAngle={slices.length > 1 ? 1.5 : 0}
-                    stroke="none"
-                    isAnimationActive
-                    animationDuration={650}
-                    animationEasing="ease-out"
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
-            <div className="pointer-events-none absolute inset-0 grid place-items-center text-center">
-              <div>
-                <div className="text-xl font-bold tabular-nums text-slate-900">
-                  <AnimatedNumber value={totalCost} format={money} />
-                </div>
-                <div className="text-[13px] text-slate-500">Total Costs</div>
-              </div>
-            </div>
-          </div>
-          <div className="w-full flex-1 space-y-2">
-            {slices.map((s) => (
-              <div key={s.name} className="flex items-center justify-between gap-3 border-b border-slate-100 pb-2 text-sm">
-                <span className="flex min-w-0 items-center gap-2 text-slate-700">
-                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: s.fill }} />
-                  <span className="truncate">{s.name}</span>
+        <div className="mt-3 flex-1 space-y-1">
+          {rows.map((row) => {
+            const t = row.totals;
+            const costs = costValues(t);
+            const open = hovered === row.id;
+            return (
+              <div
+                key={row.id}
+                tabIndex={0}
+                onMouseEnter={() => setHovered(row.id)}
+                onMouseLeave={() => setHovered(null)}
+                onFocus={() => setHovered(row.id)}
+                onBlur={() => setHovered(null)}
+                className={`relative grid grid-cols-[minmax(0,6.5rem)_minmax(0,1fr)_3.5rem] items-center gap-3 rounded-lg px-1.5 py-2 outline-none transition-colors ${
+                  open ? "bg-slate-50" : ""
+                } ${row.isTotal ? "mb-1 border-b border-slate-200 pb-3" : ""}`}
+              >
+                <span className={`truncate text-[13px] ${row.isTotal ? "font-bold text-slate-900" : "font-medium text-slate-700"}`}>
+                  {row.name}
                 </span>
-                <span className="flex items-baseline gap-2 tabular-nums">
-                  <span className="text-[13px] text-slate-500">{money(s.value)}</span>
-                  <span className="w-12 text-right font-semibold text-slate-900">{pct(s.value / totalCost)}</span>
-                </span>
+                <CostStructureBar totals={t} />
+                <span className={`text-right text-[13px] font-bold tabular-nums ${profitTone(t.margin)}`}>{pct(t.margin)}</span>
+
+                {/* Chi tiết khi rê chuột: số tiền + % doanh thu từng khoản */}
+                {open && (
+                  <div className="pointer-events-none absolute left-1/4 top-full z-30 mt-1 w-60 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs shadow-lg">
+                    <p className="mb-1.5 flex justify-between font-semibold text-slate-900">
+                      <span className="truncate">{row.name}</span>
+                      <span className="tabular-nums">{money(t.revenue)}</span>
+                    </p>
+                    {COST_ITEMS.map((c) => (
+                      <div key={c.key} className="flex items-center justify-between gap-3 py-0.5">
+                        <span className="flex items-center gap-1.5 text-slate-600">
+                          <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: c.color }} />
+                          {c.label}
+                        </span>
+                        <span className="tabular-nums text-slate-900">
+                          {money(-costs[c.key])}
+                          <span className="ml-2 inline-block w-11 text-right text-slate-500">
+                            {pct(t.revenue > 0 ? costs[c.key] / t.revenue : 0)}
+                          </span>
+                        </span>
+                      </div>
+                    ))}
+                    <div className="mt-1 flex items-center justify-between gap-3 border-t border-slate-100 pt-1.5 font-semibold">
+                      <span className="text-slate-900">Profit</span>
+                      <span className={`tabular-nums ${profitTone(t.profit)}`}>
+                        {money(t.profit)}
+                        <span className="ml-2 inline-block w-11 text-right">{pct(t.margin)}</span>
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
-            ))}
-          </div>
+            );
+          })}
         </div>
+      )}
+      {idleStores > 0 && (
+        <p className="mt-2 text-xs text-slate-400">
+          {idleStores} store không có doanh thu trong kỳ
+        </p>
       )}
     </Card>
   );
@@ -1456,27 +1519,30 @@ export function AccountingDashboardView() {
 
   const handleSelectStore = (storeId: string, team?: string | null) => {
     updateSelection([storeId]);
-    setSelectedTeam(team || null);
+    persistTeam(team || null);
+    setStoreMenuOpen(false);
+  };
+
+  const persistTeam = (team: string | null) => {
+    setSelectedTeam(team);
     try {
-      if (team) {
-        localStorage.setItem("acc_dashboard_selected_team", team);
-      } else {
-        localStorage.removeItem("acc_dashboard_selected_team");
-      }
+      if (team) localStorage.setItem("acc_dashboard_selected_team", team);
+      else localStorage.removeItem("acc_dashboard_selected_team");
     } catch {
       // ignore
     }
-    setStoreMenuOpen(false);
   };
 
   const handleSelectAll = () => {
     updateSelection([]);
-    setSelectedTeam(null);
-    try {
-      localStorage.removeItem("acc_dashboard_selected_team");
-    } catch {
-      // ignore
-    }
+    persistTeam(null);
+    setStoreMenuOpen(false);
+  };
+
+  // Tổng kết theo team: gom mọi store có team này (vd FBA 2 = EVERPHANT + FASTPEACE + LIMIMA).
+  const handleSelectTeam = (team: string | null) => {
+    persistTeam(team);
+    updateSelection([]);
     setStoreMenuOpen(false);
   };
 
@@ -1576,13 +1642,15 @@ export function AccountingDashboardView() {
   const allSelected = validSelectedIds.length === 0;
   const selectedStore =
     validSelectedIds.length === 1 ? stores.find((s) => s.id === validSelectedIds[0]) : null;
+  // 1 dropdown: All Stores / từng store (kèm team của store) / tổng kết theo team
   const storeLabel = allSelected
-    ? "All Stores"
+    ? selectedTeam || "All Stores"
     : selectedStore
     ? selectedTeam
-      ? `${selectedStore.name} • Team ${selectedTeam}`
+      ? `${selectedStore.name} • ${selectedTeam}`
       : selectedStore.name
     : `${validSelectedIds.length} stores`;
+  const teams = listTeams(stores);
   // Biểu đồ và P&L dùng chung các ô đã gộp: P&L luôn tóm tắt đúng ô đang chọn trên biểu đồ.
   const buckets = useMemo(() => (data ? aggregateTrend(data.daily, granularity) : []), [data, granularity]);
   const latestBucket = buckets.at(-1) ?? null;
@@ -1648,7 +1716,7 @@ export function AccountingDashboardView() {
             >
               <div className="p-1 text-[13px]">
                 {/* TOÀN BỘ CỬA HÀNG */}
-                <MenuItem active={allSelected} onClick={handleSelectAll}>
+                <MenuItem active={allSelected && !selectedTeam} onClick={handleSelectAll}>
                   <span className="font-semibold text-slate-800">All Stores</span>
                   <span className="ml-auto text-[11px] font-normal text-slate-400">
                     {stores.length} stores
@@ -1657,14 +1725,8 @@ export function AccountingDashboardView() {
 
                 <div className="my-1.5 h-px bg-slate-100" />
 
-                <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Cửa hàng & Team quản lý
-                </div>
                 {stores.map((s) => {
-                  const storeTeams = (s.team || "")
-                    .split(/[\/,]/)
-                    .map((t) => t.trim())
-                    .filter(Boolean);
+                  const storeTeams = parseStoreTeams(s.team);
                   const isMultiTeam = storeTeams.length > 1;
                   const isStoreActive = validSelectedIds.length === 1 && validSelectedIds[0] === s.id;
 
@@ -1707,9 +1769,6 @@ export function AccountingDashboardView() {
                         {/* Flyout Submenu khi hover / chỉ vào store có nhiều team */}
                         <div className="absolute left-[calc(100%-4px)] top-0 z-50 hidden w-52 pl-2 group-hover:block group-focus-within:block">
                           <div className="rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl ring-1 ring-black/5 animate-in fade-in duration-150">
-                            <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                              {s.name} • Chọn Team
-                            </div>
                             <button
                               type="button"
                               onClick={(e) => {
@@ -1722,7 +1781,11 @@ export function AccountingDashboardView() {
                                   : "text-slate-700 hover:bg-slate-50"
                               }`}
                             >
-                              <span className="truncate">Toàn bộ {s.name}</span>
+                              {/* Dòng tổng của store ở trên, các team chi tiết bên dưới */}
+                              <span className="flex min-w-0 items-center gap-2">
+                                <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: colorOf(s.id) }} />
+                                <span className="truncate font-semibold">{s.name}</span>
+                              </span>
                               {isStoreActive && !selectedTeam && (
                                 <CheckIcon size={12} weight="bold" className="shrink-0 text-indigo-600" />
                               )}
@@ -1773,6 +1836,21 @@ export function AccountingDashboardView() {
                           {s.team}
                         </span>
                       )}
+                    </MenuItem>
+                  );
+                })}
+
+                {/* Tổng kết theo team: gom mọi store có team đó */}
+                {teams.length > 0 && <div className="my-1.5 h-px bg-slate-100" />}
+                {teams.map((t) => {
+                  const count = stores.filter((s) => storeHasTeam(s.team, t)).length;
+                  return (
+                    <MenuItem key={t} active={allSelected && selectedTeam === t} onClick={() => handleSelectTeam(t)}>
+                      <UsersThreeIcon size={13} weight="bold" className="shrink-0 text-indigo-500" />
+                      <span className="truncate">{t}</span>
+                      <span className="ml-auto shrink-0 text-[11px] font-normal text-slate-400">
+                        {count} {count === 1 ? "store" : "stores"}
+                      </span>
                     </MenuItem>
                   );
                 })}
@@ -1857,7 +1935,7 @@ export function AccountingDashboardView() {
                   delay={180}
                 />
               </div>
-              <CostBreakdown current={data.current} delay={210} />
+              <CostBreakdown data={data} delay={210} />
             </div>
           </div>
         ) : null}

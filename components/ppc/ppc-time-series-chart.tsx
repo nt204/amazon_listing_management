@@ -17,6 +17,7 @@ import {
   ChartLineUp,
   SquaresFour,
   Eye,
+  WarningCircle,
 } from "@phosphor-icons/react";
 import type { PpcSummaryMetrics, PpcAdTypeBreakdown, PpcDailyTrendPoint } from "@/lib/ppc/types";
 import { PpcDailyCampaignDrawer, type AvailableDateItem } from "./ppc-daily-campaign-drawer";
@@ -72,6 +73,24 @@ interface PeriodTotals {
   avgOrderValue: number;
 }
 
+interface ChartLabelProps {
+  x?: unknown;
+  y?: unknown;
+  width?: unknown;
+  value?: unknown;
+  index?: number;
+}
+
+interface ChartClickState {
+  activePayload?: Array<{ payload?: DataPoint }>;
+}
+
+interface ChartDotProps {
+  cx?: number;
+  cy?: number;
+  payload?: DataPoint;
+}
+
 export function PpcTimeSeriesChart({
   summary,
   summary7D,
@@ -93,6 +112,15 @@ export function PpcTimeSeriesChart({
   const [granularity, setGranularity] = useState<Granularity>("day");
   const [channel, setChannel] = useState<ChannelFilter>("ALL");
   const [rightMetric, setRightMetric] = useState<RightAxisMetric>("ACOS");
+  const [reduceMotion, setReduceMotion] = useState(false);
+
+  React.useEffect(() => {
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const updatePreference = () => setReduceMotion(media.matches);
+    updatePreference();
+    media.addEventListener("change", updatePreference);
+    return () => media.removeEventListener("change", updatePreference);
+  }, []);
 
   // Chỉ kích hoạt xem chi tiết chiến dịch khi đang ở chế độ xem 1 store cụ thể (storeName !== "ALL")
   // Chỗ tổng quan store gộp (ALL) sẽ không hiển thị nút hay kích hoạt popup này
@@ -459,9 +487,14 @@ export function PpcTimeSeriesChart({
   }, [rawDataCurrent, channelTotals, selectedDays]);
 
   // Custom Label Renderer cho Cột Spend (Hiển thị số tiền $ ngay trên đỉnh cột)
-  const renderBarSpendLabel = (props: any, isCompact: boolean, isLongData: boolean) => {
-    const { x, y, width, value } = props;
-    if (value == null || value <= 0) return null;
+  const renderBarSpendLabel = (props: ChartLabelProps, isCompact: boolean, isLongData: boolean) => {
+    const x = Number(props.x ?? 0);
+    const y = Number(props.y ?? 0);
+    const width = Number(props.width ?? 0);
+    const value = Number(props.value ?? 0);
+    const index = props.index ?? 0;
+    if (value <= 0) return null;
+    if ((isLongData && index % 5 !== 0) || (isCompact && index % 2 !== 0)) return null;
     const text = `${currency}${Math.round(value)}`;
     const isVeryNearTop = y < 16;
     return (
@@ -479,9 +512,13 @@ export function PpcTimeSeriesChart({
   };
 
   // Custom Label Renderer cho Đường ACOS / Revenue (Dây & Điểm màu Đỏ)
-  const renderLineMetricLabel = (props: any, isCompact: boolean, isLongData: boolean) => {
-    const { x, y, value, index } = props;
-    if (value == null || value <= 0) return null;
+  const renderLineMetricLabel = (props: ChartLabelProps, isCompact: boolean, isLongData: boolean) => {
+    const x = Number(props.x ?? 0);
+    const y = Number(props.y ?? 0);
+    const value = Number(props.value ?? 0);
+    const index = props.index ?? 0;
+    if (value <= 0) return null;
+    if ((isLongData && index % 5 !== 0) || (isCompact && index % 2 !== 0)) return null;
     const isAcos = rightMetric === "ACOS";
     const text = isAcos ? `${Math.round(value)}%` : `${currency}${Math.round(value)}`;
     const color = isAcos ? "#dc2626" : "#059669";
@@ -557,14 +594,15 @@ export function PpcTimeSeriesChart({
     }[badgeColor];
 
     return (
-      <div className={`rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs space-y-3 flex flex-col justify-between ${className}`}>
+      <section className={`group relative overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_12px_35px_-28px_rgba(15,23,42,0.55)] transition-[border-color,box-shadow] duration-300 hover:border-slate-300 hover:shadow-[0_18px_45px_-30px_rgba(15,23,42,0.65)] space-y-4 flex flex-col justify-between ${className}`}>
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-indigo-300/70 to-transparent" />
         {/* Header của biểu đồ */}
-        <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
-          <div className="flex items-center gap-2">
-            <span className={`px-2 py-0.5 rounded-md text-[11px] font-black border uppercase tracking-wider ${badgeStyles}`}>
+        <div className="flex flex-col gap-2 border-b border-slate-100 pb-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className={`shrink-0 rounded-md border px-2 py-1 text-[10px] font-black tracking-[0.08em] ${badgeStyles}`}>
               {badgeText}
             </span>
-            <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">
+            <h4 className="truncate text-xs font-bold tracking-[-0.01em] text-slate-800">
               {title}
             </h4>
             {badgeText === "7D" && isStoreDetail && (
@@ -578,15 +616,15 @@ export function PpcTimeSeriesChart({
               </button>
             )}
           </div>
-          <span className="text-[11px] text-slate-400 font-medium">
-            {data.length > 0 ? `${data[0]?.displayDate} — ${data[data.length - 1]?.displayDate}` : ""}
+          <span className="shrink-0 font-mono text-[10px] font-medium text-slate-400">
+            {data.length > 0 ? `${data[0]?.displayDate} - ${data[data.length - 1]?.displayDate}` : ""}
           </span>
         </div>
 
         {/* 4 Mini KPI Cards */}
         {!hideSummaryCards && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <div className="rounded-lg bg-slate-50/80 p-2.5 border border-slate-100/80 min-w-0">
+          <div className="grid grid-cols-2 overflow-hidden rounded-xl border border-slate-200/80 bg-slate-50/50 sm:grid-cols-4 sm:divide-x sm:divide-slate-200/80">
+            <div className="min-w-0 border-b border-r border-slate-200/80 p-3 sm:border-b-0 sm:border-r-0">
               <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block whitespace-nowrap truncate" title={`Spend (${badgeText})`}>
                 Spend ({badgeText})
               </span>
@@ -598,7 +636,7 @@ export function PpcTimeSeriesChart({
               </div>
             </div>
 
-            <div className="rounded-lg bg-slate-50/80 p-2.5 border border-slate-100/80 min-w-0">
+            <div className="min-w-0 border-b border-slate-200/80 p-3 sm:border-b-0">
               <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block whitespace-nowrap truncate" title={`Revenue (${badgeText})`}>
                 Revenue ({badgeText})
               </span>
@@ -610,7 +648,7 @@ export function PpcTimeSeriesChart({
               </div>
             </div>
 
-            <div className="rounded-lg bg-slate-50/80 p-2.5 border border-slate-100/80 min-w-0">
+            <div className="min-w-0 border-r border-slate-200/80 p-3 sm:border-r-0">
               <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block whitespace-nowrap truncate" title="ACOS TB">
                 ACOS TB
               </span>
@@ -619,14 +657,14 @@ export function PpcTimeSeriesChart({
                   ? totals.spend > 0 ? "text-rose-600" : "text-slate-400"
                   : totals.acos <= targetAcos ? "text-indigo-600" : "text-rose-600"
               }`}>
-                {totals.revenue > 0 ? `${totals.acos.toFixed(1)}%` : totals.spend > 0 ? "N/A" : "—"}
+                {totals.revenue > 0 ? `${totals.acos.toFixed(1)}%` : totals.spend > 0 ? "N/A" : "-"}
               </div>
               <div className="text-[10px] font-medium text-slate-500 mt-0.5 whitespace-nowrap truncate">
                 {totals.revenue > 0 ? (totals.acos <= targetAcos ? `Mục tiêu: ≤${targetAcos}%` : `Vượt mục tiêu (≤${targetAcos}%)`) : "Chưa có sales"}
               </div>
             </div>
 
-            <div className="rounded-lg bg-slate-50/80 p-2.5 border border-slate-100/80 min-w-0">
+            <div className="min-w-0 p-3">
               <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block whitespace-nowrap truncate" title="Đơn Hàng">
                 Đơn Hàng
               </span>
@@ -642,6 +680,21 @@ export function PpcTimeSeriesChart({
 
         {/* Khung Biểu Đồ Recharts */}
         {(() => {
+          const hasChartData = data.some((point) => point.spend > 0 || point.revenue > 0 || point.orders > 0);
+          if (!hasChartData) {
+            return (
+              <div className="flex h-72 flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-6 text-center">
+                <div className="mb-3 rounded-xl border border-slate-200 bg-white p-2.5 text-slate-400 shadow-sm">
+                  <ChartLineUp size={22} weight="duotone" />
+                </div>
+                <p className="text-sm font-semibold text-slate-700">Chưa có dữ liệu trong kỳ này</p>
+                <p className="mt-1 max-w-xs text-xs leading-5 text-slate-500">
+                  Thử đổi khoảng thời gian, kênh quảng cáo hoặc kiểm tra dữ liệu đã đồng bộ.
+                </p>
+              </div>
+            );
+          }
+
           const isLongData = data.length > 15;
           const maxSpend = Math.max(...data.map((d) => d.spend || 0), 10);
           const maxRevenue = Math.max(...data.map((d) => d.revenue || 0), 10);
@@ -669,19 +722,20 @@ export function PpcTimeSeriesChart({
           }
 
           return (
-            <div className="h-72 w-full pt-1">
+            <div className="h-72 w-full rounded-xl bg-[linear-gradient(180deg,rgba(248,250,252,0.72),rgba(255,255,255,0))] pt-2">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart
                   data={data}
                   margin={{ top: 22, right: 10, left: -10, bottom: 15 }}
-                  onClick={(state: any) => {
-                    if (badgeText === "7D" && isStoreDetail && state?.activePayload?.[0]?.payload?.rawDate) {
-                      handleOpenDrilldown(state.activePayload[0].payload.rawDate);
+                  onClick={(state: unknown) => {
+                    const chartState = state as ChartClickState;
+                    if (badgeText === "7D" && isStoreDetail && chartState?.activePayload?.[0]?.payload?.rawDate) {
+                      handleOpenDrilldown(chartState.activePayload[0].payload.rawDate);
                     }
                   }}
                   className={badgeText === "7D" && isStoreDetail ? "cursor-pointer" : undefined}
                 >
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <CartesianGrid vertical={false} stroke="#e8edf4" strokeDasharray="2 6" />
                   <XAxis
                     dataKey="displayDate"
                     tick={{ fontSize: 9.5, fill: "#64748b" }}
@@ -712,17 +766,19 @@ export function PpcTimeSeriesChart({
                   />
 
                   <Tooltip
+                    cursor={{ fill: "#4f46e5", fillOpacity: 0.035 }}
                     content={({ active, payload }) => {
                       if (!active || !payload || !payload.length) return null;
                       const d = payload[0]?.payload as DataPoint;
                       if (!d) return null;
 
                       return (
-                        <div className="bg-white/95 backdrop-blur-sm border border-slate-200 rounded-xl p-2.5 shadow-xl text-xs space-y-1 min-w-[190px] z-50">
-                          <div className="font-bold text-slate-800 border-b border-slate-100 pb-1 flex justify-between items-center">
-                            <span>{d.displayDate} ({d.rawDate})</span>
+                        <div className="z-50 min-w-[210px] space-y-2 rounded-xl border border-slate-200 bg-white/98 p-3 text-xs shadow-[0_18px_45px_-18px_rgba(15,23,42,0.45)] backdrop-blur-md">
+                          <div className="flex items-center justify-between gap-3 border-b border-slate-100 pb-2 font-bold text-slate-800">
+                            <span>{d.rawDate}</span>
                             {d.isLossWarning && (
-                              <span className="px-1.5 py-0.2 rounded bg-rose-50 text-rose-600 text-[9.5px] font-bold">
+                              <span className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-1.5 py-1 text-[9.5px] font-bold text-rose-700">
+                                <WarningCircle size={11} weight="fill" />
                                 {d.revenue === 0 && d.spend > 0 ? "0 Doanh Thu" : "ACOS Cao"}
                               </span>
                             )}
@@ -736,7 +792,7 @@ export function PpcTimeSeriesChart({
 
                             <span className="text-slate-500">ACOS:</span>
                             <strong className="text-slate-900 text-right font-black">
-                              {d.revenue > 0 ? `${d.acos.toFixed(1)}%` : d.spend > 0 ? "N/A" : "—"}
+                              {d.revenue > 0 ? `${d.acos.toFixed(1)}%` : d.spend > 0 ? "N/A" : "-"}
                             </strong>
 
                             <span className="text-slate-500">Đơn hàng:</span>
@@ -769,12 +825,17 @@ export function PpcTimeSeriesChart({
                     dataKey="spend"
                     name={`Spend (${currency})`}
                     fill="#3b82f6"
-                    radius={[4, 4, 0, 0]}
+                    fillOpacity={0.82}
+                    radius={[5, 5, 1, 1]}
                     maxBarSize={data.length > 15 ? 18 : 24}
+                    isAnimationActive={!reduceMotion}
+                    animationDuration={650}
+                    animationEasing="ease-out"
                     className={badgeText === "7D" && isStoreDetail ? "cursor-pointer hover:opacity-90 transition-opacity" : undefined}
-                    onClick={(entry: any) => {
-                      if (badgeText === "7D" && isStoreDetail && entry?.rawDate) {
-                        handleOpenDrilldown(entry.rawDate);
+                    onClick={(entry: unknown) => {
+                      const point = entry as Partial<DataPoint>;
+                      if (badgeText === "7D" && isStoreDetail && point.rawDate) {
+                        handleOpenDrilldown(point.rawDate);
                       }
                     }}
                   >
@@ -793,9 +854,13 @@ export function PpcTimeSeriesChart({
                       dataKey="acos"
                       name="ACOS (%)"
                       stroke="#ef4444"
-                      strokeWidth={2}
-                      dot={(props: any) => {
+                      strokeWidth={2.25}
+                      isAnimationActive={!reduceMotion}
+                      animationDuration={750}
+                      animationEasing="ease-out"
+                      dot={(props: ChartDotProps) => {
                         const { cx, cy, payload } = props;
+                        if (cx == null || cy == null || !payload) return <g />;
                         return (
                           <circle
                             key={`dot-${payload.rawDate}`}
@@ -825,7 +890,10 @@ export function PpcTimeSeriesChart({
                       dataKey="revenue"
                       name={`Revenue (${currency})`}
                       stroke="#10b981"
-                      strokeWidth={2}
+                      strokeWidth={2.25}
+                      isAnimationActive={!reduceMotion}
+                      animationDuration={750}
+                      animationEasing="ease-out"
                       dot={{ r: data.length > 15 ? 2.5 : 3.5, fill: "#10b981", stroke: "#ffffff", strokeWidth: 1.5 }}
                     >
                       <LabelList
@@ -840,22 +908,23 @@ export function PpcTimeSeriesChart({
             </div>
           );
         })()}
-      </div>
+      </section>
     );
   };
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4 shadow-xs space-y-4">
+    <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-slate-50/60 p-3 shadow-[0_22px_60px_-50px_rgba(15,23,42,0.55)] sm:p-4">
       {/* Header & Controls chung cho toàn bộ khối */}
-      <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-200/90 shadow-2xs">
+      <div className="flex flex-col items-start justify-between gap-3 rounded-xl border border-slate-200/80 bg-white p-3 shadow-[0_10px_30px_-28px_rgba(15,23,42,0.55)] lg:flex-row lg:items-center">
         <div className="flex items-center gap-2.5">
           <div className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg">
             <ChartLineUp size={18} weight="bold" />
           </div>
           <div>
-            <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
-              SPEND VS REVENUE / ACOS THEO THỜI GIAN
+            <h3 className="text-sm font-bold tracking-[-0.02em] text-slate-900">
+              Hiệu suất quảng cáo theo thời gian
             </h3>
+            <p className="mt-0.5 text-[11px] text-slate-500">So sánh Spend, Revenue và ACOS theo cùng một nhịp dữ liệu.</p>
           </div>
         </div>
 

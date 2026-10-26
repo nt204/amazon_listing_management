@@ -11,6 +11,7 @@ import {
   shiftMonths,
   type DashboardCompareMode,
 } from "@/lib/accounting/dashboard-periods";
+import { storeHasTeam } from "@/lib/accounting/store-teams";
 import { summarizeDays, type DashboardDay, type DashboardTotals } from "@/lib/accounting/dashboard-totals";
 
 export type { DashboardDay, DashboardTotals };
@@ -165,7 +166,10 @@ export async function getAccountingDashboard(options: {
   if (options.fresh) await invalidateAccountingDashboardCache();
   const [allStores, latestDate] = await Promise.all([listStores(), getLatestAvailableAccountingDate()]);
   const requested = new Set((options.storeIds ?? []).filter(Boolean));
-  const stores = requested.size ? allStores.filter((s) => requested.has(s.id)) : allStores;
+  // Chọn theo team: chỉ giữ các store thuộc team đó (vd FBA 2 = mọi store có "FBA 2" trong cột Team).
+  const stores = allStores.filter(
+    (s) => (!requested.size || requested.has(s.id)) && (!options.team || storeHasTeam(s.team, options.team)),
+  );
 
   const channel: "Amazon" | "Merchant" | "all" = options.team?.toUpperCase().includes("FBM")
     ? "Merchant"
