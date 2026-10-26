@@ -37,6 +37,7 @@ import {
 } from "./lark-conversation-memory";
 import { sendLarkCardNotification, sendLarkTextNotification } from "@/lib/lark-notifications";
 import { resolveLarkActorStoreAccess, type PpcStoreAccessStore } from "@/lib/ppc/store-user-access";
+import { getDatabaseClient } from "@/lib/db";
 
 const AUTO_BID_TOOLS = new Set([
   "listBidRecommendations",
@@ -804,10 +805,68 @@ export async function runAccountingAgent(options: RunAgentOptions): Promise<Agen
 
   let allowedStores: PpcStoreAccessStore[] | undefined;
   if (options.larkSenderId) {
+    // 0. HỖ TRỢ TỰ ĐỘNG LIÊN KẾT TÀI KHOẢN LARK VỚI EMAIL NCE HUB QUA CHAT
+    const emailMatch = options.message.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+    const isLinkIntent = Boolean(emailMatch) && /(?:kết nối|ket noi|link|liên kết|lien ket|tai khoan|tài khoản|email|dang nhap|đăng nhập)/i.test(options.message);
+
+    if (isLinkIntent && emailMatch) {
+      const email = emailMatch[0].trim().toLowerCase();
+      const sql = await getDatabaseClient();
+      const targetUsers = await sql<Array<{ team_id: string; user_id: string; display_name: string; username: string }>>`
+        SELECT team_id, user_id, display_name, username
+        FROM app_users
+        WHERE LOWER(username) = ${email}
+          AND status = 'approved'
+        LIMIT 1
+      `;
+      if (targetUsers.length > 0) {
+        const u = targetUsers[0];
+        await sql`
+          INSERT INTO lark_user_connections (team_id, actor_id, receive_id, receive_id_type, enabled, updated_at)
+          VALUES (${u.team_id}, ${u.user_id}, ${options.larkSenderId}, 'open_id', TRUE, NOW())
+          ON CONFLICT (team_id, actor_id) DO UPDATE SET
+            receive_id = EXCLUDED.receive_id,
+            receive_id_type = EXCLUDED.receive_id_type,
+            enabled = TRUE,
+            updated_at = NOW()
+        `;
+        const userStores = await sql<Array<{ name: string }>>`
+          SELECT store.name
+          FROM ppc_store_user_access access
+          JOIN ppc_stores store ON store.id = access.store_id AND store.team_id = access.team_id
+          WHERE access.team_id = ${u.team_id} AND access.actor_id = ${u.user_id}
+            AND access.can_ask_lark = TRUE
+          ORDER BY store.name ASC
+        `;
+        const storeList = userStores.length > 0
+          ? userStores.map((s) => s.name).join(", ")
+          : "Chưa có store nào (vui lòng nhờ Admin cấp quyền trên bảng Phân quyền Store)";
+        const replyText = `✅ **ĐÃ LIÊN KẾT TÀI KHOẢN LARK THÀNH CÔNG!**\n\n- **Tài khoản:** ${u.display_name || u.username} (\`${u.username}\`)\n- **Mã Lark Open ID:** \`${options.larkSenderId}\`\n- **Store được phép hỏi đáp:** ${storeList}\n\n👉 Bây giờ bạn có thể hỏi đáp dữ liệu bình thường!`;
+        if (options.sendToLark && targetReceiveId) {
+          await sendLarkTextNotification(replyText, {
+            receiveId: targetReceiveId,
+            receiveIdType: targetReceiveIdType,
+            replyToMessageId: options.replyToMessageId,
+          });
+        }
+        return { replyText, toolsUsed: [], larkSent: Boolean(options.sendToLark && targetReceiveId) };
+      } else {
+        const replyText = `❌ Không tìm thấy tài khoản người dùng với email **${email}** trong hệ thống NCE HUB.\n\nVui lòng kiểm tra lại chính xác email bạn dùng để đăng nhập trên web.`;
+        if (options.sendToLark && targetReceiveId) {
+          await sendLarkTextNotification(replyText, {
+            receiveId: targetReceiveId,
+            receiveIdType: targetReceiveIdType,
+            replyToMessageId: options.replyToMessageId,
+          });
+        }
+        return { replyText, toolsUsed: [], larkSent: Boolean(options.sendToLark && targetReceiveId) };
+      }
+    }
+
     const access = await resolveLarkActorStoreAccess(options.larkSenderId);
     allowedStores = access.stores;
     if (!access.actorId) {
-      const replyText = "Tài khoản Lark của bạn chưa được liên kết với tài khoản NCE HUB. Hãy cấu hình Lark bằng Open ID hoặc User ID, sau đó nhờ admin cấp quyền store.";
+      const replyText = `⚠️ **Tài khoản Lark của bạn chưa được liên kết với NCE HUB.**\n\n🔑 **Mã Open ID của bạn:** \`${options.larkSenderId}\`\n\n👉 **Cách liên kết nhanh nhất:** Hãy nhắn lại cho bot theo cú pháp:\n**\`kết nối <email_đăng_nhập_của_bạn>\`**\n*(Ví dụ: \`kết nối nguyendangtri2507@gmail.com\` hoặc \`kết nối ndtrince@gmail.com\`)*\n\nSau khi kết nối, bot sẽ tự động nhận diện danh tính và cho phép bạn hỏi đáp đúng các Store được phân quyền.`;
       if (options.sendToLark && targetReceiveId) {
         await sendLarkTextNotification(replyText, {
           receiveId: targetReceiveId,
@@ -818,7 +877,7 @@ export async function runAccountingAgent(options: RunAgentOptions): Promise<Agen
       return { replyText, toolsUsed: [], larkSent: Boolean(options.sendToLark && targetReceiveId) };
     }
     if (allowedStores.length === 0) {
-      const replyText = "Bạn chưa được admin cấp quyền hỏi đáp cho store nào.";
+      const replyText = `🔒 **Bạn chưa được Admin cấp quyền hỏi đáp cho Store nào.**\n\nTài khoản của bạn đã liên kết với NCE HUB, nhưng trong bảng *Phân quyền Store* chưa được Admin tích chọn Store nào. Vui lòng nhờ Admin cấp quyền hỏi đáp 💬 cho các Store bạn quản lý.`;
       if (options.sendToLark && targetReceiveId) {
         await sendLarkTextNotification(replyText, {
           receiveId: targetReceiveId,
