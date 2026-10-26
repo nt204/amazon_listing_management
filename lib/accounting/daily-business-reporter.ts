@@ -332,10 +332,14 @@ export async function reportDailyBusinessData(
   if (options.recipient) {
     await sendLarkCardNotification(card, options.recipient);
   } else {
-    await notifyLarkEventBestEffort(scope, "accounting", {
-      card,
-      fallbackText: fallbackLines.join("\n"),
-    });
+    await notifyLarkEventBestEffort(
+      { teamId: scope.teamId, actorId: "system" },
+      "accounting",
+      {
+        card,
+        fallbackText: fallbackLines.join("\n"),
+      },
+    );
   }
 
   if (!options.recipient) {
