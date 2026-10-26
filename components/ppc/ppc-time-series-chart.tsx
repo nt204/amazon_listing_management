@@ -113,6 +113,8 @@ export function PpcTimeSeriesChart({
   const [channel, setChannel] = useState<ChannelFilter>("ALL");
   const [rightMetric, setRightMetric] = useState<RightAxisMetric>("ACOS");
   const [reduceMotion, setReduceMotion] = useState(false);
+  // Chiều rộng thật của từng biểu đồ (theo badge 7D/30D…) để quyết định thưa nhãn số theo chỗ trống
+  const [chartWidths, setChartWidths] = useState<Record<string, number>>({});
 
   React.useEffect(() => {
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -487,14 +489,14 @@ export function PpcTimeSeriesChart({
   }, [rawDataCurrent, channelTotals, selectedDays]);
 
   // Custom Label Renderer cho Cột Spend (Hiển thị số tiền $ ngay trên đỉnh cột)
-  const renderBarSpendLabel = (props: ChartLabelProps, isCompact: boolean, isLongData: boolean) => {
+  const renderBarSpendLabel = (props: ChartLabelProps, labelEvery: number, isLongData: boolean, isCompact: boolean) => {
     const x = Number(props.x ?? 0);
     const y = Number(props.y ?? 0);
     const width = Number(props.width ?? 0);
     const value = Number(props.value ?? 0);
     const index = props.index ?? 0;
     if (value <= 0) return null;
-    if ((isLongData && index % 5 !== 0) || (isCompact && index % 2 !== 0)) return null;
+    if (index % labelEvery !== 0) return null;
     const text = `${currency}${Math.round(value)}`;
     const isVeryNearTop = y < 16;
     return (
@@ -512,17 +514,24 @@ export function PpcTimeSeriesChart({
   };
 
   // Custom Label Renderer cho Đường ACOS / Revenue (Dây & Điểm màu Đỏ)
-  const renderLineMetricLabel = (props: ChartLabelProps, isCompact: boolean, isLongData: boolean) => {
+  const renderLineMetricLabel = (
+    props: ChartLabelProps,
+    labelEvery: number,
+    isLongData: boolean,
+    /** true khi nhãn đặt phía trên điểm sẽ đè lên nhãn tiền trên đỉnh cột cùng ngày */
+    collidesWithBar: (index: number) => boolean,
+  ) => {
     const x = Number(props.x ?? 0);
     const y = Number(props.y ?? 0);
     const value = Number(props.value ?? 0);
     const index = props.index ?? 0;
     if (value <= 0) return null;
-    if ((isLongData && index % 5 !== 0) || (isCompact && index % 2 !== 0)) return null;
+    if (index % labelEvery !== 0) return null;
     const isAcos = rightMetric === "ACOS";
     const text = isAcos ? `${Math.round(value)}%` : `${currency}${Math.round(value)}`;
     const color = isAcos ? "#dc2626" : "#059669";
-    const isNearTop = y < 20;
+    // Đặt nhãn dưới điểm khi sát nóc hoặc khi sẽ đè nhãn tiền của cột
+    const isNearTop = y < 20 || collidesWithBar(index);
 
     // Trong 30D (nhiều điểm san sát): render chữ có viền trắng (stroke halo)
     // KHÔNG dùng khung chữ nhật to để không che lấp số liệu cột liền kề
@@ -586,6 +595,8 @@ export function PpcTimeSeriesChart({
     totals: PeriodTotals,
     isCompact = false,
     className = "",
+    /** true: chỉ phần nội dung (không viền/nền thẻ) để ghép 7D & 30D chung 1 thẻ */
+    bare = false,
   ) => {
     const badgeStyles = {
       indigo: "bg-indigo-50 text-indigo-700 border-indigo-200",
@@ -594,8 +605,16 @@ export function PpcTimeSeriesChart({
     }[badgeColor];
 
     return (
-      <section className={`group relative overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_12px_35px_-28px_rgba(15,23,42,0.55)] transition-[border-color,box-shadow] duration-300 hover:border-slate-300 hover:shadow-[0_18px_45px_-30px_rgba(15,23,42,0.65)] space-y-4 flex flex-col justify-between ${className}`}>
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-indigo-300/70 to-transparent" />
+      <section
+        className={`relative min-w-0 space-y-4 p-4 flex flex-col justify-between ${
+          bare
+            ? ""
+            : "group overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_12px_35px_-28px_rgba(15,23,42,0.55)] transition-[border-color,box-shadow] duration-300 hover:border-slate-300 hover:shadow-[0_18px_45px_-30px_rgba(15,23,42,0.65)]"
+        } ${className}`}
+      >
+        {!bare && (
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-indigo-300/70 to-transparent" />
+        )}
         {/* Header của biểu đồ */}
         <div className="flex flex-col gap-2 border-b border-slate-100 pb-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-2.5">
@@ -721,9 +740,30 @@ export function PpcTimeSeriesChart({
             rightDomain = [0, acosCeil];
           }
 
+          // Mỗi nhãn cần ~34px ngang; đủ chỗ thì hiện số ở mọi điểm
+          const plotWidth = Math.max(0, (chartWidths[badgeText] ?? 0) - 100);
+          const slots = plotWidth > 0 ? Math.floor(plotWidth / 34) : isLongData ? 6 : 7;
+          const labelEvery = Math.max(1, Math.ceil(data.length / Math.max(1, slots)));
+          // Nhãn tiền nằm ngay trên đỉnh cột; nếu điểm của đường nằm trong dải đó (hoặc ngay dưới đỉnh cột) → nhãn đường xuống dưới
+          const collidesWithBar = (index: number) => {
+            const point = data[index];
+            if (!point) return false;
+            const barTop = (point.spend || 0) / (leftDomain[1] || 1);
+            const lineValue = rightMetric === "ACOS" ? point.acos || 0 : point.revenue || 0;
+            const lineY = lineValue / (rightDomain[1] || 1);
+            // ~220px chiều cao vẽ: nhãn tiền chiếm ~+2…+6.5% trên đỉnh cột, nhãn đường ~+2…+8% trên điểm
+            return lineY > barTop - 0.06 && lineY < barTop + 0.045;
+          };
+
           return (
             <div className="h-72 w-full rounded-xl bg-[linear-gradient(180deg,rgba(248,250,252,0.72),rgba(255,255,255,0))] pt-2">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer
+                width="100%"
+                height="100%"
+                onResize={(width) =>
+                  setChartWidths((prev) => (prev[badgeText] === width ? prev : { ...prev, [badgeText]: width }))
+                }
+              >
                 <ComposedChart
                   data={data}
                   margin={{ top: 22, right: 10, left: -10, bottom: 15 }}
@@ -825,7 +865,6 @@ export function PpcTimeSeriesChart({
                     dataKey="spend"
                     name={`Spend (${currency})`}
                     fill="#3b82f6"
-                    fillOpacity={0.82}
                     radius={[5, 5, 1, 1]}
                     maxBarSize={data.length > 15 ? 18 : 24}
                     isAnimationActive={!reduceMotion}
@@ -842,7 +881,7 @@ export function PpcTimeSeriesChart({
                     <LabelList
                       dataKey="spend"
                       position="top"
-                      content={(props) => renderBarSpendLabel(props, isCompact, isLongData)}
+                      content={(props) => renderBarSpendLabel(props, labelEvery, isLongData, isCompact)}
                     />
                   </Bar>
 
@@ -877,7 +916,7 @@ export function PpcTimeSeriesChart({
                       <LabelList
                         dataKey="acos"
                         position="top"
-                        content={(props) => renderLineMetricLabel(props, isCompact, isLongData)}
+                        content={(props) => renderLineMetricLabel(props, labelEvery, isLongData, collidesWithBar)}
                       />
                     </Line>
                   )}
@@ -899,7 +938,7 @@ export function PpcTimeSeriesChart({
                       <LabelList
                         dataKey="revenue"
                         position="top"
-                        content={(props) => renderLineMetricLabel(props, isCompact, isLongData)}
+                        content={(props) => renderLineMetricLabel(props, labelEvery, isLongData, collidesWithBar)}
                       />
                     </Line>
                   )}
@@ -913,27 +952,28 @@ export function PpcTimeSeriesChart({
   };
 
   return (
-    <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-slate-50/60 p-3 shadow-[0_22px_60px_-50px_rgba(15,23,42,0.55)] sm:p-4">
+    // 1 thẻ duy nhất: tiêu đề + bộ lọc ở trên (áp cho mọi biểu đồ bên dưới), các biểu đồ ngăn bằng đường kẻ
+    <div className="relative rounded-2xl border border-slate-200/80 bg-white shadow-[0_12px_35px_-28px_rgba(15,23,42,0.55)]">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px rounded-t-2xl bg-gradient-to-r from-transparent via-indigo-300/70 to-transparent" />
       {/* Header & Controls chung cho toàn bộ khối */}
-      <div className="flex flex-col items-start justify-between gap-3 rounded-xl border border-slate-200/80 bg-white p-3 shadow-[0_10px_30px_-28px_rgba(15,23,42,0.55)] lg:flex-row lg:items-center">
+      <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center gap-2.5">
           <div className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg">
             <ChartLineUp size={18} weight="bold" />
           </div>
           <div>
             <h3 className="text-sm font-bold tracking-[-0.02em] text-slate-900">
-              Hiệu suất quảng cáo theo thời gian
+              Hiệu suất quảng cáo
             </h3>
-            <p className="mt-0.5 text-[11px] text-slate-500">So sánh Spend, Revenue và ACOS theo cùng một nhịp dữ liệu.</p>
           </div>
         </div>
 
-        {/* Toolbar điều khiển */}
-        <div className="flex flex-wrap items-center gap-2">
+        {/* Toolbar điều khiển: mobile lưới 2 cột rộng hết khung, từ sm 1 hàng */}
+        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
           {/* Dropdown Chế độ xem: Song song (7D & 30D) | 7D | 30D */}
-          <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs">
+          <div className="flex min-w-0 items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs">
             <SquaresFour size={13} className="text-slate-400 shrink-0" weight="bold" />
-            <span className="text-[11px] text-slate-400 font-medium">Chế độ:</span>
+            <span className="shrink-0 text-[11px] text-slate-400 font-medium">Chế độ:</span>
             <select
               value={viewMode === "split" ? "split" : String(selectedDays)}
               onChange={(e) => {
@@ -945,7 +985,7 @@ export function PpcTimeSeriesChart({
                   onDaysChange?.(Number(val));
                 }
               }}
-              className="bg-transparent font-bold text-slate-800 outline-none cursor-pointer"
+              className="min-w-0 flex-1 truncate bg-transparent font-bold text-slate-800 outline-none cursor-pointer sm:flex-none"
             >
               <option value="split">7D & 30D</option>
               <option value="7">7D</option>
@@ -954,12 +994,12 @@ export function PpcTimeSeriesChart({
           </div>
 
           {/* Dropdown Lọc Kênh Chạy: Tất cả / SP / SB */}
-          <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs">
-            <span className="text-[11px] text-slate-400 font-medium">Kênh:</span>
+          <div className="flex min-w-0 items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs">
+            <span className="shrink-0 text-[11px] text-slate-400 font-medium">Kênh:</span>
             <select
               value={channel}
               onChange={(e) => setChannel(e.target.value as "ALL" | "SP" | "SB")}
-              className="bg-transparent font-bold text-slate-800 outline-none cursor-pointer"
+              className="min-w-0 flex-1 truncate bg-transparent font-bold text-slate-800 outline-none cursor-pointer sm:flex-none"
             >
               <option value="ALL">Tất cả</option>
               <option value="SP">SP</option>
@@ -968,12 +1008,12 @@ export function PpcTimeSeriesChart({
           </div>
 
           {/* Cấp độ thời gian */}
-          <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs">
-            <span className="text-[11px] text-slate-400 font-medium">Cấp độ:</span>
+          <div className="flex min-w-0 items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs">
+            <span className="shrink-0 text-[11px] text-slate-400 font-medium">Cấp độ:</span>
             <select
               value={granularity}
               onChange={(e) => setGranularity(e.target.value as Granularity)}
-              className="bg-transparent font-bold text-slate-800 outline-none cursor-pointer"
+              className="min-w-0 flex-1 truncate bg-transparent font-bold text-slate-800 outline-none cursor-pointer sm:flex-none"
             >
               <option value="day">Theo Ngày</option>
               <option value="week">Theo Tuần</option>
@@ -982,12 +1022,12 @@ export function PpcTimeSeriesChart({
           </div>
 
           {/* Trục phải */}
-          <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs">
-            <span className="text-[11px] text-slate-400 font-medium">Trục phải:</span>
+          <div className="flex min-w-0 items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs">
+            <span className="shrink-0 text-[11px] text-slate-400 font-medium">Trục phải:</span>
             <select
               value={rightMetric}
               onChange={(e) => setRightMetric(e.target.value as RightAxisMetric)}
-              className="bg-transparent font-bold text-indigo-700 outline-none cursor-pointer"
+              className="min-w-0 flex-1 truncate bg-transparent font-bold text-indigo-700 outline-none cursor-pointer sm:flex-none"
             >
               <option value="ACOS">ACOS (%)</option>
               <option value="Revenue">Revenue ($)</option>
@@ -998,36 +1038,40 @@ export function PpcTimeSeriesChart({
 
       {/* KHU VỰC HIỂN THỊ BIỂU ĐỒ */}
       {viewMode === "split" ? (
-        /* CHẾ ĐỘ SONG SONG: 7D THON GỌN (4 CỘT), 30D DÃN RỘNG (8 CỘT) */
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+        /* CHẾ ĐỘ SONG SONG: 7D (4 CỘT) & 30D (8 CỘT) CHUNG 1 THẺ, NGĂN BẰNG ĐƯỜNG KẺ */
+        <div className="grid grid-cols-1 divide-y divide-slate-100 lg:grid-cols-12 lg:divide-x lg:divide-y-0">
           {renderChartCard(
-            "SPEND VS REVENUE / ACOS (7 NGÀY GẦN NHẤT)",
+            "7 ngày gần nhất",
             "7D",
             "indigo",
             chartData7D,
             totals7D,
             true,
             "lg:col-span-5 xl:col-span-4",
+            true,
           )}
           {renderChartCard(
-            "SPEND VS REVENUE / ACOS (30 NGÀY QUA)",
+            "30 ngày qua",
             "30D",
             "sky",
             chartData30D,
             totals30D,
             true,
             "lg:col-span-7 xl:col-span-8",
+            true,
           )}
         </div>
       ) : (
         /* CHẾ ĐỘ XEM ĐƠN (7D HOẶC 30D) */
         renderChartCard(
-          `SPEND VS REVENUE / ACOS (${selectedDays} NGÀY GẦN NHẤT)`,
+          `${selectedDays} ngày gần nhất`,
           `${selectedDays}D`,
           "indigo",
           chartDataCurrent,
           totalsCurrent,
           false,
+          "",
+          true,
         )
       )}
 

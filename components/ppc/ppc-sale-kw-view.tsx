@@ -2076,7 +2076,7 @@ export function PpcSaleKwView({
                                       {item.orders}
                                     </span>
                                   </td>
-                                  <td className="py-2.5 px-3 text-right font-semibold text-slate-900">
+                                  <td className="py-2.5 px-3 text-right text-slate-900">
                                     ${item.sales.toFixed(2)}
                                   </td>
                                   <td className="py-2.5 px-3 text-right">{item.clicks}</td>
@@ -2382,7 +2382,7 @@ export function PpcSaleKwView({
                         <td className="py-3 px-3 text-right font-extrabold text-emerald-600">
                           {item.orders}
                         </td>
-                        <td className="py-3 px-3 text-right font-semibold text-slate-900">
+                        <td className="py-3 px-3 text-right text-slate-900">
                           ${Number(item.sales || 0).toFixed(2)}
                         </td>
                         <td className="py-3 px-3 text-center font-bold text-slate-800">

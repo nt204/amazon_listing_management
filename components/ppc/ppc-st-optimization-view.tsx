@@ -1251,13 +1251,13 @@ export function PpcStOptimizationView({
                       </span>
                     </td>
 
-                    {/* Orders */}
-                    <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-400">
+                    {/* Orders - Viết thường */}
+                    <td className="py-2.5 px-3 text-right font-mono font-normal text-slate-500">
                       0
                     </td>
 
-                    {/* Spend */}
-                    <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900">
+                    {/* Spend ($) - Viết thường */}
+                    <td className="py-2.5 px-3 text-right font-mono font-normal text-slate-700">
                       ${c.spend.toFixed(2)}
                     </td>
 

@@ -781,7 +781,7 @@ function PpcStCampaignRollupViewInner({
                     className="py-2.5 px-3 cursor-pointer hover:text-indigo-600 min-w-[260px] align-bottom"
                     onClick={() => handleSort("name")}
                   >
-                    Tên Campaign {sortBy === "name" && (sortDir === "asc" ? "↑" : "↓")}
+                    Campaign {sortBy === "name" && (sortDir === "asc" ? "↑" : "↓")}
                   </th>
                   <th rowSpan={2} className="py-2.5 px-3 text-center align-bottom w-24">Search Terms</th>
 
@@ -848,7 +848,7 @@ function PpcStCampaignRollupViewInner({
                     className="py-3 px-3 cursor-pointer hover:text-indigo-600 min-w-[260px]"
                     onClick={() => handleSort("name")}
                   >
-                    Tên Campaign {sortBy === "name" && (sortDir === "asc" ? "↑" : "↓")}
+                    Campaign {sortBy === "name" && (sortDir === "asc" ? "↑" : "↓")}
                   </th>
                   <th className="py-3 px-3 text-center w-24">Search Terms</th>
                   <th
@@ -944,7 +944,7 @@ function PpcStCampaignRollupViewInner({
                                 e.stopPropagation();
                                 toggleExpandCampaign(row.campaignName);
                               }}
-                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-mono font-bold text-xs transition cursor-pointer border ${
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-mono text-xs transition cursor-pointer border ${
                                 isExpanded
                                   ? "bg-indigo-600 text-white border-indigo-600 shadow-2xs"
                                   : "bg-slate-100 hover:bg-indigo-50 text-slate-800 hover:text-indigo-700 border-slate-200 hover:border-indigo-200"
@@ -961,13 +961,13 @@ function PpcStCampaignRollupViewInner({
                           </td>
 
                           {/* KỲ 1 (HIỆN TẠI): Spend | Sales | Orders | ACOS */}
-                          <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900 border-l border-slate-100 tabular-nums">
+                          <td className="py-2.5 px-3 text-right font-mono text-slate-900 border-l border-slate-100 tabular-nums">
                             ${(row.p1?.spend ?? row.spend ?? 0).toFixed(2)}
                           </td>
-                          <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-600 tabular-nums">
+                          <td className="py-2.5 px-3 text-right font-mono text-emerald-600 tabular-nums">
                             ${(row.p1?.sales ?? row.sales ?? 0).toFixed(2)}
                           </td>
-                          <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-800 tabular-nums">
+                          <td className="py-2.5 px-3 text-right font-mono text-slate-800 tabular-nums">
                             {row.p1?.orders ?? row.orders ?? 0}
                           </td>
                           <td className="py-2.5 px-3 text-right tabular-nums">
@@ -985,18 +985,18 @@ function PpcStCampaignRollupViewInner({
                           </td>
 
                           {/* KỲ 2 (SO SÁNH): Spend | Sales | Orders | ACOS */}
-                          <td className="py-2.5 px-3 text-right font-mono font-semibold text-slate-700 border-l border-slate-100 tabular-nums">
+                          <td className="py-2.5 px-3 text-right font-mono text-slate-700 border-l border-slate-100 tabular-nums">
                             ${(row.p2?.spend ?? 0).toFixed(2)}
                           </td>
-                          <td className="py-2.5 px-3 text-right font-mono font-medium text-slate-600 tabular-nums">
+                          <td className="py-2.5 px-3 text-right font-mono text-slate-600 tabular-nums">
                             ${(row.p2?.sales ?? 0).toFixed(2)}
                           </td>
-                          <td className="py-2.5 px-3 text-right font-mono font-medium text-slate-600 tabular-nums">
+                          <td className="py-2.5 px-3 text-right font-mono text-slate-600 tabular-nums">
                             {row.p2?.orders ?? 0}
                           </td>
                           <td className="py-2.5 px-3 text-right tabular-nums">
                             <span
-                              className={`px-1.5 py-0.5 rounded font-semibold text-[10px] ${
+                              className={`px-1.5 py-0.5 rounded font-extrabold text-[10px] ${
                                 (row.p2?.sales ?? 0) === 0
                                   ? "bg-slate-100 text-slate-400"
                                   : (row.p2?.acos ?? 0) <= targetAcos
@@ -1009,7 +1009,7 @@ function PpcStCampaignRollupViewInner({
                           </td>
 
                           {/* BIẾN ĐỘNG SPEND */}
-                          <td className="py-2.5 px-3 text-right font-mono font-bold text-xs whitespace-nowrap border-l border-slate-100 tabular-nums">
+                          <td className="py-2.5 px-3 text-right font-mono text-xs whitespace-nowrap border-l border-slate-100 tabular-nums">
                             {(row.deltaSpend ?? 0) > 0 ? (
                               <span className="text-amber-600">▲ +${row.deltaSpend.toFixed(2)}</span>
                             ) : (row.deltaSpend ?? 0) < 0 ? (
@@ -1045,7 +1045,7 @@ function PpcStCampaignRollupViewInner({
                                 e.stopPropagation();
                                 toggleExpandCampaign(row.campaignName);
                               }}
-                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-mono font-bold text-xs transition cursor-pointer border ${
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-mono text-xs transition cursor-pointer border ${
                                 isExpanded
                                   ? "bg-indigo-600 text-white border-indigo-600 shadow-2xs"
                                   : "bg-slate-100 hover:bg-indigo-50 text-slate-800 hover:text-indigo-700 border-slate-200 hover:border-indigo-200"
@@ -1063,17 +1063,17 @@ function PpcStCampaignRollupViewInner({
 
                           {/* 3. Spend */}
                           <td className="py-2.5 px-3 text-right">
-                            <div className="font-bold text-slate-900">${row.spend?.toFixed(2)}</div>
+                            <div className="text-slate-900">${row.spend?.toFixed(2)}</div>
                           </td>
 
                           {/* 4. Sales */}
                           <td className="py-2.5 px-3 text-right">
-                            <div className="font-bold text-emerald-600">${row.sales?.toFixed(2)}</div>
+                            <div className="text-emerald-600">${row.sales?.toFixed(2)}</div>
                           </td>
 
                           {/* 5. Orders */}
                           <td className="py-2.5 px-3 text-right">
-                            <div className="font-bold text-slate-800">{row.orders}</div>
+                            <div className="text-slate-800">{row.orders}</div>
                           </td>
 
                           {/* 6. Clicks */}
@@ -1083,7 +1083,7 @@ function PpcStCampaignRollupViewInner({
 
                           {/* 7. CPC */}
                           <td className="py-2.5 px-3 text-right">
-                            <div className="text-slate-700 font-bold">${row.cpc?.toFixed(2)}</div>
+                            <div className="text-slate-700">${row.cpc?.toFixed(2)}</div>
                           </td>
 
                           {/* 8. ACOS */}
@@ -1103,7 +1103,7 @@ function PpcStCampaignRollupViewInner({
 
                           {/* 9. CVR */}
                           <td className="py-2.5 px-3 text-right">
-                            <div className="text-slate-700 font-bold">{row.cvr}%</div>
+                            <div className="text-slate-700">{row.cvr}%</div>
                           </td>
                         </tr>
                       )}
@@ -1159,12 +1159,12 @@ function PpcStCampaignRollupViewInner({
                                           <td className="py-2 px-3 font-sans font-bold text-slate-800">{t.searchTerm}</td>
                                           <td className="py-2 px-3 text-slate-500 text-[10px]">{t.targetKeyword || "-"}</td>
                                           <td className="py-2 px-3 text-slate-500 text-[10px]">{t.matchType}</td>
-                                          <td className="py-2 px-3 text-right font-bold text-slate-900">${t.spend?.toFixed(2)}</td>
-                                          <td className="py-2 px-3 text-right text-emerald-600 font-bold">${t.sales?.toFixed(2)}</td>
-                                          <td className="py-2 px-3 text-right font-bold">{t.orders}</td>
+                                          <td className="py-2 px-3 text-right text-slate-900">${t.spend?.toFixed(2)}</td>
+                                          <td className="py-2 px-3 text-right text-emerald-600">${t.sales?.toFixed(2)}</td>
+                                          <td className="py-2 px-3 text-right">{t.orders}</td>
                                           <td className="py-2 px-3 text-right">{t.clicks}</td>
                                           <td className="py-2 px-3 text-right">${t.cpc?.toFixed(2)}</td>
-                                          <td className="py-2 px-3 text-right">{t.sales > 0 ? `${t.acos}%` : "-"}</td>
+                                          <td className="py-2 px-3 text-right font-bold">{t.sales > 0 ? `${t.acos}%` : "-"}</td>
                                         </tr>
                                       ))}
                                     </tbody>
@@ -1203,40 +1203,40 @@ function PpcStCampaignRollupViewInner({
                                           <td className="py-2 px-3 font-sans font-bold text-slate-800 max-w-xs truncate" title={t.searchTerm}>
                                             {t.searchTerm}
                                           </td>
-                                          <td className="py-2 px-2 text-center text-slate-500 text-[10px] uppercase font-semibold">
+                                          <td className="py-2 px-2 text-center text-slate-500 text-[10px] uppercase">
                                             {t.matchType}
                                           </td>
 
                                           {/* Kỳ Hiện Tại */}
-                                          <td className="py-2 px-3 text-right font-bold text-slate-900 border-l border-slate-100 tabular-nums">
+                                          <td className="py-2 px-3 text-right text-slate-900 border-l border-slate-100 tabular-nums">
                                             ${(t.p1?.spend ?? 0).toFixed(2)}
                                           </td>
-                                          <td className="py-2 px-3 text-right font-bold text-emerald-600 tabular-nums">
+                                          <td className="py-2 px-3 text-right text-emerald-600 tabular-nums">
                                             ${(t.p1?.sales ?? 0).toFixed(2)}
                                           </td>
-                                          <td className="py-2 px-3 text-right font-bold text-emerald-700 tabular-nums">
+                                          <td className="py-2 px-3 text-right text-emerald-700 tabular-nums">
                                             {t.p1?.orders ?? 0} orders
                                           </td>
-                                          <td className="py-2 px-3 text-right text-slate-700 tabular-nums">
+                                          <td className="py-2 px-3 text-right font-bold text-slate-700 tabular-nums">
                                             {(t.p1?.sales ?? 0) > 0 ? `${t.p1?.acos}%` : "-"}
                                           </td>
 
                                           {/* Kỳ So Sánh */}
-                                          <td className="py-2 px-3 text-right font-semibold text-slate-700 border-l border-slate-100 tabular-nums">
+                                          <td className="py-2 px-3 text-right text-slate-700 border-l border-slate-100 tabular-nums">
                                             ${(t.p2?.spend ?? 0).toFixed(2)}
                                           </td>
-                                          <td className="py-2 px-3 text-right font-medium text-slate-600 tabular-nums">
+                                          <td className="py-2 px-3 text-right text-slate-600 tabular-nums">
                                             ${(t.p2?.sales ?? 0).toFixed(2)}
                                           </td>
-                                          <td className="py-2 px-3 text-right font-medium text-slate-600 tabular-nums">
+                                          <td className="py-2 px-3 text-right text-slate-600 tabular-nums">
                                             {t.p2?.orders ?? 0} orders
                                           </td>
-                                          <td className="py-2 px-3 text-right text-slate-500 tabular-nums">
+                                          <td className="py-2 px-3 text-right font-bold text-slate-500 tabular-nums">
                                             {(t.p2?.sales ?? 0) > 0 ? `${t.p2?.acos}%` : "-"}
                                           </td>
 
                                           {/* Spend delta */}
-                                          <td className="py-2 px-3 text-right font-bold text-xs whitespace-nowrap border-l border-slate-100 tabular-nums">
+                                          <td className="py-2 px-3 text-right text-xs whitespace-nowrap border-l border-slate-100 tabular-nums">
                                             {(t.deltaSpend ?? 0) > 0 ? (
                                               <span className="text-amber-600">▲ +${t.deltaSpend.toFixed(2)}</span>
                                             ) : (t.deltaSpend ?? 0) < 0 ? (

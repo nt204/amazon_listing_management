@@ -148,7 +148,7 @@ export function PpcPerformanceRankingChart({
               <th className="py-2.5 px-3.5 text-left w-36">Tỉ Trọng Spend</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 font-medium">
+          <tbody className="divide-y divide-slate-100">
             {formatRows.map((row) => {
               const isGood = row.sales > 0 && row.acos <= targetAcos;
               return (
@@ -156,7 +156,7 @@ export function PpcPerformanceRankingChart({
                   <td className="py-2.5 px-3.5 font-bold text-slate-900">
                     {row.name}
                   </td>
-                  <td className="py-2.5 px-2.5 text-right font-mono font-bold text-slate-700">
+                  <td className="py-2.5 px-2.5 text-right font-mono text-slate-700">
                     {row.impressions.toLocaleString()}
                   </td>
                   <td className="py-2.5 px-2.5 text-right font-mono text-slate-600">
@@ -165,21 +165,21 @@ export function PpcPerformanceRankingChart({
                   <td className="py-2.5 px-2.5 text-right font-mono text-slate-600">
                     {row.impressions > 0 ? `${row.ctr.toFixed(2)}%` : "—"}
                   </td>
-                  <td className="py-2.5 px-2.5 text-right font-mono font-bold text-slate-900">
+                  <td className="py-2.5 px-2.5 text-right font-mono text-slate-900">
                     {currency}{row.spend.toFixed(2)}
                   </td>
-                  <td className="py-2.5 px-2.5 text-right font-mono font-black text-emerald-600">
+                  <td className="py-2.5 px-2.5 text-right font-mono text-emerald-600">
                     {currency}{row.sales.toFixed(2)}
                   </td>
-                  <td className="py-2.5 px-2.5 text-right font-mono font-bold text-slate-900">
+                  <td className="py-2.5 px-2.5 text-right font-mono text-slate-900">
                     {row.orders}
                   </td>
-                  <td className="py-2.5 px-2.5 text-right font-mono font-bold">
+                  <td className="py-2.5 px-2.5 text-right font-mono">
                     {row.sales === 0 ? (
                       <span className="text-slate-400">—</span>
                     ) : (
                       <span
-                        className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${
+                        className={`inline-block px-1.5 py-0.5 rounded text-[11px] ${
                           isGood
                             ? "bg-emerald-50 text-emerald-700"
                             : row.acos > targetAcos * 1.3
@@ -205,7 +205,7 @@ export function PpcPerformanceRankingChart({
                           style={{ width: `${Math.min(100, Math.max(2, row.spendShare))}%` }}
                         />
                       </div>
-                      <span className="font-mono text-[11px] font-bold text-slate-600 w-8 text-right">
+                      <span className="font-mono text-[11px] text-slate-600 w-8 text-right">
                         {row.spendShare.toFixed(0)}%
                       </span>
                     </div>

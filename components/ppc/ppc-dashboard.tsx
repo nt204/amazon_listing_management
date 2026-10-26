@@ -2352,6 +2352,37 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
       : skuPerformance;
   }, [skuPerformance, hidePausedSkus]);
 
+  const skuMockupBySku = useMemo(
+    () => new Map(activeSkuPerformance.filter((s) => s.mockupUrl).map((s) => [s.sku, s.mockupUrl as string])),
+    [activeSkuPerformance],
+  );
+
+  // Ảnh mockup nhỏ cho bảng SKU bán tốt / cần chú ý: hover xem lớn, bấm để phóng to (cùng kiểu bảng SKU)
+  const renderOverviewSkuThumb = (sku: string, url?: string | null) =>
+    url ? (
+      <div
+        className="relative shrink-0 cursor-pointer group/thumb"
+        onMouseEnter={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          setHoveredMockup({ url, sku, rect: { top: r.top, right: r.right } });
+        }}
+        onMouseLeave={() => setHoveredMockup(null)}
+        onClick={() => setPreviewModalMockup({ url, sku })}
+        title="Nhấn để xem ảnh phóng to"
+      >
+        <img
+          src={getOptimizedThumbnailUrl(url, 80) || url}
+          alt={sku}
+          className="h-9 w-9 rounded-md border border-slate-200 object-cover shadow-2xs transition-all group-hover/thumb:border-indigo-500 group-hover/thumb:ring-2 group-hover/thumb:ring-indigo-200"
+          loading="lazy"
+        />
+      </div>
+    ) : (
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-300">
+        <Tag size={14} />
+      </div>
+    );
+
   const overviewTopSkus = useMemo(() => {
     return activeSkuPerformance
       .filter((sku) => sku.orders > 0 && sku.acos <= targetAcos)
@@ -3163,13 +3194,24 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                       </tr>
                     ) : overviewTopSkus.map((sku) => (
                       <tr key={`${sku.storeName || selectedStore}-${sku.sku}`} className="hover:bg-slate-50">
-                        <td className="py-1.5 font-bold text-slate-800 max-w-[160px] truncate">
-                          <span title={sku.sku}>{sku.sku}</span>
+                        <td className="py-1.5 font-bold text-slate-800 max-w-[200px]">
+                          <div className="flex items-center gap-2 min-w-0">
+                            {renderOverviewSkuThumb(sku.sku, sku.mockupUrl)}
+                            <span className="truncate" title={sku.sku}>{sku.sku}</span>
+                          </div>
                         </td>
                         <td className="py-1.5 text-right text-slate-700">${sku.spend.toFixed(2)}</td>
                         <td className="py-1.5 text-right font-normal text-slate-800">{sku.orders}</td>
-                        <td className="py-1.5 text-right font-normal text-emerald-600">${sku.sales.toFixed(2)}</td>
-                        <td className="py-1.5 text-right font-normal text-emerald-700">{sku.acos.toFixed(1)}%</td>
+                        {/* Màu đặt trên span: CSS bảng chung ép màu chữ của td */}
+                        <td className="py-1.5 text-right font-normal"><span className="text-emerald-600">${sku.sales.toFixed(2)}</span></td>
+                        <td className="py-1.5 text-right">
+                          <span
+                            className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200"
+                            title={`Mục tiêu ACOS ≤ ${targetAcos.toFixed(1)}%`}
+                          >
+                            {sku.acos.toFixed(1)}%
+                          </span>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -3213,7 +3255,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                     {loadingOverviewWeakSkus ? (
                       Array.from({ length: 5 }).map((_, index) => (
                         <tr key={`attention-sku-skeleton-${index}`} aria-hidden="true">
-                          <td className="py-2 pr-4"><div className="h-3 w-28 animate-pulse rounded bg-slate-100" /></td>
+                          <td className="py-2 pr-4">
+                            <div className="flex items-center gap-2">
+                              <div className="h-9 w-9 animate-pulse rounded-md bg-slate-100" />
+                              <div className="h-3 w-28 animate-pulse rounded bg-slate-100" />
+                            </div>
+                          </td>
                           <td className="py-2 pl-4"><div className="ml-auto h-3 w-14 animate-pulse rounded bg-slate-100" /></td>
                           <td className="py-2 pl-4"><div className="ml-auto h-3 w-8 animate-pulse rounded bg-slate-100" /></td>
                           <td className="py-2 pl-4"><div className="ml-auto h-3 w-14 animate-pulse rounded bg-slate-100" /></td>
@@ -3228,10 +3275,13 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                       </tr>
                     ) : overviewWeakSkus.map((sku) => (
                       <tr key={`${selectedStore}-${sku.sku}`} className="hover:bg-slate-50">
-                        <td className="py-1.5 font-bold text-slate-800 max-w-[160px] truncate">
-                          <span title={sku.sku}>{sku.sku}</span>
+                        <td className="py-1.5 font-bold text-slate-800 max-w-[200px]">
+                          <div className="flex items-center gap-2 min-w-0">
+                            {renderOverviewSkuThumb(sku.sku, skuMockupBySku.get(sku.sku))}
+                            <span className="truncate" title={sku.sku}>{sku.sku}</span>
+                          </div>
                         </td>
-                        <td className="py-1.5 text-right font-normal text-rose-700">${sku.spend.toFixed(2)}</td>
+                        <td className="py-1.5 text-right font-normal"><span className="text-rose-700">${sku.spend.toFixed(2)}</span></td>
                         <td className="py-1.5 text-right font-normal text-slate-800">{sku.orders}</td>
                         <td className="py-1.5 text-right font-normal text-slate-700">${sku.sales.toFixed(2)}</td>
                         <td className="py-1.5 text-right">
@@ -3539,7 +3589,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 font-medium">
+              <tbody className="divide-y divide-slate-100 font-normal">
                 {(loading || isStoreSwitching || loadingSection === "campaigns" || loadingCampaignPage) ? (
                   <tr>
                     <td colSpan={14} className="py-16 text-center text-slate-500">
@@ -3573,7 +3623,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
 
                     return (
                       <tr key={i} className="hover:bg-slate-50/80 transition group">
-                        {/* Campaign Name: Clickable to view Targets directly */}
+                        {/* Campaign Name: Clickable to view Targets directly (IN ĐẬM) */}
                         <td className="py-2.5 px-3.5 min-w-[280px] max-w-[550px] col-primary font-bold">
                           <button
                             type="button"
@@ -3592,16 +3642,16 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                           </button>
                         </td>
 
-                        <td className="py-2.5 px-3 text-slate-500 font-medium whitespace-nowrap">{c.storeName}</td>
+                        <td className="py-2.5 px-3 text-slate-500 font-normal whitespace-nowrap">{c.storeName}</td>
 
                         <td className="py-2.5 px-3 whitespace-nowrap">
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-normal bg-slate-100 text-slate-700">
                             {c.adType || "?"} · {c.targetingType}
                           </span>
                         </td>
 
-                        <td className="py-2.5 px-3 text-[11px] text-slate-500 whitespace-nowrap">
-                          <div className="font-bold text-slate-700 flex items-center gap-1">
+                        <td className="py-2.5 px-3 text-[11px] text-slate-500 whitespace-nowrap font-normal">
+                          <div className="font-normal text-slate-700 flex items-center gap-1">
                             <span
                               className={`w-1.5 h-1.5 rounded-full ${!/pause|archive/i.test(c.state || "") ? "bg-emerald-500" : "bg-amber-500"
                                 }`}
@@ -3614,41 +3664,48 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                         {/* Creation Date */}
                         <td className="py-2.5 px-3 whitespace-nowrap text-[11px] font-mono text-slate-600">
                           {formattedDate !== "—" ? (
-                            <span className="px-1.5 py-0.5 rounded bg-slate-50 border border-slate-200 text-slate-700 font-bold">
+                            <span className="px-1.5 py-0.5 rounded bg-slate-50 border border-slate-200 text-slate-700 font-normal">
                               {formattedDate}
                             </span>
                           ) : (
-                            <span className="text-slate-400">—</span>
+                            <span className="text-slate-400 font-normal">—</span>
                           )}
                         </td>
 
                         {/* Impressions */}
-                        <td className="py-2.5 px-3 text-right text-slate-700 whitespace-nowrap font-mono">
+                        <td className="py-2.5 px-3 text-right text-slate-700 whitespace-nowrap font-mono font-normal">
                           {(c.impressions || 0).toLocaleString()}
                         </td>
 
                         {/* Clicks */}
-                        <td className="py-2.5 px-3 text-right text-slate-600 whitespace-nowrap font-mono">
+                        <td className="py-2.5 px-3 text-right text-slate-600 whitespace-nowrap font-mono font-normal">
                           {(c.clicks || 0).toLocaleString()}
                         </td>
 
                         {/* CTR */}
-                        <td className="py-2.5 px-3 text-right text-slate-700 whitespace-nowrap font-mono">
+                        <td className="py-2.5 px-3 text-right text-slate-700 whitespace-nowrap font-mono font-normal">
                           {c.ctr ? `${c.ctr.toFixed(2)}%` : "0.00%"}
                         </td>
 
-                        <td className="py-2.5 px-3 text-right font-bold text-slate-900 whitespace-nowrap">
+                        {/* Spend ($) - Viết thường */}
+                        <td className="py-2.5 px-3 text-right font-normal text-slate-700 whitespace-nowrap">
                           ${c.spend.toFixed(2)}
                         </td>
-                        <td className="py-2.5 px-3 text-right font-black text-emerald-600 whitespace-nowrap">
+                        {/* Sales ($) - Viết thường */}
+                        <td className="py-2.5 px-3 text-right font-normal text-slate-700 whitespace-nowrap">
                           ${c.sales.toFixed(2)}
                         </td>
-                        <td className="py-2.5 px-3 text-right font-black text-slate-900 whitespace-nowrap">{c.orders}</td>
-                        <td className="py-2.5 px-3 text-right text-slate-600 whitespace-nowrap">${c.cpc.toFixed(2)}</td>
-                        <td className="py-2.5 px-3 text-right text-slate-700 whitespace-nowrap">{c.cvr.toFixed(1)}%</td>
+                        {/* Orders - Viết thường */}
+                        <td className="py-2.5 px-3 text-right font-normal text-slate-700 whitespace-nowrap">{c.orders}</td>
+                        {/* CPC - Viết thường */}
+                        <td className="py-2.5 px-3 text-right font-normal text-slate-600 whitespace-nowrap">${c.cpc.toFixed(2)}</td>
+                        {/* CVR - Viết thường */}
+                        <td className="py-2.5 px-3 text-right font-normal text-slate-700 whitespace-nowrap">{c.cvr.toFixed(1)}%</td>
+
+                        {/* ACOS (%) - IN ĐẬM */}
                         <td className="py-2.5 px-3 text-right whitespace-nowrap">
                           <span
-                            className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-black ${c.acos <= Math.min(20, targetAcos)
+                            className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-bold ${c.acos <= Math.min(20, targetAcos)
                               ? "bg-emerald-50 text-emerald-700"
                               : c.acos <= targetAcos
                                 ? "bg-teal-50 text-teal-700"
@@ -4167,31 +4224,32 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                             <td className="px-3 py-2.5 font-bold text-slate-900 min-w-[180px] col-primary">
                               <div className="break-words leading-snug font-bold" title={target.targetKeyword}>{target.targetKeyword}</div>
                             </td>
-                            <td className="px-3 py-2.5 font-semibold text-slate-700 min-w-[260px]">
+                            {/* Bảng Target: chỉ Target / Keyword và ACOS in đậm, còn lại chữ thường */}
+                            <td className="px-3 py-2.5 text-slate-700 min-w-[260px]">
                               <div className="break-words leading-snug" title={target.campaignName}>{target.campaignName}</div>
                             </td>
                             <td className="px-3 py-2.5 whitespace-nowrap">
-                              <span className={badge.badgeColor}>{badge.label}</span>
+                              <span className={badge.badgeColor.replace("font-bold", "font-normal")}>{badge.label}</span>
                             </td>
-                            <td className="px-3 py-2.5 text-right font-mono font-black text-slate-800 whitespace-nowrap">{target.currentBid ? `$${target.currentBid.toFixed(2)}` : "—"}</td>
+                            <td className="px-3 py-2.5 text-right font-mono text-slate-800 whitespace-nowrap">{target.currentBid ? `$${target.currentBid.toFixed(2)}` : "—"}</td>
                             <td className="px-3 py-2.5 text-right font-mono text-slate-700 whitespace-nowrap">{(target.impressions || 0).toLocaleString()}</td>
                             <td className="px-3 py-2.5 text-right font-mono text-slate-600 whitespace-nowrap">{(target.clicks || 0).toLocaleString()}</td>
                             <td className="px-3 py-2.5 text-right font-mono text-slate-700 whitespace-nowrap">{target.ctr ? `${target.ctr.toFixed(2)}%` : "0.00%"}</td>
                             <td className="px-3 py-2.5 text-right font-mono whitespace-nowrap">
                               {target.orders === 0 && target.spend >= 15 ? (
                                 <span
-                                  className="inline-block px-1.5 py-0.5 rounded font-black text-rose-700 bg-rose-50 border border-rose-300"
+                                  className="inline-block px-1.5 py-0.5 rounded font-normal text-rose-700 bg-rose-50 border border-rose-300"
                                   title="Cảnh báo: Chi tiêu vượt ngưỡng ($15+) nhưng chưa có đơn hàng nào"
                                 >
                                   ${target.spend.toFixed(2)}
                                 </span>
                               ) : (
-                                <span className={`font-bold ${target.spend > 0 ? "text-slate-900" : "text-slate-400"}`}>
+                                <span className={target.spend > 0 ? "text-slate-900" : "text-slate-400"}>
                                   ${target.spend.toFixed(2)}
                                 </span>
                               )}
                             </td>
-                            <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-600 whitespace-nowrap">${target.sales.toFixed(2)}</td>
+                            <td className="px-3 py-2.5 text-right font-mono text-emerald-600 whitespace-nowrap">${target.sales.toFixed(2)}</td>
                             <td className="px-3 py-2.5 text-right font-mono whitespace-nowrap">
                               {target.orders === 0 || target.sales === 0 ? (
                                 <span
@@ -4218,7 +4276,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                             </td>
                             <td className="px-3 py-2.5 text-right font-mono text-slate-600 whitespace-nowrap">${target.cpc.toFixed(2)}</td>
                             <td className="px-3 py-2.5 text-right font-mono text-slate-700 whitespace-nowrap">{target.cvr.toFixed(1)}%</td>
-                            <td className="px-3 py-2.5 text-right font-mono font-bold text-slate-900 whitespace-nowrap">{target.orders}</td>
+                            <td className="px-3 py-2.5 text-right font-mono text-slate-900 whitespace-nowrap">{target.orders}</td>
                             <td className={`px-2 py-2 text-center whitespace-nowrap w-[60px] min-w-[60px] sticky right-0 z-10 border-l border-slate-200 shadow-[-4px_0_8px_rgba(0,0,0,0.04)] transition ${isExpanded ? "bg-indigo-50" : isSelected ? "bg-indigo-50/70" : "bg-white group-hover:bg-slate-50"
                               }`}>
                               <button
@@ -4257,7 +4315,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                                     <table className="w-full text-left text-xs text-slate-700">
                                       <thead className="bg-slate-50 text-[10px] uppercase font-bold text-slate-500 border-b border-slate-200">
                                         <tr>
-                                          <th className="py-2 px-3.5">Customer Search Term</th>
+                                          <th className="py-2 px-3.5">Search Term</th>
                                           <th className="py-2 px-2.5 text-right">Impression</th>
                                           <th className="py-2 px-2.5 text-right">Clicks</th>
                                           <th className="py-2 px-2.5 text-right">Spend ($)</th>
@@ -4880,7 +4938,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                       className="rounded border-slate-300 accent-indigo-600"
                     />
                   </th>
-                  <th className="py-3 px-3">Customer Search Term</th>
+                  <th className="py-3 px-3">Search Term</th>
                   <th className="py-3 px-3">Ad Type</th>
                   <th className="py-3 px-3">Match Type</th>
                   <th className="py-3 px-3">Campaign</th>
@@ -4952,7 +5010,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
+              <tbody className="divide-y divide-slate-100 font-mono text-[11px] font-normal">
                 {(loadingSearchTermsServer || (!serverSearchTerms && (!searchTermsReady || loadingSection === "search_terms" || loading || isStoreSwitching))) ? (
                   <tr>
                     <td colSpan={13} className="p-12 text-center text-xs text-slate-500">
@@ -4985,16 +5043,20 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                             className="rounded border-slate-300 accent-indigo-600"
                           />
                         </td>
+                        {/* Search Term - IN ĐẬM */}
                         <td className="py-2.5 px-3 font-sans font-bold text-slate-900 min-w-[180px] break-words">
                           {t.customerSearchTerm}
                         </td>
-                        <td className="py-2.5 px-3 font-sans text-[10px] font-black text-indigo-700">{t.adType || "?"}</td>
+                        {/* Ad Type - Viết thường */}
+                        <td className="py-2.5 px-3 font-sans text-[10px] font-normal text-indigo-700">{t.adType || "?"}</td>
+                        {/* Match Type - Viết thường */}
                         <td className="py-2.5 px-3 font-sans">
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-normal bg-slate-100 text-slate-700">
                             {t.matchType}
                           </span>
                         </td>
-                        <td className="py-2.5 px-3 text-slate-600 font-sans min-w-[280px] max-w-[420px] align-top leading-snug">
+                        {/* Campaign - Viết thường */}
+                        <td className="py-2.5 px-3 text-slate-600 font-sans font-normal min-w-[280px] max-w-[420px] align-top leading-snug">
                           <div className="flex items-start gap-1">
                             <span className="min-w-0 flex-1 whitespace-normal break-words">{t.campaignName}</span>
                             <PpcCopyButton value={t.campaignName} label="campaign" />
@@ -5006,19 +5068,27 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                             </div>
                           )}
                         </td>
-                        <td className="py-2.5 px-3 text-right font-bold text-slate-700">{(t.impressions || 0).toLocaleString()}</td>
-                        <td className="py-2.5 px-3 text-right font-bold text-slate-800">{t.clicks}</td>
-                        <td className="py-2.5 px-3 text-right text-slate-500">{Number.isFinite(t.ctr) ? `${(t.ctr * 100).toFixed(2)}%` : "-"}</td>
-                        <td className="py-2.5 px-3 text-right font-bold text-slate-900">${t.spend.toFixed(2)}</td>
-                        <td className="py-2.5 px-3 text-right font-black text-emerald-600">${t.sales.toFixed(2)}</td>
-                        <td className="py-2.5 px-3 text-right font-black text-slate-900">{t.orders}</td>
-                        <td className="py-2.5 px-3 text-right text-slate-700">{Number.isFinite(t.cvr) ? `${(t.cvr * 100).toFixed(1)}%` : "-"}</td>
+                        {/* Hiển thị - Viết thường */}
+                        <td className="py-2.5 px-3 text-right font-normal text-slate-700">{(t.impressions || 0).toLocaleString()}</td>
+                        {/* Clicks - Viết thường */}
+                        <td className="py-2.5 px-3 text-right font-normal text-slate-700">{t.clicks}</td>
+                        {/* CTR (%) - Viết thường */}
+                        <td className="py-2.5 px-3 text-right font-normal text-slate-600">{Number.isFinite(t.ctr) ? `${(t.ctr * 100).toFixed(2)}%` : "-"}</td>
+                        {/* Spend ($) - Viết thường */}
+                        <td className="py-2.5 px-3 text-right font-normal text-slate-700">${t.spend.toFixed(2)}</td>
+                        {/* Sales ($) - Viết thường */}
+                        <td className="py-2.5 px-3 text-right font-normal text-slate-700">${t.sales.toFixed(2)}</td>
+                        {/* Orders - Viết thường */}
+                        <td className="py-2.5 px-3 text-right font-normal text-slate-700">{t.orders}</td>
+                        {/* CVR (%) - Viết thường */}
+                        <td className="py-2.5 px-3 text-right font-normal text-slate-700">{Number.isFinite(t.cvr) ? `${(t.cvr * 100).toFixed(1)}%` : "-"}</td>
+                        {/* ACOS (%) - IN ĐẬM */}
                         <td className="py-2.5 px-3 text-right font-bold">
                           <span
-                            className={`${t.orders === 0 && t.clicks >= 9
-                              ? "text-rose-700 font-black"
+                            className={`font-bold ${t.orders === 0 && t.clicks >= 9
+                              ? "text-rose-700 font-bold"
                               : t.orders > 0 && t.acos <= targetAcos
-                                ? "text-emerald-700 font-black"
+                                ? "text-emerald-700 font-bold"
                                 : "text-slate-800"
                               }`}
                           >
