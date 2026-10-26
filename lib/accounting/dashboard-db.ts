@@ -47,7 +47,12 @@ export interface AccountingDashboardData {
   /** Số tháng lùi của chuỗi so sánh theo tháng (0 = không có). */
   monthlyCompareShift: number;
   byStore: DashboardStoreRow[];
-  /** Số liệu từng ngày (cộng các store) của kỳ hiện tại + kỳ so sánh, để client tóm tắt theo ngày / tuần / tháng. */
+  /** Ngày bắt đầu chuỗi theo tháng (1/1 của năm, hoặc sớm hơn nếu kỳ bắt đầu từ năm trước). */
+  trendStartDate: string;
+  /**
+   * Số liệu từng ngày (cộng các store) của toàn bộ dữ liệu đã tải: kỳ hiện tại, kỳ so sánh và chuỗi theo tháng
+   * (+ tháng trước đó khi so sánh), để client tóm tắt theo ngày / tuần / tháng.
+   */
   days: DashboardDay[];
 }
 
@@ -152,7 +157,7 @@ const inRange = (date: string, range: { startDate: string; endDate: string }) =>
 
 /**
  * Tổng hợp P&L FBA cho Dashboard: dùng đúng công thức listFbaDaily (khớp tab FBA và báo cáo Lark),
- * mỗi store chỉ 1 truy vấn bao trọn kỳ hiện tại + kỳ trước + 6 tháng xu hướng rồi cắt trong bộ nhớ.
+ * mỗi store chỉ 1 truy vấn bao trọn kỳ hiện tại + kỳ trước + các tháng từ đầu năm rồi cắt trong bộ nhớ.
  */
 export async function getAccountingDashboard(options: {
   startDate?: string;
@@ -239,8 +244,7 @@ export async function getAccountingDashboard(options: {
       current: summarize(items.filter((it) => inRange(it.date, periods.current))),
       previous: periods.previous ? summarize(items.filter((it) => inRange(it.date, periods.previous!))) : null,
     })),
-    days: sumByDate(
-      allItems.filter((it) => inRange(it.date, periods.current) || (periods.previous && inRange(it.date, periods.previous))),
-    ),
+    trendStartDate: periods.trendStartDate,
+    days: sumByDate(allItems),
   };
 }

@@ -5,11 +5,9 @@ export interface DashboardPeriods {
   current: { startDate: string; endDate: string };
   /** Kỳ so sánh Like-for-Like; null khi xem toàn thời gian. */
   previous: { startDate: string; endDate: string } | null;
-  /** Ngày bắt đầu chuỗi xu hướng theo tháng (mùng 1). Rỗng = toàn thời gian. */
+  /** Ngày bắt đầu chuỗi xu hướng theo tháng: 1/1 của năm (lùi thêm nếu kỳ bắt đầu sớm hơn). Rỗng = toàn thời gian. */
   trendStartDate: string;
 }
-
-export const DASHBOARD_TREND_MONTHS = 6;
 
 export type DashboardCompareMode = "prev" | "week" | "month" | "yoy" | "none";
 
@@ -56,7 +54,7 @@ function monthStartOffset(dateStr: string, monthOffset: number): string {
  * - Kỳ trước: nếu kỳ hiện tại bắt đầu từ mùng 1 và nằm gọn trong 1 tháng → cùng kỳ tháng trước
  *   (1 → cùng ngày, kẹp theo số ngày của tháng trước). Ngược lại → cùng số ngày liền trước.
  * - compare = "week" | "month" | "yoy": cùng ngày tuần/tháng/năm trước; "none": không so sánh.
- * - Xu hướng tháng: 6 tháng gần nhất tính đến tháng của ngày kết thúc (mở rộng nếu kỳ dài hơn).
+ * - Xu hướng tháng: từ tháng 1 của năm chứa ngày kết thúc (mở rộng nếu kỳ bắt đầu từ năm trước).
  */
 export function resolveDashboardPeriods(
   startDate: string,
@@ -98,9 +96,25 @@ export function resolveDashboardPeriods(
     previous = { startDate: addDays(start, -span), endDate: addDays(start, -1) };
   }
 
-  const sixMonthStart = monthStartOffset(end, -(DASHBOARD_TREND_MONTHS - 1));
+  const yearStart = `${end.slice(0, 4)}-01-01`;
   const rangeMonthStart = monthStartOffset(start, 0);
-  const trendStartDate = rangeMonthStart < sixMonthStart ? rangeMonthStart : sixMonthStart;
+  const trendStartDate = rangeMonthStart < yearStart ? rangeMonthStart : yearStart;
 
   return { current: { startDate: start, endDate: end }, previous, trendStartDate };
+}
+
+/** Ngày cuối tháng của dateStr. */
+function monthEnd(dateStr: string): string {
+  const d = toUtc(dateStr);
+  return fmt(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)));
+}
+
+/**
+ * Kỳ so sánh của 1 ô tháng [start, end] = cùng đoạn ở tháng trước.
+ * Tháng trọn vẹn → trọn tháng trước (28/2 → 31/1); tháng dở dang → cùng số ngày (1–25/10 → 1–25/9).
+ */
+export function previousMonthRange(start: string, end: string): { startDate: string; endDate: string } {
+  const startDate = shiftMonths(start, -1);
+  const endDate = end === monthEnd(end) ? monthEnd(startDate) : shiftMonths(end, -1);
+  return { startDate, endDate };
 }

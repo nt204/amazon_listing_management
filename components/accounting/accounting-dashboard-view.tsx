@@ -32,8 +32,8 @@ import type {
   DashboardStoreRow,
   DashboardTotals,
 } from "@/lib/accounting/dashboard-db";
-import type { DashboardCompareMode } from "@/lib/accounting/dashboard-periods";
-import { summarizeRange } from "@/lib/accounting/dashboard-totals";
+import { previousMonthRange, type DashboardCompareMode } from "@/lib/accounting/dashboard-periods";
+import { summarizeRange, type DashboardDay, type DashboardTotals as Totals } from "@/lib/accounting/dashboard-totals";
 import { listTeams, parseStoreTeams, storeHasTeam } from "@/lib/accounting/store-teams";
 import { PpcAmazonDatePicker, type DateRange } from "@/components/ppc/ppc-amazon-date-picker";
 import { getAmazonLatestAvailableDate, getThisMonthDateRange } from "./financials-date-utils";
@@ -464,6 +464,51 @@ function startOfWeek(date: string): string {
   return value.toISOString().slice(0, 10);
 }
 
+const seriesOf = (key: string, t: Totals): DashboardSeriesPoint => ({
+  key,
+  revenue: t.revenue,
+  profit: t.profit,
+  netProfit: t.netProfit,
+  adsFee: t.adsFee,
+  quantity: t.quantity,
+});
+
+/**
+ * Theo tháng: mọi tháng từ trendStart (1/1 của năm) đến ngày cuối kỳ; khi so sánh, mỗi tháng so với
+ * cùng đoạn của tháng liền trước (tháng dở dang so cùng số ngày).
+ */
+function monthBuckets(days: DashboardDay[], trendStart: string, endDate: string, withCompare: boolean): AggregatedChartPoint[] {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const points: AggregatedChartPoint[] = [];
+  let [y, m] = trendStart.split("-").map(Number);
+  const [endY, endM] = endDate.split("-").map(Number);
+  while (y < endY || (y === endY && m <= endM)) {
+    const key = `${y}-${pad(m)}`;
+    const monthLast = `${key}-${pad(new Date(Date.UTC(y, m, 0)).getUTCDate())}`;
+    const rangeStart = `${key}-01` < trendStart ? trendStart : `${key}-01`;
+    const rangeEnd = monthLast > endDate ? endDate : monthLast;
+    const point: AggregatedChartPoint = {
+      ...seriesOf(key, summarizeRange(days, rangeStart, rangeEnd)),
+      rangeStart,
+      rangeEnd,
+      compare: null,
+    };
+    if (withCompare) {
+      const prev = previousMonthRange(rangeStart, rangeEnd);
+      point.compare = seriesOf(prev.startDate.slice(0, 7), summarizeRange(days, prev.startDate, prev.endDate));
+      point.compareRangeStart = prev.startDate;
+      point.compareRangeEnd = prev.endDate;
+    }
+    points.push(point);
+    m += 1;
+    if (m > 12) {
+      m = 1;
+      y += 1;
+    }
+  }
+  return points;
+}
+
 function aggregateTrend(points: DashboardSeriesPoint[], granularity: ChartGranularity): AggregatedChartPoint[] {
   const groups = new Map<string, AggregatedChartPoint>();
   for (const point of points) {
@@ -603,9 +648,13 @@ function TrendChart({
   const selectedBandWidth = Math.max(4, Math.min(56, (((chartWidth || 800) - 70) / Math.max(1, data.length)) * 0.7));
   // ~1 nhãn mỗi 58px chiều ngang để số không chồng nhau trên màn hẹp
   const labelEvery = Math.max(1, Math.ceil(data.length / Math.max(3, Math.floor((chartWidth || 800) / 58))));
-  const compareRangeLabel = previousPeriod
-    ? `${shortDate(previousPeriod.startDate)} - ${shortDate(previousPeriod.endDate)}`
-    : "";
+  // Theo tháng mỗi điểm so với tháng liền trước của nó, không phải 1 khoảng cố định
+  const compareRangeLabel =
+    mode === "month"
+      ? "Tháng trước"
+      : previousPeriod
+      ? `${shortDate(previousPeriod.startDate)} - ${shortDate(previousPeriod.endDate)}`
+      : "";
 
   return (
     <Card delay={delay} className="flex h-full flex-col p-5">
@@ -1652,7 +1701,14 @@ export function AccountingDashboardView() {
     : `${validSelectedIds.length} stores`;
   const teams = listTeams(stores);
   // Biểu đồ và P&L dùng chung các ô đã gộp: P&L luôn tóm tắt đúng ô đang chọn trên biểu đồ.
-  const buckets = useMemo(() => (data ? aggregateTrend(data.daily, granularity) : []), [data, granularity]);
+  const buckets = useMemo(() => {
+    if (!data) return [];
+    // Theo tháng: luôn từ tháng 1 của năm (không chỉ các ngày trong khoảng đã chọn)
+    if (granularity === "month" && data.trendStartDate && data.period.endDate && data.days) {
+      return monthBuckets(data.days, data.trendStartDate, data.period.endDate, Boolean(data.previous));
+    }
+    return aggregateTrend(data.daily, granularity);
+  }, [data, granularity]);
   const latestBucket = buckets.at(-1) ?? null;
   const selectedBucket = buckets.find((b) => b.key === pickedBucket) ?? latestBucket;
   const bucketPnl = useMemo(() => {

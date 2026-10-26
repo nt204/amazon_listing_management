@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { resolveDashboardPeriods } from "../lib/accounting/dashboard-periods";
+import { previousMonthRange, resolveDashboardPeriods } from "../lib/accounting/dashboard-periods";
 
 test("month-to-date compares against the same days of the previous month", () => {
   const p = resolveDashboardPeriods("2026-10-01", "2026-10-25", "2026-10-25");
   assert.deepEqual(p.current, { startDate: "2026-10-01", endDate: "2026-10-25" });
   assert.deepEqual(p.previous, { startDate: "2026-09-01", endDate: "2026-09-25" });
-  assert.equal(p.trendStartDate, "2026-05-01");
+  // Theo tháng luôn hiện từ tháng 1 của năm
+  assert.equal(p.trendStartDate, "2026-01-01");
 });
 
 test("current end is clamped to the latest available data date", () => {
@@ -57,4 +58,14 @@ test("previous week shifts both ends back seven days", () => {
 test("previous month clamps the end to the shorter month", () => {
   const p = resolveDashboardPeriods("2026-10-01", "2026-10-31", "2026-12-31", "month");
   assert.deepEqual(p.previous, { startDate: "2026-09-01", endDate: "2026-09-30" });
+});
+
+test("monthly buckets compare a full month with the full previous month", () => {
+  assert.deepEqual(previousMonthRange("2026-03-01", "2026-03-31"), { startDate: "2026-02-01", endDate: "2026-02-28" });
+  assert.deepEqual(previousMonthRange("2026-02-01", "2026-02-28"), { startDate: "2026-01-01", endDate: "2026-01-31" });
+});
+
+test("a partial month compares the same days of the previous month", () => {
+  assert.deepEqual(previousMonthRange("2026-10-01", "2026-10-25"), { startDate: "2026-09-01", endDate: "2026-09-25" });
+  assert.deepEqual(previousMonthRange("2026-01-01", "2026-01-11"), { startDate: "2025-12-01", endDate: "2025-12-11" });
 });
