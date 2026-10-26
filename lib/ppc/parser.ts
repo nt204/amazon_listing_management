@@ -644,6 +644,35 @@ export async function parseBulkWorkbook(
   return Array.from(unique.values());
 }
 
+// A parse never takes this long, so an older /tmp/ppc-bulk-* directory belongs to a crashed or killed
+// process. Younger directories may be in use by a parse in another process (web upload vs. R2 worker).
+const ORPHANED_PPC_BULK_TEMP_MAX_AGE_MS = 2 * 60 * 60 * 1_000;
+
+/** Removes /tmp/ppc-bulk-* directories left behind by crashed or killed processes. */
+export async function cleanupOrphanedPpcBulkTempDirs(maxAgeMs = ORPHANED_PPC_BULK_TEMP_MAX_AGE_MS): Promise<number> {
+  const [fs, os, path] = await Promise.all([
+    import("node:fs/promises"),
+    import("node:os"),
+    import("node:path"),
+  ]);
+  const tmpDir = os.tmpdir();
+  const entries = await fs.readdir(tmpDir, { withFileTypes: true }).catch(() => []);
+  let removed = 0;
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith("ppc-bulk-")) continue;
+    const fullPath = path.join(tmpDir, entry.name);
+    try {
+      const stats = await fs.stat(fullPath);
+      if (Date.now() - stats.mtimeMs < maxAgeMs) continue;
+      await fs.rm(fullPath, { recursive: true, force: true });
+      removed += 1;
+    } catch {
+      // Another process removed it first, or it is not ours to remove.
+    }
+  }
+  return removed;
+}
+
 /** Large Amazon workbooks are streamed through openpyxl to avoid inflating XML in V8. */
 export async function parseLargeBulkWorkbook(
   buffer: Buffer,
@@ -661,7 +690,7 @@ export async function parseLargeBulkWorkbook(
   try {
     return await parseLargeBulkWorkbookFile(workbookPath, storeName, options);
   } finally {
-    await fs.rm(tempDirectory, { recursive: true, force: true });
+    await fs.rm(tempDirectory, { recursive: true, force: true }).catch(() => {});
   }
 }
 

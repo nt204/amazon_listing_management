@@ -1,8 +1,11 @@
 import { evaluatePendingActionOutcomes } from "../lib/ppc/action-outcome-evaluator";
+import { notifyNegativeBidOutcomes } from "../lib/ppc/outcome-notifications";
 import { getDatabaseClient } from "../lib/db";
 
 const watchMode = process.argv.includes("--watch");
-const defaultIntervalMs = 6 * 60 * 60 * 1_000;
+// Run often enough to drain more than one batch promptly. Individual pending
+// outcomes are still protected by the evaluator's retry cooldown.
+const defaultIntervalMs = 30 * 60 * 1_000;
 const configuredIntervalMs = Number(process.env.PPC_OUTCOME_INTERVAL_MS || defaultIntervalMs);
 const intervalMs = Number.isFinite(configuredIntervalMs) && configuredIntervalMs >= 60_000
   ? configuredIntervalMs
@@ -35,7 +38,11 @@ async function main() {
     const startedAt = new Date().toISOString();
     try {
       const summary = await evaluatePendingActionOutcomes({ limit });
-      process.stdout.write(`${JSON.stringify({ startedAt, ...summary })}\n`);
+      const alerts = await notifyNegativeBidOutcomes().catch((error) => {
+        process.stderr.write(`[PPC outcome worker] Lark alert failed: ${error instanceof Error ? error.message : String(error)}\n`);
+        return { notified: 0 };
+      });
+      process.stdout.write(`${JSON.stringify({ startedAt, ...summary, negativeAlerts: alerts.notified })}\n`);
     } catch (error) {
       process.stderr.write(
         `[PPC outcome worker] ${error instanceof Error ? error.stack || error.message : String(error)}\n`,

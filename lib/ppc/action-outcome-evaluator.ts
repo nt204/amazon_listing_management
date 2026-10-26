@@ -692,8 +692,23 @@ export async function evaluatePendingActionOutcomes(options: {
     JOIN ppc_actions action ON action.id = outcome.action_id
     LEFT JOIN ppc_action_contexts context ON context.action_id = action.id
     WHERE outcome.status IN ('OBSERVING', 'PROVISIONAL', 'INSUFFICIENT_DATA')
+      -- Future windows cannot produce an outcome yet. Excluding them keeps the
+      -- worker capacity available for reports that can actually be evaluated.
+      AND outcome.observation_end <= ${today}::date
+      -- A pending outcome may remain pending after evaluation (for example,
+      -- while attribution matures or a report is late). Give every due row a
+      -- turn before retrying it instead of selecting the same oldest 500 rows
+      -- forever. The cooldown also prevents the 30-minute worker from putting
+      -- unnecessary load on the database.
+      AND (
+        outcome.evaluated_at IS NULL
+        OR outcome.evaluated_at <= NOW() - INTERVAL '20 hours'
+      )
       ${actionIds.length > 0 ? sql`AND outcome.action_id = ANY(${actionIds})` : sql``}
-    ORDER BY outcome.observation_end ASC, outcome.window_days ASC
+    ORDER BY outcome.evaluated_at ASC NULLS FIRST,
+             outcome.observation_end ASC,
+             outcome.window_days ASC,
+             outcome.id ASC
     LIMIT ${limit}
   `;
 

@@ -399,8 +399,10 @@ export async function invokeAiReviewer(
   const startTime = Date.now();
   const harness = options?.harness || BASELINE_HARNESS;
   const model = options?.model || process.env.PPC_AI_REVIEWER_MODEL || "gpt-5.6-terra";
+  // CHEAPKEYAI_API_KEY có thể chỉ được cấp model ảnh; ưu tiên key text như lib/ai.ts.
   const apiKey = options?.apiKey
     || process.env.PPC_AI_REVIEWER_API_KEY
+    || process.env.CHEAPKEYAI_TEXT_API_KEY?.trim()
     || process.env.CHEAPKEYAI_API_KEY;
   const baseURL = options?.baseURL
     || process.env.PPC_AI_REVIEWER_BASE_URL

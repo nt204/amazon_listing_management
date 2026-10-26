@@ -60,6 +60,13 @@ async function main() {
         if (factsCleanup.deletedFactsCount > 0) {
           console.log(`[PPC Ingestion Worker] 🧹 Đã dọn dẹp ${factsCleanup.deletedFactsCount} dòng rác ngày cũ trong ppc_performance_facts.`);
         }
+
+        // Dọn các thư mục tạm /tmp/ppc-bulk-* bị bỏ lại bởi tiến trình crash (chỉ thư mục đã cũ)
+        const { cleanupOrphanedPpcBulkTempDirs } = await import("../lib/ppc/parser");
+        const removedTempDirs = await cleanupOrphanedPpcBulkTempDirs();
+        if (removedTempDirs > 0) {
+          console.log(`[PPC Ingestion Worker] 🧹 Đã xóa ${removedTempDirs} thư mục tạm ppc-bulk-* mồ côi.`);
+        }
       } catch (cleanupErr) {
         console.warn("[PPC Ingestion Worker] Không thể dọn dẹp batch/facts cũ:", cleanupErr);
       }
