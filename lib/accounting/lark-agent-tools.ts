@@ -677,7 +677,7 @@ export async function resolvePpcStore(storeQuery?: string): Promise<{ id: string
     const accStore = await resolveStore(storeQuery);
     if (accStore) {
       const targetName = canonicalStoreName(accStore.name);
-      found = ppcStores.find((s) => s.name.toLowerCase() === targetName.toLowerCase()) || null;
+      found = ppcStores.find((s) => s.name.toLowerCase() === targetName.toLowerCase());
       if (!found) {
         const inserted = await sql<Array<{ id: string; name: string; team_id: string }>>`
           INSERT INTO ppc_stores (name, team_id, marketplace)
