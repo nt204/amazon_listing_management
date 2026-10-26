@@ -61,6 +61,7 @@ export interface ListFbaDailyOptions {
   sortDirection?: "asc" | "desc";
   page?: number;
   limit?: number;
+  channel?: "Amazon" | "Merchant" | "all";
 }
 
 const STORE_SERVICE_RATES: Record<string, number> = {
@@ -166,7 +167,7 @@ export async function listFbaDaily(
       LEFT JOIN accounting_sku_master sm ON sm.store_id = o.store_id AND sm.sku = o.sku
       ${monthlyBasecostJoin(sql)}
       WHERE o.store_id = ${storeId}
-        AND o.fulfillment_channel = 'Amazon'
+        ${options.channel === 'all' ? sql`` : sql`AND o.fulfillment_channel = ${options.channel === 'Merchant' ? 'Merchant' : 'Amazon'}`}
         AND o.date < CURRENT_DATE
         AND o.currency IN ('USD', 'CAD', 'MXN')
         AND LOWER(COALESCE(o.order_status, '')) NOT IN ('cancelled', 'canceled')

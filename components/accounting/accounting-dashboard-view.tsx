@@ -20,6 +20,7 @@ import {
   ArrowDownRightIcon,
   ArrowUpRightIcon,
   CaretDownIcon,
+  CaretRightIcon,
   CheckIcon,
   StorefrontIcon,
   UsersThreeIcon,
@@ -207,24 +208,23 @@ function Card({ children, className = "", delay = 0 }: { children: React.ReactNo
   );
 }
 
-function DeltaPill({ ratio, inverse = false, points = false }: { ratio: number | null; inverse?: boolean; points?: boolean }) {
+// Quy ước màu: tăng = xanh, giảm = đỏ (kể cả chi phí)
+function DeltaPill({ ratio }: { ratio: number | null }) {
   if (ratio == null || !Number.isFinite(ratio)) {
     return <span className="text-[15px] font-medium text-slate-400">—</span>;
   }
   const up = ratio >= 0;
-  const good = inverse ? !up : up;
   const abs = Math.abs(ratio * 100).toFixed(1);
   return (
     <span
       title="vs. comparison period"
       className={`inline-flex items-center gap-0.5 whitespace-nowrap rounded-md px-1.5 py-0.5 text-[13px] font-semibold tabular-nums ${
-        good ? "bg-emerald-50 text-emerald-600" : "bg-orange-50 text-orange-600"
+        up ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"
       }`}
     >
       {up ? <ArrowUpRightIcon size={12} weight="bold" /> : <ArrowDownRightIcon size={12} weight="bold" />}
       {up ? "+" : "−"}
-      {abs}
-      {points ? " pp" : "%"}
+      {abs}%
     </span>
   );
 }
@@ -322,8 +322,6 @@ interface KpiDef {
   value: number;
   format: (v: number) => string;
   ratio: number | null;
-  points?: boolean;
-  inverse?: boolean;
   negativeRed?: boolean;
 }
 
@@ -355,7 +353,7 @@ function KpiCard({ kpi, delay, showDelta }: { kpi: KpiDef; delay: number; showDe
         </div>
         {showDelta && (
           <div className="mt-1.5">
-            <DeltaPill ratio={kpi.ratio} inverse={kpi.inverse} points={kpi.points} />
+            <DeltaPill ratio={kpi.ratio} />
           </div>
         )}
       </div>
@@ -829,8 +827,22 @@ function costValues(t: DashboardTotals): Record<CostKey, number> {
 }
 
 const PNL_GRID = "grid grid-cols-[minmax(0,7rem)_minmax(0,1fr)_auto_3.5rem] items-center gap-3";
-// Khi so sánh, cột cuối là % thay đổi (rộng hơn cột % doanh thu)
-const PNL_GRID_CMP = "grid grid-cols-[minmax(0,7rem)_minmax(0,1fr)_auto_4.75rem] items-center gap-3";
+// Khi so sánh: tên | thanh | kỳ này | kỳ trước (mờ) | % thay đổi
+const PNL_GRID_CMP = "grid grid-cols-[minmax(0,6.5rem)_minmax(0,1fr)_auto_auto_3.25rem] items-center gap-x-2.5";
+
+/** % thay đổi dạng chữ gọn; ẩn khi đổi dấu hoặc lệch quá 999% (vô nghĩa với số nhỏ). */
+function PnlDelta({ cur, prev }: { cur: number; prev: number }) {
+  const change = changeRatio(cur, prev);
+  if (change == null || !Number.isFinite(change) || Math.abs(change) > 9.99 || cur * prev < 0) {
+    return <span className="text-right text-xs text-slate-300">—</span>;
+  }
+  return (
+    <span className={`text-right text-xs font-semibold tabular-nums ${change >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+      {change >= 0 ? "+" : "−"}
+      {Math.abs(change * 100).toFixed(1)}%
+    </span>
+  );
+}
 
 function PnlCostRow({
   label,
@@ -840,7 +852,7 @@ function PnlCostRow({
   maxCost,
   title,
   grid,
-  delta,
+  compare,
 }: {
   label: string;
   value: number;
@@ -849,8 +861,8 @@ function PnlCostRow({
   maxCost: number;
   title?: string;
   grid: string;
-  /** Có khi so sánh: thay cho % doanh thu. */
-  delta?: React.ReactNode;
+  /** Có khi so sánh: số kỳ trước (mờ) + % thay đổi, thay cho % doanh thu. */
+  compare?: React.ReactNode;
 }) {
   const mounted = useMounted();
   // Thanh so với khoản chi lớn nhất để dễ so sánh; % bên phải vẫn là % doanh thu.
@@ -865,7 +877,7 @@ function PnlCostRow({
         />
       </div>
       <span className="text-right text-sm font-semibold tabular-nums text-slate-800">{money(-value)}</span>
-      {delta ?? (
+      {compare ?? (
         <span className="text-right text-xs tabular-nums text-slate-500">({ratioOrDash(value / (revenue || 1), revenue)})</span>
       )}
     </div>
@@ -896,10 +908,15 @@ function PnlStatement({
   const negative = current.profit < 0;
   const grid = previous ? PNL_GRID_CMP : PNL_GRID;
   const taxTitle = `Tax ${money(current.tax)} · Promotions ${money(current.promotion)} · Returns ${money(current.returnCost)}`;
-  const deltaCell = (cur: number, prev: number, inverse = false) => (
-    <span className="flex justify-end" title={`${compareLabel}: ${money(inverse ? -prev : prev)}`}>
-      <DeltaPill ratio={changeRatio(cur, prev)} inverse={inverse} />
-    </span>
+  // 2 ô cuối của dòng khi so sánh: số kỳ trước mờ + % thay đổi
+  // cost = khoản chi: hiển thị số âm như các dòng chi phí
+  const compareCells = (cur: number, prev: number, cost = false) => (
+    <>
+      <span className="text-right text-xs tabular-nums text-slate-400" title={compareLabel}>
+        {money(cost ? -prev : prev)}
+      </span>
+      <PnlDelta cur={cur} prev={prev} />
+    </>
   );
 
   return (
@@ -929,7 +946,7 @@ function PnlStatement({
           <span className={`text-right text-sm font-bold tabular-nums ${revenue < 0 ? "text-rose-600" : "text-slate-900"}`}>
             {money(revenue)}
           </span>
-          {previous ? deltaCell(revenue, previous.revenue) : <span />}
+          {previous ? compareCells(revenue, previous.revenue) : <span />}
         </div>
         {COST_ITEMS.map((item) => (
           <PnlCostRow
@@ -941,7 +958,7 @@ function PnlStatement({
             maxCost={maxCost}
             title={item.key === "taxOthers" ? taxTitle : undefined}
             grid={grid}
-            delta={prevCosts ? deltaCell(costs[item.key], prevCosts[item.key], true) : undefined}
+            compare={prevCosts ? compareCells(costs[item.key], prevCosts[item.key], true) : undefined}
           />
         ))}
       </div>
@@ -956,19 +973,17 @@ function PnlStatement({
             <AnimatedNumber value={current.profit} format={money} />
           </span>
           {previous ? (
-            <span title={`${compareLabel}: ${money(previous.profit)}`}>
-              <DeltaPill ratio={changeRatio(current.profit, previous.profit)} />
-            </span>
+            <>
+              <span className="text-xs text-slate-400" title={compareLabel}>
+                {money(previous.profit)}
+              </span>
+              <PnlDelta cur={current.profit} prev={previous.profit} />
+            </>
           ) : (
             <span className="text-xs font-medium">({ratioOrDash(current.margin, revenue)})</span>
           )}
         </span>
       </div>
-      {current.serviceCost > 0 && (
-        <p className="mt-2 px-1 text-right text-xs tabular-nums text-slate-500">
-          After service fee {money(-current.serviceCost)}: {money(current.netProfit)}
-        </p>
-      )}
     </Card>
   );
 }
@@ -980,13 +995,16 @@ type StoreSortKey = "store" | "revenue" | "profit" | "margin" | "tacos" | "acos"
 const STORE_COLUMNS: { key: StoreSortKey; label: string }[] = [
   { key: "store", label: "Store" },
   { key: "revenue", label: "Revenue" },
-  { key: "profit", label: "Profit" },
   { key: "margin", label: "Margin" },
   { key: "tacos", label: "TACOS" },
   { key: "acos", label: "ACOS" },
   { key: "orders", label: "Orders" },
   { key: "units", label: "Units" },
+  { key: "profit", label: "Profit" },
 ];
+
+/** Profit: dương xanh, âm đỏ, 0 xám. */
+const profitTone = (v: number) => (v > 0 ? "text-emerald-600" : v < 0 ? "text-rose-600" : "text-slate-500");
 
 /** Giá trị sắp xếp; null (tỷ lệ không có mẫu số) luôn nằm cuối. */
 function storeSortValue(row: DashboardStoreRow, key: StoreSortKey): number | string | null {
@@ -1071,7 +1089,7 @@ function StoresPerformance({
                 </div>
               </div>
               <div className="shrink-0 text-right">
-                <div className={`text-[15px] font-semibold tabular-nums ${c.profit < 0 ? "text-rose-600" : "text-slate-900"}`}>
+                <div className={`text-[15px] font-bold tabular-nums ${profitTone(c.profit)}`}>
                   {money(c.profit)}
                 </div>
                 <div className="mt-1 text-[13px]">
@@ -1171,9 +1189,6 @@ function StoresPerformance({
                       />
                     </div>
                   </td>
-                  <td className={`border-b border-slate-100 px-3 py-2.5 text-right tabular-nums ${c.profit < 0 ? "!font-semibold !text-rose-600" : ""}`}>
-                    {money(c.profit)}
-                  </td>
                   <td className="border-b border-slate-100 px-3 py-2.5 text-right">
                     {c.revenue <= 0 ? (
                       <span className="text-slate-400">—</span>
@@ -1190,7 +1205,10 @@ function StoresPerformance({
                   <td className="border-b border-slate-100 px-3 py-2.5 text-right tabular-nums">{ratioOrDash(c.tacos, c.revenue)}</td>
                   <td className="border-b border-slate-100 px-3 py-2.5 text-right tabular-nums">{ratioOrDash(c.acos, c.revenueAds)}</td>
                   <td className="border-b border-slate-100 px-3 py-2.5 text-right tabular-nums">{int.format(c.orders)}</td>
-                  <td className="border-b border-slate-100 px-3 py-2.5 pr-4 text-right tabular-nums">{int.format(c.quantity)}</td>
+                  <td className="border-b border-slate-100 px-3 py-2.5 text-right tabular-nums">{int.format(c.quantity)}</td>
+                  <td className="border-b border-slate-100 px-3 py-2.5 pr-4 text-right tabular-nums">
+                    <span className={`font-bold ${profitTone(c.profit)}`}>{money(c.profit)}</span>
+                  </td>
                 </tr>
               );
             })}
@@ -1205,12 +1223,12 @@ function StoresPerformance({
               >
                 <td className="rounded-l-lg py-2.5 pl-4 pr-3">Total</td>
                 <td className="px-3 py-2.5 text-right">{money(total.revenue)}</td>
-                <td className="px-3 py-2.5 text-right">{money(total.profit)}</td>
                 <td className="px-3 py-2.5 text-right">{ratioOrDash(total.margin, total.revenue)}</td>
                 <td className="px-3 py-2.5 text-right">{ratioOrDash(total.tacos, total.revenue)}</td>
                 <td className="px-3 py-2.5 text-right">{ratioOrDash(total.acos, total.revenueAds)}</td>
                 <td className="px-3 py-2.5 text-right">{int.format(total.orders)}</td>
-                <td className="rounded-r-lg px-3 py-2.5 pr-4 text-right">{int.format(total.quantity)}</td>
+                <td className="px-3 py-2.5 text-right">{int.format(total.quantity)}</td>
+                <td className="rounded-r-lg px-3 py-2.5 pr-4 text-right text-[15px] !font-bold">{money(total.profit)}</td>
               </tr>
             </tfoot>
           )}
@@ -1342,6 +1360,16 @@ export function AccountingDashboardView() {
   // Ô (ngày / tuần / tháng) đang xem trong P&L; null = ô mới nhất.
   const [pickedBucket, setPickedBucket] = useState<string | null>(null);
   const [storeMenuOpen, setStoreMenuOpen] = useState(false);
+  const [selectedTeam, setSelectedTeam] = useState<string | null>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        return localStorage.getItem("acc_dashboard_selected_team") || null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  });
   // Cache phản hồi theo bộ lọc: quay lại lựa chọn cũ hiển thị ngay, rồi làm mới ngầm.
   const [responses, setResponses] = useState<Record<string, AccountingDashboardData>>({});
   const [lastKey, setLastKey] = useState<string | null>(null);
@@ -1367,7 +1395,7 @@ export function AccountingDashboardView() {
     () => (stores.length ? selectedIds.filter((id) => stores.some((s) => s.id === id)) : selectedIds),
     [selectedIds, stores],
   );
-  const selectionKey = validSelectedIds.join(",");
+  const selectionKey = `${validSelectedIds.join(",")}:${selectedTeam || ""}`;
   const queryKey = `${dateRange.startDate}|${dateRange.endDate}|${selectionKey}|${compare}`;
   const requestKey = `${queryKey}|${reloadKey}`;
   const data = responses[queryKey] ?? (lastKey ? responses[lastKey] : undefined) ?? null;
@@ -1379,7 +1407,8 @@ export function AccountingDashboardView() {
     const params = new URLSearchParams();
     if (dateRange.startDate) params.set("start_date", dateRange.startDate);
     if (dateRange.endDate) params.set("end_date", dateRange.endDate);
-    if (selectionKey) params.set("store_ids", selectionKey);
+    if (validSelectedIds.length) params.set("store_ids", validSelectedIds.join(","));
+    if (selectedTeam) params.set("team", selectedTeam);
     params.set("compare", compare);
     if (freshRef.current) {
       params.set("fresh", "1");
@@ -1425,9 +1454,30 @@ export function AccountingDashboardView() {
     [stores.length],
   );
 
-  const toggleStore = (id: string) => {
-    const base = validSelectedIds;
-    updateSelection(base.includes(id) ? base.filter((x) => x !== id) : [...base, id]);
+  const handleSelectStore = (storeId: string, team?: string | null) => {
+    updateSelection([storeId]);
+    setSelectedTeam(team || null);
+    try {
+      if (team) {
+        localStorage.setItem("acc_dashboard_selected_team", team);
+      } else {
+        localStorage.removeItem("acc_dashboard_selected_team");
+      }
+    } catch {
+      // ignore
+    }
+    setStoreMenuOpen(false);
+  };
+
+  const handleSelectAll = () => {
+    updateSelection([]);
+    setSelectedTeam(null);
+    try {
+      localStorage.removeItem("acc_dashboard_selected_team");
+    } catch {
+      // ignore
+    }
+    setStoreMenuOpen(false);
   };
 
   const handleRangeChange = (next: DateRange) => setDateRange(next);
@@ -1494,7 +1544,6 @@ export function AccountingDashboardView() {
         value: c.margin,
         format: (v) => pct(v),
         ratio: ppDelta(c.margin, p?.margin, p?.revenue),
-        points: true,
         negativeRed: true,
       },
       {
@@ -1504,7 +1553,6 @@ export function AccountingDashboardView() {
         value: c.adsFee,
         format: money,
         ratio: changeRatio(c.adsFee, p?.adsFee),
-        inverse: true,
       },
       {
         id: "tacos",
@@ -1513,8 +1561,6 @@ export function AccountingDashboardView() {
         value: c.tacos,
         format: (v) => pct(v),
         ratio: ppDelta(c.tacos, p?.tacos, p?.revenue),
-        points: true,
-        inverse: true,
       },
       {
         id: "acos",
@@ -1523,44 +1569,19 @@ export function AccountingDashboardView() {
         value: c.acos,
         format: (v) => pct(v),
         ratio: ppDelta(c.acos, p?.acos, p?.revenueAds),
-        points: true,
-        inverse: true,
       },
     ];
   }, [data]);
 
-  const teams = useMemo(() => {
-    const map = new Map<string, Store[]>();
-    for (const s of stores) {
-      const t = s.team?.trim() || "Chưa phân team";
-      if (!map.has(t)) map.set(t, []);
-      map.get(t)!.push(s);
-    }
-    return Array.from(map.entries())
-      .map(([name, storeList]) => ({
-        name,
-        stores: storeList,
-        storeIds: storeList.map((s) => s.id),
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [stores]);
-
-  const matchingTeam = useMemo(() => {
-    if (validSelectedIds.length === 0) return null;
-    return teams.find(
-      (t) =>
-        t.storeIds.length === validSelectedIds.length &&
-        t.storeIds.every((id) => validSelectedIds.includes(id)),
-    );
-  }, [teams, validSelectedIds]);
-
   const allSelected = validSelectedIds.length === 0;
+  const selectedStore =
+    validSelectedIds.length === 1 ? stores.find((s) => s.id === validSelectedIds[0]) : null;
   const storeLabel = allSelected
     ? "All Stores"
-    : matchingTeam
-    ? `Team ${matchingTeam.name}`
-    : validSelectedIds.length === 1
-    ? stores.find((s) => s.id === validSelectedIds[0])?.name || "1 store"
+    : selectedStore
+    ? selectedTeam
+      ? `${selectedStore.name} • Team ${selectedTeam}`
+      : selectedStore.name
     : `${validSelectedIds.length} stores`;
   // Biểu đồ và P&L dùng chung các ô đã gộp: P&L luôn tóm tắt đúng ô đang chọn trên biểu đồ.
   const buckets = useMemo(() => (data ? aggregateTrend(data.daily, granularity) : []), [data, granularity]);
@@ -1612,11 +1633,11 @@ export function AccountingDashboardView() {
           <div className="flex w-full flex-wrap items-center gap-2 @min-[640px]:w-auto">
             <DropdownShell
               className="min-w-0 flex-1 @min-[640px]:flex-none"
-              widthClass="w-72 sm:w-80"
+              widthClass="w-64 sm:w-72"
               align="left"
               label={storeLabel}
               icon={
-                matchingTeam ? (
+                selectedTeam ? (
                   <UsersThreeIcon size={15} weight="bold" className="text-indigo-600" />
                 ) : (
                   <StorefrontIcon size={15} weight="bold" className="text-slate-400" />
@@ -1625,12 +1646,9 @@ export function AccountingDashboardView() {
               open={storeMenuOpen}
               setOpen={setStoreMenuOpen}
             >
-              <div className="max-h-[420px] overflow-y-auto p-1 text-[13px]">
-                {/* CẤP 1: TẤT CẢ STORE */}
-                <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Cấp 1: Toàn bộ
-                </div>
-                <MenuItem active={allSelected} onClick={() => updateSelection([])}>
+              <div className="p-1 text-[13px]">
+                {/* TOÀN BỘ CỬA HÀNG */}
+                <MenuItem active={allSelected} onClick={handleSelectAll}>
                   <span className="font-semibold text-slate-800">All Stores</span>
                   <span className="ml-auto text-[11px] font-normal text-slate-400">
                     {stores.length} stores
@@ -1639,44 +1657,122 @@ export function AccountingDashboardView() {
 
                 <div className="my-1.5 h-px bg-slate-100" />
 
-                {/* CẤP 2: THEO STORE CỤ THỂ */}
                 <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Cấp 2: Theo Store cụ thể
+                  Cửa hàng & Team quản lý
                 </div>
-                {stores.map((s) => (
-                  <MenuItem key={s.id} active={validSelectedIds.includes(s.id)} onClick={() => toggleStore(s.id)}>
-                    <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: colorOf(s.id) }} />
-                    <span className="truncate">{s.name}</span>
-                    {s.team && (
-                      <span className="ml-auto shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
-                        {s.team}
-                      </span>
-                    )}
-                  </MenuItem>
-                ))}
+                {stores.map((s) => {
+                  const storeTeams = (s.team || "")
+                    .split(/[\/,]/)
+                    .map((t) => t.trim())
+                    .filter(Boolean);
+                  const isMultiTeam = storeTeams.length > 1;
+                  const isStoreActive = validSelectedIds.length === 1 && validSelectedIds[0] === s.id;
 
-                <div className="my-1.5 h-px bg-slate-100" />
+                  if (isMultiTeam) {
+                    return (
+                      <div key={s.id} className="group relative">
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => handleSelectStore(s.id, null)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              handleSelectStore(s.id, null);
+                            }
+                          }}
+                          className={`flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] font-medium transition-colors ${
+                            isStoreActive
+                              ? "bg-indigo-50 font-semibold text-indigo-700"
+                              : "text-slate-700 hover:bg-slate-50"
+                          }`}
+                        >
+                          <span className="flex min-w-0 flex-1 items-center gap-2">
+                            <span
+                              className="h-2 w-2 shrink-0 rounded-full"
+                              style={{ backgroundColor: colorOf(s.id) }}
+                            />
+                            <span className="truncate">{s.name}</span>
+                            <span className="ml-auto shrink-0 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-600">
+                              {storeTeams.length} teams
+                            </span>
+                          </span>
+                          <CaretRightIcon
+                            size={12}
+                            weight="bold"
+                            className="shrink-0 text-slate-400 transition-colors group-hover:text-indigo-600"
+                          />
+                        </div>
 
-                {/* CẤP 3: THEO TEAM */}
-                <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Cấp 3: Theo Team
-                </div>
-                {teams.map((t) => {
-                  const isTeamActive =
-                    t.storeIds.length > 0 &&
-                    t.storeIds.every((id) => validSelectedIds.includes(id)) &&
-                    validSelectedIds.length === t.storeIds.length;
+                        {/* Flyout Submenu khi hover / chỉ vào store có nhiều team */}
+                        <div className="absolute left-[calc(100%-4px)] top-0 z-50 hidden w-52 pl-2 group-hover:block group-focus-within:block">
+                          <div className="rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl ring-1 ring-black/5 animate-in fade-in duration-150">
+                            <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                              {s.name} • Chọn Team
+                            </div>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSelectStore(s.id, null);
+                              }}
+                              className={`flex w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[12px] font-medium transition-colors ${
+                                isStoreActive && !selectedTeam
+                                  ? "bg-indigo-50 font-semibold text-indigo-700"
+                                  : "text-slate-700 hover:bg-slate-50"
+                              }`}
+                            >
+                              <span className="truncate">Toàn bộ {s.name}</span>
+                              {isStoreActive && !selectedTeam && (
+                                <CheckIcon size={12} weight="bold" className="shrink-0 text-indigo-600" />
+                              )}
+                            </button>
+                            <div className="my-1 h-px bg-slate-100" />
+                            {storeTeams.map((t) => {
+                              const isThisTeamActive = isStoreActive && selectedTeam === t;
+                              return (
+                                <button
+                                  key={t}
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleSelectStore(s.id, t);
+                                  }}
+                                  className={`flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-medium transition-colors ${
+                                    isThisTeamActive
+                                      ? "bg-indigo-50 font-semibold text-indigo-700"
+                                      : "text-slate-700 hover:bg-slate-50"
+                                  }`}
+                                >
+                                  <span className="flex min-w-0 items-center gap-1.5 truncate">
+                                    <UsersThreeIcon size={13} weight="bold" className="shrink-0 text-indigo-500" />
+                                    <span>Team {t}</span>
+                                  </span>
+                                  {isThisTeamActive && (
+                                    <CheckIcon size={12} weight="bold" className="shrink-0 text-indigo-600" />
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+
                   return (
                     <MenuItem
-                      key={t.name}
-                      active={isTeamActive}
-                      onClick={() => updateSelection(isTeamActive ? [] : t.storeIds)}
+                      key={s.id}
+                      active={isStoreActive && !selectedTeam}
+                      onClick={() => handleSelectStore(s.id, null)}
                     >
-                      <UsersThreeIcon size={14} weight="bold" className="shrink-0 text-indigo-500" />
-                      <span className="truncate font-medium">Team {t.name}</span>
-                      <span className="ml-auto shrink-0 text-[11px] font-normal text-slate-400">
-                        ({t.stores.length} store)
-                      </span>
+                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: colorOf(s.id) }} />
+                      <span className="truncate">{s.name}</span>
+                      {s.team && (
+                        <span className="ml-auto shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
+                          {s.team}
+                        </span>
+                      )}
                     </MenuItem>
                   );
                 })}

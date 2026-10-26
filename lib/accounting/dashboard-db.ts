@@ -121,10 +121,16 @@ export async function invalidateAccountingDashboardCache(): Promise<void> {
   await invalidateCachePattern(`${DASHBOARD_CACHE_PREFIX}*`);
 }
 
-// Cache theo từng store + khoảng ngày để đổi lựa chọn store không phải tính lại các store khác.
-function loadStoreDaily(storeId: string, startDate: string, endDate: string): Promise<FbaDailyItem[]> {
+// Cache theo từng store + khoảng ngày + channel để đổi lựa chọn store không phải tính lại các store khác.
+function loadStoreDaily(
+  storeId: string,
+  startDate: string,
+  endDate: string,
+  channel?: "Amazon" | "Merchant" | "all",
+): Promise<FbaDailyItem[]> {
+  const channelKey = channel || "Amazon";
   return getCachedOrFetch(
-    `${DASHBOARD_CACHE_PREFIX}${storeId}:${startDate || "all"}:${endDate || "all"}`,
+    `${DASHBOARD_CACHE_PREFIX}${storeId}:${startDate || "all"}:${endDate || "all"}:${channelKey}`,
     DASHBOARD_CACHE_TTL_SECONDS,
     async () => {
       const res = await listFbaDaily(storeId, {
@@ -133,6 +139,7 @@ function loadStoreDaily(storeId: string, startDate: string, endDate: string): Pr
         sortField: "date",
         sortDirection: "asc",
         limit: 100_000,
+        channel,
       });
       return res.items;
     },
@@ -153,11 +160,16 @@ export async function getAccountingDashboard(options: {
   compare?: DashboardCompareMode;
   /** Bỏ qua cache (nút Refresh). */
   fresh?: boolean;
+  team?: string;
 }): Promise<AccountingDashboardData> {
   if (options.fresh) await invalidateAccountingDashboardCache();
   const [allStores, latestDate] = await Promise.all([listStores(), getLatestAvailableAccountingDate()]);
   const requested = new Set((options.storeIds ?? []).filter(Boolean));
   const stores = requested.size ? allStores.filter((s) => requested.has(s.id)) : allStores;
+
+  const channel: "Amazon" | "Merchant" | "all" = options.team?.toUpperCase().includes("FBM")
+    ? "Merchant"
+    : "Amazon";
 
   const periods = resolveDashboardPeriods(
     options.startDate ?? "",
@@ -178,7 +190,7 @@ export async function getAccountingDashboard(options: {
   const perStore = await Promise.all(
     stores.map(async (store) => ({
       store,
-      items: await loadStoreDaily(store.id, hasRange ? fetchStart : "", hasRange ? fetchEnd : ""),
+      items: await loadStoreDaily(store.id, hasRange ? fetchStart : "", hasRange ? fetchEnd : "", channel),
     })),
   );
 
