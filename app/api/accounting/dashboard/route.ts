@@ -5,7 +5,7 @@ import type { DashboardCompareMode } from "@/lib/accounting/dashboard-periods";
 export const runtime = "nodejs";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const COMPARE_MODES = new Set<DashboardCompareMode>(["prev", "week", "month", "yoy", "none"]);
+const COMPARE_MODES = new Set<DashboardCompareMode>(["prev", "week", "month", "yoy", "yoy_week", "none"]);
 
 export async function GET(request: Request) {
   try {

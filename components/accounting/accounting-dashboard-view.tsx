@@ -32,7 +32,7 @@ import type {
   DashboardStoreRow,
   DashboardTotals,
 } from "@/lib/accounting/dashboard-db";
-import { previousMonthRange, type DashboardCompareMode } from "@/lib/accounting/dashboard-periods";
+import { previousMonthRange, resolveDashboardPeriods, type DashboardCompareMode } from "@/lib/accounting/dashboard-periods";
 import { summarizeRange, type DashboardDay, type DashboardTotals as Totals } from "@/lib/accounting/dashboard-totals";
 import { listTeams, parseStoreTeams, storeHasTeam } from "@/lib/accounting/store-teams";
 import { PpcAmazonDatePicker, type DateRange } from "@/components/ppc/ppc-amazon-date-picker";
@@ -40,7 +40,8 @@ import { getAmazonLatestAvailableDate, getThisMonthDateRange } from "./financial
 
 const STORE_IDS_KEY = "acc_dashboard_store_ids";
 // v3: chỉ giữ các kiểu so sánh có ý nghĩa ở mọi cấp độ ngày / tuần / tháng.
-const COMPARE_KEY = "acc_dashboard_compare_v3";
+// v4: lưu kiểu so sánh "prev" (kỳ trước) | "yoy" (cùng kỳ năm trước) | "none"
+const COMPARE_KEY = "acc_dashboard_compare_v4";
 
 const STORE_COLORS = ["#8b5cf6", "#f59e0b", "#10b981", "#ef4444", "#3b82f6", "#ec4899", "#14b8a6", "#6366f1"];
 
@@ -249,6 +250,7 @@ function DropdownShell({
   variant = "default",
   align = "right",
   className = "",
+  active = false,
 }: {
   label: string;
   icon?: React.ReactNode;
@@ -259,6 +261,8 @@ function DropdownShell({
   variant?: "default" | "chip";
   align?: "left" | "right";
   className?: string;
+  /** Chip đang bật (vd đang so sánh): tô tím nhạt. */
+  active?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), [setOpen]);
@@ -268,7 +272,9 @@ function DropdownShell({
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className={`flex cursor-pointer items-center justify-between gap-2 border border-slate-200 bg-white text-[13px] font-semibold text-slate-800 transition-colors hover:border-slate-300 ${
+        className={`flex cursor-pointer items-center justify-between gap-2 border text-[13px] font-semibold transition-colors ${
+          active ? "border-indigo-300 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-white text-slate-800 hover:border-slate-300"
+        } ${
           variant === "chip" ? "rounded-full px-3 py-1" : "w-full min-w-0 rounded-xl px-3 py-2 shadow-2xs @min-[640px]:min-w-[150px]"
         }`}
       >
@@ -377,10 +383,18 @@ const GRANULARITY_UNIT: Record<ChartGranularity, string> = {
   month: "Tháng",
 };
 
-const COMPARE_PERIOD_LABELS: Record<ChartGranularity, string> = {
-  day: "Kỳ trước",
-  week: "Tuần trước",
-  month: "Tháng trước",
+/** So sánh với: kỳ trước hoặc cùng kỳ năm trước; null = không so sánh. */
+type CompareBase = "prev" | "yoy";
+
+const COMPARE_BASE_LABELS: Record<CompareBase, string> = {
+  prev: "Kỳ trước",
+  yoy: "Cùng kỳ năm trước",
+};
+
+/** Tên kỳ so sánh cụ thể theo cách gộp. */
+const COMPARE_PERIOD_LABELS: Record<CompareBase, Record<ChartGranularity, string>> = {
+  prev: { day: "Ngày này tháng trước", week: "Tuần trước", month: "Tháng trước" },
+  yoy: { day: "Ngày này năm trước", week: "Cùng tuần năm trước", month: "Cùng tháng năm trước" },
 };
 
 /** Nhãn khoảng ngày của 1 ô trên biểu đồ (ngày / tuần / tháng). */
@@ -388,44 +402,76 @@ function bucketRangeLabel(start: string, end: string): string {
   return start === end ? shortDate(start) : `${shortDate(start)} – ${shortDate(end)}`;
 }
 
-/** Ngày → kỳ liền trước, tuần → tuần trước, tháng → tháng trước. */
-const compareModeFor = (granularity: ChartGranularity): DashboardCompareMode =>
-  granularity === "week" ? "week" : granularity === "month" ? "month" : "prev";
+/**
+ * Kiểu so sánh gửi server, suy ra từ cách gộp + "so với":
+ * kỳ trước: ngày → ngày này tháng trước, tuần → tuần trước, tháng → tháng trước;
+ * cùng kỳ năm trước: ngày/tháng → lùi 12 tháng, tuần → lùi 52 tuần (khớp thứ).
+ */
+function compareModeFor(granularity: ChartGranularity, base: CompareBase | null): DashboardCompareMode {
+  if (!base) return "none";
+  if (base === "yoy") return granularity === "week" ? "yoy_week" : "yoy";
+  return granularity === "week" ? "week" : "month";
+}
 
-/** Đặt trong biểu đồ nhưng điều khiển chung cho KPI, biểu đồ và P&L: bật/tắt so sánh + chọn ngày / tuần / tháng. */
+/** Đặt trong biểu đồ nhưng điều khiển chung cho KPI, biểu đồ và P&L: so với kỳ nào + chọn ngày / tuần / tháng. */
 function PeriodControls({
   granularity,
   onGranularityChange,
-  compareOn,
-  onToggleCompare,
+  compareBase,
+  onCompareBaseChange,
+  comparePreview = {},
 }: {
   granularity: ChartGranularity;
   onGranularityChange: (granularity: ChartGranularity) => void;
-  compareOn: boolean;
-  onToggleCompare: () => void;
+  compareBase: CompareBase | null;
+  onCompareBaseChange: (base: CompareBase | null) => void;
+  /** Khoảng ngày cụ thể của từng lựa chọn so sánh, vd { prev: "1/9 – 25/9", yoy: "1/10 – 25/10/2025" }. */
+  comparePreview?: Partial<Record<CompareBase, string>>;
 }) {
   const [open, setOpen] = useState(false);
+  const [compareOpen, setCompareOpen] = useState(false);
   return (
     <div className="flex items-center gap-2">
-      <button
-        type="button"
-        aria-pressed={compareOn}
-        onClick={onToggleCompare}
-        className={`inline-flex h-[34px] cursor-pointer items-center gap-2 rounded-full border px-3 text-[13px] font-semibold transition-colors ${
-          compareOn
-            ? "border-indigo-300 bg-indigo-50 text-indigo-700"
-            : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
-        }`}
+      <DropdownShell
+        label={compareBase ? `vs ${COMPARE_PERIOD_LABELS[compareBase][granularity]}` : "So sánh"}
+        open={compareOpen}
+        setOpen={setCompareOpen}
+        widthClass="w-72"
+        variant="chip"
+        align="right"
+        active={Boolean(compareBase)}
       >
-        <span
-          className={`grid h-4 w-4 place-items-center rounded border transition-colors ${
-            compareOn ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-300 bg-white"
-          }`}
-        >
-          {compareOn && <CheckIcon size={11} weight="bold" />}
-        </span>
-        So sánh
-      </button>
+        <div className="px-2.5 pb-1 pt-1.5 text-[11px] font-semibold text-slate-400">So sánh với</div>
+        {(["prev", "yoy"] as const).map((base) => (
+          <MenuItem
+            key={base}
+            active={compareBase === base}
+            onClick={() => {
+              onCompareBaseChange(base);
+              setCompareOpen(false);
+            }}
+          >
+            <span className="w-[8.5rem] shrink-0 whitespace-nowrap">{COMPARE_BASE_LABELS[base]}</span>
+            {comparePreview[base] && (
+              <span className="whitespace-nowrap text-xs font-normal tabular-nums text-slate-400">{comparePreview[base]}</span>
+            )}
+          </MenuItem>
+        ))}
+        {compareBase && (
+          <>
+            <div className="my-1 h-px bg-slate-100" />
+            <MenuItem
+              active={false}
+              onClick={() => {
+                onCompareBaseChange(null);
+                setCompareOpen(false);
+              }}
+            >
+              <span className="text-slate-500">Bỏ so sánh</span>
+            </MenuItem>
+          </>
+        )}
+      </DropdownShell>
       <DropdownShell
         label={GRANULARITY_LABELS[granularity]}
         open={open}
@@ -475,9 +521,9 @@ const seriesOf = (key: string, t: Totals): DashboardSeriesPoint => ({
 
 /**
  * Theo tháng: mọi tháng từ trendStart (1/1 của năm) đến ngày cuối kỳ; khi so sánh, mỗi tháng so với
- * cùng đoạn của tháng liền trước (tháng dở dang so cùng số ngày).
+ * cùng đoạn lùi monthsBack tháng (1 = tháng trước, 12 = cùng tháng năm trước; 0 = không so sánh).
  */
-function monthBuckets(days: DashboardDay[], trendStart: string, endDate: string, withCompare: boolean): AggregatedChartPoint[] {
+function monthBuckets(days: DashboardDay[], trendStart: string, endDate: string, monthsBack: number): AggregatedChartPoint[] {
   const pad = (n: number) => String(n).padStart(2, "0");
   const points: AggregatedChartPoint[] = [];
   let [y, m] = trendStart.split("-").map(Number);
@@ -493,8 +539,8 @@ function monthBuckets(days: DashboardDay[], trendStart: string, endDate: string,
       rangeEnd,
       compare: null,
     };
-    if (withCompare) {
-      const prev = previousMonthRange(rangeStart, rangeEnd);
+    if (monthsBack > 0) {
+      const prev = previousMonthRange(rangeStart, rangeEnd, monthsBack);
       point.compare = seriesOf(prev.startDate.slice(0, 7), summarizeRange(days, prev.startDate, prev.endDate));
       point.compareRangeStart = prev.startDate;
       point.compareRangeEnd = prev.endDate;
@@ -596,6 +642,7 @@ function TrendChart({
   previousPeriod,
   controls,
   selectedKey,
+  compareEmpty = false,
   onSelect,
   delay,
 }: {
@@ -605,6 +652,8 @@ function TrendChart({
   controls: React.ComponentProps<typeof PeriodControls>;
   /** Ô đang hiển thị trong P&L bên cạnh. */
   selectedKey: string | null;
+  /** Kỳ so sánh hoàn toàn chưa có dữ liệu: không vẽ đường so sánh (tránh hiểu nhầm là $0). */
+  compareEmpty?: boolean;
   onSelect: (key: string) => void;
   delay: number;
 }) {
@@ -629,7 +678,7 @@ function TrendChart({
       ),
     [data],
   );
-  const hasCompare = data.some((p) => p.compare);
+  const hasCompare = !compareEmpty && data.some((p) => p.compare);
   const spansYears = new Set(data.map((p) => p.rangeStart.slice(0, 4))).size > 1;
   const pointMap = useMemo(() => new Map(data.map((p) => [p.key, p])), [data]);
   const splits = useMemo(
@@ -648,13 +697,15 @@ function TrendChart({
   const selectedBandWidth = Math.max(4, Math.min(56, (((chartWidth || 800) - 70) / Math.max(1, data.length)) * 0.7));
   // ~1 nhãn mỗi 58px chiều ngang để số không chồng nhau trên màn hẹp
   const labelEvery = Math.max(1, Math.ceil(data.length / Math.max(3, Math.floor((chartWidth || 800) / 58))));
-  // Theo tháng mỗi điểm so với tháng liền trước của nó, không phải 1 khoảng cố định
+  // Theo tháng mỗi điểm có kỳ so sánh riêng nên chỉ ghi tên; ngày / tuần ghi kèm khoảng ngày
+  const compareName = controls.compareBase ? COMPARE_PERIOD_LABELS[controls.compareBase][mode] : "";
   const compareRangeLabel =
-    mode === "month"
-      ? "Tháng trước"
-      : previousPeriod
-      ? `${shortDate(previousPeriod.startDate)} - ${shortDate(previousPeriod.endDate)}`
-      : "";
+    mode !== "month" && previousPeriod
+      ? `${compareName} (${shortDate(previousPeriod.startDate)} – ${shortDate(previousPeriod.endDate)})`
+      : compareName;
+  const compareEmptyLabel = previousPeriod
+    ? `${compareName} (${shortDate(previousPeriod.startDate)} – ${longDate(previousPeriod.endDate)})`
+    : compareName;
 
   return (
     <Card delay={delay} className="flex h-full flex-col p-5">
@@ -684,6 +735,11 @@ function TrendChart({
           <span className="acc-rise inline-flex items-center gap-1.5 text-[13px] font-medium text-slate-500">
             <span className="h-0 w-4 border-t-2 border-dashed border-slate-400" />
             {compareRangeLabel}
+          </span>
+        ) : compareEmpty ? (
+          <span className="acc-rise inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
+            <WarningCircleIcon size={13} weight="bold" />
+            Chưa có dữ liệu {compareEmptyLabel}
           </span>
         ) : null}
       </div>
@@ -755,7 +811,7 @@ function TrendChart({
                 content={({ active, label }) => {
                   const point = active && label != null ? pointMap.get(String(label)) : undefined;
                   if (!point) return null;
-                  const cmp = point.compare;
+                  const cmp = hasCompare ? point.compare : null;
                   const formatRange = (start: string, end: string) => {
                     if (mode === "day" || start === end) return longDate(start);
                     if (mode === "month") return monthLabel(start.slice(0, 7), true);
@@ -942,6 +998,7 @@ function PnlStatement({
   previous,
   periodLabel,
   compareLabel,
+  compareEmpty = false,
   onResetLatest,
   delay,
 }: {
@@ -950,6 +1007,8 @@ function PnlStatement({
   /** Ô đang xem trên biểu đồ, vd "Tuần 6/10 – 11/10". */
   periodLabel: string;
   compareLabel: string;
+  /** Kỳ so sánh chưa có dữ liệu: hiện thông báo thay cho cột $0. */
+  compareEmpty?: boolean;
   /** Có khi đang xem một ô cũ hơn ô mới nhất. */
   onResetLatest?: () => void;
   delay: number;
@@ -980,6 +1039,12 @@ function PnlStatement({
             {periodLabel}
             {previous && <span className="font-medium text-slate-500"> · vs {compareLabel}</span>}
           </p>
+          {compareEmpty && (
+            <p className="acc-rise mt-1.5 inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
+              <WarningCircleIcon size={13} weight="bold" />
+              Chưa có dữ liệu kỳ so sánh
+            </p>
+          )}
         </div>
         {onResetLatest && (
           <button
@@ -1448,15 +1513,13 @@ function readSavedStoreIds(): string[] {
   }
 }
 
-function readSavedCompare(): DashboardCompareMode {
-  if (typeof window === "undefined") return "none";
+function readSavedCompareBase(): CompareBase | null {
+  if (typeof window === "undefined") return null;
   try {
     const saved = localStorage.getItem(COMPARE_KEY);
-    // Khi tải lại trang, biểu đồ mặc định ở chế độ tháng. Chỉ cần khôi phục trạng thái bật/tắt;
-    // kỳ so sánh cụ thể luôn được suy ra từ chế độ ngày / tuần / tháng.
-    return saved && saved !== "none" ? "month" : "none";
+    return saved === "prev" || saved === "yoy" ? saved : null;
   } catch {
-    return "none";
+    return null;
   }
 }
 
@@ -1466,9 +1529,10 @@ export function AccountingDashboardView() {
   const [selectedIds, setSelectedIds] = useState<string[]>(readSavedStoreIds);
   // Mỗi lần mở Dashboard luôn bắt đầu từ "This month"
   const [dateRange, setDateRange] = useState<DateRange>(() => getThisMonthDateRange(maxDate));
-  const [compare, setCompare] = useState<DashboardCompareMode>(readSavedCompare);
+  const [compareBase, setCompareBase] = useState<CompareBase | null>(readSavedCompareBase);
   // Một bộ điều khiển chung: ngày / tuần / tháng quyết định cả cách gộp biểu đồ lẫn kỳ so sánh.
   const [granularity, setGranularity] = useState<ChartGranularity>("month");
+  const compare = compareModeFor(granularity, compareBase);
   // Ô (ngày / tuần / tháng) đang xem trong P&L; null = ô mới nhất.
   const [pickedBucket, setPickedBucket] = useState<string | null>(null);
   const [storeMenuOpen, setStoreMenuOpen] = useState(false);
@@ -1597,10 +1661,10 @@ export function AccountingDashboardView() {
 
   const handleRangeChange = (next: DateRange) => setDateRange(next);
 
-  const handleCompareChange = (next: DashboardCompareMode) => {
-    setCompare(next);
+  const handleCompareBaseChange = (next: CompareBase | null) => {
+    setCompareBase(next);
     try {
-      localStorage.setItem(COMPARE_KEY, next);
+      localStorage.setItem(COMPARE_KEY, next ?? "none");
     } catch {
       // ignore
     }
@@ -1609,7 +1673,6 @@ export function AccountingDashboardView() {
   const handleGranularityChange = (next: ChartGranularity) => {
     setGranularity(next);
     setPickedBucket(null);
-    if (compare !== "none") handleCompareChange(compareModeFor(next));
   };
 
   const colorOf = useCallback(
@@ -1705,10 +1768,11 @@ export function AccountingDashboardView() {
     if (!data) return [];
     // Theo tháng: luôn từ tháng 1 của năm (không chỉ các ngày trong khoảng đã chọn)
     if (granularity === "month" && data.trendStartDate && data.period.endDate && data.days) {
-      return monthBuckets(data.days, data.trendStartDate, data.period.endDate, Boolean(data.previous));
+      const monthsBack = !data.previous ? 0 : compareBase === "yoy" ? 12 : 1;
+      return monthBuckets(data.days, data.trendStartDate, data.period.endDate, monthsBack);
     }
     return aggregateTrend(data.daily, granularity);
-  }, [data, granularity]);
+  }, [data, granularity, compareBase]);
   const latestBucket = buckets.at(-1) ?? null;
   const selectedBucket = buckets.find((b) => b.key === pickedBucket) ?? latestBucket;
   const bucketPnl = useMemo(() => {
@@ -1720,11 +1784,27 @@ export function AccountingDashboardView() {
       current: summarizeRange(days, rangeStart, rangeEnd),
       previous: hasCompare ? summarizeRange(days, compareRangeStart!, compareRangeEnd!) : null,
       periodLabel: `${GRANULARITY_UNIT[granularity]} ${bucketRangeLabel(rangeStart, rangeEnd)}`,
-      compareLabel: hasCompare
-        ? `${COMPARE_PERIOD_LABELS[granularity]} (${bucketRangeLabel(compareRangeStart!, compareRangeEnd!)})`
-        : "",
+      compareLabel:
+        hasCompare && compareBase
+          ? `${COMPARE_PERIOD_LABELS[compareBase][granularity]} (${bucketRangeLabel(compareRangeStart!, compareRangeEnd!)})`
+          : "",
     };
-  }, [data, selectedBucket, granularity]);
+  }, [data, selectedBucket, granularity, compareBase]);
+  const comparePreview = useMemo(() => {
+    const period = data?.period;
+    if (!period?.startDate || !period.endDate) return {};
+    const thisYear = period.endDate.slice(0, 4);
+    const label = (base: CompareBase) => {
+      const prev = resolveDashboardPeriods(period.startDate, period.endDate, period.endDate, compareModeFor(granularity, base)).previous;
+      if (!prev) return "";
+      // Ghi năm khi khác năm hiện tại
+      const end = prev.endDate.slice(0, 4) === thisYear ? shortDate(prev.endDate) : longDate(prev.endDate);
+      return prev.startDate === prev.endDate ? end : `${shortDate(prev.startDate)} – ${end}`;
+    };
+    return { prev: label("prev"), yoy: label("yoy") };
+  }, [data?.period, granularity]);
+  // Cả kỳ so sánh không có ngày nào có dữ liệu (vd chưa nhập dữ liệu năm trước) → ẩn phần so sánh.
+  const compareEmpty = Boolean(data?.previous && data.previous.days === 0);
   const dataClamped = Boolean(data?.period.endDate && dateRange.endDate && data.period.endDate < dateRange.endDate);
 
   return (
@@ -1950,7 +2030,7 @@ export function AccountingDashboardView() {
           <div className={`space-y-4 transition-opacity duration-300 ${loading ? "opacity-70" : "opacity-100"}`}>
             <div className="grid grid-cols-2 gap-3 @min-[560px]:grid-cols-4 @min-[1100px]:grid-cols-7">
               {kpis.map((kpi, i) => (
-                <KpiCard key={kpi.id} kpi={kpi} delay={i * 30} showDelta={Boolean(data.previous)} />
+                <KpiCard key={kpi.id} kpi={kpi} delay={i * 30} showDelta={Boolean(data.previous) && !compareEmpty} />
               ))}
             </div>
 
@@ -1959,20 +2039,23 @@ export function AccountingDashboardView() {
                 <TrendChart
                   data={buckets}
                   selectedKey={selectedBucket?.key ?? null}
+                  compareEmpty={compareEmpty}
                   onSelect={setPickedBucket}
                   previousPeriod={data.previousPeriod}
                   controls={{
                     granularity,
                     onGranularityChange: handleGranularityChange,
-                    compareOn: compare !== "none",
-                    onToggleCompare: () => handleCompareChange(compare === "none" ? compareModeFor(granularity) : "none"),
+                    compareBase,
+                    onCompareBaseChange: handleCompareBaseChange,
+                    comparePreview,
                   }}
                   delay={120}
                 />
               </div>
               <PnlStatement
                 current={bucketPnl?.current ?? data.current}
-                previous={bucketPnl ? bucketPnl.previous : data.previous}
+                previous={compareEmpty ? null : bucketPnl ? bucketPnl.previous : data.previous}
+                compareEmpty={compareEmpty}
                 periodLabel={bucketPnl?.periodLabel ?? ""}
                 compareLabel={bucketPnl?.compareLabel ?? ""}
                 onResetLatest={

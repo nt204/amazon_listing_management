@@ -69,3 +69,13 @@ test("a partial month compares the same days of the previous month", () => {
   assert.deepEqual(previousMonthRange("2026-10-01", "2026-10-25"), { startDate: "2026-09-01", endDate: "2026-09-25" });
   assert.deepEqual(previousMonthRange("2026-01-01", "2026-01-11"), { startDate: "2025-12-01", endDate: "2025-12-11" });
 });
+
+test("same week last year shifts back 52 weeks so weekdays line up", () => {
+  const p = resolveDashboardPeriods("2026-10-19", "2026-10-25", "2026-10-25", "yoy_week");
+  assert.deepEqual(p.previous, { startDate: "2025-10-20", endDate: "2025-10-26" });
+});
+
+test("monthly buckets can compare with the same month last year", () => {
+  assert.deepEqual(previousMonthRange("2026-10-01", "2026-10-25", 12), { startDate: "2025-10-01", endDate: "2025-10-25" });
+  assert.deepEqual(previousMonthRange("2028-02-01", "2028-02-29", 12), { startDate: "2027-02-01", endDate: "2027-02-28" });
+});
