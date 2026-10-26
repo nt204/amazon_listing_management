@@ -10,6 +10,8 @@ export interface FbaDailyItem {
   month: string; // e.g. "THÁNG 1", "THÁNG 2"
   revenue: number;
   quantity: number;
+  /** Số đơn FBA duy nhất trong ngày (không tính đơn S0…, đơn hủy). */
+  orders: number;
   ads_fee: number;
   basecost: number;
   amazon_fee: number;
@@ -211,6 +213,7 @@ export async function listFbaDaily(
       to_char(d.date, 'YYYY-MM-DD') as date_str,
       COALESCE(o.total_rev, 0)::numeric as revenue,
       COALESCE(o.total_qty, 0)::numeric as quantity,
+      COALESCE(o.order_count, 0)::numeric as orders,
       COALESCE(a.total_spend, 0)::numeric as ads_fee,
       COALESCE(o.total_basecost, 0)::numeric as basecost,
       COALESCE(o.total_amz_fee, 0)::numeric as amazon_fee,
@@ -232,6 +235,7 @@ export async function listFbaDaily(
     const dateStr = String(r.date_str || (r.date instanceof Date ? r.date.toISOString().slice(0, 10) : String(r.date)));
     const revenue = Number(r.revenue || 0);
     const quantity = Number(r.quantity || 0);
+    const orders = Number(r.orders || 0);
     const adsFee = Number(r.ads_fee || 0);
     const basecost = Number(r.basecost || 0);
     const amazonFee = Number(r.amazon_fee || 0);
@@ -271,6 +275,7 @@ export async function listFbaDaily(
       month: monthStr,
       revenue,
       quantity,
+      orders,
       ads_fee: adsFee,
       basecost,
       amazon_fee: amazonFee,

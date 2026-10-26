@@ -177,9 +177,10 @@ export async function reportDailyBusinessData(
     }
   }
 
-  // 3. Lấy danh sách Store đang hoạt động
+  // 3. Lấy danh sách Store kinh doanh đang hoạt động (có phát sinh đơn hàng)
   const storeRows = await sql<Array<{ id: string; name: string }>>`
     SELECT id, name FROM stores
+    WHERE EXISTS (SELECT 1 FROM accounting_orders o WHERE o.store_id = stores.id)
     ORDER BY name ASC
   `;
 
@@ -209,16 +210,43 @@ export async function reportDailyBusinessData(
         limit: 1,
       });
 
-      if (items.length > 0 && items[0]) {
-        const item = items[0];
-        reports.push({ storeName: store.name, item });
-        totalRev += Number(item.revenue || 0);
-        totalQty += Number(item.quantity || 0);
-        totalAds += Number(item.ads_fee || 0);
-        totalAmzFee += Number(item.amazon_fee || 0);
-        totalRefund += Number(item.return_cost || 0);
-        totalProfit += Number(item.profit || 0);
-      }
+      const item: FbaDailyItem = items.length > 0 && items[0]
+        ? items[0]
+        : {
+            id: latestDate,
+            date: latestDate,
+            week: "",
+            month: "",
+            revenue: 0,
+            quantity: 0,
+            orders: 0,
+            ads_fee: 0,
+            basecost: 0,
+            amazon_fee: 0,
+            thue: 0,
+            promotion: 0,
+            return_cost: 0,
+            profit: 0,
+            net_profit: 0,
+            balance: 0,
+            roi: 0,
+            tacos: 0,
+            acos: 0,
+            margin: 0,
+            margin_pre_ads: 0,
+            profit_per_item: 0,
+            revenue_ads: 0,
+            quantity_ads: 0,
+            clicks: 0,
+          };
+
+      reports.push({ storeName: store.name, item });
+      totalRev += Number(item.revenue || 0);
+      totalQty += Number(item.quantity || 0);
+      totalAds += Number(item.ads_fee || 0);
+      totalAmzFee += Number(item.amazon_fee || 0);
+      totalRefund += Number(item.return_cost || 0);
+      totalProfit += Number(item.profit || 0);
     } catch (err) {
       console.warn(`[Accounting Report] Không thể lấy dữ liệu store ${store.name}:`, err);
     }
