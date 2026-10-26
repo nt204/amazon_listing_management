@@ -84,7 +84,7 @@ export async function PATCH(request: Request) {
             duration_ms = CASE WHEN ${terminal} THEN GREATEST(0, (EXTRACT(EPOCH FROM (NOW() - created_at)) * 1000)::integer) ELSE duration_ms END
         WHERE id = ${jobId} AND team_id = ${actor.teamId}
           AND status = 'RUNNING' AND lease_token = ${leaseToken}
-        RETURNING id, status, stage, file_name, created_by, store_id, action_count, skus, action_ids
+        RETURNING id, status, stage, file_name, created_by, store_id, action_count, skus, action_ids, actions_payload
       `;
       if (!updated.length) throw new ApiError("Lease upload Bulk không còn hợp lệ.", 409);
 
@@ -187,6 +187,7 @@ export async function PATCH(request: Request) {
           jobRecord.action_count ? `• Số hành động: ${jobRecord.action_count}${skuText}` : "",
           body?.result_summary ? `• Tóm tắt kết quả Amazon Ads:\n${String(body.result_summary).slice(0, 500)}` : "",
         ].filter(Boolean),
+        { ppcStoreId: jobRecord.store_id },
       );
     }
     return Response.json({ success: true, job: rows[0] });

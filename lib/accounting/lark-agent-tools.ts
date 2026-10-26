@@ -12,7 +12,8 @@ import {
   resolveSkuForSearchTerm,
 } from "@/lib/ppc/sku-extractor";
 import type { PpcRecommendation } from "@/lib/ppc/types";
-import { listStores } from "./accounting-db";
+import { listStores, getLatestAvailableAccountingDate } from "./accounting-db";
+export { getLatestAvailableAccountingDate };
 import { listFbaDaily } from "./fba-daily-db";
 import {
   setPendingAction,
@@ -52,6 +53,8 @@ export async function resolveStore(storeQuery?: string): Promise<StoreInfo | nul
   return null;
 }
 
+
+
 export async function getAllStores(): Promise<StoreInfo[]> {
   const stores = await listStores();
   return stores.map(s => ({ id: s.id, name: s.name, marketplace: s.marketplace }));
@@ -82,25 +85,29 @@ export async function getDailyMetricsSummary(params: {
     return { hasData: false, error: "Không tìm thấy store phù hợp trong hệ thống." };
   }
 
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-  const yDate = new Date();
-  yDate.setDate(yDate.getDate() - 1);
-  const yesterdayStr = `${yDate.getFullYear()}-${pad(yDate.getMonth() + 1)}-${pad(yDate.getDate())}`;
+  const latestDbDate = await getLatestAvailableAccountingDate();
+
+  // Tự động kẹp ngày kết thúc không vượt quá ngày mới nhất có dữ liệu trong DB
+  let effectiveEndDate = params.endDate;
+  let dateClamped = false;
+  if (effectiveEndDate > latestDbDate) {
+    effectiveEndDate = latestDbDate;
+    dateClamped = true;
+  }
+  const effectiveStartDate = params.startDate > effectiveEndDate ? effectiveEndDate : params.startDate;
 
   // Nếu là 1 store, dùng listFbaDaily để tính toán chuẩn nhất
   if (targetStore) {
     const res = await listFbaDaily(targetStore.id, {
-      startDate: params.startDate,
-      endDate: params.endDate,
+      startDate: effectiveStartDate,
+      endDate: effectiveEndDate,
       limit: 100,
       sortDirection: "asc",
     });
 
     const hasRecords = res.items.length > 0;
-    const actualStartDate = hasRecords ? res.items[0].date : params.startDate;
-    const actualEndDate = hasRecords ? res.items[res.items.length - 1].date : params.endDate;
+    const actualStartDate = hasRecords ? res.items[0].date : effectiveStartDate;
+    const actualEndDate = hasRecords ? res.items[res.items.length - 1].date : effectiveEndDate;
     const actualDays = res.items.length;
     const days = res.items.map((it) => ({
       date: it.date,
@@ -118,19 +125,19 @@ export async function getDailyMetricsSummary(params: {
 
     return {
       hasData: hasRecords,
-      message: hasRecords ? undefined : `Không có dữ liệu kế toán cho store ${targetStore.name} từ ${params.startDate} đến ${params.endDate}.`,
+      message: hasRecords ? undefined : `Không có dữ liệu kế toán cho store ${targetStore.name} từ ${effectiveStartDate} đến ${effectiveEndDate}.`,
       store: targetStore.name,
       marketplace: targetStore.marketplace,
       period: {
-        startDate: params.startDate,
-        endDate: params.endDate,
+        startDate: effectiveStartDate,
+        endDate: effectiveEndDate,
         actualStartDate,
         actualEndDate,
         actualDays,
       },
-      latestAvailableDate: actualEndDate,
-      periodNote: actualEndDate < params.endDate
-        ? `Dữ liệu kế toán FBA thực tế mới có đến ngày ${actualEndDate} (tổng cộng ${actualDays} ngày). Các ngày sau đó (${actualEndDate} -> ${params.endDate}) sàn Amazon chưa có dữ liệu.`
+      latestAvailableDate: latestDbDate,
+      periodNote: dateClamped || actualEndDate < params.endDate
+        ? `Lưu ý: Dữ liệu kế toán FBA mới nhất trong hệ thống mới chốt đến ngày ${actualEndDate} (tổng cộng ${actualDays} ngày). Các ngày sau đó (${actualEndDate} -> ${params.endDate}) chưa có dữ liệu đối soát trên hệ thống.`
         : undefined,
       totalDays: actualDays,
       totals: {
@@ -153,8 +160,8 @@ export async function getDailyMetricsSummary(params: {
   const storeReports = await Promise.all(
     allStores.map(async (st) => {
       const res = await listFbaDaily(st.id, {
-        startDate: params.startDate,
-        endDate: params.endDate,
+        startDate: effectiveStartDate,
+        endDate: effectiveEndDate,
         limit: 100,
         sortDirection: "asc",
       });
@@ -170,8 +177,8 @@ export async function getDailyMetricsSummary(params: {
     new Set(storeReports.flatMap((r) => r.items.map((it) => it.date)))
   ).sort();
   const hasRecords = allDates.length > 0;
-  const actualStartDate = hasRecords ? allDates[0] : params.startDate;
-  const actualEndDate = hasRecords ? allDates[allDates.length - 1] : params.endDate;
+  const actualStartDate = hasRecords ? allDates[0] : effectiveStartDate;
+  const actualEndDate = hasRecords ? allDates[allDates.length - 1] : effectiveEndDate;
   const actualDays = allDates.length;
 
   const grandTotal = storeReports.reduce(
@@ -220,16 +227,16 @@ export async function getDailyMetricsSummary(params: {
     scope: "Tất cả các store",
     hasData: hasRecords,
     period: {
-      startDate: params.startDate,
-      endDate: params.endDate,
+      startDate: effectiveStartDate,
+      endDate: effectiveEndDate,
       actualStartDate,
       actualEndDate,
       actualDays,
     },
-    latestAvailableDate: actualEndDate,
+    latestAvailableDate: latestDbDate,
     totalDays: actualDays,
-    periodNote: actualEndDate < params.endDate
-      ? `Dữ liệu kế toán FBA thực tế mới có đến ngày ${actualEndDate} (tổng cộng ${actualDays} ngày). Các ngày sau đó (${actualEndDate} -> ${params.endDate}) sàn Amazon chưa có dữ liệu đối soát.`
+    periodNote: dateClamped || actualEndDate < params.endDate
+      ? `Lưu ý: Dữ liệu kế toán FBA mới nhất trong hệ thống mới chốt đến ngày ${actualEndDate} (tổng cộng ${actualDays} ngày). Các ngày sau đó (${actualEndDate} -> ${params.endDate}) sàn Amazon chưa có dữ liệu đối soát.`
       : undefined,
     storeBreakdown: breakdown,
     rankingByProfit,
@@ -272,6 +279,10 @@ export async function getOrderBreakdown(params: {
   const skuQuery = params.sku?.trim() || null;
   const limit = Math.min(params.limit || 10, 50);
 
+  const latestDbDate = await getLatestAvailableAccountingDate();
+  const effectiveEndDate = params.endDate > latestDbDate ? latestDbDate : params.endDate;
+  const effectiveStartDate = params.startDate > effectiveEndDate ? effectiveEndDate : params.startDate;
+
   // Top SKUs by quantity & revenue
   const skuRows = await sql<Array<{
     sku: string;
@@ -287,8 +298,8 @@ export async function getOrderBreakdown(params: {
       SUM(COALESCE(quantity, 1)) as total_units,
       SUM(COALESCE(item_price, 0)) as total_rev
     FROM accounting_orders
-    WHERE date >= ${params.startDate}::date
-      AND date <= ${params.endDate}::date
+    WHERE date >= ${effectiveStartDate}::date
+      AND date <= ${effectiveEndDate}::date
       AND fulfillment_channel = 'Amazon'
       AND LOWER(COALESCE(order_status, '')) NOT IN ('cancelled', 'canceled')
       ${storeId ? sql`AND store_id = ${storeId}` : sql``}
@@ -302,8 +313,8 @@ export async function getOrderBreakdown(params: {
   const statusRows = await sql<Array<{ order_status: string | null; count: number }>>`
     SELECT order_status, COUNT(*) as count
     FROM accounting_orders
-    WHERE date >= ${params.startDate}::date
-      AND date <= ${params.endDate}::date
+    WHERE date >= ${effectiveStartDate}::date
+      AND date <= ${effectiveEndDate}::date
       ${storeId ? sql`AND store_id = ${storeId}` : sql``}
       ${skuQuery ? sql`AND sku ILIKE ${"%" + skuQuery + "%"}` : sql``}
     GROUP BY order_status
@@ -312,9 +323,9 @@ export async function getOrderBreakdown(params: {
   const hasRecords = skuRows.length > 0;
   return {
     hasData: hasRecords,
-    message: hasRecords ? undefined : `Không có dữ liệu đơn hàng nào ${skuQuery ? `cho SKU "${skuQuery}"` : ""} từ ${params.startDate} đến ${params.endDate}.`,
+    message: hasRecords ? undefined : `Không có dữ liệu đơn hàng nào ${skuQuery ? `cho SKU "${skuQuery}"` : ""} từ ${effectiveStartDate} đến ${effectiveEndDate}.`,
     store: targetStore ? targetStore.name : "Tất cả các store",
-    period: { startDate: params.startDate, endDate: params.endDate },
+    period: { startDate: effectiveStartDate, endDate: effectiveEndDate, latestAvailableDate: latestDbDate },
     filterSku: skuQuery,
     statusBreakdown: statusRows.map((r) => ({ status: r.order_status || "Unknown", count: Number(r.count) })),
     topSkus: skuRows.map((r) => ({
@@ -341,6 +352,10 @@ export async function getReturnBreakdown(params: {
   const storeId = targetStore ? targetStore.id : null;
   const skuQuery = params.sku?.trim() || null;
 
+  const latestDbDate = await getLatestAvailableAccountingDate();
+  const effectiveEndDate = params.endDate > latestDbDate ? latestDbDate : params.endDate;
+  const effectiveStartDate = params.startDate > effectiveEndDate ? effectiveEndDate : params.startDate;
+
   const summaryRows = await sql<Array<{
     total_returns: number;
     total_refund_amount: number;
@@ -349,8 +364,8 @@ export async function getReturnBreakdown(params: {
       COUNT(*) as total_returns,
       SUM(COALESCE(return_sau_basecost, 0)) as total_refund_amount
     FROM accounting_returns
-    WHERE date >= ${params.startDate}::date
-      AND date <= ${params.endDate}::date
+    WHERE date >= ${effectiveStartDate}::date
+      AND date <= ${effectiveEndDate}::date
       ${storeId ? sql`AND store_id = ${storeId}` : sql``}
       ${skuQuery ? sql`AND sku ILIKE ${"%" + skuQuery + "%"}` : sql``}
   `;
@@ -365,8 +380,8 @@ export async function getReturnBreakdown(params: {
       COUNT(*) as return_count,
       SUM(COALESCE(return_sau_basecost, 0)) as total_cost
     FROM accounting_returns
-    WHERE date >= ${params.startDate}::date
-      AND date <= ${params.endDate}::date
+    WHERE date >= ${effectiveStartDate}::date
+      AND date <= ${effectiveEndDate}::date
       ${storeId ? sql`AND store_id = ${storeId}` : sql``}
       ${skuQuery ? sql`AND sku ILIKE ${"%" + skuQuery + "%"}` : sql``}
     GROUP BY sku
@@ -376,7 +391,7 @@ export async function getReturnBreakdown(params: {
 
   return {
     store: targetStore ? targetStore.name : "Tất cả các store",
-    period: { startDate: params.startDate, endDate: params.endDate },
+    period: { startDate: effectiveStartDate, endDate: effectiveEndDate, latestAvailableDate: latestDbDate },
     totalReturns: Number(summaryRows[0]?.total_returns || 0),
     totalRefundCost: Math.round(Number(summaryRows[0]?.total_refund_amount || 0)),
     topReturnedSkus: topReturnedSkus.map((r) => ({
@@ -395,11 +410,20 @@ export async function comparePerformancePeriods(params: {
   period1: { startDate: string; endDate: string; label?: string };
   period2: { startDate: string; endDate: string; label?: string };
 }) {
+  const latestDbDate = await getLatestAvailableAccountingDate();
+
+  // Kẹp period2.endDate không vượt quá ngày có dữ liệu thực tế trong DB
+  let p2TargetEnd = params.period2.endDate;
+  if (p2TargetEnd > latestDbDate) {
+    p2TargetEnd = latestDbDate;
+  }
+  const p2TargetStart = params.period2.startDate > p2TargetEnd ? p2TargetEnd : params.period2.startDate;
+
   // Lấy dữ liệu chu kỳ 2 trước để xác định chính xác ngày có dữ liệu thực tế (actualEndDate, actualDays)
   const p2 = await getDailyMetricsSummary({
     storeQuery: params.storeQuery,
-    startDate: params.period2.startDate,
-    endDate: params.period2.endDate,
+    startDate: p2TargetStart,
+    endDate: p2TargetEnd,
   });
 
   if ("error" in p2 || !p2.hasData) {
@@ -407,8 +431,8 @@ export async function comparePerformancePeriods(params: {
   }
 
   const p2ActualDays = p2.totalDays || p2.period?.actualDays || 0;
-  const p2ActualStart = p2.period?.actualStartDate || params.period2.startDate;
-  const p2ActualEnd = p2.period?.actualEndDate || params.period2.endDate;
+  const p2ActualStart = p2.period?.actualStartDate || p2TargetStart;
+  const p2ActualEnd = p2.period?.actualEndDate || p2TargetEnd;
 
   // Căn chỉnh Chu kỳ 1 (Baseline) cho đúng số ngày Like-for-Like với Chu kỳ 2
   let p1StartDate = params.period1.startDate;
@@ -417,7 +441,7 @@ export async function comparePerformancePeriods(params: {
 
   if (p2ActualDays > 0) {
     const p1Start = new Date(p1StartDate + "T00:00:00Z");
-    const p2Start = new Date(params.period2.startDate + "T00:00:00Z");
+    const p2Start = new Date(p2TargetStart + "T00:00:00Z");
     const p2End = new Date(p2ActualEnd + "T00:00:00Z");
 
     // Nếu cả 2 chu kỳ cùng bắt đầu từ ngày mùng 1 của tháng (ví dụ so sánh tháng này vs tháng trước)
@@ -473,35 +497,50 @@ export async function comparePerformancePeriods(params: {
   const t1 = p1.totals;
   const t2 = p2.totals;
 
+  const formatVnDate = (dStr: string) => {
+    const [y, m, d] = dStr.split("-");
+    return `${d}/${m}/${y}`;
+  };
+
+  const p1VnRange = `${formatVnDate(p1ActualStart)} - ${formatVnDate(p1ActualEnd)}`;
+  const p2VnRange = `${formatVnDate(p2ActualStart)} - ${formatVnDate(p2ActualEnd)}`;
+
   const p1Label = params.period1.label
-    ? `${params.period1.label} (${p1ActualStart} -> ${p1ActualEnd}, ${p1ActualDays} ngày)`
-    : `${p1ActualStart} -> ${p1ActualEnd} (${p1ActualDays} ngày)`;
+    ? `${params.period1.label} (${p1VnRange}, ${p1ActualDays} ngày)`
+    : `${p1VnRange} (${p1ActualDays} ngày)`;
 
   const p2Label = params.period2.label
-    ? `${params.period2.label} (${p2ActualStart} -> ${p2ActualEnd}, ${p2ActualDays} ngày)`
-    : `${p2ActualStart} -> ${p2ActualEnd} (${p2ActualDays} ngày)`;
+    ? `${params.period2.label} (${p2VnRange}, ${p2ActualDays} ngày)`
+    : `${p2VnRange} (${p2ActualDays} ngày)`;
+
+  const storeName = params.storeQuery ? (p2.store || params.storeQuery) : "Tất cả các store";
+  const headerIntro = `📊 So sánh hiệu quả hoạt động của store ${storeName} giữa tháng này (${p2VnRange}) và tháng trước (${p1VnRange}):`;
 
   return {
-    store: params.storeQuery || "Tất cả các store",
+    store: storeName,
+    headerIntro,
+    actualComparisonRange: `${p2VnRange} vs ${p1VnRange} (${p2ActualDays} ngày)`,
     period1: {
       startDate: p1ActualStart,
       endDate: p1ActualEnd,
+      vnRange: p1VnRange,
       totalDays: p1ActualDays,
       label: p1Label,
     },
     period2: {
       startDate: p2ActualStart,
       endDate: p2ActualEnd,
+      vnRange: p2VnRange,
       totalDays: p2ActualDays,
       label: p2Label,
-      latestAvailableDate: p2.latestAvailableDate,
+      latestAvailableDate: latestDbDate,
     },
     period1Label: p1Label,
     period2Label: p2Label,
     likeForLikeAligned: true,
     alignmentNote:
-      p2ActualEnd < params.period2.endDate
-        ? `Lưu ý: Dữ liệu chu kỳ 2 mới có đến ngày ${p2ActualEnd} (tổng cộng ${p2ActualDays} ngày). Hệ thống đã tự động căn chỉnh chu kỳ 1 về đúng cùng kỳ ${p1ActualDays} ngày (${p1ActualStart} -> ${p1ActualEnd}) để đảm bảo so sánh chuẩn xác (Like-for-Like / Apple-to-Apple).`
+      p2ActualEnd < params.period2.endDate || p2TargetEnd < params.period2.endDate
+        ? `Lưu ý: Dữ liệu tháng này mới chốt đến ngày ${formatVnDate(p2ActualEnd)} (tổng cộng ${p2ActualDays} ngày do các ngày sau chưa có dữ liệu đối soát trên hệ thống). Hệ thống đã tự động căn chỉnh tháng trước về đúng cùng kỳ ${p1ActualDays} ngày (${p1VnRange}) để đảm bảo so sánh chuẩn xác (Like-for-Like).`
         : `So sánh cùng kỳ chuẩn xác (${p1ActualDays} ngày vs ${p2ActualDays} ngày).`,
     comparison: {
       revenue: calcDiff(t2.totalRevenue, t1.totalRevenue),

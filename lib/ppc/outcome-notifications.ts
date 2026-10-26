@@ -11,6 +11,7 @@ interface NegativeOutcomeRow {
   outcome_id: string;
   window_days: number;
   team_id: string;
+  store_id: string;
   store_name: string;
   sku: string | null;
   target_keyword: string;
@@ -35,7 +36,7 @@ export async function notifyNegativeBidOutcomes(): Promise<{ notified: number }>
 
   const sql = await getDatabaseClient();
   const rows = await sql<NegativeOutcomeRow[]>`
-    SELECT o.id AS outcome_id, o.window_days, s.team_id, s.name AS store_name,
+    SELECT o.id AS outcome_id, o.window_days, s.team_id, s.id AS store_id, s.name AS store_name,
            a.sku, a.target_keyword, a.action_type, a.old_value, a.final_value,
            o.baseline->>'acos' AS baseline_acos, o.observed->>'acos' AS observed_acos,
            o.comparison->>'reward_usd' AS reward_usd
@@ -58,7 +59,7 @@ export async function notifyNegativeBidOutcomes(): Promise<{ notified: number }>
 
   const byStore = new Map<string, NegativeOutcomeRow[]>();
   for (const row of fresh) {
-    const key = `${row.team_id}\0${row.store_name}`;
+    const key = `${row.team_id}\0${row.store_id}\0${row.store_name}`;
     byStore.set(key, [...(byStore.get(key) || []), row]);
   }
 
@@ -68,7 +69,7 @@ export async function notifyNegativeBidOutcomes(): Promise<{ notified: number }>
   };
 
   for (const [key, items] of byStore) {
-    const [teamId, storeName] = key.split("\0");
+    const [teamId, storeId, storeName] = key.split("\0");
     const lines = items.slice(0, MAX_LINES_PER_STORE).map((row, idx) => {
       const change = row.action_type === "PAUSE_TARGET"
         ? "Tạm dừng"
@@ -85,7 +86,7 @@ export async function notifyNegativeBidOutcomes(): Promise<{ notified: number }>
       ...lines,
       more,
       "Xem chi tiết: https://ncehub.net/?view=ppc&section=auto_bid",
-    ]);
+    ], { ppcStoreId: storeId });
   }
 
   return { notified: fresh.length };

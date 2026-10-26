@@ -344,6 +344,11 @@ export function LarkNotificationSettingsModal({ open, onClose }: { open: boolean
                     <FlaskIcon size={14} /> {testing === "personal" ? "Đang gửi..." : "Gửi thử"}
                   </button>
                 </div>
+                {settings.personal.receiveIdType === "email" ? (
+                  <p className="text-[10px] font-medium leading-4 text-amber-700">
+                    Email dùng được để nhận thông báo. Muốn hỏi đáp theo quyền store, hãy chọn Open ID hoặc User ID để hệ thống nhận diện đúng người gửi.
+                  </p>
+                ) : null}
 
                 {/* Chức năng nhận cá nhân theo quyền của tài khoản */}
                 <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">

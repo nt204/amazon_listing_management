@@ -14,7 +14,7 @@ import {
 import { groupedRecommendationsRedisKey } from "@/lib/ppc/recommendation-cache";
 import { reviewPpcRecommendationWithAi } from "@/lib/ppc/ai-review-service";
 import type { PpcRecommendation } from "@/lib/ppc/types";
-import { resolvePpcStore } from "./lark-agent-tools";
+import { getLatestAvailableAccountingDate, resolvePpcStore } from "./lark-agent-tools";
 import { listSkuWin } from "./sku-win-db";
 import {
   clearPendingAction,
@@ -554,8 +554,14 @@ export async function getBidOutcomes(params: {
 
   const label = params.label && params.label !== "ALL" ? params.label : null;
   const filtered = label ? rows.filter((row) => row.outcome_label === label) : rows;
-  const limit = Math.min(30, Math.max(1, params.limit || 10));
+  const limit = Math.min(30, Math.max(1, params.limit || 5));
   const rank = params.rank || "RECENT";
+  // Tên campaign rất dài làm câu trả lời chậm và khó đọc trên Lark.
+  const shortName = (name: string | null) => {
+    const text = (name || "").trim();
+    return text.length > 70 ? `${text.slice(0, 67)}...` : text;
+  };
+  const usd = (value: number | null) => (value === null ? "chưa có" : `${value < 0 ? "-" : "+"}$${Math.abs(money(value)).toFixed(2)}`);
   const groupBy = params.groupBy || "ACTION";
   const labelIcon: Record<string, string> = {
     POSITIVE: "🟢 Tốt",
@@ -588,7 +594,7 @@ export async function getBidOutcomes(params: {
     groupBy,
     rank,
     message: rows.length === 0 ? `Chưa có lần chỉnh bid nào đã đẩy lên Amazon trong ${days} ngày qua cho store ${store.name}.` : undefined,
-    summary: { ...summary, rewardUsd: money(summary.rewardUsd), winRatePct: winRate },
+    summary: { ...summary, rewardUsd: money(summary.rewardUsd), effect: usd(summary.rewardUsd), winRatePct: winRate },
   };
 
   if (groupBy === "ACTION") {
@@ -596,13 +602,13 @@ export async function getBidOutcomes(params: {
     return {
       ...base,
       instructions:
-        "Dòng đầu tóm tắt: 'Trong [periodDays] ngày qua: N lần chỉnh bid | 🟢 X tốt | ⚪ Y trung tính | 🔴 Z xấu | ⚫ U không kết luận | ⏳ W đang theo dõi | Tỷ lệ thắng: P% | Hiệu quả ước tính: $R'. Nếu rank=BEST/WORST thì ghi tiêu đề 'Top lần chỉnh tốt nhất/xấu nhất'. Sau đó danh sách đánh số: '[STT]. [result] **[keyword]** (SKU) • $[oldBid] → $[newBid] • ngày [appliedOn] • ACOS [acosBefore]% → [acosAfter]% ([window]) • [rewardUsd]$'. ACOS null thì ghi 'chưa có'." + emptyRankNote,
+        "Dòng đầu tóm tắt: 'Trong [periodDays] ngày qua: N lần chỉnh bid | 🟢 X tốt | ⚪ Y trung tính | 🔴 Z xấu | ⚫ U không kết luận | ⏳ W đang theo dõi | Tỷ lệ thắng: P% | Hiệu quả ước tính: [summary.effect]'. Nếu rank=BEST/WORST thì ghi tiêu đề 'Top lần chỉnh tốt nhất/xấu nhất'. Sau đó danh sách đánh số: '[STT]. [result] **[keyword]** (SKU) • $[oldBid] → $[newBid] • ngày [appliedOn] • ACOS [acosBefore]% → [acosAfter]% ([window]) • [effect]'. ACOS null thì ghi 'chưa có'." + emptyRankNote,
       items: items.map(({ row, rewardUsd }, idx) => ({
         stt: idx + 1,
         result: row.outcome_label ? labelIcon[row.outcome_label] || row.outcome_label : "⏳ Đang theo dõi",
         sku: row.sku || "N/A",
         keyword: row.target_keyword,
-        campaign: row.campaign_name,
+        campaign: shortName(row.campaign_name),
         action: row.action_type === "PAUSE_TARGET" ? "Tạm dừng" : "Chỉnh bid",
         oldBid: money(Number(row.old_value)),
         newBid: row.action_type === "PAUSE_TARGET" ? null : money(Number(row.final_value)),
@@ -611,6 +617,7 @@ export async function getBidOutcomes(params: {
         acosBefore: acosOf(row.baseline),
         acosAfter: acosOf(row.observed),
         rewardUsd: rewardUsd === null ? null : money(rewardUsd),
+        effect: usd(rewardUsd),
       })),
     };
   }
@@ -682,17 +689,18 @@ export async function getBidOutcomes(params: {
 
   return {
     ...base,
-    instructions: `Dòng đầu tóm tắt như mẫu: 'Trong [periodDays] ngày qua: N lần chỉnh bid | 🟢 X tốt | 🔴 Z xấu | Tỷ lệ thắng: P% | Hiệu quả ước tính: $R'. Tiêu đề: 'Top ${groupLabel} ${rank === "WORST" ? "xấu nhất" : rank === "BEST" ? "tốt nhất" : "chỉnh gần đây"} sau khi chỉnh bid'. Danh sách đánh số: '[STT]. **[name]**${groupBy === "TARGET" ? " (Camp: [campaign])" : ""} • [actions] lần chỉnh (🟢 [positive] / 🔴 [negative]) • Hiệu quả: [rewardUsd]$ • ACOS trước [acosBefore]% → sau [acosAfter]%'. ACOS null thì ghi 'chưa có'. Hiệu quả ước tính = lợi nhuận đóng góp thực tế so với kỳ vọng (dương là tốt).${emptyRankNote}`,
+    instructions: `Dòng đầu tóm tắt như mẫu: 'Trong [periodDays] ngày qua: N lần chỉnh bid | 🟢 X tốt | 🔴 Z xấu | Tỷ lệ thắng: P% | Hiệu quả ước tính: [summary.effect]'. Tiêu đề: 'Top ${groupLabel} ${rank === "WORST" ? "xấu nhất" : rank === "BEST" ? "tốt nhất" : "chỉnh gần đây"} sau khi chỉnh bid'. Danh sách đánh số: '[STT]. **[name]**${groupBy === "TARGET" ? " (Camp: [campaign])" : ""} • [actions] lần chỉnh (🟢 [positive] / 🔴 [negative]) • Hiệu quả: [effect] • ACOS trước [acosBefore]% → sau [acosAfter]%'. ACOS null thì ghi 'chưa có'. Hiệu quả ước tính = lợi nhuận đóng góp thực tế so với kỳ vọng (dương là tốt).${emptyRankNote}`,
     items: grouped.map((group, idx) => ({
       stt: idx + 1,
-      name: group.name,
-      campaign: group.campaign,
+      name: groupBy === "CAMPAIGN" ? shortName(group.name) : group.name,
+      campaign: group.campaign === null ? null : shortName(group.campaign),
       sku: group.sku,
       actions: group.actions,
       positive: group.positive,
       neutral: group.neutral,
       negative: group.negative,
       rewardUsd: group.rewardUsd === null ? null : money(group.rewardUsd),
+      effect: usd(group.rewardUsd),
       acosBefore: pct(group.beforeSpend, group.beforeSales),
       acosAfter: pct(group.afterSpend, group.afterSales),
       lastAppliedOn: group.lastAppliedOn,
@@ -889,12 +897,14 @@ function changePct(current: number, previous: number): number | null {
  * Số kế toán lấy từ cùng hàm với bảng Lọc SKU (listSkuWin) nên khớp với web.
  */
 export async function getSkuInsight(
-  params: { storeQuery?: string; sku?: string; days?: number },
+  params: { storeQuery?: string; sku?: string; days?: number; numberBids?: boolean },
   sessionId?: string,
 ) {
   if (!params.storeQuery?.trim()) {
     return { hasData: false, needsStoreClarification: true, message: await storeClarification() };
   }
+  // false khi đã xem SKU khác trong cùng lượt: không đánh số / không ghi đè danh sách "duyệt số N".
+  const numberBids = params.numberBids !== false;
   const sku = params.sku?.trim().toUpperCase();
   if (!sku) return { hasData: false, message: "Vui lòng cho biết mã SKU cần xem." };
   const store = await resolvePpcStore(params.storeQuery);
@@ -913,14 +923,8 @@ export async function getSkuInsight(
       `)[0]
     : undefined;
 
-  // Kỳ hiện tại kết thúc ở ngày gần nhất đã có đơn (dữ liệu kế toán chốt đến hôm qua).
-  const latestRows = accounting
-    ? await sql<Array<{ latest: string | null }>>`
-        SELECT MAX(date)::text AS latest FROM accounting_orders
-        WHERE store_id = ${accounting.accountingStoreId} AND date < CURRENT_DATE
-      `
-    : [];
-  const endDate = latestRows[0]?.latest || shiftDate(new Date().toISOString().slice(0, 10), -1);
+  // Kỳ hiện tại kết thúc ở ngày có dữ liệu thực tế mới nhất từ database server.
+  const endDate = await getLatestAvailableAccountingDate();
   const startDate = shiftDate(endDate, -(days - 1));
   const prevEnd = shiftDate(startDate, -1);
   const prevStart = shiftDate(prevEnd, -(days - 1));
@@ -1022,10 +1026,10 @@ export async function getSkuInsight(
     decrease: skuRecs.filter((r) => r.recType === "BID_DECREASE").length,
     pause: skuRecs.filter((r) => r.recType === "PAUSE_TARGET").length,
   };
-  const topRecs = skuRecs.slice(0, 5);
+  const topRecs = numberBids ? skuRecs.slice(0, 5) : [];
   // Lưu để người dùng nhắn tiếp "duyệt số 1" như danh sách Auto Bid; không có đề xuất thì xóa danh sách cũ
   // để "duyệt số 1" không trỏ nhầm sang danh sách trước đó.
-  if (sessionId) await setLastBidRecommendations(sessionId, topRecs);
+  if (sessionId && numberBids) await setLastBidRecommendations(sessionId, topRecs);
 
   if (!current && !economics && skuRecs.length === 0) {
     return { hasData: false, message: `Không tìm thấy dữ liệu cho SKU ${sku} ở store ${store.name}.` };
@@ -1120,7 +1124,135 @@ export async function getSkuInsight(
 1) '📦 SKU [sku] ([productType], trạng thái [status]) – [storeName]'
 2) '📊 Hiện tại ([period.current])': Revenue, Units, Ads Spend, ACOS, TACOS, Profit, Margin; mỗi chỉ số kèm % so với kỳ trước (🔺/🔻) nếu có change.
 3) '📈 Xu hướng 4 tuần': mỗi tuần 1 dòng 'tuần: [units] units | $[revenue] | Ads $[adsSpend] | ACOS [acosPct]%'.
-4) '💡 Nên làm gì': liệt kê suggestions; nếu bidRecommendations.top có dữ liệu thì liệt kê ngắn (STT. action keyword $cũ → $mới) và nhắc 'nhắn Duyệt số 1, 2 để tạo yêu cầu chỉnh bid'.
+4) '💡 Nên làm gì': liệt kê suggestions; ${numberBids
+      ? "nếu bidRecommendations.top có dữ liệu thì liệt kê ngắn (STT. action keyword $cũ → $mới) và nhắc 'nhắn Duyệt số 1, 2 để tạo yêu cầu chỉnh bid'"
+      : `CHỈ ghi số lượng đề xuất bid (tăng / giảm / tạm dừng), KHÔNG đánh số; nhắc 'nhắn: SKU ${sku} thế nào để xem và duyệt đề xuất bid của SKU này'`}.
 ACOS / chỉ số null thì ghi 'chưa có'.`,
+  };
+}
+
+/**
+ * 17. Tổng quan SKU của một store: con nào đang lỗ, con nào tiềm năng, con nào đang giảm.
+ * Không đánh số đề xuất bid (nhiều SKU sẽ trùng STT); muốn duyệt bid thì hỏi riêng từng SKU qua getSkuInsight.
+ */
+export async function getSkuWatchlist(
+  params: { storeQuery?: string; days?: number; limit?: number },
+  sessionId?: string,
+) {
+  if (!params.storeQuery?.trim()) {
+    return { hasData: false, needsStoreClarification: true, message: await storeClarification() };
+  }
+  const store = await resolvePpcStore(params.storeQuery);
+  if (!store) {
+    return { hasData: false, message: `Không tìm thấy store "${params.storeQuery}". ${await storeClarification()}` };
+  }
+  const accounting = await getAccountingStoreForPpcStore(store.id);
+  if (!accounting) return { hasData: false, message: `Store ${store.name} chưa liên kết dữ liệu kế toán.` };
+
+  const days = Math.min(30, Math.max(7, params.days || 14));
+  const limit = Math.min(10, Math.max(1, params.limit || 5));
+  const endDate = await getLatestAvailableAccountingDate();
+  const startDate = shiftDate(endDate, -(days - 1));
+  const prevEnd = shiftDate(startDate, -1);
+  const prevStart = shiftDate(prevEnd, -(days - 1));
+
+  const [result, economicsList] = await Promise.all([
+    listSkuWin(accounting.accountingStoreId, {
+      status: "all",
+      startDate,
+      endDate,
+      compareStartDate: prevStart,
+      compareEndDate: prevEnd,
+      limit: 5000,
+    }),
+    getSkuEconomicsList(store.id, RECOMMENDATION_WINDOW_DAYS).catch(() => []),
+  ]);
+  // Danh sách tổng quan không có STT bid: xóa danh sách cũ để "duyệt số 1" không trỏ nhầm.
+  if (sessionId) await setLastBidRecommendations(sessionId, []);
+
+  const economicsBySku = new Map(economicsList.map((e) => [e.sku.toUpperCase(), e]));
+  const rows = result.items
+    .filter((it) => it.revenue > 0 || it.ads_fee > 0 || Number(it.compare_revenue || 0) > 0)
+    .map((it) => {
+      const econ = economicsBySku.get(it.sku.toUpperCase());
+      const ppcAcos = econ && Number(econ.sales || 0) > 0 ? Number(econ.acos || 0) : null;
+      const prevRevenue = Number(it.compare_revenue || 0);
+      return {
+        sku: it.sku,
+        productType: it.product_type || econ?.productType || null,
+        status: it.status,
+        revenue: money(it.revenue),
+        revenueChangePct: changePct(it.revenue, prevRevenue),
+        revenueDelta: money(it.revenue - prevRevenue),
+        prevRevenue: money(prevRevenue),
+        units: it.quantity,
+        adsSpend: money(it.ads_fee),
+        profit: money(it.profit),
+        profitText: `${it.profit < 0 ? "-" : ""}$${Math.abs(money(it.profit)).toFixed(2)}`,
+        prevProfit: money(Number(it.compare_profit || 0)),
+        marginPct: Math.round(it.margin * 1000) / 10,
+        tacosPct: Math.round(it.tacos * 1000) / 10,
+        ppcAcos30dPct: ppcAcos,
+        breakEvenAcosPct: econ?.breakEvenAcos ?? null,
+      };
+    });
+  if (rows.length === 0) {
+    return { hasData: false, message: `Store ${store.name} không có SKU nào phát sinh doanh thu / ads trong ${days} ngày gần nhất.` };
+  }
+
+  const pick = <T,>(list: T[]) => list.slice(0, limit);
+  const losing = pick(rows.filter((r) => r.profit < 0).sort((a, b) => a.profit - b.profit)).map((r) => {
+    const lossWithoutAds = r.profit + r.adsSpend;
+    return {
+      ...r,
+      reason: lossWithoutAds >= 0
+        ? `Ads $${r.adsSpend.toFixed(2)}${r.revenue > 0 ? ` (TACOS ${r.tacosPct}%)` : ", chưa ra đơn"}: giảm ads là về hòa vốn`
+        : r.adsSpend >= Math.abs(r.profit) * 0.5
+        ? `Lỗ chủ yếu do ads $${r.adsSpend.toFixed(2)}; bỏ ads vẫn lỗ $${Math.abs(lossWithoutAds).toFixed(2)} (hoàn hàng / phí)`
+        : `Bỏ ads vẫn lỗ $${Math.abs(lossWithoutAds).toFixed(2)}: xem lại giá bán / basecost / phí / hoàn hàng`,
+    };
+  });
+  const losingSkus = new Set(losing.map((r) => r.sku));
+  const potential = pick(
+    rows
+      .filter((r) => r.profit > 0 && r.units >= 5 && !(r.revenueChangePct !== null && r.revenueChangePct <= -20) && (
+        (r.ppcAcos30dPct !== null && r.breakEvenAcosPct && r.ppcAcos30dPct < r.breakEvenAcosPct * 0.7) ||
+        (r.revenueChangePct !== null && r.revenueChangePct >= 20 && r.prevRevenue >= 50)
+      ))
+      .sort((a, b) => b.profit - a.profit),
+  ).map((r) => ({
+    ...r,
+    reason: [
+      r.ppcAcos30dPct !== null && r.breakEvenAcosPct && r.ppcAcos30dPct < r.breakEvenAcosPct * 0.7
+        ? `ACOS ${r.ppcAcos30dPct}% thấp hơn nhiều so với hòa vốn ${r.breakEvenAcosPct}%: còn dư địa tăng bid / scale`
+        : null,
+      r.revenueChangePct !== null && r.revenueChangePct >= 20 ? `Revenue tăng ${r.revenueChangePct}%` : null,
+    ].filter(Boolean).join("; "),
+  }));
+  const declining = pick(
+    rows
+      .filter((r) => !losingSkus.has(r.sku) && r.prevRevenue >= 100 && r.revenueChangePct !== null && r.revenueChangePct <= -20)
+      .sort((a, b) => a.revenueDelta - b.revenueDelta),
+  ).map((r) => ({ ...r, reason: `Revenue giảm ${Math.abs(r.revenueChangePct!)}% (-$${Math.abs(r.revenueDelta).toFixed(2)})` }));
+
+  return {
+    hasData: true,
+    storeName: store.name,
+    period: { current: `${startDate} → ${endDate}`, previous: `${prevStart} → ${prevEnd}`, days },
+    summary: {
+      activeSkus: rows.length,
+      losingSkus: rows.filter((r) => r.profit < 0).length,
+      totalProfit: money(rows.reduce((sum, r) => sum + r.profit, 0)),
+    },
+    losing,
+    potential,
+    declining,
+    instructions: `Trình bày gọn, KHÔNG dùng bảng ngang, KHÔNG đánh số đề xuất bid:
+- Dòng đầu: '🔎 SKU cần chú ý – [storeName] ([period.current], so với [days] ngày trước): [activeSkus] SKU có bán, [losingSkus] SKU đang lỗ'.
+- '🔴 Đang lỗ': mỗi SKU 1 dòng '• **[sku]** ([productType]) • Profit [profitText] • Revenue $[revenue] • Ads $[adsSpend] — [reason]'.
+- '🟢 Tiềm năng': '• **[sku]** ([productType]) • Profit [profitText] • Margin [marginPct]% • Revenue $[revenue] ([revenueChangePct]% so với kỳ trước) — [reason]'.
+- '🔻 Đang giảm': '• **[sku]** ([productType]) • Revenue $[prevRevenue] → $[revenue] • Profit [profitText] — [reason]'. Một SKU chỉ nằm ở MỘT nhóm.
+- Nhóm nào rỗng thì ghi 'Không có'.
+- Cuối cùng nhắc: 'Nhắn "SKU [mã] thế nào" để xem chi tiết, xu hướng và duyệt đề xuất bid của từng SKU.'`,
   };
 }

@@ -75,6 +75,13 @@ test("only the original asker may confirm a group card action", async () => {
     action: { value: { action: "CONFIRM_NEGATIVE", sessionId: "t1:oc_group:ou_asker" } },
   });
   assert.deepEqual(result, { status: "forbidden" });
+
+  const saleKwResult = await processLarkCardAction({
+    operator: { open_id: "ou_someone_else" },
+    context: { open_chat_id: "oc_group" },
+    action: { value: { action: "CONFIRM_SALE_KW", sessionId: "t1:oc_group:ou_asker" } },
+  });
+  assert.deepEqual(saleKwResult, { status: "forbidden" });
 });
 
 test("group sessions are isolated per member", async () => {

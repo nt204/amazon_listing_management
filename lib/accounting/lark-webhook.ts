@@ -147,6 +147,7 @@ export async function processLarkMessageEvent(
     receiveId: message.chat_id,
     receiveIdType: "chat_id" as const,
     sessionId,
+    larkSenderId: senderId,
     replyToMessageId: message.message_id,
     messageCreatedAt: Number(message.create_time) || undefined,
   };
@@ -197,7 +198,9 @@ export async function processLarkCardAction(data: LarkCardActionEvent): Promise<
   const chatId = data.context?.open_chat_id || data.open_chat_id;
 
   if (!sessionId || !chatId) return { status: "ignored" };
-  if (actionType !== "CONFIRM_NEGATIVE" && actionType !== "CANCEL_NEGATIVE") return { status: "ignored" };
+  const isConfirm = actionType === "CONFIRM_NEGATIVE" || actionType === "CONFIRM_SALE_KW" || actionType === "CONFIRM_ACTION";
+  const isCancel = actionType === "CANCEL_NEGATIVE" || actionType === "CANCEL_SALE_KW" || actionType === "CANCEL_ACTION";
+  if (!isConfirm && !isCancel) return { status: "ignored" };
 
   // Group sessions end with the asker's id; only that member may confirm or
   // cancel, otherwise anyone in the group could push someone else's negatives.
@@ -211,10 +214,11 @@ export async function processLarkCardAction(data: LarkCardActionEvent): Promise<
 
   // A double-click produces two callbacks; only the first one should run.
   const result = await enqueueLarkAgentJobOnce(`card:${sessionId}`, {
-    message: actionType === "CONFIRM_NEGATIVE" ? "Xác nhận" : "Hủy",
+    message: isConfirm ? "Xác nhận" : "Hủy",
     receiveId: chatId,
     receiveIdType: "chat_id",
     sessionId,
+    larkSenderId: operatorIds[0],
   }, 15);
   return { status: result.enqueued ? "queued" : "duplicate" };
 }

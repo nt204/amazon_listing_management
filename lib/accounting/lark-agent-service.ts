@@ -14,6 +14,7 @@ import {
   listSaleKwCandidates,
   requestLaunchSaleKwAction,
   executeConfirmSaleKwLaunch,
+  getLatestAvailableAccountingDate,
 } from "./lark-agent-tools";
 import {
   listBidRecommendations,
@@ -24,6 +25,7 @@ import {
   reviewBidWithAi,
   getTargetBidHistory,
   getSkuInsight,
+  getSkuWatchlist,
 } from "./lark-ppc-bid-tools";
 import {
   getConversationHistory,
@@ -34,6 +36,7 @@ import {
   PendingPpcAction,
 } from "./lark-conversation-memory";
 import { sendLarkCardNotification, sendLarkTextNotification } from "@/lib/lark-notifications";
+import { resolveLarkActorStoreAccess, type PpcStoreAccessStore } from "@/lib/ppc/store-user-access";
 
 const AUTO_BID_TOOLS = new Set([
   "listBidRecommendations",
@@ -202,6 +205,7 @@ export interface RunAgentOptions {
   receiveId?: string;
   receiveIdType?: "email" | "chat_id" | "open_id";
   sessionId?: string; // Lưu và nhận diện ngữ cảnh trao đổi ngắn hạn
+  larkSenderId?: string;
   replyToMessageId?: string; // Reply đúng tin nhắn của người hỏi (tránh nhầm khi nhóm đông)
   sendToLark?: boolean;
 }
@@ -227,7 +231,7 @@ const TOOLS_SCHEMA = [
     type: "function",
     function: {
       name: "getDailyMetricsSummary",
-      description: "Tra cứu doanh thu, lợi nhuận (P&L), chi phí Ads, phí Amazon, tiền hoàn hàng theo ngày hoặc khoảng ngày của một store hoặc tất cả store.",
+      description: "Tra cứu doanh thu, lợi nhuận (P&L), chi phí Ads, phí Amazon, tiền hoàn hàng theo ngày hoặc khoảng ngày của một store hoặc tất cả store trong 1 chu kỳ thời gian. LƯU Ý QUAN TRỌNG: Nếu muốn SO SÁNH hai chu kỳ thời gian (tháng này vs tháng trước, tuần này vs tuần trước, hoặc phân tích điểm chú ý so với tháng trước), BẮT BUỘC PHẢI DÙNG tool comparePerformancePeriods, TUYỆT ĐỐI KHÔNG dùng tool này!",
       parameters: {
         type: "object",
         properties: {
@@ -278,7 +282,7 @@ const TOOLS_SCHEMA = [
     type: "function",
     function: {
       name: "comparePerformancePeriods",
-      description: "So sánh hiệu quả hoạt động giữa hai chu kỳ thời gian (ví dụ tuần này vs tuần trước, tháng này vs tháng trước) tự động tính chênh lệch tuyệt đối và % tăng giảm. ĐÃ TỰ ĐỘNG CĂN CHỈNH SỐ NGÀY CÙNG KỲ (Like-for-Like / Apple-to-Apple): nếu chu kỳ 2 thực tế mới có N ngày (do ngày gần nhất chưa có dữ liệu) thì chu kỳ 1 tự động được cắt đúng N ngày tương ứng để so sánh công bằng và chính xác.",
+      description: "So sánh hiệu quả hoạt động giữa hai chu kỳ thời gian (ví dụ tuần này vs tuần trước, tháng này vs tháng trước, hoặc hỏi có điểm gì cần chú ý so với tháng trước). BẮT BUỘC dùng tool này cho mọi câu hỏi so sánh chu kỳ. Tool ĐÃ TỰ ĐỘNG CĂN CHỈNH SỐ NGÀY CÙNG KỲ (Like-for-Like) đúng theo ngày có dữ liệu thực tế trong database để đảm bảo so sánh chuẩn xác và khớp hoàn toàn với Web UI.",
       parameters: {
         type: "object",
         properties: {
@@ -506,7 +510,7 @@ const TOOLS_SCHEMA = [
           groupBy: { type: "string", enum: ["ACTION", "TARGET", "CAMPAIGN", "SKU"], description: "Gom theo: từng lần chỉnh (mặc định), target, campaign hoặc SKU." },
           rank: { type: "string", enum: ["RECENT", "BEST", "WORST"], description: "Sắp xếp: gần nhất (mặc định), tốt nhất hoặc xấu nhất theo hiệu quả $." },
           sku: { type: "string", description: "Lọc theo SKU (tùy chọn)." },
-          limit: { type: "number", description: "Số dòng chi tiết (mặc định 10)." },
+          limit: { type: "number", description: "Số dòng chi tiết (mặc định 5; chỉ truyền khi người dùng hỏi rõ số lượng, ví dụ 'top 10')." },
         },
         required: ["storeQuery"],
       },
@@ -525,6 +529,22 @@ const TOOLS_SCHEMA = [
           days: { type: "number", description: "Độ dài kỳ so sánh (mặc định 14 ngày, từ 7 đến 30)." },
         },
         required: ["storeQuery", "sku"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "getSkuWatchlist",
+      description: "Tổng quan SKU của MỘT store: SKU nào đang lỗ, SKU nào tiềm năng (lãi, ACOS thấp xa hòa vốn hoặc Revenue tăng mạnh), SKU nào đang giảm. Dùng cho câu hỏi về NHIỀU SKU ('nên chú ý SKU nào', 'SKU nào lỗ', 'SKU nào tiềm năng'). BẮT BUỘC có storeQuery.",
+      parameters: {
+        type: "object",
+        properties: {
+          storeQuery: { type: "string", description: "BẮT BUỘC: Tên store." },
+          days: { type: "number", description: "Độ dài kỳ so sánh (mặc định 14 ngày, từ 7 đến 30)." },
+          limit: { type: "number", description: "Số SKU mỗi nhóm (mặc định 5)." },
+        },
+        required: ["storeQuery"],
       },
     },
   },
@@ -557,11 +577,48 @@ const SESSION_STATE_TOOLS = new Set([
   "reviewBidWithAi",
   "getTargetBidHistory",
   "getSkuInsight",
+  "getSkuWatchlist",
 ]);
 
-async function executeTool(name: string, rawArgs: string, sessionId?: string): Promise<string> {
+/** Trạng thái trong một lượt hỏi: chỉ SKU đầu tiên được đánh số đề xuất bid để "duyệt số N" không nhầm SKU. */
+interface ToolTurnState {
+  skuInsightCalls: number;
+}
+
+async function executeTool(
+  name: string,
+  rawArgs: string,
+  sessionId?: string,
+  turn: ToolTurnState = { skuInsightCalls: 0 },
+  allowedStores?: PpcStoreAccessStore[],
+): Promise<string> {
   try {
     const args = JSON.parse(rawArgs || "{}");
+    if (allowedStores) {
+      if (name === "getAllStores") return JSON.stringify(allowedStores);
+      if (allowedStores.length === 0) {
+        return JSON.stringify({ error: "Bạn chưa được admin cấp quyền hỏi đáp cho store nào." });
+      }
+      const requested = typeof args.storeQuery === "string" ? args.storeQuery.trim().toLowerCase() : "";
+      if (requested) {
+        const allowed = allowedStores.find((store) =>
+          store.id === args.storeQuery || store.name.toLowerCase() === requested
+        );
+        if (!allowed) {
+          return JSON.stringify({
+            error: `Bạn không có quyền hỏi đáp store "${args.storeQuery}". Store được cấp: ${allowedStores.map((store) => store.name).join(", ")}.`,
+          });
+        }
+        args.storeQuery = allowed.name;
+      } else if (allowedStores.length === 1) {
+        args.storeQuery = allowedStores[0].name;
+      } else {
+        return JSON.stringify({
+          needsStoreClarification: true,
+          message: `Vui lòng chọn một store bạn được cấp quyền: ${allowedStores.map((store) => store.name).join(", ")}.`,
+        });
+      }
+    }
     switch (name) {
       case "getAllStores":
         return JSON.stringify(await getAllStores());
@@ -598,7 +655,10 @@ async function executeTool(name: string, rawArgs: string, sessionId?: string): P
       case "getTargetBidHistory":
         return JSON.stringify(await getTargetBidHistory(args, sessionId));
       case "getSkuInsight":
-        return JSON.stringify(await getSkuInsight(args, sessionId));
+        turn.skuInsightCalls++;
+        return JSON.stringify(await getSkuInsight({ ...args, numberBids: turn.skuInsightCalls === 1 }, sessionId));
+      case "getSkuWatchlist":
+        return JSON.stringify(await getSkuWatchlist(args, sessionId));
       default:
         return JSON.stringify({ error: `Không tìm thấy công cụ: ${name}` });
     }
@@ -742,10 +802,52 @@ export async function runAccountingAgent(options: RunAgentOptions): Promise<Agen
   const targetReceiveId = (options.receiveId || options.recipientEmail || "").trim();
   const targetReceiveIdType = (options.receiveIdType || (targetReceiveId.includes("@") ? "email" : "chat_id")).trim();
 
+  let allowedStores: PpcStoreAccessStore[] | undefined;
+  if (options.larkSenderId) {
+    const access = await resolveLarkActorStoreAccess(options.larkSenderId);
+    allowedStores = access.stores;
+    if (!access.actorId) {
+      const replyText = "Tài khoản Lark của bạn chưa được liên kết với tài khoản NCE HUB. Hãy cấu hình Lark bằng Open ID hoặc User ID, sau đó nhờ admin cấp quyền store.";
+      if (options.sendToLark && targetReceiveId) {
+        await sendLarkTextNotification(replyText, {
+          receiveId: targetReceiveId,
+          receiveIdType: targetReceiveIdType,
+          replyToMessageId: options.replyToMessageId,
+        });
+      }
+      return { replyText, toolsUsed: [], larkSent: Boolean(options.sendToLark && targetReceiveId) };
+    }
+    if (allowedStores.length === 0) {
+      const replyText = "Bạn chưa được admin cấp quyền hỏi đáp cho store nào.";
+      if (options.sendToLark && targetReceiveId) {
+        await sendLarkTextNotification(replyText, {
+          receiveId: targetReceiveId,
+          receiveIdType: targetReceiveIdType,
+          replyToMessageId: options.replyToMessageId,
+        });
+      }
+      return { replyText, toolsUsed: [], larkSent: Boolean(options.sendToLark && targetReceiveId) };
+    }
+  }
+
   // 1. KIỂM TRA THAO TÁC PPC ĐANG CHỜ XÁC NHẬN (NẾU CÓ SESSION ID)
   if (options.sessionId) {
     const pending = await getPendingAction(options.sessionId);
     if (pending) {
+      if (allowedStores && !allowedStores.some((store) =>
+        store.id === pending.storeId || store.name.toLowerCase() === pending.storeName.toLowerCase()
+      )) {
+        await clearPendingAction(options.sessionId);
+        const replyText = `Bạn không còn quyền thao tác trên store ${pending.storeName}. Yêu cầu chờ đã được hủy.`;
+        if (options.sendToLark && targetReceiveId) {
+          await sendLarkTextNotification(replyText, {
+            receiveId: targetReceiveId,
+            receiveIdType: targetReceiveIdType,
+            replyToMessageId: options.replyToMessageId,
+          });
+        }
+        return { replyText, toolsUsed: [], larkSent: Boolean(options.sendToLark && targetReceiveId) };
+      }
       const trimmed = options.message.trim().toLowerCase();
       // Chỉ khớp khi CẢ tin nhắn là câu xác nhận / hủy ngắn: "duyệt số 3" hay "không, lấy số 2" là yêu cầu mới.
       const tail = String.raw`(?:\s+(?:nhé|nhe|nha|đi|di|luôn|luon|ạ|thôi|thoi|auto upload))*[\s.!]*$`;
@@ -1033,11 +1135,41 @@ Hệ thống đã lưu vào Negative Hub${execResult.bulksheetCreated ? " và x�
     throw new Error("Chưa cấu hình LARK_AGENT_KEY trong file .env");
   }
 
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const systemPrompt = `Bạn là AI Agent chuyên trách Kế Toán & Vận Hành Amazon FBA trên Lark Bot.
+  // Ngày theo giờ Việt Nam: toISOString() là UTC nên từ 0h-7h sáng sẽ lùi về hôm trước.
+  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
+  const yesterdayDate = new Date(`${todayStr}T00:00:00Z`);
+  yesterdayDate.setUTCDate(yesterdayDate.getUTCDate() - 1);
+  const yesterdayStr = yesterdayDate.toISOString().slice(0, 10);
+  const latestDbDate = await getLatestAvailableAccountingDate();
+  const [ly, lm, ld] = latestDbDate.split("-");
+  const latestDbDateVn = `${ld}/${lm}/${ly}`;
+
+  const storePermissionPrompt = allowedStores
+    ? `\nPHẠM VI STORE ĐƯỢC CẤP QUYỀN: ${allowedStores.map((store) => store.name).join(", ")}. Chỉ được dùng dữ liệu từ các store này. Nếu có nhiều store và người dùng chưa nêu store, phải hỏi lại họ chọn một store.\n`
+    : "";
+  const systemPrompt = `Bạn là AI Agent chuyên trách Kế Toán & Vận Hành Amazon FBA trên Lark Bot.${storePermissionPrompt}
 TỰ XƯNG & ĐỊNH DANH: Luôn xưng là "AI Agent" (Tuyệt đối KHÔNG bao giờ nhắc đến tên model hay công nghệ nền tảng).
 Hôm nay là: ${todayStr}.
+DỮ LIỆU KẾ TOÁN FBA MỚI NHẤT HIỆN CÓ TRONG HỆ THỐNG: ngày ${latestDbDate} (${latestDbDateVn}).
 Các store hiện có trong hệ thống: BOZSPACER, FASTPEACE, LIMIMA, MALFIRST, WARMSTOREY.
+
+QUY TẮC CỐT LÕI VỀ MỐC THỜI GIAN & DỮ LIỆU SERVER:
+- Hệ thống luôn tự động kiểm tra ngày hiện tại và dữ liệu thực tế có trong database server.
+- Ngày hiện tại thực tế: ngày ${todayStr}.
+- DỮ LIỆU KẾ TOÁN MỚI NHẤT HIỆN CÓ TRÊN SERVER: ngày ${latestDbDate} (${latestDbDateVn}).
+- TUYỆT ĐỐI KHÔNG tự phỏng đoán hay đặt ra quy ước giờ cố định (như 15h hay 15:30). Mọi mốc ngày hoàn toàn phụ thuộc vào dữ liệu thực tế có trên database server tại thời điểm truy vấn.
+- Khi người dùng hỏi "hôm qua" (${yesterdayStr}), "hôm nay" (${todayStr}), hoặc bất kỳ ngày nào sau ngày ${latestDbDate}:
+  * Nói rõ hệ thống kiểm tra thấy dữ liệu trên server hiện tại mới cập nhật đến ngày ${latestDbDateVn}, ngày được hỏi chưa có dữ liệu trên server.
+  * Báo số liệu của ngày mới nhất hiện có (${latestDbDateVn}) và ghi rõ đó là ngày ${latestDbDateVn}.
+  * TUYỆT ĐỐI KHÔNG gọi ngày ${latestDbDateVn} là "hôm qua" nếu ${latestDbDate} khác ${yesterdayStr}.
+- Mọi câu hỏi về "tháng này", "tuần này", "từ đầu tháng đến nay":
+  * Mốc ngày kết thúc (endDate) BẮT BUỘC chốt tại ngày có dữ liệu thực tế mới nhất trên server: ${latestDbDate}.
+  * "Tháng này": từ ngày 01 đến ngày có dữ liệu thực tế ${latestDbDate} (ví dụ: 01/${lm} -> ${ld}/${lm}/${ly}).
+  * Khi người dùng hỏi so sánh "tháng này so với tháng trước" hoặc "có điểm gì cần chú ý so với tháng trước":
+    + BẮT BUỘC GỌI TOOL "comparePerformancePeriods". TUYỆT ĐỐI KHÔNG ĐƯỢC gọi getDailyMetricsSummary 2 lần để tự so sánh!
+    + Sau khi gọi tool: BẮT BUỘC dùng đúng câu mở đầu (headerIntro) và các mốc ngày cùng kỳ trong kết quả tool (ví dụ: 01/10/2026 - 23/10/2026 so với 01/09/2026 - 23/09/2026).
+    + TUYỆT ĐỐI CẤM tự ý gán mốc thời gian vượt quá ngày có dữ liệu thực tế (${latestDbDateVn})!
+    + BẮT BUỘC dùng các con số và tỷ lệ % tăng/giảm đã được tool tính sẵn trong comparison, TUYỆT ĐỐI KHÔNG tự tính lại gây sai lệch cùng kỳ!
 
 QUY TẮC BẮT BUỘC:
 0. BẮT BUỘC PHẢI BIẾT RÕ STORE (TRỪ CÂU HỎI SO SÁNH / TỔNG HỢP CÁC STORE):
@@ -1187,16 +1319,16 @@ QUY TẮC BẮT BUỘC:
      * TUYỆT ĐỐI KHÔNG tự tiện báo "Đã lên camp thành công" ở bước này!
 
 9. QUY TẮC SO SÁNH CHU KỲ (LIKE-FOR-LIKE / APPLE-TO-APPLE):
-   - KHI SO SÁNH HAI CHU KỲ (VD: Tháng này vs Tháng trước, Tuần này vs Tuần trước):
-     * BẮT BUỘC SỐ NGÀY ĐỐI SOÁT PHẢI BẰNG NHAU (LIKE-FOR-LIKE).
-     * Ví dụ: Tháng này (tháng 10) thực tế trong DB mới có dữ liệu 23 ngày (01/10 - 23/10/2026), thì khi so sánh với tháng trước (tháng 9), BẮT BUỘC CHỈ ĐƯỢC SO VỚI ĐÚNG 23 NGÀY CỦA THÁNG 9 (01/09 - 23/09/2026).
-     * TUYỆT ĐỐI CẤM lấy 23 ngày của tháng này đem so với 24 ngày hay cả tháng của tháng trước, vì điều đó làm sai lệch hoàn toàn kết quả phân tích tăng/giảm!
-     * Luôn gọi tool comparePerformancePeriods - tool này đã được tích hợp cơ chế tự động căn chỉnh cùng kỳ đúng số ngày.
-     * Khi trình bày kết quả so sánh, BẮT BUỘC nêu rõ:
-       "So sánh hiệu quả hoạt động của store [Store] giữa tháng này (01/10 - 23/10/2026) và cùng kỳ tháng trước (01/09 - 23/09/2026, cùng 23 ngày do ngày 24/10 chưa có dữ liệu):"
+   - KHI SO SÁNH HAI CHU KỲ (VD: Tháng này vs Tháng trước, Tuần này vs Tuần trước, hoặc hỏi "có điểm gì cần chú ý so với tháng trước"):
+     * BẮT BUỘC PHẢI GỌI TOOL "comparePerformancePeriods". TUYỆT ĐỐI KHÔNG ĐƯỢC gọi getDailyMetricsSummary nhiều lần để tự tính tay!
+     * Tool "comparePerformancePeriods" đã tự động căn chỉnh số ngày cùng kỳ (Like-for-Like) đúng theo ngày có dữ liệu thực tế và tính toán toàn bộ số liệu chuẩn xác.
+     * BẮT BUỘC DÙNG ĐÚNG MỐC NGÀY VÀ CÂU MỞ ĐẦU TRONG KẾT QUẢ TOOL TRẢ VỀ (headerIntro, period2.vnRange và period1.vnRange).
+       Ví dụ khi dữ liệu mới nhất đến ngày 23/10:
+       "📊 So sánh hiệu quả hoạt động của store BOZSPACER giữa tháng này (01/10 - 23/10/2026) và cùng kỳ tháng trước (01/09 - 23/09/2026, cùng 23 ngày do ngày 24/10 chưa có dữ liệu):"
+     * BẮT BUỘC SỬ DỤNG TRỰC TIẾP các con số tuyệt đối và % chênh lệch trong comparison (diff, pctChange) mà tool đã trả về. TUYỆT ĐỐI KHÔNG tự tiện tính lại!
      * Phân tích điểm chú ý dựa trên số liệu cùng kỳ đã căn chỉnh chính xác (nếu lợi nhuận tăng thì nói tăng, doanh thu đi ngang thì nói đi ngang, tuyệt đối không đưa ra kết luận sai lệch do so sánh thiếu ngày).
 
-9. QUY TRÌNH AUTO BID (ĐỀ XUẤT CHỈNH GIÁ THẦU):
+10. QUY TRÌNH AUTO BID (ĐỀ XUẤT CHỈNH GIÁ THẦU):
    - BẮT BUỘC xác định Store trước (theo Rule 0) cho listBidRecommendations và getBidOutcomes.
    - "đề xuất bid", "auto bid", "cần tăng/giảm bid", "target nào cần tạm dừng" -> gọi "listBidRecommendations" (lọc type INCREASE / DECREASE / PAUSE nếu người dùng nói rõ).
    - "duyệt số 1, 2", "duyệt tất cả", "số 3 đặt bid 0.65", "duyệt số 2 dùng bid AI" -> gọi "requestBidAction" (itemIndices / all / bidOverrides / useAiBidFor).
@@ -1204,6 +1336,7 @@ QUY TẮC BẮT BUỘC:
      * Nhắc người dùng bấm [✅ Xác nhận Auto Upload] hoặc nhắn "Xác nhận", hoặc "Hủy".
      * TUYỆT ĐỐI KHÔNG báo "đã cập nhật bid" ở bước này.
    - "AI review số 2", "AI xem số 2 thế nào" -> gọi "reviewBidWithAi" (mỗi lần 1 STT).
+     * TUYỆT ĐỐI KHÔNG tự viết kết quả AI Review, bid, ACOS hay nhận định nếu chưa gọi tool trong lượt này; không suy ra từ các câu trả lời trước. Câu mơ hồ như "xem số 2" thì hỏi lại: xem lịch sử, AI review hay duyệt số 2.
    - "hàng đợi bid", "đang chờ upload", "upload bid xong chưa", "job upload lỗi" -> gọi "getBidQueueStatus".
    - "chỉnh bid có hiệu quả không", "kết quả auto bid / auto upload", "lần chỉnh nào bị xấu" -> gọi "getBidOutcomes".
      * "target nào tốt/xấu nhất sau khi chỉnh" -> groupBy TARGET, rank BEST/WORST.
@@ -1211,6 +1344,7 @@ QUY TẮC BẮT BUỘC:
      * "SKU nào chỉnh bid hiệu quả nhất" -> groupBy SKU, rank BEST.
      * "lần chỉnh nào xấu nhất" -> groupBy ACTION, rank WORST.
    - "SKU X thế nào", "tình hình SKU X", "trend SKU X", "SKU X nên làm gì" -> gọi "getSkuInsight" (BẮT BUỘC có store và SKU; thiếu thì hỏi lại). Sau đó người dùng nhắn "duyệt số 1" thì gọi requestBidAction như bình thường.
+   - "nên chú ý SKU nào", "SKU nào tiềm năng / lỗ / đang giảm" (nhiều SKU) -> gọi "getSkuWatchlist" MỘT lần. TUYỆT ĐỐI KHÔNG gọi getSkuInsight lần lượt cho nhiều SKU. Chỉ gọi getSkuInsight khi người dùng hỏi đích danh 1 SKU.
    - "lịch sử bid của số 3", "keyword X đã chỉnh bid mấy lần" -> gọi "getTargetBidHistory".
    - Trình bày theo đúng "instructions" tool trả về: danh sách đánh số, KHÔNG dùng bảng ngang nhiều cột.`;
 
@@ -1229,6 +1363,7 @@ QUY TẮC BẮT BUỘC:
   ];
 
   const toolsUsed: string[] = [];
+  const turnState: ToolTurnState = { skuInsightCalls: 0 };
 
   async function fetchWithRetry(url: string, init: RequestInit, retries = 3): Promise<Response> {
     let lastErr: any;
@@ -1289,7 +1424,7 @@ QUY TẮC BẮT BUỘC:
     const toolCalls: ToolCall[] = assistantMsg.tool_calls;
     toolsUsed.push(...toolCalls.map((toolCall) => toolCall.function.name));
     const runTool = (toolCall: ToolCall) =>
-      executeTool(toolCall.function.name, toolCall.function.arguments, options.sessionId);
+      executeTool(toolCall.function.name, toolCall.function.arguments, options.sessionId, turnState, allowedStores);
     const hasSessionTool = toolCalls.some((toolCall) => SESSION_STATE_TOOLS.has(toolCall.function.name));
     const toolResults: string[] = [];
     if (hasSessionTool) {

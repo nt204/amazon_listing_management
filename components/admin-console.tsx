@@ -23,6 +23,7 @@ import {
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AccountMenu } from "@/components/account-menu";
+import { PpcStoreAccessPanel } from "@/components/admin/ppc-store-access-panel";
 import type { RequestActor } from "@/lib/auth";
 import type { AppUserStatus, AppUserSummary, ImageStorageStats, SystemGuideSummary } from "@/lib/db";
 
@@ -552,6 +553,8 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
             </div>
           )}
         </section>
+
+        <PpcStoreAccessPanel />
 
         {/* MODAL THÊM EMAIL MỚI */}
         {showAddUserModal && (

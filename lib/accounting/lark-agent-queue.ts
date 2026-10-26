@@ -13,6 +13,8 @@ export interface LarkAgentJob {
   receiveId: string;
   receiveIdType: "email" | "chat_id" | "open_id";
   sessionId: string;
+  /** Lark user identity used to enforce per-store permissions. */
+  larkSenderId?: string;
   /** Original Lark message to reply to, so answers stay attached to the asker. */
   replyToMessageId?: string;
   /** When the user sent the Lark message (ms). Stale jobs are dropped by the worker. */
@@ -23,7 +25,7 @@ export interface LarkAgentJob {
 
 export type NewLarkAgentJob = Pick<
   LarkAgentJob,
-  "message" | "receiveId" | "receiveIdType" | "sessionId" | "replyToMessageId" | "messageCreatedAt"
+  "message" | "receiveId" | "receiveIdType" | "sessionId" | "larkSenderId" | "replyToMessageId" | "messageCreatedAt"
 >;
 
 const DEFAULT_MAX_MESSAGE_AGE_MINUTES = 30;

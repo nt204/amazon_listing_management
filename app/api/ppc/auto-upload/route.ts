@@ -138,7 +138,8 @@ export async function POST(request: Request) {
 
     const result = await executeAutoUploadZeroSpendActions(finalStoreId, actionIds, actor.teamId, {
       allowAllSkus,
-      createdBy: actor.displayName || actor.userId,
+      // Persist the stable user id so the worker can resolve the exact Lark recipient.
+      createdBy: actor.userId,
     });
 
     return Response.json({

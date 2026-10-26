@@ -280,9 +280,10 @@ export async function notifyLarkEventBestEffort(
   scope: DataScope,
   category: LarkNotificationCategory,
   payload: LarkNotificationPayload,
+  options: { ppcStoreId?: string } = {},
 ) {
   try {
-    const recipients = await resolveLarkRecipients(scope, category);
+    const recipients = await resolveLarkRecipients(scope, category, options);
     if (!recipients.length) return;
 
     const isCard = typeof payload === "object" && payload !== null && !Array.isArray(payload) && "card" in payload;

@@ -2,7 +2,6 @@ import "server-only";
 import crypto from "node:crypto";
 import type postgres from "postgres";
 import { getDatabaseClient, type DataScope } from "@/lib/db";
-import { notifyLarkEventBestEffort } from "@/lib/lark-notifications";
 
 export interface PpcIngestionJob {
   id: string; team_id: string; actor_id: string; batch_id: string; batch_date: string; store_names: string[];
@@ -190,21 +189,6 @@ export async function completePpcIngestion(id:string,token:string,result:unknown
     }
     return linked;
   });
-
-  if (completedJob) {
-    const stores = Array.isArray(completedJob.store_names) ? completedJob.store_names : [];
-    const storeCountText = stores.length > 0 ? ` (${stores.length} store: ${stores.join(", ")})` : "";
-    await notifyLarkEventBestEffort(
-      { teamId: completedJob.team_id, actorId: completedJob.actor_id },
-      "ppc",
-      [
-        "📊 **Dữ liệu PPC hôm nay đã sẵn sàng**",
-        `• Đã hoàn tất đồng bộ toàn bộ dữ liệu PPC lên server${storeCountText}.`,
-        completedJob.batch_date ? `• Ngày dữ liệu: ${completedJob.batch_date}` : "",
-        `• Mã đợt: \`${completedJob.batch_id}\``,
-      ].filter(Boolean),
-    );
-  }
 }
 export async function failPpcIngestion(id:string,token:string,message:string){
   const sql=await getDatabaseClient();

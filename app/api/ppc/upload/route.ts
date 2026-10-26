@@ -2,6 +2,7 @@ import { ApiError, authorize, dataScope, enforceRequestSize, routeErrorResponse 
 import { ingestPpcFilePath, MAX_PPC_REPORT_BYTES, PpcInputError } from "@/lib/ppc/service";
 import { MultipartUploadError, streamMultipartFileUpload } from "@/lib/multipart-file-upload";
 import { notifyLarkEventBestEffort } from "@/lib/lark-notifications";
+import { getDatabaseClient } from "@/lib/db";
 
 export const runtime = "nodejs";
 
@@ -46,13 +47,19 @@ export async function POST(request: Request) {
     const { invalidateCachePattern } = await import("@/lib/redis");
     await invalidateCachePattern(`ppc:metrics:${scope.teamId}:*`).catch(() => {});
 
+    const sql = await getDatabaseClient();
+    const notificationStores = await sql<Array<{ id: string }>>`
+      SELECT id FROM ppc_stores
+      WHERE team_id = ${scope.teamId} AND LOWER(name) = LOWER(${result.storeName || storeName})
+      LIMIT 1
+    `;
     await notifyLarkEventBestEffort(scope, "ppc", [
       "✅ Upload file PPC đã hoàn tất",
       `Store: ${result.storeName || storeName}`,
       `File: ${file.name}`,
       `Loại báo cáo: ${result.reportType}`,
       `Kết quả: ${result.totalParsed} dòng (${result.newInserted} mới, ${result.updated} cập nhật)`,
-    ].join("\n"));
+    ].join("\n"), { ppcStoreId: notificationStores[0]?.id });
 
     return Response.json({
       success: true,

@@ -302,7 +302,7 @@ export async function POST(request: Request) {
       ) VALUES (
         ${jobId}, ${actor.teamId}, ${storeId}, ${fileName}, ${recommendations.length},
         ${sql.json(distinctCamps)}, 'PENDING', 'FILE_READY',
-        'SUCCESS', 25, ${sql.json([])}, ${sql.json(actionsPayload)}, ${r2Key}, ${sha256}, NOW(), ${actor.displayName || actor.userId || null}
+        'SUCCESS', 25, ${sql.json([])}, ${sql.json(actionsPayload)}, ${r2Key}, ${sha256}, NOW(), ${actor.userId}
       )
     `;
 

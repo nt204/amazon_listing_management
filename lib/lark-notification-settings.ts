@@ -163,16 +163,40 @@ export async function saveTeamLarkSettings(
   });
 }
 
-export async function resolveLarkRecipients(scope: DataScope, category: LarkNotificationCategory) {
+export async function resolveLarkRecipients(
+  scope: DataScope,
+  category: LarkNotificationCategory,
+  options: { ppcStoreId?: string } = {},
+) {
   const sql = await getDatabaseClient();
   const actors = await sql<Array<{ actor_id: string }>>`
     SELECT user_id AS actor_id FROM app_users
-    WHERE team_id = ${scope.teamId} AND (user_id = ${scope.actorId} OR LOWER(username) = LOWER(${scope.actorId}))
-    ORDER BY CASE WHEN user_id = ${scope.actorId} THEN 0 ELSE 1 END LIMIT 1
+    WHERE team_id = ${scope.teamId} AND (
+      user_id = ${scope.actorId}
+      OR LOWER(username) = LOWER(${scope.actorId})
+      OR (
+        LOWER(display_name) = LOWER(${scope.actorId})
+        AND 1 = (
+          SELECT COUNT(*) FROM app_users matching_user
+          WHERE matching_user.team_id = ${scope.teamId}
+            AND LOWER(matching_user.display_name) = LOWER(${scope.actorId})
+        )
+      )
+    )
+    ORDER BY CASE
+      WHEN user_id = ${scope.actorId} THEN 0
+      WHEN LOWER(username) = LOWER(${scope.actorId}) THEN 1
+      ELSE 2
+    END
+    LIMIT 1
   `;
   const actorId = actors[0]?.actor_id || scope.actorId;
-  const isSystemActor = scope.actorId === "system" || scope.actorId === "worker" || !actors.length;
+  // Only explicit background actors may fan out to admins. An unknown actor can
+  // be legacy data (for example a display name) and must never become a team-wide
+  // personal notification by accident.
+  const isSystemActor = scope.actorId === "system" || scope.actorId === "worker";
 
+  const ppcStoreId = options.ppcStoreId?.trim() || null;
   const rows = await sql<Array<{ receive_id: string; receive_id_type: string }>>`
     SELECT connection.receive_id, connection.receive_id_type
     FROM lark_user_connections connection
@@ -181,9 +205,16 @@ export async function resolveLarkRecipients(scope: DataScope, category: LarkNoti
       AND preference.category = ${category}
     WHERE connection.team_id = ${scope.teamId}
       AND (
-        connection.actor_id = ${actorId}
-        OR (${isSystemActor} AND connection.actor_id IN (
-          SELECT user_id FROM app_users WHERE team_id = ${scope.teamId} AND role = 'admin' AND status = 'approved'
+        (${ppcStoreId}::uuid IS NOT NULL AND connection.actor_id IN (
+          SELECT access.actor_id FROM ppc_store_user_access access
+          WHERE access.team_id = ${scope.teamId} AND access.store_id = ${ppcStoreId}::uuid
+            AND access.receive_action_notifications = TRUE
+        ))
+        OR (${ppcStoreId}::uuid IS NULL AND (
+          connection.actor_id = ${actorId}
+          OR (${isSystemActor} AND connection.actor_id IN (
+            SELECT user_id FROM app_users WHERE team_id = ${scope.teamId} AND role = 'admin' AND status = 'approved'
+          ))
         ))
       )
       AND connection.enabled = TRUE AND COALESCE(preference.personal_enabled, FALSE) = TRUE

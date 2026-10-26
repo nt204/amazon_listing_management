@@ -80,6 +80,7 @@ async function processJob(raw: string, job: LarkAgentJob) {
       receiveId: job.receiveId,
       receiveIdType: job.receiveIdType,
       sessionId: job.sessionId,
+      larkSenderId: job.larkSenderId,
       replyToMessageId: job.replyToMessageId,
       sendToLark: true,
     });
