@@ -306,119 +306,125 @@ export async function downloadInventoryLedgerReport(
   // 2. Đảm bảo chọn Radio "Summary view"
   try {
     await page.evaluate(() => {
-      // Tìm radio Summary view
-      const radios = Array.from(document.querySelectorAll('input[type="radio"], kat-radio-button'));
-      for (const r of radios) {
-        const text = (r.textContent || (r as any).label || (r as any).value || "").toLowerCase();
-        if (text.includes("summary")) {
-          (r as HTMLElement).click();
-          break;
-        }
-      }
+      const radio = (document.querySelector('kat-radio-button[value="18200"], input[value="18200"], kat-radio-button[label*="Summary"], input[aria-label="Summary view"]') ||
+        Array.from(document.querySelectorAll('kat-radio-button, input[type="radio"]')).find((r: any) =>
+          (r.textContent || r.label || r.value || "").toLowerCase().includes("summary")
+        )) as HTMLElement | null;
+      if (radio) radio.click();
     });
+    await page.waitForTimeout(1000);
   } catch {}
 
   // 3. Đảm bảo chọn Radio "Country"
   try {
     await page.evaluate(() => {
-      const radios = Array.from(document.querySelectorAll('input[type="radio"], kat-radio-button'));
-      for (const r of radios) {
-        const text = (r.textContent || (r as any).label || (r as any).value || "").toLowerCase();
-        if (text.includes("country")) {
-          (r as HTMLElement).click();
-          break;
-        }
-      }
+      const radio = (document.querySelector('kat-radio-button[value="COUNTRY"], input[value="COUNTRY"], kat-radio-button[label*="Country"], input[aria-label="Country"]') ||
+        Array.from(document.querySelectorAll('kat-radio-button, input[type="radio"]')).find((r: any) =>
+          (r.textContent || r.label || r.value || "").toLowerCase().includes("country")
+        )) as HTMLElement | null;
+      if (radio) radio.click();
     });
+    await page.waitForTimeout(1000);
   } catch {}
 
   // 4. Chọn "Daily" trong Dropdown "Aggregate report by time period"
   try {
     await page.evaluate(() => {
-      const dropdowns = Array.from(document.querySelectorAll("select, kat-dropdown, kat-select"));
-      for (const d of dropdowns) {
-        if (d instanceof HTMLSelectElement) {
-          for (const opt of Array.from(d.options)) {
-            if (opt.text.toLowerCase().includes("daily") || opt.value.toLowerCase().includes("daily")) {
-              d.value = opt.value;
-              d.dispatchEvent(new Event("change", { bubbles: true }));
-              break;
-            }
-          }
+      const dd = (document.querySelector('kat-dropdown[label*="time period"]') ||
+        Array.from(document.querySelectorAll("kat-dropdown")).find((d: any) =>
+          (d.getAttribute("label") || "").toLowerCase().includes("time period")
+        )) as any;
+      if (dd) {
+        if (dd.shadowRoot) {
+          const opt = Array.from(dd.shadowRoot.querySelectorAll("kat-option")).find((o: any) =>
+            (o.getAttribute("value") || "").toUpperCase() === "DAILY" || (o.textContent || "").toLowerCase().includes("daily")
+          ) as HTMLElement | null;
+          if (opt) opt.click();
         }
+        dd.value = "DAILY";
+        dd.dispatchEvent(new CustomEvent("change", { detail: { value: "DAILY" }, bubbles: true, composed: true }));
       }
     });
+    await page.waitForTimeout(1000);
   } catch {}
 
   // 5. Chọn "Exact dates" trong Date range
+  console.log(`  [Inventory Ledger] Đang chọn phạm vi ngày: 'Exact dates'...`);
   try {
     await page.evaluate(() => {
-      const selects = Array.from(document.querySelectorAll("select, kat-dropdown, kat-select"));
-      for (const sel of selects) {
-        if (sel instanceof HTMLSelectElement) {
-          for (const opt of Array.from(sel.options)) {
-            if (opt.text.toLowerCase().includes("exact date") || opt.value.toLowerCase().includes("exact")) {
-              sel.value = opt.value;
-              sel.dispatchEvent(new Event("change", { bubbles: true }));
-              break;
-            }
-          }
+      const dd = (document.querySelector("#ledger-date-range-time-picker") ||
+        document.querySelector('kat-dropdown[kat-aria-label*="Date range"], kat-dropdown[label*="Date range"]') ||
+        Array.from(document.querySelectorAll("kat-dropdown")).find((d: any) =>
+          (d.getAttribute("kat-aria-label") || d.getAttribute("label") || "").toLowerCase().includes("date range")
+        )) as any;
+      if (!dd) return;
+
+      if (dd.shadowRoot) {
+        const header = dd.shadowRoot.querySelector(".select-header, button, div[role='button']") as HTMLElement | null;
+        if (header) header.click();
+
+        const opts = Array.from(dd.shadowRoot.querySelectorAll("kat-option")) as HTMLElement[];
+        const targetOpt = opts.find((o: any) =>
+          o.getAttribute("value") === "-1" || (o.textContent || "").toLowerCase().includes("exact")
+        );
+        if (targetOpt) {
+          targetOpt.click();
+          return;
         }
       }
+
+      dd.value = "-1";
+      dd.dispatchEvent(new CustomEvent("change", { detail: { value: "-1" }, bubbles: true, composed: true }));
     });
-    await page.waitForTimeout(1500);
-  } catch {}
+    await page.waitForTimeout(2500);
+  } catch (err) {
+    console.warn(`  [Inventory Ledger] Cảnh báo khi chọn Exact dates: ${(err as Error).message}`);
+  }
 
   // 6. Điền From Date và To Date vào ô nhập liệu
   console.log(`  [Inventory Ledger] Đang điền ngày chốt sổ: ${targetUsDate} (${targetIsoDate})...`);
   const dateFilled = await page.evaluate((usDate) => {
     let count = 0;
-    // Tìm các input ngày của Amazon
-    const inputs = Array.from(document.querySelectorAll('input[type="text"], input:not([type]), kat-date-picker input'));
-    const dateInputs: HTMLInputElement[] = [];
-    for (const inp of inputs) {
-      if (inp instanceof HTMLInputElement) {
-        const placeholder = (inp.placeholder || "").toLowerCase();
-        const ariaLabel = (inp.getAttribute("aria-label") || "").toLowerCase();
-        const name = (inp.name || "").toLowerCase();
-        if (
-          placeholder.includes("mm/dd/yyyy") ||
-          ariaLabel.includes("date") ||
-          name.includes("date") ||
-          inp.value.includes("/")
-        ) {
-          dateInputs.push(inp);
+    // 1. kat-date-range-picker
+    const rangePicker = (document.querySelector("#ledger-time-picker-kat-date-range-picker") ||
+      document.querySelector("kat-date-range-picker")) as any;
+
+    if (rangePicker && rangePicker.shadowRoot) {
+      const pickers = rangePicker.shadowRoot.querySelectorAll("kat-date-picker");
+      pickers.forEach((p: any) => {
+        const katInput = p.shadowRoot?.querySelector("kat-input") || p.querySelector("kat-input");
+        const input = katInput?.shadowRoot?.querySelector("input") || katInput?.querySelector("input") || p.shadowRoot?.querySelector("input");
+        if (input) {
+          input.value = usDate;
+          input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+          input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+          input.dispatchEvent(new Event("blur", { bubbles: true, composed: true }));
+          count++;
         }
-      }
+      });
+      rangePicker.setAttribute("start-value", usDate);
+      rangePicker.setAttribute("end-value", usDate);
+      rangePicker.dispatchEvent(new CustomEvent("change", { detail: { startValue: usDate, endValue: usDate }, bubbles: true, composed: true }));
     }
 
-    if (dateInputs.length >= 2) {
-      for (let i = 0; i < 2; i++) {
-        const inp = dateInputs[i];
-        inp.value = usDate;
-        inp.dispatchEvent(new Event("input", { bubbles: true }));
-        inp.dispatchEvent(new Event("change", { bubbles: true }));
-        inp.dispatchEvent(new Event("blur", { bubbles: true }));
-        count++;
-      }
+    // 2. Thử các input ngày khác nếu có
+    const allInputs = Array.from(document.querySelectorAll('kat-date-picker input, input[placeholder*="MM/DD/YYYY"]'));
+    for (const inp of allInputs as HTMLInputElement[]) {
+      inp.value = usDate;
+      inp.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+      inp.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+      inp.dispatchEvent(new Event("blur", { bubbles: true, composed: true }));
+      count++;
     }
     return count;
   }, targetUsDate);
 
-  if (dateFilled < 2) {
-    // Fallback thử tìm bằng selector
-    const datePickers = page.locator('input[placeholder*="MM/DD/YYYY"], kat-date-picker input');
-    const c = await datePickers.count();
-    for (let i = 0; i < Math.min(c, 2); i++) {
-      await datePickers.nth(i).fill(targetUsDate);
-    }
-  }
-
+  console.log(`  [Inventory Ledger] Kết quả điền ngày: ${dateFilled} inputs được cập nhật thành ${targetUsDate}`);
   await page.waitForTimeout(2000);
 
   // 7. Nhấn nút "Request .csv Download"
   console.log(`  [Inventory Ledger] Đang nhấn nút 'Request .csv Download'...`);
-  const requestCsvBtn = page.locator('button:has-text("Request .csv Download"), kat-button:has-text("Request .csv Download"), [data-testid="request-csv-download"]').first();
+  const requestCsvBtn = page.locator('kat-button[label="Request .csv Download"], button:has-text("Request .csv Download"), [data-testid="request-csv-download"]').first();
   await requestCsvBtn.waitFor({ state: "visible", timeout: 15000 });
   await requestCsvBtn.click();
   console.log(`  [Inventory Ledger] Đã click 'Request .csv Download'. Đang chờ báo cáo tạo xong...`);
@@ -426,22 +432,22 @@ export async function downloadInventoryLedgerReport(
 
   // 8. Chờ nút "Download" xuất hiện ở dòng đầu tiên của bảng lịch sử yêu cầu (tối đa 5 phút)
   console.log(`  [Inventory Ledger] Đang theo dõi tiến độ tạo báo cáo trong bảng...`);
-  let downloadedPath: string | null = null;
   const startTime = Date.now();
   const MAX_WAIT_MS = 300000; // 5 phút
 
   while (Date.now() - startTime < MAX_WAIT_MS) {
     // Kiểm tra xem nút Download ở dòng đầu tiên đã sẵn sàng chưa
     const isDownloadReady = await page.evaluate(() => {
-      // Tìm dòng đầu tiên trong bảng kết quả
       const rows = document.querySelectorAll("kat-table-body kat-table-row, table tbody tr");
       if (!rows.length) return false;
       const firstRow = rows[0];
       const text = firstRow.textContent || "";
-      // Nếu trạng thái đã là Download hoặc có nút Download
-      const btn = firstRow.querySelector("kat-button[label='Download'], button:has-text('Download')");
+      const btn = firstRow.querySelector("kat-button[label='Download']") ||
+        Array.from(firstRow.querySelectorAll("button, kat-button")).find((b: any) =>
+          (b.getAttribute("label") || b.textContent || "").trim() === "Download"
+        );
       if (btn) return true;
-      if (text.includes("Download") && !text.includes("In progress") && !text.includes("In queue")) {
+      if (text.includes("Download") && !text.includes("In progress") && !text.includes("In queue") && !text.includes("In Progress")) {
         return true;
       }
       return false;
@@ -452,29 +458,52 @@ export async function downloadInventoryLedgerReport(
       break;
     }
 
-    console.log(`  [Inventory Ledger] Báo cáo đang xử lý... chờ 10 giây (đã chờ ${Math.round((Date.now() - startTime) / 1000)}s)...`);
+    const elapsedSec = Math.round((Date.now() - startTime) / 1000);
+    console.log(`  [Inventory Ledger] Báo cáo đang xử lý... chờ 10 giây (đã chờ ${elapsedSec}s)...`);
     await page.waitForTimeout(10000);
 
-    // Refresh bảng nếu có nút Refresh hoặc reload trang
-    try {
-      const refreshBtn = page.locator('button[aria-label="Refresh"], kat-button[label="Refresh"], [data-testid="refresh-button"]').first();
-      if (await refreshBtn.isVisible({ timeout: 2000 })) {
-        await refreshBtn.click();
-      }
-    } catch {}
+    // Sau 25s nếu vẫn đang In progress, reload trang và quay lại tab Download để cập nhật trạng thái mới nhất từ server Amazon
+    if (elapsedSec >= 25 && elapsedSec % 20 < 10) {
+      try {
+        console.log(`  [Inventory Ledger] Đang làm mới trang để cập nhật trạng thái bảng báo cáo...`);
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await page.waitForTimeout(3000);
+        const tab = page.locator('kat-tab[label="Download"], a:has-text("Download")').first();
+        if (await tab.isVisible({ timeout: 5000 })) {
+          await tab.click();
+          await page.waitForTimeout(2000);
+        }
+      } catch {}
+    }
   }
 
   // 9. Bấm tải file CSV
   const tableDownloadBtn = page.locator("kat-table-body kat-table-row:nth-child(1) kat-button[label='Download'], table tbody tr:nth-child(1) button:has-text('Download')").first();
-  await tableDownloadBtn.waitFor({ state: "visible", timeout: 20000 });
+  await tableDownloadBtn.waitFor({ state: "visible", timeout: 25000 });
 
   fs.mkdirSync(downloadDir, { recursive: true });
   const targetFileName = `09_InventoryLedger_${targetIsoDate}.csv`;
   const finalFilePath = path.join(downloadDir, targetFileName);
 
+  console.log(`  [Inventory Ledger] Bắt đầu tải file và lưu vào: ${finalFilePath}`);
   const [download] = await Promise.all([
     page.waitForEvent("download", { timeout: 45000 }),
-    tableDownloadBtn.click(),
+    (async () => {
+      try {
+        await tableDownloadBtn.click({ timeout: 5000 });
+      } catch {
+        await page.evaluate(() => {
+          const rows = document.querySelectorAll("kat-table-body kat-table-row, table tbody tr");
+          const firstRow = rows[0];
+          const katBtn = firstRow?.querySelector("kat-button[label='Download']") as any;
+          if (katBtn?.shadowRoot?.querySelector("button")) {
+            katBtn.shadowRoot.querySelector("button").click();
+          } else if (katBtn) {
+            katBtn.click();
+          }
+        });
+      }
+    })(),
   ]);
 
   await download.saveAs(finalFilePath);
@@ -598,8 +627,9 @@ export async function runInventoryLedgerCrawler(): Promise<void> {
         );
       } catch (err: any) {
         console.error(`  ❌ [LỖI] Store ${store.store_name} gặp lỗi khi tải Inventory Ledger:`, err?.message || err);
+        const errMsg = String(err?.message || err).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
         await sendTelegramMessage(
-          `⚠️ <b>[INVENTORY LEDGER LỖI]</b> Store <b>${store.store_name}</b> không tải được báo cáo tồn kho:\n<code>${err?.message || err}</code>`
+          `⚠️ <b>[INVENTORY LEDGER LỖI]</b> Store <b>${store.store_name}</b> không tải được báo cáo tồn kho:\n<code>${errMsg.slice(0, 500)}</code>`
         );
       } finally {
         if (browserContext) {

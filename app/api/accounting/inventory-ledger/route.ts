@@ -3,6 +3,7 @@ import {
   parseInventoryLedgerContent,
   ingestInventoryLedgerRows,
   getLatestInventoryBalances,
+  getInventoryStockSnapshot,
 } from "@/lib/accounting/inventory-ledger-db";
 
 export const runtime = "nodejs";
@@ -14,6 +15,11 @@ export async function GET(request: Request) {
     const storeId = url.searchParams.get("store_id");
     if (!storeId) {
       return Response.json({ error: "Thiếu store_id." }, { status: 400 });
+    }
+
+    // Tab TỒN KHO: dòng báo cáo của 1 ngày chốt sổ (mặc định mới nhất)
+    if (url.searchParams.get("mode") === "stock") {
+      return Response.json(await getInventoryStockSnapshot(storeId, url.searchParams.get("snapshot_date")));
     }
 
     const balances = await getLatestInventoryBalances(storeId);
@@ -35,14 +41,18 @@ export async function POST(request: Request) {
       const formData = await request.formData();
       const file = formData.get("file") as File | null;
       const storeId = formData.get("store_id") as string | null;
-      const snapshotDate = (formData.get("snapshot_date") as string | null) || new Date().toISOString().slice(0, 10);
-
       if (!file || !storeId) {
         return Response.json({ error: "Thiếu file hoặc store_id." }, { status: 400 });
       }
 
       const text = await file.text();
       const rows = parseInventoryLedgerContent(text);
+      if (rows.length === 0) {
+        return Response.json({ error: "File không có dòng Inventory Ledger hợp lệ (cần cột MSKU/ASIN)." }, { status: 400 });
+      }
+      // Nhập tay không truyền ngày: lấy cột Date trong file (ngày chốt sổ của báo cáo)
+      const snapshotDate =
+        (formData.get("snapshot_date") as string | null) || rows[0].date || new Date().toISOString().slice(0, 10);
       const result = await ingestInventoryLedgerRows(storeId, rows, snapshotDate, file.name);
 
       return Response.json({

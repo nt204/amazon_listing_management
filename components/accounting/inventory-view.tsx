@@ -38,9 +38,11 @@ import {
   TrashIcon,
   TruckIcon,
   UploadSimpleIcon,
+  WarehouseIcon,
   WarningCircleIcon,
   XIcon,
 } from "@phosphor-icons/react";
+import type { InventoryStockItem } from "@/lib/accounting/inventory-ledger-db";
 import type { SkuMasterItem, InboundShipmentItem, CheckShipmentItem, SkuChannel } from "@/lib/accounting/inventory-db";
 import { storeHasTeam } from "@/lib/accounting/store-teams";
 import type { Store } from "@/lib/accounting/types";
@@ -113,6 +115,7 @@ import {
   DEFAULT_INBOUND_COLUMNS,
   DEFAULT_CHECK_SHIPMENT_COLUMNS,
   DEFAULT_MONTHLY_BASE_COST_COLUMNS,
+  DEFAULT_INVENTORY_STOCK_COLUMNS,
   ColumnHeaderCell,
   createTextWidthMeasurer,
 } from "./column-manager-modal";
@@ -127,6 +130,7 @@ import {
 } from "./inventory-sheet-links-modal";
 import type { SheetType } from "@/lib/accounting/inventory-sheet-sync";
 import { MonthlyBaseCostView, type MonthlyBaseCostViewRef } from "./monthly-base-cost-view";
+import { InventoryStockView, formatSnapshotDate } from "./inventory-stock-view";
 
 // Debounce hook for instant, throttled searching (300ms)
 function useDebounce<T>(value: T, delay: number): T {
@@ -1543,11 +1547,11 @@ function InventoryViewInner() {
   const [loadingStores, setLoadingStores] = useState(true);
 
   // Giữ nguyên tab Inventory đang mở khi reload trang trong cùng một phiên browser.
-  type InventoryTab = "sku" | "inbound" | "check_shipment" | "monthly_base_cost";
+  type InventoryTab = "sku" | "inbound" | "check_shipment" | "monthly_base_cost" | "stock";
   const [activeTab, setActiveTab] = useState<InventoryTab>(() => {
     if (typeof window === "undefined") return "sku";
     const savedTab = window.sessionStorage.getItem("accounting_inventory_active_tab");
-    return savedTab === "sku" || savedTab === "inbound" || savedTab === "check_shipment" || savedTab === "monthly_base_cost"
+    return savedTab === "sku" || savedTab === "inbound" || savedTab === "check_shipment" || savedTab === "monthly_base_cost" || savedTab === "stock"
       ? savedTab
       : "sku";
   });
@@ -1561,6 +1565,7 @@ function InventoryViewInner() {
     inbound: activeTab === "inbound",
     check_shipment: activeTab === "check_shipment",
     monthly_base_cost: activeTab === "monthly_base_cost",
+    stock: activeTab === "stock",
   }));
 
   const handleTabChange = useCallback((tab: InventoryTab) => {
@@ -1601,6 +1606,15 @@ function InventoryViewInner() {
   const [monthlyBaseCostSearch, setMonthlyBaseCostSearch] = useState("");
   const debouncedMonthlyBaseCostSearch = useDebounce(monthlyBaseCostSearch, 300);
 
+  // TỒN KHO: dữ liệu Inventory Ledger theo ngày chốt sổ ("" = ngày mới nhất), lọc/phân trang phía client
+  const [stockSearch, setStockSearch] = useState("");
+  const debouncedStockSearch = useDebounce(stockSearch, 300);
+  const [stockSnapshotDate, setStockSnapshotDate] = useState("");
+  const [stockPage, setStockPage] = useState(1);
+  const [stockLimit, setStockLimit] = useState(100);
+  const [importingStock, setImportingStock] = useState(false);
+  const stockFileInputRef = useRef<HTMLInputElement>(null);
+
   // Bấm tiêu đề một cột ngày để đổi giữa mới nhất và cũ nhất.
   // Mặc định Bảng Mã và Đi Hàng sắp xếp theo ngày tạo (created_at DESC) để dòng mới luôn ở trên đầu.
   const [dateSort, setDateSort] = useState<Record<"sku" | "inbound" | "check_shipment", { field: string; direction: "asc" | "desc" }>>({
@@ -1608,23 +1622,25 @@ function InventoryViewInner() {
     inbound: { field: "created_at", direction: "desc" },
     check_shipment: { field: "ngay_update", direction: "desc" },
   });
-  const [columnFilters, setColumnFilters] = useState<Record<"sku" | "inbound" | "check_shipment", Record<string, string>>>({
+  const [columnFilters, setColumnFilters] = useState<Record<"sku" | "inbound" | "check_shipment" | "stock", Record<string, string>>>({
     sku: {},
     inbound: {},
     check_shipment: {},
+    stock: {},
   });
   const [openColumnFilter, setOpenColumnFilter] = useState<{ table: "sku" | "inbound" | "check_shipment"; field: string } | null>(null);
   const [columnContextMenu, setColumnContextMenu] = useState<{
-    table: "sku" | "inbound" | "check_shipment" | "monthly_base_cost";
+    table: "sku" | "inbound" | "check_shipment" | "monthly_base_cost" | "stock";
     field: string;
     x: number;
     y: number;
   } | null>(null);
-  const [frozenThrough, setFrozenThrough] = useState<Record<"sku" | "inbound" | "check_shipment" | "monthly_base_cost", string>>({
+  const [frozenThrough, setFrozenThrough] = useState<Record<"sku" | "inbound" | "check_shipment" | "monthly_base_cost" | "stock", string>>({
     sku: "sku",
     inbound: "sku",
     check_shipment: "shipment_name",
     monthly_base_cost: "asin",
+    stock: "sku",
   });
   const skuTableRef = useRef<HTMLTableElement>(null);
   const inboundTableRef = useRef<HTMLTableElement>(null);
@@ -1638,7 +1654,7 @@ function InventoryViewInner() {
     document.addEventListener("mousedown", closeMenu);
     return () => document.removeEventListener("mousedown", closeMenu);
   }, [columnContextMenu]);
-  const setColumnFilter = useCallback((table: "sku" | "inbound" | "check_shipment", field: string, value: string) => {
+  const setColumnFilter = useCallback((table: "sku" | "inbound" | "check_shipment" | "stock", field: string, value: string) => {
     setColumnFilters((previous) => {
       const nextTable = { ...previous[table] };
       if (!value) {
@@ -1654,6 +1670,7 @@ function InventoryViewInner() {
     if (table === "sku") setSkuPage(1);
     if (table === "inbound") setShipmentPage(1);
     if (table === "check_shipment") setCheckShipmentPage(1);
+    if (table === "stock") setStockPage(1);
   }, []);
   const toggleDateSort = useCallback((table: "sku" | "inbound" | "check_shipment", field: string) => {
     setDateSort((previous) => {
@@ -1684,6 +1701,7 @@ function InventoryViewInner() {
   const [inboundColumns, setInboundColumns] = useState<ColumnConfig[]>(DEFAULT_INBOUND_COLUMNS);
   const [checkShipmentColumns, setCheckShipmentColumns] = useState<ColumnConfig[]>(DEFAULT_CHECK_SHIPMENT_COLUMNS);
   const [monthlyBaseCostColumns, setMonthlyBaseCostColumns] = useState<ColumnConfig[]>(DEFAULT_MONTHLY_BASE_COST_COLUMNS);
+  const [stockColumns, setStockColumns] = useState<ColumnConfig[]>(DEFAULT_INVENTORY_STOCK_COLUMNS);
   const [showColumnModal, setShowColumnModal] = useState(false);
 
   // BẢNG MÃ FBM có bộ cột riêng (theo mẫu sheet FBM) và lưu thiết lập cột riêng.
@@ -1692,6 +1710,7 @@ function InventoryViewInner() {
   const INBOUND_COLUMNS_STORAGE_KEY = "accounting_inbound_columns_global";
   const CHECK_SHIPMENT_COLUMNS_STORAGE_KEY = "accounting_check_shipment_columns_global";
   const MONTHLY_BASE_COST_COLUMNS_STORAGE_KEY = "accounting_monthly_base_cost_columns_global";
+  const STOCK_COLUMNS_STORAGE_KEY = "accounting_inventory_stock_columns_global";
   const FROZEN_COLUMNS_STORAGE_KEY = "accounting_frozen_columns_global";
 
   useEffect(() => {
@@ -1703,7 +1722,7 @@ function InventoryViewInner() {
     } catch {}
   }, [FROZEN_COLUMNS_STORAGE_KEY, selectedStoreId]);
 
-  const setFrozenThroughColumn = useCallback((table: "sku" | "inbound" | "check_shipment" | "monthly_base_cost", field: string) => {
+  const setFrozenThroughColumn = useCallback((table: "sku" | "inbound" | "check_shipment" | "monthly_base_cost" | "stock", field: string) => {
     setFrozenThrough((current) => {
       const next = { ...current, [table]: field };
       try { localStorage.setItem(FROZEN_COLUMNS_STORAGE_KEY, JSON.stringify(next)); } catch {}
@@ -1725,7 +1744,7 @@ function InventoryViewInner() {
     return fallback;
   }, []);
 
-  const resizeColumn = useCallback((table: "sku" | "inbound" | "check_shipment" | "monthly_base_cost", id: string, width: number) => {
+  const resizeColumn = useCallback((table: "sku" | "inbound" | "check_shipment" | "monthly_base_cost" | "stock", id: string, width: number) => {
     const update = (columns: ColumnConfig[]) => columns.map((column) => column.id === id ? { ...column, width } : column);
     if (table === "sku") {
       setSkuColumns((previous) => {
@@ -1743,6 +1762,12 @@ function InventoryViewInner() {
       setCheckShipmentColumns((previous) => {
         const next = update(previous);
         try { localStorage.setItem(CHECK_SHIPMENT_COLUMNS_STORAGE_KEY, JSON.stringify(next)); } catch {}
+        return next;
+      });
+    } else if (table === "stock") {
+      setStockColumns((previous) => {
+        const next = update(previous);
+        try { localStorage.setItem(STOCK_COLUMNS_STORAGE_KEY, JSON.stringify(next)); } catch {}
         return next;
       });
     } else {
@@ -1876,6 +1901,14 @@ function InventoryViewInner() {
       } else {
         setMonthlyBaseCostColumns(DEFAULT_MONTHLY_BASE_COST_COLUMNS);
       }
+
+      const stockStored = localStorage.getItem(STOCK_COLUMNS_STORAGE_KEY);
+      const stockParsed: ColumnConfig[] | null = stockStored ? JSON.parse(stockStored) : null;
+      setStockColumns(
+        Array.isArray(stockParsed) && stockParsed.length > 0
+          ? mergeFromParsed(stockParsed, DEFAULT_INVENTORY_STOCK_COLUMNS)
+          : DEFAULT_INVENTORY_STOCK_COLUMNS,
+      );
     } catch {}
   }, [selectedStoreId, SKU_COLUMNS_STORAGE_KEY, skuDefaultColumns, INBOUND_COLUMNS_STORAGE_KEY, CHECK_SHIPMENT_COLUMNS_STORAGE_KEY, MONTHLY_BASE_COST_COLUMNS_STORAGE_KEY]);
 
@@ -1943,7 +1976,23 @@ function InventoryViewInner() {
     notify("Đã khôi phục cột BASECOST THÁNG về mặc định!", "success");
   }, [MONTHLY_BASE_COST_COLUMNS_STORAGE_KEY]);
 
-  const handleQuickHideColumn = useCallback((tab: "sku" | "inbound" | "check_shipment" | "monthly_base_cost", colId: string) => {
+  const handleSaveStockColumns = useCallback((newCols: ColumnConfig[]) => {
+    setStockColumns(newCols);
+    try {
+      localStorage.setItem(STOCK_COLUMNS_STORAGE_KEY, JSON.stringify(newCols));
+    } catch {}
+    notify("Đã lưu thiết lập cột TỒN KHO cho tất cả Store!", "success");
+  }, []);
+
+  const handleResetStockColumns = useCallback(() => {
+    setStockColumns(DEFAULT_INVENTORY_STOCK_COLUMNS);
+    try {
+      localStorage.removeItem(STOCK_COLUMNS_STORAGE_KEY);
+    } catch {}
+    notify("Đã khôi phục cột TỒN KHO về mặc định!", "success");
+  }, []);
+
+  const handleQuickHideColumn = useCallback((tab: "sku" | "inbound" | "check_shipment" | "monthly_base_cost" | "stock", colId: string) => {
     if (tab === "sku") {
       setSkuColumns((prev) => {
         const updated = prev.map((c) => (c.id === colId ? { ...c, visible: false } : c));
@@ -1967,6 +2016,15 @@ function InventoryViewInner() {
         const updated = prev.map((c) => (c.id === colId ? { ...c, visible: false } : c));
         try {
           localStorage.setItem(CHECK_SHIPMENT_COLUMNS_STORAGE_KEY, JSON.stringify(updated));
+        } catch {}
+        return updated;
+      });
+      notify("Đã ẩn cột khỏi bảng!", "success");
+    } else if (tab === "stock") {
+      setStockColumns((prev) => {
+        const updated = prev.map((c) => (c.id === colId ? { ...c, visible: false } : c));
+        try {
+          localStorage.setItem(STOCK_COLUMNS_STORAGE_KEY, JSON.stringify(updated));
         } catch {}
         return updated;
       });
@@ -2355,6 +2413,54 @@ function InventoryViewInner() {
   const loadingSkus = skuQuery.isLoading;
   const loadingShipments = shipmentQuery.isLoading;
   const loadingCheckShipments = checkShipmentQuery.isLoading;
+
+  // 4. TỒN KHO: snapshot Inventory Ledger (crawler thứ 2 nạp vào DB → mở tab là thấy số mới)
+  const stockQuery = useQuery({
+    queryKey: ["inventory-stock", selectedStoreId, stockSnapshotDate],
+    queryFn: async () => {
+      const params = new URLSearchParams({ store_id: selectedStoreId, mode: "stock" });
+      if (stockSnapshotDate) params.set("snapshot_date", stockSnapshotDate);
+      const res = await fetch(`/api/accounting/inventory-ledger?${params}`);
+      if (!res.ok) throw new Error("Không tải được dữ liệu tồn kho");
+      return res.json() as Promise<{ snapshotDates: string[]; snapshotDate: string | null; items: InventoryStockItem[] }>;
+    },
+    enabled: !!selectedStoreId,
+  });
+  const allStockItems = useMemo(() => stockQuery.data?.items ?? [], [stockQuery.data?.items]);
+  const filteredStockItems = useMemo(() => {
+    const term = debouncedStockSearch.trim().toLowerCase();
+    return allStockItems.filter(
+      (item) =>
+        (!term ||
+          [item.sku, item.asin, item.fnsku, item.title, item.product_type].some((v) => v?.toLowerCase().includes(term))) &&
+        Object.entries(columnFilters.stock).every(
+          ([field, value]) => !value || String((item as unknown as Record<string, unknown>)[field] ?? "").trim() === value,
+        ),
+    );
+  }, [allStockItems, debouncedStockSearch, columnFilters.stock]);
+  const stockSummary = useMemo(() => {
+    const sum = (key: "ton_kho" | "in_transit_between_warehouses" | "ending_warehouse_balance") =>
+      filteredStockItems.reduce((total, item) => total + Number(item[key] || 0), 0);
+    return {
+      rows: filteredStockItems.length,
+      skus: new Set(filteredStockItems.map((item) => item.sku.toLowerCase())).size,
+      tonKho: sum("ton_kho"),
+      inTransit: sum("in_transit_between_warehouses"),
+      ending: sum("ending_warehouse_balance"),
+      snapshotDate: stockQuery.data?.snapshotDate ?? null,
+    };
+  }, [filteredStockItems, stockQuery.data?.snapshotDate]);
+  const stockTotalPages = Math.max(1, Math.ceil(filteredStockItems.length / stockLimit));
+  const pagedStockItems = useMemo(
+    () => filteredStockItems.slice((stockPage - 1) * stockLimit, stockPage * stockLimit),
+    [filteredStockItems, stockPage, stockLimit],
+  );
+  useEffect(() => {
+    setStockPage(1);
+  }, [selectedStoreId, debouncedStockSearch, stockSnapshotDate]);
+  useEffect(() => {
+    setStockSnapshotDate("");
+  }, [selectedStoreId]);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const notify = useCallback((message: string, type: "success" | "error" = "success") => {
     setToast({ type, message });
@@ -2708,7 +2814,7 @@ function InventoryViewInner() {
   // Tính toán độ rộng vừa khít nội dung thực tế và tiêu đề cột cho tất cả các bảng
   const calculateAutoFitWidth = useCallback(
     (
-      table: "sku" | "inbound" | "check_shipment" | "monthly_base_cost",
+      table: "sku" | "inbound" | "check_shipment" | "monthly_base_cost" | "stock",
       colId: string,
       label: string
     ): number => {
@@ -2753,6 +2859,13 @@ function InventoryViewInner() {
             maxContentWidth = Math.max(maxContentWidth, measureText(str));
           }
         }
+      } else if (table === "stock") {
+        for (const item of allStockItems) {
+          const val = (item as unknown as Record<string, unknown>)[colId];
+          if (val == null) continue;
+          const str = typeof val === "number" ? val.toLocaleString("en-US") : colId === "report_date" ? "00/00/0000" : String(val).trim();
+          maxContentWidth = Math.max(maxContentWidth, measureText(str));
+        }
       }
 
       const contentWidth = maxContentWidth > 0 ? Math.ceil(maxContentWidth + 30) : 0;
@@ -2766,11 +2879,11 @@ function InventoryViewInner() {
 
       return Math.max(52, targetWidth);
     },
-    [allSkus, allShipments, allCheckShipments]
+    [allSkus, allShipments, allCheckShipments, allStockItems]
   );
 
   const handleAutoFitColumn = useCallback(
-    (table: "sku" | "inbound" | "check_shipment" | "monthly_base_cost", colId: string) => {
+    (table: "sku" | "inbound" | "check_shipment" | "monthly_base_cost" | "stock", colId: string) => {
       if (table === "sku") {
         setSkuColumns((prev) => {
           const targetCol = prev.find((c) => c.id === colId);
@@ -2801,6 +2914,17 @@ function InventoryViewInner() {
           const updated = prev.map((c) => (c.id === colId ? { ...c, width: snugWidth } : c));
           try {
             localStorage.setItem(CHECK_SHIPMENT_COLUMNS_STORAGE_KEY, JSON.stringify(updated));
+          } catch {}
+          return updated;
+        });
+      } else if (table === "stock") {
+        setStockColumns((prev) => {
+          const targetCol = prev.find((c) => c.id === colId);
+          if (!targetCol) return prev;
+          const snugWidth = calculateAutoFitWidth(table, colId, targetCol.label);
+          const updated = prev.map((c) => (c.id === colId ? { ...c, width: snugWidth } : c));
+          try {
+            localStorage.setItem(STOCK_COLUMNS_STORAGE_KEY, JSON.stringify(updated));
           } catch {}
           return updated;
         });
@@ -2955,6 +3079,7 @@ function InventoryViewInner() {
       fetchShipments();
       fetchCheckShipments();
       monthlyBaseCostRef.current?.reload();
+      stockQuery.refetch();
     };
     window.addEventListener("accounting-import-completed", handleImportCompleted);
     return () => window.removeEventListener("accounting-import-completed", handleImportCompleted);
@@ -4018,6 +4143,47 @@ function InventoryViewInner() {
     notify("Đã thay đổi vị trí cột!", "success");
   }, [MONTHLY_BASE_COST_COLUMNS_STORAGE_KEY]);
 
+  const handleReorderStockColumns = useCallback((fromId: string, toId: string) => {
+    if (fromId === toId) return;
+    setStockColumns((prev) => {
+      const fromIndex = prev.findIndex((c) => c.id === fromId);
+      const toIndex = prev.findIndex((c) => c.id === toId);
+      if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return prev;
+      if (prev[fromIndex].isFrozen || prev[toIndex].isFrozen) return prev;
+
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      try {
+        localStorage.setItem(STOCK_COLUMNS_STORAGE_KEY, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    notify("Đã thay đổi vị trí cột!", "success");
+  }, []);
+
+  // Nhập tay file Inventory Ledger (.csv) cho store đang chọn; ngày chốt sổ lấy theo cột Date trong file.
+  const handleImportStockFile = useCallback(async (file: File) => {
+    if (!selectedStoreId) return;
+    setImportingStock(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("store_id", selectedStoreId);
+      const res = await fetch("/api/accounting/inventory-ledger", { method: "POST", body: formData });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Nạp file tồn kho thất bại.");
+      notify(data.message || "Đã nạp file tồn kho!", "success");
+      setStockSnapshotDate("");
+      queryClient.invalidateQueries({ queryKey: ["inventory-stock", selectedStoreId] });
+    } catch (err) {
+      notify((err as Error).message, "error");
+    } finally {
+      setImportingStock(false);
+      if (stockFileInputRef.current) stockFileInputRef.current.value = "";
+    }
+  }, [selectedStoreId, notify, queryClient]);
+
   // Dynamic Scrollable Column Header & Cell Renderers (Follows user-customized order)
   const renderSkuHeader = useCallback((col: ColumnConfig) => {
     const isCustom = col.isCustom;
@@ -4804,7 +4970,15 @@ function InventoryViewInner() {
   );
 
   const contextFilterOptions =
-    columnContextMenu && columnContextMenu.table !== "monthly_base_cost"
+    columnContextMenu?.table === "stock"
+      ? Array.from(
+          new Set(
+            allStockItems
+              .map((item) => String((item as unknown as Record<string, unknown>)[columnContextMenu.field] ?? "").trim())
+              .filter(Boolean),
+          ),
+        ).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+      : columnContextMenu && columnContextMenu.table !== "monthly_base_cost"
       ? (() => {
           const opts = getColumnOptions(columnContextMenu.table, columnContextMenu.field);
           if (opts.length > 0) return opts;
@@ -4836,6 +5010,8 @@ function InventoryViewInner() {
             ? inboundColumns
             : table === "check_shipment"
             ? checkShipmentColumns
+            : table === "stock"
+            ? stockColumns
             : monthlyBaseCostColumns;
         const col = columns.find((item) => item.id === field);
         const colLabel = col?.label || field;
@@ -4880,7 +5056,7 @@ function InventoryViewInner() {
               <button
                 type="button"
                 onClick={() => {
-                  if (table === "monthly_base_cost") {
+                  if (table === "monthly_base_cost" || table === "stock") {
                     setShowColumnModal(true);
                   } else if (col) {
                     handleQuickRenameColumn(table, col.id, col.label);
@@ -5084,6 +5260,58 @@ function InventoryViewInner() {
                   title="Tải lại bảng Basecost Tháng"
                 >
                   <ArrowClockwiseIcon size={16} weight="bold" />
+                </button>
+              </div>
+            ) : activeTab === "stock" ? (
+              <div className="flex items-center gap-2">
+                <input
+                  ref={stockFileInputRef}
+                  type="file"
+                  accept=".csv,.tsv,.txt"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleImportStockFile(file);
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => stockFileInputRef.current?.click()}
+                  disabled={importingStock || !selectedStoreId}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition shadow-2xs cursor-pointer disabled:opacity-50"
+                  title="Nạp tay file Inventory Ledger (.csv) tải từ Seller Central cho Store đang chọn"
+                >
+                  {importingStock ? <ArrowClockwiseIcon size={15} className="animate-spin" /> : <UploadSimpleIcon size={15} weight="bold" />}
+                  <span>{importingStock ? "Đang nạp..." : "Nhập file Tồn Kho"}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowColumnModal(true)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-amber-400 bg-amber-50 text-amber-950 hover:bg-amber-100 transition shadow-2xs cursor-pointer"
+                  title={`Cấu hình cột TỒN KHO (${stockColumns.filter((c) => c.visible !== false).length}/${stockColumns.length})`}
+                >
+                  <SlidersHorizontalIcon size={16} weight="bold" className="text-amber-700" />
+                </button>
+
+                <a
+                  href={`/api/accounting/inventory-ledger/export?store_id=${selectedStoreId}${stockQuery.data?.snapshotDate ? `&snapshot_date=${stockQuery.data.snapshotDate}` : ""}`}
+                  download
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-800 hover:bg-emerald-100 transition shadow-2xs cursor-pointer"
+                  title="Xuất Excel tồn kho của ngày chốt sổ đang xem"
+                >
+                  <FileXlsIcon size={15} weight="bold" />
+                  <span>Xuất Excel</span>
+                </a>
+
+                <button
+                  type="button"
+                  onClick={() => stockQuery.refetch()}
+                  disabled={stockQuery.isFetching}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 transition shadow-2xs cursor-pointer disabled:opacity-50"
+                  title="Tải lại tồn kho mới nhất từ database"
+                >
+                  <ArrowClockwiseIcon size={16} weight="bold" className={stockQuery.isFetching ? "animate-spin text-indigo-600" : ""} />
                 </button>
               </div>
             ) : (
@@ -5310,6 +5538,26 @@ function InventoryViewInner() {
           >
             <CalculatorIcon size={16} weight="bold" />
             <span>Basecost Tháng</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleTabChange("stock")}
+            className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
+              activeTab === "stock"
+                ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
+                : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
+            }`}
+          >
+            <WarehouseIcon size={16} weight="bold" />
+            <span>Tồn Kho</span>
+            <span
+              className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                activeTab === "stock" ? "bg-emerald-700 text-white" : "bg-slate-300 text-slate-700"
+              }`}
+            >
+              {stockSummary.skus}
+            </span>
           </button>
         </div>
 
@@ -5578,6 +5826,76 @@ function InventoryViewInner() {
               </button>
             </div>
           </div>
+        ) : activeTab === "stock" ? (
+          <div className="flex items-center gap-2 flex-wrap ml-auto justify-end">
+            <div className="relative w-40 sm:w-52 focus-within:!w-64 transition-all duration-200">
+              <MagnifyingGlassIcon size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Tìm SKU, ASIN, FNSKU, Title..."
+                value={stockSearch}
+                onChange={(e) => setStockSearch(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 bg-white pl-8 pr-7 py-1 text-xs text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:outline-hidden shadow-2xs"
+              />
+              {stockSearch && (
+                <button
+                  type="button"
+                  onClick={() => setStockSearch("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-600 rounded cursor-pointer"
+                  title="Xoá tìm kiếm"
+                >
+                  <XIcon size={12} weight="bold" />
+                </button>
+              )}
+            </div>
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Ngày chốt sổ:</span>
+            <div className="relative">
+              <select
+                aria-label="Chọn ngày chốt sổ tồn kho"
+                value={stockSnapshotDate || stockQuery.data?.snapshotDate || ""}
+                onChange={(e) => setStockSnapshotDate(e.target.value === stockQuery.data?.snapshotDates[0] ? "" : e.target.value)}
+                disabled={!stockQuery.data?.snapshotDates.length}
+                className="pl-2.5 pr-7 py-1 text-xs font-bold text-slate-800 bg-white border border-slate-300 rounded-lg appearance-none focus:outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer shadow-2xs disabled:text-slate-400"
+              >
+                {!stockQuery.data?.snapshotDates.length && <option value="">Chưa có dữ liệu</option>}
+                {stockQuery.data?.snapshotDates.map((date, index) => (
+                  <option key={date} value={date}>
+                    {formatSnapshotDate(date)}
+                    {index === 0 ? " (mới nhất)" : ""}
+                  </option>
+                ))}
+              </select>
+              <CaretDownIcon className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
+            </div>
+
+            {/* Zoom Controls (+ / -) */}
+            <div className="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-300 shadow-2xs">
+              <button
+                type="button"
+                onClick={() => setTableZoom((z) => Math.max(60, z - 10))}
+                className="h-6 w-6 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 hover:shadow-2xs active:scale-95 transition cursor-pointer"
+                title="Thu nhỏ bảng (-10%)"
+              >
+                <MinusIcon size={13} weight="bold" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setTableZoom(100)}
+                className="px-1.5 py-0.5 text-[11px] font-mono font-bold text-slate-700 hover:text-indigo-600 cursor-pointer"
+                title="Đặt lại cỡ 100%"
+              >
+                {tableZoom}%
+              </button>
+              <button
+                type="button"
+                onClick={() => setTableZoom((z) => Math.min(150, z + 10))}
+                className="h-6 w-6 rounded flex items-center justify-center font-bold text-slate-700 hover:bg-white hover:text-indigo-600 hover:shadow-2xs active:scale-95 transition cursor-pointer"
+                title="Phóng to bảng (+10%)"
+              >
+                <PlusIcon size={13} weight="bold" />
+              </button>
+            </div>
+          </div>
         ) : null}
       </div>
 
@@ -5594,6 +5912,8 @@ function InventoryViewInner() {
                 ? skuColumns
                 : activeTab === "inbound"
                 ? inboundColumns
+                : activeTab === "stock"
+                ? stockColumns
                 : checkShipmentColumns;
             const col = activeColumns.find((c) => c.id === field);
             const label = col?.label || field;
@@ -6256,6 +6576,48 @@ function InventoryViewInner() {
             onAutoFitColumn={(colId) => handleAutoFitColumn("monthly_base_cost", colId)}
             onReorderColumns={handleReorderMonthlyBaseCostColumns}
             onColumnContextMenu={(field, x, y) => setColumnContextMenu({ table: "monthly_base_cost", field, x, y })}
+          />
+        </div>
+      )}
+
+      {/* TAB 5: TỒN KHO (Inventory Ledger, Tồn kho = In Transit Between Warehouses + Ending Warehouse Balance) */}
+      {visitedTabs.stock && (
+        <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col ${activeTab === "stock" ? "" : "hidden"}`}>
+          <InventoryStockView
+            rows={pagedStockItems}
+            startIndex={(stockPage - 1) * stockLimit}
+            loading={stockQuery.isLoading}
+            emptyMessage={
+              allStockItems.length > 0 ? (
+                "Không có dòng nào khớp bộ lọc / từ khóa."
+              ) : (
+                <>
+                  Chưa có dữ liệu tồn kho của Store {selectedStore?.name}. File Inventory Ledger được tự động tải vào mỗi thứ 2,
+                  hoặc nhấn <strong>Nhập file Tồn Kho</strong> để nạp tay.
+                </>
+              )
+            }
+            summary={stockSummary}
+            tableZoom={tableZoom}
+            columns={stockColumns}
+            frozenThrough={frozenThrough.stock}
+            onResizeColumn={(colId, w) => resizeColumn("stock", colId, w)}
+            onAutoFitColumn={(colId) => handleAutoFitColumn("stock", colId)}
+            onReorderColumns={handleReorderStockColumns}
+            onColumnContextMenu={(field, x, y) => setColumnContextMenu({ table: "stock", field, x, y })}
+            onPreviewImage={(url, title) => setPreviewModal({ url, title })}
+          />
+          <PaginationBar
+            page={stockPage}
+            totalPages={stockTotalPages}
+            totalItems={filteredStockItems.length}
+            limit={stockLimit}
+            onPageChange={setStockPage}
+            onLimitChange={(l) => {
+              setStockLimit(l);
+              setStockPage(1);
+            }}
+            label="dòng"
           />
         </div>
       )}
@@ -7562,6 +7924,8 @@ function InventoryViewInner() {
             ? "CHI TIẾT ĐI HÀNG"
             : activeTab === "check_shipment"
             ? "CHECK SHIPMENT"
+            : activeTab === "stock"
+            ? "TỒN KHO"
             : "BASECOST THÁNG"
         }
         columns={
@@ -7571,6 +7935,8 @@ function InventoryViewInner() {
             ? inboundColumns
             : activeTab === "check_shipment"
             ? checkShipmentColumns
+            : activeTab === "stock"
+            ? stockColumns
             : monthlyBaseCostColumns
         }
         onSave={
@@ -7580,6 +7946,8 @@ function InventoryViewInner() {
             ? handleSaveInboundColumns
             : activeTab === "check_shipment"
             ? handleSaveCheckShipmentColumns
+            : activeTab === "stock"
+            ? handleSaveStockColumns
             : handleSaveMonthlyBaseCostColumns
         }
         onReset={
@@ -7589,6 +7957,8 @@ function InventoryViewInner() {
             ? handleResetInboundColumns
             : activeTab === "check_shipment"
             ? handleResetCheckShipmentColumns
+            : activeTab === "stock"
+            ? handleResetStockColumns
             : handleResetMonthlyBaseCostColumns
         }
       />

@@ -1,6 +1,24 @@
 import { getDatabaseClient } from "@/lib/db";
 import { parseCsv } from "@/lib/csv";
 
+/** Các cột số của báo cáo Inventory Ledger ngoài 2 cột tạo nên tồn kho (cột DB → tiêu đề trong file). */
+export const LEDGER_EVENT_COLUMNS = {
+  starting_warehouse_balance: "Starting Warehouse Balance",
+  receipts: "Receipts",
+  customer_shipments: "Customer Shipments",
+  customer_returns: "Customer Returns",
+  vendor_returns: "Vendor Returns",
+  warehouse_transfer_in_out: "Warehouse Transfer In/Out",
+  found: "Found",
+  lost: "Lost",
+  damaged: "Damaged",
+  disposed: "Disposed",
+  other_events: "Other Events",
+  unknown_events: "Unknown Events",
+} as const;
+export type LedgerEventColumn = keyof typeof LEDGER_EVENT_COLUMNS;
+const LEDGER_EVENT_KEYS = Object.keys(LEDGER_EVENT_COLUMNS) as LedgerEventColumn[];
+
 export interface InventoryLedgerRow {
   date: string | null;
   fnsku: string | null;
@@ -8,9 +26,28 @@ export interface InventoryLedgerRow {
   sku: string; // From MSKU
   title: string | null;
   disposition: string | null;
+  location: string;
   inTransitBetweenWarehouses: number;
   endingWarehouseBalance: number;
   totalWarehouseBalance: number;
+  events: Record<LedgerEventColumn, number>;
+}
+
+/** 1 dòng của tab TỒN KHO: dòng báo cáo + Product Type / Mockup lấy từ Bảng Mã. */
+export interface InventoryStockItem extends Record<LedgerEventColumn, number> {
+  id: string;
+  report_date: string | null;
+  fnsku: string | null;
+  asin: string;
+  sku: string;
+  title: string | null;
+  disposition: string | null;
+  location: string;
+  in_transit_between_warehouses: number;
+  ending_warehouse_balance: number;
+  ton_kho: number;
+  product_type: string | null;
+  mockup: string | null;
 }
 
 export interface InventoryBalanceItem {
@@ -100,6 +137,8 @@ export function parseInventoryLedgerContent(content: string): InventoryLedgerRow
     "endingbalance",
     "endingwarehouse"
   );
+  const idxLocation = findIdx("location", "country");
+  const eventIdx = LEDGER_EVENT_KEYS.map((key) => [key, findIdx(LEDGER_EVENT_COLUMNS[key])] as const);
 
   const results: InventoryLedgerRow[] = [];
 
@@ -122,9 +161,13 @@ export function parseInventoryLedgerContent(content: string): InventoryLedgerRow
       sku,
       title: idxTitle !== -1 && r[idxTitle] ? r[idxTitle].trim() : null,
       disposition: idxDisposition !== -1 && r[idxDisposition] ? r[idxDisposition].trim().toUpperCase() : "SELLABLE",
+      location: idxLocation !== -1 && r[idxLocation] ? r[idxLocation].trim().toUpperCase() : "",
       inTransitBetweenWarehouses: inTransit,
       endingWarehouseBalance: ending,
       totalWarehouseBalance: total,
+      events: Object.fromEntries(
+        eventIdx.map(([key, idx]) => [key, idx !== -1 ? parseNumber(r[idx]) : 0]),
+      ) as Record<LedgerEventColumn, number>,
     });
   }
 
@@ -153,7 +196,7 @@ export async function ingestInventoryLedgerRows(
 
   const sql = await getDatabaseClient();
 
-  // 1. Gom nhóm theo khóa duy nhất (store_id, snapshot_date, sku, asin, fnsku, disposition)
+  // 1. Gom nhóm theo khóa duy nhất (store_id, snapshot_date, sku, asin, fnsku, disposition, location)
   // để tránh lỗi Postgres 21000 (ON CONFLICT DO UPDATE command cannot affect row a second time)
   // nếu trong file có nhiều dòng cùng SKU/Disposition
   const rawLedgerMap = new Map<
@@ -167,17 +210,18 @@ export async function ingestInventoryLedgerRows(
       sku: string;
       title: string | null;
       disposition: string;
+      location: string;
       in_transit_between_warehouses: number;
       ending_warehouse_balance: number;
       total_warehouse_balance: number;
       source_file: string | null;
-    }
+    } & Record<LedgerEventColumn, number>
   >();
 
   for (const r of rows) {
     const fnskuKey = (r.fnsku || "").trim().toUpperCase();
     const dispKey = (r.disposition || "SELLABLE").trim().toUpperCase();
-    const key = `${r.sku.trim().toUpperCase()}|||${r.asin.trim().toUpperCase()}|||${fnskuKey}|||${dispKey}`;
+    const key = `${r.sku.trim().toUpperCase()}|||${r.asin.trim().toUpperCase()}|||${fnskuKey}|||${dispKey}|||${r.location}`;
     const existing = rawLedgerMap.get(key);
 
     if (!existing) {
@@ -190,12 +234,15 @@ export async function ingestInventoryLedgerRows(
         sku: r.sku,
         title: r.title,
         disposition: dispKey,
+        location: r.location,
         in_transit_between_warehouses: r.inTransitBetweenWarehouses,
         ending_warehouse_balance: r.endingWarehouseBalance,
         total_warehouse_balance: r.totalWarehouseBalance,
         source_file: sourceFileName || null,
+        ...r.events,
       });
     } else {
+      for (const k of LEDGER_EVENT_KEYS) existing[k] += r.events[k];
       existing.in_transit_between_warehouses += r.inTransitBetweenWarehouses;
       existing.ending_warehouse_balance += r.endingWarehouseBalance;
       existing.total_warehouse_balance += r.totalWarehouseBalance;
@@ -206,23 +253,15 @@ export async function ingestInventoryLedgerRows(
 
   const ledgerValues = Array.from(rawLedgerMap.values());
 
-  // Ghi nhận theo lô 500 dòng
+  // Nạp lại cùng 1 ngày chốt sổ thì thay toàn bộ dòng của ngày đó (dòng không còn trong file bị bỏ).
+  // Ghi nhận theo lô 500 dòng, trong 1 transaction để tab TỒN KHO không thấy snapshot dở dang.
   const BATCH_SIZE = 500;
-  for (let i = 0; i < ledgerValues.length; i += BATCH_SIZE) {
-    const chunk = ledgerValues.slice(i, i + BATCH_SIZE);
-    await sql`
-      INSERT INTO accounting_inventory_ledger ${sql(chunk)}
-      ON CONFLICT (store_id, snapshot_date, sku, asin, fnsku, disposition)
-      DO UPDATE SET
-        report_date = EXCLUDED.report_date,
-        title = COALESCE(EXCLUDED.title, accounting_inventory_ledger.title),
-        in_transit_between_warehouses = EXCLUDED.in_transit_between_warehouses,
-        ending_warehouse_balance = EXCLUDED.ending_warehouse_balance,
-        total_warehouse_balance = EXCLUDED.total_warehouse_balance,
-        source_file = COALESCE(EXCLUDED.source_file, accounting_inventory_ledger.source_file),
-        updated_at = NOW()
-    `;
-  }
+  await sql.begin(async (tx) => {
+    await tx`DELETE FROM accounting_inventory_ledger WHERE store_id = ${storeId} AND snapshot_date = ${snapshotDate}`;
+    for (let i = 0; i < ledgerValues.length; i += BATCH_SIZE) {
+      await tx`INSERT INTO accounting_inventory_ledger ${tx(ledgerValues.slice(i, i + BATCH_SIZE))}`;
+    }
+  });
 
   // 2. Gom nhóm theo SKU + ASIN để tính tổng tồn kho
   // Cột tồn kho = In Transit Between Warehouses + Ending Warehouse Balance
@@ -404,4 +443,40 @@ export async function getLatestInventoryBalances(
     snapshotDate: r.snapshot_date,
     updatedAt: r.updated_at,
   }));
+}
+
+/**
+ * Tab TỒN KHO: các dòng báo cáo của 1 ngày chốt sổ (mặc định mới nhất) + danh sách các ngày đã có.
+ * Product Type / Mockup lấy từ Bảng Mã FBA theo SKU.
+ */
+export async function getInventoryStockSnapshot(
+  storeId: string,
+  snapshotDate?: string | null,
+): Promise<{ snapshotDates: string[]; snapshotDate: string | null; items: InventoryStockItem[] }> {
+  const sql = await getDatabaseClient();
+  const dates = await sql<{ d: string }[]>`
+    SELECT DISTINCT snapshot_date::text AS d FROM accounting_inventory_ledger
+    WHERE store_id = ${storeId} ORDER BY d DESC
+  `;
+  const snapshotDates = dates.map((r) => r.d);
+  const target = snapshotDate && snapshotDates.includes(snapshotDate) ? snapshotDate : snapshotDates[0] ?? null;
+  if (!target) return { snapshotDates, snapshotDate: null, items: [] };
+
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT
+      l.id, l.report_date::text, l.fnsku, l.asin, l.sku, l.title, l.disposition, l.location,
+      l.in_transit_between_warehouses::float, l.ending_warehouse_balance::float,
+      l.total_warehouse_balance::float AS ton_kho,
+      ${sql.unsafe(LEDGER_EVENT_KEYS.map((k) => `l.${k}::float`).join(", "))},
+      m.product_type, COALESCE(m.mockup_url, m.mockup) AS mockup
+    FROM accounting_inventory_ledger l
+    LEFT JOIN LATERAL (
+      SELECT product_type, mockup, mockup_url FROM accounting_sku_master
+      WHERE store_id = l.store_id AND deleted_at IS NULL AND LOWER(TRIM(sku)) = LOWER(TRIM(l.sku))
+      LIMIT 1
+    ) m ON TRUE
+    WHERE l.store_id = ${storeId} AND l.snapshot_date = ${target}
+    ORDER BY l.total_warehouse_balance DESC, l.sku, l.location
+  `;
+  return { snapshotDates, snapshotDate: target, items: rows as unknown as InventoryStockItem[] };
 }
