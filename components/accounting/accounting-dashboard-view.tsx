@@ -1630,10 +1630,13 @@ export function AccountingDashboardView() {
     [stores.length],
   );
 
+  const [activeFlyout, setActiveFlyout] = useState<"store" | "team" | null>(null);
+
   const handleSelectStore = (storeId: string, team?: string | null) => {
     updateSelection([storeId]);
     persistTeam(team || null);
     setStoreMenuOpen(false);
+    setActiveFlyout(null);
   };
 
   const persistTeam = (team: string | null) => {
@@ -1650,6 +1653,7 @@ export function AccountingDashboardView() {
     updateSelection([]);
     persistTeam(null);
     setStoreMenuOpen(false);
+    setActiveFlyout(null);
   };
 
   // Tổng kết theo team: gom mọi store có team này (vd FBA 2 = EVERPHANT + FASTPEACE + LIMIMA).
@@ -1657,6 +1661,7 @@ export function AccountingDashboardView() {
     persistTeam(team);
     updateSelection([]);
     setStoreMenuOpen(false);
+    setActiveFlyout(null);
   };
 
   const handleRangeChange = (next: DateRange) => setDateRange(next);
@@ -1754,9 +1759,9 @@ export function AccountingDashboardView() {
   const allSelected = validSelectedIds.length === 0;
   const selectedStore =
     validSelectedIds.length === 1 ? stores.find((s) => s.id === validSelectedIds[0]) : null;
-  // 1 dropdown: All Stores / từng store (kèm team của store) / tổng kết theo team
+  // 1 dropdown: All / từng store (kèm team của store) / tổng kết theo team
   const storeLabel = allSelected
-    ? selectedTeam || "All Stores"
+    ? selectedTeam || "All"
     : selectedStore
     ? selectedTeam
       ? `${selectedStore.name} • ${selectedTeam}`
@@ -1837,23 +1842,37 @@ export function AccountingDashboardView() {
           <div className="flex w-full flex-wrap items-center gap-2 @min-[640px]:w-auto">
             <DropdownShell
               className="min-w-0 flex-1 @min-[640px]:flex-none"
-              widthClass="w-64 sm:w-72"
+              widthClass="w-60 sm:w-64"
               align="left"
               label={storeLabel}
               icon={
                 selectedTeam ? (
                   <UsersThreeIcon size={15} weight="bold" className="text-indigo-600" />
                 ) : (
-                  <StorefrontIcon size={15} weight="bold" className="text-slate-400" />
+                  <StorefrontIcon
+                    size={15}
+                    weight="bold"
+                    className={validSelectedIds.length > 0 ? "text-indigo-600" : "text-slate-500"}
+                  />
                 )
               }
               open={storeMenuOpen}
-              setOpen={setStoreMenuOpen}
+              setOpen={(open) => {
+                setStoreMenuOpen(open);
+                if (!open) setActiveFlyout(null);
+              }}
             >
-              <div className="p-1 text-[13px]">
-                {/* TOÀN BỘ CỬA HÀNG */}
-                <MenuItem active={allSelected && !selectedTeam} onClick={handleSelectAll}>
-                  <span className="font-semibold text-slate-800">All Stores</span>
+              <div
+                className="relative p-1 text-[13px]"
+                onMouseLeave={() => setActiveFlyout(null)}
+              >
+                {/* MỤC ALL */}
+                <MenuItem
+                  active={allSelected && !selectedTeam}
+                  onClick={handleSelectAll}
+                >
+                  <StorefrontIcon size={14} weight="bold" className="shrink-0 text-slate-500" />
+                  <span className="font-semibold text-slate-800">All</span>
                   <span className="ml-auto text-[11px] font-normal text-slate-400">
                     {stores.length} stores
                   </span>
@@ -1861,135 +1880,239 @@ export function AccountingDashboardView() {
 
                 <div className="my-1.5 h-px bg-slate-100" />
 
-                {stores.map((s) => {
-                  const storeTeams = parseStoreTeams(s.team);
-                  const isMultiTeam = storeTeams.length > 1;
-                  const isStoreActive = validSelectedIds.length === 1 && validSelectedIds[0] === s.id;
-
-                  if (isMultiTeam) {
-                    return (
-                      <div key={s.id} className="group relative">
-                        <div
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => handleSelectStore(s.id, null)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === " ") {
-                              e.preventDefault();
-                              handleSelectStore(s.id, null);
-                            }
-                          }}
-                          className={`flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] font-medium transition-colors ${
-                            isStoreActive
-                              ? "bg-indigo-50 font-semibold text-indigo-700"
-                              : "text-slate-700 hover:bg-slate-50"
-                          }`}
-                        >
-                          <span className="flex min-w-0 flex-1 items-center gap-2">
-                            <span
-                              className="h-2 w-2 shrink-0 rounded-full"
-                              style={{ backgroundColor: colorOf(s.id) }}
-                            />
-                            <span className="truncate">{s.name}</span>
-                            <span className="ml-auto shrink-0 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-600">
-                              {storeTeams.length} teams
-                            </span>
-                          </span>
-                          <CaretRightIcon
-                            size={12}
-                            weight="bold"
-                            className="shrink-0 text-slate-400 transition-colors group-hover:text-indigo-600"
-                          />
-                        </div>
-
-                        {/* Flyout Submenu khi hover / chỉ vào store có nhiều team */}
-                        <div className="absolute left-[calc(100%-4px)] top-0 z-50 hidden w-52 pl-2 group-hover:block group-focus-within:block">
-                          <div className="rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl ring-1 ring-black/5 animate-in fade-in duration-150">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleSelectStore(s.id, null);
-                              }}
-                              className={`flex w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[12px] font-medium transition-colors ${
-                                isStoreActive && !selectedTeam
-                                  ? "bg-indigo-50 font-semibold text-indigo-700"
-                                  : "text-slate-700 hover:bg-slate-50"
-                              }`}
-                            >
-                              {/* Dòng tổng của store ở trên, các team chi tiết bên dưới */}
-                              <span className="flex min-w-0 items-center gap-2">
-                                <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: colorOf(s.id) }} />
-                                <span className="truncate font-semibold">{s.name}</span>
-                              </span>
-                              {isStoreActive && !selectedTeam && (
-                                <CheckIcon size={12} weight="bold" className="shrink-0 text-indigo-600" />
-                              )}
-                            </button>
-                            <div className="my-1 h-px bg-slate-100" />
-                            {storeTeams.map((t) => {
-                              const isThisTeamActive = isStoreActive && selectedTeam === t;
-                              return (
-                                <button
-                                  key={t}
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleSelectStore(s.id, t);
-                                  }}
-                                  className={`flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-medium transition-colors ${
-                                    isThisTeamActive
-                                      ? "bg-indigo-50 font-semibold text-indigo-700"
-                                      : "text-slate-700 hover:bg-slate-50"
-                                  }`}
-                                >
-                                  <span className="flex min-w-0 items-center gap-1.5 truncate">
-                                    <UsersThreeIcon size={13} weight="bold" className="shrink-0 text-indigo-500" />
-                                    <span>Team {t}</span>
-                                  </span>
-                                  {isThisTeamActive && (
-                                    <CheckIcon size={12} weight="bold" className="shrink-0 text-indigo-600" />
-                                  )}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <MenuItem
-                      key={s.id}
-                      active={isStoreActive && !selectedTeam}
-                      onClick={() => handleSelectStore(s.id, null)}
-                    >
-                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: colorOf(s.id) }} />
-                      <span className="truncate">{s.name}</span>
-                      {s.team && (
-                        <span className="ml-auto shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
-                          {s.team}
+                {/* 3. CẤP STORE */}
+                <div
+                  className="group/store relative"
+                  onMouseEnter={() => setActiveFlyout("store")}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setActiveFlyout(activeFlyout === "store" ? null : "store")}
+                    className={`flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] font-medium transition-colors ${
+                      validSelectedIds.length > 0 || activeFlyout === "store"
+                        ? "bg-slate-100 text-slate-900 font-semibold"
+                        : "text-slate-700 hover:bg-slate-50"
+                    }`}
+                  >
+                    <span className="flex min-w-0 flex-1 items-center gap-2">
+                      <StorefrontIcon
+                        size={14}
+                        weight="bold"
+                        className={validSelectedIds.length > 0 ? "text-indigo-600" : "text-slate-500"}
+                      />
+                      <span>Store</span>
+                      {validSelectedIds.length > 0 && selectedStore ? (
+                        <span className="ml-auto truncate max-w-[90px] rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600">
+                          {selectedStore.name}
+                        </span>
+                      ) : (
+                        <span className="ml-auto text-[11px] font-normal text-slate-400">
+                          {stores.length} stores
                         </span>
                       )}
-                    </MenuItem>
-                  );
-                })}
+                    </span>
+                    <CaretRightIcon
+                      size={12}
+                      weight="bold"
+                      className="shrink-0 text-slate-400 transition-colors group-hover/store:text-indigo-600"
+                    />
+                  </button>
 
-                {/* Tổng kết theo team: gom mọi store có team đó */}
-                {teams.length > 0 && <div className="my-1.5 h-px bg-slate-100" />}
-                {teams.map((t) => {
-                  const count = stores.filter((s) => storeHasTeam(s.team, t)).length;
-                  return (
-                    <MenuItem key={t} active={allSelected && selectedTeam === t} onClick={() => handleSelectTeam(t)}>
-                      <UsersThreeIcon size={13} weight="bold" className="shrink-0 text-indigo-500" />
-                      <span className="truncate">{t}</span>
-                      <span className="ml-auto shrink-0 text-[11px] font-normal text-slate-400">
-                        {count} {count === 1 ? "store" : "stores"}
-                      </span>
-                    </MenuItem>
-                  );
-                })}
+                  {/* Flyout Submenu cho Cấp Store */}
+                  <div
+                    className={`absolute left-[calc(100%-4px)] top-0 z-50 w-64 pl-2 ${
+                      activeFlyout === "store" ? "block" : "hidden group-hover/store:block"
+                    }`}
+                  >
+                    <div className="max-h-[380px] overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl ring-1 ring-black/5 animate-in fade-in duration-150">
+                      <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                        Stores ({stores.length})
+                      </div>
+                      {stores.map((s) => {
+                        const storeTeams = parseStoreTeams(s.team);
+                        const isMultiTeam = storeTeams.length > 1;
+                        const isStoreActive = validSelectedIds.length === 1 && validSelectedIds[0] === s.id;
+
+                        if (isMultiTeam) {
+                          return (
+                            <div key={s.id} className="group/sub relative">
+                              <div
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => handleSelectStore(s.id, null)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    handleSelectStore(s.id, null);
+                                  }
+                                }}
+                                className={`flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] font-medium transition-colors ${
+                                  isStoreActive
+                                    ? "bg-indigo-50 font-semibold text-indigo-700"
+                                    : "text-slate-700 hover:bg-slate-50"
+                                }`}
+                              >
+                                <span className="flex min-w-0 flex-1 items-center gap-2">
+                                  <span
+                                    className="h-2 w-2 shrink-0 rounded-full"
+                                    style={{ backgroundColor: colorOf(s.id) }}
+                                  />
+                                  <span className="truncate">{s.name}</span>
+                                  <span className="ml-auto shrink-0 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-600">
+                                    {storeTeams.length} teams
+                                  </span>
+                                </span>
+                                <CaretRightIcon
+                                  size={12}
+                                  weight="bold"
+                                  className="shrink-0 text-slate-400 transition-colors group-hover/sub:text-indigo-600"
+                                />
+                              </div>
+
+                              {/* Submenu cho store có nhiều team */}
+                              <div className="absolute left-[calc(100%-4px)] top-0 z-50 hidden w-52 pl-2 group-hover/sub:block group-focus-within/sub:block">
+                                <div className="rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl ring-1 ring-black/5 animate-in fade-in duration-150">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleSelectStore(s.id, null);
+                                    }}
+                                    className={`flex w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[12px] font-medium transition-colors ${
+                                      isStoreActive && !selectedTeam
+                                        ? "bg-indigo-50 font-semibold text-indigo-700"
+                                        : "text-slate-700 hover:bg-slate-50"
+                                    }`}
+                                  >
+                                    <span className="flex min-w-0 items-center gap-2">
+                                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: colorOf(s.id) }} />
+                                      <span className="truncate font-semibold">{s.name} (Tất cả)</span>
+                                    </span>
+                                    {isStoreActive && !selectedTeam && (
+                                      <CheckIcon size={12} weight="bold" className="shrink-0 text-indigo-600" />
+                                    )}
+                                  </button>
+                                  <div className="my-1 h-px bg-slate-100" />
+                                  {storeTeams.map((t) => {
+                                    const isThisTeamActive = isStoreActive && selectedTeam === t;
+                                    return (
+                                      <button
+                                        key={t}
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleSelectStore(s.id, t);
+                                        }}
+                                        className={`flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] font-medium transition-colors ${
+                                          isThisTeamActive
+                                            ? "bg-indigo-50 font-semibold text-indigo-700"
+                                            : "text-slate-700 hover:bg-slate-50"
+                                        }`}
+                                      >
+                                        <span className="flex min-w-0 items-center gap-1.5 truncate">
+                                          <UsersThreeIcon size={13} weight="bold" className="shrink-0 text-indigo-500" />
+                                          <span>Team {t}</span>
+                                        </span>
+                                        {isThisTeamActive && (
+                                          <CheckIcon size={12} weight="bold" className="shrink-0 text-indigo-600" />
+                                        )}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <MenuItem
+                            key={s.id}
+                            active={isStoreActive && !selectedTeam}
+                            onClick={() => handleSelectStore(s.id, null)}
+                          >
+                            <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: colorOf(s.id) }} />
+                            <span className="truncate">{s.name}</span>
+                            {s.team && (
+                              <span className="ml-auto shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
+                                {s.team}
+                              </span>
+                            )}
+                          </MenuItem>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 4. CẤP TEAM */}
+                <div
+                  className="group/team relative"
+                  onMouseEnter={() => setActiveFlyout("team")}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setActiveFlyout(activeFlyout === "team" ? null : "team")}
+                    className={`flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] font-medium transition-colors ${
+                      (allSelected && selectedTeam) || activeFlyout === "team"
+                        ? "bg-slate-100 text-slate-900 font-semibold"
+                        : "text-slate-700 hover:bg-slate-50"
+                    }`}
+                  >
+                    <span className="flex min-w-0 flex-1 items-center gap-2">
+                      <UsersThreeIcon
+                        size={14}
+                        weight="bold"
+                        className={allSelected && selectedTeam ? "text-indigo-600" : "text-indigo-500"}
+                      />
+                      <span>Team</span>
+                      {allSelected && selectedTeam ? (
+                        <span className="ml-auto truncate max-w-[90px] rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600">
+                          {selectedTeam}
+                        </span>
+                      ) : (
+                        <span className="ml-auto text-[11px] font-normal text-slate-400">
+                          {teams.length} teams
+                        </span>
+                      )}
+                    </span>
+                    <CaretRightIcon
+                      size={12}
+                      weight="bold"
+                      className="shrink-0 text-slate-400 transition-colors group-hover/team:text-indigo-600"
+                    />
+                  </button>
+
+                  {/* Flyout Submenu cho Cấp Team */}
+                  <div
+                    className={`absolute left-[calc(100%-4px)] top-0 z-50 w-56 pl-2 ${
+                      activeFlyout === "team" ? "block" : "hidden group-hover/team:block"
+                    }`}
+                  >
+                    <div className="max-h-[380px] overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl ring-1 ring-black/5 animate-in fade-in duration-150">
+                      <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                        Teams ({teams.length})
+                      </div>
+                      {teams.map((t) => {
+                        const count = stores.filter((s) => storeHasTeam(s.team, t)).length;
+                        const isThisTeamActive = allSelected && selectedTeam === t;
+                        return (
+                          <MenuItem
+                            key={t}
+                            active={isThisTeamActive}
+                            onClick={() => handleSelectTeam(t)}
+                          >
+                            <UsersThreeIcon size={13} weight="bold" className="shrink-0 text-indigo-500" />
+                            <span className="truncate">{t}</span>
+                            <span className="ml-auto shrink-0 text-[11px] font-normal text-slate-400">
+                              {count} {count === 1 ? "store" : "stores"}
+                            </span>
+                          </MenuItem>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
               </div>
             </DropdownShell>
             <div className="order-last w-full @min-[640px]:order-none @min-[640px]:w-auto">
