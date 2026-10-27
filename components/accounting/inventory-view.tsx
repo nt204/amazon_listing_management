@@ -23,7 +23,6 @@ import {
   EyeIcon,
   EyeSlashIcon,
   FileXlsIcon,
-  LinkSimpleIcon,
   FloppyDiskIcon,
   FunnelIcon,
   LockIcon,
@@ -119,8 +118,8 @@ import {
 } from "./column-manager-modal";
 import { InventoryHistoryDrawer } from "./inventory-history-drawer";
 import {
-  InventorySheetLinksModal,
   SHEET_LINKS_QUERY_KEY,
+  describeLinkOutcome,
   describeSyncResult,
   requestSheetSync,
   useSheetLinks,
@@ -2370,15 +2369,17 @@ function InventoryViewInner() {
     count?: number;
     errors?: string[];
   } | null>(null);
-  // Link Google Sheet lưu theo store (Bảng Mã / Chi tiết đi hàng / Bảng Mã FBM): nút tải lại của tab
-  // đồng bộ ngay từ link; cửa sổ import FBM dán link cũng lưu vào đây.
-  const [showSheetLinksModal, setShowSheetLinksModal] = useState(false);
+  // Link Google Sheet lưu theo store (cấu hình ở System Admin): file INVENTORY cho Bảng Mã FBA + Chi tiết
+  // đi hàng, file FBM cho Bảng Mã FBM. Nút tải lại của tab đồng bộ ngay đúng tab đó.
   const [syncingSheet, setSyncingSheet] = useState(false);
   const sheetLinksQuery = useSheetLinks(!!selectedStoreId);
   const currentSheetType: SheetType | null =
     activeTab === "sku" ? (skuChannel === "fbm" ? "sku_fbm" : "sku") : activeTab === "inbound" ? "inbound" : null;
   const currentSheetLink = sheetLinksQuery.data?.links.find(
-    (link) => link.store_id === selectedStoreId && link.sheet_type === currentSheetType,
+    (link) =>
+      link.store_id === selectedStoreId &&
+      currentSheetType != null &&
+      link.link_type === (currentSheetType === "sku_fbm" ? "fbm" : "inventory"),
   );
   const [sheetUrl, setSheetUrl] = useState("");
 
@@ -2386,7 +2387,7 @@ function InventoryViewInner() {
     setShowImportModal(true);
     setImportResult(null);
     setSheetUrl(
-      sheetLinksQuery.data?.links.find((link) => link.store_id === selectedStoreId && link.sheet_type === "sku_fbm")?.sheet_url ?? "",
+      sheetLinksQuery.data?.links.find((link) => link.store_id === selectedStoreId && link.link_type === "fbm")?.sheet_url ?? "",
     );
   };
 
@@ -2993,11 +2994,12 @@ function InventoryViewInner() {
       const outcome = await requestSheetSync("sync", { store_id: selectedStoreId, sheet_type: currentSheetType, trigger: "reload" });
       setSyncingSheet(false);
       queryClient.invalidateQueries({ queryKey: SHEET_LINKS_QUERY_KEY });
-      if (outcome.ok) {
-        const warn = outcome.result.warnings.length ? ` (${outcome.result.warnings.join(" ")})` : "";
-        notify(`Đã đồng bộ từ Google Sheet: ${describeSyncResult(outcome.result)}${warn}`, "success");
+      const part = outcome.parts[currentSheetType];
+      if (outcome.ok && part?.result) {
+        const warn = part.result.warnings.length ? ` (${part.result.warnings.join(" ")})` : "";
+        notify(`Đã đồng bộ từ Google Sheet: ${describeSyncResult(part.result)}${warn}`, "success");
       } else {
-        notify(`Đồng bộ Google Sheet lỗi: ${outcome.error}`, "error");
+        notify(`Đồng bộ Google Sheet lỗi: ${part?.error ?? outcome.error}`, "error");
       }
       refreshAfterSheetSync(currentSheetType);
     } else if (activeTab === "sku") {
@@ -3916,16 +3918,18 @@ function InventoryViewInner() {
     if (!selectedStoreId || !url || importing) return;
     setImporting(true);
     setImportResult(null);
-    const outcome = await requestSheetSync("save", { store_id: selectedStoreId, sheet_type: "sku_fbm", sheet_url: url });
+    const outcome = await requestSheetSync("save", { store_id: selectedStoreId, link_type: "fbm", sheet_url: url });
+    const result = outcome.parts.sku_fbm?.result;
     setImporting(false);
     queryClient.invalidateQueries({ queryKey: SHEET_LINKS_QUERY_KEY });
-    if (outcome.ok) {
-      setImportResult({ success: true, count: outcome.result.sheetRows, errors: outcome.result.warnings });
-      notify(`Đã đồng bộ Bảng Mã FBM từ tab "${outcome.result.tabTitle}": ${describeSyncResult(outcome.result)}`, "success");
+    if (outcome.ok && result) {
+      setImportResult({ success: true, count: result.sheetRows, errors: result.warnings });
+      notify(`Đã đồng bộ Bảng Mã FBM từ tab "${result.tabTitle}": ${describeLinkOutcome(outcome)}`, "success");
       refreshAfterSheetSync("sku_fbm");
     } else {
-      setImportResult({ success: false, count: 0, errors: [outcome.error] });
-      notify(outcome.error, "error");
+      const message = outcome.error ?? "Lỗi không xác định.";
+      setImportResult({ success: false, count: 0, errors: [message] });
+      notify(message, "error");
     }
   };
 
@@ -5161,16 +5165,6 @@ function InventoryViewInner() {
                   })`}
                 >
                   <SlidersHorizontalIcon size={16} weight="bold" className="text-amber-700" />
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setShowSheetLinksModal(true)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 hover:text-indigo-700 transition shadow-2xs cursor-pointer"
-                  title="Dán link Google Sheet cho các store để tự đồng bộ"
-                >
-                  <LinkSimpleIcon size={15} weight="bold" />
-                  <span>Google Sheet</span>
                 </button>
 
                 <button
@@ -7592,15 +7586,6 @@ function InventoryViewInner() {
             ? handleResetCheckShipmentColumns
             : handleResetMonthlyBaseCostColumns
         }
-      />
-
-      <InventorySheetLinksModal
-        isOpen={showSheetLinksModal}
-        onClose={() => setShowSheetLinksModal(false)}
-        stores={stores}
-        onSynced={(storeId, type) => {
-          if (storeId === selectedStoreId) refreshAfterSheetSync(type);
-        }}
       />
 
       {/* DRAWER LỊCH SỬ THAY ĐỔI & KHÔI PHỤC PHIÊN BẢN */}

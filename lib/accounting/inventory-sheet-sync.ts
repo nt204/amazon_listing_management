@@ -755,12 +755,15 @@ async function runPart(
     outcome = { ok: true, at: new Date().toISOString(), trigger, tabTitle: result.tabTitle, result };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    // Bị khóa vì tiến trình khác đang đồng bộ cùng phần: không đè trạng thái, lần chạy kia tự ghi kết quả
+    if (error instanceof ApiError && error.status === 409) {
+      return { ok: false, at: new Date().toISOString(), trigger, error: message };
+    }
     console.error(`[InventorySheetSync] ${link.store_id}/${part} (${trigger}) lỗi:`, message);
     outcome = { ok: false, at: new Date().toISOString(), trigger, error: message };
   } finally {
     inFlight.delete(flightKey);
   }
-  // Không đè trạng thái khi chỉ bị chặn vì đang chạy (lần chạy kia sẽ tự ghi kết quả)
   await recordPart(link, part, trigger, actor, startedAt, outcome).catch((error) =>
     console.error("[InventorySheetSync] Không ghi được nhật ký:", error),
   );

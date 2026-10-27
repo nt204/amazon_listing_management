@@ -3,7 +3,7 @@ import "server-only";
 import { getDatabaseClient } from "@/lib/db";
 import { listSheetLinks, syncAllSheetLinks } from "@/lib/accounting/inventory-sheet-sync";
 
-// Lịch đồng bộ Google Sheet → Inventory mỗi sáng (mặc định 9:00 giờ Việt Nam).
+// Lịch đồng bộ Google Sheet → Inventory mỗi sáng (mặc định 4:00 sáng giờ Việt Nam, trước giờ làm để sáng ra đã có số liệu mới).
 // Tắt bằng INVENTORY_SHEET_SYNC_SCHEDULE=off; đổi giờ bằng INVENTORY_SHEET_SYNC_HOUR.
 // Mỗi ngày chỉ chạy 1 lần kể cả khi nhiều server cùng chạy (khóa bằng bảng inventory_sheet_schedule_runs);
 // server bật sau giờ hẹn vẫn chạy bù trong ngày.
@@ -11,7 +11,12 @@ import { listSheetLinks, syncAllSheetLinks } from "@/lib/accounting/inventory-sh
 const TIME_ZONE = "Asia/Ho_Chi_Minh";
 const CHECK_INTERVAL_MS = 60_000;
 
-const globalForScheduler = globalThis as typeof globalThis & { inventorySheetScheduler?: NodeJS.Timeout };
+// Mỗi lần module được nạp (dev hot reload) có id riêng: bộ hẹn giờ của bản code cũ được thay bằng bản mới.
+const MODULE_ID = Symbol("inventory-sheet-scheduler");
+const globalForScheduler = globalThis as typeof globalThis & {
+  inventorySheetScheduler?: NodeJS.Timeout;
+  inventorySheetSchedulerOwner?: symbol;
+};
 
 function vietnamNow() {
   const parts = Object.fromEntries(
@@ -30,7 +35,7 @@ function vietnamNow() {
 }
 
 async function runIfDue() {
-  const hour = Number(process.env.INVENTORY_SHEET_SYNC_HOUR ?? 9);
+  const hour = Number(process.env.INVENTORY_SHEET_SYNC_HOUR ?? 4);
   const now = vietnamNow();
   if (now.hour < hour) return;
 
@@ -61,13 +66,18 @@ export function getInventorySheetSchedulerStatus() {
   return {
     enabled: process.env.INVENTORY_SHEET_SYNC_SCHEDULE !== "off",
     running: Boolean(globalForScheduler.inventorySheetScheduler),
-    hour: Number(process.env.INVENTORY_SHEET_SYNC_HOUR ?? 9),
+    hour: Number(process.env.INVENTORY_SHEET_SYNC_HOUR ?? 4),
   };
 }
 
 /** Bật lịch (gọi khi server khởi động và khi có request tới API link, chạy 1 lần duy nhất mỗi tiến trình). */
 export function startInventorySheetSyncScheduler() {
-  if (process.env.INVENTORY_SHEET_SYNC_SCHEDULE === "off" || globalForScheduler.inventorySheetScheduler) return;
+  if (process.env.INVENTORY_SHEET_SYNC_SCHEDULE === "off") return;
+  if (globalForScheduler.inventorySheetScheduler) {
+    if (globalForScheduler.inventorySheetSchedulerOwner === MODULE_ID) return;
+    clearInterval(globalForScheduler.inventorySheetScheduler);
+  }
+  globalForScheduler.inventorySheetSchedulerOwner = MODULE_ID;
   let running = false;
   const tick = () => {
     if (running) return;

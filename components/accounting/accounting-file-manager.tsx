@@ -14,8 +14,10 @@ import {
   CircleNotch,
   CaretDown,
   CaretRight,
+  LinkSimple,
 } from "@phosphor-icons/react";
 import type { ManagedAccountingFile, AccountingFileStats } from "@/lib/accounting/accounting-file-service";
+import { InventorySheetLinksModal } from "./inventory-sheet-links-modal";
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -60,6 +62,7 @@ export function AccountingFileManager() {
   const [availableDates, setAvailableDates] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [showSheetLinks, setShowSheetLinks] = useState(false);
 
   // Filters
   const [selectedStore, setSelectedStore] = useState<string>("ALL");
@@ -227,6 +230,7 @@ export function AccountingFileManager() {
 
   return (
     <div className="w-full max-w-7xl mx-auto space-y-5 animate-in fade-in duration-200">
+      <InventorySheetLinksModal isOpen={showSheetLinks} onClose={() => setShowSheetLinks(false)} />
       {/* Top Header & Stat Cards */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-200">
         <div>
@@ -240,6 +244,16 @@ export function AccountingFileManager() {
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowSheetLinks(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-xs font-semibold text-indigo-700 shadow-2xs hover:bg-indigo-100 transition cursor-pointer"
+            title="Dán link Google Sheet Inventory cho các store (tự đồng bộ 4:00 sáng)"
+          >
+            <LinkSimple size={14} weight="bold" />
+            Link Google Sheet
+          </button>
+
           <button
             type="button"
             onClick={toggleAllDates}
