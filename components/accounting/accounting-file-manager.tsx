@@ -17,10 +17,12 @@ import {
   LinkSimple,
   UploadSimple,
   CheckCircle,
+  Robot,
   X,
 } from "@phosphor-icons/react";
 import type { ManagedAccountingFile, AccountingFileStats } from "@/lib/accounting/accounting-file-service";
 import { InventorySheetLinksModal } from "./inventory-sheet-links-modal";
+import { AccountingCrawlerModal } from "./accounting-crawler-modal";
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -66,6 +68,7 @@ export function AccountingFileManager() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showSheetLinks, setShowSheetLinks] = useState(false);
+  const [showCrawlers, setShowCrawlers] = useState(false);
 
   // Upload modal state
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -317,6 +320,7 @@ export function AccountingFileManager() {
   return (
     <div className="w-full max-w-7xl mx-auto space-y-5 animate-in fade-in duration-200">
       <InventorySheetLinksModal isOpen={showSheetLinks} onClose={() => setShowSheetLinks(false)} />
+      <AccountingCrawlerModal isOpen={showCrawlers} onClose={() => setShowCrawlers(false)} />
       {/* Top Header & Stat Cards */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-200">
         <div>
@@ -351,6 +355,16 @@ export function AccountingFileManager() {
           >
             <LinkSimple size={14} weight="bold" />
             Link Google Sheet
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowCrawlers(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-violet-200 bg-violet-50 text-xs font-semibold text-violet-700 shadow-2xs hover:bg-violet-100 transition cursor-pointer"
+            title="Xem trạng thái và chạy thủ công các crawler kế toán trên máy Mac"
+          >
+            <Robot size={14} weight="bold" />
+            Crawler
           </button>
 
           <button

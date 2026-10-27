@@ -837,6 +837,11 @@ const EditableCell = memo(
     if (prevProps.id !== nextProps.id) return false;
     if (prevProps.field !== nextProps.field) return false;
     if (prevProps.className !== nextProps.className) return false;
+    // style chứa độ rộng / vị trí khóa cột: đổi độ rộng cột mà bỏ qua thì ô lệch khỏi tiêu đề
+    const prevStyle = (prevProps.style ?? {}) as Record<string, unknown>;
+    const nextStyle = (nextProps.style ?? {}) as Record<string, unknown>;
+    const styleKeys = new Set([...Object.keys(prevStyle), ...Object.keys(nextStyle)]);
+    for (const key of styleKeys) if (prevStyle[key] !== nextStyle[key]) return false;
     if (prevProps.options?.length !== nextProps.options?.length) return false;
     if (prevProps.options?.some((option, index) => option !== nextProps.options?.[index])) return false;
     return true;
