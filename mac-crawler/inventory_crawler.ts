@@ -436,30 +436,36 @@ export async function downloadInventoryLedgerReport(
   const MAX_WAIT_MS = 300000; // 5 phút
 
   while (Date.now() - startTime < MAX_WAIT_MS) {
-    // Kiểm tra xem nút Download ở dòng đầu tiên đã sẵn sàng chưa
-    const isDownloadReady = await page.evaluate(() => {
-      const rows = document.querySelectorAll("kat-table-body kat-table-row, table tbody tr");
-      if (!rows.length) return false;
-      const firstRow = rows[0];
-      const text = firstRow.textContent || "";
-      const btn = firstRow.querySelector("kat-button[label='Download']") ||
-        Array.from(firstRow.querySelectorAll("button, kat-button")).find((b: any) =>
-          (b.getAttribute("label") || b.textContent || "").trim() === "Download"
-        );
-      if (btn) return true;
-      if (text.includes("Download") && !text.includes("In progress") && !text.includes("In queue") && !text.includes("In Progress")) {
-        return true;
+    // Kiểm tra xem dòng có đúng ngày yêu cầu đã sẵn sàng Download chưa
+    const checkRes = await page.evaluate((targetDate) => {
+      const rows = Array.from(document.querySelectorAll("kat-table-body kat-table-row, table tbody tr"));
+      const parts = targetDate.split("/");
+      const shortDate = parts.length === 3 ? `${parseInt(parts[0], 10)}/${parseInt(parts[1], 10)}/${parts[2].slice(2)}` : targetDate;
+      for (let i = 0; i < Math.min(rows.length, 6); i++) {
+        const text = rows[i].textContent || "";
+        if (text.includes(targetDate) || text.includes(shortDate)) {
+          const hasDownload = rows[i].querySelector("kat-button[label='Download']") ||
+            Array.from(rows[i].querySelectorAll("button, kat-button")).some((b: any) =>
+              (b.getAttribute("label") || b.textContent || "").trim() === "Download"
+            );
+          const inProgress = text.includes("In progress") || text.includes("In queue") || text.includes("In Progress");
+          return { found: true, index: i, ready: hasDownload && !inProgress, text };
+        }
       }
-      return false;
-    });
+      return { found: false, ready: false, index: -1, text: "" };
+    }, targetUsDate);
 
-    if (isDownloadReady) {
-      console.log(`  [Inventory Ledger] ✅ Báo cáo đã tạo xong! Đang bấm tải file...`);
+    if (checkRes.ready) {
+      console.log(`  [Inventory Ledger] ✅ Báo cáo ngày ${targetUsDate} đã tạo xong ở dòng ${checkRes.index + 1}! Đang bấm tải file...`);
+      downloadRowIndex = checkRes.index;
       break;
+    } else if (checkRes.found) {
+      console.log(`  [Inventory Ledger] ⏳ Báo cáo ngày ${targetUsDate} đang xử lý (In progress)... chờ 10 giây`);
+    } else {
+      console.log(`  [Inventory Ledger] ⏳ Đang chờ yêu cầu ngày ${targetUsDate} xuất hiện trong bảng...`);
     }
 
     const elapsedSec = Math.round((Date.now() - startTime) / 1000);
-    console.log(`  [Inventory Ledger] Báo cáo đang xử lý... chờ 10 giây (đã chờ ${elapsedSec}s)...`);
     await page.waitForTimeout(10000);
 
     // Sau 25s nếu vẫn đang In progress, reload trang và quay lại tab Download để cập nhật trạng thái mới nhất từ server Amazon
@@ -477,37 +483,33 @@ export async function downloadInventoryLedgerReport(
     }
   }
 
-  // 9. Bấm tải file CSV
-  const tableDownloadBtn = page.locator("kat-table-body kat-table-row:nth-child(1) kat-button[label='Download'], table tbody tr:nth-child(1) button:has-text('Download')").first();
-  await tableDownloadBtn.waitFor({ state: "visible", timeout: 25000 });
-
+  const targetIdx = downloadRowIndex >= 0 ? downloadRowIndex : 0;
   fs.mkdirSync(downloadDir, { recursive: true });
   const targetFileName = `09_InventoryLedger_${targetIsoDate}.csv`;
   const finalFilePath = path.join(downloadDir, targetFileName);
 
-  console.log(`  [Inventory Ledger] Bắt đầu tải file và lưu vào: ${finalFilePath}`);
+  console.log(`  [Inventory Ledger] Bắt đầu tải file ở dòng ${targetIdx + 1} và lưu vào: ${finalFilePath}`);
   const [download] = await Promise.all([
     page.waitForEvent("download", { timeout: 45000 }),
-    (async () => {
-      try {
-        await tableDownloadBtn.click({ timeout: 5000 });
-      } catch {
-        await page.evaluate(() => {
-          const rows = document.querySelectorAll("kat-table-body kat-table-row, table tbody tr");
-          const firstRow = rows[0];
-          const katBtn = firstRow?.querySelector("kat-button[label='Download']") as any;
-          if (katBtn?.shadowRoot?.querySelector("button")) {
-            katBtn.shadowRoot.querySelector("button").click();
-          } else if (katBtn) {
-            katBtn.click();
-          }
-        });
+    page.evaluate((idx) => {
+      const rows = document.querySelectorAll("kat-table-body kat-table-row, table tbody tr");
+      const targetRow = rows[idx] || rows[0];
+      const katBtn = targetRow?.querySelector("kat-button[label='Download']") as any;
+      if (katBtn?.shadowRoot?.querySelector("button")) {
+        katBtn.shadowRoot.querySelector("button").click();
+      } else if (katBtn) {
+        katBtn.click();
       }
-    })(),
+    }, targetIdx),
   ]);
 
   await download.saveAs(finalFilePath);
   console.log(`  [Inventory Ledger] ✅ Tải thành công: ${targetFileName} (${fs.statSync(finalFilePath).size} bytes)`);
+
+  const fileHead = fs.readFileSync(finalFilePath, "utf8").slice(0, 800);
+  if (!fileHead.includes(targetUsDate) && !fileHead.includes(targetIsoDate)) {
+    console.warn(`  ⚠️ [CẢNH BÁO] Ngày trong nội dung file tải về (${targetFileName}) không khớp ngày yêu cầu (${targetUsDate})!`);
+  }
 
   return finalFilePath;
 }
@@ -515,7 +517,7 @@ export async function downloadInventoryLedgerReport(
 /**
  * Tải file lên Cloudflare R2
  */
-async function uploadFileToR2(filePath: string, storeName: string, dateStr: string) {
+export async function uploadFileToR2(filePath: string, storeName: string, dateStr: string) {
   const accountId = process.env.R2_ACCOUNT_ID;
   const accessKeyId = process.env.R2_ACCESS_KEY_ID;
   const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
