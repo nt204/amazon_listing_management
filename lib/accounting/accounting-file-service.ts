@@ -61,6 +61,8 @@ function getR2Client() {
   return { client, bucket, prefix };
 }
 
+import { parseInventoryLedgerContent, ingestInventoryLedgerRows } from "./inventory-ledger-db";
+
 export function detectFileType(fileName: string): { code: string; label: string; isIngestable: boolean } {
   const lower = fileName.toLowerCase();
   if (lower.includes("01_portfolios") || lower.includes("portfolio")) {
@@ -86,6 +88,15 @@ export function detectFileType(fileName: string): { code: string; label: string;
   }
   if (lower.includes("07_shipments") || lower.includes("shipment")) {
     return { code: "07_SHIPMENTS", label: "07. Lô hàng Inbound Shipments", isIngestable: true };
+  }
+  if (
+    lower.includes("09_inventoryledger") ||
+    lower.includes("inventoryledger") ||
+    lower.includes("ledger_report") ||
+    lower.includes("ledgerreport") ||
+    lower.includes("inventory ledger")
+  ) {
+    return { code: "09_INVENTORY_LEDGER", label: "09. Tồn kho Inventory Ledger", isIngestable: true };
   }
   return { code: "OTHER", label: "Khác", isIngestable: false };
 }
@@ -378,6 +389,22 @@ export async function ingestAccountingFile(r2Key: string, storeName: string): Pr
     };
   }
 
+  if (typeInfo.code === "09_INVENTORY_LEDGER") {
+    const text = buffer.toString("utf-8");
+    const rows = parseInventoryLedgerContent(text);
+    const matchDate = fileName.match(/(\d{4}-\d{2}-\d{2})/);
+    const snapshotDate = matchDate ? matchDate[1] : (rows[0]?.date || new Date().toISOString().slice(0, 10));
+    const result = await ingestInventoryLedgerRows(targetStore.id, rows, snapshotDate, fileName);
+    return {
+      success: true,
+      type: "09_INVENTORY_LEDGER",
+      message: `Đã nạp tồn kho Inventory Ledger: ${result.insertedCount} dòng, cập nhật ${result.updatedSkuMasterCount} SKU trong Bảng Mã, tổng tồn kho ${result.totalTonKho.toLocaleString("en-US")} units!`,
+      count: result.insertedCount,
+      createdCount: result.insertedCount,
+      updatedCount: result.updatedSkuMasterCount,
+    };
+  }
+
   throw new Error(`Loại file '${typeInfo.label}' chưa hỗ trợ tự động nạp dữ liệu.`);
 }
 
@@ -386,7 +413,7 @@ export async function ingestAccountingFile(r2Key: string, storeName: string): Pr
  * và nạp dữ liệu vào database cho TẤT CẢ các Store trong hệ thống.
  */
 export async function syncLatestFilesForAllStores(
-  fileTypeCode: "07_SHIPMENTS" | "02_ALL_ORDERS" | "05_CAMPAIGNS" | "01_PORTFOLIOS" | "03_RETURNS" | "04_SERVICE_FEES"
+  fileTypeCode: "07_SHIPMENTS" | "02_ALL_ORDERS" | "05_CAMPAIGNS" | "01_PORTFOLIOS" | "03_RETURNS" | "04_SERVICE_FEES" | "09_INVENTORY_LEDGER"
 ): Promise<{
   success: boolean;
   fileTypeCode: string;

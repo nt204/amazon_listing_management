@@ -10,6 +10,9 @@ import {
   Target,
   CircleNotch,
   CaretRight,
+  CaretDown,
+  CalendarBlank,
+  Megaphone,
 } from "@phosphor-icons/react";
 
 export interface WindowDetail {
@@ -93,6 +96,86 @@ interface PpcAutoBidResultsModalProps {
   selectedStore?: string;
 }
 
+function getOutcomeMetrics(item: BidOutcomeActionItem) {
+  const window = [item.d30, item.d14, item.d7, item.d3].find((entry) => entry?.observed && Object.keys(entry.observed).length > 0);
+  const observed = window?.observed || {};
+  const number = (key: string) => {
+    const value = Number(observed[key] ?? 0);
+    return Number.isFinite(value) ? value : 0;
+  };
+  const spend = number("spend");
+  const sales = number("sales");
+  return {
+    spend,
+    sales,
+    orders: number("orders"),
+    clicks: number("clicks"),
+    acos: observed.acos == null ? (sales > 0 ? (spend / sales) * 100 : spend > 0 ? 999 : 0) : number("acos"),
+  };
+}
+
+function getAcosTone(acos: number, spend: number) {
+  if (spend === 0) return "bg-slate-100 text-slate-600";
+  if (acos <= 30) return "bg-emerald-100 text-emerald-700";
+  if (acos <= 45) return "bg-amber-100 text-amber-700";
+  return "bg-rose-100 text-rose-700";
+}
+
+function aggregateOutcomeMetrics(items: BidOutcomeActionItem[]) {
+  const total = items.reduce((sum, item) => {
+    const metrics = getOutcomeMetrics(item);
+    sum.spend += metrics.spend;
+    sum.sales += metrics.sales;
+    sum.orders += metrics.orders;
+    return sum;
+  }, { spend: 0, sales: 0, orders: 0 });
+  return { ...total, acos: total.sales > 0 ? (total.spend / total.sales) * 100 : 0 };
+}
+
+function BidSparkline({
+  values,
+  labels,
+  height = 48,
+}: {
+  values: number[];
+  labels?: string[];
+  height?: number;
+}) {
+  if (values.length === 0) return <div className="h-12 rounded-lg bg-slate-50" />;
+  const width = 240;
+  const chartHeight = 40;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = Math.max(max - min, 0.01);
+  const points = values.map((value, index) => {
+    const x = values.length === 1 ? width / 2 : 8 + (index / (values.length - 1)) * (width - 16);
+    const y = values.length === 1 ? chartHeight / 2 : 5 + (1 - (value - min) / range) * (chartHeight - 10);
+    return { x, y, value };
+  });
+  const polyline = points.map((point) => `${point.x},${point.y}`).join(" ");
+
+  return (
+    <div>
+      <svg viewBox={`0 0 ${width} ${chartHeight}`} className="w-full" style={{ height }} role="img" aria-label="Biểu đồ thay đổi bid">
+        <line x1="8" y1={chartHeight - 5} x2={width - 8} y2={chartHeight - 5} stroke="#e2e8f0" strokeWidth="1" />
+        {points.length > 1 && <polyline points={polyline} fill="none" stroke="#4f46e5" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />}
+        {points.map((point, index) => (
+          <g key={`${point.x}-${index}`}>
+            <circle cx={point.x} cy={point.y} r={points.length === 1 ? 4 : 3} fill="#4f46e5" />
+            <circle cx={point.x} cy={point.y} r="6" fill="transparent" />
+          </g>
+        ))}
+      </svg>
+      {labels && labels.length > 1 && (
+        <div className="flex justify-between text-[9px] font-semibold text-slate-400">
+          <span>{labels[0]}</span>
+          <span>{labels[labels.length - 1]}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // FORMAT TIỀN TỆ CHUẨN: -$38.4 thay vì $-38.4
 export function formatCurrencyUsd(
   val: number | string | null | undefined,
@@ -114,6 +197,11 @@ export function formatPercent(val: number | string | null | undefined, showPlus 
   if (isNaN(num)) return "—";
   const sign = num > 0 && showPlus ? "+" : "";
   return `${sign}${num.toFixed(1)}%`;
+}
+
+function formatDisplayDate(value: string) {
+  const [year, month, day] = value.split("-");
+  return year && month && day ? `${day}/${month}/${year}` : value;
 }
 
 // Tính số ngày đã trôi qua kể từ khi áp dụng chỉnh bid
@@ -324,6 +412,8 @@ export function PpcAutoBidResultsModal({
   const [stageFilter, setStageFilter] = useState<"ALL" | "3D" | "7D" | "14D" | "30D" | "COMPLETED" | "INTERRUPTED">("ALL");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "WIN" | "NEUTRAL" | "LOSS" | "WARNING_3D">("ALL");
   const [selectedAction, setSelectedAction] = useState<BidOutcomeActionItem | null>(null);
+  const [expandedCampaign, setExpandedCampaign] = useState<string | null>(null);
+  const [selectedDate, setSelectedDate] = useState("");
 
   const fetchOutcomes = useCallback(async () => {
     if (!isOpen) return;
@@ -360,6 +450,13 @@ export function PpcAutoBidResultsModal({
       fetchOutcomes();
     }
   }, [isOpen, fetchOutcomes]);
+
+  useEffect(() => {
+    // Always start from the collapsed campaign list on each open/close cycle.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setExpandedCampaign(null);
+    setSelectedAction(null);
+  }, [isOpen]);
 
   const handleRunEvaluation = async () => {
     try {
@@ -577,7 +674,92 @@ export function PpcAutoBidResultsModal({
     });
   }, [visibleTargetItems]);
 
-  // Render từng dòng Target (Gọn gàng, sạch sẽ, chuẩn 4 mốc 3D/7D/14D/30D)
+  const dateGroups = useMemo(() => {
+    const groups = new Map<string, Map<string, BidOutcomeActionItem[]>>();
+    for (const item of rankedVisibleTargetItems) {
+      const date = item.applied_on || (item.action_timestamp ? item.action_timestamp.slice(0, 10) : "Không rõ ngày");
+      const campaignId = item.campaign_id || item.campaign_name || "unknown";
+      if (!groups.has(date)) groups.set(date, new Map());
+      const campaigns = groups.get(date)!;
+      const current = campaigns.get(campaignId) || [];
+      current.push(item);
+      campaigns.set(campaignId, current);
+    }
+
+    return Array.from(groups.entries())
+      .sort(([dateA], [dateB]) => dateB.localeCompare(dateA))
+      .map(([date, campaignMap]) => {
+        const campaigns = Array.from(campaignMap.entries()).map(([campaignId, campaignItems]) => {
+          const first = campaignItems[0];
+          let loss = 0;
+          let win = 0;
+          let warning3d = 0;
+          for (const item of campaignItems) {
+            const days = getDaysElapsed(item);
+            const evaluations = [
+              getWindowEvaluation(item.d30, 30, days),
+              getWindowEvaluation(item.d14, 14, days),
+              getWindowEvaluation(item.d7, 7, days),
+              getWindowEvaluation(item.d3, 3, days),
+            ];
+            if (evaluations.some((evaluation) => evaluation.label === "Loss")) loss++;
+            if (evaluations.some((evaluation) => evaluation.label === "Win")) win++;
+            if (evaluations[3].label === "Loss") warning3d++;
+          }
+          return {
+            campaignId,
+            campaignName: first.campaign_name || (campaignId === "unknown" ? "Chiến dịch không xác định" : campaignId),
+            campaignType: first.campaign_type || "SP",
+            sku: first.sku || "",
+            items: campaignItems,
+            latestActionDate: date,
+            stats: { total: campaignItems.length, warning3d, loss, win },
+          };
+        }).sort((a, b) => b.stats.loss - a.stats.loss || b.items.length - a.items.length || a.campaignName.localeCompare(b.campaignName));
+
+        return {
+          date,
+          campaigns,
+          targetCount: campaigns.reduce((sum, campaign) => sum + campaign.items.length, 0),
+          lossCount: campaigns.reduce((sum, campaign) => sum + campaign.stats.loss, 0),
+        };
+      });
+  }, [rankedVisibleTargetItems]);
+
+  const campaignTrend = useCallback((campaignId: string) => {
+    const byDate = new Map<string, BidOutcomeActionItem[]>();
+    for (const item of items) {
+      if ((item.campaign_id || item.campaign_name || "unknown") !== campaignId) continue;
+      const date = item.applied_on || (item.action_timestamp ? item.action_timestamp.slice(0, 10) : "Không rõ ngày");
+      const current = byDate.get(date) || [];
+      current.push(item);
+      byDate.set(date, current);
+    }
+
+    return Array.from(byDate.entries())
+      .sort(([dateA], [dateB]) => dateA.localeCompare(dateB))
+      .map(([date, dayItems]) => {
+        const oldBid = dayItems.reduce((sum, item) => sum + Number(item.old_value || 0), 0) / dayItems.length;
+        const newBid = dayItems.reduce((sum, item) => sum + Number(item.final_value || item.system_suggested_value || 0), 0) / dayItems.length;
+        const reward = dayItems.reduce((sum, item) => {
+          const value = item.d30?.comparison?.reward_usd ?? item.d14?.comparison?.reward_usd ?? item.d7?.comparison?.reward_usd ?? item.d3?.comparison?.reward_usd ?? 0;
+          return sum + Number(value);
+        }, 0);
+        return {
+          date,
+          oldBid,
+          newBid,
+          changePct: oldBid > 0 ? ((newBid - oldBid) / oldBid) * 100 : 0,
+          reward,
+          targets: dayItems.length,
+        };
+      });
+  }, [items]);
+
+  const activeDateGroup = dateGroups.find((group) => group.date === selectedDate) || dateGroups[0];
+
+  // Kept for the dense table variant used by older outcome views.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const renderTargetRow = (item: BidOutcomeActionItem) => {
     const days = getDaysElapsed(item);
     const ev3 = getWindowEvaluation(item.d3, 3, days);
@@ -706,11 +888,79 @@ export function PpcAutoBidResultsModal({
     );
   };
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const renderTargetCard = (item: BidOutcomeActionItem) => {
+    const targetKey = item.target_id || `${item.campaign_id}_${item.target_keyword}_${item.match_type}`;
+    const history = items
+      .filter((candidate) => (candidate.target_id || `${candidate.campaign_id}_${candidate.target_keyword}_${candidate.match_type}`) === targetKey)
+      .sort((a, b) => new Date(a.action_timestamp || a.applied_on || 0).getTime() - new Date(b.action_timestamp || b.applied_on || 0).getTime());
+    const days = getDaysElapsed(item);
+    const overall = getOverallStatus(item, days);
+    const oldBid = Number(item.old_value || 0);
+    const newBid = Number(item.final_value || item.system_suggested_value || 0);
+    const deltaPct = item.applied_delta_pct || (oldBid > 0 ? ((newBid - oldBid) / oldBid) * 100 : 0);
+    const latestWindow = item.d30?.observed && Object.keys(item.d30.observed).length > 0 ? item.d30
+      : item.d14?.observed && Object.keys(item.d14.observed).length > 0 ? item.d14
+        : item.d7?.observed && Object.keys(item.d7.observed).length > 0 ? item.d7
+          : item.d3;
+    const reward = latestWindow?.comparison?.reward_usd;
+    const isSelected = selectedAction?.action_id === item.action_id;
+    const metrics = getOutcomeMetrics(item);
+
+    return (
+      <button
+        type="button"
+        key={item.action_id}
+        onClick={() => setSelectedAction(item)}
+        className={`grid w-full gap-3 rounded-lg border p-3 text-left transition active:translate-y-px md:grid-cols-[minmax(220px,1.4fr)_minmax(180px,1fr)_auto] ${isSelected ? "border-indigo-400 bg-indigo-50 ring-1 ring-indigo-100" : "border-slate-200 bg-white hover:border-indigo-200 hover:bg-slate-50"}`}
+      >
+        <span className="min-w-0 self-center">
+          <span className="flex items-center gap-2">
+            <span className="truncate text-xs font-black text-slate-900">{item.target_keyword || "—"}</span>
+            <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[9px] font-bold ${overall.color}`}>{overall.badge}</span>
+          </span>
+          <span className="mt-1 flex items-center gap-2 text-[10px] font-semibold text-slate-400">
+            <span className="rounded bg-slate-100 px-1.5 py-0.5 font-black text-slate-600">{item.match_type}</span>
+            {item.sku && <span className="truncate font-mono">{item.sku}</span>}
+          </span>
+          <span className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[9px] font-bold text-slate-500">
+            <span>Spend {formatCurrencyUsd(metrics.spend, false, 2)}</span>
+            <span>Sales {formatCurrencyUsd(metrics.sales, false, 2)}</span>
+            <span>Orders {metrics.orders}</span>
+            <span>ACoS {formatPercent(metrics.acos)}</span>
+            <span>Clicks {metrics.clicks}</span>
+          </span>
+        </span>
+        <span className="min-w-0 rounded-md bg-slate-50 px-2 py-1.5">
+          <BidSparkline
+            values={history.map((entry) => Number(entry.final_value || entry.system_suggested_value || 0))}
+            labels={history.map((entry) => entry.applied_on || entry.action_timestamp?.slice(0, 10) || "")}
+            height={34}
+          />
+        </span>
+        <span className="flex min-w-[170px] items-center justify-end gap-3 self-center">
+          <span>
+            <span className="flex items-center gap-1.5 font-mono text-xs font-black">
+              <span className="text-slate-400">${oldBid.toFixed(2)}</span>
+              <ArrowRight size={11} weight="bold" className="text-slate-300" />
+              <span className={deltaPct >= 0 ? "text-emerald-700" : "text-rose-700"}>${newBid.toFixed(2)}</span>
+            </span>
+            <span className={`mt-0.5 block text-right text-[10px] font-black ${deltaPct >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{formatPercent(deltaPct, true)}</span>
+          </span>
+          <span className={`w-14 text-right font-mono text-[10px] font-black ${reward == null ? "text-slate-300" : reward >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+            {reward == null ? "—" : formatCurrencyUsd(reward, true)}
+          </span>
+          <CaretRight size={14} weight="bold" className={isSelected ? "text-indigo-600" : "text-slate-300"} />
+        </span>
+      </button>
+    );
+  };
+
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-2 sm:p-4 backdrop-blur-xs animate-in fade-in duration-150">
-      <div className="flex h-[94vh] w-full max-w-[1500px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+      <div className="flex h-[92vh] w-full max-w-[1400px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
         {/* HEADER */}
         <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 sm:px-6 bg-white">
           <div className="flex items-center gap-3">
@@ -729,6 +979,24 @@ export function PpcAutoBidResultsModal({
           </div>
 
           <div className="flex items-center gap-2">
+            {dateGroups.length > 0 && (
+              <div className="relative">
+                <CalendarBlank size={15} weight="bold" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                <select
+                  aria-label="Chọn ngày chỉnh bid"
+                  value={activeDateGroup?.date || ""}
+                  onChange={(event) => {
+                    setSelectedDate(event.target.value);
+                    setExpandedCampaign(null);
+                    setSelectedAction(null);
+                  }}
+                  className="appearance-none rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-9 text-xs font-black text-slate-800 shadow-2xs focus:border-indigo-500 focus:outline-none"
+                >
+                  {dateGroups.map((group) => <option key={group.date} value={group.date}>{formatDisplayDate(group.date)}</option>)}
+                </select>
+                <CaretDown size={13} weight="bold" className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              </div>
+            )}
             <button
               type="button"
               onClick={handleRunEvaluation}
@@ -750,7 +1018,7 @@ export function PpcAutoBidResultsModal({
         </div>
 
         {/* EXECUTIVE SUMMARY */}
-        <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 bg-slate-50/70 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 border-b border-slate-200 bg-white p-4 sm:grid-cols-4">
           {[
             { label: "Cần xử lý", value: summary?.negative || 0, tone: "text-rose-700" },
             { label: "Đang thắng", value: summary?.positive || 0, tone: "text-emerald-700" },
@@ -761,7 +1029,7 @@ export function PpcAutoBidResultsModal({
               type="button"
               key={metric.label}
               onClick={() => metric.label === "Cần xử lý" && Number(metric.value) > 0 ? setStatusFilter("LOSS") : metric.label === "Đang thắng" && Number(metric.value) > 0 ? setStatusFilter("WIN") : null}
-              className="px-4 py-2.5 text-left transition hover:bg-white active:translate-y-px"
+              className={`rounded-xl border border-slate-100 px-4 py-3 text-left transition active:translate-y-px ${metric.label === "Cần xử lý" ? "bg-rose-50/40 hover:bg-rose-50" : metric.label === "Đang thắng" || metric.label === "Reward" ? "bg-emerald-50/45 hover:bg-emerald-50" : "bg-sky-50/45 hover:bg-sky-50"}`}
             >
               <span className="block text-[10px] font-bold text-slate-500">{metric.label}</span>
               <span className={`mt-0.5 block text-lg font-black leading-none ${metric.tone}`}>{metric.value}</span>
@@ -850,23 +1118,78 @@ export function PpcAutoBidResultsModal({
               <span className="text-sm font-bold text-slate-600">Không có target nào trong mục này</span>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-                        <table className="w-full min-w-[820px] border-collapse text-left text-xs">
-                          <thead>
-                            <tr className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 text-[10px] font-bold text-slate-500">
-                              <th className="py-2.5 px-4">Target · Campaign</th>
-                              <th className="py-2.5 px-3">Đổi Bid</th>
-                              <th className="py-2.5 px-2 text-center">3D</th>
-                              <th className="py-2.5 px-2 text-center">7D</th>
-                              <th className="py-2.5 px-2 text-center">14D</th>
-                              <th className="py-2.5 px-2 text-center">30D</th>
-                              <th className="py-2.5 px-3 text-right">Reward</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100">
-                            {rankedVisibleTargetItems.map((item) => renderTargetRow(item))}
-                          </tbody>
-                        </table>
+            <div className="overflow-x-auto p-3 sm:p-4">
+              <div className="min-w-[1080px] overflow-hidden rounded-xl border border-slate-200 bg-white">
+                <div className="grid grid-cols-[minmax(260px,1.4fr)_100px_125px_80px_80px_65px_70px_minmax(150px,0.8fr)] items-center gap-3 border-b border-slate-200 bg-slate-100 px-4 py-3.5 text-sm font-black text-slate-800">
+                  <span>Campaign</span><span>Ngày chỉnh</span><span>Bid</span><span>Spend</span><span>Sales</span><span>Orders</span><span>ACoS</span><span>Trend</span>
+                </div>
+                {(activeDateGroup?.campaigns || []).map((campaign) => {
+                  const campaignKey = `${activeDateGroup.date}:${campaign.campaignId}`;
+                  const campaignOpen = expandedCampaign === campaignKey;
+                  const trend = campaignTrend(campaign.campaignId || campaign.campaignName || "unknown");
+                  const latest = trend[trend.length - 1];
+                  const metrics = aggregateOutcomeMetrics(campaign.items);
+                  return (
+                    <div key={campaignKey} className="border-b border-slate-200 last:border-b-0">
+                      <button
+                        type="button"
+                        aria-expanded={campaignOpen}
+                        onClick={() => setExpandedCampaign(campaignOpen ? null : campaignKey)}
+                        className={`grid w-full grid-cols-[minmax(260px,1.4fr)_100px_125px_80px_80px_65px_70px_minmax(150px,0.8fr)] items-center gap-3 px-4 py-4 text-left transition ${campaignOpen ? "bg-indigo-50/40" : "hover:bg-slate-50"}`}
+                      >
+                        <span className="flex min-w-0 items-center gap-3">
+                          <CaretRight size={14} weight="bold" className={`shrink-0 text-slate-400 transition-transform ${campaignOpen ? "rotate-90" : ""}`} />
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-indigo-100 bg-indigo-50 text-indigo-600"><Megaphone size={16} weight="bold" /></span>
+                          <span className="min-w-0">
+                            <span className="block truncate text-sm font-black text-slate-900">{campaign.campaignName}</span>
+                            <span className="mt-1 block text-xs font-semibold text-slate-500">{campaign.items.length} targets</span>
+                          </span>
+                        </span>
+                        <span className="text-sm font-bold text-slate-700">{formatDisplayDate(activeDateGroup.date)}</span>
+                        <span className="flex items-center gap-2">
+                          <span className="font-mono text-sm font-black text-slate-900">{latest ? `$${latest.newBid.toFixed(2)}` : "—"}</span>
+                          <span className={`rounded-md px-2 py-1 text-xs font-black ${(latest?.changePct || 0) >= 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>{latest ? formatPercent(latest.changePct, true) : "—"}</span>
+                        </span>
+                        <span className="font-mono text-sm font-semibold text-slate-700">{formatCurrencyUsd(metrics.spend, false, 2)}</span>
+                        <span className="font-mono text-sm font-semibold text-slate-700">{formatCurrencyUsd(metrics.sales, false, 2)}</span>
+                        <span className="text-sm font-bold text-slate-700">{metrics.orders}</span>
+                        <span className={`w-fit rounded-md px-2 py-1 text-sm font-black ${getAcosTone(metrics.acos, metrics.spend)}`}>{metrics.acos >= 999 ? "—" : formatPercent(metrics.acos)}</span>
+                        <span className="rounded-lg bg-slate-50 px-2 py-1"><BidSparkline values={trend.map((point) => point.newBid)} height={38} /></span>
+                      </button>
+                      {campaignOpen && (
+                        <div className="m-3 overflow-x-auto rounded-xl border border-slate-200">
+                          <table className="w-full min-w-[780px] border-collapse text-sm">
+                            <thead className="bg-slate-100 text-left text-sm font-black text-slate-800">
+                              <tr><th className="px-4 py-2.5">Target</th><th className="px-3 py-2.5">Bid</th><th className="px-3 py-2.5">Spend</th><th className="px-3 py-2.5">Sales</th><th className="px-3 py-2.5">Orders</th><th className="px-3 py-2.5">ACoS</th><th className="px-3 py-2.5">Trend</th></tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {campaign.items.map((item) => {
+                                const metrics = getOutcomeMetrics(item);
+                                const oldBid = Number(item.old_value || 0);
+                                const newBid = Number(item.final_value || item.system_suggested_value || 0);
+                                const delta = item.applied_delta_pct || (oldBid > 0 ? ((newBid - oldBid) / oldBid) * 100 : 0);
+                                const targetKey = item.target_id || `${item.campaign_id}_${item.target_keyword}_${item.match_type}`;
+                                const history = items.filter((candidate) => (candidate.target_id || `${candidate.campaign_id}_${candidate.target_keyword}_${candidate.match_type}`) === targetKey).sort((a, b) => new Date(a.action_timestamp || a.applied_on || 0).getTime() - new Date(b.action_timestamp || b.applied_on || 0).getTime());
+                                return (
+                                  <tr key={item.action_id} onClick={() => setSelectedAction(item)} className="cursor-pointer bg-white hover:bg-slate-50">
+                                    <td className="max-w-[280px] truncate px-4 py-3.5 text-sm font-bold text-slate-900">{item.target_keyword || "—"}</td>
+                                    <td className="whitespace-nowrap px-3 py-3 font-mono"><span className="text-slate-400">${oldBid.toFixed(2)}</span> <span className="text-slate-300">→</span> <span className={delta >= 0 ? "font-black text-emerald-700" : "font-black text-rose-700"}>${newBid.toFixed(2)}</span></td>
+                                    <td className="px-3 py-3 font-mono">{formatCurrencyUsd(metrics.spend, false, 2)}</td>
+                                    <td className="px-3 py-3 font-mono">{formatCurrencyUsd(metrics.sales, false, 2)}</td>
+                                    <td className="px-3 py-3">{metrics.orders}</td>
+                                    <td className="px-3 py-3"><span className={`inline-block rounded-md px-2 py-1 font-black ${getAcosTone(metrics.acos, metrics.spend)}`}>{metrics.acos >= 999 ? "—" : formatPercent(metrics.acos)}</span></td>
+                                    <td className="min-w-[170px] px-3 py-2"><div className="flex items-center gap-3"><span className="min-w-[100px] flex-1"><BidSparkline values={history.map((entry) => Number(entry.final_value || entry.system_suggested_value || 0))} height={30} /></span><span className={`rounded-md px-2 py-1 text-[10px] font-black ${delta >= 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>{formatPercent(delta, true)}</span></div></td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>

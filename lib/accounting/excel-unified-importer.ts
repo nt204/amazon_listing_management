@@ -189,13 +189,14 @@ export async function importUnifiedAccountingExcel(
   }
 
   // 2. Tìm tên sheet tương ứng cho các bảng
-  const findSheet = (patterns: string[]): string | null => {
+  const findSheet = (patterns: string[], accept: (name: string) => boolean = () => true): string | null => {
+    const candidates = sheetNames.filter(accept);
     for (const p of patterns) {
-      const match = sheetNames.find((s) => s.trim().toLowerCase() === p.toLowerCase());
+      const match = candidates.find((s) => s.trim().toLowerCase() === p.toLowerCase());
       if (match) return match;
     }
     for (const p of patterns) {
-      const match = sheetNames.find((s) => s.trim().toLowerCase().includes(p.toLowerCase()));
+      const match = candidates.find((s) => s.trim().toLowerCase().includes(p.toLowerCase()));
       if (match) return match;
     }
     return null;
@@ -205,7 +206,11 @@ export async function importUnifiedAccountingExcel(
   const targetAdsSheet = findSheet(["ads", "campaign ads", "campaigns", "portfolio"]);
   const targetReturnSheet = findSheet(["return", "returns"]);
   const targetServiceFeeSheet = findSheet(["service fees", "service fee", "servicefees"]);
-  const targetSkuMasterSheet = findSheet(["bảng mã", "bang ma", "sku master", "bang_ma", "danh mục sku", "bảng mã sku"]);
+  // Sheet "BẢNG MÃ FBM" chỉ nhập qua tab BẢNG MÃ FBM, không lẫn vào BẢNG MÃ (FBA).
+  const targetSkuMasterSheet = findSheet(
+    ["bảng mã", "bang ma", "sku master", "bang_ma", "danh mục sku", "bảng mã sku"],
+    (name) => !/fbm/i.test(name),
+  );
   const targetInboundSheet = findSheet(["chi tiết đi hàng", "chi tiet di hang", "inbound shipments", "inbound", "di hang"]);
   const targetCheckShipmentSheet = findSheet(["check shipment amazon", "check shipment", "check_shipment", "shipment amazon", "check shipment amz"]);
   const targetBasecostThangSheet = findSheet(["basecost tháng", "basecost thang", "basecost_thang", "monthly basecost", "base cost tháng"]);

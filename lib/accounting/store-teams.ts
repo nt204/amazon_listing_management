@@ -17,3 +17,8 @@ export function listTeams(stores: { team?: string | null }[]): string[] {
   const teams = new Set(stores.flatMap((s) => parseStoreTeams(s.team)));
   return [...teams].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
+
+/** Store có ít nhất 1 team FBA ("FBA 1", "FBA 2"...). */
+export function storeHasFbaTeam(team: string | null | undefined): boolean {
+  return parseStoreTeams(team).some((t) => /^fba\b/i.test(t));
+}

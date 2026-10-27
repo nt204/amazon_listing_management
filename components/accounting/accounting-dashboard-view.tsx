@@ -37,6 +37,7 @@ import { summarizeRange, type DashboardDay, type DashboardTotals as Totals } fro
 import { listTeams, parseStoreTeams, storeHasTeam } from "@/lib/accounting/store-teams";
 import { PpcAmazonDatePicker, type DateRange } from "@/components/ppc/ppc-amazon-date-picker";
 import { getAmazonLatestAvailableDate, getThisMonthDateRange } from "./financials-date-utils";
+import { TopSellingProducts } from "./top-selling-products";
 
 const STORE_IDS_KEY = "acc_dashboard_store_ids";
 // v3: chỉ giữ các kiểu so sánh có ý nghĩa ở mọi cấp độ ngày / tuần / tháng.
@@ -1523,7 +1524,11 @@ function readSavedCompareBase(): CompareBase | null {
   }
 }
 
-export function AccountingDashboardView() {
+export function AccountingDashboardView({
+  onNavigateFinancials,
+}: {
+  onNavigateFinancials?: () => void;
+} = {}) {
   const maxDate = useMemo(() => getAmazonLatestAvailableDate(), []);
   const [stores, setStores] = useState<Store[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>(readSavedStoreIds);
@@ -1714,7 +1719,7 @@ export function AccountingDashboardView() {
       {
         id: "profit",
         label: "Profit",
-        tone: TONES.violet,
+        tone: TONES.green,
         value: c.profit,
         format: money,
         ratio: changeRatio(c.profit, p?.profit),
@@ -2188,17 +2193,26 @@ export function AccountingDashboardView() {
               />
             </div>
 
+            {/* Row 3: Top Selling Products (2 cols) & Cost Breakdown (1 col) */}
             <div className="grid gap-4 @min-[900px]:grid-cols-3">
               <div className="min-w-0 @min-[900px]:col-span-2">
-                <StoresPerformance
-                  data={data}
-                  colorOf={colorOf}
-                  onFocusStore={(id) => updateSelection([id])}
-                  delay={180}
+                <TopSellingProducts
+                  products={data.topProducts || []}
+                  scopeLabel={storeLabel}
+                  onNavigateFinancials={onNavigateFinancials}
+                  delay={160}
                 />
               </div>
-              <CostBreakdown data={data} delay={210} />
+              <CostBreakdown data={data} delay={190} />
             </div>
+
+            {/* Row 4: Stores Performance Breakdown */}
+            <StoresPerformance
+              data={data}
+              colorOf={colorOf}
+              onFocusStore={(id) => updateSelection([id])}
+              delay={210}
+            />
           </div>
         ) : null}
       </div>

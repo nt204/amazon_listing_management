@@ -23,6 +23,7 @@ import {
   EyeIcon,
   EyeSlashIcon,
   FileXlsIcon,
+  LinkSimpleIcon,
   FloppyDiskIcon,
   FunnelIcon,
   LockIcon,
@@ -41,7 +42,8 @@ import {
   WarningCircleIcon,
   XIcon,
 } from "@phosphor-icons/react";
-import type { SkuMasterItem, InboundShipmentItem, CheckShipmentItem } from "@/lib/accounting/inventory-db";
+import type { SkuMasterItem, InboundShipmentItem, CheckShipmentItem, SkuChannel } from "@/lib/accounting/inventory-db";
+import { storeHasTeam } from "@/lib/accounting/store-teams";
 import type { Store } from "@/lib/accounting/types";
 
 const DEFAULT_PRODUCT_TYPES = [
@@ -108,6 +110,7 @@ import {
   ColumnManagerModal,
   type ColumnConfig,
   DEFAULT_SKU_COLUMNS,
+  DEFAULT_FBM_SKU_COLUMNS,
   DEFAULT_INBOUND_COLUMNS,
   DEFAULT_CHECK_SHIPMENT_COLUMNS,
   DEFAULT_MONTHLY_BASE_COST_COLUMNS,
@@ -115,6 +118,14 @@ import {
   createTextWidthMeasurer,
 } from "./column-manager-modal";
 import { InventoryHistoryDrawer } from "./inventory-history-drawer";
+import {
+  InventorySheetLinksModal,
+  SHEET_LINKS_QUERY_KEY,
+  describeSyncResult,
+  requestSheetSync,
+  useSheetLinks,
+} from "./inventory-sheet-links-modal";
+import type { SheetType } from "@/lib/accounting/inventory-sheet-sync";
 import { MonthlyBaseCostView, type MonthlyBaseCostViewRef } from "./monthly-base-cost-view";
 
 // Debounce hook for instant, throttled searching (300ms)
@@ -522,6 +533,7 @@ export function isDateField(field: string): boolean {
     "thang_danh_gia",
     "event_250th",
     "ngay_danh_gia_sku_event",
+    "ngay_len_camp",
     "ngay_update",
     "created_date",
     "last_updated_date",
@@ -1555,6 +1567,18 @@ function InventoryViewInner() {
     setActiveTab(tab);
     setVisitedTabs((prev) => (prev[tab] ? prev : { ...prev, [tab]: true }));
   }, []);
+
+  // Store có team FBM có thêm tab BẢNG MÃ FBM: cùng giao diện/chức năng BẢNG MÃ nhưng dữ liệu
+  // và import tách riêng (bảng accounting_sku_master_fbm).
+  const storeHasFbm = storeHasTeam(selectedStore?.team, "FBM");
+  const [skuChannelState, setSkuChannelState] = useState<SkuChannel>(() => {
+    if (typeof window === "undefined") return "fba";
+    return window.sessionStorage.getItem("accounting_inventory_sku_channel") === "fbm" ? "fbm" : "fba";
+  });
+  const skuChannel: SkuChannel = loadingStores || storeHasFbm ? skuChannelState : "fba";
+  const isFbmSheet = activeTab === "sku" && skuChannel === "fbm";
+  const skuEntityType = skuChannel === "fbm" ? "sku_fbm" : "sku";
+  const skuSheetLabel = skuChannel === "fbm" ? "Bảng Mã FBM" : "Bảng Mã";
   const monthlyBaseCostRef = useRef<MonthlyBaseCostViewRef>(null);
   const [monthlyBaseCostYear, setMonthlyBaseCostYear] = useState<number>(2026);
   const [syncingMonthlyBaseCost, setSyncingMonthlyBaseCost] = useState<boolean>(false);
@@ -1662,7 +1686,9 @@ function InventoryViewInner() {
   const [monthlyBaseCostColumns, setMonthlyBaseCostColumns] = useState<ColumnConfig[]>(DEFAULT_MONTHLY_BASE_COST_COLUMNS);
   const [showColumnModal, setShowColumnModal] = useState(false);
 
-  const SKU_COLUMNS_STORAGE_KEY = "accounting_sku_columns_global";
+  // BẢNG MÃ FBM có bộ cột riêng (theo mẫu sheet FBM) và lưu thiết lập cột riêng.
+  const SKU_COLUMNS_STORAGE_KEY = skuChannel === "fbm" ? "accounting_sku_fbm_columns_global" : "accounting_sku_columns_global";
+  const skuDefaultColumns = skuChannel === "fbm" ? DEFAULT_FBM_SKU_COLUMNS : DEFAULT_SKU_COLUMNS;
   const INBOUND_COLUMNS_STORAGE_KEY = "accounting_inbound_columns_global";
   const CHECK_SHIPMENT_COLUMNS_STORAGE_KEY = "accounting_check_shipment_columns_global";
   const MONTHLY_BASE_COST_COLUMNS_STORAGE_KEY = "accounting_monthly_base_cost_columns_global";
@@ -1815,10 +1841,10 @@ function InventoryViewInner() {
       if (skuStored) {
         const parsed: ColumnConfig[] = JSON.parse(skuStored);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          setSkuColumns(mergeFromParsed(parsed, DEFAULT_SKU_COLUMNS));
+          setSkuColumns(mergeFromParsed(parsed, skuDefaultColumns));
         }
       } else {
-        setSkuColumns(DEFAULT_SKU_COLUMNS);
+        setSkuColumns(skuDefaultColumns);
       }
 
       const inboundStored = localStorage.getItem(INBOUND_COLUMNS_STORAGE_KEY);
@@ -1851,23 +1877,23 @@ function InventoryViewInner() {
         setMonthlyBaseCostColumns(DEFAULT_MONTHLY_BASE_COST_COLUMNS);
       }
     } catch {}
-  }, [selectedStoreId, SKU_COLUMNS_STORAGE_KEY, INBOUND_COLUMNS_STORAGE_KEY, CHECK_SHIPMENT_COLUMNS_STORAGE_KEY, MONTHLY_BASE_COST_COLUMNS_STORAGE_KEY]);
+  }, [selectedStoreId, SKU_COLUMNS_STORAGE_KEY, skuDefaultColumns, INBOUND_COLUMNS_STORAGE_KEY, CHECK_SHIPMENT_COLUMNS_STORAGE_KEY, MONTHLY_BASE_COST_COLUMNS_STORAGE_KEY]);
 
   const handleSaveSkuColumns = useCallback((newCols: ColumnConfig[]) => {
     setSkuColumns(newCols);
     try {
       localStorage.setItem(SKU_COLUMNS_STORAGE_KEY, JSON.stringify(newCols));
     } catch {}
-    notify("Đã lưu thiết lập cột BẢNG MÃ cho tất cả Store!", "success");
-  }, [SKU_COLUMNS_STORAGE_KEY]);
+    notify(`Đã lưu thiết lập cột ${skuSheetLabel.toUpperCase()} cho tất cả Store!`, "success");
+  }, [SKU_COLUMNS_STORAGE_KEY, skuSheetLabel]);
 
   const handleResetSkuColumns = useCallback(() => {
-    setSkuColumns(DEFAULT_SKU_COLUMNS);
+    setSkuColumns(skuDefaultColumns);
     try {
       localStorage.removeItem(SKU_COLUMNS_STORAGE_KEY);
     } catch {}
-    notify("Đã khôi phục cột BẢNG MÃ về mặc định!", "success");
-  }, [SKU_COLUMNS_STORAGE_KEY]);
+    notify(`Đã khôi phục cột ${skuSheetLabel.toUpperCase()} về mặc định!`, "success");
+  }, [SKU_COLUMNS_STORAGE_KEY, skuDefaultColumns, skuSheetLabel]);
 
   const handleSaveInboundColumns = useCallback((newCols: ColumnConfig[]) => {
     setInboundColumns(newCols);
@@ -2177,14 +2203,22 @@ function InventoryViewInner() {
     setCheckShipmentPage(1);
   }, [selectedStoreId, debouncedCheckShipmentSearch, checkShipmentStatusFilter, checkShipmentBrandFilter]);
 
+  const handleSkuSheetChange = useCallback((channel: SkuChannel) => {
+    setSkuChannelState(channel);
+    window.sessionStorage.setItem("accounting_inventory_sku_channel", channel);
+    setSkuPage(1);
+    handleTabChange("sku");
+  }, [handleTabChange, setSkuPage]);
+
   // 1. TanStack Query for SKU Master (Server-side Page Pagination, 100/trang)
   const skuQuery = useQuery({
-    queryKey: ["sku-master", selectedStoreId, skuPage, skuLimit, debouncedSkuSearch, effectiveSkuStatus, effectiveSkuProductType],
+    queryKey: ["sku-master", selectedStoreId, skuChannel, skuPage, skuLimit, debouncedSkuSearch, effectiveSkuStatus, effectiveSkuProductType],
     queryFn: async ({ signal }) => {
       const params = new URLSearchParams({
         store_id: selectedStoreId!,
         page: String(skuPage),
         limit: String(skuLimit),
+        channel: skuChannel,
       });
       if (debouncedSkuSearch) params.set("search", debouncedSkuSearch);
       if (effectiveSkuStatus) params.set("status", effectiveSkuStatus);
@@ -2206,6 +2240,21 @@ function InventoryViewInner() {
   const skuTotalCount = skuQuery.data?.total ?? 0;
   const skuTotal = skuTotalCount;
   const skuTotalPages = Math.max(1, Math.ceil(skuTotal / skuLimit));
+
+  // Số SKU của bảng mã còn lại (FBA ↔ FBM) cho badge trên tab.
+  const otherSkuChannel: SkuChannel = skuChannel === "fbm" ? "fba" : "fbm";
+  const otherSkuCountQuery = useQuery({
+    queryKey: ["sku-master-count", selectedStoreId, otherSkuChannel],
+    queryFn: async ({ signal }) => {
+      const params = new URLSearchParams({ store_id: selectedStoreId!, page: "1", limit: "1", channel: otherSkuChannel });
+      const res = await fetch(`/api/accounting/inventory/sku-master?${params.toString()}`, { signal });
+      if (!res.ok) throw new Error("Không thể tải số lượng SKU");
+      return ((await res.json()) as { total: number }).total;
+    },
+    enabled: !!selectedStoreId && storeHasFbm,
+  });
+  const fbaSkuCount = skuChannel === "fba" ? skuTotal : otherSkuCountQuery.data ?? 0;
+  const fbmSkuCount = skuChannel === "fbm" ? skuTotal : otherSkuCountQuery.data ?? 0;
 
   // 2. TanStack Query for Inbound Shipments (Server-side Page Pagination, 100/trang)
   const shipmentQuery = useQuery({
@@ -2321,6 +2370,25 @@ function InventoryViewInner() {
     count?: number;
     errors?: string[];
   } | null>(null);
+  // Link Google Sheet lưu theo store (Bảng Mã / Chi tiết đi hàng / Bảng Mã FBM): nút tải lại của tab
+  // đồng bộ ngay từ link; cửa sổ import FBM dán link cũng lưu vào đây.
+  const [showSheetLinksModal, setShowSheetLinksModal] = useState(false);
+  const [syncingSheet, setSyncingSheet] = useState(false);
+  const sheetLinksQuery = useSheetLinks(!!selectedStoreId);
+  const currentSheetType: SheetType | null =
+    activeTab === "sku" ? (skuChannel === "fbm" ? "sku_fbm" : "sku") : activeTab === "inbound" ? "inbound" : null;
+  const currentSheetLink = sheetLinksQuery.data?.links.find(
+    (link) => link.store_id === selectedStoreId && link.sheet_type === currentSheetType,
+  );
+  const [sheetUrl, setSheetUrl] = useState("");
+
+  const openImportModal = () => {
+    setShowImportModal(true);
+    setImportResult(null);
+    setSheetUrl(
+      sheetLinksQuery.data?.links.find((link) => link.store_id === selectedStoreId && link.sheet_type === "sku_fbm")?.sheet_url ?? "",
+    );
+  };
 
   // SKU Edit / Add Modal
   const [showSkuModal, setShowSkuModal] = useState(false);
@@ -2494,6 +2562,7 @@ function InventoryViewInner() {
             store_id: selectedStore.id,
             field,
             value: cleanValue,
+            ...(table === "sku" ? { channel: skuChannel } : {}),
           }),
         });
 
@@ -2508,7 +2577,7 @@ function InventoryViewInner() {
           };
         };
         if (table === "sku") {
-          queryClient.setQueriesData({ queryKey: ["sku-master", selectedStoreId] }, updateCachedRows);
+          queryClient.setQueriesData({ queryKey: ["sku-master", selectedStoreId, skuChannel] }, updateCachedRows);
         } else if (table === "inbound") {
           queryClient.setQueriesData({ queryKey: ["inbound-shipments", selectedStoreId] }, updateCachedRows);
         } else {
@@ -2523,7 +2592,7 @@ function InventoryViewInner() {
         setInlineSaving(false);
       }
     },
-    [selectedStore, selectedStoreId, inlineEditing, notify, queryClient]
+    [selectedStore, selectedStoreId, inlineEditing, notify, queryClient, skuChannel]
   );
 
   const compareDatesDesc = (aStr?: string | null, bStr?: string | null): number => {
@@ -2892,6 +2961,13 @@ function InventoryViewInner() {
   const [syncingLatestFiles, setSyncingLatestFiles] = useState(false);
 
   // Reload tab: Khi ấn làm mới ở bảng Check Shipment, tự động nạp file mới nhất cho tất cả các store từ Cloudflare R2 / lưu trữ rồi refetch
+  const refreshAfterSheetSync = useCallback((type: SheetType) => {
+    queryClient.invalidateQueries({ queryKey: ["inventory-field-options", selectedStoreId] });
+    queryClient.invalidateQueries({ queryKey: ["sku-master-count", selectedStoreId] });
+    if (type === "inbound") fetchShipments();
+    else fetchSkus();
+  }, [queryClient, selectedStoreId, fetchShipments, fetchSkus]);
+
   const handleReloadTab = useCallback(async () => {
     if (activeTab === "check_shipment") {
       try {
@@ -2911,6 +2987,19 @@ function InventoryViewInner() {
         setSyncingLatestFiles(false);
         fetchCheckShipments();
       }
+    } else if ((activeTab === "sku" || activeTab === "inbound") && currentSheetType && currentSheetLink && selectedStoreId) {
+      // Tab có link Google Sheet: đồng bộ ngay đúng store + sheet đang mở rồi tải lại bảng
+      setSyncingSheet(true);
+      const outcome = await requestSheetSync("sync", { store_id: selectedStoreId, sheet_type: currentSheetType, trigger: "reload" });
+      setSyncingSheet(false);
+      queryClient.invalidateQueries({ queryKey: SHEET_LINKS_QUERY_KEY });
+      if (outcome.ok) {
+        const warn = outcome.result.warnings.length ? ` (${outcome.result.warnings.join(" ")})` : "";
+        notify(`Đã đồng bộ từ Google Sheet: ${describeSyncResult(outcome.result)}${warn}`, "success");
+      } else {
+        notify(`Đồng bộ Google Sheet lỗi: ${outcome.error}`, "error");
+      }
+      refreshAfterSheetSync(currentSheetType);
     } else if (activeTab === "sku") {
       fetchSkus();
     } else if (activeTab === "inbound") {
@@ -2918,7 +3007,7 @@ function InventoryViewInner() {
     } else {
       fetchCheckShipments();
     }
-  }, [activeTab, fetchCheckShipments, fetchSkus, fetchShipments]);
+  }, [activeTab, fetchCheckShipments, fetchSkus, fetchShipments, currentSheetType, currentSheetLink, selectedStoreId, queryClient, notify, refreshAfterSheetSync]);
 
 
   // Options are scoped to the selected Store and include every record, not only this page.
@@ -3029,14 +3118,14 @@ function InventoryViewInner() {
   // History Drawer state
   const [historyDrawer, setHistoryDrawer] = useState<{
     isOpen: boolean;
-    entityType?: "sku" | "inbound" | "check_shipment" | "monthly_base_cost";
+    entityType?: "sku" | "sku_fbm" | "inbound" | "check_shipment" | "monthly_base_cost";
     entityId?: string;
     entityTitle?: string;
   }>({ isOpen: false });
 
   // 30s Undo state for deleted items
   const [undoDelete, setUndoDelete] = useState<{
-    entityType: "sku" | "inbound" | "check_shipment";
+    entityType: "sku" | "sku_fbm" | "inbound" | "check_shipment";
     entityId: string;
     label: string;
     secondsLeft: number;
@@ -3076,7 +3165,7 @@ function InventoryViewInner() {
       notify(`Đã hoàn tác và khôi phục ${undoDelete.label} thành công!`, "success");
       const restoredType = undoDelete.entityType;
       setUndoDelete(null);
-      if (restoredType === "sku") {
+      if (restoredType === "sku" || restoredType === "sku_fbm") {
         fetchSkus();
       } else if (restoredType === "inbound") {
         fetchShipments();
@@ -3095,12 +3184,12 @@ function InventoryViewInner() {
     if (!confirm(`Bạn có chắc chắn muốn xóa SKU ${skuName}?`)) return;
     try {
       const res = await fetch(
-        `/api/accounting/inventory/sku-master?id=${id}&store_id=${selectedStoreId}`,
+        `/api/accounting/inventory/sku-master?id=${id}&store_id=${selectedStoreId}&channel=${skuChannel}`,
         { method: "DELETE" },
       );
       if (!res.ok) throw new Error("Không thể xóa SKU");
       setUndoDelete({
-        entityType: "sku",
+        entityType: skuEntityType,
         entityId: id,
         label: skuName,
         secondsLeft: 30,
@@ -3251,6 +3340,7 @@ function InventoryViewInner() {
 
       const payload = {
         store_id: selectedStoreId,
+        channel: skuChannel,
         sku: copySku,
         brand: item.brand || null,
         product_type: item.product_type || null,
@@ -3295,7 +3385,7 @@ function InventoryViewInner() {
 
       // Cập nhật tức thời vào cache query
       queryClient.setQueryData(
-        ["sku-master", selectedStoreId, skuPage, skuLimit, debouncedSkuSearch, skuStatusFilter, skuTypeFilter],
+        ["sku-master", selectedStoreId, skuChannel, skuPage, skuLimit, debouncedSkuSearch, skuStatusFilter, skuTypeFilter],
         (oldData: any) => {
           if (!oldData) return oldData;
           return {
@@ -3337,6 +3427,7 @@ function InventoryViewInner() {
       setSavingSku(true);
       const payload = {
         store_id: selectedStoreId,
+        channel: skuChannel,
         sku: skuFormData.sku.trim(),
         brand: skuFormData.brand.trim() || null,
         product_type: skuFormData.product_type.trim() || null,
@@ -3749,7 +3840,25 @@ function InventoryViewInner() {
 
       for (const file of files) {
         const isExcel = file.name.toLowerCase().endsWith(".xlsx") || file.name.toLowerCase().endsWith(".xls");
-        if (isExcel) {
+        if (isExcel && isFbmSheet) {
+          // BẢNG MÃ FBM import riêng: chỉ đọc sheet bảng mã của file, không qua luồng quét 4 sheet.
+          const formData = new FormData();
+          formData.append("store_id", selectedStoreId);
+          formData.append("type", "sku");
+          formData.append("channel", "fbm");
+          formData.append("file", file);
+
+          const res = await fetch("/api/accounting/inventory/import", {
+            method: "POST",
+            body: formData,
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || "Lỗi khi import Bảng Mã FBM");
+          setImportResult({ success: true, count: data.count || 0, errors: data.errors || [] });
+          notify(`Đã import ${data.count || 0} SKU vào Bảng Mã FBM!`, "success");
+          queryClient.invalidateQueries({ queryKey: ["inventory-field-options", selectedStoreId] });
+          fetchSkus();
+        } else if (isExcel) {
           const formData = new FormData();
           formData.append("store_id", selectedStoreId);
           formData.append("file", file);
@@ -3799,6 +3908,24 @@ function InventoryViewInner() {
     } finally {
       setImporting(false);
       e.target.value = "";
+    }
+  };
+
+  const handleImportFromSheet = async () => {
+    const url = sheetUrl.trim();
+    if (!selectedStoreId || !url || importing) return;
+    setImporting(true);
+    setImportResult(null);
+    const outcome = await requestSheetSync("save", { store_id: selectedStoreId, sheet_type: "sku_fbm", sheet_url: url });
+    setImporting(false);
+    queryClient.invalidateQueries({ queryKey: SHEET_LINKS_QUERY_KEY });
+    if (outcome.ok) {
+      setImportResult({ success: true, count: outcome.result.sheetRows, errors: outcome.result.warnings });
+      notify(`Đã đồng bộ Bảng Mã FBM từ tab "${outcome.result.tabTitle}": ${describeSyncResult(outcome.result)}`, "success");
+      refreshAfterSheetSync("sku_fbm");
+    } else {
+      setImportResult({ success: false, count: 0, errors: [outcome.error] });
+      notify(outcome.error, "error");
     }
   };
 
@@ -3887,7 +4014,7 @@ function InventoryViewInner() {
     const isCustom = col.isCustom;
     const isFee = col.id === "amazon_fee";
     const isPercent = col.id === "referral_fee_pct";
-    const isRight = col.id === "amazon_fba_fee_thay_doi" || col.id === "basecost_tb";
+    const isRight = ["amazon_fba_fee_thay_doi", "basecost_tb", "basecost", "shipping_fee", "add_shipping_fee", "total_cost"].includes(col.id);
     const isCenter = isFee || isPercent;
 
     let alignClass = "";
@@ -4033,6 +4160,15 @@ function InventoryViewInner() {
       );
     }
 
+    if (cid === "total_cost") {
+      // Total = Basecost + Shipping fee + Add shipping fee (DB tự tính, không sửa trực tiếp)
+      return (
+        <td key={col.id} style={f.style} className={`py-1.5 px-2.5 text-[13px] text-right tabular-nums text-slate-900 ${f.className || "border-r border-slate-200"}`}>
+          {item.total_cost != null ? `$${item.total_cost.toFixed(2)}` : "—"}
+        </td>
+      );
+    }
+
     if (cid === "landing_page_url") {
       return (
         <td key={col.id} style={f.style} className={`py-1 px-2.5 text-[12.5px] overflow-hidden ${f.className || "border-r border-slate-200"}`}>
@@ -4128,6 +4264,19 @@ function InventoryViewInner() {
       case "basecost_tb":
         displayNode = item.basecost_tb != null ? `$${item.basecost_tb.toFixed(2)}` : "—";
         cellClass = "py-1.5 px-2.5 text-[13px] text-right font-normal tabular-nums text-slate-900 border-r border-slate-200";
+        break;
+      case "basecost":
+      case "shipping_fee":
+      case "add_shipping_fee":
+        displayNode = typeof cellValue === "number" ? `$${cellValue.toFixed(2)}` : "—";
+        cellClass = "py-1.5 px-2.5 text-[13px] text-right font-normal tabular-nums text-slate-900 border-r border-slate-200";
+        break;
+      case "sup":
+        displayNode = <EntityBadge value={item.sup} />;
+        break;
+      case "ngay_len_camp":
+        displayNode = safeDisplay(formatDate(item.ngay_len_camp));
+        cellClass = "py-1.5 px-2.5 text-[13px] text-slate-900 font-normal tabular-nums border-r border-slate-200";
         break;
       case "brand_entity_id":
       case "creative_asins_video":
@@ -4877,10 +5026,7 @@ function InventoryViewInner() {
 
                 <button
                   type="button"
-                  onClick={() => {
-                    setShowImportModal(true);
-                    setImportResult(null);
-                  }}
+                  onClick={openImportModal}
                   className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition shadow-2xs cursor-pointer"
                   title="Nhập file Excel dữ liệu đầu năm hoặc bảng Basecost 12 tháng"
                 >
@@ -4964,14 +5110,11 @@ function InventoryViewInner() {
 
                 <button
                   type="button"
-                  onClick={() => {
-                    setShowImportModal(true);
-                    setImportResult(null);
-                  }}
+                  onClick={openImportModal}
                   className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition shadow-2xs cursor-pointer"
                 >
                   <UploadSimpleIcon size={15} weight="bold" />
-                  <span>{activeTab === "sku" ? "Nhập Bảng Mã" : activeTab === "inbound" ? "Nhập Đi Hàng" : "Nhập Check Shipment"}</span>
+                  <span>{activeTab === "sku" ? `Nhập ${skuSheetLabel}` : activeTab === "inbound" ? "Nhập Đi Hàng" : "Nhập Check Shipment"}</span>
                 </button>
 
                 {activeTab === "check_shipment" && (
@@ -4993,7 +5136,7 @@ function InventoryViewInner() {
                   className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-amber-400 bg-amber-50 text-amber-950 hover:bg-amber-100 transition shadow-2xs cursor-pointer"
                   title={`Cấu hình cột ${
                     activeTab === "sku"
-                      ? "BẢNG MÃ"
+                      ? skuSheetLabel.toUpperCase()
                       : activeTab === "inbound"
                       ? "CHI TIẾT ĐI HÀNG"
                       : activeTab === "check_shipment"
@@ -5022,10 +5165,20 @@ function InventoryViewInner() {
 
                 <button
                   type="button"
+                  onClick={() => setShowSheetLinksModal(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 hover:text-indigo-700 transition shadow-2xs cursor-pointer"
+                  title="Dán link Google Sheet cho các store để tự đồng bộ"
+                >
+                  <LinkSimpleIcon size={15} weight="bold" />
+                  <span>Google Sheet</span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={() =>
                     setHistoryDrawer({
                       isOpen: true,
-                      entityType: activeTab,
+                      entityType: activeTab === "sku" ? skuEntityType : activeTab,
                     })
                   }
                   className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 hover:text-indigo-700 transition shadow-2xs cursor-pointer"
@@ -5036,7 +5189,7 @@ function InventoryViewInner() {
                 </button>
 
                 <a
-                  href={`/api/accounting/inventory/export?store_id=${selectedStoreId}&type=${activeTab}`}
+                  href={`/api/accounting/inventory/export?store_id=${selectedStoreId}&type=${activeTab}${isFbmSheet ? "&channel=fbm" : ""}`}
                   download
                   className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-800 hover:bg-emerald-100 transition shadow-2xs cursor-pointer"
                   title="Xuất Excel toàn bộ dữ liệu từ Server"
@@ -5048,11 +5201,13 @@ function InventoryViewInner() {
                 <button
                   type="button"
                   onClick={handleReloadTab}
-                  disabled={loadingSkus || loadingShipments || loadingCheckShipments || syncingLatestFiles}
+                  disabled={loadingSkus || loadingShipments || loadingCheckShipments || syncingLatestFiles || syncingSheet}
                   className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 transition shadow-2xs cursor-pointer disabled:opacity-50"
                   title={
                     activeTab === "check_shipment"
                       ? "Tải lại tab và tự động nạp file Check Shipment mới nhất cho tất cả các Store"
+                      : currentSheetLink
+                      ? `Đồng bộ ngay từ Google Sheet "${currentSheetLink.spreadsheet_title ?? ""}" rồi tải lại bảng`
                       : "Tải lại bảng dữ liệu"
                   }
                 >
@@ -5060,7 +5215,7 @@ function InventoryViewInner() {
                     size={16}
                     weight="bold"
                     className={
-                      loadingSkus || loadingShipments || loadingCheckShipments || syncingLatestFiles
+                      loadingSkus || loadingShipments || loadingCheckShipments || syncingLatestFiles || syncingSheet
                         ? "animate-spin text-indigo-600"
                         : ""
                     }
@@ -5076,25 +5231,34 @@ function InventoryViewInner() {
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 bg-slate-200/70 p-1.5 rounded-xl border border-slate-300 min-h-[46px]">
         {/* Sheet Tabs like Excel */}
         <div className="flex items-center gap-1 shrink-0">
-          <button
-            type="button"
-            onClick={() => handleTabChange("sku")}
-            className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
-              activeTab === "sku"
-                ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
-                : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
-            }`}
-          >
-            <PackageIcon size={16} weight="bold" />
-            <span>Bảng Mã</span>
-            <span
-              className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
-                activeTab === "sku" ? "bg-emerald-700 text-white" : "bg-slate-300 text-slate-700"
-              }`}
-            >
-              {skuTotal}
-            </span>
-          </button>
+          {(storeHasFbm
+            ? [{ channel: "fba", label: "Bảng Mã", count: fbaSkuCount }, { channel: "fbm", label: "Bảng Mã FBM", count: fbmSkuCount }] as const
+            : [{ channel: "fba", label: "Bảng Mã", count: fbaSkuCount }] as const
+          ).map((sheet) => {
+            const isActive = activeTab === "sku" && skuChannel === sheet.channel;
+            return (
+              <button
+                key={sheet.channel}
+                type="button"
+                onClick={() => handleSkuSheetChange(sheet.channel)}
+                className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
+                  isActive
+                    ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
+                    : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
+                }`}
+              >
+                <PackageIcon size={16} weight="bold" />
+                <span>{sheet.label}</span>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                    isActive ? "bg-emerald-700 text-white" : "bg-slate-300 text-slate-700"
+                  }`}
+                >
+                  {sheet.count}
+                </span>
+              </button>
+            );
+          })}
 
           <button
             type="button"
@@ -5498,14 +5662,14 @@ function InventoryViewInner() {
                   <tr>
                     <td colSpan={skuVisibleCount + 1} className="py-20 text-center text-slate-500 font-bold text-base">
                       <ArrowClockwiseIcon size={28} className="mx-auto mb-2 animate-spin text-indigo-600" />
-                      Đang tải Bảng Mã của Store {selectedStore?.name}...
+                      Đang tải {skuSheetLabel} của Store {selectedStore?.name}...
                     </td>
                   </tr>
                 ) : sortedSkus.length === 0 ? (
                   <tr>
                     <td colSpan={skuVisibleCount + 1} className="py-20 text-center text-slate-500 text-sm">
                       <PackageIcon size={40} className="mx-auto mb-2 text-slate-400" />
-                      Chưa có SKU nào trong Store {selectedStore?.name}. Nhấn <strong>Thêm Phôi SKU</strong> hoặc <strong>Import Bảng Mã</strong> để nhập dữ liệu.
+                      Chưa có SKU nào trong {skuSheetLabel} của Store {selectedStore?.name}. Nhấn <strong>Thêm Phôi</strong> hoặc <strong>Nhập {skuSheetLabel}</strong> để nhập dữ liệu.
                     </td>
                   </tr>
                 ) : (
@@ -6132,7 +6296,7 @@ function InventoryViewInner() {
                     onClick={() => {
                       setHistoryDrawer({
                         isOpen: true,
-                        entityType: "sku",
+                        entityType: skuEntityType,
                         entityId: skuFormData.id,
                         entityTitle: skuFormData.sku,
                       });
@@ -7064,7 +7228,7 @@ function InventoryViewInner() {
                   <FileXlsIcon size={18} weight="bold" />
                 </span>
                 <h3 className="text-base font-extrabold text-slate-900">
-                  Nhập File Quản Lý Kho (Inventory)
+                  {isFbmSheet ? "Nhập Bảng Mã FBM" : "Nhập File Quản Lý Kho (Inventory)"}
                 </h3>
               </div>
               <button
@@ -7077,14 +7241,25 @@ function InventoryViewInner() {
             </div>
 
             <div className="space-y-3">
-              <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3 text-xs text-indigo-900">
-                <p className="font-semibold text-indigo-800">
-                  ⚡ Hệ thống tự động quét 1 lần toàn bộ file và phân bổ nạp đủ cho cả 4 sheet: BẢNG MÃ, CHI TIẾT ĐI HÀNG, CHECK SHIPMENT AMAZON, BASECOST THÁNG.
-                </p>
-                <p className="mt-1 text-[11px] text-indigo-600">
-                  Tiến trình chạy ngầm tiết kiệm RAM tuyệt đối, không đơ trình duyệt. Tiến độ và thông báo hoàn tất sẽ hiển thị ở góc trên bên phải màn hình.
-                </p>
-              </div>
+              {isFbmSheet ? (
+                <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3 text-xs text-indigo-900">
+                  <p className="font-semibold text-indigo-800">
+                    Nhập riêng cho BẢNG MÃ FBM của Store {selectedStore?.name}.
+                  </p>
+                  <p className="mt-1 text-[11px] text-indigo-600">
+                    Tải file hoặc dán link Google Sheet. Hệ thống đọc tab &quot;FBM_&lt;Store&gt;&quot; và không ảnh hưởng Bảng Mã FBA hay các sheet khác.
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3 text-xs text-indigo-900">
+                  <p className="font-semibold text-indigo-800">
+                    ⚡ Hệ thống tự động quét 1 lần toàn bộ file và phân bổ nạp đủ cho cả 4 sheet: BẢNG MÃ, CHI TIẾT ĐI HÀNG, CHECK SHIPMENT AMAZON, BASECOST THÁNG.
+                  </p>
+                  <p className="mt-1 text-[11px] text-indigo-600">
+                    Tiến trình chạy ngầm tiết kiệm RAM tuyệt đối, không đơ trình duyệt. Tiến độ và thông báo hoàn tất sẽ hiển thị ở góc trên bên phải màn hình.
+                  </p>
+                </div>
+              )}
 
               <label className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-6 hover:border-indigo-400 hover:bg-indigo-50/20 transition cursor-pointer">
                 <UploadSimpleIcon size={32} className="text-indigo-600 mb-2" weight="duotone" />
@@ -7103,6 +7278,65 @@ function InventoryViewInner() {
                   className="hidden"
                 />
               </label>
+
+              {isFbmSheet && (
+                <>
+                  <div className="flex items-center gap-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                    <span className="h-px flex-1 bg-slate-200" />
+                    hoặc
+                    <span className="h-px flex-1 bg-slate-200" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="block text-xs font-bold text-slate-700" htmlFor="fbm-sheet-url">
+                      Link Google Sheet
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        id="fbm-sheet-url"
+                        type="url"
+                        value={sheetUrl}
+                        onChange={(e) => setSheetUrl(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleImportFromSheet();
+                        }}
+                        placeholder="https://docs.google.com/spreadsheets/d/..."
+                        disabled={importing}
+                        className="field-control flex-1"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleImportFromSheet}
+                        disabled={importing || !sheetUrl.trim()}
+                        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-indigo-700 transition disabled:opacity-50 cursor-pointer"
+                      >
+                        <UploadSimpleIcon size={14} weight="bold" />
+                        <span>Nhập</span>
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      Link được lưu cho store và tự đồng bộ mỗi sáng 9:00. Hệ thống tự tìm tab &quot;FBM_&lt;Store&gt;&quot;. Sheet cần chia sẻ quyền <strong>Người xem</strong> cho:
+                    </p>
+                    {sheetLinksQuery.data?.service_account_email ? (
+                      <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5">
+                        <code className="min-w-0 flex-1 truncate text-[11px] text-slate-800">{sheetLinksQuery.data.service_account_email}</code>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(sheetLinksQuery.data?.service_account_email || "");
+                            notify("Đã copy email để chia sẻ sheet!", "success");
+                          }}
+                          className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-bold text-indigo-700 hover:bg-indigo-50 cursor-pointer"
+                        >
+                          <CopyIcon size={13} weight="bold" />
+                          Copy
+                        </button>
+                      </div>
+                    ) : sheetLinksQuery.isFetched ? (
+                      <p className="text-[11px] font-semibold text-rose-600">Chưa cấu hình Google service account trên server.</p>
+                    ) : null}
+                  </div>
+                </>
+              )}
 
               {importing && (
                 <div className="flex items-center justify-center gap-2 py-3 text-xs font-bold text-indigo-700">
@@ -7324,7 +7558,7 @@ function InventoryViewInner() {
         onClose={() => setShowColumnModal(false)}
         title={
           activeTab === "sku"
-            ? "BẢNG MÃ"
+            ? skuSheetLabel.toUpperCase()
             : activeTab === "inbound"
             ? "CHI TIẾT ĐI HÀNG"
             : activeTab === "check_shipment"
@@ -7360,6 +7594,15 @@ function InventoryViewInner() {
         }
       />
 
+      <InventorySheetLinksModal
+        isOpen={showSheetLinksModal}
+        onClose={() => setShowSheetLinksModal(false)}
+        stores={stores}
+        onSynced={(storeId, type) => {
+          if (storeId === selectedStoreId) refreshAfterSheetSync(type);
+        }}
+      />
+
       {/* DRAWER LỊCH SỬ THAY ĐỔI & KHÔI PHỤC PHIÊN BẢN */}
       <InventoryHistoryDrawer
         isOpen={historyDrawer.isOpen}
@@ -7369,6 +7612,7 @@ function InventoryViewInner() {
         entityType={historyDrawer.entityType}
         entityId={historyDrawer.entityId}
         entityTitle={historyDrawer.entityTitle}
+        showFbm={storeHasFbm}
         onRestored={() => {
           fetchSkus();
           fetchShipments();

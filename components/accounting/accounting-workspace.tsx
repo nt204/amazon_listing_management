@@ -335,7 +335,7 @@ export function AccountingWorkspace({
   if (effectiveSection === "overview") {
     return (
       <AccountingSectionShell>
-        <AccountingDashboardView />
+        <AccountingDashboardView onNavigateFinancials={() => onSectionChange?.("financials")} />
       </AccountingSectionShell>
     );
   }

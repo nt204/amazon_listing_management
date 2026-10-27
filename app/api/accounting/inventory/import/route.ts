@@ -6,6 +6,7 @@ import {
   importCheckShipmentsFromWorkbook,
   importCheckShipmentsFromCsv,
   importMonthlyBaseCostFromWorkbook,
+  parseSkuChannel,
   processAndSaveImportTemplate,
 } from "@/lib/accounting/inventory-db";
 import { getStoreById } from "@/lib/accounting/accounting-db";
@@ -28,6 +29,7 @@ export async function POST(request: Request) {
     const formData = await request.formData();
     const storeId = formData.get("store_id") as string | null;
     const type = (formData.get("type") as string | null) || "sku";
+    const channel = parseSkuChannel(formData.get("channel"));
     const file = formData.get("file") as File | null;
 
     if (!storeId) {
@@ -75,14 +77,16 @@ export async function POST(request: Request) {
     const buffer = Buffer.from(await file.arrayBuffer());
     await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
 
-    // Lưu template cho store
-    await processAndSaveImportTemplate(
-      storeId,
-      type === "inbound" ? "inbound" : type === "check_shipment" ? "check_shipment" : "sku",
-      file.name,
-      buffer,
-      workbook,
-    );
+    // Lưu template cho store (BẢNG MÃ FBM import riêng, không ghi đè template BẢNG MÃ FBA)
+    if (channel === "fba") {
+      await processAndSaveImportTemplate(
+        storeId,
+        type === "inbound" ? "inbound" : type === "check_shipment" ? "check_shipment" : "sku",
+        file.name,
+        buffer,
+        workbook,
+      );
+    }
 
     if (type === "check_shipment") {
       const result = await importCheckShipmentsFromWorkbook(storeId, workbook);
@@ -127,10 +131,11 @@ export async function POST(request: Request) {
     }
 
     // Mặc định type === "sku"
-    const result = await importSkuMasterFromWorkbook(storeId, workbook);
+    const result = await importSkuMasterFromWorkbook(storeId, workbook, channel, actorName);
     return Response.json({
       success: true,
       type: "sku",
+      channel,
       store_name: store.name,
       count: result.count,
       errors: result.errors.slice(0, 20),

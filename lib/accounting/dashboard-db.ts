@@ -3,6 +3,8 @@ import "server-only";
 import { getLatestAvailableAccountingDate, listStores } from "@/lib/accounting/accounting-db";
 import { listFbaDaily, type FbaDailyItem } from "@/lib/accounting/fba-daily-db";
 import { getCachedOrFetch, invalidateCachePattern } from "@/lib/redis";
+import { getDatabaseClient } from "@/lib/db";
+import { monthlyBasecostJoin } from "@/lib/accounting/workbook-parity-sql";
 import {
   addDays,
   inclusiveDayCount,
@@ -35,6 +37,19 @@ export interface DashboardStoreRow {
   previous: DashboardTotals | null;
 }
 
+export interface TopProductItem {
+  storeId: string;
+  storeName: string;
+  sku: string;
+  asin: string | null;
+  productName: string;
+  imageUrl: string | null;
+  units: number;
+  revenue: number;
+  netProfit: number;
+  margin: number;
+}
+
 export interface AccountingDashboardData {
   latestDate: string;
   period: { startDate: string; endDate: string };
@@ -54,6 +69,7 @@ export interface AccountingDashboardData {
    * (+ tháng trước đó khi so sánh), để client tóm tắt theo ngày / tuần / tháng.
    */
   days: DashboardDay[];
+  topProducts: TopProductItem[];
 }
 
 function toDay(it: FbaDailyItem): DashboardDay {
@@ -196,12 +212,22 @@ export async function getAccountingDashboard(options: {
   const fetchEnd = periods.current.endDate;
 
   const hasRange = Boolean(fetchStart && fetchEnd);
-  const perStore = await Promise.all(
-    stores.map(async (store) => ({
-      store,
-      items: await loadStoreDaily(store.id, hasRange ? fetchStart : "", hasRange ? fetchEnd : "", channel),
-    })),
-  );
+  const [perStore, topProducts] = await Promise.all([
+    Promise.all(
+      stores.map(async (store) => ({
+        store,
+        items: await loadStoreDaily(store.id, hasRange ? fetchStart : "", hasRange ? fetchEnd : "", channel),
+      })),
+    ),
+    hasRange && stores.length > 0 && periods.current.startDate && periods.current.endDate
+      ? loadTopSellingProducts(
+          stores.map((s) => s.id),
+          periods.current.startDate,
+          periods.current.endDate,
+          5,
+        )
+      : Promise.resolve([]),
+  ]);
 
   const allItems = perStore.flatMap((s) => s.items);
   const currentItems = allItems.filter((it) => inRange(it.date, periods.current));
@@ -246,5 +272,120 @@ export async function getAccountingDashboard(options: {
     })),
     trendStartDate: periods.trendStartDate,
     days: sumByDate(allItems),
+    topProducts,
   };
+}
+
+export async function loadTopSellingProducts(
+  storeIds: string[],
+  startDate: string,
+  endDate: string,
+  limit: number = 5,
+): Promise<TopProductItem[]> {
+  if (!storeIds.length || !startDate || !endDate) return [];
+  const sql = await getDatabaseClient();
+
+  const rows = await sql<Record<string, unknown>[]>`
+    WITH asin_fees AS (
+      SELECT store_id, asin, MAX(amazon_fee) as amazon_fee, MAX(referral_fee_pct) as referral_fee_pct
+      FROM accounting_sku_master
+      WHERE store_id IN ${sql(storeIds)} AND asin IS NOT NULL AND asin != ''
+      GROUP BY store_id, asin
+    ),
+    orders_agg AS (
+      SELECT 
+        o.store_id,
+        o.sku,
+        MAX(o.asin) as asin,
+        MAX(o.product_name) as product_name,
+        SUM(COALESCE(o.quantity, 1)) as units,
+        SUM(COALESCE(o.item_price, 0) * (
+          CASE WHEN o.currency = 'CAD' THEN 0.738 WHEN o.currency = 'MXN' THEN 0.051 ELSE 1.0 END
+        )) as revenue,
+        SUM(COALESCE(o.item_promotion_discount, 0) + COALESCE(o.ship_promotion_discount, 0)) as promo,
+        SUM(
+          CASE 
+            WHEN o.amazon_order_id NOT LIKE 'S0%' THEN COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, sm.basecost_tb, 0)
+            ELSE 0
+          END
+        ) as basecost,
+        SUM(
+          CASE 
+            WHEN COALESCE(o.item_price, 0) = 0 THEN 0
+            ELSE (COALESCE(sm.amazon_fee, af.amazon_fee, 0) * COALESCE(o.quantity, 1)) + (COALESCE(sm.referral_fee_pct, af.referral_fee_pct, 0.15) * COALESCE(o.item_price, 0) * (
+              CASE WHEN o.currency = 'CAD' THEN 0.738 WHEN o.currency = 'MXN' THEN 0.051 ELSE 1.0 END
+            ))
+          END
+        ) as amz_fee
+      FROM accounting_orders o
+      LEFT JOIN asin_fees af ON af.store_id = o.store_id AND af.asin = o.asin
+      LEFT JOIN accounting_sku_master sm ON sm.store_id = o.store_id AND sm.sku = o.sku
+      ${monthlyBasecostJoin(sql)}
+      WHERE o.store_id IN ${sql(storeIds)}
+        AND o.fulfillment_channel = 'Amazon'
+        AND (o.currency IN ('USD', 'CAD', 'MXN') OR o.amazon_order_id LIKE 'S0%')
+        AND LOWER(COALESCE(o.order_status, '')) NOT IN ('cancelled', 'canceled')
+        AND o.date >= ${startDate}::date AND o.date <= ${endDate}::date
+      GROUP BY o.store_id, o.sku
+    ),
+    ads_agg AS (
+      SELECT ad.store_id, sm.sku, SUM(ad.spend) as ads_fee
+      FROM accounting_ads ad
+      JOIN accounting_sku_master sm 
+        ON sm.store_id = ad.store_id 
+        AND strpos(LOWER(ad.portfolio), LOWER(sm.sku)) > 0
+      WHERE ad.store_id IN ${sql(storeIds)}
+        AND ad.date >= ${startDate}::date AND ad.date <= ${endDate}::date
+      GROUP BY ad.store_id, sm.sku
+    ),
+    combined AS (
+      SELECT 
+        o.store_id,
+        o.sku,
+        COALESCE(sm.asin, o.asin) as asin,
+        COALESCE(sm.mockup_url, sm.mockup) as image_url,
+        COALESCE(o.product_name, sm.sku) as product_name,
+        o.units,
+        o.revenue,
+        o.basecost,
+        o.amz_fee,
+        o.promo,
+        COALESCE(a.ads_fee, 0) as ads_fee,
+        ((COALESCE(sm.referral_fee_pct, 0.15) * 0.10 + 0.01) * o.revenue) + (0.10 * COALESCE(a.ads_fee, 0)) as tax
+      FROM orders_agg o
+      LEFT JOIN accounting_sku_master sm ON sm.store_id = o.store_id AND sm.sku = o.sku
+      LEFT JOIN ads_agg a ON a.store_id = o.store_id AND a.sku = o.sku
+    )
+    SELECT 
+      c.store_id,
+      c.sku,
+      c.asin,
+      c.product_name,
+      c.image_url,
+      s.name as store_name,
+      c.units,
+      ROUND(c.revenue::numeric, 2) as revenue,
+      ROUND((c.revenue - c.basecost - c.amz_fee - c.promo - c.ads_fee - c.tax)::numeric, 2) as net_profit,
+      CASE WHEN c.revenue > 0 
+        THEN ROUND(((c.revenue - c.basecost - c.amz_fee - c.promo - c.ads_fee - c.tax) / c.revenue * 100)::numeric, 1)
+        ELSE 0 
+      END as margin
+    FROM combined c
+    JOIN stores s ON s.id = c.store_id
+    ORDER BY net_profit DESC
+    LIMIT ${limit};
+  `;
+
+  return rows.map((r) => ({
+    storeId: String(r.store_id || ""),
+    storeName: String(r.store_name || ""),
+    sku: String(r.sku || ""),
+    asin: r.asin ? String(r.asin) : null,
+    productName: String(r.product_name || r.sku || "Unknown Product"),
+    imageUrl: r.image_url ? String(r.image_url) : null,
+    units: Number(r.units || 0),
+    revenue: Number(r.revenue || 0),
+    netProfit: Number(r.net_profit || 0),
+    margin: Number(r.margin || 0),
+  }));
 }

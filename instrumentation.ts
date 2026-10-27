@@ -5,5 +5,7 @@ export async function register() {
   ) {
     const { startMockupJobWorker } = await import("@/lib/mockup-job-worker");
     startMockupJobWorker();
+    const { startInventorySheetSyncScheduler } = await import("@/lib/accounting/inventory-sheet-scheduler");
+    startInventorySheetSyncScheduler();
   }
 }

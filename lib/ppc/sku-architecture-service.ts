@@ -1470,6 +1470,26 @@ function inRuleRange(value: number, min: number, max: number, minInclusive: bool
   return (minInclusive ? value >= min : value > min) && (maxInclusive ? value <= max : value < max);
 }
 
+// Regex trích SKU dừng ở dấu "-" (BT150101V-N -> BT150101V), nên ưu tiên khớp
+// nguyên văn với danh sách SKU kinh tế trước khi fallback sang regex. Chỉ ưu tiên
+// khi kinh tế SKU đó đáng tin (có trong Bảng mã hoặc đã map tay); SKU biến thể
+// chưa có Bảng mã (vd OCNH06093-FBM) chỉ có Product Type đoán theo prefix.
+function resolveRowSku(row: PpcPerformanceRow, econMap: Map<string, SkuEconomics>): string {
+  const isTrusted = (candidate: string) => {
+    const econ = candidate ? econMap.get(candidate) : undefined;
+    return Boolean(econ && (econ.accountingMatched || econ.costSource !== "INHERITED"));
+  };
+  const directSku = (row.sku || "").trim().toUpperCase();
+  if (isTrusted(directSku)) return directSku;
+  const leadToken = (row.campaignName || "").trim().split(/\s+/)[0].toUpperCase();
+  if (isTrusted(leadToken)) return leadToken;
+  return (
+    extractSkuFromText(row.sku) ||
+    extractSkuFromText(row.campaignName) ||
+    (row.sku || (row.campaignName ? row.campaignName.trim().split(/\s+/)[0] : ""))
+  ).toUpperCase();
+}
+
 export function evaluateRowWithRuleEngine(
   row: PpcPerformanceRow,
   ruleMap: Map<string, PpcRuleDefinition>,
@@ -1479,11 +1499,7 @@ export function evaluateRowWithRuleEngine(
   if (/archived/i.test(row.state || "") || /archived/i.test(row.campaignState || "") || /archived/i.test(row.adGroupState || "")) return null;
   if (/paused/i.test(row.state || "")) return null;
 
-  const sku = (
-    extractSkuFromText(row.sku) ||
-    extractSkuFromText(row.campaignName) ||
-    (row.sku || (row.campaignName ? row.campaignName.trim().split(/\s+/)[0] : ""))
-  ).toUpperCase();
+  const sku = resolveRowSku(row, econMap);
   const campaignName = (row.campaignName || "").toUpperCase();
 
   // Yêu cầu: Phần chỉnh bid chỉ áp dụng cho SP03, SB05, SB01.

@@ -3,6 +3,7 @@ import "server-only";
 import { getDatabaseClient } from "@/lib/db";
 import ExcelJS from "exceljs";
 import { parseCsv } from "@/lib/csv";
+import { ApiError } from "@/lib/api-guard";
 
 export interface SkuMasterItem {
   id: string;
@@ -39,6 +40,18 @@ export interface SkuMasterItem {
   landing_page_url: string | null;
   custom_fields?: Record<string, any> | null;
   row_order?: number | null;
+  // Chỉ có ở BẢNG MÃ FBA
+  kich_thuoc?: string | null;
+  file_design?: string | null;
+  // Chỉ có ở BẢNG MÃ FBM (accounting_sku_master_fbm)
+  sup?: string | null;
+  size?: string | null;
+  basecost?: number | null;
+  shipping_fee?: number | null;
+  add_shipping_fee?: number | null;
+  total_cost?: number | null;
+  ngay_len_camp?: string | null;
+  phan_loai_kich_thuoc?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -129,9 +142,42 @@ export interface AccountingMonthlyBaseCostItem {
   updated_at: string;
 }
 
+/** BẢNG MÃ FBA dùng accounting_sku_master; store có team FBM có thêm BẢNG MÃ FBM tách bảng riêng. */
+export type SkuChannel = "fba" | "fbm";
+
+export function skuMasterTable(channel: SkuChannel = "fba") {
+  return channel === "fbm" ? "accounting_sku_master_fbm" : "accounting_sku_master";
+}
+
+export function parseSkuChannel(value: unknown): SkuChannel {
+  return value === "fbm" ? "fbm" : "fba";
+}
+
+/** Cột chỉ có ở BẢNG MÃ FBM (total_cost là cột tính, không ghi trực tiếp). */
+export const FBM_SKU_EXTRA_FIELDS = [
+  "sup", "size", "basecost", "shipping_fee", "add_shipping_fee", "ngay_len_camp", "phan_loai_kich_thuoc",
+] as const;
+const FBM_SKU_NUMERIC_FIELDS = ["basecost", "shipping_fee", "add_shipping_fee"];
+/** Cột chỉ có ở BẢNG MÃ FBA (theo sheet BẢNG MÃ của các store). */
+export const FBA_SKU_EXTRA_FIELDS = ["kich_thuoc", "phan_loai_kich_thuoc", "file_design"] as const;
+
+export function skuExtraFields(channel: SkuChannel): readonly string[] {
+  return channel === "fbm" ? FBM_SKU_EXTRA_FIELDS : FBA_SKU_EXTRA_FIELDS;
+}
+
+type Sql = Awaited<ReturnType<typeof getDatabaseClient>>;
+
+function skuChannelSelect(sql: Sql, channel: SkuChannel) {
+  return channel === "fbm"
+    ? sql`, sup, size, basecost::float, shipping_fee::float, add_shipping_fee::float, total_cost::float, ngay_len_camp, phan_loai_kich_thuoc`
+    : sql`, kich_thuoc, phan_loai_kich_thuoc, file_design`;
+}
+
+export type InventoryEntityType = "sku" | "sku_fbm" | "inbound" | "check_shipment" | "monthly_base_cost";
+
 export interface InventoryHistoryItem {
   id: string;
-  entity_type: "sku" | "inbound" | "check_shipment" | "monthly_base_cost";
+  entity_type: InventoryEntityType;
   entity_id: string;
   store_id: string;
   action: "create" | "update" | "delete" | "restore";
@@ -401,9 +447,10 @@ export async function listInventoryFieldOptions(storeId: string): Promise<Invent
 
 export async function listSkuMaster(
   storeId: string,
-  params: { search?: string; status?: string; productType?: string; cursor?: string; page?: number; limit?: number } = {},
+  params: { search?: string; status?: string; productType?: string; cursor?: string; page?: number; limit?: number; channel?: SkuChannel } = {},
 ): Promise<{ items: SkuMasterItem[]; total: number; page: number; limit: number; nextCursor: string | null }> {
   const sql = await getDatabaseClient();
+  const table = skuMasterTable(params.channel);
   const page = Math.max(1, params.page || 1);
   const limit = Math.min(10000, Math.max(1, params.limit || 50));
   const offset = params.cursor ? 0 : (page - 1) * limit;
@@ -427,7 +474,7 @@ export async function listSkuMaster(
 
   const countRows = await sql<{ count: string }[]>`
     SELECT COUNT(*)::text as count
-    FROM accounting_sku_master
+    FROM ${sql(table)}
     WHERE store_id = ${storeId}
       AND deleted_at IS NULL
       AND (${searchPattern}::text IS NULL OR (
@@ -477,10 +524,11 @@ export async function listSkuMaster(
       creative_headline,
       brand_logo_asset_id,
       landing_page_url,
-      custom_fields,
+      custom_fields
+      ${skuChannelSelect(sql, params.channel ?? "fba")},
       created_at::text,
       updated_at::text
-    FROM accounting_sku_master
+    FROM ${sql(table)}
     WHERE store_id = ${storeId}
       AND deleted_at IS NULL
       AND (${searchPattern}::text IS NULL OR (
@@ -513,10 +561,12 @@ export async function upsertSkuMasterItem(
   storeId: string,
   data: Partial<SkuMasterItem> & { sku: string },
   changedBy = "system",
+  channel: SkuChannel = "fba",
 ): Promise<SkuMasterItem> {
   const sql = await getDatabaseClient();
+  const fbm = channel === "fbm";
   const rows = await sql<SkuMasterItem[]>`
-    INSERT INTO accounting_sku_master (
+    INSERT INTO ${sql(skuMasterTable(channel))} AS t (
       store_id,
       brand,
       product_type,
@@ -548,6 +598,9 @@ export async function upsertSkuMasterItem(
       creative_headline,
       brand_logo_asset_id,
       landing_page_url,
+      ${fbm
+        ? sql`sup, size, basecost, shipping_fee, add_shipping_fee, ngay_len_camp, phan_loai_kich_thuoc,`
+        : sql`kich_thuoc, phan_loai_kich_thuoc, file_design,`}
       last_changed_by,
       updated_at
     ) VALUES (
@@ -564,7 +617,7 @@ export async function upsertSkuMasterItem(
       ${data.loai ?? null},
       ${data.niche ?? null},
       ${data.pic_idea ?? null},
-      ${data.status ?? "Active"},
+      ${data.status ?? (fbm ? null : "Active")},
       ${data.event ?? null},
       ${data.tinh_trang ?? null},
       ${data.design_pic ?? null},
@@ -582,6 +635,10 @@ export async function upsertSkuMasterItem(
       ${data.creative_headline ?? null},
       ${data.brand_logo_asset_id ?? null},
       ${data.landing_page_url ?? null},
+      ${fbm
+        ? sql`${data.sup ?? null}, ${data.size ?? null}, ${data.basecost ?? null}, ${data.shipping_fee ?? null},
+          ${data.add_shipping_fee ?? null}, ${cleanDateOnly(data.ngay_len_camp) ?? null}, ${data.phan_loai_kich_thuoc ?? null},`
+        : sql`${data.kich_thuoc ?? null}, ${data.phan_loai_kich_thuoc ?? null}, ${data.file_design ?? null},`}
       ${changedBy},
       NOW()
     )
@@ -590,39 +647,50 @@ export async function upsertSkuMasterItem(
       product_type = EXCLUDED.product_type,
       mockup = CASE 
         WHEN EXCLUDED.mockup IS NOT NULL AND EXCLUDED.mockup != '[object Object]' THEN EXCLUDED.mockup
-        WHEN accounting_sku_master.mockup = '[object Object]' THEN NULL
-        ELSE accounting_sku_master.mockup
+        WHEN t.mockup = '[object Object]' THEN NULL
+        ELSE t.mockup
       END,
-      asin = COALESCE(EXCLUDED.asin, accounting_sku_master.asin),
-      fnsku = COALESCE(EXCLUDED.fnsku, accounting_sku_master.fnsku),
-      amazon_fee = COALESCE(EXCLUDED.amazon_fee, accounting_sku_master.amazon_fee),
-      referral_fee_pct = COALESCE(EXCLUDED.referral_fee_pct, accounting_sku_master.referral_fee_pct),
-      pic_mkt = COALESCE(EXCLUDED.pic_mkt, accounting_sku_master.pic_mkt),
-      loai = COALESCE(EXCLUDED.loai, accounting_sku_master.loai),
-      niche = COALESCE(EXCLUDED.niche, accounting_sku_master.niche),
-      pic_idea = COALESCE(EXCLUDED.pic_idea, accounting_sku_master.pic_idea),
-      status = COALESCE(EXCLUDED.status, accounting_sku_master.status),
-      event = COALESCE(EXCLUDED.event, accounting_sku_master.event),
-      tinh_trang = COALESCE(EXCLUDED.tinh_trang, accounting_sku_master.tinh_trang),
-      design_pic = COALESCE(EXCLUDED.design_pic, accounting_sku_master.design_pic),
+      asin = COALESCE(EXCLUDED.asin, t.asin),
+      fnsku = COALESCE(EXCLUDED.fnsku, t.fnsku),
+      amazon_fee = COALESCE(EXCLUDED.amazon_fee, t.amazon_fee),
+      referral_fee_pct = COALESCE(EXCLUDED.referral_fee_pct, t.referral_fee_pct),
+      pic_mkt = COALESCE(EXCLUDED.pic_mkt, t.pic_mkt),
+      loai = COALESCE(EXCLUDED.loai, t.loai),
+      niche = COALESCE(EXCLUDED.niche, t.niche),
+      pic_idea = COALESCE(EXCLUDED.pic_idea, t.pic_idea),
+      status = COALESCE(EXCLUDED.status, t.status),
+      event = COALESCE(EXCLUDED.event, t.event),
+      tinh_trang = COALESCE(EXCLUDED.tinh_trang, t.tinh_trang),
+      design_pic = COALESCE(EXCLUDED.design_pic, t.design_pic),
       mockup_url = CASE 
         WHEN EXCLUDED.mockup_url IS NOT NULL AND EXCLUDED.mockup_url != '[object Object]' THEN EXCLUDED.mockup_url
-        WHEN accounting_sku_master.mockup_url = '[object Object]' THEN NULL
-        ELSE accounting_sku_master.mockup_url
+        WHEN t.mockup_url = '[object Object]' THEN NULL
+        ELSE t.mockup_url
       END,
-      thang_listing = COALESCE(EXCLUDED.thang_listing, accounting_sku_master.thang_listing),
-      thang_danh_gia = COALESCE(EXCLUDED.thang_danh_gia, accounting_sku_master.thang_danh_gia),
-      event_250th = COALESCE(EXCLUDED.event_250th, accounting_sku_master.event_250th),
-      ngay_danh_gia_sku_event = COALESCE(EXCLUDED.ngay_danh_gia_sku_event, accounting_sku_master.ngay_danh_gia_sku_event),
-      amazon_fba_fee_thay_doi = COALESCE(EXCLUDED.amazon_fba_fee_thay_doi, accounting_sku_master.amazon_fba_fee_thay_doi),
-      basecost_tb = COALESCE(EXCLUDED.basecost_tb, accounting_sku_master.basecost_tb),
-      brand_entity_id = COALESCE(EXCLUDED.brand_entity_id, accounting_sku_master.brand_entity_id),
-      creative_asins_video = COALESCE(EXCLUDED.creative_asins_video, accounting_sku_master.creative_asins_video),
-      creative_asins_collection = COALESCE(EXCLUDED.creative_asins_collection, accounting_sku_master.creative_asins_collection),
-      video_media_ids = COALESCE(EXCLUDED.video_media_ids, accounting_sku_master.video_media_ids),
-      creative_headline = COALESCE(EXCLUDED.creative_headline, accounting_sku_master.creative_headline),
-      brand_logo_asset_id = COALESCE(EXCLUDED.brand_logo_asset_id, accounting_sku_master.brand_logo_asset_id),
-      landing_page_url = COALESCE(EXCLUDED.landing_page_url, accounting_sku_master.landing_page_url),
+      thang_listing = COALESCE(EXCLUDED.thang_listing, t.thang_listing),
+      thang_danh_gia = COALESCE(EXCLUDED.thang_danh_gia, t.thang_danh_gia),
+      event_250th = COALESCE(EXCLUDED.event_250th, t.event_250th),
+      ngay_danh_gia_sku_event = COALESCE(EXCLUDED.ngay_danh_gia_sku_event, t.ngay_danh_gia_sku_event),
+      amazon_fba_fee_thay_doi = COALESCE(EXCLUDED.amazon_fba_fee_thay_doi, t.amazon_fba_fee_thay_doi),
+      basecost_tb = COALESCE(EXCLUDED.basecost_tb, t.basecost_tb),
+      brand_entity_id = COALESCE(EXCLUDED.brand_entity_id, t.brand_entity_id),
+      creative_asins_video = COALESCE(EXCLUDED.creative_asins_video, t.creative_asins_video),
+      creative_asins_collection = COALESCE(EXCLUDED.creative_asins_collection, t.creative_asins_collection),
+      video_media_ids = COALESCE(EXCLUDED.video_media_ids, t.video_media_ids),
+      creative_headline = COALESCE(EXCLUDED.creative_headline, t.creative_headline),
+      brand_logo_asset_id = COALESCE(EXCLUDED.brand_logo_asset_id, t.brand_logo_asset_id),
+      landing_page_url = COALESCE(EXCLUDED.landing_page_url, t.landing_page_url),
+      ${fbm
+        ? sql`sup = COALESCE(EXCLUDED.sup, t.sup),
+          size = COALESCE(EXCLUDED.size, t.size),
+          basecost = COALESCE(EXCLUDED.basecost, t.basecost),
+          shipping_fee = COALESCE(EXCLUDED.shipping_fee, t.shipping_fee),
+          add_shipping_fee = COALESCE(EXCLUDED.add_shipping_fee, t.add_shipping_fee),
+          ngay_len_camp = COALESCE(EXCLUDED.ngay_len_camp, t.ngay_len_camp),
+          phan_loai_kich_thuoc = COALESCE(EXCLUDED.phan_loai_kich_thuoc, t.phan_loai_kich_thuoc),`
+        : sql`kich_thuoc = COALESCE(EXCLUDED.kich_thuoc, t.kich_thuoc),
+          phan_loai_kich_thuoc = COALESCE(EXCLUDED.phan_loai_kich_thuoc, t.phan_loai_kich_thuoc),
+          file_design = COALESCE(EXCLUDED.file_design, t.file_design),`}
       deleted_at = NULL,
       last_changed_by = EXCLUDED.last_changed_by,
       updated_at = NOW()
@@ -634,16 +702,22 @@ export async function upsertSkuMasterItem(
       amazon_fba_fee_thay_doi::float, basecost_tb::float, brand_entity_id,
       creative_asins_video, creative_asins_collection, video_media_ids,
       creative_headline, brand_logo_asset_id, landing_page_url,
-      custom_fields,
+      custom_fields
+      ${skuChannelSelect(sql, channel)},
       created_at::text, updated_at::text
   `;
   return rows[0];
 }
 
-export async function deleteSkuMasterItem(id: string, storeId: string, changedBy = "system"): Promise<boolean> {
+export async function deleteSkuMasterItem(
+  id: string,
+  storeId: string,
+  changedBy = "system",
+  channel: SkuChannel = "fba",
+): Promise<boolean> {
   const sql = await getDatabaseClient();
   const res = await sql`
-    UPDATE accounting_sku_master
+    UPDATE ${sql(skuMasterTable(channel))}
     SET deleted_at = NOW(), last_changed_by = ${changedBy}, updated_at = NOW()
     WHERE id = ${id} AND store_id = ${storeId} AND deleted_at IS NULL
   `;
@@ -656,13 +730,15 @@ export async function patchSkuMasterField(
   field: string,
   value: any,
   changedBy = "system",
+  channel: SkuChannel = "fba",
 ): Promise<SkuMasterItem> {
   const sql = await getDatabaseClient();
+  const table = skuMasterTable(channel);
   const trimmed = typeof value === "string" ? value.trim() : value;
 
   if (field.startsWith("custom_")) {
     const rows = await sql<SkuMasterItem[]>`
-      UPDATE accounting_sku_master
+      UPDATE ${sql(table)}
       SET
         custom_fields = jsonb_set(COALESCE(custom_fields, '{}'::jsonb), ARRAY[${field}], to_jsonb(${trimmed === "" ? null : trimmed}::text)),
         last_changed_by = ${changedBy},
@@ -676,15 +752,15 @@ export async function patchSkuMasterField(
         amazon_fba_fee_thay_doi::float, basecost_tb::float, brand_entity_id,
         creative_asins_video, creative_asins_collection, video_media_ids,
         creative_headline, brand_logo_asset_id, landing_page_url,
-        custom_fields, created_at::text, updated_at::text
+        custom_fields ${skuChannelSelect(sql, channel)}, created_at::text, updated_at::text
     `;
     if (!rows[0]) throw new Error("Không tìm thấy SKU cần cập nhật.");
     return rows[0];
   }
 
   const monthFields = ["thang_listing", "thang_danh_gia"];
-  const dateFields = ["event_250th", "ngay_danh_gia_sku_event"];
-  const numFields = ["amazon_fee", "referral_fee_pct", "amazon_fba_fee_thay_doi", "basecost_tb"];
+  const dateFields = ["event_250th", "ngay_danh_gia_sku_event", "ngay_len_camp"];
+  const numFields = ["amazon_fee", "referral_fee_pct", "amazon_fba_fee_thay_doi", "basecost_tb", ...FBM_SKU_NUMERIC_FIELDS];
   const val = numFields.includes(field)
     ? trimmed === "" || trimmed == null ? null : parseFloat(trimmed)
     : monthFields.includes(field)
@@ -700,14 +776,15 @@ export async function patchSkuMasterField(
     "thang_listing", "thang_danh_gia", "event_250th", "ngay_danh_gia_sku_event",
     "amazon_fba_fee_thay_doi", "basecost_tb", "brand_entity_id",
     "creative_asins_video", "creative_asins_collection", "video_media_ids",
-    "creative_headline", "brand_logo_asset_id", "landing_page_url"
+    "creative_headline", "brand_logo_asset_id", "landing_page_url",
+    ...skuExtraFields(channel),
   ];
   if (!validFields.includes(field)) {
     throw new Error(`Trường '${field}' không hợp lệ.`);
   }
 
   const rows = await sql<SkuMasterItem[]>`
-    UPDATE accounting_sku_master
+    UPDATE ${sql(table)}
     SET
       ${sql(field)} = ${val},
       last_changed_by = ${changedBy},
@@ -721,7 +798,7 @@ export async function patchSkuMasterField(
       amazon_fba_fee_thay_doi::float, basecost_tb::float, brand_entity_id,
       creative_asins_video, creative_asins_collection, video_media_ids,
       creative_headline, brand_logo_asset_id, landing_page_url,
-      custom_fields, created_at::text, updated_at::text
+      custom_fields ${skuChannelSelect(sql, channel)}, created_at::text, updated_at::text
   `;
   if (!rows[0]) throw new Error("Không tìm thấy SKU cần cập nhật.");
   return rows[0];
@@ -1230,7 +1307,7 @@ export async function deleteInboundShipmentItem(id: string, storeId: string, cha
 
 export async function listInventoryHistory(
   storeId: string,
-  entityType?: "sku" | "inbound" | "check_shipment" | "monthly_base_cost" | null,
+  entityType?: InventoryEntityType | null,
   entityId?: string | null,
 ): Promise<InventoryHistoryItem[]> {
   const sql = await getDatabaseClient();
@@ -1248,7 +1325,7 @@ export async function listInventoryHistory(
 
 export async function restoreSoftDeletedItem(
   storeId: string,
-  entityType: "sku" | "inbound" | "check_shipment" | "monthly_base_cost",
+  entityType: InventoryEntityType,
   entityId: string,
   changedBy = "system",
 ): Promise<boolean> {
@@ -1256,6 +1333,8 @@ export async function restoreSoftDeletedItem(
   const table =
     entityType === "sku"
       ? "accounting_sku_master"
+      : entityType === "sku_fbm"
+      ? "accounting_sku_master_fbm"
       : entityType === "inbound"
       ? "accounting_inbound_shipments"
       : entityType === "check_shipment"
@@ -1302,7 +1381,7 @@ export async function restoreInventoryHistory(
   storeId: string,
   historyId: string,
   changedBy = "system",
-): Promise<{ entityType: "sku" | "inbound" | "check_shipment" | "monthly_base_cost"; entityId: string }> {
+): Promise<{ entityType: InventoryEntityType; entityId: string }> {
   const sql = await getDatabaseClient();
   return sql.begin(async (tx) => {
     const historyRows = await tx<InventoryHistoryItem[]>`
@@ -1317,13 +1396,17 @@ export async function restoreInventoryHistory(
 
     const table = history.entity_type === "sku"
       ? "accounting_sku_master"
+      : history.entity_type === "sku_fbm"
+      ? "accounting_sku_master_fbm"
       : history.entity_type === "inbound"
       ? "accounting_inbound_shipments"
       : history.entity_type === "check_shipment"
       ? "accounting_amazon_check_shipments"
       : "accounting_monthly_base_cost";
-    const fields = history.entity_type === "sku"
-      ? SKU_RESTORE_FIELDS
+    const fields = history.entity_type === "sku_fbm"
+      ? [...SKU_RESTORE_FIELDS, ...FBM_SKU_EXTRA_FIELDS]
+      : history.entity_type === "sku"
+      ? [...SKU_RESTORE_FIELDS, ...FBA_SKU_EXTRA_FIELDS]
       : history.entity_type === "inbound"
       ? INBOUND_RESTORE_FIELDS
       : history.entity_type === "check_shipment"
@@ -2210,7 +2293,19 @@ export function populateInboundWorksheet(worksheet: ExcelJS.Worksheet, shipments
 export async function importSkuMasterFromWorkbook(
   storeId: string,
   workbook: ExcelJS.Workbook,
+  channel: SkuChannel = "fba",
+  changedBy = "system",
 ): Promise<{ count: number; errors: string[] }> {
+  if (channel === "fbm") {
+    const sheetName = pickFbmSkuSheet(workbook.worksheets.map((w) => w.name));
+    const ws = sheetName ? workbook.getWorksheet(sheetName) : undefined;
+    if (!ws) {
+      const available = workbook.worksheets.map((w) => `"${w.name}"`).join(", ");
+      throw new Error(`File không có sheet BẢNG MÃ FBM (ví dụ "FBM_<Store>"). Các sheet hiện có trong file: [${available}]`);
+    }
+    return importFbmSkuRows(storeId, worksheetToRows(ws), changedBy);
+  }
+
   const wsSku = findWorksheetByName(workbook, ["BẢNG MÃ", "BANG MA", "SKU MASTER"]);
   if (!wsSku) {
     const available = workbook.worksheets.map((w) => `"${w.name}"`).join(", ");
@@ -2340,13 +2435,237 @@ export async function importSkuMasterFromWorkbook(
 
   for (const item of skuBatch) {
     try {
-      await upsertSkuMasterItem(storeId, item as SkuMasterItem);
+      await upsertSkuMasterItem(storeId, item as SkuMasterItem, "system", channel);
       count++;
     } catch (err) {
       errors.push(`Lỗi SKU ${item.sku}: ${(err as Error).message}`);
     }
   }
 
+  return { count, errors };
+}
+
+// ----------------- BẢNG MÃ FBM IMPORT -----------------
+// Mẫu sheet "FBM_<Store>" (VD "FBM_EKASPEEK"): map cột theo TÊN tiêu đề, không theo vị trí,
+// vì thứ tự cột FBM khác BẢNG MÃ FBA. Dùng chung cho file Excel và link Google Sheet.
+
+export type SheetRows = (string | number | null)[][];
+
+function normalizeHeader(value: unknown): string {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/đ/g, "d")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const FBM_SKU_HEADER_MAP: Record<string, keyof SkuMasterItem | null> = {
+  "brand": "brand",
+  "product type": "product_type",
+  "mockup": null, // =IMAGE(Mockup url) — lấy từ cột Mockup url
+  "sku": "sku",
+  "asin": "asin",
+  "sup": "sup",
+  "size": "size",
+  "% referal": "referral_fee_pct",
+  "% referral": "referral_fee_pct",
+  "pic mkt": "pic_mkt",
+  "loai": "loai",
+  "ngach": "niche",
+  "niche": "niche",
+  "pic idea": "pic_idea",
+  "trang thai": "status",
+  "status": "status",
+  "event": "event",
+  "tinh trang": "tinh_trang",
+  "basecost": "basecost",
+  "base cost": "basecost",
+  "shipping fee": "shipping_fee",
+  "add shipping fee": "add_shipping_fee",
+  "total": null, // = Basecost + Shipping fee + Add shipping fee, DB tự tính
+  "mockup url": "mockup_url",
+  "ngay listing": "thang_listing",
+  "thang listing": "thang_listing",
+  "design pic": "design_pic",
+  "ngay len camp": "ngay_len_camp",
+  "phan loai kich thuoc": "phan_loai_kich_thuoc",
+  "amazon fba fee": "amazon_fee",
+  "amazon fee": "amazon_fee",
+  "basecost trung binh": "basecost_tb",
+  "basecost tb": "basecost_tb",
+  "brand entity id": "brand_entity_id",
+  "creative asins (video)": "creative_asins_video",
+  "creative asins (collection)": "creative_asins_collection",
+  "video media ids": "video_media_ids",
+  "creative headline": "creative_headline",
+  "brand logo asset id": "brand_logo_asset_id",
+  "landing page url": "landing_page_url",
+};
+
+const FBM_NUMBER_KEYS = new Set<keyof SkuMasterItem>(["basecost", "shipping_fee", "add_shipping_fee", "amazon_fee", "basecost_tb"]);
+
+/** Chọn tab BẢNG MÃ FBM: "FBM_<Store>" / "BẢNG MÃ FBM", nếu không có thì "BẢNG MÃ". */
+export function pickFbmSkuSheet(names: string[]): string | null {
+  const norm = names.map((name) => ({ name, n: normalizeHeader(name) }));
+  return (
+    norm.find(({ n }) => n.startsWith("fbm_") || n.startsWith("fbm ") || n === "fbm" || n === "bang ma fbm")?.name ??
+    norm.find(({ n }) => n === "bang ma" || n === "sku master")?.name ??
+    null
+  );
+}
+
+export function worksheetToRows(ws: ExcelJS.Worksheet): SheetRows {
+  const rows: SheetRows = [];
+  const colCount = ws.columnCount;
+  ws.eachRow({ includeEmpty: true }, (row, rowNumber) => {
+    const values: (string | number | null)[] = [];
+    for (let c = 1; c <= colCount; c++) values.push(getExcelCellValue(row.getCell(c)));
+    rows[rowNumber - 1] = values;
+  });
+  return Array.from(rows, (r) => r ?? []);
+}
+
+function cellText(value: unknown): string | null {
+  if (value == null) return null;
+  const text = String(value).replace(/\r/g, "").trim();
+  return text && text !== "[object Object]" && text !== "#N/A" ? text : null;
+}
+
+/** Serial number ngày của Google Sheet / Excel (gốc 30/12/1899) → "YYYY-MM-DD". */
+export function sheetSerialToIsoDate(value: unknown): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 20000 || value > 80000) return null;
+  return new Date(Math.round((value - 25569) * 86_400_000)).toISOString().slice(0, 10);
+}
+
+function cellNumber(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const text = cellText(value);
+  if (!text) return null;
+  const n = parseFloat(text.replace(/[$,%\s]/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Thứ tự cột của mẫu sheet "FBM_<Store>", dùng khi xuất Excel BẢNG MÃ FBM. */
+const FBM_SKU_TEMPLATE: { header: string; key: keyof SkuMasterItem | "mockup_formula" | "total_formula"; width: number }[] = [
+  { header: "Brand", key: "brand", width: 14 },
+  { header: "Product Type", key: "product_type", width: 18 },
+  { header: "Mockup", key: "mockup_formula", width: 12 },
+  { header: "SKU", key: "sku", width: 18 },
+  { header: "ASIN", key: "asin", width: 14 },
+  { header: "SUP", key: "sup", width: 12 },
+  { header: "Size", key: "size", width: 10 },
+  { header: "% Referal", key: "referral_fee_pct", width: 10 },
+  { header: "PIC MKT", key: "pic_mkt", width: 12 },
+  { header: "Loại", key: "loai", width: 8 },
+  { header: "Ngách", key: "niche", width: 14 },
+  { header: "PIC Idea", key: "pic_idea", width: 12 },
+  { header: "Trạng thái", key: "status", width: 14 },
+  { header: "Event", key: "event", width: 12 },
+  { header: "Tinh Trang", key: "tinh_trang", width: 16 },
+  { header: "Basecost", key: "basecost", width: 10 },
+  { header: "Shipping fee", key: "shipping_fee", width: 11 },
+  { header: "Add shipping fee", key: "add_shipping_fee", width: 14 },
+  { header: "Total", key: "total_formula", width: 10 },
+  { header: "Mockup url", key: "mockup_url", width: 30 },
+  { header: "Ngày Listing", key: "thang_listing", width: 12 },
+  { header: "DESIGN PIC", key: "design_pic", width: 12 },
+  { header: "Ngày Lên Camp", key: "ngay_len_camp", width: 13 },
+  { header: "Phân loại kích thước", key: "phan_loai_kich_thuoc", width: 18 },
+  { header: "Amazon FBA Fee", key: "amazon_fee", width: 13 },
+  { header: "Basecost trung bình", key: "basecost_tb", width: 16 },
+  { header: "Brand Entity ID", key: "brand_entity_id", width: 16 },
+  { header: "Creative ASINs (Video)", key: "creative_asins_video", width: 18 },
+  { header: "Creative ASINs (Collection)", key: "creative_asins_collection", width: 20 },
+  { header: "Video Media IDs", key: "video_media_ids", width: 16 },
+  { header: "Creative Headline", key: "creative_headline", width: 24 },
+  { header: "Brand Logo Asset ID", key: "brand_logo_asset_id", width: 20 },
+  { header: "Landing Page URL", key: "landing_page_url", width: 24 },
+];
+
+export function createFbmSkuSheet(ws: ExcelJS.Worksheet, skus: Partial<SkuMasterItem>[]): void {
+  // Các cột tham chiếu trong công thức đều nằm trong A..Z.
+  const col = (key: string) => String.fromCharCode(65 + FBM_SKU_TEMPLATE.findIndex((c) => c.key === key));
+  const mockupUrlCol = col("mockup_url");
+  const basecostCol = col("basecost");
+  const addShippingCol = col("add_shipping_fee");
+
+  ws.columns = FBM_SKU_TEMPLATE.map((c) => ({ header: c.header, width: c.width }));
+  ws.views = [{ state: "frozen", ySplit: 1 }];
+  const header = ws.getRow(1);
+  header.font = { bold: true };
+  header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF9900" } };
+
+  skus.forEach((item, index) => {
+    const r = index + 2;
+    ws.getRow(r).values = FBM_SKU_TEMPLATE.map((c) => {
+      if (c.key === "mockup_formula") return item.mockup_url ? { formula: `IMAGE(${mockupUrlCol}${r},1)` } : null;
+      if (c.key === "total_formula") return { formula: `SUM(${basecostCol}${r}:${addShippingCol}${r})`, result: item.total_cost ?? undefined };
+      if (c.key === "thang_listing") {
+        const m = item.thang_listing?.match(/^(\d{4})-(\d{2})$/);
+        return m ? `${Number(m[2])}/${m[1]}` : item.thang_listing ?? null;
+      }
+      return (item[c.key] as string | number | null | undefined) ?? null;
+    });
+    ws.getCell(r, FBM_SKU_TEMPLATE.findIndex((c) => c.key === "referral_fee_pct") + 1).numFmt = "0%";
+  });
+}
+
+/** Đọc các dòng của sheet BẢNG MÃ FBM thành danh sách SKU (thuần, không ghi DB). */
+export function parseFbmSkuRows(rows: SheetRows): (Partial<SkuMasterItem> & { sku: string; _row: number })[] {
+  // Dòng tiêu đề là dòng đầu tiên (trong 5 dòng đầu) có cột "SKU".
+  const headerIndex = rows.slice(0, 5).findIndex((r) => r.some((v) => normalizeHeader(v) === "sku"));
+  if (headerIndex === -1) {
+    throw new ApiError('Không tìm thấy dòng tiêu đề có cột "SKU" trong sheet BẢNG MÃ FBM.', 400);
+  }
+  const columns = rows[headerIndex].map((h) => FBM_SKU_HEADER_MAP[normalizeHeader(h)] ?? null);
+
+  const items: (Partial<SkuMasterItem> & { sku: string; _row: number })[] = [];
+  for (const [offset, row] of rows.slice(headerIndex + 1).entries()) {
+    const raw: Partial<Record<keyof SkuMasterItem, unknown>> = {};
+    columns.forEach((key, i) => {
+      if (key) raw[key] = row[i];
+    });
+    const sku = cellText(raw.sku);
+    if (!sku) continue;
+
+    const item: Partial<SkuMasterItem> & { sku: string; _row: number } = { sku, _row: headerIndex + offset + 2 };
+    const fields = item as Record<string, unknown>;
+    for (const key of Object.keys(raw) as (keyof SkuMasterItem)[]) {
+      if (key === "sku") continue;
+      const value = raw[key];
+      if (FBM_NUMBER_KEYS.has(key)) fields[key] = cellNumber(value);
+      else if (key === "referral_fee_pct") {
+        const pct = cellNumber(value);
+        item.referral_fee_pct = pct != null && pct > 1 ? pct / 100 : pct;
+      } else if (key === "thang_listing") item.thang_listing = cleanMonthOnly(sheetSerialToIsoDate(value) ?? cellText(value));
+      else if (key === "ngay_len_camp") item.ngay_len_camp = cleanDateOnly(sheetSerialToIsoDate(value) ?? cellText(value));
+      else fields[key] = cellText(value);
+    }
+    const url = item.mockup_url;
+    item.mockup_url = url && /^(https?:\/\/|\/)/.test(url) ? url : null;
+    item.mockup = item.mockup_url;
+    items.push(item);
+  }
+  return items;
+}
+
+export async function importFbmSkuRows(
+  storeId: string,
+  rows: SheetRows,
+  changedBy = "system",
+): Promise<{ count: number; errors: string[] }> {
+  const errors: string[] = [];
+  let count = 0;
+  for (const item of parseFbmSkuRows(rows)) {
+    try {
+      await upsertSkuMasterItem(storeId, item, changedBy, "fbm");
+      count++;
+    } catch (err) {
+      errors.push(`Lỗi SKU ${item.sku}: ${(err as Error).message}`);
+    }
+  }
   return { count, errors };
 }
 

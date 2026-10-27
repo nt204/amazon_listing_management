@@ -11,7 +11,10 @@ import {
   createDefaultSkuSheet,
   createDefaultInboundSheet,
   createDefaultCheckShipmentSheet,
+  createFbmSkuSheet,
   getYearlyBaseCostMatrix,
+  parseSkuChannel,
+  skuMasterTable,
   type YearlyBaseCostRow,
 } from "@/lib/accounting/inventory-db";
 
@@ -22,6 +25,8 @@ export async function GET(request: Request) {
     const storeId = searchParams.get("store_id");
     const type = (searchParams.get("type") || "all") as "sku" | "inbound" | "check_shipment" | "monthly_base_cost" | "all";
     const period = searchParams.get("period");
+    // BẢNG MÃ FBM: xuất từ bảng riêng, không dùng template của BẢNG MÃ FBA
+    const isFbm = type === "sku" && parseSkuChannel(searchParams.get("channel")) === "fbm";
     const isTemplateMode =
       searchParams.get("mode") === "template" ||
       searchParams.get("template") === "true";
@@ -48,7 +53,11 @@ export async function GET(request: Request) {
           creative_asins_collection, video_media_ids,
           creative_headline, brand_logo_asset_id, landing_page_url,
           custom_fields
-        FROM accounting_sku_master
+          ${isFbm
+            ? sql`, sup, size, basecost::float, shipping_fee::float, add_shipping_fee::float,
+              total_cost::float, ngay_len_camp, phan_loai_kich_thuoc`
+            : sql``}
+        FROM ${sql(skuMasterTable(isFbm ? "fbm" : "fba"))}
         WHERE store_id = ${storeId} AND deleted_at IS NULL
         ORDER BY thang_listing DESC NULLS LAST, created_at DESC, sku ASC
       `;
@@ -201,7 +210,7 @@ export async function GET(request: Request) {
 
     // Kiểm tra xem Store đã có file mẫu gốc (Template) được tự động lưu khi Import chưa
     const template =
-      type !== "monthly_base_cost"
+      type !== "monthly_base_cost" && !isFbm
         ? await getInventoryTemplate(storeId, type as "sku" | "inbound" | "check_shipment" | "all")
         : null;
 
@@ -281,7 +290,10 @@ export async function GET(request: Request) {
       // 🌟 CÁCH 2: Tạo mới workbook theo đúng chuẩn 100% định dạng, công thức, độ rộng cột, frozen panes
       const wb = new ExcelJS.Workbook();
 
-      if (type === "all" || type === "sku") {
+      if (isFbm) {
+        // Giữ đúng mẫu sheet "FBM_<Store>" để file xuất ra import lại được
+        createFbmSkuSheet(wb.addWorksheet(`FBM_${storeName}`), skus);
+      } else if (type === "all" || type === "sku") {
         const wsSku = wb.addWorksheet("BẢNG MÃ");
         createDefaultSkuSheet(wsSku, skus);
       }
@@ -310,7 +322,7 @@ export async function GET(request: Request) {
 
     const typeSuffix =
       type === "sku"
-        ? "BANG_MA"
+        ? isFbm ? "BANG_MA_FBM" : "BANG_MA"
         : type === "inbound"
         ? "DI_HANG"
         : type === "check_shipment"

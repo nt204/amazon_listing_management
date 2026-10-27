@@ -8,16 +8,18 @@ import {
   TrashIcon,
   XIcon,
 } from "@phosphor-icons/react";
-import type { InventoryHistoryItem } from "@/lib/accounting/inventory-db";
+import type { InventoryEntityType, InventoryHistoryItem } from "@/lib/accounting/inventory-db";
 
 interface InventoryHistoryDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   storeId: string;
   storeName?: string;
-  entityType?: "sku" | "inbound" | "check_shipment" | "monthly_base_cost";
+  entityType?: InventoryEntityType;
   entityId?: string;
   entityTitle?: string;
+  /** Store có team FBM: thêm bộ lọc BẢNG MÃ FBM. */
+  showFbm?: boolean;
   onRestored?: () => void;
 }
 
@@ -136,13 +138,14 @@ export function InventoryHistoryDrawer({
   entityType,
   entityId,
   entityTitle,
+  showFbm = false,
   onRestored,
 }: InventoryHistoryDrawerProps) {
   const [history, setHistory] = useState<InventoryHistoryItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [restoringId, setRestoringId] = useState<string | null>(null);
-  const [activeFilter, setActiveFilter] = useState<"all" | "sku" | "inbound" | "check_shipment" | "monthly_base_cost">(
+  const [activeFilter, setActiveFilter] = useState<"all" | InventoryEntityType>(
     (entityType as any) || "all"
   );
 
@@ -264,7 +267,7 @@ export function InventoryHistoryDrawer({
                   Store: <strong className="text-indigo-700">{storeName || "Hiện tại"}</strong>
                   {entityTitle && (
                     <span className="ml-1.5 font-mono text-slate-700">
-                      • {entityType === "sku" ? "SKU" : entityType === "check_shipment" ? "Shipment" : "Lô hàng"}: <strong>{entityTitle}</strong>
+                      • {entityType === "sku" ? "SKU" : entityType === "sku_fbm" ? "SKU FBM" : entityType === "check_shipment" ? "Shipment" : "Lô hàng"}: <strong>{entityTitle}</strong>
                     </span>
                   )}
                 </p>
@@ -305,6 +308,19 @@ export function InventoryHistoryDrawer({
               >
                 Tổng kho (SKU Master)
               </button>
+              {showFbm && (
+                <button
+                  type="button"
+                  onClick={() => setActiveFilter("sku_fbm")}
+                  className={`px-2.5 py-1 rounded-md font-semibold transition cursor-pointer ${
+                    activeFilter === "sku_fbm"
+                      ? "bg-indigo-600 text-white shadow-2xs"
+                      : "text-slate-600 hover:bg-slate-100"
+                  }`}
+                >
+                  Bảng Mã FBM
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setActiveFilter("inbound")}
@@ -399,6 +415,8 @@ export function InventoryHistoryDrawer({
                               <span className="font-mono text-xs font-bold text-slate-900">
                                 {item.entity_type === "sku"
                                   ? "SKU"
+                                  : item.entity_type === "sku_fbm"
+                                  ? "SKU FBM"
                                   : item.entity_type === "check_shipment"
                                   ? "Shipment"
                                   : item.entity_type === "monthly_base_cost"

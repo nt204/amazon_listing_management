@@ -3,6 +3,7 @@ import { authorize, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
 import {
   deleteSkuMasterItem,
   listSkuMaster,
+  parseSkuChannel,
   patchSkuMasterField,
   upsertSkuMasterItem,
 } from "@/lib/accounting/inventory-db";
@@ -40,6 +41,7 @@ const skuInputSchema = z.object({
   brand_logo_asset_id: z.string().trim().nullable().optional(),
   landing_page_url: z.string().trim().nullable().optional(),
   custom_fields: z.record(z.string(), z.any()).nullable().optional(),
+  channel: z.enum(["fba", "fbm"]).optional(),
 });
 
 export async function GET(request: Request) {
@@ -58,7 +60,9 @@ export async function GET(request: Request) {
     const page = parseInt(searchParams.get("page") || "1", 10);
     const limit = parseInt(searchParams.get("limit") || "50", 10);
 
-    const result = await listSkuMaster(storeId, { search, status, productType, cursor, page, limit });
+    const channel = parseSkuChannel(searchParams.get("channel"));
+
+    const result = await listSkuMaster(storeId, { search, status, productType, cursor, page, limit, channel });
     return Response.json(result);
   } catch (error) {
     return routeErrorResponse(error, "Failed to load SKU Master.", 500);
@@ -69,8 +73,13 @@ export async function POST(request: Request) {
   try {
     const actor = await authorize(request, "write", "accounting");
     const body = await readJsonBody(request, 50_000);
-    const parsed = skuInputSchema.parse(body);
-    const item = await upsertSkuMasterItem(parsed.store_id, parsed, actor.email || actor.displayName || actor.userId);
+    const { channel, ...parsed } = skuInputSchema.parse(body);
+    const item = await upsertSkuMasterItem(
+      parsed.store_id,
+      parsed,
+      actor.email || actor.displayName || actor.userId,
+      parseSkuChannel(channel),
+    );
     return Response.json({ item });
   } catch (error) {
     return routeErrorResponse(error, "Failed to save SKU Master item.");
@@ -80,11 +89,18 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   try {
     const actor = await authorize(request, "write", "accounting");
-    const body = (await readJsonBody(request, 10_000)) as { id?: string; store_id?: string; field?: string; value?: any };
+    const body = (await readJsonBody(request, 10_000)) as { id?: string; store_id?: string; field?: string; value?: any; channel?: string };
     if (!body?.id || !body?.store_id || !body?.field) {
       return Response.json({ error: "id, store_id, and field are required" }, { status: 400 });
     }
-    const item = await patchSkuMasterField(body.store_id, body.id, body.field, body.value, actor.email || actor.displayName || actor.userId);
+    const item = await patchSkuMasterField(
+      body.store_id,
+      body.id,
+      body.field,
+      body.value,
+      actor.email || actor.displayName || actor.userId,
+      parseSkuChannel(body.channel),
+    );
     return Response.json({ item });
   } catch (error) {
     return routeErrorResponse(error, "Failed to update SKU Master field.");
@@ -100,7 +116,12 @@ export async function DELETE(request: Request) {
     if (!id || !storeId) {
       return Response.json({ error: "id and store_id are required" }, { status: 400 });
     }
-    const success = await deleteSkuMasterItem(id, storeId, actor.email || actor.displayName || actor.userId);
+    const success = await deleteSkuMasterItem(
+      id,
+      storeId,
+      actor.email || actor.displayName || actor.userId,
+      parseSkuChannel(searchParams.get("channel")),
+    );
     return Response.json({ success });
   } catch (error) {
     return routeErrorResponse(error, "Failed to delete SKU Master item.");
