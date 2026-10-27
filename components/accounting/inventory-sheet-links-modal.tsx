@@ -78,10 +78,17 @@ function formatTime(value: string | null | undefined) {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")} ${d.getDate()}/${d.getMonth() + 1}`;
 }
 
+/** Hỏi xác nhận trước khi bỏ qua giới hạn an toàn (sheet thiếu nhiều dòng so với web). */
+export function confirmForceSync(error: string | undefined) {
+  return confirm(
+    `${error ?? ""}\n\nVẫn đồng bộ theo sheet? Các dòng không còn trên sheet sẽ bị xóa (khôi phục được qua Lịch sử).`,
+  );
+}
+
 /** Lưu link (PUT) hoặc đồng bộ ngay (POST sync). */
 export async function requestSheetSync(
   action: "save" | "sync",
-  body: { store_id: string; link_type?: LinkType; sheet_type?: SheetType; sheet_url?: string; trigger?: "manual" | "reload" },
+  body: { store_id: string; link_type?: LinkType; sheet_type?: SheetType; sheet_url?: string; trigger?: "manual" | "reload"; force?: boolean },
 ): Promise<SheetSyncOutcome> {
   const res = await fetch(
     action === "save" ? "/api/accounting/inventory/sheet-links" : "/api/accounting/inventory/sheet-links/sync",
@@ -92,7 +99,15 @@ export async function requestSheetSync(
   return { ok: false, parts: {}, error: data?.error || "Không kết nối được máy chủ." };
 }
 
-function PartStatus({ part, link }: { part: SheetType; link: SheetLink | undefined }) {
+function PartStatus({
+  part,
+  link,
+  onForce,
+}: {
+  part: SheetType;
+  link: SheetLink | undefined;
+  onForce: (part: SheetType) => void;
+}) {
   const outcome = link?.last_result?.parts?.[part];
   if (!outcome) return null;
   const warnings = outcome.result?.warnings ?? [];
@@ -108,6 +123,17 @@ function PartStatus({ part, link }: { part: SheetType; link: SheetLink | undefin
         {outcome.ok && outcome.result
           ? `${outcome.result.sheetRows} dòng · ${describeSyncResult(outcome.result)}${warnings.length ? ` · ${warnings.join(" ")}` : ""}`
           : outcome.error}
+        {outcome.blocked && (
+          <button
+            type="button"
+            onClick={() => onForce(part)}
+            className="ml-1.5 inline-flex items-center gap-1 rounded-md border border-rose-300 bg-white px-1.5 py-px align-middle font-bold text-rose-700 hover:bg-rose-50 cursor-pointer"
+            title="Bỏ qua giới hạn an toàn và đọc lại toàn bộ sheet vào web"
+          >
+            <ArrowClockwiseIcon size={11} weight="bold" />
+            Vẫn đồng bộ
+          </button>
+        )}
       </span>
     </p>
   );
@@ -144,6 +170,16 @@ function LinkRow({
     if (!outcome.ok && Object.keys(outcome.parts).length === 0) setError(outcome.error ?? "Lỗi không xác định.");
     else setDraft(null);
     onChanged(meta.parts);
+  };
+
+  const forceSync = async (part: SheetType) => {
+    if (!confirmForceSync(link?.last_result?.parts?.[part]?.error)) return;
+    setBusy("sync");
+    setError(null);
+    const outcome = await requestSheetSync("sync", { store_id: store.id, sheet_type: part, trigger: "manual", force: true });
+    setBusy(null);
+    if (!outcome.ok && Object.keys(outcome.parts).length === 0) setError(outcome.error ?? "Lỗi không xác định.");
+    onChanged([part]);
   };
 
   const remove = async () => {
@@ -216,7 +252,7 @@ function LinkRow({
           <span className="min-w-0 break-words">{error}</span>
         </p>
       ) : (
-        meta.parts.map((part) => <PartStatus key={part} part={part} link={link} />)
+        meta.parts.map((part) => <PartStatus key={part} part={part} link={link} onForce={forceSync} />)
       )}
     </div>
   );

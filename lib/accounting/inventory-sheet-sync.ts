@@ -75,6 +75,8 @@ export interface SheetPartOutcome {
   tabTitle?: string;
   result?: SheetSyncResult;
   error?: string;
+  /** Bị chặn bởi giới hạn an toàn xóa hàng loạt — có thể chạy lại với force để bỏ qua. */
+  blocked?: boolean;
 }
 
 export interface SheetLink {
@@ -330,6 +332,9 @@ async function readSheet(url: string, type: SheetType) {
 
 class DryRunRollback extends Error {}
 
+/** Sheet thiếu quá nhiều dòng so với web: dừng để không xóa hàng loạt (bỏ qua bằng force). */
+class DeleteGuardError extends ApiError {}
+
 /** Số chữ số thập phân của từng cột NUMERIC để so sánh đúng với giá trị đã lưu. */
 async function numericScales(tx: Tx, table: string): Promise<Map<string, number>> {
   const rows = await tx<{ column_name: string; numeric_scale: number | null; data_type: string }[]>`
@@ -464,6 +469,7 @@ async function writeInboundRecords(
   records: Row[],
   actor: string,
   result: SheetSyncResult,
+  force = false,
 ) {
   await lockOrFail(tx, storeId, "inbound");
   const scales = await numericScales(tx, "accounting_inbound_shipments");
@@ -534,11 +540,12 @@ async function writeInboundRecords(
   const toDelete = existing.filter((row) => !used.has(row.id as string));
   const limit = Math.max(20, Math.ceil(existing.length * 0.2));
   if (toDelete.length > limit) {
-    throw new ApiError(
+    if (!force) throw new DeleteGuardError(
       `Dừng đồng bộ: sheet thiếu ${toDelete.length}/${existing.length} dòng đang có trên web (giới hạn an toàn ${limit}). ` +
         "Kiểm tra lại tab CHI TIẾT ĐI HÀNG (lọc, xóa nhầm, sai link?).",
       400,
     );
+    result.warnings.push(`Đã bỏ qua giới hạn an toàn: xóa ${toDelete.length}/${existing.length} dòng không còn trên sheet.`);
   }
 
   const writable = [
@@ -616,6 +623,8 @@ export async function syncSheetToDatabase(
     /** Chỉ dùng khi chạy thử: ghi lần 2 ngay trong transaction, lần 2 phải không đổi gì. */
     verifyIdempotent?: boolean;
     preloaded?: Awaited<ReturnType<typeof readSheet>>;
+    /** Bỏ qua giới hạn an toàn xóa hàng loạt (người dùng đã xác nhận sheet đúng). */
+    force?: boolean;
   } = {},
 ): Promise<SheetSyncResult & { secondPass?: Pick<SheetSyncResult, "inserted" | "updated" | "restored" | "deleted"> }> {
   const store = await getStoreById(storeId);
@@ -643,7 +652,7 @@ export async function syncSheetToDatabase(
     await sql.begin(async (tx) => {
       const write = (target: SheetSyncResult) =>
         type === "inbound"
-          ? writeInboundRecords(tx, storeId, store.name, sheet.records, actor, target)
+          ? writeInboundRecords(tx, storeId, store.name, sheet.records, actor, target, options.force)
           : writeSkuRecords(tx, storeId, type === "sku_fbm" ? "fbm" : "fba", sheet.records, actor, target);
       await write(result);
       if (options.dryRun && options.verifyIdempotent) {
@@ -742,6 +751,7 @@ async function runPart(
   trigger: SyncTrigger,
   actor: string,
   preloaded?: Preloaded,
+  force = false,
 ): Promise<SheetPartOutcome> {
   const flightKey = `${link.store_id}:${part}`;
   const startedAt = new Date();
@@ -751,7 +761,7 @@ async function runPart(
   inFlight.add(flightKey);
   let outcome: SheetPartOutcome;
   try {
-    const result = await syncSheetToDatabase(link.store_id, part, link.sheet_url, `google-sheet:${trigger}:${actor}`, { preloaded });
+    const result = await syncSheetToDatabase(link.store_id, part, link.sheet_url, `google-sheet:${trigger}${force ? ":force" : ""}:${actor}`, { preloaded, force });
     outcome = { ok: true, at: new Date().toISOString(), trigger, tabTitle: result.tabTitle, result };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -760,7 +770,7 @@ async function runPart(
       return { ok: false, at: new Date().toISOString(), trigger, error: message };
     }
     console.error(`[InventorySheetSync] ${link.store_id}/${part} (${trigger}) lỗi:`, message);
-    outcome = { ok: false, at: new Date().toISOString(), trigger, error: message };
+    outcome = { ok: false, at: new Date().toISOString(), trigger, error: message, ...(error instanceof DeleteGuardError && { blocked: true }) };
   } finally {
     inFlight.delete(flightKey);
   }
@@ -778,10 +788,11 @@ async function runLink(
   trigger: SyncTrigger,
   actor: string,
   preloaded: Partial<Record<SheetType, Preloaded>> = {},
+  force = false,
 ): Promise<LinkSyncOutcome> {
   const results: Partial<Record<SheetType, SheetPartOutcome>> = {};
   // Bảng mã chạy trước để Chi tiết đi hàng gắn đúng SKU
-  for (const part of parts) results[part] = await runPart(link, part, trigger, actor, preloaded[part]);
+  for (const part of parts) results[part] = await runPart(link, part, trigger, actor, preloaded[part], force);
   const errors = parts.filter((p) => !results[p]!.ok).map((p) => `${SHEET_TYPE_LABELS[p]}: ${results[p]!.error}`);
   return { ok: errors.length === 0, parts: results, error: errors.length ? errors.join(" | ") : undefined };
 }
@@ -840,16 +851,18 @@ export async function deleteSheetLink(storeId: string, linkType: LinkType) {
 
 /**
  * Đồng bộ ngay theo link đã lưu. part: chỉ 1 tab (nút tải lại của tab đó); không truyền part: cả file.
+ * force: bỏ qua giới hạn an toàn xóa hàng loạt (nút "Vẫn đồng bộ" sau khi bị chặn).
  */
 export async function syncStoreLink(
   storeId: string,
   target: { linkType: LinkType; part?: SheetType },
   trigger: SyncTrigger,
   actor: string,
+  force = false,
 ): Promise<LinkSyncOutcome & { skipped?: boolean }> {
   const link = await getSheetLink(storeId, target.linkType);
   if (!link) return { ok: false, skipped: true, parts: {}, error: "Chưa lưu link Google Sheet cho store này." };
-  return runLink(link, target.part ? [target.part] : LINK_PARTS[link.link_type], trigger, actor);
+  return runLink(link, target.part ? [target.part] : LINK_PARTS[link.link_type], trigger, actor, {}, force);
 }
 
 /** Đồng bộ tất cả link (lịch hằng ngày). Link vừa đồng bộ thành công gần đây thì bỏ qua. */

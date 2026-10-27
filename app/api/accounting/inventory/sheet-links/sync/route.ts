@@ -19,6 +19,8 @@ const syncSchema = z
     // Nút Đồng bộ ở System Admin: đồng bộ cả file (inventory | fbm)
     link_type: z.enum(LINK_TYPES as [string, ...string[]]).optional(),
     trigger: z.enum(["manual", "reload"]).default("manual"),
+    // Bỏ qua giới hạn an toàn khi sheet thiếu nhiều dòng so với web (người dùng đã xác nhận)
+    force: z.boolean().default(false),
   })
   .refine((data) => Boolean(data.sheet_type || data.link_type), { message: "Cần sheet_type hoặc link_type" });
 
@@ -30,7 +32,7 @@ export async function POST(request: Request) {
     const part = isSheetType(input.sheet_type) ? input.sheet_type : undefined;
     const linkType = part ? linkTypeOfPart(part) : isLinkType(input.link_type) ? input.link_type : null;
     if (!linkType) return Response.json({ error: "Tham số không hợp lệ" }, { status: 400 });
-    const outcome = await syncStoreLink(input.store_id, { linkType, part }, input.trigger, actorName);
+    const outcome = await syncStoreLink(input.store_id, { linkType, part }, input.trigger, actorName, input.force);
     return Response.json(outcome, { status: outcome.ok || outcome.skipped ? 200 : 422 });
   } catch (error) {
     return routeErrorResponse(error, "Không đồng bộ được Google Sheet.");

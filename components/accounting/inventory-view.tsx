@@ -119,6 +119,7 @@ import {
 import { InventoryHistoryDrawer } from "./inventory-history-drawer";
 import {
   SHEET_LINKS_QUERY_KEY,
+  confirmForceSync,
   describeLinkOutcome,
   describeSyncResult,
   requestSheetSync,
@@ -2991,7 +2992,11 @@ function InventoryViewInner() {
     } else if ((activeTab === "sku" || activeTab === "inbound") && currentSheetType && currentSheetLink && selectedStoreId) {
       // Tab có link Google Sheet: đồng bộ ngay đúng store + sheet đang mở rồi tải lại bảng
       setSyncingSheet(true);
-      const outcome = await requestSheetSync("sync", { store_id: selectedStoreId, sheet_type: currentSheetType, trigger: "reload" });
+      let outcome = await requestSheetSync("sync", { store_id: selectedStoreId, sheet_type: currentSheetType, trigger: "reload" });
+      // Bị chặn vì sheet thiếu nhiều dòng: hỏi xác nhận rồi đọc lại, bỏ qua giới hạn an toàn
+      if (outcome.parts[currentSheetType]?.blocked && confirmForceSync(outcome.parts[currentSheetType]?.error)) {
+        outcome = await requestSheetSync("sync", { store_id: selectedStoreId, sheet_type: currentSheetType, trigger: "reload", force: true });
+      }
       setSyncingSheet(false);
       queryClient.invalidateQueries({ queryKey: SHEET_LINKS_QUERY_KEY });
       const part = outcome.parts[currentSheetType];
