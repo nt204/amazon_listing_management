@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowClockwiseIcon,
   CheckCircleIcon,
@@ -222,16 +222,27 @@ function LinkRow({
   );
 }
 
-export function InventorySheetLinksModal({
-  isOpen,
-  onClose,
-  onSynced,
-}: {
+interface InventorySheetLinksModalProps {
   isOpen: boolean;
   onClose: () => void;
   /** Gọi sau mỗi lần lưu / đồng bộ / xóa (để màn hình đang mở tải lại dữ liệu nếu cần). */
   onSynced?: (storeId: string, parts: SheetType[]) => void;
-}) {
+}
+
+// Cửa sổ dùng ở System Admin (không nằm trong QueryClientProvider nào) nên tự mang client riêng.
+const sheetLinksQueryClient = new QueryClient({
+  defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } },
+});
+
+export function InventorySheetLinksModal(props: InventorySheetLinksModalProps) {
+  return (
+    <QueryClientProvider client={sheetLinksQueryClient}>
+      <SheetLinksModalContent {...props} />
+    </QueryClientProvider>
+  );
+}
+
+function SheetLinksModalContent({ isOpen, onClose, onSynced }: InventorySheetLinksModalProps) {
   const queryClient = useQueryClient();
   const linksQuery = useSheetLinks(isOpen);
   const storesQuery = useQuery({
