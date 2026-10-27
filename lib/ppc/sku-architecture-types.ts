@@ -23,6 +23,21 @@ export interface ProductCostMaster {
 
 export type CrSource = "ACTUAL_30D" | "CALCULATED" | "INHERITED" | "OVERRIDE" | "ASSUMED";
 export type CostSource = "INHERITED" | "MAPPING_OVERRIDE" | "OVERRIDE";
+/** Nguồn của từng con số: sửa tay → Cost Master khai báo → Accounting → mặc định. */
+export type CostFieldSource =
+  | "OVERRIDE"
+  | "COST_MASTER"
+  | "PPC_ADS"
+  | "PREVIOUS"
+  | "ACCOUNTING_MONTHLY"
+  | "ACCOUNTING_SKU"
+  | "ACCOUNTING_ORDERS"
+  | "DEFAULT";
+export interface CostSources {
+  sellingPrice: CostFieldSource;
+  baseCost: CostFieldSource;
+  amazonFee: CostFieldSource;
+}
 export type PpcStatus = "Healthy" | "Review" | "Bleeding" | "Zero Clicks";
 export const SKU_PREFIX_ERROR_PRODUCT_TYPE = "Lỗi Prefix";
 
@@ -42,6 +57,7 @@ export interface SkuEconomics {
   crSource: CrSource;
   maxBid: number;
   costSource: CostSource;
+  costSources?: CostSources;
   mappingStatus?: "RESOLVED" | "AMBIGUOUS" | "UNMAPPED";
   matchedPrefix?: string | null;
   candidateProductTypes?: string[];
@@ -426,14 +442,20 @@ export function suggestProductTypeFromPrice(
 /**
  * Danh sách ký hiệu đầu SKU của một loại phôi, ưu tiên customPrefixes nếu có, ngược lại lấy từ bộ quy tắc chuẩn.
  */
+/** Tên phôi chuẩn theo taxonomy, so khớp không phân biệt hoa/thường ("blanket hoodie" → "Oodie"). */
+function canonicalProductType(productType: string): string {
+  const key = productType.trim().toLowerCase();
+  const hit = Object.entries(SKU_TO_PRODUCT_TYPE_RULE_SET.taxonomy).find(([raw]) => raw.toLowerCase() === key);
+  return hit ? hit[1] : productType;
+}
+
 export function getSkuPrefixesForProductType(productType: string, customPrefixes?: string[] | null): string[] {
   if (customPrefixes && customPrefixes.length > 0) {
     return customPrefixes.map((p) => (p.endsWith("*") ? p : `${p}*`));
   }
   return SKU_TO_PRODUCT_TYPE_RULE_SET.prefix_rules
     .filter((rule) => {
-      const normalizedType = SKU_TO_PRODUCT_TYPE_RULE_SET.taxonomy[rule.product_type] || rule.product_type;
-      return normalizedType === productType;
+      return canonicalProductType(rule.product_type).toLowerCase() === canonicalProductType(productType).toLowerCase();
     })
     .map((rule) => `${rule.prefix}*`);
 }
@@ -474,7 +496,7 @@ export function detectSkuProductTypeMatch(
   // 1. Exception map
   if (SKU_TO_PRODUCT_TYPE_RULE_SET.exception_map[s]) {
     const raw = SKU_TO_PRODUCT_TYPE_RULE_SET.exception_map[s];
-    const productType = SKU_TO_PRODUCT_TYPE_RULE_SET.taxonomy[raw] || raw;
+    const productType = canonicalProductType(raw);
     return { productType, status: "RESOLVED", matchedPrefix: s, candidateProductTypes: [productType] };
   }
 
@@ -483,13 +505,14 @@ export function detectSkuProductTypeMatch(
     const matches = customRules
       .map((rule) => ({
         prefix: rule.prefix.replace(/[\*\+]+$/g, "").trim().toUpperCase(),
-        productType: SKU_TO_PRODUCT_TYPE_RULE_SET.taxonomy[rule.productType] || rule.productType,
+        productType: canonicalProductType(rule.productType),
       }))
       .filter((rule) => rule.prefix && s.startsWith(rule.prefix));
     const longestLength = Math.max(0, ...matches.map((rule) => rule.prefix.length));
     const longest = matches.filter((rule) => rule.prefix.length === longestLength);
     if (longest.length > 0) {
-      const candidates = Array.from(new Set(longest.map((rule) => rule.productType)));
+      // Cùng một phôi viết khác hoa/thường chỉ tính là 1 ứng viên
+      const candidates = Array.from(new Map(longest.map((rule) => [rule.productType.toLowerCase(), rule.productType])).values());
       if (candidates.length > 1) {
         return {
           productType: SKU_PREFIX_ERROR_PRODUCT_TYPE,
@@ -511,7 +534,7 @@ export function detectSkuProductTypeMatch(
   for (const rule of SORTED_PREFIX_RULES) {
     if (s.startsWith(rule.prefix)) {
       const raw = rule.product_type;
-      const productType = SKU_TO_PRODUCT_TYPE_RULE_SET.taxonomy[raw] || raw;
+      const productType = canonicalProductType(raw);
       return {
         productType,
         status: "RESOLVED",

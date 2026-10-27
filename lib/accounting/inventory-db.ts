@@ -4150,7 +4150,52 @@ export async function syncMonthlyBaseCostFromInbound(
     prevMonthMap.set(r.sku.trim(), r.basecost_thang);
   }
 
-  // 4. Lấy các bản ghi hiện tại của tháng này (để giữ nguyên tồn kho đã nhập tay nếu có)
+  // 4. Lấy tồn kho thực tế từ báo cáo tồn kho (FBA + AWD) chốt vào cuối tháng trước
+  // Ví dụ period = "2026-10" thì tìm snapshot_date <= "2026-09-30" (hoặc snapshot gần nhất trước ngày 1 của tháng)
+  const [pYear, pMonth] = period.split("-").map(Number);
+  const firstDayOfMonth = `${period}-01`;
+  const lastDayOfPrevMonthDate = new Date(Date.UTC(pYear, pMonth - 1, 0));
+  const defaultPrevMonthLastDay = lastDayOfPrevMonthDate.toISOString().slice(0, 10);
+
+  // Tìm ngày snapshot gần nhất có dữ liệu tồn kho <= firstDayOfMonth
+  const latestSnapshotRows = await sql<{ snapshot_date: string }[]>`
+    SELECT snapshot_date::text
+    FROM (
+      SELECT snapshot_date FROM accounting_inventory_ledger WHERE store_id = ${storeId} AND snapshot_date < ${firstDayOfMonth}
+      UNION
+      SELECT snapshot_date FROM accounting_awd_inventory_ledger WHERE store_id = ${storeId} AND snapshot_date < ${firstDayOfMonth}
+    ) s
+    ORDER BY snapshot_date DESC
+    LIMIT 1
+  `;
+  const targetLedgerSnapshot = latestSnapshotRows[0]?.snapshot_date || defaultPrevMonthLastDay;
+
+  // Lấy tổng tồn FBA theo SKU tại ngày snapshot
+  const fbaLedgerRows = await sql<{ sku: string; fba_ton: number }[]>`
+    SELECT sku, COALESCE(SUM(ending_warehouse_balance + in_transit_between_warehouses), 0)::float as fba_ton
+    FROM accounting_inventory_ledger
+    WHERE store_id = ${storeId} AND snapshot_date = ${targetLedgerSnapshot}
+    GROUP BY sku
+  `;
+  const ledgerStockMap = new Map<string, number>();
+  for (const r of fbaLedgerRows) {
+    if (!r.sku) continue;
+    ledgerStockMap.set(r.sku.trim(), (ledgerStockMap.get(r.sku.trim()) || 0) + r.fba_ton);
+  }
+
+  // Lấy tổng tồn AWD theo SKU tại ngày snapshot (hoặc snapshot AWD gần nhất)
+  const awdLedgerRows = await sql<{ sku: string; awd_ton: number }[]>`
+    SELECT sku, COALESCE(SUM(ton_kho_units), 0)::float as awd_ton
+    FROM accounting_awd_inventory_ledger
+    WHERE store_id = ${storeId} AND snapshot_date <= ${targetLedgerSnapshot}
+    GROUP BY sku
+  `;
+  for (const r of awdLedgerRows) {
+    if (!r.sku) continue;
+    ledgerStockMap.set(r.sku.trim(), (ledgerStockMap.get(r.sku.trim()) || 0) + r.awd_ton);
+  }
+
+  // 5. Lấy các bản ghi hiện tại của tháng này
   const currentMonthRows = await sql<{
     sku: string;
     sl_ton_dau_ky: number;
@@ -4178,14 +4223,21 @@ export async function syncMonthlyBaseCostFromInbound(
 
   let syncedCount = 0;
 
-  // 5. Tính toán và UPSERT cho từng SKU
+  // 6. Tính toán và UPSERT cho từng SKU
   for (const [sku, meta] of allSkuMap.entries()) {
     try {
       const existing = currentMonthMap.get(sku);
       const inbound = inboundMap.get(sku);
 
-      // Số lượng tồn đầu kỳ: nếu đã có trong bảng tháng này thì giữ nguyên, ngược lại mặc định 0
-      const slTon = existing ? existing.sl_ton_dau_ky : 0;
+      // Số lượng tồn đầu kỳ: ưu tiên lấy từ báo cáo tồn kho (FBA + AWD) của ngày chốt cuối tháng trước.
+      // Nếu có dữ liệu trong báo cáo Ledger (>= 0) thì dùng số thực tế này.
+      // Nếu không có trong ledger thì fallback theo số đã lưu (nếu > 0) hoặc 0.
+      let slTon = 0;
+      if (ledgerStockMap.has(sku)) {
+        slTon = ledgerStockMap.get(sku)!;
+      } else if (existing && existing.sl_ton_dau_ky > 0) {
+        slTon = existing.sl_ton_dau_ky;
+      }
 
       // Đơn giá tồn đầu kỳ: ưu tiên tháng trước -> nếu không có thì lấy fallbackBasecost từ Bảng Mã -> nếu có existing.basecost_dau_ky > 0 thì giữ
       let basecostDauKy = 0;

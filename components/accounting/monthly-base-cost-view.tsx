@@ -367,7 +367,7 @@ export const MonthlyBaseCostView = forwardRef<MonthlyBaseCostViewRef, MonthlyBas
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Tính toán thất bại.");
 
-        notify(`Đã tự động tính toán đồng bộ thành công cả 12 tháng của năm ${year}!`, "success");
+        notify(`Đã tự động tính toán Base Cost 12 tháng năm ${year} (tự động lấy tồn kho cuối tháng trước từ báo cáo FBA + AWD làm tồn đầu kỳ)!`, "success");
         fetchYearlyMatrix(year, propSearch);
       } catch (err) {
         notify((err as Error).message, "error");

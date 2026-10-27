@@ -15,13 +15,35 @@ import {
   Check,
   Sparkle,
 } from "@phosphor-icons/react";
-import type { SkuEconomics, CrSource } from "@/lib/ppc/sku-architecture-types";
+import type { SkuEconomics, CrSource, CostFieldSource } from "@/lib/ppc/sku-architecture-types";
 import {
   calculateBreakEvenAcos,
   calculateMaxBid,
   calculateProfitBeforeAds,
   SKU_PREFIX_ERROR_PRODUCT_TYPE,
 } from "@/lib/ppc/sku-architecture-types";
+
+// Nguồn của từng con số: sửa tay → Cost Master khai báo → Accounting → mặc định
+const COST_SOURCE_LABELS: Record<CostFieldSource, { label: string; title: string; className: string }> = {
+  OVERRIDE: { label: "Sửa tay", title: "Giá trị nhập tay cho riêng SKU này", className: "bg-violet-50 text-violet-700" },
+  COST_MASTER: { label: "Phôi", title: "Khai báo trong Cost Master (Quản lý phôi)", className: "bg-indigo-50 text-indigo-700" },
+  PPC_ADS: { label: "Ads", title: "Giá bán thực tế từ báo cáo quảng cáo (sales / units)", className: "bg-sky-50 text-sky-700" },
+  ACCOUNTING_MONTHLY: { label: "Kế toán", title: "Basecost tháng gần nhất (bình quân gia quyền) bên Accounting", className: "bg-emerald-50 text-emerald-700" },
+  ACCOUNTING_SKU: { label: "Kế toán", title: "Bảng Mã Accounting (phí Amazon = phí FBA + % referral × giá bán)", className: "bg-emerald-50 text-emerald-700" },
+  ACCOUNTING_ORDERS: { label: "Kế toán", title: "Giá bán trung bình 30 ngày từ đơn hàng (All Orders) bên Accounting", className: "bg-emerald-50 text-emerald-700" },
+  PREVIOUS: { label: "Đã lưu", title: "Giá trị đã lưu lần trước", className: "bg-slate-100 text-slate-600" },
+  DEFAULT: { label: "Mặc định", title: "Chưa khai báo phôi và Accounting chưa có dữ liệu — nên khai báo Cost Master", className: "bg-amber-50 text-amber-700" },
+};
+
+function CostSourceTag({ source }: { source?: CostFieldSource }) {
+  if (!source) return null;
+  const meta = COST_SOURCE_LABELS[source];
+  return (
+    <span title={meta.title} className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${meta.className}`}>
+      {meta.label}
+    </span>
+  );
+}
 
 function getOptimizedThumbnailUrl(url: string | null | undefined, w = 64): string | null {
   if (!url) return null;
@@ -551,8 +573,11 @@ export function PpcSkuEconomicsTable({
                         className="w-24 px-2 py-1 bg-white border border-slate-300 rounded text-right text-slate-900 font-mono text-xs focus:border-indigo-600 focus:outline-none"
                       />
                     ) : (
-                      <span className="font-bold text-slate-900 font-mono">
-                        ${selectedSku.sellingPrice.toFixed(2)}
+                      <span className="inline-flex items-center gap-1.5">
+                        <CostSourceTag source={selectedSku.costSources?.sellingPrice} />
+                        <span className="font-bold text-slate-900 font-mono">
+                          ${selectedSku.sellingPrice.toFixed(2)}
+                        </span>
                       </span>
                     )}
                   </div>
@@ -568,8 +593,11 @@ export function PpcSkuEconomicsTable({
                         className="w-24 px-2 py-1 bg-white border border-slate-300 rounded text-right text-slate-900 font-mono text-xs focus:border-indigo-600 focus:outline-none"
                       />
                     ) : (
-                      <span className="font-mono text-slate-700">
-                        ${selectedSku.baseCost.toFixed(2)}
+                      <span className="inline-flex items-center gap-1.5">
+                        <CostSourceTag source={selectedSku.costSources?.baseCost} />
+                        <span className="font-mono text-slate-700">
+                          ${selectedSku.baseCost.toFixed(2)}
+                        </span>
                       </span>
                     )}
                   </div>
@@ -585,8 +613,11 @@ export function PpcSkuEconomicsTable({
                         className="w-24 px-2 py-1 bg-white border border-slate-300 rounded text-right text-slate-900 font-mono text-xs focus:border-indigo-600 focus:outline-none"
                       />
                     ) : (
-                      <span className="font-mono text-slate-700">
-                        ${selectedSku.amazonFee.toFixed(2)}
+                      <span className="inline-flex items-center gap-1.5">
+                        <CostSourceTag source={selectedSku.costSources?.amazonFee} />
+                        <span className="font-mono text-slate-700">
+                          ${selectedSku.amazonFee.toFixed(2)}
+                        </span>
                       </span>
                     )}
                   </div>
