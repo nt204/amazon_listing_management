@@ -15,6 +15,9 @@ import {
   CaretDown,
   CaretRight,
   LinkSimple,
+  UploadSimple,
+  CheckCircle,
+  X,
 } from "@phosphor-icons/react";
 import type { ManagedAccountingFile, AccountingFileStats } from "@/lib/accounting/accounting-file-service";
 import { InventorySheetLinksModal } from "./inventory-sheet-links-modal";
@@ -63,6 +66,89 @@ export function AccountingFileManager() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showSheetLinks, setShowSheetLinks] = useState(false);
+
+  // Upload modal state
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploadStore, setUploadStore] = useState("");
+  const [uploadDate, setUploadDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [uploadFileType, setUploadFileType] = useState("09_INVENTORY_LEDGER");
+  const [uploadSelectedFile, setUploadSelectedFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadMessage, setUploadMessage] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // Ingest state
+  const [ingestingId, setIngestingId] = useState<string | null>(null);
+
+  const handleIngestFile = async (file: ManagedAccountingFile) => {
+    if (ingestingId) return;
+    setIngestingId(file.id);
+    try {
+      const res = await fetch("/api/accounting/files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "ingest", r2Key: file.r2Key, storeName: file.storeName }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        alert(json.data?.message || `Đã nạp file ${file.fileName} vào hệ thống thành công!`);
+        fetchFiles();
+      } else {
+        alert("Lỗi khi nạp file: " + (json.error || "Không xác định"));
+      }
+    } catch (err: any) {
+      alert("Lỗi kết nối khi nạp file: " + err.message);
+    } finally {
+      setIngestingId(null);
+    }
+  };
+
+  const handleUploadSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!uploadSelectedFile) {
+      setUploadError("Vui lòng chọn một file (.csv, .tsv, .txt) để tải lên.");
+      return;
+    }
+    const storeTarget = uploadStore || availableStores[0] || "LIMIMA";
+    if (!storeTarget) {
+      setUploadError("Vui lòng chọn Store.");
+      return;
+    }
+
+    setUploading(true);
+    setUploadError(null);
+    setUploadMessage(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", uploadSelectedFile);
+      formData.append("storeName", storeTarget);
+      formData.append("reportDate", uploadDate);
+      formData.append("fileTypeCode", uploadFileType);
+
+      const res = await fetch("/api/accounting/files", {
+        method: "POST",
+        body: formData,
+      });
+
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || "Không thể tải file lên.");
+      }
+
+      setUploadMessage(json.message || "Tải lên và nạp dữ liệu thành công!");
+      fetchFiles();
+      setTimeout(() => {
+        setShowUploadModal(false);
+        setUploadSelectedFile(null);
+        setUploadMessage(null);
+      }, 1500);
+    } catch (err: any) {
+      setUploadError(err.message || "Lỗi khi tải file lên.");
+    } finally {
+      setUploading(false);
+    }
+  };
 
   // Filters
   const [selectedStore, setSelectedStore] = useState<string>("ALL");
@@ -244,6 +330,19 @@ export function AccountingFileManager() {
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              if (availableStores.length > 0 && !uploadStore) setUploadStore(availableStores[0]);
+              setShowUploadModal(true);
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 text-xs font-semibold text-emerald-700 shadow-2xs hover:bg-emerald-100 transition cursor-pointer"
+            title="Thêm file báo cáo (.csv, .tsv, .txt) vào Quản lý file"
+          >
+            <UploadSimple size={14} weight="bold" />
+            Thêm file mới tải
+          </button>
+
           <button
             type="button"
             onClick={() => setShowSheetLinks(true)}
@@ -510,17 +609,36 @@ export function AccountingFileManager() {
                                       {formatBytes(file.sizeBytes)}
                                     </td>
 
-                                    {/* Thao tác: Nút Tải về */}
+                                    {/* Thao tác */}
                                     <td className="px-3.5 py-2.5 whitespace-nowrap text-right">
-                                      <button
-                                        type="button"
-                                        onClick={() => handleDownload(file)}
-                                        className="inline-flex items-center gap-1 px-3 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold text-xs transition cursor-pointer"
-                                        title="Tải file về máy"
-                                      >
-                                        <DownloadSimple size={12} weight="bold" />
-                                        Tải về
-                                      </button>
+                                      <div className="inline-flex items-center gap-1.5 justify-end">
+                                        {file.isIngestable && (
+                                          <button
+                                            type="button"
+                                            onClick={() => handleIngestFile(file)}
+                                            disabled={ingestingId === file.id}
+                                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 font-semibold text-xs transition cursor-pointer disabled:opacity-50"
+                                            title="Nạp dữ liệu từ file này vào Database"
+                                          >
+                                            {ingestingId === file.id ? (
+                                              <CircleNotch size={12} className="animate-spin" />
+                                            ) : (
+                                              <ArrowsClockwise size={12} weight="bold" />
+                                            )}
+                                            {ingestingId === file.id ? "Đang nạp..." : "Nạp vào DB"}
+                                          </button>
+                                        )}
+
+                                        <button
+                                          type="button"
+                                          onClick={() => handleDownload(file)}
+                                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold text-xs transition cursor-pointer"
+                                          title="Tải file về máy"
+                                        >
+                                          <DownloadSimple size={12} weight="bold" />
+                                          Tải về
+                                        </button>
+                                      </div>
                                     </td>
                                   </tr>
                                 );
@@ -537,6 +655,123 @@ export function AccountingFileManager() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Modal Tải lên file mới */}
+      {showUploadModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-slate-50/60">
+              <div className="flex items-center gap-2">
+                <div className="h-8 w-8 rounded-lg bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600">
+                  <UploadSimple size={18} weight="bold" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Thêm file báo cáo vào Quản lý file</h3>
+                  <p className="text-[11px] text-slate-500">Lưu lên R2 và tự động nạp vào Database</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowUploadModal(false)}
+                className="p-1 rounded-lg hover:bg-slate-200/70 text-slate-400 hover:text-slate-600 transition cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <form onSubmit={handleUploadSubmit} className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Store:</label>
+                <select
+                  value={uploadStore || (availableStores[0] || "")}
+                  onChange={(e) => setUploadStore(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                >
+                  {(availableStores.length > 0 ? availableStores : ["BOZSPACER", "FASTPEACE", "LIMIMA", "MALFIRST", "WARMSTOREY"]).map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Ngày báo cáo:</label>
+                <input
+                  type="date"
+                  value={uploadDate}
+                  onChange={(e) => setUploadDate(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Loại báo cáo:</label>
+                <select
+                  value={uploadFileType}
+                  onChange={(e) => setUploadFileType(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                >
+                  <option value="09_INVENTORY_LEDGER">09. Tồn kho Inventory Ledger (tính Tồn kho = In Transit + Ending)</option>
+                  <option value="AUTO">Tự động nhận diện theo tên file</option>
+                  <option value="01_PORTFOLIOS">01. Danh mục Portfolios</option>
+                  <option value="02_ALL_ORDERS">02. Đơn hàng All Orders</option>
+                  <option value="03_RETURNS">03. Trả hàng Returns</option>
+                  <option value="04_SERVICE_FEES">04. Phí dịch vụ Service Fees</option>
+                  <option value="05_CAMPAIGNS">05. Chi phí Ads (Portfolios)</option>
+                  <option value="06_FBA_INVENTORY">06. Tồn kho FBA Inventory</option>
+                  <option value="07_SHIPMENTS">07. Lô hàng Inbound Shipments</option>
+                  <option value="08_DC_SHIPMENTS">08. Lô hàng DC Shipments (AWD)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Chọn file (.csv, .tsv, .txt):</label>
+                <input
+                  type="file"
+                  accept=".csv,.tsv,.txt"
+                  onChange={(e) => setUploadSelectedFile(e.target.files?.[0] || null)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 file:mr-2 file:py-1 file:px-2.5 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
+                />
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Ví dụ file vừa tải: <code>231214020753.csv</code> sẽ được tự động chuẩn hóa và nạp tồn kho.
+                </p>
+              </div>
+
+              {uploadError && (
+                <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700 font-medium">
+                  {uploadError}
+                </div>
+              )}
+
+              {uploadMessage && (
+                <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-700 font-medium flex items-center gap-1.5">
+                  <CheckCircle size={14} weight="fill" className="text-emerald-600 shrink-0" />
+                  {uploadMessage}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowUploadModal(false)}
+                  className="px-3.5 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  disabled={uploading || !uploadSelectedFile}
+                  className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-semibold shadow-2xs transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  {uploading ? <CircleNotch size={14} className="animate-spin" /> : <UploadSimple size={14} weight="bold" />}
+                  {uploading ? "Đang tải lên..." : "Tải lên & Nạp Database"}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

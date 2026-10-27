@@ -7,6 +7,7 @@ import {
   S3Client,
   ListObjectsV2Command,
   GetObjectCommand,
+  PutObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { listStores } from "./accounting-db";
@@ -59,6 +60,32 @@ function getR2Client() {
   });
 
   return { client, bucket, prefix };
+}
+
+export async function uploadAccountingFileToR2(
+  buffer: Buffer,
+  storeName: string,
+  reportDate: string,
+  fileName: string
+): Promise<{ r2Key: string; fileName: string }> {
+  const r2 = getR2Client();
+  if (!r2) {
+    throw new Error("Chưa cấu hình Cloudflare R2.");
+  }
+
+  const cleanStore = storeName.toUpperCase().trim();
+  const r2Key = `${r2.prefix}/${reportDate}/${cleanStore}/${fileName}`;
+
+  await r2.client.send(
+    new PutObjectCommand({
+      Bucket: r2.bucket,
+      Key: r2Key,
+      Body: buffer,
+      ContentType: fileName.endsWith(".tsv") || fileName.endsWith(".txt") ? "text/tab-separated-values" : "text/csv",
+    })
+  );
+
+  return { r2Key, fileName };
 }
 
 import { parseInventoryLedgerContent, ingestInventoryLedgerRows } from "./inventory-ledger-db";

@@ -153,21 +153,58 @@ export async function ingestInventoryLedgerRows(
 
   const sql = await getDatabaseClient();
 
-  // 1. Batch upsert chi tiết vào accounting_inventory_ledger
-  const ledgerValues = rows.map((r) => ({
-    store_id: storeId,
-    snapshot_date: snapshotDate,
-    report_date: r.date || snapshotDate,
-    fnsku: r.fnsku,
-    asin: r.asin,
-    sku: r.sku,
-    title: r.title,
-    disposition: r.disposition || "SELLABLE",
-    in_transit_between_warehouses: r.inTransitBetweenWarehouses,
-    ending_warehouse_balance: r.endingWarehouseBalance,
-    total_warehouse_balance: r.totalWarehouseBalance,
-    source_file: sourceFileName || null,
-  }));
+  // 1. Gom nhóm theo khóa duy nhất (store_id, snapshot_date, sku, asin, fnsku, disposition)
+  // để tránh lỗi Postgres 21000 (ON CONFLICT DO UPDATE command cannot affect row a second time)
+  // nếu trong file có nhiều dòng cùng SKU/Disposition
+  const rawLedgerMap = new Map<
+    string,
+    {
+      store_id: string;
+      snapshot_date: string;
+      report_date: string;
+      fnsku: string | null;
+      asin: string;
+      sku: string;
+      title: string | null;
+      disposition: string;
+      in_transit_between_warehouses: number;
+      ending_warehouse_balance: number;
+      total_warehouse_balance: number;
+      source_file: string | null;
+    }
+  >();
+
+  for (const r of rows) {
+    const fnskuKey = (r.fnsku || "").trim().toUpperCase();
+    const dispKey = (r.disposition || "SELLABLE").trim().toUpperCase();
+    const key = `${r.sku.trim().toUpperCase()}|||${r.asin.trim().toUpperCase()}|||${fnskuKey}|||${dispKey}`;
+    const existing = rawLedgerMap.get(key);
+
+    if (!existing) {
+      rawLedgerMap.set(key, {
+        store_id: storeId,
+        snapshot_date: snapshotDate,
+        report_date: r.date || snapshotDate,
+        fnsku: r.fnsku,
+        asin: r.asin,
+        sku: r.sku,
+        title: r.title,
+        disposition: dispKey,
+        in_transit_between_warehouses: r.inTransitBetweenWarehouses,
+        ending_warehouse_balance: r.endingWarehouseBalance,
+        total_warehouse_balance: r.totalWarehouseBalance,
+        source_file: sourceFileName || null,
+      });
+    } else {
+      existing.in_transit_between_warehouses += r.inTransitBetweenWarehouses;
+      existing.ending_warehouse_balance += r.endingWarehouseBalance;
+      existing.total_warehouse_balance += r.totalWarehouseBalance;
+      if (!existing.title && r.title) existing.title = r.title;
+      if (!existing.fnsku && r.fnsku) existing.fnsku = r.fnsku;
+    }
+  }
+
+  const ledgerValues = Array.from(rawLedgerMap.values());
 
   // Ghi nhận theo lô 500 dòng
   const BATCH_SIZE = 500;
