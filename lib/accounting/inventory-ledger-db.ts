@@ -33,23 +33,6 @@ export interface InventoryLedgerRow {
   events: Record<LedgerEventColumn, number>;
 }
 
-/** 1 dòng của tab TỒN KHO: dòng báo cáo + Product Type / Mockup lấy từ Bảng Mã. */
-export interface InventoryStockItem extends Record<LedgerEventColumn, number> {
-  id: string;
-  report_date: string | null;
-  fnsku: string | null;
-  asin: string;
-  sku: string;
-  title: string | null;
-  disposition: string | null;
-  location: string;
-  in_transit_between_warehouses: number;
-  ending_warehouse_balance: number;
-  ton_kho: number;
-  product_type: string | null;
-  mockup: string | null;
-}
-
 export interface InventoryBalanceItem {
   storeId: string;
   sku: string;
@@ -254,7 +237,7 @@ export async function ingestInventoryLedgerRows(
   const ledgerValues = Array.from(rawLedgerMap.values());
 
   // Nạp lại cùng 1 ngày chốt sổ thì thay toàn bộ dòng của ngày đó (dòng không còn trong file bị bỏ).
-  // Ghi nhận theo lô 500 dòng, trong 1 transaction để tab TỒN KHO không thấy snapshot dở dang.
+  // Ghi nhận theo lô 500 dòng, trong 1 transaction để không ai đọc được snapshot dở dang.
   const BATCH_SIZE = 500;
   await sql.begin(async (tx) => {
     await tx`DELETE FROM accounting_inventory_ledger WHERE store_id = ${storeId} AND snapshot_date = ${snapshotDate}`;
@@ -313,6 +296,13 @@ export async function ingestInventoryLedgerRows(
 
   const aggregatedList = Array.from(aggregatedMap.values());
 
+  // Bảng tổng hợp + cột Tồn của BẢNG MÃ chỉ lấy snapshot mới nhất của store:
+  // nạp lại file tuần cũ chỉ lưu vào ledger, không đè số tuần mới.
+  const [{ latest }] = await sql<{ latest: string | null }[]>`
+    SELECT MAX(snapshot_date)::text AS latest FROM accounting_inventory_ledger WHERE store_id = ${storeId}
+  `;
+  const isLatestSnapshot = !latest || snapshotDate >= latest;
+
   // 3. Cập nhật bảng tổng hợp accounting_inventory_balance
   const balanceValues = aggregatedList.map((item) => ({
     store_id: storeId,
@@ -328,7 +318,7 @@ export async function ingestInventoryLedgerRows(
     snapshot_date: snapshotDate,
   }));
 
-  for (let i = 0; i < balanceValues.length; i += BATCH_SIZE) {
+  for (let i = 0; isLatestSnapshot && i < balanceValues.length; i += BATCH_SIZE) {
     const chunk = balanceValues.slice(i, i + BATCH_SIZE);
     await sql`
       INSERT INTO accounting_inventory_balance ${sql(chunk)}
@@ -346,9 +336,9 @@ export async function ingestInventoryLedgerRows(
     `;
   }
 
-  // 4. Cập nhật trực tiếp ton_kho vào accounting_sku_master (map cả sku + asin)
+  // 4. Cập nhật trực tiếp ton_kho vào accounting_sku_master (map cả sku + asin) — cột Tồn của BẢNG MÃ.
   let updatedSkuMasterCount = 0;
-  for (const item of aggregatedList) {
+  for (const item of isLatestSnapshot ? aggregatedList : []) {
     if (!item.sku) continue;
 
     // Ưu tiên khớp cả store_id + SKU + ASIN
@@ -356,9 +346,11 @@ export async function ingestInventoryLedgerRows(
       const res = await sql`
         UPDATE accounting_sku_master
         SET 
-          ton_kho = ${item.tonKho},
+          ton_kho_fba = ${item.tonKho},
+          ton_kho_fba_updated_at = NOW(),
           in_transit_between_warehouses = ${item.inTransit},
           ending_warehouse_balance = ${item.ending},
+          ton_kho = ${item.tonKho} + COALESCE(ton_kho_awd, 0),
           ton_kho_updated_at = NOW()
         WHERE 
           store_id = ${storeId}
@@ -376,10 +368,12 @@ export async function ingestInventoryLedgerRows(
     const fallbackRes = await sql`
       UPDATE accounting_sku_master
       SET 
-        ton_kho = ${item.tonKho},
+        ton_kho_fba = ${item.tonKho},
+        ton_kho_fba_updated_at = NOW(),
         in_transit_between_warehouses = ${item.inTransit},
         ending_warehouse_balance = ${item.ending},
         asin = COALESCE(asin, ${item.asin || null}),
+        ton_kho = ${item.tonKho} + COALESCE(ton_kho_awd, 0),
         ton_kho_updated_at = NOW()
       WHERE 
         store_id = ${storeId}
@@ -389,12 +383,296 @@ export async function ingestInventoryLedgerRows(
     updatedSkuMasterCount += fallbackRes.count;
   }
 
+  // SKU không còn trong báo cáo FBA mới nhất = không còn hàng ở kho FBA → Tồn FBA về 0, giữ nguyên tồn AWD
+  if (isLatestSnapshot) {
+    const reportedSkus = Array.from(new Set(aggregatedList.map((item) => item.sku.trim().toUpperCase())));
+    await sql`
+      UPDATE accounting_sku_master
+      SET 
+        ton_kho_fba = 0,
+        in_transit_between_warehouses = 0,
+        ending_warehouse_balance = 0,
+        ton_kho_fba_updated_at = NOW(),
+        ton_kho = COALESCE(ton_kho_awd, 0),
+        ton_kho_updated_at = NOW()
+      WHERE store_id = ${storeId}
+        AND deleted_at IS NULL
+        AND (ton_kho_fba IS DISTINCT FROM 0 OR in_transit_between_warehouses IS DISTINCT FROM 0 OR ending_warehouse_balance IS DISTINCT FROM 0)
+        AND NOT (UPPER(TRIM(sku)) = ANY(${reportedSkus}::text[]))
+    `;
+  }
+
   const totalTonKho = aggregatedList.reduce((acc, it) => acc + it.tonKho, 0);
 
   return {
     insertedCount: rows.length,
     updatedSkuMasterCount,
     totalTonKho,
+  };
+}
+
+// ============================================================================
+// AWD INVENTORY LEDGER (TỒN KHO AWD)
+// ============================================================================
+
+export interface AwdInventoryLedgerRow {
+  date: string | null;
+  sku: string; // MSKU
+  fnsku: string | null;
+  asin: string;
+  packageQuantity: number;
+  purchaseOrderId: string | null;
+  title: string | null;
+  startingWarehouseBalanceCartons: number;
+  receivedCartons: number;
+  departedCartons: number;
+  lostCartons: number;
+  foundCartons: number;
+  otherCartons: number;
+  unknownCartons: number;
+  endingWarehouseBalanceCartons: number;
+  tonKhoUnits: number; // endingWarehouseBalanceCartons * packageQuantity
+  facilityId: string | null;
+  country: string | null;
+  expiryDate: string | null;
+}
+
+/**
+ * Phân tích nội dung file CSV báo cáo AWD Inventory Ledger (Summary)
+ * Tồn của kho AWD = Ending Warehouse Balance (cartons) * Package Quantity
+ */
+export function parseAwdInventoryLedgerContent(content: string): AwdInventoryLedgerRow[] {
+  const isTsv = !content.includes(",") && content.includes("\t");
+  let rawRows: string[][];
+  if (isTsv) {
+    rawRows = content
+      .replace(/^\uFEFF/, "")
+      .split(/\r?\n/)
+      .map((line) => line.split("\t").map((c) => c.trim()))
+      .filter((r) => r.some(Boolean));
+  } else {
+    rawRows = parseCsv(content);
+  }
+
+  if (rawRows.length < 2) return [];
+
+  const headers = rawRows[0].map(normalizeHeader);
+  const findIdx = (...keys: string[]) => {
+    for (const k of keys) {
+      const normalized = normalizeHeader(k);
+      const idx = headers.indexOf(normalized);
+      if (idx !== -1) return idx;
+    }
+    return -1;
+  };
+
+  const idxDate = findIdx("date");
+  const idxSku = findIdx("msku", "merchantsku", "sku");
+  const idxFnsku = findIdx("fnsku");
+  const idxAsin = findIdx("asin");
+  const idxPkgQty = findIdx("packagequantity", "package_quantity", "pkgqty");
+  const idxPoId = findIdx("purchaseorderid", "purchase_order_id", "poid");
+  const idxTitle = findIdx("title", "productname");
+  const idxStarting = findIdx("startingwarehousebalancecartons", "startingwarehousebalance", "starting");
+  const idxReceived = findIdx("receivedcartons", "received");
+  const idxDeparted = findIdx("departedcartons", "departed");
+  const idxLost = findIdx("lostcartons", "lost");
+  const idxFound = findIdx("foundcartons", "found");
+  const idxOther = findIdx("othercartons", "other");
+  const idxUnknown = findIdx("unknowncartons", "unknown");
+  const idxEnding = findIdx("endingwarehousebalancecartons", "endingwarehousebalance", "ending");
+  const idxFacility = findIdx("facilityid", "facility");
+  const idxCountry = findIdx("country");
+  const idxExpiry = findIdx("expirydate", "expiry");
+
+  if (idxSku === -1 && idxAsin === -1) {
+    throw new Error("File CSV báo cáo AWD thiếu cột nhận diện SKU/MSKU hoặc ASIN.");
+  }
+
+  const results: AwdInventoryLedgerRow[] = [];
+
+  for (let i = 1; i < rawRows.length; i++) {
+    const r = rawRows[i];
+    if (!r || r.length === 0) continue;
+
+    const sku = idxSku !== -1 && r[idxSku] ? r[idxSku].trim() : "";
+    const asin = idxAsin !== -1 && r[idxAsin] ? r[idxAsin].trim() : "";
+    if (!sku && !asin) continue;
+
+    const pkgQty = idxPkgQty !== -1 ? Math.max(1, parseNumber(r[idxPkgQty])) : 1;
+    const endingCartons = idxEnding !== -1 ? parseNumber(r[idxEnding]) : 0;
+    const tonKhoUnits = endingCartons * pkgQty;
+
+    results.push({
+      date: idxDate !== -1 && r[idxDate] ? r[idxDate].trim() : null,
+      sku: sku || asin,
+      fnsku: idxFnsku !== -1 && r[idxFnsku] ? r[idxFnsku].trim() : null,
+      asin,
+      packageQuantity: pkgQty,
+      purchaseOrderId: idxPoId !== -1 && r[idxPoId] ? r[idxPoId].trim() : null,
+      title: idxTitle !== -1 && r[idxTitle] ? r[idxTitle].trim() : null,
+      startingWarehouseBalanceCartons: idxStarting !== -1 ? parseNumber(r[idxStarting]) : 0,
+      receivedCartons: idxReceived !== -1 ? parseNumber(r[idxReceived]) : 0,
+      departedCartons: idxDeparted !== -1 ? parseNumber(r[idxDeparted]) : 0,
+      lostCartons: idxLost !== -1 ? parseNumber(r[idxLost]) : 0,
+      foundCartons: idxFound !== -1 ? parseNumber(r[idxFound]) : 0,
+      otherCartons: idxOther !== -1 ? parseNumber(r[idxOther]) : 0,
+      unknownCartons: idxUnknown !== -1 ? parseNumber(r[idxUnknown]) : 0,
+      endingWarehouseBalanceCartons: endingCartons,
+      tonKhoUnits,
+      facilityId: idxFacility !== -1 && r[idxFacility] ? r[idxFacility].trim() : null,
+      country: idxCountry !== -1 && r[idxCountry] ? r[idxCountry].trim().toUpperCase() : null,
+      expiryDate: idxExpiry !== -1 && r[idxExpiry] ? r[idxExpiry].trim() : null,
+    });
+  }
+
+  return results;
+}
+
+/**
+ * Nạp dữ liệu báo cáo AWD Inventory Ledger vào database và cập nhật Bảng Mã (accounting_sku_master)
+ * - Tồn kho AWD = Ending Warehouse Balance (cartons) * Package Quantity
+ * - Tổng tồn trong Bảng Mã = ton_kho_fba + ton_kho_awd (theo SKU + ASIN)
+ */
+export async function ingestAwdInventoryLedgerRows(
+  storeId: string,
+  rows: AwdInventoryLedgerRow[],
+  snapshotDate: string,
+  sourceFileName?: string
+): Promise<{ insertedCount: number; updatedSkuMasterCount: number; totalTonKhoAwd: number }> {
+  if (!rows || rows.length === 0) {
+    return { insertedCount: 0, updatedSkuMasterCount: 0, totalTonKhoAwd: 0 };
+  }
+
+  const sql = await getDatabaseClient();
+
+  // 1. Lưu chi tiết từng dòng báo cáo vào accounting_awd_inventory_ledger (thay thế snapshot của ngày đó)
+  const detailValues = rows.map((r) => ({
+    store_id: storeId,
+    snapshot_date: snapshotDate,
+    report_date: r.date || snapshotDate,
+    sku: r.sku,
+    fnsku: r.fnsku,
+    asin: r.asin,
+    package_quantity: r.packageQuantity,
+    purchase_order_id: r.purchaseOrderId,
+    title: r.title,
+    starting_warehouse_balance_cartons: r.startingWarehouseBalanceCartons,
+    received_cartons: r.receivedCartons,
+    departed_cartons: r.departedCartons,
+    lost_cartons: r.lostCartons,
+    found_cartons: r.foundCartons,
+    other_cartons: r.otherCartons,
+    unknown_cartons: r.unknownCartons,
+    ending_warehouse_balance_cartons: r.endingWarehouseBalanceCartons,
+    ton_kho_units: r.tonKhoUnits,
+    facility_id: r.facilityId,
+    country: r.country,
+    expiry_date: r.expiryDate,
+    source_file: sourceFileName || null,
+  }));
+
+  const BATCH_SIZE = 500;
+  await sql.begin(async (tx) => {
+    await tx`DELETE FROM accounting_awd_inventory_ledger WHERE store_id = ${storeId} AND snapshot_date = ${snapshotDate}`;
+    for (let i = 0; i < detailValues.length; i += BATCH_SIZE) {
+      const chunk = detailValues.slice(i, i + BATCH_SIZE);
+      await tx`INSERT INTO accounting_awd_inventory_ledger ${tx(chunk)}`;
+    }
+  });
+
+  // 2. Gom nhóm theo SKU + ASIN để tính tổng tồn kho AWD
+  const aggregatedMap = new Map<string, { sku: string; asin: string; tonKhoAwd: number; endingCartons: number }>();
+  for (const r of rows) {
+    const key = `${r.sku.trim().toUpperCase()}|||${r.asin.trim().toUpperCase()}`;
+    const existing = aggregatedMap.get(key);
+    if (!existing) {
+      aggregatedMap.set(key, {
+        sku: r.sku,
+        asin: r.asin,
+        tonKhoAwd: r.tonKhoUnits,
+        endingCartons: r.endingWarehouseBalanceCartons,
+      });
+    } else {
+      existing.tonKhoAwd += r.tonKhoUnits;
+      existing.endingCartons += r.endingWarehouseBalanceCartons;
+    }
+  }
+
+  const aggregatedList = Array.from(aggregatedMap.values());
+
+  // 3. Kiểm tra xem snapshotDate có phải mới nhất không
+  const maxDateRes = await sql<Array<{ max_date: string | null }>>`
+    SELECT MAX(snapshot_date)::text AS max_date FROM accounting_awd_inventory_ledger WHERE store_id = ${storeId}
+  `;
+  const latestSnapshotDate = maxDateRes[0]?.max_date || snapshotDate;
+  const isLatestSnapshot = snapshotDate >= latestSnapshotDate;
+
+  // 4. Cập nhật trực tiếp ton_kho_awd và tổng tồn (ton_kho = ton_kho_fba + ton_kho_awd) vào accounting_sku_master
+  let updatedSkuMasterCount = 0;
+  if (isLatestSnapshot) {
+    for (const item of aggregatedList) {
+      if (!item.sku) continue;
+
+      if (item.asin) {
+        const res = await sql`
+          UPDATE accounting_sku_master
+          SET 
+            ton_kho_awd = ${item.tonKhoAwd},
+            ton_kho_awd_updated_at = NOW(),
+            ton_kho = COALESCE(ton_kho_fba, 0) + ${item.tonKhoAwd},
+            ton_kho_updated_at = NOW()
+          WHERE 
+            store_id = ${storeId}
+            AND UPPER(TRIM(sku)) = UPPER(TRIM(${item.sku}))
+            AND UPPER(TRIM(asin)) = UPPER(TRIM(${item.asin}))
+            AND deleted_at IS NULL
+        `;
+        if (res.count > 0) {
+          updatedSkuMasterCount += res.count;
+          continue;
+        }
+      }
+
+      // Fallback khớp theo SKU
+      const fallbackRes = await sql`
+        UPDATE accounting_sku_master
+        SET 
+          ton_kho_awd = ${item.tonKhoAwd},
+          ton_kho_awd_updated_at = NOW(),
+          asin = COALESCE(asin, ${item.asin || null}),
+          ton_kho = COALESCE(ton_kho_fba, 0) + ${item.tonKhoAwd},
+          ton_kho_updated_at = NOW()
+        WHERE 
+          store_id = ${storeId}
+          AND UPPER(TRIM(sku)) = UPPER(TRIM(${item.sku}))
+          AND deleted_at IS NULL
+      `;
+      updatedSkuMasterCount += fallbackRes.count;
+    }
+
+    // Những SKU không còn trong báo cáo AWD mới nhất -> ton_kho_awd về 0, tổng tồn = ton_kho_fba
+    const reportedSkus = Array.from(new Set(aggregatedList.map((item) => item.sku.trim().toUpperCase())));
+    await sql`
+      UPDATE accounting_sku_master
+      SET 
+        ton_kho_awd = 0,
+        ton_kho_awd_updated_at = NOW(),
+        ton_kho = COALESCE(ton_kho_fba, 0),
+        ton_kho_updated_at = NOW()
+      WHERE store_id = ${storeId}
+        AND deleted_at IS NULL
+        AND ton_kho_awd IS DISTINCT FROM 0
+        AND NOT (UPPER(TRIM(sku)) = ANY(${reportedSkus}::text[]))
+    `;
+  }
+
+  const totalTonKhoAwd = aggregatedList.reduce((acc, it) => acc + it.tonKhoAwd, 0);
+
+  return {
+    insertedCount: rows.length,
+    updatedSkuMasterCount,
+    totalTonKhoAwd,
   };
 }
 
@@ -445,38 +723,3 @@ export async function getLatestInventoryBalances(
   }));
 }
 
-/**
- * Tab TỒN KHO: các dòng báo cáo của 1 ngày chốt sổ (mặc định mới nhất) + danh sách các ngày đã có.
- * Product Type / Mockup lấy từ Bảng Mã FBA theo SKU.
- */
-export async function getInventoryStockSnapshot(
-  storeId: string,
-  snapshotDate?: string | null,
-): Promise<{ snapshotDates: string[]; snapshotDate: string | null; items: InventoryStockItem[] }> {
-  const sql = await getDatabaseClient();
-  const dates = await sql<{ d: string }[]>`
-    SELECT DISTINCT snapshot_date::text AS d FROM accounting_inventory_ledger
-    WHERE store_id = ${storeId} ORDER BY d DESC
-  `;
-  const snapshotDates = dates.map((r) => r.d);
-  const target = snapshotDate && snapshotDates.includes(snapshotDate) ? snapshotDate : snapshotDates[0] ?? null;
-  if (!target) return { snapshotDates, snapshotDate: null, items: [] };
-
-  const rows = await sql<Record<string, unknown>[]>`
-    SELECT
-      l.id, l.report_date::text, l.fnsku, l.asin, l.sku, l.title, l.disposition, l.location,
-      l.in_transit_between_warehouses::float, l.ending_warehouse_balance::float,
-      l.total_warehouse_balance::float AS ton_kho,
-      ${sql.unsafe(LEDGER_EVENT_KEYS.map((k) => `l.${k}::float`).join(", "))},
-      m.product_type, COALESCE(m.mockup_url, m.mockup) AS mockup
-    FROM accounting_inventory_ledger l
-    LEFT JOIN LATERAL (
-      SELECT product_type, mockup, mockup_url FROM accounting_sku_master
-      WHERE store_id = l.store_id AND deleted_at IS NULL AND LOWER(TRIM(sku)) = LOWER(TRIM(l.sku))
-      LIMIT 1
-    ) m ON TRUE
-    WHERE l.store_id = ${storeId} AND l.snapshot_date = ${target}
-    ORDER BY l.total_warehouse_balance DESC, l.sku, l.location
-  `;
-  return { snapshotDates, snapshotDate: target, items: rows as unknown as InventoryStockItem[] };
-}

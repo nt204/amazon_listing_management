@@ -43,6 +43,11 @@ export interface SkuMasterItem {
   // Chỉ có ở BẢNG MÃ FBA
   kich_thuoc?: string | null;
   file_design?: string | null;
+  /** Tồn kho Amazon = In Transit Between Warehouses + Ending Warehouse Balance (từ Inventory Ledger mới nhất). */
+  ton_kho?: number | null;
+  in_transit_between_warehouses?: number | null;
+  ending_warehouse_balance?: number | null;
+  ton_kho_updated_at?: string | null;
   // Chỉ có ở BẢNG MÃ FBM (accounting_sku_master_fbm)
   sup?: string | null;
   size?: string | null;
@@ -170,7 +175,8 @@ type Sql = Awaited<ReturnType<typeof getDatabaseClient>>;
 function skuChannelSelect(sql: Sql, channel: SkuChannel) {
   return channel === "fbm"
     ? sql`, sup, size, basecost::float, shipping_fee::float, add_shipping_fee::float, total_cost::float, ngay_len_camp, phan_loai_kich_thuoc`
-    : sql`, kich_thuoc, phan_loai_kich_thuoc, file_design`;
+    : sql`, kich_thuoc, phan_loai_kich_thuoc, file_design, ton_kho::float, in_transit_between_warehouses::float,
+        ending_warehouse_balance::float, ton_kho_updated_at::text`;
 }
 
 export type InventoryEntityType = "sku" | "sku_fbm" | "inbound" | "check_shipment" | "monthly_base_cost";

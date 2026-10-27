@@ -3,7 +3,6 @@ import {
   parseInventoryLedgerContent,
   ingestInventoryLedgerRows,
   getLatestInventoryBalances,
-  getInventoryStockSnapshot,
 } from "@/lib/accounting/inventory-ledger-db";
 
 export const runtime = "nodejs";
@@ -15,11 +14,6 @@ export async function GET(request: Request) {
     const storeId = url.searchParams.get("store_id");
     if (!storeId) {
       return Response.json({ error: "Thiếu store_id." }, { status: 400 });
-    }
-
-    // Tab TỒN KHO: dòng báo cáo của 1 ngày chốt sổ (mặc định mới nhất)
-    if (url.searchParams.get("mode") === "stock") {
-      return Response.json(await getInventoryStockSnapshot(storeId, url.searchParams.get("snapshot_date")));
     }
 
     const balances = await getLatestInventoryBalances(storeId);

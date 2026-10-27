@@ -68,6 +68,8 @@ export const DEFAULT_SKU_COLUMNS: ColumnConfig[] = [
   { id: "creative_headline", label: "Creative Headline", defaultLabel: "Creative Headline", visible: true, width: 250 },
   { id: "brand_logo_asset_id", label: "Brand Logo Asset ID", defaultLabel: "Brand Logo Asset ID", visible: true, width: 200 },
   { id: "landing_page_url", label: "Landing Page URL", defaultLabel: "Landing Page URL", visible: true, width: 160 },
+  // Tồn kho Amazon từ Inventory Ledger (tự cập nhật mỗi tuần, không sửa tay)
+  { id: "ton_kho", label: "Tồn", defaultLabel: "Tồn", visible: true, type: "number", align: "right", width: 100 },
 ];
 
 /** BẢNG MÃ FBM: theo mẫu sheet "FBM_<Store>" (khác thứ tự & cột với BẢNG MÃ FBA). */
@@ -174,35 +176,6 @@ export const DEFAULT_MONTHLY_BASE_COST_COLUMNS: ColumnConfig[] = [
   { id: "month_10", label: "Basecost tháng 10", defaultLabel: "Basecost tháng 10", visible: true, align: "right", width: 75 },
   { id: "month_11", label: "Basecost tháng 11", defaultLabel: "Basecost tháng 11", visible: true, align: "right", width: 75 },
   { id: "month_12", label: "Basecost tháng 12", defaultLabel: "Basecost tháng 12", visible: true, align: "right", width: 75 },
-];
-
-// TỒN KHO: các cột của báo cáo Inventory Ledger; Tồn kho = In Transit Between Warehouses + Ending Warehouse Balance.
-export const DEFAULT_INVENTORY_STOCK_COLUMNS: ColumnConfig[] = [
-  { id: "stt", label: "STT", defaultLabel: "STT", visible: true, isFrozen: true, align: "center", width: 58 },
-  { id: "product_type", label: "Product Type", defaultLabel: "Product Type", visible: true, isFrozen: true, width: 155 },
-  { id: "mockup", label: "Mockup", defaultLabel: "Mockup", visible: true, isFrozen: true, align: "center", width: 76 },
-  { id: "sku", label: "SKU", defaultLabel: "SKU", visible: true, isFrozen: true, width: 185 },
-  { id: "ton_kho", label: "Tồn kho", defaultLabel: "Tồn kho", visible: true, type: "number", align: "right", width: 100 },
-  { id: "asin", label: "ASIN", defaultLabel: "ASIN", visible: true, align: "center", width: 130 },
-  { id: "fnsku", label: "FNSKU", defaultLabel: "FNSKU", visible: true, align: "center", width: 130 },
-  { id: "title", label: "Title", defaultLabel: "Title", visible: true, width: 300 },
-  { id: "disposition", label: "Disposition", defaultLabel: "Disposition", visible: true, align: "center", width: 160 },
-  { id: "starting_warehouse_balance", label: "Starting Warehouse Balance", defaultLabel: "Starting Warehouse Balance", visible: true, type: "number", align: "right", width: 120 },
-  { id: "in_transit_between_warehouses", label: "In Transit Between Warehouses", defaultLabel: "In Transit Between Warehouses", visible: true, type: "number", align: "right", width: 130 },
-  { id: "receipts", label: "Receipts", defaultLabel: "Receipts", visible: true, type: "number", align: "right", width: 95 },
-  { id: "customer_shipments", label: "Customer Shipments", defaultLabel: "Customer Shipments", visible: true, type: "number", align: "right", width: 110 },
-  { id: "customer_returns", label: "Customer Returns", defaultLabel: "Customer Returns", visible: true, type: "number", align: "right", width: 105 },
-  { id: "vendor_returns", label: "Vendor Returns", defaultLabel: "Vendor Returns", visible: true, type: "number", align: "right", width: 100 },
-  { id: "warehouse_transfer_in_out", label: "Warehouse Transfer In/Out", defaultLabel: "Warehouse Transfer In/Out", visible: true, type: "number", align: "right", width: 120 },
-  { id: "found", label: "Found", defaultLabel: "Found", visible: true, type: "number", align: "right", width: 80 },
-  { id: "lost", label: "Lost", defaultLabel: "Lost", visible: true, type: "number", align: "right", width: 80 },
-  { id: "damaged", label: "Damaged", defaultLabel: "Damaged", visible: true, type: "number", align: "right", width: 90 },
-  { id: "disposed", label: "Disposed", defaultLabel: "Disposed", visible: true, type: "number", align: "right", width: 90 },
-  { id: "other_events", label: "Other Events", defaultLabel: "Other Events", visible: true, type: "number", align: "right", width: 90 },
-  { id: "ending_warehouse_balance", label: "Ending Warehouse Balance", defaultLabel: "Ending Warehouse Balance", visible: true, type: "number", align: "right", width: 120 },
-  { id: "unknown_events", label: "Unknown Events", defaultLabel: "Unknown Events", visible: true, type: "number", align: "right", width: 95 },
-  { id: "location", label: "Location", defaultLabel: "Location", visible: true, align: "center", width: 90 },
-  { id: "report_date", label: "Date", defaultLabel: "Date", visible: true, type: "date", align: "center", width: 110 },
 ];
 
 export const DEFAULT_ORDER_INPUT_COLUMNS: ColumnConfig[] = [
