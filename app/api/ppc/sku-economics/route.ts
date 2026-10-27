@@ -1,7 +1,13 @@
 // app/api/ppc/sku-economics/route.ts
 import { ApiError, authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
 import { z } from "zod";
-import { getSkuEconomicsList, saveSkuProductTypeMappings, upsertSkuEconomics, resolveStoreId } from "@/lib/ppc/sku-architecture-service";
+import {
+  getSkuEconomicsList,
+  resolveStoreId,
+  saveSkuProductTypeMappings,
+  setSkuMaxBidOverride,
+  upsertSkuEconomics,
+} from "@/lib/ppc/sku-architecture-service";
 
 const mappingSchema = z.object({
   storeId: z.string().trim().min(1).optional(),
@@ -11,6 +17,14 @@ const mappingSchema = z.object({
     productType: z.string().trim().min(1).max(160),
     asin: z.string().trim().max(32).optional(),
   }).strict()).min(1).max(200),
+}).strict();
+
+// Max Bid nhập tay cho 1 SKU; null = quay về tự tính
+const maxBidOverrideSchema = z.object({
+  storeId: z.string().trim().min(1).optional(),
+  storeName: z.string().trim().min(1).optional(),
+  sku: z.string().trim().min(1).max(256),
+  maxBidOverride: z.number().positive().max(100).nullable(),
 }).strict();
 
 export const runtime = "nodejs";
@@ -42,6 +56,13 @@ export async function POST(request: Request) {
       const mappingStoreId = await resolveStoreId(input.storeId || input.storeName || searchParams.get("storeId"));
       const updated = await saveSkuProductTypeMappings(mappingStoreId, input.mappings);
       return Response.json({ success: true, data: updated, updatedCount: updated.length });
+    }
+
+    if (body && typeof body === "object" && "maxBidOverride" in body) {
+      const input = maxBidOverrideSchema.parse(body);
+      const overrideStoreId = await resolveStoreId(input.storeId || input.storeName || searchParams.get("storeId"));
+      const updated = await setSkuMaxBidOverride(overrideStoreId, input.sku, input.maxBidOverride);
+      return Response.json({ success: true, data: updated });
     }
 
     const storeId = await resolveStoreId(body?.storeId || body?.storeName || searchParams.get("storeId"));

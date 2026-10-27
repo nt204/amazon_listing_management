@@ -1358,9 +1358,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     groupedRecRequestRef.current?.controller.abort();
   }, [activeTab]);
 
-  const loadSkuRecommendationDetails = useCallback(async (sku: string) => {
+  const loadSkuRecommendationDetails = useCallback(async (sku: string, force = false) => {
     const cacheKey = `${selectedStore}:${selectedDays}:${sku.trim().toUpperCase()}:${includePausedRecs ? 1 : 0}`;
-    const cached = skuRecDetailsCacheRef.current.get(cacheKey);
+    const cached = force ? undefined : skuRecDetailsCacheRef.current.get(cacheKey);
     if (cached) {
       setSkuRecAllRecs(cached);
       return cached;

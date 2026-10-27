@@ -15,15 +15,16 @@ import {
   Check,
   Sparkle,
 } from "@phosphor-icons/react";
-import type { SkuEconomics, CrSource, CostFieldSource } from "@/lib/ppc/sku-architecture-types";
+import type { SkuEconomics, CrSource, CostField, CostFieldSource } from "@/lib/ppc/sku-architecture-types";
 import {
+  MISSING_COST_PPC_STATUS,
   calculateBreakEvenAcos,
   calculateMaxBid,
   calculateProfitBeforeAds,
   SKU_PREFIX_ERROR_PRODUCT_TYPE,
 } from "@/lib/ppc/sku-architecture-types";
 
-// Nguồn của từng con số: sửa tay → Cost Master khai báo → Accounting → mặc định
+// Nguồn của từng con số: sửa tay → Cost Master khai báo → Accounting; không có nguồn → thiếu (SKU không bid)
 const COST_SOURCE_LABELS: Record<CostFieldSource, { label: string; title: string; className: string }> = {
   OVERRIDE: { label: "Sửa tay", title: "Giá trị nhập tay cho riêng SKU này", className: "bg-violet-50 text-violet-700" },
   COST_MASTER: { label: "Phôi", title: "Khai báo trong Cost Master (Quản lý phôi)", className: "bg-indigo-50 text-indigo-700" },
@@ -32,7 +33,13 @@ const COST_SOURCE_LABELS: Record<CostFieldSource, { label: string; title: string
   ACCOUNTING_SKU: { label: "Kế toán", title: "Bảng Mã Accounting (phí Amazon = phí FBA + % referral × giá bán)", className: "bg-emerald-50 text-emerald-700" },
   ACCOUNTING_ORDERS: { label: "Kế toán", title: "Giá bán trung bình 30 ngày từ đơn hàng (All Orders) bên Accounting", className: "bg-emerald-50 text-emerald-700" },
   PREVIOUS: { label: "Đã lưu", title: "Giá trị đã lưu lần trước", className: "bg-slate-100 text-slate-600" },
-  DEFAULT: { label: "Mặc định", title: "Chưa khai báo phôi và Accounting chưa có dữ liệu — nên khai báo Cost Master", className: "bg-amber-50 text-amber-700" },
+  DEFAULT: { label: "Thiếu", title: "Cost Master và Accounting đều chưa có số này — SKU không được tính bid", className: "bg-rose-50 text-rose-700" },
+};
+
+const MISSING_FIELD_LABELS: Record<CostField, string> = {
+  sellingPrice: "Giá bán",
+  baseCost: "Basecost",
+  amazonFee: "Phí Amazon",
 };
 
 function CostSourceTag({ source }: { source?: CostFieldSource }) {
@@ -197,8 +204,17 @@ export function PpcSkuEconomicsTable({
   };
 
   // Status badge styling
-  const renderPpcStatusBadge = (status?: string) => {
+  const renderPpcStatusBadge = (status?: string, missing?: CostField[]) => {
     switch (status) {
+      case MISSING_COST_PPC_STATUS:
+        return (
+          <span
+            title={`Thiếu: ${(missing ?? []).map((field) => MISSING_FIELD_LABELS[field]).join(", ")} — khai báo Cost Master hoặc cập nhật bên Accounting`}
+            className="px-2.5 py-0.5 rounded text-[11px] font-bold bg-orange-50 text-orange-700 border border-orange-200 whitespace-nowrap"
+          >
+            {MISSING_COST_PPC_STATUS}
+          </span>
+        );
       case "Healthy":
         return (
           <span className="px-2.5 py-0.5 rounded text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -312,6 +328,7 @@ export function PpcSkuEconomicsTable({
               <option value="Review">Review</option>
               <option value="Bleeding">Bleeding</option>
               <option value="Zero Clicks">Zero Clicks</option>
+              <option value={MISSING_COST_PPC_STATUS}>{MISSING_COST_PPC_STATUS}</option>
             </select>
           </div>
 
@@ -475,7 +492,7 @@ export function PpcSkuEconomicsTable({
                     ${item.maxBid.toFixed(2)}
                   </td>
                   <td className="py-3 px-3 text-center">
-                    {renderPpcStatusBadge(item.ppcStatus)}
+                    {renderPpcStatusBadge(item.ppcStatus, item.missingCostFields)}
                   </td>
                   <td className="py-3 px-3 text-center">
                     <button
@@ -521,7 +538,7 @@ export function PpcSkuEconomicsTable({
                   <div>
                     <div className="flex items-center gap-2">
                       <h2 className="text-base font-black text-slate-900">SKU OVERVIEW</h2>
-                      {renderPpcStatusBadge(selectedSku.ppcStatus)}
+                      {renderPpcStatusBadge(selectedSku.ppcStatus, selectedSku.missingCostFields)}
                     </div>
                     <p className="text-sm font-black text-indigo-600 mt-0.5">{selectedSku.sku}</p>
                     <p className="text-xs text-slate-500">

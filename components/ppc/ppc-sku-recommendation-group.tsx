@@ -54,7 +54,8 @@ interface PpcSkuRecommendationGroupProps {
   recommendationWindowDays: number;
   loadedRecommendationWindowDays: number | null;
   onRecommendationWindowChange: (days: 7 | 30) => void;
-  onLoadSkuRecommendations: (sku: string) => Promise<PpcRecommendation[]>;
+  /** force = bỏ qua cache (vd. sau khi đổi Max Bid). */
+  onLoadSkuRecommendations: (sku: string, force?: boolean) => Promise<PpcRecommendation[]>;
   onApproveToQueue: (items: Array<{
     recommendation: PpcRecommendation;
     userFinalBid?: number;
@@ -228,6 +229,9 @@ export function PpcSkuRecommendationGroupView({
   const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set());
   const [ruleExplanationModal, setRuleExplanationModal] = useState<PpcRecommendation | null>(null);
   const [showOutcomesModal, setShowOutcomesModal] = useState(false);
+  // Max Bid nhập tay trong Block A: null = đang không sửa
+  const [maxBidDraft, setMaxBidDraft] = useState<string | null>(null);
+  const [isSavingMaxBid, setIsSavingMaxBid] = useState(false);
   const previousRecommendationWindowRef = useRef(recommendationWindowDays);
   const previousStoreRef = useRef(selectedStore);
 
@@ -423,12 +427,47 @@ export function PpcSkuRecommendationGroupView({
     onOpenActionQueue();
   };
 
+  // value = null → bỏ số nhập tay, quay về Max Bid tự tính
+  const handleSaveMaxBid = async (value: number | null) => {
+    if (!selectedSkuGroup || isSavingMaxBid) return;
+    if (value !== null && !(value > 0 && value <= 100)) {
+      alert("Max Bid phải lớn hơn 0 và không quá $100.");
+      return;
+    }
+    const { sku, economics } = selectedSkuGroup;
+    try {
+      setIsSavingMaxBid(true);
+      const res = await fetch("/api/ppc/sku-economics", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storeId: economics.storeId, sku, maxBidOverride: value }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.success) throw new Error(data?.error || "Không lưu được Max Bid");
+      const override: number | null = data.data.maxBidOverride;
+      const calculated = economics.calculatedMaxBid ?? economics.maxBid;
+      setSelectedSkuGroup((current) =>
+        current && current.sku === sku
+          ? { ...current, economics: { ...current.economics, maxBidOverride: override, maxBid: override ?? calculated } }
+          : current,
+      );
+      setMaxBidDraft(null);
+      // Trần bid đổi → tính lại đề xuất của SKU
+      await onLoadSkuRecommendations(sku, true);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Không lưu được Max Bid");
+    } finally {
+      setIsSavingMaxBid(false);
+    }
+  };
+
   const handleOpenSkuGroup = async (
     group: SkuRecommendationGroup,
     overrideAction?: "ALL" | "BID_INCREASE" | "BID_DECREASE" | "PAUSE_TARGET",
     overrideCampType?: "ALL" | "SP03" | "SB05" | "SB01",
   ) => {
     setSelectedSkuGroup(group);
+    setMaxBidDraft(null);
 
     // Mặc định lọc action theo quickFilter hiện tại (nếu đang bấm Tăng Bid, Giảm Bid, Pause)
     let initialAction: "ALL" | "BID_INCREASE" | "BID_DECREASE" | "PAUSE_TARGET" = "ALL";
@@ -1795,12 +1834,89 @@ export function PpcSkuRecommendationGroupView({
                         {(selectedSkuGroup.economics.cr * 100).toFixed(1)}%
                       </div>
                     </div>
-                    <div className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs">
-                      <div className="text-[10px] font-semibold text-slate-500">Max Bid</div>
-                      <div className="text-xs font-black text-indigo-600 font-mono mt-0.5">
-                        ${selectedSkuGroup.economics.maxBid.toFixed(2)}
-                      </div>
-                    </div>
+                    {(() => {
+                      const econ = selectedSkuGroup.economics;
+                      const calculated = econ.calculatedMaxBid ?? econ.maxBid;
+                      const isOverridden = econ.maxBidOverride != null && econ.maxBidOverride > 0 && calculated > 0;
+                      // Lỗi Prefix / thiếu dữ liệu (Max Bid tự tính = 0) thì không cho đặt tay
+                      const canEdit = calculated > 0 && /^[0-9a-f-]{36}$/i.test(econ.storeId);
+                      return (
+                        <div className={`bg-white p-2.5 rounded-xl border shadow-2xs ${isOverridden ? "border-violet-300" : "border-slate-200"}`}>
+                          <div className="flex items-center justify-center gap-1 text-[10px] font-semibold text-slate-500">
+                            Max Bid
+                            {maxBidDraft === null && canEdit && (
+                              <button
+                                type="button"
+                                onClick={() => setMaxBidDraft(econ.maxBid.toFixed(2))}
+                                className="text-slate-400 hover:text-indigo-600"
+                                title="Sửa Max Bid"
+                              >
+                                <PencilSimple size={11} weight="bold" />
+                              </button>
+                            )}
+                          </div>
+                          {maxBidDraft !== null ? (
+                            <div className="mt-0.5 space-y-1">
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0.01"
+                                autoFocus
+                                value={maxBidDraft}
+                                disabled={isSavingMaxBid}
+                                onChange={(e) => setMaxBidDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") void handleSaveMaxBid(Number(maxBidDraft));
+                                  else if (e.key === "Escape") {
+                                    e.stopPropagation();
+                                    setMaxBidDraft(null);
+                                  }
+                                }}
+                                className="w-full rounded border border-indigo-300 px-1 py-0.5 text-center font-mono text-xs font-bold text-slate-900 focus:border-indigo-600 focus:outline-none"
+                              />
+                              <div className="flex justify-center gap-1">
+                                <button
+                                  type="button"
+                                  disabled={isSavingMaxBid}
+                                  onClick={() => void handleSaveMaxBid(Number(maxBidDraft))}
+                                  className="rounded bg-indigo-600 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
+                                >
+                                  {isSavingMaxBid ? "..." : "Lưu"}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isSavingMaxBid}
+                                  onClick={() => setMaxBidDraft(null)}
+                                  className="rounded border border-slate-200 px-1.5 py-0.5 text-[10px] font-bold text-slate-600 hover:bg-slate-50"
+                                >
+                                  Hủy
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <div className={`text-xs font-black font-mono mt-0.5 ${isOverridden ? "text-violet-700" : "text-indigo-600"}`}>
+                                ${econ.maxBid.toFixed(2)}
+                              </div>
+                              {isOverridden && (
+                                <div className="mt-0.5 text-[9px] text-slate-500">
+                                  Sửa tay · tự tính ${calculated.toFixed(2)}{" "}
+                                  <button
+                                    type="button"
+                                    disabled={isSavingMaxBid}
+                                    onClick={() => void handleSaveMaxBid(null)}
+                                    className="font-bold text-indigo-600 hover:underline disabled:opacity-50"
+                                    title="Bỏ số nhập tay, dùng Max Bid tự tính"
+                                  >
+                                    Bỏ
+                                  </button>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 

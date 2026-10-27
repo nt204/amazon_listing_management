@@ -1,10 +1,10 @@
 import "server-only";
 
 import { getDatabaseClient } from "@/lib/db";
-import type { CostFieldSource, ProductCostMaster } from "./sku-architecture-types";
+import type { CostField, CostFieldSource, CostSources, ProductCostMaster } from "./sku-architecture-types";
 
 // Lấy chi phí của SKU bên Accounting để bù vào chỗ Cost Master (khai báo phôi) còn trống.
-// Thứ tự cho từng trường: OVERRIDE của SKU → Cost Master khai báo → Accounting → mặc định.
+// Thứ tự cho từng trường: OVERRIDE của SKU → Cost Master khai báo → Accounting. Không có nguồn nào → SKU thiếu dữ liệu.
 
 export interface AccountingSkuCost {
   productType: string | null;
@@ -83,34 +83,32 @@ export async function loadAccountingSkuCosts(accountingStoreId: string): Promise
 
 /**
  * Giá bán khi chưa có giá thực tế từ Ads:
- * Cost Master → giá đơn hàng Accounting (30 ngày) → giá đã lưu trước đó → mặc định.
+ * Cost Master → giá đơn hàng Accounting (30 ngày) → giá đã lưu trước đó. Không có nguồn nào → 0 (DEFAULT = thiếu).
  */
 export function resolveFallbackPrice(
   declared: ProductCostMaster | null,
   acc: AccountingSkuCost | undefined,
   previous: number | null,
-  defaultPrice: number,
 ): { price: number; source: CostFieldSource } {
   if (positive(declared?.defaultPrice)) return { price: declared!.defaultPrice, source: "COST_MASTER" };
   if (acc?.avgPrice) return { price: acc.avgPrice, source: "ACCOUNTING_ORDERS" };
   if (positive(previous)) return { price: previous!, source: "PREVIOUS" };
-  return { price: defaultPrice, source: "DEFAULT" };
+  return { price: 0, source: "DEFAULT" };
 }
 
 /**
  * Basecost + phí Amazon cho SKU không OVERRIDE. declared = Cost Master khai báo cho đúng loại phôi
- * (null nếu chưa khai báo); fallback = giá trị mặc định khi cả 2 nguồn đều trống.
+ * (null nếu chưa khai báo). Cả 2 nguồn đều trống → 0 (DEFAULT = thiếu), không lấy số mặc định.
  * Phí Amazon bên PPC là TỔNG phí: lấy từ Accounting thì = phí FBA + % referral × giá bán.
  */
 export function resolveSkuCosts(input: {
   declared: ProductCostMaster | null;
-  fallback: { baseCost: number; defaultAmazonFee: number };
   acc: AccountingSkuCost | undefined;
   sellingPrice: number;
 }): { baseCost: number; baseCostSource: CostFieldSource; amazonFee: number; amazonFeeSource: CostFieldSource } {
-  const { declared, fallback, acc, sellingPrice } = input;
+  const { declared, acc, sellingPrice } = input;
 
-  let baseCost = fallback.baseCost;
+  let baseCost = 0;
   let baseCostSource: CostFieldSource = "DEFAULT";
   if (positive(declared?.baseCost)) {
     baseCost = declared!.baseCost;
@@ -120,7 +118,7 @@ export function resolveSkuCosts(input: {
     baseCostSource = acc.baseCostSource;
   }
 
-  let amazonFee = fallback.defaultAmazonFee;
+  let amazonFee = 0;
   let amazonFeeSource: CostFieldSource = "DEFAULT";
   if (positive(declared?.defaultAmazonFee)) {
     amazonFee = declared!.defaultAmazonFee;
@@ -133,31 +131,25 @@ export function resolveSkuCosts(input: {
   return { baseCost, baseCostSource, amazonFee, amazonFeeSource };
 }
 
+/** Các ô Giá / Basecost / Phí không có nguồn nào. */
+export function findMissingCostFields(sources: CostSources): CostField[] {
+  return (["sellingPrice", "baseCost", "amazonFee"] as const).filter((field) => sources[field] === "DEFAULT");
+}
+
 /**
- * Lợi nhuận trước Ads + BE ACoS. Chỉ tính từ các con số đã chọn khi cả Giá / Basecost / Phí đều có nguồn thật;
- * thiếu ô nào (DEFAULT) thì dùng nguyên bộ chuẩn của phôi như trước — không ghép giá thật với giá vốn mặc định.
+ * Lợi nhuận trước Ads + BE ACoS từ các con số đã chọn. Thiếu ô nào (DEFAULT) thì không tính: trả 0 kèm danh sách ô thiếu,
+ * để SKU bị đánh dấu lỗi thay vì đoán bằng số mặc định.
  */
 export function computeBreakEven(input: {
   sellingPrice: number;
   baseCost: number;
   amazonFee: number;
   taxRate: number;
-  sources: { sellingPrice: CostFieldSource; baseCost: CostFieldSource; amazonFee: CostFieldSource };
-  packageMaster: { defaultPrice: number; defaultAmazonFee: number; baseCost: number; breakEvenAcos?: number };
-}): { profitBeforeAds: number; breakEvenAcos: number } {
-  const { sellingPrice, baseCost, amazonFee, taxRate, sources, packageMaster } = input;
-  const calc = (price: number, fee: number, base: number) => {
-    const profit = Math.round((price - fee - base - price * taxRate) * 100) / 100;
-    return { profitBeforeAds: profit, breakEvenAcos: price > 0 ? Math.round((profit / price) * 1000) / 10 : 0 };
-  };
-  const allReal = sources.sellingPrice !== "DEFAULT" && sources.baseCost !== "DEFAULT" && sources.amazonFee !== "DEFAULT";
-  if (allReal) return calc(sellingPrice, amazonFee, baseCost);
-  if (packageMaster.defaultPrice > 0) {
-    const profitBeforeAds = Math.round((packageMaster.defaultPrice - packageMaster.defaultAmazonFee - packageMaster.baseCost) * 100) / 100;
-    return {
-      profitBeforeAds,
-      breakEvenAcos: positive(packageMaster.breakEvenAcos) ?? Math.round((profitBeforeAds / packageMaster.defaultPrice) * 1000) / 10,
-    };
-  }
-  return calc(sellingPrice, amazonFee, baseCost);
+  sources: CostSources;
+}): { profitBeforeAds: number; breakEvenAcos: number; missing: CostField[] } {
+  const { sellingPrice, baseCost, amazonFee, taxRate, sources } = input;
+  const missing = findMissingCostFields(sources);
+  if (missing.length > 0 || sellingPrice <= 0) return { profitBeforeAds: 0, breakEvenAcos: 0, missing };
+  const profitBeforeAds = Math.round((sellingPrice - amazonFee - baseCost - sellingPrice * taxRate) * 100) / 100;
+  return { profitBeforeAds, breakEvenAcos: Math.round((profitBeforeAds / sellingPrice) * 1000) / 10, missing };
 }

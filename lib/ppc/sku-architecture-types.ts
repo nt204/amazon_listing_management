@@ -23,7 +23,7 @@ export interface ProductCostMaster {
 
 export type CrSource = "ACTUAL_30D" | "CALCULATED" | "INHERITED" | "OVERRIDE" | "ASSUMED";
 export type CostSource = "INHERITED" | "MAPPING_OVERRIDE" | "OVERRIDE";
-/** Nguồn của từng con số: sửa tay → Cost Master khai báo → Accounting → mặc định. */
+/** Nguồn của từng con số: sửa tay → Cost Master khai báo → Accounting. DEFAULT = không có nguồn nào (thiếu dữ liệu, giá trị 0). */
 export type CostFieldSource =
   | "OVERRIDE"
   | "COST_MASTER"
@@ -38,7 +38,9 @@ export interface CostSources {
   baseCost: CostFieldSource;
   amazonFee: CostFieldSource;
 }
-export type PpcStatus = "Healthy" | "Review" | "Bleeding" | "Zero Clicks";
+export type CostField = keyof CostSources;
+export const MISSING_COST_PPC_STATUS = "Thiếu dữ liệu";
+export type PpcStatus = "Healthy" | "Review" | "Bleeding" | "Zero Clicks" | typeof MISSING_COST_PPC_STATUS;
 export const SKU_PREFIX_ERROR_PRODUCT_TYPE = "Lỗi Prefix";
 
 export interface SkuEconomics {
@@ -56,8 +58,14 @@ export interface SkuEconomics {
   cr: number; // conversion rate, e.g. 0.10 for 10%
   crSource: CrSource;
   maxBid: number;
+  /** Max Bid nhập tay (null = tự tính). Khi có thì maxBid = giá trị này. */
+  maxBidOverride?: number | null;
+  /** Max Bid tự tính = CR × Profit Before Ads, để so với số nhập tay. */
+  calculatedMaxBid?: number;
   costSource: CostSource;
   costSources?: CostSources;
+  /** Ô chi phí không có nguồn (không Cost Master, không Accounting) → SKU không tính bid. */
+  missingCostFields?: CostField[];
   mappingStatus?: "RESOLVED" | "AMBIGUOUS" | "UNMAPPED";
   matchedPrefix?: string | null;
   candidateProductTypes?: string[];

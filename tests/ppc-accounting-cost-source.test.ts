@@ -35,31 +35,30 @@ const acc: AccountingSkuCost = {
   baseCostSource: "ACCOUNTING_MONTHLY",
   avgPrice: 28,
 };
-const fallback = { baseCost: 2, defaultAmazonFee: 6.32 };
 
 test("Cost Master đã khai báo luôn thắng số Accounting", () => {
-  const costs = resolveSkuCosts({ declared: master({ baseCost: 3, defaultAmazonFee: 7.5 }), fallback, acc, sellingPrice: 28 });
+  const costs = resolveSkuCosts({ declared: master({ baseCost: 3, defaultAmazonFee: 7.5 }), acc, sellingPrice: 28 });
   assert.deepEqual(costs, { baseCost: 3, baseCostSource: "COST_MASTER", amazonFee: 7.5, amazonFeeSource: "COST_MASTER" });
 });
 
 test("Ô Cost Master trống mới lấy Accounting, phí Amazon = FBA + % referral × giá", () => {
-  const costs = resolveSkuCosts({ declared: master({ baseCost: 3 }), fallback, acc, sellingPrice: 28 });
+  const costs = resolveSkuCosts({ declared: master({ baseCost: 3 }), acc, sellingPrice: 28 });
   assert.equal(costs.baseCost, 3);
   assert.equal(costs.baseCostSource, "COST_MASTER");
   assert.equal(costs.amazonFee, 8.4); // 4.2 + 0.15 × 28
   assert.equal(costs.amazonFeeSource, "ACCOUNTING_SKU");
 });
 
-test("Thiếu cả Cost Master lẫn Accounting thì đánh dấu DEFAULT", () => {
-  const costs = resolveSkuCosts({ declared: null, fallback, acc: undefined, sellingPrice: 28 });
-  assert.deepEqual(costs, { baseCost: 2, baseCostSource: "DEFAULT", amazonFee: 6.32, amazonFeeSource: "DEFAULT" });
+test("Thiếu cả Cost Master lẫn Accounting thì để 0 và đánh dấu thiếu (DEFAULT), không lấy số mặc định", () => {
+  const costs = resolveSkuCosts({ declared: null, acc: undefined, sellingPrice: 28 });
+  assert.deepEqual(costs, { baseCost: 0, baseCostSource: "DEFAULT", amazonFee: 0, amazonFeeSource: "DEFAULT" });
 });
 
-test("Giá bán: Cost Master → đơn hàng Accounting → giá đã lưu → mặc định", () => {
-  assert.deepEqual(resolveFallbackPrice(master({ defaultPrice: 30 }), acc, 25, 15.99), { price: 30, source: "COST_MASTER" });
-  assert.deepEqual(resolveFallbackPrice(master({}), acc, 25, 15.99), { price: 28, source: "ACCOUNTING_ORDERS" });
-  assert.deepEqual(resolveFallbackPrice(null, undefined, 25, 15.99), { price: 25, source: "PREVIOUS" });
-  assert.deepEqual(resolveFallbackPrice(null, undefined, 0, 15.99), { price: 15.99, source: "DEFAULT" });
+test("Giá bán: Cost Master → đơn hàng Accounting → giá đã lưu → thiếu", () => {
+  assert.deepEqual(resolveFallbackPrice(master({ defaultPrice: 30 }), acc, 25), { price: 30, source: "COST_MASTER" });
+  assert.deepEqual(resolveFallbackPrice(master({}), acc, 25), { price: 28, source: "ACCOUNTING_ORDERS" });
+  assert.deepEqual(resolveFallbackPrice(null, undefined, 25), { price: 25, source: "PREVIOUS" });
+  assert.deepEqual(resolveFallbackPrice(null, undefined, 0), { price: 0, source: "DEFAULT" });
 });
 
 test("Đủ số thật thì tính BE từ số đó", () => {
@@ -69,21 +68,19 @@ test("Đủ số thật thì tính BE từ số đó", () => {
     amazonFee: 8.4,
     taxRate: 0.03,
     sources: { sellingPrice: "ACCOUNTING_ORDERS", baseCost: "ACCOUNTING_MONTHLY", amazonFee: "ACCOUNTING_SKU" },
-    packageMaster: { defaultPrice: 15.99, defaultAmazonFee: 6.32, baseCost: 2, breakEvenAcos: 48 },
   });
   assert.equal(result.profitBeforeAds, 14.46);
   assert.equal(result.breakEvenAcos, 51.7);
+  assert.deepEqual(result.missing, []);
 });
 
-test("Thiếu một ô (DEFAULT) thì không ghép giá thật với giá vốn mặc định", () => {
+test("Thiếu một ô (DEFAULT) thì không tính BE, báo ô thiếu để SKU vào lỗi", () => {
   const result = computeBreakEven({
     sellingPrice: 30,
-    baseCost: 2,
+    baseCost: 0,
     amazonFee: 9.05,
     taxRate: 0.03,
     sources: { sellingPrice: "PREVIOUS", baseCost: "DEFAULT", amazonFee: "ACCOUNTING_SKU" },
-    packageMaster: { defaultPrice: 15.99, defaultAmazonFee: 6.32, baseCost: 2, breakEvenAcos: 48 },
   });
-  assert.equal(result.breakEvenAcos, 48);
-  assert.equal(result.profitBeforeAds, 7.67);
+  assert.deepEqual(result, { profitBeforeAds: 0, breakEvenAcos: 0, missing: ["baseCost"] });
 });

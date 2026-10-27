@@ -11,12 +11,15 @@ import {
   normalizeSkuPrefixes,
   suggestProductTypeFromPrice,
   suggestProductTypeFromText,
+  MISSING_COST_PPC_STATUS,
   SKU_PREFIX_ERROR_PRODUCT_TYPE,
   type ActionType,
   type BulkExport,
+  type CostField,
   type CostFieldSource,
   type CostSource,
   type CostSources,
+  type PpcStatus,
   type CrSource,
   type PpcAction,
   type PpcAutoUploadLog,
@@ -38,7 +41,13 @@ import { objectStorageDriver, putStoredObject, r2KeyPrefix } from "@/lib/object-
 import { invalidateGroupedRecommendationsCache } from "./recommendation-cache";
 import { getCachedOrFetch, invalidateCachePattern } from "@/lib/redis";
 import { saveActionContextsBestEffort, type ActionContextInput } from "./action-memory";
-import { computeBreakEven, loadAccountingSkuCosts, resolveFallbackPrice, resolveSkuCosts } from "./accounting-cost-source";
+import {
+  computeBreakEven,
+  findMissingCostFields,
+  loadAccountingSkuCosts,
+  resolveFallbackPrice,
+  resolveSkuCosts,
+} from "./accounting-cost-source";
 
 export async function resolveStoreId(storeIdOrName?: string | null): Promise<string> {
   const sql = await getDatabaseClient();
@@ -262,7 +271,7 @@ export async function saveCostMasterNewVersion(data: {
           break_even_acos = CASE
             WHEN selling_price > 0 THEN ((selling_price - amazon_fee - base_cost - selling_price * tax_rate) / selling_price) * 100
             ELSE ${beAcos}::numeric END,
-          max_bid = cr * (selling_price - amazon_fee - base_cost - selling_price * tax_rate)
+          max_bid = COALESCE(max_bid_override, cr * (selling_price - amazon_fee - base_cost - selling_price * tax_rate))
       WHERE store_id = ${storeId} AND lower(trim(product_type)) = lower(trim(${data.productType}))
         AND cost_source IN ('INHERITED', 'MAPPING_OVERRIDE')
     `;
@@ -1073,7 +1082,7 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
     const accCost = accountingCosts.get(sku);
     const isOverride = existing?.cost_source === "OVERRIDE";
 
-    // Giá bán: sửa tay → giá thực tế từ Ads → Cost Master → đơn hàng Accounting → giá đã lưu → mặc định
+    // Giá bán: sửa tay → giá thực tế từ Ads → Cost Master → đơn hàng Accounting → giá đã lưu (không có → thiếu)
     let sellingPrice: number;
     let priceSource: CostFieldSource;
     if (hasPrefixError) {
@@ -1086,18 +1095,13 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
       sellingPrice = Math.round(dynamicPrice * 100) / 100;
       priceSource = "PPC_ADS";
     } else {
-      const fallbackPrice = resolveFallbackPrice(
-        declaredMaster,
-        accCost,
-        existing ? Number(existing.selling_price) : null,
-        master.defaultPrice > 0 ? master.defaultPrice : 15.99,
-      );
+      const fallbackPrice = resolveFallbackPrice(declaredMaster, accCost, existing ? Number(existing.selling_price) : null);
       sellingPrice = fallbackPrice.price;
       priceSource = fallbackPrice.source;
     }
 
-    // Basecost / Phí Amazon: sửa tay → Cost Master → Accounting → mặc định
-    const resolvedCosts = resolveSkuCosts({ declared: declaredMaster, fallback: master, acc: accCost, sellingPrice });
+    // Basecost / Phí Amazon: sửa tay → Cost Master → Accounting (không có → thiếu)
+    const resolvedCosts = resolveSkuCosts({ declared: declaredMaster, acc: accCost, sellingPrice });
     const baseCost = isOverride ? Number(existing.base_cost) : resolvedCosts.baseCost;
     const amazonFee = isOverride ? Number(existing.amazon_fee) : resolvedCosts.amazonFee;
     const taxRate = isOverride ? Number(existing.tax_rate) : master.taxRate;
@@ -1114,18 +1118,19 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
     let crSource: CrSource = existing?.cr_source === "OVERRIDE" ? "OVERRIDE" : "ASSUMED";
 
     // Break-even ACoS & Profit Before Ads:
-    // - Khi OVERRIDE hoặc khi SKU có đơn hàng (orders > 0): Tính linh hoạt theo giá bán thực tế, base cost và fee giữ nguyên theo phôi.
-    // - Khi INHERITED chưa có đơn: Sử dụng các giá trị chuẩn mặc định của phôi
+    // - OVERRIDE: tính theo số nhập tay.
+    // - Thiếu Giá / Basecost / Phí (không Cost Master, không Accounting): không tính, Max Bid 0, trạng thái "Thiếu dữ liệu".
+    // - Chưa có đơn và phôi đã khai báo đủ: dùng chuẩn của phôi; còn lại tính theo các con số đã chọn.
     let profitBeforeAds: number;
     let breakEvenAcos: number;
+    const missingCostFields: CostField[] = isOverride || hasPrefixError ? [] : findMissingCostFields(costSources);
 
     if (costSource === "OVERRIDE") {
       profitBeforeAds = calculateProfitBeforeAds(sellingPrice, amazonFee, baseCost, taxRate);
       breakEvenAcos = calculateBreakEvenAcos(profitBeforeAds, sellingPrice);
-    } else if (orders > 0 && dynamicPrice > 0) {
-      profitBeforeAds = calculateProfitBeforeAds(sellingPrice, amazonFee, baseCost, taxRate);
-      breakEvenAcos = calculateBreakEvenAcos(profitBeforeAds, sellingPrice);
     } else if (
+      missingCostFields.length === 0 &&
+      !(orders > 0 && dynamicPrice > 0) &&
       declaredMaster &&
       declaredMaster.defaultPrice > 0 &&
       declaredMaster.baseCost > 0 &&
@@ -1137,13 +1142,13 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
         ? declaredMaster.breakEvenAcos
         : calculateBreakEvenAcos(profitBeforeAds, sellingPrice);
     } else {
-      // Phôi thiếu số liệu: tính từ số Accounting nếu đủ cả 3 ô, thiếu thì dùng bộ chuẩn của phôi như trước
-      ({ profitBeforeAds, breakEvenAcos } = computeBreakEven({
-        sellingPrice, baseCost, amazonFee, taxRate, sources: costSources, packageMaster: master,
-      }));
+      ({ profitBeforeAds, breakEvenAcos } = computeBreakEven({ sellingPrice, baseCost, amazonFee, taxRate, sources: costSources }));
     }
 
-    const maxBid = hasPrefixError ? 0 : calculateMaxBid(cr, profitBeforeAds);
+    // Max Bid: nhập tay → CR × Profit. Lỗi Prefix / thiếu dữ liệu luôn 0 (không bid).
+    const calculatedMaxBid = hasPrefixError || missingCostFields.length > 0 ? 0 : calculateMaxBid(cr, profitBeforeAds);
+    const maxBidOverride = Number(existing?.max_bid_override) > 0 ? Number(existing.max_bid_override) : null;
+    const maxBid = calculatedMaxBid > 0 && maxBidOverride ? maxBidOverride : calculatedMaxBid;
 
     // Đồng bộ vào sku_economics nếu có đơn hàng và giá bán được tính tự động
     if (existing && ["INHERITED", "MAPPING_OVERRIDE"].includes(existing.cost_source) && orders > 0 && dynamicPrice > 0) {
@@ -1162,8 +1167,10 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
       `.catch(() => { });
     }
 
-    let ppcStatus: "Healthy" | "Review" | "Bleeding" | "Zero Clicks" = "Healthy";
-    if (clicks === 0) {
+    let ppcStatus: PpcStatus = "Healthy";
+    if (missingCostFields.length > 0) {
+      ppcStatus = MISSING_COST_PPC_STATUS;
+    } else if (clicks === 0) {
       ppcStatus = "Zero Clicks";
     } else if (actualAcos > breakEvenAcos) {
       ppcStatus = "Bleeding";
@@ -1188,8 +1195,11 @@ export async function getSkuEconomicsList(storeId: string, days = 30): Promise<S
       cr: Math.round(cr * 1000) / 1000,
       crSource,
       maxBid,
+      maxBidOverride,
+      calculatedMaxBid,
       costSource,
       costSources,
+      missingCostFields,
       mappingStatus,
       matchedPrefix: match.matchedPrefix,
       candidateProductTypes: match.candidateProductTypes,
@@ -1265,7 +1275,7 @@ export async function upsertSkuEconomics(
 
   const profitBeforeAds = calculateProfitBeforeAds(sellingPrice, amazonFee, baseCost, taxRate);
   const breakEvenAcos = calculateBreakEvenAcos(profitBeforeAds, sellingPrice);
-  const maxBid = calculateMaxBid(cr, profitBeforeAds);
+  const maxBid = Number(existing?.max_bid_override) > 0 ? Number(existing.max_bid_override) : calculateMaxBid(cr, profitBeforeAds);
 
   const rows = await sql<any[]>`
     INSERT INTO sku_economics (
@@ -1311,12 +1321,51 @@ export async function upsertSkuEconomics(
     cr: Number(r.cr),
     crSource: r.cr_source,
     maxBid: Number(r.max_bid),
+    maxBidOverride: r.max_bid_override == null ? null : Number(r.max_bid_override),
     costSource: r.cost_source,
   };
 
   invalidateGroupedRecommendationsCache(storeId);
   await invalidateCachePattern(`sku_economics:${storeId}:*`).catch(() => {});
   return result;
+}
+
+/**
+ * Đặt / bỏ Max Bid nhập tay cho 1 SKU (null = quay về tự tính CR × Profit).
+ * Chỉ đổi trần bid, không động tới Giá / Basecost / Phí. SKU chưa có dòng sku_economics thì tạo dòng tối thiểu.
+ */
+export async function setSkuMaxBidOverride(
+  storeId: string,
+  sku: string,
+  maxBidOverride: number | null,
+): Promise<{ sku: string; maxBidOverride: number | null; maxBid: number }> {
+  const sql = await getDatabaseClient();
+  const normalizedSku = sku.toUpperCase().trim();
+  const value = maxBidOverride != null && maxBidOverride > 0 ? Math.round(maxBidOverride * 100) / 100 : null;
+
+  const rows = await sql<{ sku: string; max_bid_override: string | null; max_bid: string }[]>`
+    INSERT INTO sku_economics (store_id, sku, cr, cr_source, max_bid, max_bid_override, cost_source, updated_at)
+    VALUES (${storeId}, ${normalizedSku}, 0.10, 'ASSUMED', ${value ?? 0}, ${value}, 'INHERITED', NOW())
+    ON CONFLICT (store_id, sku) DO UPDATE
+    SET max_bid_override = EXCLUDED.max_bid_override,
+        max_bid = CASE
+          WHEN EXCLUDED.max_bid_override IS NOT NULL THEN EXCLUDED.max_bid_override
+          WHEN sku_economics.profit_before_ads > 0 AND sku_economics.break_even_acos > 0
+            THEN GREATEST(0.05, ROUND(sku_economics.cr * sku_economics.profit_before_ads, 2))
+          ELSE 0
+        END,
+        updated_at = NOW()
+    RETURNING sku, max_bid_override, max_bid
+  `;
+
+  invalidateGroupedRecommendationsCache(storeId);
+  await invalidateCachePattern(`sku_economics:${storeId}:*`).catch(() => {});
+  const r = rows[0];
+  return {
+    sku: r.sku,
+    maxBidOverride: r.max_bid_override == null ? null : Number(r.max_bid_override),
+    maxBid: Number(r.max_bid),
+  };
 }
 
 export async function saveSkuProductTypeMappings(
@@ -1398,14 +1447,6 @@ export async function syncSkuEconomicsFromAccounting(storeIdOrName: string): Pro
   const masters = await getCostMasters(storeId);
   // So khớp loại phôi không phân biệt hoa/thường (Bảng Mã và Cost Master có thể viết khác nhau)
   const masterMap = new Map(masters.map((m) => [m.productType.trim().toLowerCase(), m]));
-  // Phôi mặc định giống danh sách SKU Economics: Ornament / Glass Ornament của store, không có thì số chuẩn
-  const defaultMaster = masterMap.get("ornament") || masterMap.get("glass ornament") || {
-    baseCost: 2.0,
-    defaultAmazonFee: 6.32,
-    taxRate: 0.03,
-    defaultPrice: 15.99,
-    breakEvenAcos: 48,
-  };
 
   const existingRows = await sql<any[]>`
     SELECT * FROM sku_economics WHERE store_id = ${storeId}
@@ -1433,9 +1474,8 @@ export async function syncSkuEconomicsFromAccounting(storeIdOrName: string): Pro
     const pType = existing?.cost_source === "MAPPING_OVERRIDE" && existing?.product_type
       ? existing.product_type
       : costMasterType ?? (isDeclared(accType) ? accType! : accType || "Chưa phân loại");
-    // Cost Master khai báo đúng loại phôi; chưa khai báo thì chỉ dùng mặc định khi Accounting cũng trống
+    // Cost Master khai báo đúng loại phôi; ô nào trống lấy Accounting, cả 2 trống → thiếu dữ liệu (không bid)
     const declared = masterMap.get(pType.trim().toLowerCase()) ?? null;
-    const fallback = declared ?? defaultMaster;
     const asin = (acc.asin || existing?.asin || "").trim();
     const isOverride = existing?.cost_source === "OVERRIDE";
 
@@ -1448,15 +1488,10 @@ export async function syncSkuEconomicsFromAccounting(storeIdOrName: string): Pro
       continue;
     }
 
-    // Giá bán: Cost Master → đơn hàng Accounting 30 ngày → giá đã lưu → mặc định
-    const price = resolveFallbackPrice(
-      declared,
-      acc,
-      existing ? Number(existing.selling_price) : null,
-      defaultMaster.defaultPrice || 15.99,
-    );
-    const costs = resolveSkuCosts({ declared, fallback, acc, sellingPrice: price.price });
-    const taxRate = fallback.taxRate || 0.03;
+    // Giá bán: Cost Master → đơn hàng Accounting 30 ngày → giá đã lưu (không có → thiếu)
+    const price = resolveFallbackPrice(declared, acc, existing ? Number(existing.selling_price) : null);
+    const costs = resolveSkuCosts({ declared, acc, sellingPrice: price.price });
+    const taxRate = declared?.taxRate || 0.03;
     const costSources: CostSources = {
       sellingPrice: price.source,
       baseCost: costs.baseCostSource,
@@ -1466,15 +1501,16 @@ export async function syncSkuEconomicsFromAccounting(storeIdOrName: string): Pro
     const crSource = existing?.cr_source || "ASSUMED";
     const costSource = existing?.cost_source || "INHERITED";
 
-    const { profitBeforeAds, breakEvenAcos } = computeBreakEven({
+    const { profitBeforeAds, breakEvenAcos, missing } = computeBreakEven({
       sellingPrice: price.price,
       baseCost: costs.baseCost,
       amazonFee: costs.amazonFee,
       taxRate,
       sources: costSources,
-      packageMaster: fallback,
     });
-    const maxBid = calculateMaxBid(cr, profitBeforeAds);
+    const maxBid = missing.length > 0
+      ? 0
+      : Number(existing?.max_bid_override) > 0 ? Number(existing.max_bid_override) : calculateMaxBid(cr, profitBeforeAds);
 
     if (existing) {
       await sql`
