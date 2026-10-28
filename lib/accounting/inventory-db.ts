@@ -4151,48 +4151,42 @@ export async function syncMonthlyBaseCostFromInbound(
   }
 
   // 4. Lấy tồn kho thực tế từ báo cáo tồn kho (FBA + AWD) chốt vào cuối tháng trước
-  // Ví dụ period = "2026-10" thì tìm snapshot_date <= "2026-09-30" (hoặc snapshot gần nhất trước ngày 1 của tháng)
-  const [pYear, pMonth] = period.split("-").map(Number);
+  // Ví dụ period = "2026-10" thì lấy snapshot gần nhất trước ngày 2026-10-01.
+  // FBA và AWD crawl vào các ngày khác nhau nên mỗi báo cáo lấy snapshot mới nhất của riêng nó;
+  // mỗi snapshot đã là toàn bộ tồn tại ngày đó nên chỉ lấy đúng 1 snapshot, không cộng dồn các ngày.
   const firstDayOfMonth = `${period}-01`;
-  const lastDayOfPrevMonthDate = new Date(Date.UTC(pYear, pMonth - 1, 0));
-  const defaultPrevMonthLastDay = lastDayOfPrevMonthDate.toISOString().slice(0, 10);
-
-  // Tìm ngày snapshot gần nhất có dữ liệu tồn kho <= firstDayOfMonth
-  const latestSnapshotRows = await sql<{ snapshot_date: string }[]>`
-    SELECT snapshot_date::text
-    FROM (
-      SELECT snapshot_date FROM accounting_inventory_ledger WHERE store_id = ${storeId} AND snapshot_date < ${firstDayOfMonth}
-      UNION
-      SELECT snapshot_date FROM accounting_awd_inventory_ledger WHERE store_id = ${storeId} AND snapshot_date < ${firstDayOfMonth}
-    ) s
-    ORDER BY snapshot_date DESC
-    LIMIT 1
+  const [ledgerDates] = await sql<{ fba_date: string | null; awd_date: string | null }[]>`
+    SELECT
+      (SELECT MAX(snapshot_date)::text FROM accounting_inventory_ledger
+        WHERE store_id = ${storeId} AND snapshot_date < ${firstDayOfMonth}) AS fba_date,
+      (SELECT MAX(snapshot_date)::text FROM accounting_awd_inventory_ledger
+        WHERE store_id = ${storeId} AND snapshot_date < ${firstDayOfMonth}) AS awd_date
   `;
-  const targetLedgerSnapshot = latestSnapshotRows[0]?.snapshot_date || defaultPrevMonthLastDay;
 
-  // Lấy tổng tồn FBA theo SKU tại ngày snapshot
-  const fbaLedgerRows = await sql<{ sku: string; fba_ton: number }[]>`
-    SELECT sku, COALESCE(SUM(ending_warehouse_balance + in_transit_between_warehouses), 0)::float as fba_ton
-    FROM accounting_inventory_ledger
-    WHERE store_id = ${storeId} AND snapshot_date = ${targetLedgerSnapshot}
-    GROUP BY sku
-  `;
   const ledgerStockMap = new Map<string, number>();
-  for (const r of fbaLedgerRows) {
-    if (!r.sku) continue;
-    ledgerStockMap.set(r.sku.trim(), (ledgerStockMap.get(r.sku.trim()) || 0) + r.fba_ton);
+  if (ledgerDates?.fba_date) {
+    const fbaLedgerRows = await sql<{ sku: string; fba_ton: number }[]>`
+      SELECT UPPER(TRIM(sku)) AS sku, COALESCE(SUM(ending_warehouse_balance + in_transit_between_warehouses), 0)::float as fba_ton
+      FROM accounting_inventory_ledger
+      WHERE store_id = ${storeId} AND snapshot_date = ${ledgerDates.fba_date}
+      GROUP BY UPPER(TRIM(sku))
+    `;
+    for (const r of fbaLedgerRows) {
+      if (!r.sku) continue;
+      ledgerStockMap.set(r.sku, (ledgerStockMap.get(r.sku) || 0) + r.fba_ton);
+    }
   }
-
-  // Lấy tổng tồn AWD theo SKU tại ngày snapshot (hoặc snapshot AWD gần nhất)
-  const awdLedgerRows = await sql<{ sku: string; awd_ton: number }[]>`
-    SELECT sku, COALESCE(SUM(ton_kho_units), 0)::float as awd_ton
-    FROM accounting_awd_inventory_ledger
-    WHERE store_id = ${storeId} AND snapshot_date <= ${targetLedgerSnapshot}
-    GROUP BY sku
-  `;
-  for (const r of awdLedgerRows) {
-    if (!r.sku) continue;
-    ledgerStockMap.set(r.sku.trim(), (ledgerStockMap.get(r.sku.trim()) || 0) + r.awd_ton);
+  if (ledgerDates?.awd_date) {
+    const awdLedgerRows = await sql<{ sku: string; awd_ton: number }[]>`
+      SELECT UPPER(TRIM(sku)) AS sku, COALESCE(SUM(ton_kho_units), 0)::float as awd_ton
+      FROM accounting_awd_inventory_ledger
+      WHERE store_id = ${storeId} AND snapshot_date = ${ledgerDates.awd_date}
+      GROUP BY UPPER(TRIM(sku))
+    `;
+    for (const r of awdLedgerRows) {
+      if (!r.sku) continue;
+      ledgerStockMap.set(r.sku, (ledgerStockMap.get(r.sku) || 0) + r.awd_ton);
+    }
   }
 
   // 5. Lấy các bản ghi hiện tại của tháng này
@@ -4233,8 +4227,9 @@ export async function syncMonthlyBaseCostFromInbound(
       // Nếu có dữ liệu trong báo cáo Ledger (>= 0) thì dùng số thực tế này.
       // Nếu không có trong ledger thì fallback theo số đã lưu (nếu > 0) hoặc 0.
       let slTon = 0;
-      if (ledgerStockMap.has(sku)) {
-        slTon = ledgerStockMap.get(sku)!;
+      const ledgerKey = sku.toUpperCase();
+      if (ledgerStockMap.has(ledgerKey)) {
+        slTon = ledgerStockMap.get(ledgerKey)!;
       } else if (existing && existing.sl_ton_dau_ky > 0) {
         slTon = existing.sl_ton_dau_ky;
       }
@@ -4300,6 +4295,26 @@ export async function syncMonthlyBaseCostFromInbound(
           last_changed_by = ${changedBy},
           updated_at = NOW()
         WHERE accounting_monthly_base_cost.deleted_at IS NULL
+          -- Số liệu không đổi thì bỏ qua, tránh ghi lịch sử thừa mỗi lần tính lại (kể cả tự động)
+          AND (
+            EXCLUDED.sku_id,
+            COALESCE(EXCLUDED.brand, accounting_monthly_base_cost.brand),
+            COALESCE(EXCLUDED.product_type, accounting_monthly_base_cost.product_type),
+            EXCLUDED.sl_ton_dau_ky, EXCLUDED.basecost_dau_ky, EXCLUDED.gtri_ton_dau_ky,
+            EXCLUDED.sl_nhap, EXCLUDED.gtri_nhap, EXCLUDED.don_gia_nhap_tb,
+            EXCLUDED.tong_sl_kha_dung, EXCLUDED.tong_gtri_kha_dung,
+            CASE WHEN accounting_monthly_base_cost.is_overridden THEN accounting_monthly_base_cost.basecost_thang ELSE EXCLUDED.basecost_thang END,
+            EXCLUDED.calculation_rule
+          ) IS DISTINCT FROM (
+            accounting_monthly_base_cost.sku_id,
+            accounting_monthly_base_cost.brand,
+            accounting_monthly_base_cost.product_type,
+            accounting_monthly_base_cost.sl_ton_dau_ky, accounting_monthly_base_cost.basecost_dau_ky, accounting_monthly_base_cost.gtri_ton_dau_ky,
+            accounting_monthly_base_cost.sl_nhap, accounting_monthly_base_cost.gtri_nhap, accounting_monthly_base_cost.don_gia_nhap_tb,
+            accounting_monthly_base_cost.tong_sl_kha_dung, accounting_monthly_base_cost.tong_gtri_kha_dung,
+            accounting_monthly_base_cost.basecost_thang,
+            accounting_monthly_base_cost.calculation_rule
+          )
       `;
       syncedCount++;
     } catch (err) {

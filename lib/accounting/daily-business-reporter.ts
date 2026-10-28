@@ -272,12 +272,12 @@ export async function reportDailyBusinessData(
 
   // KIỂM TRA CHẶT CHẼ:
   // Nếu có bất kỳ store nào trong các store kinh doanh chưa có dữ liệu (revenue = 0 và quantity = 0),
-  // tuyệt đối không gửi báo cáo thiếu (trừ khi có chỉ định ép gửi force = true).
+  // tuyệt đối không gửi báo cáo thiếu (trừ khi có chỉ định ép gửi force = true hoặc gửi test tới đích danh recipient).
   // Đợi cho đến khi tất cả các Store đều đã hoàn tất nạp số liệu ngày đó thì mới phát hành báo cáo.
   const incompleteStores = reports.filter(
     (r) => Number(r.item.revenue || 0) === 0 && Number(r.item.quantity || 0) === 0,
   );
-  if (incompleteStores.length > 0 && !options.force) {
+  if (incompleteStores.length > 0 && !options.force && !options.recipient) {
     const missingNames = incompleteStores.map((s) => s.storeName).join(", ");
     return {
       success: false,
@@ -413,3 +413,22 @@ export async function reportDailyBusinessData(
     message: `Đã gửi báo cáo kinh doanh ngày ${displayDate} cho ${reports.length} Store qua Lark bot.`,
   };
 }
+
+/**
+ * Tự động kích hoạt kiểm tra và gửi báo cáo kinh doanh ngày qua Lark sau mỗi lần nạp file đơn hàng / dữ liệu.
+ * Chạy bất đồng bộ an toàn (best-effort), không làm chậm hoặc lỗi luồng nạp file chính.
+ */
+export async function triggerDailyReportCheckAfterImport(teamId: string = "default"): Promise<void> {
+  try {
+    const scope: DataScope = { teamId, actorId: "system" };
+    const result = await reportDailyBusinessData(scope);
+    if (result.success && result.reportedDate) {
+      console.log(`[Auto Daily Report] Đã tự động gửi báo cáo ngày ${result.reportedDate} qua Lark: ${result.message}`);
+    } else {
+      console.log(`[Auto Daily Report] Kiểm tra sau import: ${result.message}`);
+    }
+  } catch (err) {
+    console.warn("[Auto Daily Report] Lỗi khi tự động kích hoạt báo cáo kế toán:", err);
+  }
+}
+

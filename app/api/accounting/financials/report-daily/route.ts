@@ -9,8 +9,28 @@ export async function POST(request: Request) {
     const scope = dataScope(actor);
     const body = await request.json().catch(() => ({}));
     const force = Boolean(body?.force);
+    const targetDate = typeof body?.targetDate === "string" ? body.targetDate.trim() : undefined;
 
-    const result = await reportDailyBusinessData(scope, { force });
+    let recipient: { receiveId: string; receiveIdType: string } | undefined;
+    if (body?.recipient && typeof body.recipient === "object") {
+      recipient = {
+        receiveId: String(body.recipient.receiveId || "").trim(),
+        receiveIdType: String(body.recipient.receiveIdType || "email").trim(),
+      };
+    } else if (typeof body?.email === "string" && body.email.trim()) {
+      recipient = {
+        receiveId: body.email.trim(),
+        receiveIdType: "email",
+      };
+    } else if (typeof body?.recipient === "string" && body.recipient.trim()) {
+      const rec = body.recipient.trim();
+      recipient = {
+        receiveId: rec,
+        receiveIdType: rec.includes("@") ? "email" : "open_id",
+      };
+    }
+
+    const result = await reportDailyBusinessData(scope, { force, targetDate, recipient });
     return Response.json(result);
   } catch (error) {
     return routeErrorResponse(error, "Không thể gửi báo cáo kinh doanh ngày qua Lark.");

@@ -434,6 +434,7 @@ export async function downloadInventoryLedgerReport(
   console.log(`  [Inventory Ledger] Đang theo dõi tiến độ tạo báo cáo trong bảng...`);
   const startTime = Date.now();
   const MAX_WAIT_MS = 300000; // 5 phút
+  let downloadRowIndex = -1;
 
   while (Date.now() - startTime < MAX_WAIT_MS) {
     // Kiểm tra xem dòng có đúng ngày yêu cầu đã sẵn sàng Download chưa

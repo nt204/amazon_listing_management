@@ -19,6 +19,20 @@ export const LEDGER_EVENT_COLUMNS = {
 export type LedgerEventColumn = keyof typeof LEDGER_EVENT_COLUMNS;
 const LEDGER_EVENT_KEYS = Object.keys(LEDGER_EVENT_COLUMNS) as LedgerEventColumn[];
 
+/** Tồn chốt ngày snapshot là tồn đầu kỳ của tháng sau → xếp hàng tính lại Base Cost từ tháng đó (xem migration 117). */
+async function enqueueBaseCostResyncAfterSnapshot(
+  sql: Awaited<ReturnType<typeof getDatabaseClient>>,
+  storeId: string,
+  snapshotDate: string,
+) {
+  await sql`
+    SELECT accounting_enqueue_base_cost_resync(
+      ${storeId}::uuid,
+      to_char(date_trunc('month', ${snapshotDate}::date) + interval '1 month', 'YYYY-MM')
+    )
+  `;
+}
+
 export interface InventoryLedgerRow {
   date: string | null;
   fnsku: string | null;
@@ -245,6 +259,7 @@ export async function ingestInventoryLedgerRows(
       await tx`INSERT INTO accounting_inventory_ledger ${tx(ledgerValues.slice(i, i + BATCH_SIZE))}`;
     }
   });
+  await enqueueBaseCostResyncAfterSnapshot(sql, storeId, snapshotDate);
 
   // 2. Gom nhóm theo SKU + ASIN để tính tổng tồn kho
   // Cột tồn kho = In Transit Between Warehouses + Ending Warehouse Balance
@@ -580,6 +595,7 @@ export async function ingestAwdInventoryLedgerRows(
       await tx`INSERT INTO accounting_awd_inventory_ledger ${tx(chunk)}`;
     }
   });
+  await enqueueBaseCostResyncAfterSnapshot(sql, storeId, snapshotDate);
 
   // 2. Gom nhóm theo SKU + ASIN để tính tổng tồn kho AWD
   const aggregatedMap = new Map<string, { sku: string; asin: string; tonKhoAwd: number; endingCartons: number }>();

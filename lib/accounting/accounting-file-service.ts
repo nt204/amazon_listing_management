@@ -17,6 +17,7 @@ import { parseAdsBuffer, batchUpsertAds } from "./ads-db";
 import { parseReturnBuffer, batchUpsertReturns } from "./returns-db";
 import { parseServiceFeeBuffer, batchUpsertServiceFees } from "./service-fees-db";
 import { assertRowsInsideCoverage, coverageFromAccountingFileName } from "./import-coverage";
+import { triggerDailyReportCheckAfterImport } from "./daily-business-reporter";
 
 export interface ManagedAccountingFile {
   id: string;
@@ -363,6 +364,7 @@ export async function ingestAccountingFile(r2Key: string, storeName: string): Pr
     const coverage = coverageFromAccountingFileName(fileName, "orders");
     assertRowsInsideCoverage(orders, coverage);
     const result = await batchUpsertOrders(targetStore.id, orders, { snapshot: "dates", coverage });
+    void triggerDailyReportCheckAfterImport().catch(() => {});
     return {
       success: true,
       type: "02_ALL_ORDERS",

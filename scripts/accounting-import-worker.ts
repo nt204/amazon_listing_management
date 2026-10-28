@@ -3,6 +3,7 @@ import {
   claimAccountingImport,
   executeAccountingImportJob,
 } from "../lib/accounting/import-jobs";
+import { triggerDailyReportCheckAfterImport } from "../lib/accounting/daily-business-reporter";
 
 const workerId = process.env.ACCOUNTING_IMPORT_WORKER_ID || `${os.hostname()}:${process.pid}`;
 const pollMs = Math.max(1_000, Number(process.env.ACCOUNTING_IMPORT_POLL_SECONDS || 3) * 1_000);
@@ -30,6 +31,7 @@ async function main() {
 
     console.log(`[Accounting Import Worker] Processing ${job.id}: ${job.file_name}`);
     await executeAccountingImportJob(job);
+    void triggerDailyReportCheckAfterImport().catch(() => {});
   }
   console.log("[Accounting Import Worker] Stopped");
 }

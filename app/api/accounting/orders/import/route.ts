@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseOrdersBuffer, batchUpsertOrders, normalizeOrderRow } from "@/lib/accounting/orders-db";
 import { assertRowsInsideCoverage, normalizeImportCoverage } from "@/lib/accounting/import-coverage";
+import { triggerDailyReportCheckAfterImport } from "@/lib/accounting/daily-business-reporter";
 
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
@@ -37,6 +38,9 @@ export async function POST(request: NextRequest) {
       assertRowsInsideCoverage(parsedOrders, coverage);
       const result = await batchUpsertOrders(storeId, parsedOrders, { snapshot: "dates", coverage });
 
+      // Tự động kiểm tra và gửi báo cáo kinh doanh ngày qua Lark nếu các Store đã đủ dữ liệu
+      void triggerDailyReportCheckAfterImport().catch(() => {});
+
       return NextResponse.json({
         success: true,
         totalParsed: parsedOrders.length,
@@ -64,6 +68,9 @@ export async function POST(request: NextRequest) {
 
     assertRowsInsideCoverage(normalizedRows, coverage);
     const result = await batchUpsertOrders(store_id, normalizedRows, { snapshot: "dates", coverage });
+
+    // Tự động kiểm tra và gửi báo cáo kinh doanh ngày qua Lark nếu các Store đã đủ dữ liệu
+    void triggerDailyReportCheckAfterImport().catch(() => {});
 
     return NextResponse.json({
       success: true,
