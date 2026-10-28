@@ -30,9 +30,19 @@ const LINK_LABELS: Record<LinkType, { title: string; hint: string; parts: SheetT
     parts: ["sku", "inbound"],
   },
   fbm: { title: "File Bảng Mã FBM", hint: "Link file \"BẢNG MÃ FBM\" — tab FBM_<Store>", parts: ["sku_fbm"] },
+  fbm_accounting: {
+    title: "File Kế Toán Tổng Hợp FBM",
+    hint: "Link file \"FBM - <STORE> - KẾ TOÁN TỔNG HỢP\" — tab ĐẦU VÀO FBM PW → Basecost Tháng FBM",
+    parts: ["fbm_pw"],
+  },
 };
 
-const PART_LABELS: Record<SheetType, string> = { sku: "Bảng Mã FBA", inbound: "Chi Tiết Đi Hàng", sku_fbm: "Bảng Mã FBM" };
+const PART_LABELS: Record<SheetType, string> = {
+  sku: "Bảng Mã FBA",
+  inbound: "Chi Tiết Đi Hàng",
+  sku_fbm: "Bảng Mã FBM",
+  fbm_pw: "Basecost Tháng FBM",
+};
 
 export interface SheetLinksResponse {
   links: SheetLink[];
@@ -351,7 +361,7 @@ function SheetLinksModalContent({ isOpen, onClose, onSynced }: InventorySheetLin
             stores.map((store) => {
               const linkTypes: LinkType[] = [
                 ...(storeHasFbaTeam(store.team) ? (["inventory"] as const) : []),
-                ...(storeHasTeam(store.team, "FBM") ? (["fbm"] as const) : []),
+                ...(storeHasTeam(store.team, "FBM") ? (["fbm", "fbm_accounting"] as const) : []),
               ];
               return (
                 <section key={store.id} className="space-y-3 rounded-xl border border-slate-200 p-3">

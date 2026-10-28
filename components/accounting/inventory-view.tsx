@@ -125,8 +125,10 @@ import {
   requestSheetSync,
   useSheetLinks,
 } from "./inventory-sheet-links-modal";
-import type { SheetType } from "@/lib/accounting/inventory-sheet-sync";
+import type { LinkType, SheetType } from "@/lib/accounting/inventory-sheet-sync";
 import { MonthlyBaseCostView, type MonthlyBaseCostViewRef } from "./monthly-base-cost-view";
+import { PaginationBar } from "./pagination-bar";
+import { FbmPwCostView, type FbmPwCostViewRef } from "./fbm-pw-cost-view";
 
 // Debounce hook for instant, throttled searching (300ms)
 function useDebounce<T>(value: T, delay: number): T {
@@ -849,100 +851,6 @@ const EditableCell = memo(
 );
 
 // High-performance Pagination Bar (50/trang, Trang 1/X, previous/next, jump)
-function PaginationBar({
-  page,
-  totalPages,
-  totalItems,
-  limit,
-  onPageChange,
-  onLimitChange,
-  label = "mục",
-}: {
-  page: number;
-  totalPages: number;
-  totalItems: number;
-  limit: number;
-  onPageChange: (newPage: number) => void;
-  onLimitChange?: (newLimit: number) => void;
-  label?: string;
-}) {
-  const startItem = totalItems === 0 ? 0 : (page - 1) * limit + 1;
-  const endItem = Math.min(totalItems, page * limit);
-
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-300 bg-[#f8fafc] px-4 py-2.5 text-xs text-slate-700 font-semibold select-none">
-      <div className="flex items-center gap-3">
-        <span>
-          Hiển thị <strong className="text-slate-950 font-black">{startItem}–{endItem}</strong> / <strong className="text-slate-950 font-black">{totalItems.toLocaleString()}</strong> {label}
-        </span>
-        {onLimitChange && (
-          <div className="flex items-center gap-1.5 ml-2 border-l border-slate-300 pl-3">
-            <span className="text-slate-500 text-[11px]">Mỗi trang:</span>
-            <select
-              value={limit}
-              onChange={(e) => onLimitChange(Number(e.target.value))}
-              className="rounded border border-slate-300 bg-white px-2 py-0.5 text-xs font-bold text-slate-800 focus:outline-hidden cursor-pointer"
-            >
-              <option value={25}>25</option>
-              <option value={50}>50</option>
-              <option value={100}>100</option>
-              <option value={200}>200</option>
-            </select>
-          </div>
-        )}
-      </div>
-
-      <div className="flex items-center gap-1">
-        <button
-          type="button"
-          disabled={page <= 1}
-          onClick={() => onPageChange(1)}
-          className="px-2 py-1 rounded border border-slate-300 bg-white text-slate-700 font-bold hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition shadow-2xs text-[11px]"
-          title="Trang đầu"
-        >
-          « Đầu
-        </button>
-        <button
-          type="button"
-          disabled={page <= 1}
-          onClick={() => onPageChange(page - 1)}
-          className="px-2.5 py-1 rounded border border-slate-300 bg-white text-slate-700 font-bold hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition shadow-2xs text-[11px]"
-          title="Trang trước"
-        >
-          ‹ Trước
-        </button>
-
-        <div className="flex items-center gap-1 px-2 font-mono text-xs">
-          <span className="text-slate-500">Trang</span>
-          <span className="font-black text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
-            {page}
-          </span>
-          <span className="text-slate-500">/ {totalPages}</span>
-        </div>
-
-        <button
-          type="button"
-          disabled={page >= totalPages}
-          onClick={() => onPageChange(page + 1)}
-          className="px-2.5 py-1 rounded border border-slate-300 bg-white text-slate-700 font-bold hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition shadow-2xs text-[11px]"
-          title="Trang sau"
-        >
-          Sau ›
-        </button>
-        <button
-          type="button"
-          disabled={page >= totalPages}
-          onClick={() => onPageChange(totalPages)}
-          className="px-2 py-1 rounded border border-slate-300 bg-white text-slate-700 font-bold hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition shadow-2xs text-[11px]"
-          title="Trang cuối"
-        >
-          Cuối »
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function getOptimizedThumbnailUrl(url: string | null | undefined, w = 64): string | null {
   if (!url) return null;
   const trimmed = url.trim();
@@ -1585,6 +1493,20 @@ function InventoryViewInner() {
   const skuEntityType = skuChannel === "fbm" ? "sku_fbm" : "sku";
   const skuSheetLabel = skuChannel === "fbm" ? "Bảng Mã FBM" : "Bảng Mã";
   const monthlyBaseCostRef = useRef<MonthlyBaseCostViewRef>(null);
+  // Store có team FBM có thêm tab BASECOST THÁNG FBM (dữ liệu ĐẦU VÀO FBM PW từ link Kế Toán Tổng Hợp FBM),
+  // dùng chung tab Basecost Tháng như cặp Bảng Mã / Bảng Mã FBM.
+  const [baseCostChannelState, setBaseCostChannelState] = useState<SkuChannel>(() => {
+    if (typeof window === "undefined") return "fba";
+    return window.sessionStorage.getItem("accounting_inventory_basecost_channel") === "fbm" ? "fbm" : "fba";
+  });
+  const baseCostChannel: SkuChannel = loadingStores || storeHasFbm ? baseCostChannelState : "fba";
+  const isFbmBaseCost = activeTab === "monthly_base_cost" && baseCostChannel === "fbm";
+  const fbmPwCostRef = useRef<FbmPwCostViewRef>(null);
+  const handleBaseCostChannelChange = useCallback((channel: SkuChannel) => {
+    setBaseCostChannelState(channel);
+    window.sessionStorage.setItem("accounting_inventory_basecost_channel", channel);
+    handleTabChange("monthly_base_cost");
+  }, [handleTabChange]);
   const [monthlyBaseCostYear, setMonthlyBaseCostYear] = useState<number>(2026);
   const [syncingMonthlyBaseCost, setSyncingMonthlyBaseCost] = useState<boolean>(false);
 
@@ -2380,20 +2302,30 @@ function InventoryViewInner() {
   const [syncingSheet, setSyncingSheet] = useState(false);
   const sheetLinksQuery = useSheetLinks(!!selectedStoreId);
   const currentSheetType: SheetType | null =
-    activeTab === "sku" ? (skuChannel === "fbm" ? "sku_fbm" : "sku") : activeTab === "inbound" ? "inbound" : null;
+    activeTab === "sku"
+      ? (skuChannel === "fbm" ? "sku_fbm" : "sku")
+      : activeTab === "inbound"
+      ? "inbound"
+      : isFbmBaseCost
+      ? "fbm_pw"
+      : null;
+  const linkTypeOfSheet = (type: SheetType): LinkType =>
+    type === "sku_fbm" ? "fbm" : type === "fbm_pw" ? "fbm_accounting" : "inventory";
   const currentSheetLink = sheetLinksQuery.data?.links.find(
     (link) =>
       link.store_id === selectedStoreId &&
       currentSheetType != null &&
-      link.link_type === (currentSheetType === "sku_fbm" ? "fbm" : "inventory"),
+      link.link_type === linkTypeOfSheet(currentSheetType),
   );
   const [sheetUrl, setSheetUrl] = useState("");
+  // Ô link Google Sheet trong modal Nhập: Bảng Mã FBM hoặc Kế Toán Tổng Hợp FBM (tab Basecost Tháng FBM)
+  const importSheetLinkType: LinkType = isFbmBaseCost ? "fbm_accounting" : "fbm";
 
   const openImportModal = () => {
     setShowImportModal(true);
     setImportResult(null);
     setSheetUrl(
-      sheetLinksQuery.data?.links.find((link) => link.store_id === selectedStoreId && link.link_type === "fbm")?.sheet_url ?? "",
+      sheetLinksQuery.data?.links.find((link) => link.store_id === selectedStoreId && link.link_type === importSheetLinkType)?.sheet_url ?? "",
     );
   };
 
@@ -2587,6 +2519,9 @@ function InventoryViewInner() {
           queryClient.setQueriesData({ queryKey: ["sku-master", selectedStoreId, skuChannel] }, updateCachedRows);
         } else if (table === "inbound") {
           queryClient.setQueriesData({ queryKey: ["inbound-shipments", selectedStoreId] }, updateCachedRows);
+          if (field === "quantity" || field === "shipment_id" || field === "so_luong_amazon_nhan") {
+            queryClient.invalidateQueries({ queryKey: ["inbound-shipments", selectedStoreId] });
+          }
         } else {
           queryClient.setQueriesData({ queryKey: ["check-shipments", selectedStoreId] }, updateCachedRows);
         }
@@ -2971,7 +2906,8 @@ function InventoryViewInner() {
   const refreshAfterSheetSync = useCallback((type: SheetType) => {
     queryClient.invalidateQueries({ queryKey: ["inventory-field-options", selectedStoreId] });
     queryClient.invalidateQueries({ queryKey: ["sku-master-count", selectedStoreId] });
-    if (type === "inbound") fetchShipments();
+    if (type === "fbm_pw") queryClient.invalidateQueries({ queryKey: ["fbm-pw-costs", selectedStoreId] });
+    else if (type === "inbound") fetchShipments();
     else fetchSkus();
   }, [queryClient, selectedStoreId, fetchShipments, fetchSkus]);
 
@@ -2994,7 +2930,7 @@ function InventoryViewInner() {
         setSyncingLatestFiles(false);
         fetchCheckShipments();
       }
-    } else if ((activeTab === "sku" || activeTab === "inbound") && currentSheetType && currentSheetLink && selectedStoreId) {
+    } else if ((activeTab === "sku" || activeTab === "inbound" || isFbmBaseCost) && currentSheetType && currentSheetLink && selectedStoreId) {
       // Tab có link Google Sheet: đồng bộ ngay đúng store + sheet đang mở rồi tải lại bảng
       setSyncingSheet(true);
       let outcome = await requestSheetSync("sync", { store_id: selectedStoreId, sheet_type: currentSheetType, trigger: "reload" });
@@ -3016,10 +2952,12 @@ function InventoryViewInner() {
       fetchSkus();
     } else if (activeTab === "inbound") {
       fetchShipments();
+    } else if (isFbmBaseCost) {
+      fbmPwCostRef.current?.reload();
     } else {
       fetchCheckShipments();
     }
-  }, [activeTab, fetchCheckShipments, fetchSkus, fetchShipments, currentSheetType, currentSheetLink, selectedStoreId, queryClient, notify, refreshAfterSheetSync]);
+  }, [activeTab, isFbmBaseCost, fetchCheckShipments, fetchSkus, fetchShipments, currentSheetType, currentSheetLink, selectedStoreId, queryClient, notify, refreshAfterSheetSync]);
 
 
   // Options are scoped to the selected Store and include every record, not only this page.
@@ -3928,14 +3866,15 @@ function InventoryViewInner() {
     if (!selectedStoreId || !url || importing) return;
     setImporting(true);
     setImportResult(null);
-    const outcome = await requestSheetSync("save", { store_id: selectedStoreId, link_type: "fbm", sheet_url: url });
-    const result = outcome.parts.sku_fbm?.result;
+    const part: SheetType = importSheetLinkType === "fbm_accounting" ? "fbm_pw" : "sku_fbm";
+    const outcome = await requestSheetSync("save", { store_id: selectedStoreId, link_type: importSheetLinkType, sheet_url: url });
+    const result = outcome.parts[part]?.result;
     setImporting(false);
     queryClient.invalidateQueries({ queryKey: SHEET_LINKS_QUERY_KEY });
     if (outcome.ok && result) {
       setImportResult({ success: true, count: result.sheetRows, errors: result.warnings });
-      notify(`Đã đồng bộ Bảng Mã FBM từ tab "${result.tabTitle}": ${describeLinkOutcome(outcome)}`, "success");
-      refreshAfterSheetSync("sku_fbm");
+      notify(`Đã đồng bộ từ tab "${result.tabTitle}": ${describeLinkOutcome(outcome)}`, "success");
+      refreshAfterSheetSync(part);
     } else {
       const message = outcome.error ?? "Lỗi không xác định.";
       setImportResult({ success: false, count: 0, errors: [message] });
@@ -4558,14 +4497,18 @@ function InventoryViewInner() {
         displayNode = <StatusBadge status={item.status} />;
         break;
       case "so_luong_amazon_nhan":
-        displayNode = item.so_luong_amazon_nhan?.toLocaleString() || "—";
+        displayNode = item.so_luong_amazon_nhan != null ? item.so_luong_amazon_nhan.toLocaleString() : "—";
         cellClass = "py-1.5 px-2.5 text-[13px] text-right font-medium tabular-nums text-emerald-800 border-r border-slate-200";
         break;
       case "discrepancy":
-        displayNode = item.discrepancy ? (
-          <span className="font-normal tabular-nums text-rose-600">{item.discrepancy}</span>
+        displayNode = item.discrepancy != null ? (
+          item.discrepancy !== 0 ? (
+            <span className="font-normal tabular-nums text-rose-600">{item.discrepancy}</span>
+          ) : (
+            <span className="text-slate-400 font-normal tabular-nums">0</span>
+          )
         ) : (
-          <span className="text-slate-400 font-normal tabular-nums">0</span>
+          "—"
         );
         cellClass = "py-1.5 px-2.5 text-[13px] text-center border-r border-slate-200";
         break;
@@ -5045,7 +4988,45 @@ function InventoryViewInner() {
 
           {/* Right: Action Buttons (Tab nào nút của tab đó) */}
           <div className="flex items-center gap-2 self-end lg:self-center">
-            {activeTab === "monthly_base_cost" ? (
+            {isFbmBaseCost ? (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={openImportModal}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition shadow-2xs cursor-pointer"
+                  title="Dán link Google Sheet Kế Toán Tổng Hợp FBM (tab ĐẦU VÀO FBM PW)"
+                >
+                  <UploadSimpleIcon size={15} weight="bold" />
+                  <span>Nhập Basecost FBM</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.location.href = `/api/accounting/inventory/fbm-pw-costs?${fbmPwCostRef.current?.exportQuery() ?? `store_id=${selectedStoreId}`}&format=xlsx`;
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-800 hover:bg-emerald-100 transition shadow-2xs cursor-pointer"
+                  title="Xuất Excel theo bộ lọc đang xem"
+                >
+                  <FileXlsIcon size={15} weight="bold" />
+                  <span>Xuất Excel</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleReloadTab}
+                  disabled={syncingSheet}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 transition shadow-2xs cursor-pointer disabled:opacity-50"
+                  title={
+                    currentSheetLink
+                      ? `Đồng bộ ngay từ Google Sheet "${currentSheetLink.spreadsheet_title ?? ""}" rồi tải lại bảng`
+                      : "Tải lại bảng dữ liệu"
+                  }
+                >
+                  <ArrowClockwiseIcon size={16} weight="bold" className={syncingSheet ? "animate-spin text-indigo-600" : ""} />
+                </button>
+              </div>
+            ) : activeTab === "monthly_base_cost" ? (
               <div className="flex items-center gap-2">
                 <button
                   type="button"
@@ -5324,18 +5305,27 @@ function InventoryViewInner() {
             </span>
           </button>
 
-          <button
-            type="button"
-            onClick={() => handleTabChange("monthly_base_cost")}
-            className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
-              activeTab === "monthly_base_cost"
-                ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
-                : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
-            }`}
-          >
-            <CalculatorIcon size={16} weight="bold" />
-            <span>Basecost Tháng</span>
-          </button>
+          {(storeHasFbm
+            ? [{ channel: "fba", label: "Basecost Tháng" }, { channel: "fbm", label: "Basecost Tháng FBM" }] as const
+            : [{ channel: "fba", label: "Basecost Tháng" }] as const
+          ).map((sheet) => {
+            const isActive = activeTab === "monthly_base_cost" && baseCostChannel === sheet.channel;
+            return (
+              <button
+                key={sheet.channel}
+                type="button"
+                onClick={() => handleBaseCostChannelChange(sheet.channel)}
+                className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
+                  isActive
+                    ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
+                    : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
+                }`}
+              >
+                <CalculatorIcon size={16} weight="bold" />
+                <span>{sheet.label}</span>
+              </button>
+            );
+          })}
         </div>
 
         {/* Filter Controls inline + Table Zoom Controls */}
@@ -5534,6 +5524,8 @@ function InventoryViewInner() {
           </div>
         ) : activeTab === "monthly_base_cost" ? (
           <div className="flex items-center gap-2 flex-wrap ml-auto justify-end">
+            {/* Basecost Tháng FBM có ô tìm kiếm + lọc tháng riêng ngay trên bảng */}
+            {!isFbmBaseCost && (<>
             <div className="relative w-40 sm:w-52 focus-within:!w-64 transition-all duration-200">
               <MagnifyingGlassIcon
                 size={14}
@@ -5574,6 +5566,7 @@ function InventoryViewInner() {
               </select>
               <CaretDownIcon className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
             </div>
+            </>)}
 
             {/* Zoom Controls (+ / -) */}
             <div className="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-300 shadow-2xs">
@@ -6254,9 +6247,22 @@ function InventoryViewInner() {
       </div>
     )}
 
+      {/* TAB 4b: BASECOST THÁNG FBM (dữ liệu thô ĐẦU VÀO FBM PW) */}
+      {isFbmBaseCost && selectedStoreId && (
+        <div className="rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col flex-1 min-h-[580px]">
+          <FbmPwCostView
+            ref={fbmPwCostRef}
+            storeId={selectedStoreId}
+            storeName={selectedStore?.name}
+            tableZoom={tableZoom}
+            onOpenImport={openImportModal}
+          />
+        </div>
+      )}
+
       {/* TAB 4: BASECOST THÁNG */}
       {visitedTabs.monthly_base_cost && (
-        <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col flex-1 min-h-[580px] ${activeTab === "monthly_base_cost" ? "" : "hidden"}`}>
+        <div className={`rounded-xl border border-slate-300 bg-white shadow-2xs overflow-hidden flex flex-col flex-1 min-h-[580px] ${activeTab === "monthly_base_cost" && !isFbmBaseCost ? "" : "hidden"}`}>
           <MonthlyBaseCostView
             ref={monthlyBaseCostRef}
             storeId={selectedStoreId}
@@ -7252,7 +7258,7 @@ function InventoryViewInner() {
                   <FileXlsIcon size={18} weight="bold" />
                 </span>
                 <h3 className="text-base font-extrabold text-slate-900">
-                  {isFbmSheet ? "Nhập Bảng Mã FBM" : "Nhập File Quản Lý Kho (Inventory)"}
+                  {isFbmBaseCost ? "Nhập Basecost Tháng FBM" : isFbmSheet ? "Nhập Bảng Mã FBM" : "Nhập File Quản Lý Kho (Inventory)"}
                 </h3>
               </div>
               <button
@@ -7265,7 +7271,16 @@ function InventoryViewInner() {
             </div>
 
             <div className="space-y-3">
-              {isFbmSheet ? (
+              {isFbmBaseCost ? (
+                <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3 text-xs text-indigo-900">
+                  <p className="font-semibold text-indigo-800">
+                    Dán link Google Sheet KẾ TOÁN TỔNG HỢP FBM của Store {selectedStore?.name}.
+                  </p>
+                  <p className="mt-1 text-[11px] text-indigo-600">
+                    Hệ thống chép nguyên văn tab &quot;ĐẦU VÀO FBM PW&quot; (Order ID, PWOrderId, OrderName, NetPrice) vào Basecost Tháng FBM, không ghi gì vào các tab khác.
+                  </p>
+                </div>
+              ) : isFbmSheet ? (
                 <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3 text-xs text-indigo-900">
                   <p className="font-semibold text-indigo-800">
                     Nhập riêng cho BẢNG MÃ FBM của Store {selectedStore?.name}.
@@ -7285,6 +7300,8 @@ function InventoryViewInner() {
                 </div>
               )}
 
+              {/* Basecost Tháng FBM chỉ nhập qua link Google Sheet (file kế toán tổng hợp rất nặng) */}
+              {!isFbmBaseCost && (
               <label className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-6 hover:border-indigo-400 hover:bg-indigo-50/20 transition cursor-pointer">
                 <UploadSimpleIcon size={32} className="text-indigo-600 mb-2" weight="duotone" />
                 <span className="text-sm font-bold text-slate-800 text-center">
@@ -7302,17 +7319,20 @@ function InventoryViewInner() {
                   className="hidden"
                 />
               </label>
+              )}
 
-              {isFbmSheet && (
+              {(isFbmSheet || isFbmBaseCost) && (
                 <>
+                  {!isFbmBaseCost && (
                   <div className="flex items-center gap-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">
                     <span className="h-px flex-1 bg-slate-200" />
                     hoặc
                     <span className="h-px flex-1 bg-slate-200" />
                   </div>
+                  )}
                   <div className="space-y-2">
                     <label className="block text-xs font-bold text-slate-700" htmlFor="fbm-sheet-url">
-                      Link Google Sheet
+                      {isFbmBaseCost ? "Link Google Sheet Kế Toán Tổng Hợp FBM" : "Link Google Sheet"}
                     </label>
                     <div className="flex gap-2">
                       <input
@@ -7338,7 +7358,8 @@ function InventoryViewInner() {
                       </button>
                     </div>
                     <p className="text-[11px] text-slate-500">
-                      Link được lưu cho store và tự đồng bộ mỗi sáng 9:00. Hệ thống tự tìm tab &quot;FBM_&lt;Store&gt;&quot;. Sheet cần chia sẻ quyền <strong>Người xem</strong> cho:
+                      Link được lưu cho store và tự đồng bộ mỗi sáng {sheetLinksQuery.data?.schedule.hour ?? 4}:00 cùng Bảng Mã FBM. Hệ thống tự tìm tab{" "}
+                      {isFbmBaseCost ? <>&quot;ĐẦU VÀO FBM PW&quot;</> : <>&quot;FBM_&lt;Store&gt;&quot;</>}. Sheet cần chia sẻ quyền <strong>Người xem</strong> cho:
                     </p>
                     {sheetLinksQuery.data?.service_account_email ? (
                       <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5">
@@ -7530,12 +7551,16 @@ function InventoryViewInner() {
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-2.5">
                 <span className="text-[10px] font-bold text-slate-400 uppercase">Số lượng nhận</span>
                 <p className="font-bold text-emerald-700">
-                  {selectedShipmentDetail.so_luong_amazon_nhan ?? selectedShipmentDetail.amazon_received ?? "—"}
+                  {selectedShipmentDetail.so_luong_amazon_nhan != null
+                    ? selectedShipmentDetail.so_luong_amazon_nhan.toLocaleString()
+                    : (selectedShipmentDetail.amazon_received?.toLocaleString() ?? "—")}
                 </p>
               </div>
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-2.5">
                 <span className="text-[10px] font-bold text-slate-400 uppercase">Chênh lệch</span>
-                <p className="font-bold text-rose-600">{selectedShipmentDetail.discrepancy || 0}</p>
+                <p className="font-bold text-rose-600">
+                  {selectedShipmentDetail.discrepancy != null ? selectedShipmentDetail.discrepancy : "—"}
+                </p>
               </div>
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-2.5">
                 <span className="text-[10px] font-bold text-slate-400 uppercase">Line Ship</span>

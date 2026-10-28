@@ -1238,7 +1238,11 @@ export async function patchInboundShipmentField(
 
   let val: any = trimmed === "" || trimmed == null ? null : trimmed;
   if (intFields.includes(field)) {
-    val = trimmed === "" || trimmed == null ? 0 : parseInt(trimmed, 10);
+    if (field === "quantity") {
+      val = trimmed === "" || trimmed == null ? 0 : parseInt(trimmed, 10);
+    } else {
+      val = trimmed === "" || trimmed == null ? null : parseInt(trimmed, 10);
+    }
   } else if (floatFields.includes(field)) {
     val = trimmed === "" || trimmed == null ? null : parseFloat(trimmed);
   } else if (dateFields.includes(field)) {
@@ -1296,6 +1300,60 @@ export async function patchInboundShipmentField(
       `;
       if (synced[0]) return synced[0];
     }
+  } else if (field === "so_luong_amazon_nhan") {
+    // Khi kế toán điền tay số lượng Amazon nhận: tự động tính discrepancy cụ thể của SKU đó = quantity - so_luong_amazon_nhan
+    const currentQty = rows[0].quantity || 0;
+    const computedDisc = val != null ? currentQty - val : null;
+    const autoDiscRow = await sql<InboundShipmentItem[]>`
+      UPDATE accounting_inbound_shipments
+      SET discrepancy = ${computedDisc}, updated_at = NOW()
+      WHERE id = ${id} AND store_id = ${storeId}
+      RETURNING
+        id, store_id, sku_id, brand, sup, ngay_request, product_type, mockup,
+        sku, quantity, line_ship, base_cost_per_unit::float, card::float,
+        tag::float, shipping_fee::float, hop_tui::float, final_basecost::float,
+        total_basecost::float, ngay_thanh_toan, ten_lo_hang, shipment_id,
+        ngay_di, ngay_den, amazon_received, tinh_trang_hang_den_kho, status,
+        so_luong_amazon_nhan, discrepancy, note, trang_thai,
+        custom_fields, created_at::text, updated_at::text
+    `;
+    if (autoDiscRow[0]) return autoDiscRow[0];
+  } else if (field === "amazon_received") {
+    // Khi kế toán điền tay cột Amazon Received: tự động cập nhật discrepancy cho SKU nếu so_luong_amazon_nhan đang trống hoặc bằng val
+    const currentQty = rows[0].quantity || 0;
+    const effectiveRcv = rows[0].so_luong_amazon_nhan ?? val;
+    const computedDisc = effectiveRcv != null ? currentQty - effectiveRcv : null;
+    const autoDiscRow = await sql<InboundShipmentItem[]>`
+      UPDATE accounting_inbound_shipments
+      SET discrepancy = ${computedDisc}, updated_at = NOW()
+      WHERE id = ${id} AND store_id = ${storeId}
+      RETURNING
+        id, store_id, sku_id, brand, sup, ngay_request, product_type, mockup,
+        sku, quantity, line_ship, base_cost_per_unit::float, card::float,
+        tag::float, shipping_fee::float, hop_tui::float, final_basecost::float,
+        total_basecost::float, ngay_thanh_toan, ten_lo_hang, shipment_id,
+        ngay_di, ngay_den, amazon_received, tinh_trang_hang_den_kho, status,
+        so_luong_amazon_nhan, discrepancy, note, trang_thai,
+        custom_fields, created_at::text, updated_at::text
+    `;
+    if (autoDiscRow[0]) return autoDiscRow[0];
+  } else if (field === "quantity" || field === "shipment_id") {
+    if (rows[0].shipment_id?.trim()) {
+      await syncCheckShipmentsToInbound(storeId, [rows[0].shipment_id.trim()], changedBy).catch(() => {});
+      const refreshed = await sql<InboundShipmentItem[]>`
+        SELECT
+          id, store_id, sku_id, brand, sup, ngay_request, product_type, mockup,
+          sku, quantity, line_ship, base_cost_per_unit::float, card::float,
+          tag::float, shipping_fee::float, hop_tui::float, final_basecost::float,
+          total_basecost::float, ngay_thanh_toan, ten_lo_hang, shipment_id,
+          ngay_di, ngay_den, amazon_received, tinh_trang_hang_den_kho, status,
+          so_luong_amazon_nhan, discrepancy, note, trang_thai,
+          custom_fields, created_at::text, updated_at::text
+        FROM accounting_inbound_shipments
+        WHERE id = ${id} AND store_id = ${storeId}
+      `;
+      if (refreshed[0]) return refreshed[0];
+    }
   }
 
   return rows[0];
@@ -1303,12 +1361,16 @@ export async function patchInboundShipmentField(
 
 export async function deleteInboundShipmentItem(id: string, storeId: string, changedBy = "system"): Promise<boolean> {
   const sql = await getDatabaseClient();
-  const res = await sql`
+  const res = await sql<{ shipment_id: string }[]>`
     UPDATE accounting_inbound_shipments
     SET deleted_at = NOW(), last_changed_by = ${changedBy}, updated_at = NOW()
     WHERE id = ${id} AND store_id = ${storeId} AND deleted_at IS NULL
+    RETURNING shipment_id
   `;
-  return res.count > 0;
+  if (res[0]?.shipment_id?.trim()) {
+    await syncCheckShipmentsToInbound(storeId, [res[0].shipment_id.trim()], changedBy).catch(() => {});
+  }
+  return res.length > 0;
 }
 
 export async function listInventoryHistory(
@@ -2096,7 +2158,7 @@ export function createDefaultInboundSheet(ws: ExcelJS.Worksheet, shipments: any[
     const amzReceived = row.amazon_received != null && row.amazon_received !== "" ? Number(row.amazon_received) : null;
     const computedDiscrepancy = row.discrepancy != null && row.discrepancy !== ""
       ? Number(row.discrepancy)
-      : (amzReceived != null ? amzReceived - qty : null);
+      : null;
 
     const values: any[] = [
       row.brand ?? null,
@@ -2125,8 +2187,8 @@ export function createDefaultInboundSheet(ws: ExcelJS.Worksheet, shipments: any[
       row.tinh_trang_hang_den_kho ?? null,
       row.status ?? null,
       row.so_luong_amazon_nhan != null && row.so_luong_amazon_nhan !== "" ? Number(row.so_luong_amazon_nhan) : null,
-      // Y (25) Discrepancy formula
-      { formula: `IF(ISBLANK(U${r}),"",U${r}-G${r})`, result: computedDiscrepancy },
+      // Y (25) Discrepancy
+      computedDiscrepancy,
       row.note ?? null,
       row.trang_thai ?? null,
     ];
@@ -3504,32 +3566,7 @@ export async function syncCheckShipmentsToInbound(
       : sql``;
 
   const updatedRows = await sql<{ id: string }[]>`
-    UPDATE accounting_inbound_shipments s
-    SET
-      so_luong_amazon_nhan = CASE
-        WHEN LOWER(TRIM(s.shipment_id)) LIKE 'star%' THEN COALESCE(s.quantity, 0)
-        ELSE c.units_located
-      END,
-      status = CASE
-        WHEN c.status IS NOT NULL AND c.status != '' AND c.status NOT LIKE '%object Object%' THEN c.status
-        ELSE COALESCE(NULLIF(s.status, '[object Object]'), 'Working')
-      END,
-      tinh_trang_hang_den_kho = CASE
-        WHEN c.status IS NOT NULL AND c.status != '' AND c.status NOT LIKE '%object Object%' THEN c.status
-        WHEN s.tinh_trang_hang_den_kho LIKE '%object Object%' THEN COALESCE(NULLIF(s.status, '[object Object]'), 'Working')
-        ELSE COALESCE(s.tinh_trang_hang_den_kho, s.status, 'Working')
-      END,
-      ngay_di = CASE
-        WHEN c.created_date IS NOT NULL AND TRIM(c.created_date) != '' THEN c.created_date
-        ELSE s.ngay_di
-      END,
-      discrepancy = CASE
-        WHEN LOWER(TRIM(s.shipment_id)) LIKE 'star%' THEN 0
-        ELSE COALESCE(s.quantity, 0) - COALESCE(c.units_located, 0)
-      END,
-      last_changed_by = ${changedBy},
-      updated_at = NOW()
-    FROM (
+    WITH check_data AS (
       SELECT DISTINCT ON (LOWER(TRIM(shipment_id)))
         LOWER(TRIM(shipment_id)) AS matched_shipment_id,
         units_located,
@@ -3541,27 +3578,114 @@ export async function syncCheckShipmentsToInbound(
         AND shipment_id IS NOT NULL
         AND TRIM(shipment_id) != ''
       ORDER BY LOWER(TRIM(shipment_id)), updated_at DESC
-    ) c
-    WHERE s.store_id = ${storeId}
-      AND LOWER(TRIM(s.shipment_id)) = c.matched_shipment_id
-      AND s.deleted_at IS NULL
-      ${idFilter}
+    ),
+    inbound_matched AS (
+      SELECT
+        s.id,
+        s.store_id,
+        s.shipment_id,
+        s.quantity,
+        s.so_luong_amazon_nhan AS current_so_luong_amazon_nhan,
+        s.discrepancy AS current_discrepancy,
+        s.status AS current_status,
+        s.tinh_trang_hang_den_kho AS current_tinh_trang,
+        s.ngay_di AS current_ngay_di,
+        c.units_located,
+        c.status AS c_status,
+        c.created_date AS c_created_date,
+        ROW_NUMBER() OVER (
+          PARTITION BY s.store_id, LOWER(TRIM(s.shipment_id))
+          ORDER BY
+            (CASE WHEN s.row_order IS NOT NULL AND s.row_order > 0 THEN s.row_order ELSE 999999 END) ASC,
+            s.created_at DESC,
+            s.id DESC
+        ) AS rn,
+        COUNT(*) OVER (
+          PARTITION BY s.store_id, LOWER(TRIM(s.shipment_id))
+        ) AS sku_count,
+        SUM(COALESCE(s.quantity, 0)) OVER (
+          PARTITION BY s.store_id, LOWER(TRIM(s.shipment_id))
+        ) AS total_shipment_qty,
+        BOOL_AND(s.so_luong_amazon_nhan IS NOT NULL AND s.so_luong_amazon_nhan = c.units_located) OVER (
+          PARTITION BY s.store_id, LOWER(TRIM(s.shipment_id))
+        ) AS is_all_duplicate
+      FROM accounting_inbound_shipments s
+      JOIN check_data c ON LOWER(TRIM(s.shipment_id)) = c.matched_shipment_id
+      WHERE s.store_id = ${storeId}
+        AND s.deleted_at IS NULL
+        ${idFilter}
+    ),
+    shipment_summary AS (
+      SELECT
+        m.*,
+        (m.sku_count > 1 AND NOT m.is_all_duplicate AND (
+          BOOL_OR(m.rn > 1 AND m.current_so_luong_amazon_nhan IS NOT NULL) OVER (
+            PARTITION BY m.store_id, LOWER(TRIM(m.shipment_id))
+          )
+        )) AS has_manual_split
+      FROM inbound_matched m
+    )
+    UPDATE accounting_inbound_shipments s
+    SET
+      so_luong_amazon_nhan = CASE
+        WHEN r.has_manual_split THEN s.so_luong_amazon_nhan
+        WHEN LOWER(TRIM(r.shipment_id)) LIKE 'star%' THEN COALESCE(r.quantity, 0)
+        WHEN r.rn = 1 THEN r.units_located
+        ELSE NULL
+      END,
+      status = CASE
+        WHEN r.c_status IS NOT NULL AND r.c_status != '' AND r.c_status NOT LIKE '%object Object%' THEN r.c_status
+        ELSE COALESCE(NULLIF(s.status, '[object Object]'), 'Working')
+      END,
+      tinh_trang_hang_den_kho = CASE
+        WHEN r.c_status IS NOT NULL AND r.c_status != '' AND r.c_status NOT LIKE '%object Object%' THEN r.c_status
+        WHEN s.tinh_trang_hang_den_kho LIKE '%object Object%' THEN COALESCE(NULLIF(s.status, '[object Object]'), 'Working')
+        ELSE COALESCE(s.tinh_trang_hang_den_kho, s.status, 'Working')
+      END,
+      ngay_di = CASE
+        WHEN r.c_created_date IS NOT NULL AND TRIM(r.c_created_date) != '' THEN r.c_created_date
+        ELSE s.ngay_di
+      END,
+      discrepancy = CASE
+        WHEN r.has_manual_split THEN s.discrepancy
+        WHEN LOWER(TRIM(r.shipment_id)) LIKE 'star%' THEN 0
+        WHEN r.rn = 1 THEN (
+          CASE
+            WHEN r.units_located IS NOT NULL THEN (r.total_shipment_qty - r.units_located)
+            ELSE NULL
+          END
+        )
+        ELSE NULL
+      END,
+      last_changed_by = ${changedBy},
+      updated_at = NOW()
+    FROM shipment_summary r
+    WHERE s.id = r.id
       AND (
         s.so_luong_amazon_nhan IS DISTINCT FROM (
           CASE
-            WHEN LOWER(TRIM(s.shipment_id)) LIKE 'star%' THEN COALESCE(s.quantity, 0)
-            ELSE c.units_located
+            WHEN r.has_manual_split THEN s.so_luong_amazon_nhan
+            WHEN LOWER(TRIM(r.shipment_id)) LIKE 'star%' THEN COALESCE(r.quantity, 0)
+            WHEN r.rn = 1 THEN r.units_located
+            ELSE NULL
           END
         ) OR
-        s.status IS DISTINCT FROM c.status OR
-        s.tinh_trang_hang_den_kho IS DISTINCT FROM c.status OR
-        (c.created_date IS NOT NULL AND TRIM(c.created_date) != '' AND s.ngay_di IS DISTINCT FROM c.created_date) OR
         s.discrepancy IS DISTINCT FROM (
           CASE
-            WHEN LOWER(TRIM(s.shipment_id)) LIKE 'star%' THEN 0
-            ELSE COALESCE(s.quantity, 0) - COALESCE(c.units_located, 0)
+            WHEN r.has_manual_split THEN s.discrepancy
+            WHEN LOWER(TRIM(r.shipment_id)) LIKE 'star%' THEN 0
+            WHEN r.rn = 1 THEN (
+              CASE
+                WHEN r.units_located IS NOT NULL THEN (r.total_shipment_qty - r.units_located)
+                ELSE NULL
+              END
+            )
+            ELSE NULL
           END
-        )
+        ) OR
+        s.status IS DISTINCT FROM r.c_status OR
+        s.tinh_trang_hang_den_kho IS DISTINCT FROM r.c_status OR
+        (r.c_created_date IS NOT NULL AND TRIM(r.c_created_date) != '' AND s.ngay_di IS DISTINCT FROM r.c_created_date)
       )
     RETURNING s.id
   `;

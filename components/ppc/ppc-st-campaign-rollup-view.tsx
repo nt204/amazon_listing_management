@@ -765,7 +765,8 @@ function PpcStCampaignRollupViewInner({
 
       {/* 3. BẢNG CAMPAIGN: GIỮ NGUYÊN CỘT, HIỆN DELTA NGAY DƯỚI GIÁ TRỊ (KHÔNG PHÌNH BẢNG) */}
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs overflow-hidden">
-        <div className="overflow-x-auto relative">
+        {/* Cuộn trong khung để dòng tiêu đề cột luôn dính ở trên khi kéo xuống */}
+        <div className="overflow-auto max-h-[calc(100vh-120px)] relative">
           {loading && items.length > 0 && (
             <div className="absolute top-0 left-0 right-0 h-0.5 bg-indigo-600 animate-pulse z-20" />
           )}
@@ -773,20 +774,21 @@ function PpcStCampaignRollupViewInner({
             {/* THEAD */}
             {isCompare ? (
               /* KHI BẬT SO SÁNH: Gom lại thành Cột 1 (Kỳ hiện tại) và Cột 2 (Kỳ so sánh) */
+              /* Bảng border-collapse: dính từng ô th (dính cả thead thì chữ dòng dưới lọt qua mép tiêu đề) */
               <thead>
-                <tr className="bg-slate-100 text-[10px] uppercase tracking-wider text-slate-600 font-extrabold border-b border-slate-200">
-                  <th rowSpan={2} className="py-2.5 px-3 w-8 text-center align-bottom">#</th>
+                <tr className="bg-slate-100 [&>th]:sticky [&>th]:top-0 [&>th]:z-30 text-[10px] uppercase tracking-wider text-slate-600 font-extrabold border-b border-slate-200">
+                  <th rowSpan={2} className="py-2.5 px-3 w-8 text-center align-bottom bg-slate-100">#</th>
                   <th
                     rowSpan={2}
-                    className="py-2.5 px-3 cursor-pointer hover:text-indigo-600 min-w-[260px] align-bottom"
+                    className="py-2.5 px-3 cursor-pointer hover:text-indigo-600 min-w-[260px] align-bottom bg-slate-100"
                     onClick={() => handleSort("name")}
                   >
                     Campaign {sortBy === "name" && (sortDir === "asc" ? "↑" : "↓")}
                   </th>
-                  <th rowSpan={2} className="py-2.5 px-3 text-center align-bottom w-24">Search Terms</th>
+                  <th rowSpan={2} className="py-2.5 px-3 text-center align-bottom w-24 bg-slate-100">Search Terms</th>
 
                   {/* Cột 1: Ngày A đến Ngày B */}
-                  <th colSpan={4} className="py-2 px-3 text-center border-l border-slate-200 bg-indigo-50/70 text-indigo-950 font-black tracking-normal normal-case text-xs">
+                  <th colSpan={4} className="py-2 px-3 text-center border-l border-slate-200 bg-indigo-50 text-indigo-950 font-black tracking-normal normal-case text-xs">
                     {formatDateRangeLabel(primaryPeriod.startDate, primaryPeriod.endDate)}
                   </th>
 
@@ -798,14 +800,15 @@ function PpcStCampaignRollupViewInner({
                   {/* Cột biến động Spend */}
                   <th
                     rowSpan={2}
-                    className="py-2.5 px-3 text-right align-bottom border-l border-slate-200 w-28 cursor-pointer hover:text-indigo-600 whitespace-nowrap"
+                    className="py-2.5 px-3 text-right align-bottom border-l border-slate-200 w-28 cursor-pointer hover:text-indigo-600 whitespace-nowrap bg-slate-100"
                     onClick={() => handleSort("delta_spend")}
                   >
                     Spend (Δ) {sortBy === "delta_spend" && (sortDir === "asc" ? "↑" : "↓")}
                   </th>
                 </tr>
 
-                <tr className="bg-slate-50/90 text-[10px] uppercase font-bold text-slate-500 border-b border-slate-200">
+                {/* top-[28px]: ngay dưới dòng ngày (cao ~29px, chồng 1px viền) */}
+                <tr className="bg-slate-50 [&>th]:sticky [&>th]:top-[28px] [&>th]:z-30 [&>th]:bg-slate-50 [&>th]:shadow-[0_1px_0_0_rgb(226,232,240)] text-[10px] uppercase font-bold text-slate-500 border-b border-slate-200">
                   {/* Subheaders Kỳ 1 */}
                   <th
                     className="py-1.5 px-2.5 text-right border-l border-slate-200 cursor-pointer hover:text-indigo-600 w-24"
@@ -841,7 +844,7 @@ function PpcStCampaignRollupViewInner({
               </thead>
             ) : (
               /* KHI KHÔNG SO SÁNH: Giữ nguyên giao diện 10 cột truyền thống */
-              <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
+              <thead className="sticky top-0 z-30 shadow-[0_1px_0_0_rgb(226,232,240)] bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
                 <tr>
                   <th className="py-3 px-3 w-10 text-center">#</th>
                   <th

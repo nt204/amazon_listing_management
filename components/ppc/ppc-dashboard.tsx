@@ -3510,9 +3510,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
           </div>
 
           {/* Campaigns Data Table */}
-          <div className={`overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs transition-opacity ${loadingCampaignPage ? "opacity-60" : "opacity-100"}`} aria-busy={loadingCampaignPage}>
+          <div className={`overflow-auto max-h-[calc(100vh-120px)] rounded-xl border border-slate-200 bg-white shadow-2xs transition-opacity ${loadingCampaignPage ? "opacity-60" : "opacity-100"}`} aria-busy={loadingCampaignPage}>
             <table className="w-full text-left text-xs text-slate-700">
-              <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
+              <thead className="sticky top-0 z-30 shadow-[0_1px_0_0_rgb(226,232,240)] bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
                 <tr>
                   <th className="py-3 px-3.5 min-w-[280px]">Campaign Name</th>
                   <th className="py-3 px-3">Store</th>
@@ -4014,9 +4014,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
             </div>
           )}
 
-          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
+          <div className="overflow-auto max-h-[calc(100vh-120px)] rounded-xl border border-slate-200 bg-white shadow-2xs">
             <table className="w-full min-w-[1050px] text-left text-xs text-slate-700">
-              <thead className="border-b border-slate-200 bg-slate-50 text-[10px] font-extrabold uppercase text-slate-500">
+              <thead className="sticky top-0 z-30 shadow-[0_1px_0_0_rgb(226,232,240)] border-b border-slate-200 bg-slate-50 text-[10px] font-extrabold uppercase text-slate-500">
                 <tr>
                   <th className="px-3 py-3 text-center w-10">
                     <input
@@ -4141,7 +4141,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                 ) : (
                   <>
                     {/* Sticky / Highlighted Top TOTAL Row (SQL-aggregated across entire filtered database scope) */}
-                    <tr className="bg-slate-100 font-black border-b-2 border-slate-300 text-slate-900 sticky top-0 z-10 shadow-xs">
+                    <tr className="bg-slate-100 font-black border-b-2 border-slate-300 text-slate-900 shadow-xs">
                       <td className="px-3 py-2.5 text-center text-slate-400 font-bold">—</td>
                       <td className="px-3.5 py-2.5 font-black text-slate-900 min-w-[180px]">
                         <div className="flex items-center gap-1.5">
@@ -4478,9 +4478,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
             </div>
           </div>
 
-          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
+          <div className="overflow-auto max-h-[calc(100vh-120px)] rounded-xl border border-slate-200 bg-white shadow-2xs">
             <table className="w-full text-left text-xs text-slate-700">
-              <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
+              <thead className="sticky top-0 z-30 shadow-[0_1px_0_0_rgb(226,232,240)] bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
                 <tr>
                   <th className="py-3 px-2 text-center w-12">Ảnh</th>
                   <th className="py-3 px-3.5">SKU</th>
@@ -4926,9 +4926,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
           )}
 
           {/* Table */}
-          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
+          <div className="overflow-auto max-h-[calc(100vh-120px)] rounded-xl border border-slate-200 bg-white shadow-2xs">
             <table className="w-full text-left text-xs text-slate-700">
-              <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
+              <thead className="sticky top-0 z-30 shadow-[0_1px_0_0_rgb(226,232,240)] bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
                 <tr>
                   <th className="p-3 w-8 text-center">
                     <input

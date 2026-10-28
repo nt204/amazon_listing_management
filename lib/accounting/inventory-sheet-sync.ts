@@ -20,21 +20,22 @@ import {
   type SkuChannel,
 } from "@/lib/accounting/inventory-db";
 
-// Đồng bộ BẢNG MÃ / BẢNG MÃ FBM / CHI TIẾT ĐI HÀNG từ link Google Sheet đã lưu theo store.
+// Đồng bộ BẢNG MÃ / BẢNG MÃ FBM / CHI TIẾT ĐI HÀNG / ĐẦU VÀO FBM PW từ link Google Sheet đã lưu theo store.
 // Google Sheet là bản gốc: ô có giá trị trên sheet ghi đè DB; ô trống giữ nguyên giá trị đang có.
 // Chống trùng: SKU khớp không phân biệt hoa/thường + UNIQUE(store_id, sku); đi hàng khớp theo
 // SKU+Shipment ID → SKU+Tên lô → SKU+Ngày request+Số lượng (theo thứ tự xuất hiện), dòng web
 // không còn trên sheet bị xóa mềm (khôi phục được qua Lịch sử). Mỗi store+sheet chạy trong
 // 1 transaction có khóa, lỗi giữa chừng thì không ghi gì.
 
-export type SheetType = "sku" | "sku_fbm" | "inbound";
+export type SheetType = "sku" | "sku_fbm" | "inbound" | "fbm_pw";
 export type SyncTrigger = "link_saved" | "manual" | "reload" | "schedule";
 
-export const SHEET_TYPES: SheetType[] = ["sku", "sku_fbm", "inbound"];
+export const SHEET_TYPES: SheetType[] = ["sku", "sku_fbm", "inbound", "fbm_pw"];
 export const SHEET_TYPE_LABELS: Record<SheetType, string> = {
   sku: "Bảng Mã",
   sku_fbm: "Bảng Mã FBM",
   inbound: "Chi Tiết Đi Hàng",
+  fbm_pw: "Basecost Tháng FBM (Đầu vào FBM PW)",
 };
 
 export interface SheetSyncResult {
@@ -55,17 +56,25 @@ export interface SheetSyncResult {
   dryRun: boolean;
 }
 
-/** Link lưu theo FILE: 'inventory' = BẢNG MÃ FBA + CHI TIẾT ĐI HÀNG, 'fbm' = BẢNG MÃ FBM. */
-export type LinkType = "inventory" | "fbm";
-export const LINK_TYPES: LinkType[] = ["inventory", "fbm"];
-export const LINK_PARTS: Record<LinkType, SheetType[]> = { inventory: ["sku", "inbound"], fbm: ["sku_fbm"] };
+/**
+ * Link lưu theo FILE: 'inventory' = BẢNG MÃ FBA + CHI TIẾT ĐI HÀNG, 'fbm' = BẢNG MÃ FBM,
+ * 'fbm_accounting' = KẾ TOÁN TỔNG HỢP FBM (tab ĐẦU VÀO FBM PW → Basecost Tháng FBM).
+ */
+export type LinkType = "inventory" | "fbm" | "fbm_accounting";
+export const LINK_TYPES: LinkType[] = ["inventory", "fbm", "fbm_accounting"];
+export const LINK_PARTS: Record<LinkType, SheetType[]> = {
+  inventory: ["sku", "inbound"],
+  fbm: ["sku_fbm"],
+  fbm_accounting: ["fbm_pw"],
+};
 export const LINK_TYPE_LABELS: Record<LinkType, string> = {
   inventory: "File INVENTORY (Bảng Mã FBA + Chi Tiết Đi Hàng)",
   fbm: "File Bảng Mã FBM",
+  fbm_accounting: "File Kế Toán Tổng Hợp FBM",
 };
 
 export function linkTypeOfPart(part: SheetType): LinkType {
-  return part === "sku_fbm" ? "fbm" : "inventory";
+  return part === "sku_fbm" ? "fbm" : part === "fbm_pw" ? "fbm_accounting" : "inventory";
 }
 
 export interface SheetPartOutcome {
@@ -295,8 +304,55 @@ function parseInboundRows(rows: SheetRows): Row[] {
   return out;
 }
 
+// ĐẦU VÀO FBM PW: chép nguyên văn (không có khóa, giữ cả dòng trùng). NetPrice "8,94" (dấu phẩy thập phân) đọc thành 8.94.
+const PW_HEADERS = new Map<string, string>([
+  ["order id", "order_id"],
+  ["pworderid", "pw_order_id"],
+  ["ordername", "order_name"],
+  ["netprice", "net_price"],
+]);
+
+function rawText(value: unknown): string | null {
+  if (value == null || typeof value === "object") return null;
+  const s = String(value).replace(/\r/g, "").trim();
+  return s || null;
+}
+
+function pwPrice(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const s = rawText(value)?.replace(/[$\s]/g, "");
+  if (!s) return null;
+  const n = Number(/^-?\d+,\d+$/.test(s) ? s.replace(",", ".") : s.replace(/,/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+export function parsePwRows(rows: SheetRows): Row[] {
+  const headerIndex = rows.slice(0, 5).findIndex((r) => r.some((v) => norm(v) === "netprice"));
+  if (headerIndex === -1) throw new ApiError(`Không tìm thấy dòng tiêu đề có cột "NetPrice" trong tab ĐẦU VÀO FBM PW.`, 400);
+  const columns = rows[headerIndex].map((h) => PW_HEADERS.get(norm(h)) ?? null);
+  for (const field of PW_HEADERS.values()) {
+    if (!columns.includes(field)) {
+      throw new ApiError(`Tab ĐẦU VÀO FBM PW thiếu cột "${[...PW_HEADERS].find(([, f]) => f === field)![0]}".`, 400);
+    }
+  }
+  const out: Row[] = [];
+  for (const [offset, row] of rows.slice(headerIndex + 1).entries()) {
+    const item: Row = { _row: headerIndex + offset + 2 };
+    columns.forEach((field, i) => {
+      if (!field || item[field] != null) return;
+      item[field] = field === "net_price" ? pwPrice(row[i]) : rawText(row[i]);
+    });
+    const rawPrice = row[columns.indexOf("net_price")];
+    if (item.net_price == null && rawText(rawPrice)) item._bad_price = rawText(rawPrice);
+    if (item.order_id == null && item.pw_order_id == null && item.order_name == null && item.net_price == null && !item._bad_price) continue;
+    out.push(item);
+  }
+  return out;
+}
+
 function pickTab(type: SheetType) {
   return (titles: string[]) => {
+    if (type === "fbm_pw") return titles.find((t) => norm(t) === "dau vao fbm pw") ?? null;
     // Bảng Mã FBM chỉ nhận tab FBM ("FBM_<Store>" / "BẢNG MÃ FBM"), không lùi về tab BẢNG MÃ của FBA
     // để dán nhầm link file FBA vào ô FBM không ghi bảng mã FBA vào bảng FBM.
     if (type === "sku_fbm") {
@@ -321,9 +377,14 @@ async function readSheet(url: string, type: SheetType) {
       ? parseInboundRows(sheet.rows)
       : type === "sku"
       ? parseFbaSkuRows(sheet.rows)
+      : type === "fbm_pw"
+      ? parsePwRows(sheet.rows)
       : (parseFbmSkuRows(sheet.rows) as unknown as Row[]).map((r) => ({ ...r, sku: skuText(r.sku) ?? String(r.sku) }));
   if (records.length === 0) {
-    throw new ApiError(`Tab "${sheet.tabTitle}" không có dòng dữ liệu hợp lệ nào (cần có SKU).`, 400);
+    throw new ApiError(
+      `Tab "${sheet.tabTitle}" không có dòng dữ liệu hợp lệ nào${type === "fbm_pw" ? "" : " (cần có SKU)"}.`,
+      400,
+    );
   }
   return { ...sheet, records };
 }
@@ -612,6 +673,71 @@ async function writeInboundRecords(
   }
 }
 
+/**
+ * ĐẦU VÀO FBM PW: thay toàn bộ dòng của store bằng đúng các dòng trên sheet (giữ thứ tự, giữ dòng trùng).
+ * Thêm/xóa đếm theo so khớp từng dòng (đa tập) giữa web và sheet; sheet thiếu nhiều dòng thì dừng như Đi Hàng.
+ */
+async function writePwRecords(tx: Tx, storeId: string, records: Row[], result: SheetSyncResult, force = false) {
+  await lockOrFail(tx, storeId, "fbm_pw");
+  const lineKey = (r: Partial<Record<"order_id" | "pw_order_id" | "order_name" | "net_price", string | number | null>>) =>
+    JSON.stringify([r.order_id ?? null, r.pw_order_id ?? null, r.order_name ?? null, r.net_price == null ? null : Number(r.net_price).toFixed(4)]);
+
+  const existing = await tx<{ order_id: string | null; pw_order_id: string | null; order_name: string | null; net_price: string | null }[]>`
+    SELECT order_id, pw_order_id, order_name, net_price::text FROM accounting_fbm_pw_costs
+    WHERE store_id = ${storeId} ORDER BY row_no
+  `;
+  const pool = new Map<string, number>();
+  for (const row of existing) {
+    const k = lineKey(row);
+    pool.set(k, (pool.get(k) ?? 0) + 1);
+  }
+  for (const r of records) {
+    const k = lineKey(r);
+    const left = pool.get(k) ?? 0;
+    if (left > 0) {
+      pool.set(k, left - 1);
+      result.unchanged++;
+    } else {
+      result.inserted++;
+    }
+  }
+  result.deleted = [...pool.values()].reduce((sum, n) => sum + n, 0);
+
+  const limit = Math.max(20, Math.ceil(existing.length * 0.2));
+  if (result.deleted > limit) {
+    if (!force) throw new DeleteGuardError(
+      `Dừng đồng bộ: sheet thiếu ${result.deleted}/${existing.length} dòng đang có trên web (giới hạn an toàn ${limit}). ` +
+        "Kiểm tra lại tab ĐẦU VÀO FBM PW (lọc, xóa nhầm, sai link?).",
+      400,
+    );
+    result.warnings.push(`Đã bỏ qua giới hạn an toàn: xóa ${result.deleted}/${existing.length} dòng không còn trên sheet.`);
+  }
+
+  const badPrices = records.filter((r) => r._bad_price != null);
+  if (badPrices.length) {
+    result.warnings.push(
+      `${badPrices.length} dòng NetPrice không phải số (để trống), ví dụ dòng ${badPrices.slice(0, 3).map((r) => `${r._row} "${r._bad_price}"`).join(", ")}.`,
+    );
+  }
+
+  // Không đổi gì (kể cả thứ tự) thì không ghi lại
+  const sameOrder = existing.length === records.length && existing.every((row, i) => lineKey(row) === lineKey(records[i]));
+  if (sameOrder) return;
+
+  await tx`DELETE FROM accounting_fbm_pw_costs WHERE store_id = ${storeId}`;
+  const values = records.map((r, i) => ({
+    store_id: storeId,
+    row_no: i + 1,
+    order_id: r.order_id ?? null,
+    pw_order_id: r.pw_order_id ?? null,
+    order_name: r.order_name ?? null,
+    net_price: r.net_price ?? null,
+  }));
+  for (let i = 0; i < values.length; i += 5000) {
+    await tx`INSERT INTO accounting_fbm_pw_costs ${tx(values.slice(i, i + 5000))}`;
+  }
+}
+
 /** Đọc sheet và ghi vào DB cho 1 store + 1 loại sheet. dryRun: chạy thật trong transaction rồi rollback. */
 export async function syncSheetToDatabase(
   storeId: string,
@@ -653,6 +779,8 @@ export async function syncSheetToDatabase(
       const write = (target: SheetSyncResult) =>
         type === "inbound"
           ? writeInboundRecords(tx, storeId, store.name, sheet.records, actor, target, options.force)
+          : type === "fbm_pw"
+          ? writePwRecords(tx, storeId, sheet.records, target, options.force)
           : writeSkuRecords(tx, storeId, type === "sku_fbm" ? "fbm" : "fba", sheet.records, actor, target);
       await write(result);
       if (options.dryRun && options.verifyIdempotent) {
@@ -801,8 +929,8 @@ async function runLink(
 export async function saveSheetLink(storeId: string, linkType: LinkType, url: string, actor: string) {
   const store = await getStoreById(storeId);
   if (!store) throw new ApiError("Không tìm thấy Store.", 404);
-  if (linkType === "fbm" && !storeHasTeam(store.team, "FBM")) {
-    throw new ApiError(`Store ${store.name} không có team FBM nên không có Bảng Mã FBM.`, 400);
+  if ((linkType === "fbm" || linkType === "fbm_accounting") && !storeHasTeam(store.team, "FBM")) {
+    throw new ApiError(`Store ${store.name} không có team FBM nên không có ${LINK_TYPE_LABELS[linkType]}.`, 400);
   }
   if (linkType === "inventory" && !storeHasFbaTeam(store.team)) {
     throw new ApiError(`Store ${store.name} không có team FBA nên không có file INVENTORY.`, 400);
@@ -870,7 +998,7 @@ export async function syncAllSheetLinks(trigger: SyncTrigger, actor = "system", 
   const recentAfter = Date.now() - (options.skipRecentMinutes ?? 0) * 60_000;
   const links = (await listSheetLinks())
     .filter((link) => !(link.last_status === "success" && link.last_synced_at && Date.parse(link.last_synced_at) > recentAfter))
-    // File INVENTORY (bảng mã FBA) trước, FBM sau
+    // File INVENTORY (bảng mã FBA) trước, Bảng Mã FBM sau, Kế Toán Tổng Hợp FBM cuối
     .sort((a, b) => LINK_TYPES.indexOf(a.link_type) - LINK_TYPES.indexOf(b.link_type));
   const summary: { store_id: string; link_type: LinkType; ok: boolean; error?: string }[] = [];
   for (const link of links) {
