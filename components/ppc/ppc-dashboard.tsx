@@ -64,7 +64,7 @@ import type {
 import { PpcMultiStoreView } from "./ppc-multi-store-view";
 import { PpcCopyButton } from "./ppc-copy-button";
 import { PpcSearchVolumeCell } from "./ppc-search-volume";
-import { PpcKeywordGroupRows, type KeywordGroupRow } from "./ppc-keyword-group-rows";
+import { PpcKeywordGroupRows, PpcSummaryTableHead, usePpcSummarySort, type KeywordGroupRow } from "./ppc-keyword-group-rows";
 import { PpcSkuTrendModal } from "./ppc-sku-trend-modal";
 import type {
   PpcAlert,
@@ -620,6 +620,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
   const targetFrozen = usePpcFrozenColumns("targets", actor, 2);
   const searchTermFrozen = usePpcFrozenColumns("search_terms", actor, 2);
   const skuFrozen = usePpcFrozenColumns("skus", actor, 2);
+  // Sắp xếp bảng tổng (SKU + keyword) phía trên tab Target / Search Term
+  const targetSummarySort = usePpcSummarySort();
+  const searchTermSummarySort = usePpcSummarySort();
 
   const [campaignPage, setCampaignPage] = useState(1);
   const [campaignPageSize, setCampaignPageSize] = useState(25);
@@ -3978,23 +3981,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
           {targetQuery.trim() && serverTargetSummary && (
             <div className="overflow-auto max-h-[480px] rounded-xl border border-slate-200 bg-white shadow-2xs">
               <table className="w-full min-w-[1100px] text-left">
-                <thead className="sticky top-0 z-10 shadow-[0_1px_0_0_rgb(226,232,240)] border-b border-slate-200 bg-slate-50 text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
-                  <tr>
-                    <th className="w-16 px-3 py-3 text-center">Ảnh</th>
-                    <th className="px-3 py-3">SKU</th>
-                    <th className="min-w-[240px] px-3 py-3">Target / Keyword</th>
-                    <th className="px-3 py-3 text-right">Hiển thị</th>
-                    <th className="px-3 py-3 text-right">Clicks</th>
-                    <th className="px-3 py-3 text-right">CTR</th>
-                    <th className="px-3 py-3 text-right">Spend</th>
-                    <th className="px-3 py-3 text-right">Sales</th>
-                    <th className="px-3 py-3 text-right">Orders</th>
-                    <th className="px-3 py-3 text-right">CVR</th>
-                    <th className="px-3 py-3 text-right">ACOS</th>
-                  </tr>
-                </thead>
+                <PpcSummaryTableHead keywordLabel="Target / Keyword" sort={targetSummarySort} />
                 <tbody className="divide-y divide-slate-100">
-                  {((serverTargetSummary.skuGroups?.length
+                  {targetSummarySort.sortSkuGroups((serverTargetSummary.skuGroups?.length
                     ? serverTargetSummary.skuGroups
                     : [{
                         sku: selectedSku !== "ALL" ? selectedSku : "TẤT CẢ SKU",
@@ -4060,7 +4049,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                     </tr>
                   ))}
                   {serverTargetSummary.keywordGroups && (
-                    <PpcKeywordGroupRows groups={serverTargetSummary.keywordGroups} total={serverTargetSummary.keywordGroupTotal || 0} />
+                    <PpcKeywordGroupRows groups={targetSummarySort.sortKeywordGroups(serverTargetSummary.keywordGroups)} total={serverTargetSummary.keywordGroupTotal || 0} />
                   )}
                 </tbody>
               </table>
@@ -4919,23 +4908,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
           {searchTermQuery.trim() && serverSearchTermSummary && (
             <div className="overflow-auto max-h-[480px] rounded-xl border border-slate-200 bg-white shadow-2xs">
               <table className="w-full min-w-[1100px] text-left">
-                <thead className="sticky top-0 z-10 shadow-[0_1px_0_0_rgb(226,232,240)] border-b border-slate-200 bg-slate-50 text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
-                  <tr>
-                    <th className="w-16 px-3 py-3 text-center">Ảnh</th>
-                    <th className="px-3 py-3">SKU</th>
-                    <th className="min-w-[240px] px-3 py-3">Search Term</th>
-                    <th className="px-3 py-3 text-right">Hiển thị</th>
-                    <th className="px-3 py-3 text-right">Clicks</th>
-                    <th className="px-3 py-3 text-right">CTR</th>
-                    <th className="px-3 py-3 text-right">Spend</th>
-                    <th className="px-3 py-3 text-right">Sales</th>
-                    <th className="px-3 py-3 text-right">Orders</th>
-                    <th className="px-3 py-3 text-right">CVR</th>
-                    <th className="px-3 py-3 text-right">ACOS</th>
-                  </tr>
-                </thead>
+                <PpcSummaryTableHead keywordLabel="Search Term" sort={searchTermSummarySort} />
                 <tbody className="divide-y divide-slate-100">
-                  {((serverSearchTermSummary.skuGroups?.length
+                  {searchTermSummarySort.sortSkuGroups((serverSearchTermSummary.skuGroups?.length
                     ? serverSearchTermSummary.skuGroups
                     : [{ ...serverSearchTermSummary, sku: selectedSku !== "ALL" ? selectedSku : "TẤT CẢ SKU" }]
                   ) as SearchTermSkuSummary[]).map((group) => (
@@ -4992,7 +4967,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                     </tr>
                   ))}
                   {serverSearchTermSummary.keywordGroups && (
-                    <PpcKeywordGroupRows groups={serverSearchTermSummary.keywordGroups} total={serverSearchTermSummary.keywordGroupTotal || 0} />
+                    <PpcKeywordGroupRows groups={searchTermSummarySort.sortKeywordGroups(serverSearchTermSummary.keywordGroups)} total={serverSearchTermSummary.keywordGroupTotal || 0} />
                   )}
                 </tbody>
               </table>
