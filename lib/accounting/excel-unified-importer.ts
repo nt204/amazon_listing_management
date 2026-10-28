@@ -309,7 +309,9 @@ export async function importUnifiedAccountingExcel(
           if (isHeaderRow) {
             isHeaderRow = false;
             vals.forEach((v, idx) => {
-              if (v != null) headers[idx] = String(v).trim().replace(/^\uFEFF/, "");
+              // Tiêu đề có thể là ô công thức (QUERY/IMPORTRANGE của Google Sheets): lấy giá trị đã tính
+              const text = v != null && typeof v === "object" ? (v.result ?? v.text) : v;
+              if (text != null) headers[idx] = String(text).trim().replace(/^\uFEFF/, "");
             });
           } else {
             const rowData: Record<string, any> = {};
@@ -319,6 +321,9 @@ export async function importUnifiedAccountingExcel(
                 if (cellVal && typeof cellVal === "object") {
                   if ("result" in cellVal) cellVal = cellVal.result;
                   else if ("text" in cellVal) cellVal = cellVal.text;
+                  // ExcelJS (stream) bỏ mất result khi giá trị đã tính = 0 (file xuất từ Google Sheets).
+                  // Quantity trống sẽ bị mặc định = 1 nên phải giữ đúng 0 (đơn hủy); cột khác để trống.
+                  else if ("formula" in cellVal || "sharedFormula" in cellVal) cellVal = /^quantity/i.test(h) ? 0 : null;
                 }
                 rowData[h] = cellVal;
               }
