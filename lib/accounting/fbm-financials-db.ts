@@ -80,6 +80,12 @@ function fbmBaseCtes(sql: Sql, storeId: string) {
   `;
 }
 
+/** Thuế Ads của store (stores.fbm_ads_tax_rate): mặc định 10%, store không chịu thuế Ads đặt 0. */
+async function fbmAdsTaxRate(sql: Sql, storeId: string): Promise<number> {
+  const [row] = await sql<{ rate: number | null }[]>`SELECT fbm_ads_tax_rate::float AS rate FROM stores WHERE id = ${storeId}`;
+  return row?.rate ?? 0.1;
+}
+
 function dateRangeCondition(sql: Sql, column: string, startDate: string, endDate: string) {
   return startDate && endDate
     ? sql`AND ${sql(column)} >= ${startDate}::date AND ${sql(column)} <= ${endDate}::date`
@@ -124,7 +130,8 @@ export async function listFbmDaily(
   const limit = options.limit && options.limit > 0 ? options.limit : 100;
 
   // Sheet FBM bỏ trống ngày >= TODAY(); ADS lọc Loại (XLOOKUP từ chữ cuối Portfolio vào BẢNG MÃ FBM) = "FBM".
-  const [rows, orderSkus, masterSkus] = await Promise.all([sql<Record<string, unknown>[]>`
+  const [adsTaxRate, rows, orderSkus, masterSkus] = await Promise.all([
+    fbmAdsTaxRate(sql, storeId),sql<Record<string, unknown>[]>`
     WITH ${fbmBaseCtes(sql, storeId)},
     daily_orders AS (
       SELECT date,
@@ -206,8 +213,8 @@ export async function listFbmDaily(
     const returnCost = Number(r.return_cost);
     const revenueAds = Number(r.revenue_ads);
     const quantityAds = Number(r.quantity_ads);
-    // Thuế = 10% Ads Fee + 10% AMZ Fee + 1% Revenue
-    const thue = 0.1 * adsFee + 0.1 * amazonFee + 0.01 * revenue;
+    // Thuế = thuế Ads (mặc định 10%) × Ads Fee + 10% AMZ Fee + 1% Revenue
+    const thue = adsTaxRate * adsFee + 0.1 * amazonFee + 0.01 * revenue;
     const profit = revenue - adsFee - basecost - amazonFee - thue - promotion - returnCost;
     return {
       id: date,
@@ -373,9 +380,9 @@ const EMPTY_AGGREGATE: FbmSkuAggregate = {
   ads_fee: 0, revenue_ads: 0, return_total: 0, return_count: 0,
 };
 
-function skuProfit(a: FbmSkuAggregate) {
+function skuProfit(a: FbmSkuAggregate, adsTaxRate: number) {
   const returnCost = -a.return_total;
-  const thue = 0.1 * a.ads_fee + 0.1 * a.amazon_fee + 0.01 * a.revenue;
+  const thue = adsTaxRate * a.ads_fee + 0.1 * a.amazon_fee + 0.01 * a.revenue;
   const profit = a.revenue - a.ads_fee - a.basecost - a.amazon_fee - thue - a.promotion - returnCost;
   return { thue, returnCost, profit };
 }
@@ -399,7 +406,8 @@ export async function listFbmSkuFixed(
   const page = Math.max(1, options.page || 1);
   const limit = options.limit && options.limit > 0 ? options.limit : 50;
 
-  const [masterRows, aggregates, compareAggregates, allTimeRows] = await Promise.all([
+  const [adsTaxRate, masterRows, aggregates, compareAggregates, allTimeRows] = await Promise.all([
+    fbmAdsTaxRate(sql, storeId),
     sql<Record<string, unknown>[]>`
       SELECT id, sku, asin, product_type, mockup, mockup_url, brand, status, niche, pic_mkt,
         COALESCE(amazon_fee, 0)::float AS amazon_fee_unit,
@@ -448,11 +456,11 @@ export async function listFbmSkuFixed(
     .map((r) => {
       const key = String(r.sku).trim().toUpperCase();
       const a = aggregates.get(key) ?? EMPTY_AGGREGATE;
-      const { thue, returnCost, profit } = skuProfit(a);
+      const { thue, returnCost, profit } = skuProfit(a, adsTaxRate);
       let compare: Partial<SkuWinItem> = {};
       if (compareAggregates) {
         const c = compareAggregates.get(key) ?? EMPTY_AGGREGATE;
-        const compareProfit = skuProfit(c).profit;
+        const compareProfit = skuProfit(c, adsTaxRate).profit;
         compare = {
           compare_revenue: c.revenue,
           compare_quantity: c.quantity,

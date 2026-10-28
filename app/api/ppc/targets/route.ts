@@ -3,6 +3,8 @@ import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-gu
 import { getDatabaseClient } from "@/lib/db";
 import { roundedPerformanceMetrics } from "@/lib/ppc/analytics";
 import { attachSearchVolumes } from "@/lib/ppc/search-volume";
+import { KEYWORD_GROUP_LIMIT, splitSkuSearch } from "@/lib/ppc/search-term-grouping";
+import { loadTargetsGroupedBySku, targetSkuMatch } from "@/lib/ppc/target-grouping";
 import { getCachedOrFetch } from "@/lib/redis";
 import type { MatchType, PpcAdType, PpcTargetPerformance } from "@/lib/ppc/types";
 
@@ -107,8 +109,16 @@ export async function GET(request: Request) {
     );
     const combinedSnaps = snapConditions.reduce((acc, curr) => sql`${acc} OR ${curr}`);
 
+    // Ô tìm kiếm có mã SKU (vd "BTV260203MR" hoặc "BTV260203MR marine"): bảng dưới lọc theo SKU (+ keyword còn lại),
+    // bảng tổng phía trên gộp các target cùng keyword
+    const { skuTokens, keywordText } = splitSkuSearch(search);
+    const skuSearch = skuTokens.length > 0;
+
     // Dynamic search conditions
-    const searchFilter = search
+    const searchFilter = skuSearch
+      ? sql`AND (${targetSkuMatch(sql, skuTokens)})
+          ${keywordText ? sql`AND lower(p.target_expression) LIKE ${`%${keywordText}%`}` : sql``}`
+      : search
       ? sql`AND (
           lower(p.target_expression) LIKE ${`%${search}%`}
           OR lower(p.campaign_name) LIKE ${`%${search}%`}
@@ -121,6 +131,14 @@ export async function GET(request: Request) {
       : (campaignName ? sql`AND lower(p.campaign_name) = lower(${campaignName})` : sql``);
     const adGroupFilter = adGroupName ? sql`AND lower(p.ad_group_name) = lower(${adGroupName})` : sql``;
     const skuFilter = sku !== "ALL" ? sql`AND lower(p.sku) = lower(${sku})` : sql``;
+
+    const keywordGroups = skuSearch
+      ? await loadTargetsGroupedBySku({
+        sql, teamId: scope.teamId, combinedSnaps,
+        rowFilters: sql`${campaignFilter} ${adGroupFilter} ${skuFilter}`,
+        skuTokens, keywordText, days, page: 1, pageSize: KEYWORD_GROUP_LIMIT, sortBy: "spend", sortDir: "DESC",
+      })
+      : null;
 
     // 4. Query Summary & Total Count trên TOÀN BỘ tập dữ liệu thỏa mãn bộ lọc
     const summaryRows = await sql<Array<{
@@ -184,7 +202,7 @@ export async function GET(request: Request) {
       acos,
     };
 
-    let exactSkuRows = search ? await sql<Array<{
+    let exactSkuRows = search && !skuSearch ? await sql<Array<{
       sku: string;
       impressions: string;
       clicks: number;
@@ -222,7 +240,7 @@ export async function GET(request: Request) {
       ORDER BY SUM(p.spend) DESC
     ` : [];
 
-    if (search && exactSkuRows.length === 0) {
+    if (search && !skuSearch && exactSkuRows.length === 0) {
       exactSkuRows = await sql<Array<{
         sku: string;
         impressions: string;
@@ -434,7 +452,9 @@ export async function GET(request: Request) {
         pageSize,
         totalPages,
         summary,
-        exactSkuSummaries,
+        exactSkuSummaries: keywordGroups ? keywordGroups.exactSkuSummaries : exactSkuSummaries,
+        keywordGroups: keywordGroups?.items ?? null,
+        keywordGroupTotal: keywordGroups?.total ?? 0,
       };
     });
 

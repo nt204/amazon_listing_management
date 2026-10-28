@@ -3,6 +3,7 @@ import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-gu
 import { getDatabaseClient } from "@/lib/db";
 import { getCachedOrFetch } from "@/lib/redis";
 import { attachSearchVolumes } from "@/lib/ppc/search-volume";
+import { KEYWORD_GROUP_LIMIT, loadGroupedBySku, searchTermSkuMatch, splitSkuSearch } from "@/lib/ppc/search-term-grouping";
 import type { MatchType, PpcAdType } from "@/lib/ppc/types";
 
 export const runtime = "nodejs";
@@ -69,7 +70,13 @@ export async function GET(request: Request) {
           ${storeId ? sql`AND p0.store_id = ${storeId}` : sql``}
       `;
 
-      const searchFilter = search
+      // Ô tìm kiếm có mã SKU (vd "AOTT0625F01C" hoặc "AOTT0625F01C family christmas"): bảng dưới lọc theo SKU
+      // (+ từ khóa còn lại), bảng tổng phía trên gộp theo search term
+      const { skuTokens, keywordText } = splitSkuSearch(search);
+      const searchFilter = skuTokens.length > 0
+        ? sql`AND (${searchTermSkuMatch(sql, skuTokens)})
+            ${keywordText ? sql`AND lower(p.customer_search_term) LIKE ${`%${keywordText}%`}` : sql``}`
+        : search
         ? sql`AND (
             lower(p.customer_search_term) LIKE ${`%${search}%`}
             OR lower(p.campaign_name) LIKE ${`%${search}%`}
@@ -120,6 +127,16 @@ export async function GET(request: Request) {
       } else if (performanceFilter === "HIGH_ACOS") {
         performanceFilterClause = sql`AND p.orders > 0 AND p.sales > 0 AND (p.spend / p.sales) * 100 > 60`;
       }
+
+      const keywordGroups = skuTokens.length > 0
+        ? await loadGroupedBySku({
+          sql, storeId, anchorCte, days, page: 1, pageSize: KEYWORD_GROUP_LIMIT, sortBy: "spend", sortDir: "DESC", startDate, endDate,
+          skuTokens, keywordText,
+          rowFilters: sql`${skuFilter} ${campaignFilter} ${adGroupFilter} ${matchTypeFilterClause}`,
+          minClicks, maxClicks, minOrders, maxOrders, minAcos, maxAcos, performanceFilter,
+          teamId: scope.teamId,
+        })
+        : null;
 
       // 1. Query Summary & Total Count trên TOÀN BỘ tập dữ liệu thỏa mãn bộ lọc
       const summaryRows = await sql<Array<{
@@ -491,8 +508,10 @@ export async function GET(request: Request) {
         pageSize,
         totalPages,
         summary,
-        exactSummary,
-        exactSkuSummaries,
+        exactSummary: keywordGroups ? null : exactSummary,
+        exactSkuSummaries: keywordGroups ? keywordGroups.exactSkuSummaries : exactSkuSummaries,
+        keywordGroups: keywordGroups?.items ?? null,
+        keywordGroupTotal: keywordGroups?.total ?? 0,
       };
     });
 

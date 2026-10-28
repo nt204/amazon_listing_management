@@ -63,7 +63,8 @@ import type {
 } from "@/lib/ppc/sku-architecture-types";
 import { PpcMultiStoreView } from "./ppc-multi-store-view";
 import { PpcCopyButton } from "./ppc-copy-button";
-import { PpcSearchVolumeCell, PpcSearchVolumeSyncButton } from "./ppc-search-volume";
+import { PpcSearchVolumeCell } from "./ppc-search-volume";
+import { PpcKeywordGroupRows, type KeywordGroupRow } from "./ppc-keyword-group-rows";
 import { PpcSkuTrendModal } from "./ppc-sku-trend-modal";
 import type {
   PpcAlert,
@@ -87,6 +88,7 @@ import type {
 } from "@/lib/ppc/types";
 
 import type { RequestActor } from "@/lib/auth";
+import { usePpcFrozenColumns } from "./use-ppc-frozen-columns";
 
 interface PpcDashboardProps {
   isEmbedded?: boolean;
@@ -179,6 +181,12 @@ function getOptimizedThumbnailUrl(url: string | null | undefined, w = 64): strin
 }
 
 const STORE_SCOPED_TABS = new Set<string>(["campaigns", "ad_groups", "targets", "skus", "match_types", "search_terms", "st_campaigns"]);
+
+// Dòng tổng phía trên bảng: bỏ mã SKU khỏi nội dung tìm kiếm, chỉ hiện phần keyword (không có thì "Tất cả …")
+function querySummaryLabel(query: string, allLabel: string): string {
+  const words = query.trim().split(/\s+/).filter((word) => word && !(/^[a-z0-9-]{6,}$/i.test(word) && /[a-z]/i.test(word) && /\d/.test(word)));
+  return words.length > 0 ? words.join(" ") : allLabel;
+}
 
 function searchTermKey(term: PpcSearchTermRow): string {
   return [
@@ -607,6 +615,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
   const [termSortDir, setTermSortDir] = useState<SortDirection>("desc");
   const [termPage, setTermPage] = useState(1);
   const [termPageSize, setTermPageSize] = useState(25);
+  // Khóa cột cho các bảng Campaign / Target / Search Term / SKU — lưu theo từng tài khoản
+  const campaignFrozen = usePpcFrozenColumns("campaigns", actor, 1);
+  const targetFrozen = usePpcFrozenColumns("targets", actor, 2);
+  const searchTermFrozen = usePpcFrozenColumns("search_terms", actor, 2);
+  const skuFrozen = usePpcFrozenColumns("skus", actor, 2);
+
   const [campaignPage, setCampaignPage] = useState(1);
   const [campaignPageSize, setCampaignPageSize] = useState(25);
   const [loadingCampaignPage, setLoadingCampaignPage] = useState(false);
@@ -665,6 +679,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     cvr: number;
     acos: number;
     skuGroups?: SearchTermSkuSummary[];
+    keywordGroups?: KeywordGroupRow[] | null;
+    keywordGroupTotal?: number;
   }>({
     count: 0,
     impressions: 0,
@@ -1088,6 +1104,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
             setServerTargetSummary({
               ...json.data.summary,
               skuGroups: json.data.exactSkuSummaries || [],
+              keywordGroups: json.data.keywordGroups || null,
+              keywordGroupTotal: Number(json.data.keywordGroupTotal || 0),
             });
           }
         }
@@ -1218,6 +1236,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
           setServerSearchTermSummary({
             ...(json.data.exactSummary || json.data.summary),
             skuGroups: json.data.exactSkuSummaries || [],
+            keywordGroups: json.data.keywordGroups || null,
+            keywordGroupTotal: Number(json.data.keywordGroupTotal || 0),
           });
         }
       } catch (error) {
@@ -3541,8 +3561,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
 
           {/* Campaigns Data Table */}
           <div className={`overflow-auto max-h-[calc(100vh-120px)] rounded-xl border border-slate-200 bg-white shadow-2xs transition-opacity ${loadingCampaignPage ? "opacity-60" : "opacity-100"}`} aria-busy={loadingCampaignPage}>
-            <table className="w-full text-left text-xs text-slate-700">
-              <thead className="sticky top-0 z-30 shadow-[0_1px_0_0_rgb(226,232,240)] bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
+            <table ref={campaignFrozen.tableRef} className="w-full text-left text-xs text-slate-700">
+              <thead title="Chuột phải vào tiêu đề cột để khóa cột" className="sticky top-0 z-30 shadow-[0_1px_0_0_rgb(226,232,240)] bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
                 <tr>
                   <th className="py-3 px-3.5 min-w-[280px]">Campaign Name</th>
                   <th className="py-3 px-3">Store</th>
@@ -3894,8 +3914,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                 </button>
               )}
 
-              <PpcSearchVolumeSyncButton storeName={selectedStore} />
-
               {/* Results count indicator */}
               <div className="ml-auto text-xs text-slate-500 font-medium">
                 Khớp <span className="font-extrabold text-slate-900">{serverTargetTotal.toLocaleString("vi-VN")}</span>
@@ -3958,9 +3976,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
 
           {/* Totals for the current Target query; detail rows stay separated by campaign. */}
           {targetQuery.trim() && serverTargetSummary && (
-            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
+            <div className="overflow-auto max-h-[480px] rounded-xl border border-slate-200 bg-white shadow-2xs">
               <table className="w-full min-w-[1100px] text-left">
-                <thead className="border-b border-slate-200 bg-slate-50 text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+                <thead className="sticky top-0 z-10 shadow-[0_1px_0_0_rgb(226,232,240)] border-b border-slate-200 bg-slate-50 text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
                   <tr>
                     <th className="w-16 px-3 py-3 text-center">Ảnh</th>
                     <th className="px-3 py-3">SKU</th>
@@ -4016,7 +4034,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                         )}
                       </td>
                       <td className="whitespace-nowrap px-3 py-3 font-mono text-sm font-black text-slate-900">{group.sku}</td>
-                      <td className="px-3 py-3 text-sm font-bold text-slate-900">{targetQuery.trim()}</td>
+                      <td className="px-3 py-3 text-sm font-bold text-slate-900">{querySummaryLabel(targetQuery, "Tất cả target")}</td>
                       <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{Number(group.totalImpressions || 0).toLocaleString("vi-VN")}</td>
                       <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{Number(group.totalClicks || 0).toLocaleString("vi-VN")}</td>
                       <td className="px-3 py-3 text-right font-mono text-sm text-slate-700">{group.totalImpressions > 0 ? ((group.totalClicks / group.totalImpressions) * 100).toFixed(2) : "0.00"}%</td>
@@ -4041,14 +4059,17 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                       </td>
                     </tr>
                   ))}
+                  {serverTargetSummary.keywordGroups && (
+                    <PpcKeywordGroupRows groups={serverTargetSummary.keywordGroups} total={serverTargetSummary.keywordGroupTotal || 0} />
+                  )}
                 </tbody>
               </table>
             </div>
           )}
 
           <div className="overflow-auto max-h-[calc(100vh-120px)] rounded-xl border border-slate-200 bg-white shadow-2xs">
-            <table className="w-full min-w-[1050px] text-left text-xs text-slate-700">
-              <thead className="sticky top-0 z-30 shadow-[0_1px_0_0_rgb(226,232,240)] border-b border-slate-200 bg-slate-50 text-[10px] font-extrabold uppercase text-slate-500">
+            <table ref={targetFrozen.tableRef} className="w-full min-w-[1050px] text-left text-xs text-slate-700">
+              <thead title="Chuột phải vào tiêu đề cột để khóa cột" className="sticky top-0 z-30 shadow-[0_1px_0_0_rgb(226,232,240)] border-b border-slate-200 bg-slate-50 text-[10px] font-extrabold uppercase text-slate-500">
                 <tr>
                   <th className="px-3 py-3 text-center w-10">
                     <input
@@ -4529,8 +4550,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
           </div>
 
           <div className="overflow-auto max-h-[calc(100vh-120px)] rounded-xl border border-slate-200 bg-white shadow-2xs">
-            <table className="w-full text-left text-xs text-slate-700">
-              <thead className="sticky top-0 z-30 shadow-[0_1px_0_0_rgb(226,232,240)] bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
+            <table ref={skuFrozen.tableRef} className="w-full text-left text-xs text-slate-700">
+              <thead title="Chuột phải vào tiêu đề cột để khóa cột" className="sticky top-0 z-30 shadow-[0_1px_0_0_rgb(226,232,240)] bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
                 <tr>
                   <th className="py-3 px-2 text-center w-12">Ảnh</th>
                   <th className="py-3 px-3.5">SKU</th>
@@ -4887,8 +4908,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                 </button>
               )}
 
-              <PpcSearchVolumeSyncButton storeName={selectedStore} />
-
               {/* Results count indicator */}
               <div className="ml-auto text-xs text-slate-500 font-medium">
                 Khớp <span className="font-extrabold text-slate-900">{(serverSearchTermTotal ?? filteredSortedSearchTerms.length).toLocaleString("vi-VN")}</span> / {(serverSearchTermTotal ?? detailCounts?.searchTerms ?? aggregatedSearchTerms.length).toLocaleString("vi-VN")} từ khóa
@@ -4898,9 +4917,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
 
           {/* Totals for the current Search Term query; detail rows stay separated by campaign. */}
           {searchTermQuery.trim() && serverSearchTermSummary && (
-            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
+            <div className="overflow-auto max-h-[480px] rounded-xl border border-slate-200 bg-white shadow-2xs">
               <table className="w-full min-w-[1100px] text-left">
-                <thead className="border-b border-slate-200 bg-slate-50 text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+                <thead className="sticky top-0 z-10 shadow-[0_1px_0_0_rgb(226,232,240)] border-b border-slate-200 bg-slate-50 text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
                   <tr>
                     <th className="w-16 px-3 py-3 text-center">Ảnh</th>
                     <th className="px-3 py-3">SKU</th>
@@ -4947,7 +4966,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                         )}
                       </td>
                       <td className="whitespace-nowrap px-3 py-3 font-mono text-sm font-black text-slate-900">{group.sku}</td>
-                      <td className="px-3 py-3 text-sm font-bold text-slate-900">{searchTermQuery.trim()}</td>
+                      <td className="px-3 py-3 text-sm font-bold text-slate-900">{querySummaryLabel(searchTermQuery, "Tất cả search term")}</td>
                       <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{Number(group.totalImpressions || 0).toLocaleString("vi-VN")}</td>
                       <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{Number(group.totalClicks || 0).toLocaleString("vi-VN")}</td>
                       <td className="px-3 py-3 text-right font-mono text-sm text-slate-700">{group.totalImpressions > 0 ? ((group.totalClicks / group.totalImpressions) * 100).toFixed(2) : "0.00"}%</td>
@@ -4972,6 +4991,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                       </td>
                     </tr>
                   ))}
+                  {serverSearchTermSummary.keywordGroups && (
+                    <PpcKeywordGroupRows groups={serverSearchTermSummary.keywordGroups} total={serverSearchTermSummary.keywordGroupTotal || 0} />
+                  )}
                 </tbody>
               </table>
             </div>
@@ -4979,8 +5001,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
 
           {/* Table */}
           <div className="overflow-auto max-h-[calc(100vh-120px)] rounded-xl border border-slate-200 bg-white shadow-2xs">
-            <table className="w-full text-left text-xs text-slate-700">
-              <thead className="sticky top-0 z-30 shadow-[0_1px_0_0_rgb(226,232,240)] bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
+            <table ref={searchTermFrozen.tableRef} className="w-full text-left text-xs text-slate-700">
+              <thead title="Chuột phải vào tiêu đề cột để khóa cột" className="sticky top-0 z-30 shadow-[0_1px_0_0_rgb(226,232,240)] bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold border-b border-slate-200">
                 <tr>
                   <th className="p-3 w-8 text-center">
                     <input
@@ -5558,6 +5580,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
           targetAcos={targetAcos}
         />
       )}
+
+      {/* Menu khóa cột (chuột phải vào tiêu đề cột) */}
+      {campaignFrozen.menu}
+      {targetFrozen.menu}
+      {searchTermFrozen.menu}
+      {skuFrozen.menu}
     </div>
   );
 }

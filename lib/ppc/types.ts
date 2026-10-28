@@ -66,6 +66,9 @@ export interface PpcSearchTermRow {
   searchVolume?: number | null;
   searchVolumeTrend?: number | null;
   estImpressionShare?: number | null;
+  // Tìm theo SKU: dòng tổng của search term trên nhiều campaign / match type
+  grouped?: boolean;
+  campaignCount?: number;
 }
 
 export interface PpcPerformanceRow {
@@ -284,6 +287,9 @@ export interface PpcTargetPerformance extends PpcAdGroupPerformance {
   searchVolume?: number | null;
   searchVolumeTrend?: number | null;
   estImpressionShare?: number | null;
+  // Tìm theo SKU: dòng tổng của keyword trên nhiều campaign / match type
+  grouped?: boolean;
+  campaignCount?: number;
 }
 
 export interface PpcDailyTrendPoint {
