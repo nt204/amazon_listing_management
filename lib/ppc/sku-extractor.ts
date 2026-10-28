@@ -334,13 +334,16 @@ export function buildSaleKwCampaignName(params: {
   userName?: string;
   matchType: "Exact" | "Phrase" | "Broad";
   dateStr?: string;
+  /** Đuôi tên campaign; bỏ trống thì không thêm, không truyền thì giữ "(sale kw)" */
+  suffix?: string;
 }): string {
   const extractedSku = extractSkuFromText(params.sku);
   const cleanSku = (extractedSku || params.sku || "").trim().toUpperCase() || "SKU";
   const runType = formatSaleKwRunType(params.adTypeCode);
   const user = sanitizeSaleKwUserName(params.userName);
   const dateStr = normalizeSaleKwDate(params.dateStr);
-  return `${cleanSku} ${runType} ${params.matchType} FBA ${user} ${dateStr} (sale kw)`;
+  const suffix = (params.suffix ?? "(sale kw)").trim();
+  return `${cleanSku} ${runType} ${params.matchType} FBA ${user} ${dateStr}${suffix ? ` ${suffix}` : ""}`;
 }
 
 /**
@@ -351,6 +354,7 @@ export function generateSaleKwCampaignTriad(params: {
   adTypeCode?: string;
   userName?: string;
   dateStr?: string;
+  suffix?: string;
 }): { exact: string; phrase: string; broad: string } {
   return {
     exact: buildSaleKwCampaignName({ ...params, matchType: "Exact" }),

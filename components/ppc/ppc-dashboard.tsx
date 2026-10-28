@@ -42,6 +42,7 @@ import {
   extractSkuFromText,
   extractCampaignDate,
   formatPpcExportFilename,
+  resolveSkuForSearchTerm,
 } from "@/lib/ppc/sku-extractor";
 import { PpcSkuEconomicsTable } from "./ppc-sku-economics-table";
 import { PpcSkuMappingPanel } from "./ppc-sku-mapping-panel";
@@ -66,6 +67,7 @@ import { PpcCopyButton } from "./ppc-copy-button";
 import { PpcSearchVolumeCell } from "./ppc-search-volume";
 import { PpcKeywordGroupRows, PpcSummaryTableHead, usePpcSummarySort, type KeywordGroupRow } from "./ppc-keyword-group-rows";
 import { PpcSkuTrendModal } from "./ppc-sku-trend-modal";
+import { PpcSearchTermLaunchPanel } from "./ppc-search-term-launch-panel";
 import type {
   PpcAlert,
   PpcAdTypeBreakdown,
@@ -641,7 +643,14 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
   const [skuPageSize, setSkuPageSize] = useState(25);
   const [overviewWeakSkus, setOverviewWeakSkus] = useState<PpcOverviewAttentionSku[]>([]);
   const [loadingOverviewWeakSkus, setLoadingOverviewWeakSkus] = useState(false);
-  const [selectedTerms, setSelectedTerms] = useState<Set<string>>(new Set());
+  // Giữ cả dòng đã chọn để chọn được qua nhiều trang / bộ lọc rồi lên camp một lần
+  const [selectedTermRows, setSelectedTermRows] = useState<Map<string, PpcSearchTermRow>>(new Map());
+  const selectedTerms = useMemo(() => new Set(selectedTermRows.keys()), [selectedTermRows]);
+  const lastTermSelectIndexRef = useRef<number | null>(null);
+  const clearSelectedTerms = useCallback(() => {
+    setSelectedTermRows(new Map());
+    lastTermSelectIndexRef.current = null;
+  }, []);
 
   // SKU category & niche filter
   const [skuCategoryFilter, setSkuCategoryFilter] = useState<"ALL" | "HERO" | "BLEEDING" | "POTENTIAL" | "ZERO_CLICKS" | "ZERO_SPEND">("ALL");
@@ -914,7 +923,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
         setDailyTrends(data.dailyTrends || []);
         setLastSyncedAt(data.lastSyncedAt || null);
         setDetailCounts(data.detailCounts || null);
-        setSelectedTerms(new Set());
+        clearSelectedTerms();
         setTermPage(1);
         setCampaignPage(1);
         setAdGroupPage(1);
@@ -2548,24 +2557,43 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
   };
 
   // Checkbox Selection
-  const toggleTermSelect = (term: PpcSearchTermRow) => {
+  // Shift + click chọn / bỏ chọn cả đoạn từ dòng bấm trước đó
+  const toggleTermSelect = (term: PpcSearchTermRow, index: number, shiftKey = false) => {
+    const visible = serverSearchTerms || paginatedSearchTerms;
     const key = searchTermKey(term);
-    const next = new Set(selectedTerms);
-    if (next.has(key)) next.delete(key);
-    else next.add(key);
-    setSelectedTerms(next);
+    const shouldSelect = !selectedTermRows.has(key);
+    const last = lastTermSelectIndexRef.current;
+    const range = shiftKey && last !== null && last < visible.length
+      ? visible.slice(Math.min(last, index), Math.max(last, index) + 1)
+      : [term];
+    const next = new Map(selectedTermRows);
+    for (const row of range) {
+      if (shouldSelect) next.set(searchTermKey(row), row);
+      else next.delete(searchTermKey(row));
+    }
+    lastTermSelectIndexRef.current = index;
+    setSelectedTermRows(next);
   };
 
   const toggleSelectAllVisible = () => {
-    const visibleKeys = paginatedSearchTerms.map(searchTermKey);
-    if (visibleKeys.length > 0 && visibleKeys.every((key) => selectedTerms.has(key))) {
-      const next = new Set(selectedTerms);
-      visibleKeys.forEach((key) => next.delete(key));
-      setSelectedTerms(next);
+    const visible = serverSearchTerms || paginatedSearchTerms;
+    const next = new Map(selectedTermRows);
+    if (visible.length > 0 && visible.every((term) => next.has(searchTermKey(term)))) {
+      visible.forEach((term) => next.delete(searchTermKey(term)));
     } else {
-      setSelectedTerms(new Set([...selectedTerms, ...visibleKeys]));
+      visible.forEach((term) => next.set(searchTermKey(term), term));
     }
+    setSelectedTermRows(next);
   };
+
+  const launchKnownSkus = useMemo(() => {
+    const skus = new Set<string>();
+    for (const term of searchTerms) {
+      const sku = resolveSkuForSearchTerm(term);
+      if (sku && sku !== "UNKNOWN_SKU") skus.add(sku);
+    }
+    return Array.from(skus).sort();
+  }, [searchTerms]);
 
   const handleCopySelected = async () => {
     const list = selectedTerms.size > 0
@@ -4740,7 +4768,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   onChange={(e) => {
                     setSearchTermQuery(e.target.value);
                     setTermPage(1);
-                    setSelectedTerms(new Set());
                   }}
                   placeholder="Lọc từ khóa khách gõ, campaign..."
                   className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs outline-none focus:bg-white focus:border-indigo-600 transition"
@@ -4753,7 +4780,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                 onChange={(e) => {
                   setSearchTermCampaignFilter(e.target.value);
                   setTermPage(1);
-                  setSelectedTerms(new Set());
                 }}
                 className="py-1.5 px-2.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 outline-none cursor-pointer max-w-[220px] truncate"
                 title="Lọc theo Campaign (danh sách tự động rút ngắn theo từ khóa đang tìm)"
@@ -4772,7 +4798,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                 onChange={(e) => {
                   setMatchTypeFilter(e.target.value);
                   setTermPage(1);
-                  setSelectedTerms(new Set());
                 }}
                 className="py-1.5 px-2.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 outline-none cursor-pointer"
               >
@@ -4795,7 +4820,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   onChange={(e) => {
                     setTermMinClicks(e.target.value);
                     setTermPage(1);
-                    setSelectedTerms(new Set());
                   }}
                   className="w-12 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs text-center font-bold text-slate-800 outline-none focus:border-indigo-600"
                 />
@@ -4808,7 +4832,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   onChange={(e) => {
                     setTermMaxClicks(e.target.value);
                     setTermPage(1);
-                    setSelectedTerms(new Set());
                   }}
                   className="w-12 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs text-center font-bold text-slate-800 outline-none focus:border-indigo-600"
                 />
@@ -4825,7 +4848,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   onChange={(e) => {
                     setTermMinOrders(e.target.value);
                     setTermPage(1);
-                    setSelectedTerms(new Set());
                   }}
                   className="w-12 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs text-center font-bold text-slate-800 outline-none focus:border-indigo-600"
                 />
@@ -4838,7 +4860,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   onChange={(e) => {
                     setTermMaxOrders(e.target.value);
                     setTermPage(1);
-                    setSelectedTerms(new Set());
                   }}
                   className="w-12 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs text-center font-bold text-slate-800 outline-none focus:border-indigo-600"
                 />
@@ -4855,7 +4876,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   onChange={(e) => {
                     setTermMinAcos(e.target.value);
                     setTermPage(1);
-                    setSelectedTerms(new Set());
                   }}
                   className="w-12 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs text-center font-bold text-slate-800 outline-none focus:border-indigo-600"
                 />
@@ -4868,7 +4888,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   onChange={(e) => {
                     setTermMaxAcos(e.target.value);
                     setTermPage(1);
-                    setSelectedTerms(new Set());
                   }}
                   className="w-12 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs text-center font-bold text-slate-800 outline-none focus:border-indigo-600"
                 />
@@ -5105,7 +5124,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                           <input
                             type="checkbox"
                             checked={isSelected}
-                            onChange={() => toggleTermSelect(t)}
+                            onChange={(e) => toggleTermSelect(t, idx, (e.nativeEvent as MouseEvent).shiftKey)}
                             className="rounded border-slate-300 accent-indigo-600"
                           />
                         </td>
@@ -5496,6 +5515,20 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
           setSettingsSubTab("phoi");
         }}
       />
+
+      {activeTab === "search_terms" && selectedStore !== "ALL" && (
+        <PpcSearchTermLaunchPanel
+          selectedRows={Array.from(selectedTermRows.values())}
+          storeName={stores.find((s) => s.name.toLowerCase() === selectedStore.toLowerCase())?.name || selectedStore}
+          storeId={stores.find((s) => s.name.toLowerCase() === selectedStore.toLowerCase())?.id}
+          selectedSku={selectedSku}
+          knownSkus={launchKnownSkus}
+          actor={actor}
+          notify={notify}
+          onClear={clearSelectedTerms}
+          onLaunched={clearSelectedTerms}
+        />
+      )}
 
       {/* FLOATING ACTION QUEUE BUTTON (DRAGGABLE, GÓC DƯỚI) */}
       {selectedStore !== "ALL" && (
