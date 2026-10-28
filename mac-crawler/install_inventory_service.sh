@@ -37,16 +37,27 @@ cat <<EOF > "$TARGET_PLIST"
         <string>$SCRIPT_DIR/run_inventory_weekly.sh</string>
     </array>
 
-    <!-- Chạy tự động lúc 04:00 sáng Thứ Hai hàng tuần (Weekday 1: Thứ 2 trong launchd) -->
+    <!-- Chạy tự động lúc 04:00 sáng Thứ Hai hàng tuần (Weekday 1: Thứ 2 trong launchd)
+         và 04:00 sáng mùng 1 hằng tháng (chốt tồn kho ngày cuối tháng trước) -->
     <key>StartCalendarInterval</key>
-    <dict>
-        <key>Weekday</key>
-        <integer>1</integer>
-        <key>Hour</key>
-        <integer>4</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
+    <array>
+        <dict>
+            <key>Weekday</key>
+            <integer>1</integer>
+            <key>Hour</key>
+            <integer>4</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Day</key>
+            <integer>1</integer>
+            <key>Hour</key>
+            <integer>4</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+    </array>
 
     <key>ProcessType</key>
     <string>Background</string>

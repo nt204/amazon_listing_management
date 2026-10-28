@@ -216,6 +216,23 @@ export function getTargetSaturday(refDate = new Date()): { isoDate: string; usDa
   return { isoDate, usDate };
 }
 
+/**
+ * Lượt chạy mùng 1 hằng tháng: chốt tồn kho ngày cuối tháng trước (30/31),
+ * làm tồn đầu kỳ cho Base Cost tháng mới. Ví dụ mùng 1/11 -> 31/10.
+ */
+export function getPreviousMonthEnd(refDate = new Date()): { isoDate: string; usDate: string } {
+  const d = new Date(refDate.getFullYear(), refDate.getMonth(), 0);
+
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const year = d.getFullYear();
+  const month = pad(d.getMonth() + 1);
+  const date = pad(d.getDate());
+
+  const isoDate = `${year}-${month}-${date}`;
+  const usDate = `${month}/${date}/${year}`;
+  return { isoDate, usDate };
+}
+
 // AdsPower profile control
 export async function startAdsPowerProfile(profileId: string): Promise<string> {
   if (DEFAULT_CDP_PORT > 0) {
@@ -565,13 +582,15 @@ export async function runInventoryLedgerCrawler(): Promise<void> {
     if (requestedDate && /^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) {
       const [y, m, d] = requestedDate.split("-");
       targetSaturday = { isoDate: requestedDate, usDate: `${m}/${d}/${y}` };
+    } else if (new Date().getDate() === 1) {
+      targetSaturday = getPreviousMonthEnd(new Date());
     } else {
       targetSaturday = getTargetSaturday(new Date());
     }
 
     console.log(`\n======================================================================`);
-    console.log(`📦 BẮT ĐẦU CRAWL TỒN KHO HÀNG TUẦN (INVENTORY LEDGER REPORT)`);
-    console.log(`📅 Ngày chốt tồn kho (Thứ 7): ${targetSaturday.isoDate} (${targetSaturday.usDate})`);
+    console.log(`📦 BẮT ĐẦU CRAWL TỒN KHO (INVENTORY LEDGER REPORT)`);
+    console.log(`📅 Ngày chốt tồn kho: ${targetSaturday.isoDate} (${targetSaturday.usDate})`);
     console.log(`⏰ Thời gian chạy: ${new Date().toLocaleString("vi-VN")}`);
     console.log(`======================================================================\n`);
 

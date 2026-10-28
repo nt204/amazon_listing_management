@@ -23,15 +23,15 @@ export const ACCOUNTING_CRAWLERS: Record<
   inventory_ledger: {
     label: "Inventory Ledger FBA (Tồn kho)",
     description: "Báo cáo Inventory Ledger dạng Summary theo Country → cột Tồn (FBA) trong Bảng Mã.",
-    schedule: "04:00 thứ 2 hằng tuần",
-    dateHint: "Ngày chốt sổ (trống = thứ 7 tuần trước)",
+    schedule: "04:00 thứ 2 hằng tuần + mùng 1 hằng tháng",
+    dateHint: "Ngày chốt sổ (trống = thứ 7 tuần trước; mùng 1 = ngày cuối tháng trước)",
     freshnessLabel: "Snapshot mới nhất",
   },
   awd_ledger: {
     label: "AWD Inventory Ledger",
     description: "Báo cáo tồn kho kho AWD → cộng vào cột Tồn trong Bảng Mã.",
-    schedule: "04:00 thứ 4 hằng tuần",
-    dateHint: "Ngày chốt sổ (trống = mặc định của crawler)",
+    schedule: "04:00 thứ 4 hằng tuần + mùng 1 hằng tháng",
+    dateHint: "Ngày chốt sổ (trống = thứ 7 tuần trước; mùng 1 = ngày cuối tháng trước)",
     freshnessLabel: "Snapshot mới nhất",
   },
 };
