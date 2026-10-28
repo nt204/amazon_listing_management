@@ -38,7 +38,7 @@ export function getThisMonthDateRange(maxDateStr?: string): DateRange {
  * Falls back to "This Month" if no custom range has been saved yet for that account.
  */
 export function getSavedStoreDateRange(
-  viewKey: "sku_win" | "sku_test" | "fba_daily",
+  viewKey: "sku_win" | "sku_test" | "fba_daily" | "fbm_daily" | "fbm_sku",
   storeId: string,
   maxDateStr?: string
 ): DateRange {
@@ -78,7 +78,7 @@ export function getSavedStoreDateRange(
  * Saves the selected date range for a specific account (store).
  */
 export function saveStoreDateRange(
-  viewKey: "sku_win" | "sku_test" | "fba_daily",
+  viewKey: "sku_win" | "sku_test" | "fba_daily" | "fbm_daily" | "fbm_sku",
   storeId: string,
   range: DateRange
 ): void {

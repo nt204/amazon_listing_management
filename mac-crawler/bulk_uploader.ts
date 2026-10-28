@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { startAdsPowerProfile, stopAdsPowerProfile, type StoreTarget } from "./crawler";
+import { startAdsPowerProfile, stopAdsPowerProfile, ensureAmazonSession, type StoreTarget } from "./crawler";
 
 export interface RemoteBulkUploadJob {
   id: string;
@@ -258,6 +258,7 @@ function entityIdFromUrl(url: string) {
 async function resolveAmazonAdsEntityId(
   context: import("playwright-core").BrowserContext,
   page: import("playwright-core").Page,
+  storeName?: string,
 ) {
   for (const candidate of context.pages()) {
     const entityId = entityIdFromUrl(candidate.url());
@@ -269,6 +270,9 @@ async function resolveAmazonAdsEntityId(
     timeout: 30_000,
   });
   await page.waitForTimeout(2_000);
+  if (storeName) {
+    await ensureAmazonSession(page, storeName);
+  }
   return entityIdFromUrl(page.url());
 }
 
@@ -295,7 +299,7 @@ async function uploadThroughAdsPower(filePath: string, store: StoreTarget, fileN
   if (!context) throw new Error("Không tìm thấy browser context của AdsPower.");
   const page = await context.newPage();
   try {
-    const entityId = await resolveAmazonAdsEntityId(context, page);
+    const entityId = await resolveAmazonAdsEntityId(context, page, store.store_name);
     if (!entityId) {
       throw new Error(`Không xác định được entityId Amazon Ads của profile ${store.store_name}.`);
     }
@@ -304,6 +308,13 @@ async function uploadThroughAdsPower(filePath: string, store: StoreTarget, fileN
       `https://advertising.amazon.com/bulk-operations?entityId=${encodeURIComponent(entityId)}`,
       { waitUntil: "domcontentloaded" },
     );
+    await ensureAmazonSession(page, store.store_name);
+    if (!page.url().includes("bulk-operations")) {
+      await page.goto(
+        `https://advertising.amazon.com/bulk-operations?entityId=${encodeURIComponent(entityId)}`,
+        { waitUntil: "domcontentloaded" },
+      );
+    }
     const currentUrl = page.url();
     if (!currentUrl.includes("advertising.amazon.com") || /signin|login/i.test(currentUrl)) {
       throw new Error(`Profile ${store.store_name} chưa đăng nhập Amazon Ads (${currentUrl}).`);

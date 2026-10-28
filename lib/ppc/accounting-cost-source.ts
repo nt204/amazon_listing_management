@@ -83,16 +83,15 @@ export async function loadAccountingSkuCosts(accountingStoreId: string): Promise
 
 /**
  * Giá bán khi chưa có giá thực tế từ Ads:
- * Cost Master → giá đơn hàng Accounting (30 ngày) → giá đã lưu trước đó. Không có nguồn nào → 0 (DEFAULT = thiếu).
+ * Cost Master → giá đơn hàng Accounting (30 ngày). Không có nguồn nào → 0 (DEFAULT = thiếu), không lấy giá đã lưu
+ * hay giá mặc định, để SKU bị đánh dấu thiếu dữ liệu (Max Bid 0) thay vì bid theo giá đoán.
  */
 export function resolveFallbackPrice(
   declared: ProductCostMaster | null,
   acc: AccountingSkuCost | undefined,
-  previous: number | null,
 ): { price: number; source: CostFieldSource } {
   if (positive(declared?.defaultPrice)) return { price: declared!.defaultPrice, source: "COST_MASTER" };
   if (acc?.avgPrice) return { price: acc.avgPrice, source: "ACCOUNTING_ORDERS" };
-  if (positive(previous)) return { price: previous!, source: "PREVIOUS" };
   return { price: 0, source: "DEFAULT" };
 }
 

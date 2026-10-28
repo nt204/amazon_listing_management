@@ -1,6 +1,7 @@
 // app/api/ppc/targets/search-terms/route.ts
 import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
+import { attachSearchVolumes } from "@/lib/ppc/search-volume";
 import type { PpcSearchTermRow } from "@/lib/ppc/types";
 import { getCachedOrFetch } from "@/lib/redis";
 
@@ -97,7 +98,7 @@ export async function GET(request: Request) {
       LIMIT ${limit}
     `;
 
-    return rows.map((r): PpcSearchTermRow => {
+    const terms = rows.map((r): PpcSearchTermRow => {
       const spend = Number(r.spend || 0);
       const sales = Number(r.sales || 0);
       const orders = Number(r.orders || 0);
@@ -133,6 +134,13 @@ export async function GET(request: Request) {
         ctr: impressions > 0 ? Math.round((clicks / impressions) * 10_000) / 100 : 0,
         cvr: clicks > 0 ? Math.round((orders / clicks) * 10_000) / 100 : 0,
       };
+    });
+
+    // Dòng ở đây là theo ngày lẻ nên chỉ gắn volume, không tính impression share
+    return attachSearchVolumes(sql, terms, {
+      keywordOf: (term) => term.customerSearchTerm,
+      coverageDaysOf: () => 1,
+      shareApplies: () => false,
     });
   },
 );

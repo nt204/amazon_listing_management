@@ -276,10 +276,11 @@ export function PpcSkuRecommendationGroupView({
       void handleOpenSkuGroup(found);
       onClearTargetSkuToOpen?.();
     } else if (!isLoading && groups.length > 0) {
+      // SKU không có trong danh sách đề xuất → Lỗi Prefix, không gán số của phôi mặc định
       const fallbackGroup: SkuRecommendationGroup = {
         sku: targetSkuToOpen,
         asin: "",
-        productType: "Ornament",
+        productType: SKU_PREFIX_ERROR_PRODUCT_TYPE,
         mockupUrl: null,
         picMkt: null,
         niche: null,
@@ -300,17 +301,17 @@ export function PpcSkuRecommendationGroupView({
           id: targetSkuToOpen,
           storeId: selectedStore || "",
           sku: targetSkuToOpen,
-          productType: "Ornament",
+          productType: SKU_PREFIX_ERROR_PRODUCT_TYPE,
           asin: "",
-          sellingPrice: 15.99,
-          baseCost: 2.0,
-          amazonFee: 6.32,
+          sellingPrice: 0,
+          baseCost: 0,
+          amazonFee: 0,
           taxRate: 0.03,
-          profitBeforeAds: 7.19,
-          breakEvenAcos: 45,
+          profitBeforeAds: 0,
+          breakEvenAcos: 0,
           cr: 0.1,
           crSource: "ASSUMED",
-          maxBid: 0.72,
+          maxBid: 0,
           costSource: "INHERITED",
         },
       };

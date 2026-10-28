@@ -1,5 +1,6 @@
 import { authorize, readJsonBody, routeErrorResponse } from "@/lib/api-guard";
 import { listSkuWin, updateSkuWinCustomFields } from "@/lib/accounting/sku-win-db";
+import { listFbmSkuFixed, updateFbmSkuCustomFields } from "@/lib/accounting/fbm-financials-db";
 
 export async function GET(request: Request) {
   try {
@@ -23,7 +24,9 @@ export async function GET(request: Request) {
     const page = parseInt(searchParams.get("page") || "1", 10);
     const limit = parseInt(searchParams.get("limit") || "50", 10);
 
-    const result = await listSkuWin(storeId, {
+    // channel=fbm: tab FBM cố định (sheet "LỌC SKU CỐ ĐỊNH" của file FBM, mọi SKU trong BẢNG MÃ FBM)
+    const list = searchParams.get("channel") === "fbm" ? listFbmSkuFixed : listSkuWin;
+    const result = await list(storeId, {
       startDate,
       endDate,
       compareStartDate,
@@ -50,6 +53,7 @@ export async function PATCH(request: Request) {
     const body = await readJsonBody(request, 10_000) as {
       store_id?: string;
       id?: string;
+      channel?: string;
       price?: number | null;
       targets?: {
         revenue?: number | null;
@@ -63,7 +67,8 @@ export async function PATCH(request: Request) {
       return Response.json({ error: "store_id and id are required" }, { status: 400 });
     }
 
-    const customFields = await updateSkuWinCustomFields(body.store_id, body.id, {
+    const update = body.channel === "fbm" ? updateFbmSkuCustomFields : updateSkuWinCustomFields;
+    const customFields = await update(body.store_id, body.id, {
       price: body.price,
       targets: body.targets,
     });

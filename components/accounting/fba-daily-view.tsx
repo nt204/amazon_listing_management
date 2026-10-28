@@ -17,10 +17,13 @@ import {
   StorefrontIcon,
 } from "@phosphor-icons/react";
 import type { FbaDailyItem, FbaDailyStats } from "@/lib/accounting/fba-daily-db";
+import type { FbmDailyItem, FbmDailyStats } from "@/lib/accounting/fbm-financials-db";
+import { storeHasTeam } from "@/lib/accounting/store-teams";
 import type { Store } from "@/lib/accounting/types";
 import {
   type ColumnConfig,
   DEFAULT_FBA_DAILY_COLUMNS,
+  DEFAULT_FBM_DAILY_COLUMNS,
   ColumnHeaderCell,
   ColumnManagerModal,
   createTextWidthMeasurer,
@@ -53,7 +56,17 @@ function formatPercent(val: number | null | undefined): string {
   return `${(val * 100).toFixed(1)}%`;
 }
 
-export function FbaDailyView() {
+type DailyItem = FbaDailyItem & Partial<Pick<FbmDailyItem, "organic_sales" | "aov" | "basecost_per_item" | "ads_per_item">>;
+type DailyStats = FbaDailyStats & Partial<Pick<FbmDailyStats, "totalQuantityAds" | "avgMarginPreAds">>;
+
+/** channel="fbm": tab FBM theo ngày (sheet "FBM"), chỉ hiện các store có team FBM. */
+export function FbaDailyView({ channel = "fba" }: { channel?: "fba" | "fbm" } = {}) {
+  const fbm = channel === "fbm";
+  const channelLabel = fbm ? "FBM" : "FBA";
+  const rangeKey = fbm ? "fbm_daily" : "fba_daily";
+  const columnsStorageKey = fbm ? "acc_fbm_daily_columns_global" : FBA_DAILY_COLUMNS_STORAGE_KEY;
+  const frozenStorageKey = fbm ? "acc_fbm_daily_frozen_global" : FBA_DAILY_FROZEN_STORAGE_KEY;
+  const defaultColumns = fbm ? DEFAULT_FBM_DAILY_COLUMNS : DEFAULT_FBA_DAILY_COLUMNS;
   const financialMaxDate = useMemo(() => getAmazonLatestAvailableDate(), []);
   const [stores, setStores] = useState<Store[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<string>(() => {
@@ -67,7 +80,7 @@ export function FbaDailyView() {
   // Date Range state: defaults to 'This Month' or per-account saved range
   const [dateRange, setDateRange] = useState<DateRange>(() => {
     const initStoreId = typeof window !== "undefined" ? localStorage.getItem("acc_selected_store_id") || "" : "";
-    return getSavedStoreDateRange("fba_daily", initStoreId, financialMaxDate);
+    return getSavedStoreDateRange(rangeKey, initStoreId, financialMaxDate);
   });
 
   const [search, setSearch] = useState("");
@@ -76,10 +89,12 @@ export function FbaDailyView() {
   const [sortField, setSortField] = useState<string>("date");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
-  const [items, setItems] = useState<FbaDailyItem[]>([]);
+  const [items, setItems] = useState<DailyItem[]>([]);
   const [total, setTotal] = useState(0);
-  const [stats, setStats] = useState<FbaDailyStats | null>(null);
+  const [stats, setStats] = useState<DailyStats | null>(null);
   const [loading, setLoading] = useState(false);
+  // FBM: SKU có đơn nhưng thiếu trong Bảng mã FBM
+  const [missingSkus, setMissingSkus] = useState<string[]>([]);
 
   // Table zoom
   const [zoomLevel, setZoomLevel] = useState<number>(() => {
@@ -101,12 +116,12 @@ export function FbaDailyView() {
   // Columns & Freezing
   const [columns, setColumns] = useState<ColumnConfig[]>(() => {
     if (typeof window !== "undefined") {
-      const saved = localStorage.getItem(FBA_DAILY_COLUMNS_STORAGE_KEY);
+      const saved = localStorage.getItem(columnsStorageKey);
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            const defaultMap = new Map(DEFAULT_FBA_DAILY_COLUMNS.map((c) => [c.id, c]));
+            const defaultMap = new Map(defaultColumns.map((c) => [c.id, c]));
             const restored = parsed.map((col: ColumnConfig) => {
               const def = defaultMap.get(col.id);
               return {
@@ -120,7 +135,7 @@ export function FbaDailyView() {
             const restoredIds = new Set(restored.map((col: ColumnConfig) => col.id));
             return [
               ...restored,
-              ...DEFAULT_FBA_DAILY_COLUMNS.filter((col) => !restoredIds.has(col.id)),
+              ...defaultColumns.filter((col) => !restoredIds.has(col.id)),
             ];
           }
         } catch {
@@ -128,12 +143,12 @@ export function FbaDailyView() {
         }
       }
     }
-    return DEFAULT_FBA_DAILY_COLUMNS;
+    return defaultColumns;
   });
 
   const [frozenColumns, setFrozenColumns] = useState<string[]>(() => {
     if (typeof window !== "undefined") {
-      const saved = localStorage.getItem(FBA_DAILY_FROZEN_STORAGE_KEY);
+      const saved = localStorage.getItem(frozenStorageKey);
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
@@ -165,11 +180,11 @@ export function FbaDailyView() {
     setColumns((prev) => {
       const updated = prev.map((c) => (c.id === colId ? { ...c, width: Math.max(50, width) } : c));
       if (typeof window !== "undefined") {
-        localStorage.setItem(FBA_DAILY_COLUMNS_STORAGE_KEY, JSON.stringify(updated));
+        localStorage.setItem(columnsStorageKey, JSON.stringify(updated));
       }
       return updated;
     });
-  }, []);
+  }, [columnsStorageKey]);
 
   const handleAutoFitColumn = useCallback(
     (colId: string) => {
@@ -215,23 +230,23 @@ export function FbaDailyView() {
     newCols.splice(toIndex, 0, moved);
     setColumns(newCols);
     if (typeof window !== "undefined") {
-      localStorage.setItem(FBA_DAILY_COLUMNS_STORAGE_KEY, JSON.stringify(newCols));
+      localStorage.setItem(columnsStorageKey, JSON.stringify(newCols));
     }
   };
 
   const handleSaveColumns = (newCols: ColumnConfig[]) => {
     setColumns(newCols);
     if (typeof window !== "undefined") {
-      localStorage.setItem(FBA_DAILY_COLUMNS_STORAGE_KEY, JSON.stringify(newCols));
+      localStorage.setItem(columnsStorageKey, JSON.stringify(newCols));
     }
   };
 
   const handleResetColumns = () => {
     if (typeof window !== "undefined") {
-      localStorage.removeItem(FBA_DAILY_COLUMNS_STORAGE_KEY);
-      localStorage.removeItem(FBA_DAILY_FROZEN_STORAGE_KEY);
+      localStorage.removeItem(columnsStorageKey);
+      localStorage.removeItem(frozenStorageKey);
     }
-    setColumns(DEFAULT_FBA_DAILY_COLUMNS);
+    setColumns(defaultColumns);
     setFrozenColumns(["stt", "week", "date"]);
   };
 
@@ -243,19 +258,19 @@ export function FbaDailyView() {
       const nextFrozenColumns = visibleColumns.slice(0, targetIndex + 1).map((col) => col.id);
       setFrozenColumns(nextFrozenColumns);
       if (typeof window !== "undefined") {
-        localStorage.setItem(FBA_DAILY_FROZEN_STORAGE_KEY, JSON.stringify(nextFrozenColumns));
+        localStorage.setItem(frozenStorageKey, JSON.stringify(nextFrozenColumns));
       }
     },
-    [visibleColumns]
+    [visibleColumns, frozenStorageKey]
   );
 
   const handleResetFrozenColumns = useCallback(() => {
     const defaultFrozenColumns = ["stt", "week", "date"];
     setFrozenColumns(defaultFrozenColumns);
     if (typeof window !== "undefined") {
-      localStorage.setItem(FBA_DAILY_FROZEN_STORAGE_KEY, JSON.stringify(defaultFrozenColumns));
+      localStorage.setItem(frozenStorageKey, JSON.stringify(defaultFrozenColumns));
     }
-  }, []);
+  }, [frozenStorageKey]);
 
   const handleQuickHideColumn = useCallback(
     (colId: string) => {
@@ -264,12 +279,12 @@ export function FbaDailyView() {
         if (!current.includes(colId)) return current;
         const next = current.filter((id) => id !== colId);
         if (typeof window !== "undefined") {
-          localStorage.setItem(FBA_DAILY_FROZEN_STORAGE_KEY, JSON.stringify(next));
+          localStorage.setItem(frozenStorageKey, JSON.stringify(next));
         }
         return next;
       });
     },
-    [columns]
+    [columns, frozenStorageKey]
   );
 
   useEffect(() => {
@@ -344,7 +359,8 @@ export function FbaDailyView() {
         if (res.ok) {
           const data = await res.json();
           if (ignore) return;
-          const storeList: Store[] = data.stores || [];
+          const allStores: Store[] = data.stores || [];
+          const storeList = fbm ? allStores.filter((s) => storeHasTeam(s.team, "FBM")) : allStores;
           setStores(storeList);
           
           if (storeList.length > 0) {
@@ -356,8 +372,12 @@ export function FbaDailyView() {
             setSelectedStoreId(targetStore.id);
             if (typeof window !== "undefined") {
               localStorage.setItem("acc_selected_store_id", targetStore.id);
+              // Báo cho thanh tab Financials biết store thực tế (để ẩn/hiện tab FBM)
+              if (targetStore.id !== savedId) {
+                window.dispatchEvent(new CustomEvent("acc_store_changed", { detail: targetStore.id }));
+              }
             }
-            setDateRange(getSavedStoreDateRange("fba_daily", targetStore.id, financialMaxDate));
+            setDateRange(getSavedStoreDateRange(rangeKey, targetStore.id, financialMaxDate));
           }
         }
       } catch (err) {
@@ -370,7 +390,7 @@ export function FbaDailyView() {
     return () => {
       ignore = true;
     };
-  }, []);
+  }, [fbm, rangeKey]);
 
   const handleStoreSelect = (newStoreId: string) => {
     if (!newStoreId) return;
@@ -379,7 +399,7 @@ export function FbaDailyView() {
       localStorage.setItem("acc_selected_store_id", newStoreId);
       window.dispatchEvent(new CustomEvent("acc_store_changed", { detail: newStoreId }));
     }
-    setDateRange(getSavedStoreDateRange("fba_daily", newStoreId, financialMaxDate));
+    setDateRange(getSavedStoreDateRange(rangeKey, newStoreId, financialMaxDate));
   };
 
   // Sync store change from other tabs
@@ -388,7 +408,7 @@ export function FbaDailyView() {
       const newStoreId = e.detail || (typeof window !== "undefined" ? localStorage.getItem("acc_selected_store_id") : null);
       if (newStoreId && newStoreId !== selectedStoreId && stores.some((s) => s.id === newStoreId)) {
         setSelectedStoreId(newStoreId);
-        setDateRange(getSavedStoreDateRange("fba_daily", newStoreId, financialMaxDate));
+        setDateRange(getSavedStoreDateRange(rangeKey, newStoreId, financialMaxDate));
       }
     };
     window.addEventListener("acc_store_changed", handleSyncStore);
@@ -397,7 +417,7 @@ export function FbaDailyView() {
       window.removeEventListener("acc_store_changed", handleSyncStore);
       window.removeEventListener("storage", handleSyncStore);
     };
-  }, [selectedStoreId, stores]);
+  }, [selectedStoreId, stores, rangeKey]);
 
   // Fetch FBA daily data
   const fetchData = useCallback(async () => {
@@ -413,19 +433,21 @@ export function FbaDailyView() {
       params.set("sort_dir", sortDirection);
       params.set("limit", "1000");
 
+      if (fbm) params.set("channel", "fbm");
       const res = await fetch(`/api/accounting/financials/fba-daily?${params.toString()}`);
       if (res.ok) {
         const data = await res.json();
         setItems(data.items || []);
         setTotal(data.total || 0);
         setStats(data.stats || null);
+        setMissingSkus(data.missingSkus || []);
       }
     } catch {
       // error
     } finally {
       setLoading(false);
     }
-  }, [selectedStoreId, dateRange, debouncedSearch, sortField, sortDirection]);
+  }, [fbm, selectedStoreId, dateRange, debouncedSearch, sortField, sortDirection]);
 
   useEffect(() => {
     fetchData();
@@ -448,6 +470,7 @@ export function FbaDailyView() {
     if (debouncedSearch) params.set("search", debouncedSearch);
     params.set("sort_field", sortField);
     params.set("sort_dir", sortDirection);
+    if (fbm) params.set("channel", "fbm");
     return `/api/accounting/financials/fba-daily/export?${params.toString()}`;
   };
 
@@ -460,7 +483,7 @@ export function FbaDailyView() {
           <div className="relative flex items-center bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs shadow-2xs hover:border-slate-400 transition-colors">
             <StorefrontIcon size={15} weight="bold" className="text-amber-600 mr-1.5 shrink-0" />
             <select
-              id="fba-store-select"
+              id={`${channel}-store-select`}
               value={selectedStoreId}
               onChange={(e) => handleStoreSelect(e.target.value)}
               disabled={loadingStores || stores.length === 0}
@@ -492,7 +515,7 @@ export function FbaDailyView() {
             onChange={(next) => {
               setDateRange(next);
               if (selectedStoreId) {
-                saveStoreDateRange("fba_daily", selectedStoreId, next);
+                saveStoreDateRange(rangeKey, selectedStoreId, next);
               }
             }}
             maxDate={financialMaxDate}
@@ -576,6 +599,17 @@ export function FbaDailyView() {
           </a>
         </div>
       </div>
+
+      {fbm && missingSkus.length > 0 && (
+        <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs text-amber-900 shrink-0">
+          <span className="font-bold">
+            {missingSkus.length >= 200 ? "200+" : missingSkus.length} SKU có đơn FBM nhưng chưa có trong Bảng mã FBM
+          </span>{" "}
+          — thiếu % Referal / Total nên AMZ Fee (và Basecost khi đơn chưa có PW) của các SKU này đang tính = 0. Bổ sung ở
+          Inventory → Bảng mã FBM:{" "}
+          <span className="font-mono">{missingSkus.slice(0, 12).join(", ")}{missingSkus.length > 12 ? ", …" : ""}</span>
+        </div>
+      )}
 
       {/* TABLE CONTAINER */}
       <div className="flex-1 overflow-auto bg-white relative">
@@ -798,9 +832,10 @@ export function FbaDailyView() {
                         {col.id === "margin_pre_ads" && (
                           <span className="font-semibold text-slate-800 tabular-nums">
                             {formatPercent(
-                              stats.totalRevenue > 0
-                                ? (stats.totalRevenue - stats.totalBasecost - stats.totalAmazonFee) / stats.totalRevenue
-                                : 0
+                              stats.avgMarginPreAds ??
+                                (stats.totalRevenue > 0
+                                  ? (stats.totalRevenue - stats.totalBasecost - stats.totalAmazonFee) / stats.totalRevenue
+                                  : 0)
                             )}
                           </span>
                         )}
@@ -833,6 +868,26 @@ export function FbaDailyView() {
                             {formatInteger(stats.totalClicks)}
                           </span>
                         )}
+                        {col.id === "organic_sales" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatInteger(stats.totalQuantity - (stats.totalQuantityAds ?? 0))}
+                          </span>
+                        )}
+                        {col.id === "aov" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(stats.totalQuantity > 0 ? stats.totalRevenue / stats.totalQuantity : 0)}
+                          </span>
+                        )}
+                        {col.id === "basecost_per_item" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(stats.totalQuantity > 0 ? stats.totalBasecost / stats.totalQuantity : 0)}
+                          </span>
+                        )}
+                        {col.id === "ads_per_item" && (
+                          <span className="font-bold text-slate-950 tabular-nums">
+                            {formatCurrency(stats.totalQuantity > 0 ? stats.totalAdsFee / stats.totalQuantity : 0)}
+                          </span>
+                        )}
                       </td>
                     );
                   })}
@@ -847,14 +902,14 @@ export function FbaDailyView() {
                   <td colSpan={visibleColumns.length} className="text-center py-12">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <div className="h-6 w-6 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" />
-                      <span className="text-slate-500 font-medium">Đang tính toán dữ liệu FBA theo ngày…</span>
+                      <span className="text-slate-500 font-medium">Đang tính toán dữ liệu {channelLabel} theo ngày…</span>
                     </div>
                   </td>
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
                   <td colSpan={visibleColumns.length} className="text-center py-12 text-slate-400">
-                    Không tìm thấy dữ liệu FBA cho khoảng thời gian đã chọn.
+                    Không tìm thấy dữ liệu {channelLabel} cho khoảng thời gian đã chọn.
                   </td>
                 </tr>
               ) : (
@@ -1082,6 +1137,18 @@ export function FbaDailyView() {
                                 {formatInteger(item.clicks)}
                               </span>
                             )}
+
+                            {/* FBM: Organic sale, AOV, Basecost/item, Ads/Item */}
+                            {col.id === "organic_sales" && (
+                              <span className="tabular-nums text-slate-700">
+                                {item.organic_sales == null ? "—" : formatInteger(item.organic_sales)}
+                              </span>
+                            )}
+                            {(col.id === "aov" || col.id === "basecost_per_item" || col.id === "ads_per_item") && (
+                              <span className="tabular-nums text-slate-700">
+                                {formatCurrency(item[col.id])}
+                              </span>
+                            )}
                           </td>
                         );
                       })}
@@ -1202,7 +1269,7 @@ export function FbaDailyView() {
       <ColumnManagerModal
         isOpen={showColumnModal}
         onClose={() => setShowColumnModal(false)}
-        title="FBA - DOANH THU THEO NGÀY"
+        title={`${channelLabel} - DOANH THU THEO NGÀY`}
         columns={columns}
         onSave={handleSaveColumns}
         onReset={handleResetColumns}

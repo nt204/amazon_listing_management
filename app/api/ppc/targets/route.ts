@@ -2,6 +2,7 @@
 import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import { roundedPerformanceMetrics } from "@/lib/ppc/analytics";
+import { attachSearchVolumes } from "@/lib/ppc/search-volume";
 import { getCachedOrFetch } from "@/lib/redis";
 import type { MatchType, PpcAdType, PpcTargetPerformance } from "@/lib/ppc/types";
 
@@ -373,7 +374,7 @@ export async function GET(request: Request) {
       LIMIT ${pageSize} OFFSET ${offset}
     `;
 
-    const items: PpcTargetPerformance[] = rows.map((row) => {
+    const baseItems: PpcTargetPerformance[] = rows.map((row) => {
       let matchType = row.match_type as MatchType;
       const campName = (row.campaign_name || "").toLowerCase();
       const targetExpr = (row.target_expression || "").toLowerCase().trim();
@@ -418,6 +419,12 @@ export async function GET(request: Request) {
         statusBadge: metrics.acos <= 30 ? "EXCELLENT" : metrics.acos <= 45 ? "GOOD" : "WARNING",
         ...metrics,
       };
+    });
+
+    const items: PpcTargetPerformance[] = await attachSearchVolumes(sql, baseItems, {
+      keywordOf: (item) => item.targetKeyword,
+      coverageDaysOf: () => days,
+      shareApplies: (item) => item.matchType === "Exact",
     });
 
       return {

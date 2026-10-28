@@ -5,8 +5,11 @@ import dynamic from "next/dynamic";
 import {
   CalendarBlankIcon,
   FlaskIcon,
+  ListChecksIcon,
   PackageIcon,
+  TruckIcon,
 } from "@phosphor-icons/react";
+import { storeHasTeam } from "@/lib/accounting/store-teams";
 
 function TabLoading() {
   return (
@@ -34,23 +37,52 @@ const FbaDailyView = dynamic(
   { loading: TabLoading }
 );
 
-export type FinancialsSubTab = "sku_win" | "sku_test" | "fba";
+export type FinancialsSubTab = "sku_win" | "sku_test" | "fba" | "fbm" | "fbm_fixed";
+
+const SUB_TABS: FinancialsSubTab[] = ["sku_win", "sku_test", "fba", "fbm", "fbm_fixed"];
+const FBM_TABS: FinancialsSubTab[] = ["fbm", "fbm_fixed"];
+
+function isSubTab(value: string | null): value is FinancialsSubTab {
+  return SUB_TABS.includes(value as FinancialsSubTab);
+}
 
 export function FinancialsWorkspace() {
   const [activeTab, setActiveTab] = useState<FinancialsSubTab>(() => {
     if (typeof window !== "undefined") {
-      const p = new URLSearchParams(window.location.search);
-      const urlSubTab = p.get("subtab");
-      if (urlSubTab === "sku_win" || urlSubTab === "sku_test" || urlSubTab === "fba") {
-        return urlSubTab;
-      }
-      const saved = window.sessionStorage.getItem("accounting_financials_sub_tab") as FinancialsSubTab;
-      if (saved === "sku_win" || saved === "sku_test" || saved === "fba") {
-        return saved;
-      }
+      const urlSubTab = new URLSearchParams(window.location.search).get("subtab");
+      if (isSubTab(urlSubTab)) return urlSubTab;
+      const saved = window.sessionStorage.getItem("accounting_financials_sub_tab");
+      if (isSubTab(saved)) return saved;
     }
     return "fba";
   });
+
+  // Tab FBM / FBM cố định chỉ dành cho store có team FBM: theo dõi store đang chọn (dùng chung giữa các tab)
+  const [storeTeams, setStoreTeams] = useState<Map<string, string> | null>(null);
+  const [selectedStoreId, setSelectedStoreId] = useState("");
+  useEffect(() => {
+    let ignore = false;
+    fetch("/api/accounting/stores")
+      .then((res) => (res.ok ? res.json() : { stores: [] }))
+      .then((data: { stores?: { id: string; team?: string }[] }) => {
+        if (!ignore) setStoreTeams(new Map((data.stores || []).map((s) => [s.id, s.team || ""])));
+      })
+      .catch(() => {
+        if (!ignore) setStoreTeams(new Map());
+      });
+    const syncStore = () => setSelectedStoreId(window.localStorage.getItem("acc_selected_store_id") || "");
+    syncStore();
+    window.addEventListener("acc_store_changed", syncStore);
+    window.addEventListener("storage", syncStore);
+    return () => {
+      ignore = true;
+      window.removeEventListener("acc_store_changed", syncStore);
+      window.removeEventListener("storage", syncStore);
+    };
+  }, []);
+  const showFbmTabs = storeTeams != null && storeHasTeam(storeTeams.get(selectedStoreId), "FBM");
+  // Store không có FBM (hoặc đổi sang store khác) thì quay về tab FBA
+  const visibleTab: FinancialsSubTab = storeTeams != null && !showFbmTabs && FBM_TABS.includes(activeTab) ? "fba" : activeTab;
 
   const handleTabChange = useCallback((tab: FinancialsSubTab) => {
     setActiveTab(tab);
@@ -69,7 +101,7 @@ export function FinancialsWorkspace() {
             type="button"
             onClick={() => handleTabChange("fba")}
             className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide border transition-all cursor-pointer select-none whitespace-nowrap ${
-              activeTab === "fba"
+              visibleTab === "fba"
                 ? "bg-amber-600 text-white shadow-2xs border-amber-700"
                 : "border-transparent text-slate-700 hover:bg-slate-300/70 hover:text-slate-900"
             }`}
@@ -78,19 +110,58 @@ export function FinancialsWorkspace() {
             <span>FBA</span>
             <span
               className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
-                activeTab === "fba" ? "bg-amber-700 text-white" : "bg-slate-300/80 text-slate-700"
+                visibleTab === "fba" ? "bg-amber-700 text-white" : "bg-slate-300/80 text-slate-700"
               }`}
             >
               Theo Ngày
             </span>
           </button>
 
+          {showFbmTabs && (
+            <>
+              {/* FBM (Theo Ngày) — sheet "FBM" */}
+              <button
+                type="button"
+                onClick={() => handleTabChange("fbm")}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide border transition-all cursor-pointer select-none whitespace-nowrap ${
+                  visibleTab === "fbm"
+                    ? "bg-amber-600 text-white shadow-2xs border-amber-700"
+                    : "border-transparent text-slate-700 hover:bg-slate-300/70 hover:text-slate-900"
+                }`}
+              >
+                <TruckIcon size={14} weight="bold" />
+                <span>FBM</span>
+                <span
+                  className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+                    visibleTab === "fbm" ? "bg-amber-700 text-white" : "bg-slate-300/80 text-slate-700"
+                  }`}
+                >
+                  Theo Ngày
+                </span>
+              </button>
+
+              {/* FBM cố định — sheet "LỌC SKU CỐ ĐỊNH": mọi SKU trong Bảng mã FBM */}
+              <button
+                type="button"
+                onClick={() => handleTabChange("fbm_fixed")}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide border transition-all cursor-pointer select-none whitespace-nowrap ${
+                  visibleTab === "fbm_fixed"
+                    ? "bg-amber-600 text-white shadow-2xs border-amber-700"
+                    : "border-transparent text-slate-700 hover:bg-slate-300/70 hover:text-slate-900"
+                }`}
+              >
+                <ListChecksIcon size={14} weight="bold" />
+                <span>FBM Cố định</span>
+              </button>
+            </>
+          )}
+
           {/* Tab 2: LỌC SKU WIN */}
           <button
             type="button"
             onClick={() => handleTabChange("sku_win")}
             className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide border transition-all cursor-pointer select-none whitespace-nowrap ${
-              activeTab === "sku_win"
+              visibleTab === "sku_win"
                 ? "bg-amber-600 text-white shadow-2xs border-amber-700"
                 : "border-transparent text-slate-700 hover:bg-slate-300/70 hover:text-slate-900"
             }`}
@@ -104,7 +175,7 @@ export function FinancialsWorkspace() {
             type="button"
             onClick={() => handleTabChange("sku_test")}
             className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide border transition-all cursor-pointer select-none whitespace-nowrap ${
-              activeTab === "sku_test"
+              visibleTab === "sku_test"
                 ? "bg-amber-600 text-white shadow-2xs border-amber-700"
                 : "border-transparent text-slate-700 hover:bg-slate-300/70 hover:text-slate-900"
             }`}
@@ -117,9 +188,11 @@ export function FinancialsWorkspace() {
 
       {/* CONTENT PANELS: Mount ONLY active tab to isolate performance and eliminate background lag */}
       <div className="flex-1 overflow-hidden relative">
-        {activeTab === "fba" && <FbaDailyView />}
-        {activeTab === "sku_win" && <SkuWinView />}
-        {activeTab === "sku_test" && <SkuTestView />}
+        {visibleTab === "fba" && <FbaDailyView key="fba" />}
+        {visibleTab === "sku_win" && <SkuWinView key="sku_win" />}
+        {visibleTab === "sku_test" && <SkuTestView />}
+        {visibleTab === "fbm" && <FbaDailyView key="fbm" channel="fbm" />}
+        {visibleTab === "fbm_fixed" && <SkuWinView key="fbm_fixed" variant="fbm_fixed" />}
       </div>
     </div>
   );

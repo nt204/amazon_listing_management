@@ -361,6 +361,32 @@ export const DEFAULT_FBA_DAILY_COLUMNS: ColumnConfig[] = [
   { id: "clicks", label: "Click", defaultLabel: "Click", visible: false, align: "right", width: 90 },
 ];
 
+/** Tab FBM theo ngày: đúng thứ tự cột sheet "FBM" (không có Net Profit vì sheet để trống). */
+export const DEFAULT_FBM_DAILY_COLUMNS: ColumnConfig[] = [
+  ...DEFAULT_FBA_DAILY_COLUMNS.filter((col) => col.id !== "net_profit").map((col) => ({
+    ...col,
+    visible: col.id === "margin_pre_ads" || col.id === "revenue_ads" || col.id === "quantity_ads" || col.id === "clicks" ? true : col.visible,
+  })),
+  { id: "organic_sales", label: "Organic sale", defaultLabel: "Organic sale", visible: true, align: "right", width: 110 },
+  { id: "aov", label: "AOV (Rev/Qt)", defaultLabel: "AOV (Rev/Qt)", visible: true, align: "right", width: 115 },
+  { id: "basecost_per_item", label: "Basecost/item", defaultLabel: "Basecost/item", visible: true, align: "right", width: 120 },
+  { id: "ads_per_item", label: "Ads/Item", defaultLabel: "Ads/Item", visible: true, align: "right", width: 100 },
+];
+
+/** Tab FBM cố định: đúng thứ tự cột sheet "LỌC SKU CỐ ĐỊNH" của file FBM. */
+const FBM_SKU_FIXED_ORDER = [
+  "stt", "product_type", "status", "mockup", "sku", "asin", "revenue", "quantity", "ads_fee", "basecost", "amazon_fee",
+  "thue", "promotion", "return_cost", "profit", "profit_per_item", "tacos", "acos", "margin", "roi",
+  "basecost_per_item", "all_time_quantity", "return_rate", "revenue_ads", "niche",
+];
+export const DEFAULT_FBM_SKU_FIXED_COLUMNS: ColumnConfig[] = [
+  ...FBM_SKU_FIXED_ORDER.map((id) => {
+    const col = DEFAULT_SKU_WIN_COLUMNS.find((c) => c.id === id)!;
+    return { ...col, visible: true };
+  }),
+  ...DEFAULT_SKU_WIN_COLUMNS.filter((c) => !FBM_SKU_FIXED_ORDER.includes(c.id) && c.id !== "shipped_qty").map((c) => ({ ...c })),
+];
+
 
 
 export function ColumnHeaderCell({

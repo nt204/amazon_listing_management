@@ -63,6 +63,7 @@ import type {
 } from "@/lib/ppc/sku-architecture-types";
 import { PpcMultiStoreView } from "./ppc-multi-store-view";
 import { PpcCopyButton } from "./ppc-copy-button";
+import { PpcSearchVolumeCell, PpcSearchVolumeSyncButton } from "./ppc-search-volume";
 import { PpcSkuTrendModal } from "./ppc-sku-trend-modal";
 import type {
   PpcAlert,
@@ -176,6 +177,8 @@ function getOptimizedThumbnailUrl(url: string | null | undefined, w = 64): strin
   }
   return trimmed;
 }
+
+const STORE_SCOPED_TABS = new Set<string>(["campaigns", "ad_groups", "targets", "skus", "match_types", "search_terms", "st_campaigns"]);
 
 function searchTermKey(term: PpcSearchTermRow): string {
   return [
@@ -521,16 +524,21 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     } catch { }
   }, [activeTab, selectedStore, settingsSubTab, storePreferenceReady]);
 
+  // Các bảng chi tiết (Campaign / Target / Search Term / SKU / Đối soát ST) chỉ xem theo 1 store:
+  // ở All Stores thì hiện khung chọn store thay vì tải dữ liệu toàn bộ store
+  const storeRequired = selectedStore === "ALL" && STORE_SCOPED_TABS.has(activeTab);
+
   // Keep-alive state: preserve DOM and scroll position for visited tabs (zero re-render delay)
   const [mountedTabs, setMountedTabs] = useState<Set<string>>(() => new Set([initialTab || "overview"]));
   useEffect(() => {
+    if (storeRequired) return;
     setMountedTabs((prev) => {
       if (prev.has(activeTab)) return prev;
       const next = new Set(prev);
       next.add(activeTab);
       return next;
     });
-  }, [activeTab]);
+  }, [activeTab, storeRequired]);
 
   // In-memory caches for instant tab/drilldown interactions
   const skuRecDetailsCacheRef = useRef<Map<string, PpcRecommendation[]>>(new Map());
@@ -993,7 +1001,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
   }, [activeTab, loadData, loadSection]);
 
   useEffect(() => {
-    if (activeTab !== "campaigns") return;
+    if (activeTab !== "campaigns" || selectedStore === "ALL") return;
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       setLoadingCampaignPage(true);
@@ -1031,7 +1039,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
 
   // Server-side paginated fetch for Targets (50 rows/page, 300ms debounce, SQL summary aggregation)
   useEffect(() => {
-    if (activeTab !== "targets") return;
+    if (activeTab !== "targets" || selectedStore === "ALL") return;
 
     const currentParamsKey = `${selectedStore}:${selectedSku}:${selectedDays}:${targetPage}:${targetPageSize}:${targetQuery}:${targetSortField}:${targetSortDir}:${selectedCampaignIdForDrilldown || ""}:${selectedCampaignForDrilldown || ""}:${selectedAdGroupForDrilldown || ""}`;
 
@@ -1153,7 +1161,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
   }, [selectedStore, selectedDays]);
 
   useEffect(() => {
-    if (activeTab !== "search_terms") return;
+    if (activeTab !== "search_terms" || selectedStore === "ALL") return;
 
     const currentParamsKey = `${selectedStore}:${selectedSku}:${selectedDays}:${termPage}:${termPageSize}:${searchTermQuery}:${termSortField}:${termSortDir}:${searchTermCampaignFilter}:${matchTypeFilter}:${termPerformanceFilter}:${termMinClicks}:${termMaxClicks}:${termMinOrders}:${termMaxOrders}:${termMinAcos}:${termMaxAcos}`;
 
@@ -1708,7 +1716,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
       }
     }
 
-    if (activeTab !== "overview" && ["ad_groups", "skus"].includes(activeTab)) {
+    if (activeTab !== "overview" && ["ad_groups", "skus"].includes(activeTab) && selectedStore !== "ALL") {
       const sectionToLoad = activeTab;
       const isMissingFullSkus = sectionToLoad === "skus" && (skuPerformance.length <= 10 && (detailCounts?.skus ?? 0) > 10);
       if (!loadedSectionsRef.current.has(sectionToLoad) || isMissingFullSkus) {
@@ -3305,8 +3313,30 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
       {/* ========================================================================= */}
       {/* VIEW 2: BREAKDOWN BY CAMPAIGN */}
       {/* ========================================================================= */}
+      {storeRequired && (
+        <div className="p-8 text-center bg-amber-50/80 rounded-2xl border border-amber-200 space-y-3 my-4 shadow-2xs">
+          <Storefront size={36} className="mx-auto text-amber-600" weight="duotone" />
+          <h3 className="text-sm font-bold text-amber-950">Vui lòng chọn một Store cụ thể</h3>
+          <p className="text-xs text-amber-800 max-w-lg mx-auto">
+            Bảng Campaign, Target, Search Term và SKU chỉ xem theo từng Store. Ở All Stores chỉ có trang Tổng quan.
+          </p>
+          <div className="flex items-center justify-center gap-2 flex-wrap pt-2">
+            {stores.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => handleStoreChange(s.name)}
+                className="px-3.5 py-1.5 rounded-xl bg-white border border-amber-300 text-amber-950 text-xs font-bold hover:bg-amber-100 hover:border-amber-400 transition cursor-pointer shadow-xs"
+              >
+                {s.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {mountedTabs.has("campaigns") && (
-        <div id="ppc-campaigns-section" className={activeTab === "campaigns" ? "space-y-3.5 scroll-mt-6" : "hidden"}>
+        <div id="ppc-campaigns-section" className={activeTab === "campaigns" && !storeRequired ? "space-y-3.5 scroll-mt-6" : "hidden"}>
           {/* Campaign Search & Filter Toolbar (Single Clean Row) */}
           <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-2.5 bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs text-xs">
             <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 flex-1 min-w-0">
@@ -3746,7 +3776,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
       {/* VIEW: BREAKDOWN BY TARGET / KEYWORD (Level 4 Hierarchy + Search Term 2-Layer) */}
       {/* ========================================================================= */}
       {mountedTabs.has("targets") && (
-        <div className={activeTab === "targets" ? "space-y-3" : "hidden"}>
+        <div className={activeTab === "targets" && !storeRequired ? "space-y-3" : "hidden"}>
           {/* Active drilldown banner */}
           {(selectedCampaignForDrilldown || selectedAdGroupForDrilldown) && (
             <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-indigo-50 border border-indigo-200 text-xs shadow-2xs">
@@ -3863,6 +3893,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   <X size={13} weight="bold" /> Đặt lại
                 </button>
               )}
+
+              <PpcSearchVolumeSyncButton storeName={selectedStore} />
 
               {/* Results count indicator */}
               <div className="ml-auto text-xs text-slate-500 font-medium">
@@ -4044,6 +4076,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                     Impression {targetSortField === "impressions" && (targetSortDir === "asc" ? "↑" : "↓")}
                   </th>
                   <th
+                    className="px-3 py-3 text-right whitespace-nowrap"
+                    title="Search Volume tháng từ Helium 10. Dòng IS ~% = impression share ước tính (chỉ target Exact)"
+                  >
+                    Search Vol
+                  </th>
+                  <th
                     className="px-3 py-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() =>
                       handleSort("clicks", targetSortField, targetSortDir, setTargetSortField, setTargetSortDir, () => setTargetPage(1))
@@ -4102,7 +4140,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
               <tbody className="divide-y divide-slate-100">
                 {(loading || isStoreSwitching || loadingTargetsServer || loadingSection === "targets") ? (
                   <tr>
-                    <td colSpan={15} className="p-12 text-center text-xs text-slate-500">
+                    <td colSpan={16} className="p-12 text-center text-xs text-slate-500">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <CircleNotch size={24} className="animate-spin text-indigo-600" />
                         <span className="font-bold text-slate-700">Đang tải danh sách Target / Keyword cho {selectedStore === "ALL" ? "tất cả store" : selectedStore}...</span>
@@ -4112,7 +4150,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   </tr>
                 ) : filteredSortedTargets.length === 0 ? (
                   <tr>
-                    <td colSpan={15} className="p-8 text-center text-xs text-slate-400">
+                    <td colSpan={16} className="p-8 text-center text-xs text-slate-400">
                       {targetQuery ? (
                         <div className="flex flex-col items-center gap-1.5">
                           <span className="font-semibold text-slate-600">
@@ -4159,6 +4197,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                       <td className="px-3 py-2.5 text-right font-mono font-black text-slate-900 whitespace-nowrap">
                         {serverTargetSummary.impressions.toLocaleString()}
                       </td>
+                      <td className="px-3 py-2.5 text-right font-mono font-bold text-slate-400 whitespace-nowrap">—</td>
                       <td className="px-3 py-2.5 text-right font-mono font-black text-slate-900 whitespace-nowrap">
                         {serverTargetSummary.clicks.toLocaleString()}
                       </td>
@@ -4233,6 +4272,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                             </td>
                             <td className="px-3 py-2.5 text-right font-mono text-slate-800 whitespace-nowrap">{target.currentBid ? `$${target.currentBid.toFixed(2)}` : "—"}</td>
                             <td className="px-3 py-2.5 text-right font-mono text-slate-700 whitespace-nowrap">{(target.impressions || 0).toLocaleString()}</td>
+                            <PpcSearchVolumeCell
+                              searchVolume={target.searchVolume}
+                              searchVolumeTrend={target.searchVolumeTrend}
+                              estImpressionShare={target.estImpressionShare}
+                            />
                             <td className="px-3 py-2.5 text-right font-mono text-slate-600 whitespace-nowrap">{(target.clicks || 0).toLocaleString()}</td>
                             <td className="px-3 py-2.5 text-right font-mono text-slate-700 whitespace-nowrap">{target.ctr ? `${target.ctr.toFixed(2)}%` : "0.00%"}</td>
                             <td className="px-3 py-2.5 text-right font-mono whitespace-nowrap">
@@ -4296,7 +4340,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                           {/* Inline Expandable Layer 2: On-demand Child Search Term Breakdown */}
                           {isExpanded && (
                             <tr className="bg-slate-50/70 border-b border-slate-200">
-                              <td colSpan={15} className="p-3">
+                              <td colSpan={16} className="p-3">
                                 {childData?.loading ? (
                                   <div className="flex items-center justify-center gap-2 p-6 bg-white rounded-lg border border-slate-200 text-xs text-slate-600">
                                     <CircleNotch size={18} className="animate-spin text-indigo-600" />
@@ -4316,6 +4360,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                                       <thead className="bg-slate-50 text-[10px] uppercase font-bold text-slate-500 border-b border-slate-200">
                                         <tr>
                                           <th className="py-2 px-3.5">Search Term</th>
+                                          <th className="py-2 px-2.5 text-right">Search Vol</th>
                                           <th className="py-2 px-2.5 text-right">Impression</th>
                                           <th className="py-2 px-2.5 text-right">Clicks</th>
                                           <th className="py-2 px-2.5 text-right">Spend ($)</th>
@@ -4343,6 +4388,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                                                 )}
                                               </div>
                                             </td>
+                                            <PpcSearchVolumeCell
+                                              className="py-2 px-2.5"
+                                              searchVolume={term.searchVolume}
+                                              searchVolumeTrend={term.searchVolumeTrend}
+                                            />
                                             <td className="py-2 px-2.5 text-right font-mono text-slate-600">{(term.impressions || 0).toLocaleString()}</td>
                                             <td className="py-2 px-2.5 text-right font-mono text-slate-600">{term.clicks}</td>
                                             <td className="py-2 px-2.5 text-right font-mono whitespace-nowrap">
@@ -4417,7 +4467,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
       {/* VIEW 5: HIỆU SUẤT QUẢNG CÁO SKU */}
       {/* ========================================================================= */}
       {mountedTabs.has("skus") && (
-        <div className={activeTab === "skus" ? "space-y-3" : "hidden"}>
+        <div className={activeTab === "skus" && !storeRequired ? "space-y-3" : "hidden"}>
           {selectedStore !== "ALL" && (
             <PpcSkuMappingPanel skuList={skuEconomicsList} onSave={handleSaveSkuMappings} />
           )}
@@ -4666,7 +4716,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
       {/* VIEW 5: CUSTOMER SEARCH TERMS REPORT (Full Drill-Down) */}
       {/* ========================================================================= */}
       {mountedTabs.has("search_terms") && (
-        <div className={activeTab === "search_terms" ? "space-y-3" : "hidden"}>
+        <div className={activeTab === "search_terms" && !storeRequired ? "space-y-3" : "hidden"}>
           {/* Filter Bar */}
           <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs space-y-2.5">
             <div className="flex flex-wrap items-center gap-2">
@@ -4837,6 +4887,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                 </button>
               )}
 
+              <PpcSearchVolumeSyncButton storeName={selectedStore} />
+
               {/* Results count indicator */}
               <div className="ml-auto text-xs text-slate-500 font-medium">
                 Khớp <span className="font-extrabold text-slate-900">{(serverSearchTermTotal ?? filteredSortedSearchTerms.length).toLocaleString("vi-VN")}</span> / {(serverSearchTermTotal ?? detailCounts?.searchTerms ?? aggregatedSearchTerms.length).toLocaleString("vi-VN")} từ khóa
@@ -4952,6 +5004,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                     Hiển Thị {termSortField === "impressions" && (termSortDir === "asc" ? "↑" : "↓")}
                   </th>
                   <th
+                    className="py-3 px-3 text-right whitespace-nowrap"
+                    title="Search Volume tháng từ Helium 10. Dòng IS ~% = impression share ước tính theo số ngày của dòng"
+                  >
+                    Search Vol
+                  </th>
+                  <th
                     className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() =>
                       handleSort("clicks", termSortField, termSortDir, setTermSortField, setTermSortDir)
@@ -5013,7 +5071,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
               <tbody className="divide-y divide-slate-100 font-mono text-[11px] font-normal">
                 {(loadingSearchTermsServer || (!serverSearchTerms && (!searchTermsReady || loadingSection === "search_terms" || loading || isStoreSwitching))) ? (
                   <tr>
-                    <td colSpan={13} className="p-12 text-center text-xs text-slate-500">
+                    <td colSpan={14} className="p-12 text-center text-xs text-slate-500">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <CircleNotch size={24} className="animate-spin text-indigo-600" />
                         <span className="font-bold text-slate-700">Đang tải dữ liệu Search Terms từ máy chủ...</span>
@@ -5022,7 +5080,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   </tr>
                 ) : (serverSearchTerms || paginatedSearchTerms).length === 0 ? (
                   <tr>
-                    <td colSpan={13} className="p-8 text-center text-slate-400 font-sans font-medium">
+                    <td colSpan={14} className="p-8 text-center text-slate-400 font-sans font-medium">
                       Không tìm thấy từ khóa nào phù hợp bộ lọc.
                     </td>
                   </tr>
@@ -5070,6 +5128,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                         </td>
                         {/* Hiển thị - Viết thường */}
                         <td className="py-2.5 px-3 text-right font-normal text-slate-700">{(t.impressions || 0).toLocaleString()}</td>
+                        <PpcSearchVolumeCell
+                          className="py-2.5 px-3"
+                          searchVolume={t.searchVolume}
+                          searchVolumeTrend={t.searchVolumeTrend}
+                          estImpressionShare={t.estImpressionShare}
+                        />
                         {/* Clicks - Viết thường */}
                         <td className="py-2.5 px-3 text-right font-normal text-slate-700">{t.clicks}</td>
                         {/* CTR (%) - Viết thường */}
@@ -5123,7 +5187,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
       {/* VIEW 5.5: ST CAMPAIGN ROLL-UP (ĐỐI SOÁT CHIẾN DỊCH TỔNG HỢP TỪ SEARCH TERMS) */}
       {/* ========================================================================= */}
       {mountedTabs.has("st_campaigns") && (
-        <div className={activeTab === "st_campaigns" ? "space-y-3" : "hidden"}>
+        <div className={activeTab === "st_campaigns" && !storeRequired ? "space-y-3" : "hidden"}>
           <PpcStCampaignRollupView
             selectedStore={selectedStore}
             selectedSku={selectedSku}

@@ -742,84 +742,119 @@ function generateTOTP(secret: string, timeStep = 30): string {
 
 export async function ensureAmazonSession(page: Page, storeName: string): Promise<void> {
   const currentUrl = page.url();
-  if (!currentUrl.includes("/signin") && !currentUrl.includes("/ap/signin")) {
+  const isSignInUrl =
+    currentUrl.includes("/signin") ||
+    currentUrl.includes("/ap/signin") ||
+    currentUrl.includes("/auth-mfa") ||
+    currentUrl.includes("openid.return_to");
+
+  // Kiểm tra xem trang có các input đăng nhập không
+  const hasLoginInput = await page
+    .$("#ap_email, #ap_password, #auth-mfa-otpcode, a[href*='/ap/signin'], button:has-text('Sign in')")
+    .catch(() => null);
+
+  if (!isSignInUrl && !hasLoginInput) {
     return;
   }
 
-  // Tự động điền cho BOZSPACER theo thông tin xác thực được cấp
-  if (storeName.toUpperCase() === "BOZSPACER") {
-    console.log(`[BOZSPACER] 🔐 Phát hiện trang đăng nhập Amazon (${currentUrl}). Tiến hành tự động điền mật khẩu...`);
+  const storeKey = storeName.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+  const email =
+    process.env[`${storeKey}_AMAZON_EMAIL`] ||
+    (storeKey === "BOZSPACER" ? (process.env.BOZSPACER_AMAZON_EMAIL || "jennie662quynhnhunce@gmail.com") : "");
+  const password =
+    process.env[`${storeKey}_AMAZON_PASSWORD`] ||
+    (storeKey === "BOZSPACER" ? (process.env.BOZSPACER_AMAZON_PASSWORD || "") : "");
+  const secret =
+    process.env[`${storeKey}_AMAZON_2FA_SECRET`] ||
+    (storeKey === "BOZSPACER" ? (process.env.BOZSPACER_AMAZON_2FA_SECRET || "") : "");
 
-    const email = process.env.BOZSPACER_AMAZON_EMAIL || "jennie662quynhnhunce@gmail.com";
-    const password = process.env.BOZSPACER_AMAZON_PASSWORD || "";
-    const secret = process.env.BOZSPACER_AMAZON_2FA_SECRET || "";
+  if (!password) {
+    throw new Error(
+      `Profile ${storeName} chưa đăng nhập Amazon (URL: ${currentUrl}). Chưa có ${storeKey}_AMAZON_PASSWORD trong config.env để tự đăng nhập.`,
+    );
+  }
 
-    if (!password) {
-      throw new Error(`[BOZSPACER] Chưa cấu hình BOZSPACER_AMAZON_PASSWORD trong config.env.`);
-    }
+  console.log(`[${storeName}] 🔐 Phát hiện trang đăng nhập Amazon (${currentUrl}). Tiến hành tự động điền thông tin...`);
 
-    // Kiểm tra ô email nếu chưa chọn sẵn
-    const emailField = await page.$("#ap_email");
-    if (emailField && (await emailField.isVisible())) {
-      console.log(`[BOZSPACER] Điền email: ${email}...`);
-      await emailField.fill(email);
-      const continueBtn = await page.$("#continue");
-      if (continueBtn) await continueBtn.click();
+  // Nếu đang ở trang trung gian có nút "Sign in" hoặc link signin
+  const intermediateBtn = await page.$("a[href*='/ap/signin'], button:has-text('Sign in')").catch(() => null);
+  if (intermediateBtn && !(await page.$("#ap_password")) && !(await page.$("#ap_email"))) {
+    const isVisible = await intermediateBtn.isVisible().catch(() => false);
+    if (isVisible) {
+      console.log(`[${storeName}] Nhấn nút đăng nhập trung gian...`);
+      await Promise.all([
+        page.waitForNavigation({ timeout: 25000 }).catch(() => null),
+        intermediateBtn.click(),
+      ]);
       await page.waitForTimeout(2000);
     }
-
-    // Kiểm tra ô mật khẩu
-    const pwdField = await page.waitForSelector("#ap_password", { timeout: 10000 }).catch(() => null);
-    if (pwdField) {
-      console.log(`[BOZSPACER] Điền mật khẩu cho Bozspacer...`);
-      await pwdField.fill(password);
-      const rememberCheckbox = await page.$('input[name="rememberMe"]');
-      if (rememberCheckbox) await rememberCheckbox.check().catch(() => {});
-      const submitBtn = await page.$("#signInSubmit");
-      if (submitBtn) {
-        console.log(`[BOZSPACER] Click Đăng nhập...`);
-        await Promise.all([
-          page.waitForNavigation({ timeout: 25000 }).catch(() => null),
-          submitBtn.click(),
-        ]);
-      }
-    }
-
-    await page.waitForTimeout(3000);
-
-    // Kiểm tra màn hình 2FA OTP
-    const otpField = await page.waitForSelector("#auth-mfa-otpcode", { timeout: 10000 }).catch(() => null);
-    if (otpField) {
-      if (!secret) {
-        throw new Error(`[BOZSPACER] Yêu cầu OTP 2FA nhưng chưa cấu hình BOZSPACER_AMAZON_2FA_SECRET trong config.env.`);
-      }
-      console.log(`[BOZSPACER] 🔑 Phát hiện màn hình Two-Step Verification OTP. Đang tự động sinh mã TOTP...`);
-      const otp = generateTOTP(secret);
-      console.log(`[BOZSPACER] Mã OTP tạo được: ${otp}. Đang submit...`);
-      await otpField.fill(otp);
-
-      const mfaRemember = await page.$("#auth-mfa-remember-device");
-      if (mfaRemember) await mfaRemember.check().catch(() => {});
-
-      const mfaSubmit = await page.$("#auth-signin-button");
-      if (mfaSubmit) {
-        await Promise.all([
-          page.waitForNavigation({ timeout: 25000 }).catch(() => null),
-          mfaSubmit.click(),
-        ]);
-      }
-    }
-
-    await page.waitForTimeout(4000);
-    const afterUrl = page.url();
-    if (afterUrl.includes("/signin") || afterUrl.includes("/ap/signin")) {
-      throw new Error(`[BOZSPACER] Đăng nhập tự động không thành công. URL hiện tại: ${afterUrl}`);
-    }
-    console.log(`[BOZSPACER] ✅ Đăng nhập thành công! URL hiện tại: ${afterUrl}`);
-    return;
   }
 
-  throw new Error(`Profile AdsPower chưa đăng nhập Amazon Seller (URL: ${currentUrl}). Vui lòng đăng nhập trước.`);
+  // 1. Kiểm tra ô email nếu chưa chọn sẵn
+  const emailField = await page.$("#ap_email");
+  if (emailField && (await emailField.isVisible().catch(() => false))) {
+    if (email) {
+      console.log(`[${storeName}] Điền email: ${email}...`);
+      await emailField.fill(email);
+      const continueBtn = await page.$("#continue");
+      if (continueBtn) {
+        await Promise.all([
+          page.waitForNavigation({ timeout: 25000 }).catch(() => null),
+          continueBtn.click(),
+        ]);
+        await page.waitForTimeout(2000);
+      }
+    }
+  }
+
+  // 2. Kiểm tra ô mật khẩu
+  const pwdField = await page.waitForSelector("#ap_password", { timeout: 10000 }).catch(() => null);
+  if (pwdField && (await pwdField.isVisible().catch(() => false))) {
+    console.log(`[${storeName}] Điền mật khẩu...`);
+    await pwdField.fill(password);
+    const rememberCheckbox = await page.$('input[name="rememberMe"]');
+    if (rememberCheckbox) await rememberCheckbox.check().catch(() => {});
+    const submitBtn = await page.$("#signInSubmit");
+    if (submitBtn) {
+      console.log(`[${storeName}] Click Đăng nhập...`);
+      await Promise.all([
+        page.waitForNavigation({ timeout: 25000 }).catch(() => null),
+        submitBtn.click(),
+      ]);
+    }
+  }
+
+  await page.waitForTimeout(3000);
+
+  // 3. Kiểm tra màn hình 2FA OTP
+  const otpField = await page.waitForSelector("#auth-mfa-otpcode", { timeout: 10000 }).catch(() => null);
+  if (otpField && (await otpField.isVisible().catch(() => false))) {
+    if (!secret) {
+      throw new Error(`[${storeName}] Yêu cầu OTP 2FA nhưng chưa cấu hình ${storeKey}_AMAZON_2FA_SECRET trong config.env.`);
+    }
+    console.log(`[${storeName}] 🔑 Phát hiện màn hình Two-Step Verification OTP. Đang tự động sinh mã TOTP...`);
+    const otp = generateTOTP(secret);
+    console.log(`[${storeName}] Mã OTP tạo được: ${otp}. Đang submit...`);
+    await otpField.fill(otp);
+
+    const mfaRemember = await page.$("#auth-mfa-remember-device");
+    if (mfaRemember) await mfaRemember.check().catch(() => {});
+
+    const mfaSubmit = await page.$("#auth-signin-button");
+    if (mfaSubmit) {
+      await Promise.all([
+        page.waitForNavigation({ timeout: 25000 }).catch(() => null),
+        mfaSubmit.click(),
+      ]);
+    }
+  }
+
+  await page.waitForTimeout(4000);
+  const afterUrl = page.url();
+  if (afterUrl.includes("/signin") || afterUrl.includes("/ap/signin")) {
+    throw new Error(`[${storeName}] Đăng nhập tự động không thành công. URL hiện tại: ${afterUrl}`);
+  }
+  console.log(`[${storeName}] ✅ Đăng nhập thành công! URL hiện tại: ${afterUrl}`);
 }
 
 async function triggerBulkExport(

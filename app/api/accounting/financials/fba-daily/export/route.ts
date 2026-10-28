@@ -2,6 +2,7 @@ import ExcelJS from "exceljs";
 import { authorize, routeErrorResponse } from "@/lib/api-guard";
 import { getStoreById } from "@/lib/accounting/accounting-db";
 import { listFbaDaily } from "@/lib/accounting/fba-daily-db";
+import { listFbmDaily, type FbmDailyItem } from "@/lib/accounting/fbm-financials-db";
 
 export async function GET(request: Request) {
   try {
@@ -21,7 +22,9 @@ export async function GET(request: Request) {
     const sortField = searchParams.get("sort_field") || "date";
     const sortDirection = (searchParams.get("sort_dir") as "asc" | "desc") || "asc";
 
-    const result = await listFbaDaily(storeId, {
+    const fbm = searchParams.get("channel") === "fbm";
+    const channel = fbm ? "FBM" : "FBA";
+    const result = await (fbm ? listFbmDaily : listFbaDaily)(storeId, {
       startDate,
       endDate,
       search,
@@ -35,14 +38,14 @@ export async function GET(request: Request) {
     workbook.creator = "Amazon Listing Management";
     workbook.created = new Date();
 
-    const ws = workbook.addWorksheet("FBA", {
+    const ws = workbook.addWorksheet(channel, {
       views: [{ state: "frozen", xSplit: 3, ySplit: 2 }],
     });
 
     // Header title row 1
     const r1 = ws.getRow(1);
-    r1.getCell(1).value = "FBA";
-    r1.getCell(2).value = "BÁO CÁO DOANH THU - FBA";
+    r1.getCell(1).value = channel;
+    r1.getCell(2).value = `BÁO CÁO DOANH THU - ${channel}`;
     r1.getCell(3).value = storeName;
     r1.font = { bold: true, size: 11 };
 
@@ -70,6 +73,7 @@ export async function GET(request: Request) {
       "Revenue ads",
       "Quantity (Ads)",
       "Click",
+      ...(fbm ? ["Organic sale", "AOV (Rev/Qt)", "Basecost/item", "Ads/Item"] : []),
     ];
 
     const r2 = ws.getRow(2);
@@ -103,7 +107,8 @@ export async function GET(request: Request) {
         item.promotion,
         item.return_cost,
         item.profit,
-        item.net_profit,
+        // Sheet FBM để trống Net Profit (không có phí dịch vụ cố định)
+        fbm ? null : item.net_profit,
         item.balance,
         item.roi,
         item.tacos,
@@ -114,13 +119,16 @@ export async function GET(request: Request) {
         item.revenue_ads,
         item.quantity_ads,
         item.clicks,
+        ...(fbm
+          ? [(item as FbmDailyItem).organic_sales, (item as FbmDailyItem).aov, (item as FbmDailyItem).basecost_per_item, (item as FbmDailyItem).ads_per_item]
+          : []),
       ];
 
       // Formats
-      [3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 19, 20].forEach((colIdx) => {
+      [3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 19, 20, ...(fbm ? [24, 25, 26] : [])].forEach((colIdx) => {
         row.getCell(colIdx).numFmt = "$#,##0.00";
       });
-      [4, 21, 22].forEach((colIdx) => {
+      [4, 21, 22, ...(fbm ? [23] : [])].forEach((colIdx) => {
         row.getCell(colIdx).numFmt = "#,##0";
       });
       [14, 15, 16, 17, 18].forEach((colIdx) => {
@@ -142,7 +150,7 @@ export async function GET(request: Request) {
 
     const buffer = await workbook.xlsx.writeBuffer();
     const dateStr = new Date().toISOString().slice(0, 10);
-    const fileName = `FBA_Daily_${storeName}_${startDate || "All"}_${endDate || dateStr}.xlsx`;
+    const fileName = `${channel}_Daily_${storeName}_${startDate || "All"}_${endDate || dateStr}.xlsx`;
 
     return new Response(buffer, {
       status: 200,
@@ -152,6 +160,6 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
-    return routeErrorResponse(error, "Failed to export FBA Daily Excel.", 500);
+    return routeErrorResponse(error, "Failed to export daily Excel.", 500);
   }
 }

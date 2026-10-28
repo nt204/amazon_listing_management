@@ -5233,9 +5233,9 @@ function InventoryViewInner() {
       </div>
 
       {/* TABS & QUICK FILTER BAR: Sheet tabs + Quick Filter in ONE compact line */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 bg-slate-200/70 p-1.5 rounded-xl border border-slate-300 min-h-[46px]">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 bg-slate-200/70 p-1.5 rounded-xl border border-slate-300 min-h-[46px]">
         {/* Sheet Tabs like Excel */}
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center gap-1 min-w-0 max-w-full overflow-x-auto">
           {(storeHasFbm
             ? [{ channel: "fba", label: "Bảng Mã", count: fbaSkuCount }, { channel: "fbm", label: "Bảng Mã FBM", count: fbmSkuCount }] as const
             : [{ channel: "fba", label: "Bảng Mã", count: fbaSkuCount }] as const
@@ -5246,7 +5246,7 @@ function InventoryViewInner() {
                 key={sheet.channel}
                 type="button"
                 onClick={() => handleSkuSheetChange(sheet.channel)}
-                className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
+                className={`flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-2.5 2xl:px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
                   isActive
                     ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
                     : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
@@ -5268,7 +5268,7 @@ function InventoryViewInner() {
           <button
             type="button"
             onClick={() => handleTabChange("inbound")}
-            className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
+            className={`flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-2.5 2xl:px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
               activeTab === "inbound"
                 ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
                 : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
@@ -5288,7 +5288,7 @@ function InventoryViewInner() {
           <button
             type="button"
             onClick={() => handleTabChange("check_shipment")}
-            className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
+            className={`flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-2.5 2xl:px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
               activeTab === "check_shipment"
                 ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
                 : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
@@ -5315,7 +5315,7 @@ function InventoryViewInner() {
                 key={sheet.channel}
                 type="button"
                 onClick={() => handleBaseCostChannelChange(sheet.channel)}
-                className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
+                className={`flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-2.5 2xl:px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
                   isActive
                     ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
                     : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
@@ -5330,7 +5330,7 @@ function InventoryViewInner() {
 
         {/* Filter Controls inline + Table Zoom Controls */}
         {activeTab === "sku" ? (
-          <div className="flex items-center gap-2 flex-wrap ml-auto justify-end">
+          <div className="flex items-center gap-2 flex-wrap ml-auto justify-end min-w-0">
             <div className="relative w-40 sm:w-52 focus-within:!w-64 transition-all duration-200">
               <MagnifyingGlassIcon
                 size={14}
@@ -5394,7 +5394,7 @@ function InventoryViewInner() {
             </div>
           </div>
         ) : activeTab === "inbound" ? (
-          <div className="flex items-center gap-2 flex-wrap ml-auto justify-end">
+          <div className="flex items-center gap-2 flex-wrap ml-auto justify-end min-w-0">
             <div className="relative w-40 sm:w-52 focus-within:!w-64 transition-all duration-200">
               <MagnifyingGlassIcon
                 size={14}
@@ -5459,7 +5459,7 @@ function InventoryViewInner() {
             </div>
           </div>
         ) : activeTab === "check_shipment" ? (
-          <div className="flex items-center gap-2 flex-wrap ml-auto justify-end">
+          <div className="flex items-center gap-2 flex-wrap ml-auto justify-end min-w-0">
             <div className="relative w-40 sm:w-52 focus-within:!w-64 transition-all duration-200">
               <MagnifyingGlassIcon
                 size={14}
@@ -5523,7 +5523,7 @@ function InventoryViewInner() {
             </div>
           </div>
         ) : activeTab === "monthly_base_cost" ? (
-          <div className="flex items-center gap-2 flex-wrap ml-auto justify-end">
+          <div className="flex items-center gap-2 flex-wrap ml-auto justify-end min-w-0">
             {/* Basecost Tháng FBM có ô tìm kiếm + lọc tháng riêng ngay trên bảng */}
             {!isFbmBaseCost && (<>
             <div className="relative w-40 sm:w-52 focus-within:!w-64 transition-all duration-200">

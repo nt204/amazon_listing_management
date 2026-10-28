@@ -70,8 +70,11 @@ export function deriveTargetScenario(input: {
   const orders = Math.max(0, Number(input.orders || 0));
   const spend = Math.max(0, Number(input.spend || 0));
   const sales = Math.max(0, Number(input.sales || 0));
-  const breakEvenAcos = Number(input.breakEvenAcos) > 0 ? Number(input.breakEvenAcos) : 45.5;
-  const targetAcos = Number(input.targetAcos) > 0 ? Number(input.targetAcos) : breakEvenAcos * 0.75;
+  // Không có BE ACoS thì không phân loại theo ACoS (không lấy số mặc định)
+  const breakEvenAcos = Number(input.breakEvenAcos) > 0 ? Number(input.breakEvenAcos) : null;
+  const targetAcos = Number(input.targetAcos) > 0
+    ? Number(input.targetAcos)
+    : breakEvenAcos !== null ? breakEvenAcos * 0.75 : null;
   const reason = String(input.reason || "");
   const ruleId = input.ruleId || null;
 
@@ -85,7 +88,7 @@ export function deriveTargetScenario(input: {
 
   if (sales > 0 && spend > 0) {
     actualAcos = (spend / sales) * 100;
-    if (breakEvenAcos > 0) {
+    if (breakEvenAcos !== null) {
       acosBeRatio = Math.round((actualAcos / breakEvenAcos) * 100) / 100;
     }
   }
@@ -107,7 +110,7 @@ export function deriveTargetScenario(input: {
 
   // 3. FALLBACK to metrics if Rule ID did not classify explicitly
   if (scenario === "OTHER") {
-    if (actualAcos !== null) {
+    if (actualAcos !== null && breakEvenAcos !== null && targetAcos !== null) {
       if (actualAcos > breakEvenAcos) {
         scenario = "HIGH_ACOS_TRIM";
       } else if (actualAcos > targetAcos) {

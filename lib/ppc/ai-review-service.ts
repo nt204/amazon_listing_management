@@ -3,7 +3,8 @@ import "server-only";
 import { ApiError } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import type { PpcRecommendation } from "@/lib/ppc/types";
-import { getSkuEconomicsList, getCostMasters } from "@/lib/ppc/sku-architecture-service";
+import { getSkuEconomicsList } from "@/lib/ppc/sku-architecture-service";
+import { SKU_PREFIX_ERROR_PRODUCT_TYPE } from "@/lib/ppc/sku-architecture-types";
 import { extractSkuFromText } from "@/lib/ppc/sku-extractor";
 import {
   buildShadowCandidates,
@@ -121,51 +122,27 @@ export async function reviewPpcRecommendationWithAi(teamId: string, rec: PpcReco
   ).trim();
   const sku = rawSku.toUpperCase();
 
-  // 1. Fetch SKU Economics via unified service (cached in Redis) with Phôi fallback
-  let economics: Record<string, unknown> = {};
-  if (storeId) {
-    try {
-      const econList = await getSkuEconomicsList(storeId, 30);
-      let matchedEcon = sku ? econList.find((e) => e.sku.toUpperCase() === sku) : undefined;
-      if (!matchedEcon && sku) {
-        matchedEcon = econList.find(
-          (e) => sku.startsWith(e.sku.toUpperCase()) || e.sku.toUpperCase().startsWith(sku)
-        );
-      }
-
-      if (matchedEcon) {
-        economics = {
-          break_even_acos: matchedEcon.breakEvenAcos,
-          max_bid: matchedEcon.maxBid,
-          profit_before_ads: matchedEcon.profitBeforeAds,
-          selling_price: matchedEcon.sellingPrice,
-          product_type: matchedEcon.productType,
-        };
-      } else {
-        // Fallback to Cost Master of this specific Phôi
-        const masters = await getCostMasters(storeId);
-        const matchedMaster = (sku ? masters.find((m) =>
-          m.skuPrefixes?.some((p) => p && sku.startsWith(p.toUpperCase()))
-        ) : undefined) || masters.find((m) =>
-          rec.productType && m.productType.toLowerCase() === String(rec.productType).toLowerCase()
-        ) || masters[0];
-
-        if (matchedMaster) {
-          const profit = matchedMaster.defaultPrice - matchedMaster.defaultAmazonFee - matchedMaster.baseCost - (matchedMaster.defaultPrice * matchedMaster.taxRate);
-          const maxBid = Math.round(0.10 * Math.max(0, profit) * 100) / 100;
-          economics = {
-            break_even_acos: matchedMaster.breakEvenAcos,
-            max_bid: maxBid > 0 ? maxBid : 1.25,
-            profit_before_ads: profit > 0 ? profit : null,
-            selling_price: matchedMaster.defaultPrice,
-            product_type: matchedMaster.productType,
-          };
-        }
-      }
-    } catch (err) {
-      console.warn("[PPC AI Review] Could not load dynamic economics:", err);
-    }
+  // 1. SKU Economics (đúng SKU). Thiếu dữ liệu / Lỗi Prefix → không review, không đoán bằng phôi khác hay số mặc định
+  const econList = await getSkuEconomicsList(storeId, 30);
+  const matchedEcon = sku ? econList.find((e) => e.sku.toUpperCase() === sku) : undefined;
+  if (
+    !matchedEcon ||
+    matchedEcon.productType === SKU_PREFIX_ERROR_PRODUCT_TYPE ||
+    matchedEcon.maxBid <= 0 ||
+    matchedEcon.breakEvenAcos <= 0
+  ) {
+    throw new ApiError(
+      `SKU ${sku || "(không rõ)"} đang Lỗi Prefix / thiếu Giá, Basecost hoặc Phí nên không có Max Bid / BE ACoS để review.`,
+      422,
+    );
   }
+  const economics: Record<string, unknown> = {
+    break_even_acos: matchedEcon.breakEvenAcos,
+    max_bid: matchedEcon.maxBid,
+    profit_before_ads: matchedEcon.profitBeforeAds,
+    selling_price: matchedEcon.sellingPrice,
+    product_type: matchedEcon.productType,
+  };
 
   // 2. Fetch mature historical evidence
   let historicalRows: HistoricalRow[] = [];
@@ -193,7 +170,7 @@ export async function reviewPpcRecommendationWithAi(teamId: string, rec: PpcReco
     `${rec.ruleProfile || ""} ${rec.reason || ""} ${rec.campaignName || ""}`,
     (rec.adType || "SP").toUpperCase().startsWith("SB") ? "SB05" : "SP03",
   );
-  const resolvedProductType = String(rec.productType || economics.product_type || "ORNAMENT");
+  const resolvedProductType = String(rec.productType || matchedEcon.productType);
   const productType = resolvedProductType.toLowerCase();
 
   // 2. Derive Target Scenario from Rule Engine intent and relative economics
@@ -202,7 +179,7 @@ export async function reviewPpcRecommendationWithAi(teamId: string, rec: PpcReco
     orders: rec.orders,
     spend: rec.spend,
     sales: rec.sales,
-    breakEvenAcos: finite(economics.break_even_acos, 45.5),
+    breakEvenAcos: matchedEcon.breakEvenAcos,
     targetAcos: storeTargetAcos,
     reason: rec.reason,
     recType: rec.recType,
@@ -254,7 +231,7 @@ export async function reviewPpcRecommendationWithAi(teamId: string, rec: PpcReco
         orders: Number(hMetrics.orders || 0),
         spend: Number(hMetrics.spend || 0),
         sales: Number(hMetrics.sales || 0),
-        breakEvenAcos: Number(hEconomics.break_even_acos || 45.5),
+        breakEvenAcos: Number(hEconomics.break_even_acos) > 0 ? Number(hEconomics.break_even_acos) : null,
         reason: String(
           hContext.decision && typeof hContext.decision === "object"
             ? (hContext.decision as Record<string, unknown>).reason || ""

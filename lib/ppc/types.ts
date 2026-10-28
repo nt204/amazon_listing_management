@@ -62,6 +62,10 @@ export interface PpcSearchTermRow {
   campaignId?: string;
   adGroupId?: string;
   keywordId?: string;
+  // Helium 10 (keyword_search_volumes): volume tháng, trend %, impression share ước tính %
+  searchVolume?: number | null;
+  searchVolumeTrend?: number | null;
+  estImpressionShare?: number | null;
 }
 
 export interface PpcPerformanceRow {
@@ -276,6 +280,10 @@ export interface PpcTargetPerformance extends PpcAdGroupPerformance {
   adType?: PpcAdType;
   state?: string;
   currentBid?: number;
+  // Helium 10 (keyword_search_volumes): volume tháng, trend %, impression share ước tính % (chỉ target Exact)
+  searchVolume?: number | null;
+  searchVolumeTrend?: number | null;
+  estImpressionShare?: number | null;
 }
 
 export interface PpcDailyTrendPoint {

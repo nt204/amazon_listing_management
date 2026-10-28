@@ -290,15 +290,7 @@ export function AccountingFileManager() {
     });
   };
 
-  const isAllExpanded = dateGroups.length > 0 && dateGroups.every((d) => expandedDates.has(d.date));
 
-  const toggleAllDates = () => {
-    if (isAllExpanded) {
-      setExpandedDates(new Set());
-    } else {
-      setExpandedDates(new Set(dateGroups.map((d) => d.date)));
-    }
-  };
 
   const handleDownload = async (file: ManagedAccountingFile) => {
     try {
@@ -328,9 +320,6 @@ export function AccountingFileManager() {
             <FolderSimple size={22} weight="duotone" className="text-indigo-600" />
             System Admin — Quản lý File Kế toán
           </h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Quản lý báo cáo tải tự động từ Amazon Seller Central theo từng ngày và từng Store
-          </p>
         </div>
 
         <div className="flex items-center gap-2">
@@ -367,14 +356,6 @@ export function AccountingFileManager() {
             Crawler
           </button>
 
-          <button
-            type="button"
-            onClick={toggleAllDates}
-            disabled={dateGroups.length === 0}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 transition cursor-pointer"
-          >
-            {isAllExpanded ? "Thu gọn tất cả" : "Mở rộng tất cả"}
-          </button>
 
           <button
             type="button"

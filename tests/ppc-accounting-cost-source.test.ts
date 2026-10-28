@@ -54,11 +54,10 @@ test("Thiếu cả Cost Master lẫn Accounting thì để 0 và đánh dấu th
   assert.deepEqual(costs, { baseCost: 0, baseCostSource: "DEFAULT", amazonFee: 0, amazonFeeSource: "DEFAULT" });
 });
 
-test("Giá bán: Cost Master → đơn hàng Accounting → giá đã lưu → thiếu", () => {
-  assert.deepEqual(resolveFallbackPrice(master({ defaultPrice: 30 }), acc, 25), { price: 30, source: "COST_MASTER" });
-  assert.deepEqual(resolveFallbackPrice(master({}), acc, 25), { price: 28, source: "ACCOUNTING_ORDERS" });
-  assert.deepEqual(resolveFallbackPrice(null, undefined, 25), { price: 25, source: "PREVIOUS" });
-  assert.deepEqual(resolveFallbackPrice(null, undefined, 0), { price: 0, source: "DEFAULT" });
+test("Giá bán: Cost Master → đơn hàng Accounting → thiếu (không lấy giá đã lưu)", () => {
+  assert.deepEqual(resolveFallbackPrice(master({ defaultPrice: 30 }), acc), { price: 30, source: "COST_MASTER" });
+  assert.deepEqual(resolveFallbackPrice(master({}), acc), { price: 28, source: "ACCOUNTING_ORDERS" });
+  assert.deepEqual(resolveFallbackPrice(null, undefined), { price: 0, source: "DEFAULT" });
 });
 
 test("Đủ số thật thì tính BE từ số đó", () => {

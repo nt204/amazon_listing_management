@@ -33,7 +33,9 @@ import {
   createTextWidthMeasurer,
   type ColumnConfig,
   DEFAULT_SKU_WIN_COLUMNS,
+  DEFAULT_FBM_SKU_FIXED_COLUMNS,
 } from "./column-manager-modal";
+import { storeHasTeam } from "@/lib/accounting/store-teams";
 import { getOptimizedThumbnailUrl } from "@/lib/image-client";
 import {
   PpcAmazonDatePicker,
@@ -119,6 +121,7 @@ interface Store {
   id: string;
   name: string;
   marketplace?: string;
+  team?: string;
 }
 
 const SKU_WIN_COLUMNS_STORAGE_KEY = "accounting_sku_win_columns_global";
@@ -248,7 +251,17 @@ function PaginationBar({
   );
 }
 
-export function SkuWinView() {
+/**
+ * variant="fbm_fixed": tab FBM cố định = sheet "LỌC SKU CỐ ĐỊNH" của file FBM —
+ * mọi SKU trong BẢNG MÃ FBM (không lọc trạng thái), chỉ hiện các store có team FBM.
+ */
+export function SkuWinView({ variant = "win" }: { variant?: "win" | "fbm_fixed" } = {}) {
+  const fbm = variant === "fbm_fixed";
+  const viewTitle = fbm ? "LỌC SKU CỐ ĐỊNH FBM" : "LỌC SKU WIN";
+  const rangeKey = fbm ? "fbm_sku" : "sku_win";
+  const columnsStorageKey = fbm ? "accounting_fbm_sku_fixed_columns_global" : SKU_WIN_COLUMNS_STORAGE_KEY;
+  const frozenStorageKey = fbm ? "accounting_fbm_sku_fixed_frozen_through" : SKU_WIN_FROZEN_STORAGE_KEY;
+  const defaultColumns = fbm ? DEFAULT_FBM_SKU_FIXED_COLUMNS : DEFAULT_SKU_WIN_COLUMNS;
   const [stores, setStores] = useState<Store[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<string>(() => {
     if (typeof window !== "undefined") {
@@ -264,7 +277,7 @@ export function SkuWinView() {
   // Date Range state: defaults to 'This Month' or per-account saved range
   const [dateRange, setDateRange] = useState<DateRange>(() => {
     const initStoreId = typeof window !== "undefined" ? localStorage.getItem("acc_selected_store_id") || "" : "";
-    return getSavedStoreDateRange("sku_win", initStoreId, financialMaxDate);
+    return getSavedStoreDateRange(rangeKey, initStoreId, financialMaxDate);
   });
   const startDate = dateRange.startDate;
   const endDate = dateRange.endDate;
@@ -328,11 +341,11 @@ export function SkuWinView() {
   const [columns, setColumns] = useState<ColumnConfig[]>(() => {
     if (typeof window !== "undefined") {
       try {
-        const saved = localStorage.getItem(SKU_WIN_COLUMNS_STORAGE_KEY);
+        const saved = localStorage.getItem(columnsStorageKey);
         if (saved) {
           const parsed: ColumnConfig[] = JSON.parse(saved);
           const colMap = new Map(parsed.map((c) => [c.id, c]));
-          return DEFAULT_SKU_WIN_COLUMNS.map((def) => {
+          return defaultColumns.map((def) => {
             const user = colMap.get(def.id);
             if (!user) return def;
             let userLabel = (user.label || def.label).replace(/\s*\(\$\)/g, "").trim();
@@ -345,13 +358,13 @@ export function SkuWinView() {
         console.error("Failed to load sku win columns:", err);
       }
     }
-    return DEFAULT_SKU_WIN_COLUMNS;
+    return defaultColumns;
   });
   const [showColumnModal, setShowColumnModal] = useState(false);
 
   const [frozenThrough, setFrozenThrough] = useState<string>(() => {
     if (typeof window !== "undefined") {
-      return localStorage.getItem(SKU_WIN_FROZEN_STORAGE_KEY) || "sku";
+      return localStorage.getItem(frozenStorageKey) || "sku";
     }
     return "sku";
   });
@@ -390,7 +403,8 @@ export function SkuWinView() {
         if (res.ok) {
           const data = await res.json();
           if (!ignore) {
-            const list: Store[] = data.stores || [];
+            const allStores: Store[] = data.stores || [];
+            const list = fbm ? allStores.filter((s) => storeHasTeam(s.team, "FBM")) : allStores;
             setStores(list);
             
             if (list.length > 0) {
@@ -402,8 +416,12 @@ export function SkuWinView() {
               setSelectedStoreId(targetStore.id);
               if (typeof window !== "undefined") {
                 localStorage.setItem("acc_selected_store_id", targetStore.id);
+                // Báo cho thanh tab Financials biết store thực tế (để ẩn/hiện tab FBM)
+                if (targetStore.id !== savedId) {
+                  window.dispatchEvent(new CustomEvent("acc_store_changed", { detail: targetStore.id }));
+                }
               }
-              setDateRange(getSavedStoreDateRange("sku_win", targetStore.id, financialMaxDate));
+              setDateRange(getSavedStoreDateRange(rangeKey, targetStore.id, financialMaxDate));
             }
           }
         }
@@ -417,7 +435,7 @@ export function SkuWinView() {
     return () => {
       ignore = true;
     };
-  }, []);
+  }, [fbm, rangeKey]);
 
   const handleStoreSelect = (newStoreId: string) => {
     if (!newStoreId) return;
@@ -426,7 +444,7 @@ export function SkuWinView() {
       localStorage.setItem("acc_selected_store_id", newStoreId);
       window.dispatchEvent(new CustomEvent("acc_store_changed", { detail: newStoreId }));
     }
-    setDateRange(getSavedStoreDateRange("sku_win", newStoreId, financialMaxDate));
+    setDateRange(getSavedStoreDateRange(rangeKey, newStoreId, financialMaxDate));
     setPage(1);
   };
 
@@ -436,7 +454,7 @@ export function SkuWinView() {
       const newStoreId = e.detail || (typeof window !== "undefined" ? localStorage.getItem("acc_selected_store_id") : null);
       if (newStoreId && newStoreId !== selectedStoreId && stores.some((s) => s.id === newStoreId)) {
         setSelectedStoreId(newStoreId);
-        setDateRange(getSavedStoreDateRange("sku_win", newStoreId, financialMaxDate));
+        setDateRange(getSavedStoreDateRange(rangeKey, newStoreId, financialMaxDate));
         setPage(1);
       }
     };
@@ -446,7 +464,7 @@ export function SkuWinView() {
       window.removeEventListener("acc_store_changed", handleSyncStore);
       window.removeEventListener("storage", handleSyncStore);
     };
-  }, [selectedStoreId, stores]);
+  }, [selectedStoreId, stores, rangeKey]);
 
   // 2. Fetch Data
   const fetchData = useCallback(async () => {
@@ -466,6 +484,7 @@ export function SkuWinView() {
       if (endDate) params.set("end_date", endDate);
       if (debouncedSearch) params.set("search", debouncedSearch);
 
+      if (fbm) params.set("channel", "fbm");
       const res = await fetch(`/api/accounting/financials/sku-win?${params.toString()}`);
       if (res.ok) {
         const data = await res.json();
@@ -478,7 +497,7 @@ export function SkuWinView() {
     } finally {
       setLoading(false);
     }
-  }, [
+  }, [fbm,
     selectedStoreId,
     page,
     limit,
@@ -537,6 +556,7 @@ export function SkuWinView() {
         body: JSON.stringify({
           store_id: selectedStoreId,
           id: targetModalItem.id,
+          channel: fbm ? "fbm" : undefined,
           price: targetForm.price ? parseFloat(targetForm.price) : null,
           targets: {
             revenue: targetForm.revenue_target ? parseFloat(targetForm.revenue_target) : null,
@@ -564,15 +584,15 @@ export function SkuWinView() {
   const handleSaveColumns = (updated: ColumnConfig[]) => {
     setColumns(updated);
     if (typeof window !== "undefined") {
-      localStorage.setItem(SKU_WIN_COLUMNS_STORAGE_KEY, JSON.stringify(updated));
+      localStorage.setItem(columnsStorageKey, JSON.stringify(updated));
     }
   };
 
   const handleResetColumns = () => {
-    setColumns(DEFAULT_SKU_WIN_COLUMNS);
+    setColumns(defaultColumns);
     if (typeof window !== "undefined") {
-      localStorage.removeItem(SKU_WIN_COLUMNS_STORAGE_KEY);
-      localStorage.removeItem(SKU_WIN_FROZEN_STORAGE_KEY);
+      localStorage.removeItem(columnsStorageKey);
+      localStorage.removeItem(frozenStorageKey);
     }
     setFrozenThrough("sku");
     notify("Đã đưa cấu hình cột về mặc định!", "success");
@@ -660,11 +680,11 @@ export function SkuWinView() {
     setColumns((prev) => {
       const updated = prev.map((c) => (c.id === colId ? { ...c, width: Math.max(50, width) } : c));
       if (typeof window !== "undefined") {
-        localStorage.setItem(SKU_WIN_COLUMNS_STORAGE_KEY, JSON.stringify(updated));
+        localStorage.setItem(columnsStorageKey, JSON.stringify(updated));
       }
       return updated;
     });
-  }, []);
+  }, [columnsStorageKey]);
 
   // Auto-fit Column
   const handleAutoFitColumn = useCallback(
@@ -719,7 +739,7 @@ export function SkuWinView() {
   const handleSetFrozenColumn = (colId: string) => {
     setFrozenThrough(colId);
     if (typeof window !== "undefined") {
-      localStorage.setItem(SKU_WIN_FROZEN_STORAGE_KEY, colId);
+      localStorage.setItem(frozenStorageKey, colId);
     }
     notify(`Đã khóa đến cột "${colId}".`, "success");
   };
@@ -805,8 +825,9 @@ export function SkuWinView() {
     if (startDate) params.set("start_date", startDate);
     if (endDate) params.set("end_date", endDate);
     if (debouncedSearch) params.set("search", debouncedSearch);
+    if (fbm) params.set("channel", "fbm");
     return `/api/accounting/financials/sku-win/export?${params.toString()}`;
-  }, [
+  }, [fbm,
     selectedStoreId,
     sortField,
     sortDirection,
@@ -835,7 +856,7 @@ export function SkuWinView() {
           <div className="relative flex items-center bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs shadow-2xs hover:border-slate-400 transition-colors">
             <StorefrontIcon size={15} weight="bold" className="text-amber-600 mr-1.5 shrink-0" />
             <select
-              id="skuwin-store-select"
+              id={fbm ? "fbm-sku-store-select" : "skuwin-store-select"}
               value={selectedStoreId}
               onChange={(e) => handleStoreSelect(e.target.value)}
               disabled={loadingStores || stores.length === 0}
@@ -867,7 +888,7 @@ export function SkuWinView() {
             onChange={(newRange) => {
               setDateRange(newRange);
               if (selectedStoreId) {
-                saveStoreDateRange("sku_win", selectedStoreId, newRange);
+                saveStoreDateRange(rangeKey, selectedStoreId, newRange);
               }
               setPage(1);
             }}
@@ -944,7 +965,7 @@ export function SkuWinView() {
           <button
             type="button"
             onClick={() => setShowColumnModal(true)}
-            title={`Cấu hình cột LỌC SKU WIN (${visibleColumns.length}/${columns.length})`}
+            title={`Cấu hình cột ${viewTitle} (${visibleColumns.length}/${columns.length})`}
             className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
           >
             <SlidersHorizontalIcon size={14} className="text-slate-600" />
@@ -956,7 +977,7 @@ export function SkuWinView() {
             href={exportUrl}
             download
             className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1 text-xs font-bold text-white hover:bg-emerald-700 transition-colors shadow-2xs cursor-pointer"
-            title="Xuất file Excel đúng chuẩn format LỌC SKU WIN"
+            title={`Xuất file Excel đúng chuẩn format ${viewTitle}`}
           >
             <FileXlsIcon size={14} weight="bold" />
             <span>Xuất Excel</span>
@@ -1309,7 +1330,7 @@ export function SkuWinView() {
                   <tr>
                     <td colSpan={visibleColumns.length} className="py-24 text-center text-slate-500 font-bold text-sm">
                       <ArrowClockwiseIcon size={28} className="mx-auto mb-2 animate-spin text-amber-600" />
-                      Đang tải dữ liệu Lọc SKU Win của Store {selectedStore?.name}...
+                      Đang tải dữ liệu {fbm ? "Lọc SKU cố định FBM" : "Lọc SKU Win"} của Store {selectedStore?.name}...
                     </td>
                   </tr>
                 ) : displayItems.length === 0 ? (
@@ -2058,7 +2079,7 @@ export function SkuWinView() {
       <ColumnManagerModal
         isOpen={showColumnModal}
         onClose={() => setShowColumnModal(false)}
-        title="LỌC SKU WIN"
+        title={viewTitle}
         columns={columns}
         onSave={handleSaveColumns}
         onReset={handleResetColumns}

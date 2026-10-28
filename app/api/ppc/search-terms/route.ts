@@ -2,6 +2,7 @@
 import { ApiError, authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
 import { getDatabaseClient } from "@/lib/db";
 import { getCachedOrFetch } from "@/lib/redis";
+import { attachSearchVolumes } from "@/lib/ppc/search-volume";
 import type { MatchType, PpcAdType } from "@/lib/ppc/types";
 
 export const runtime = "nodejs";
@@ -284,6 +285,7 @@ export async function GET(request: Request) {
         sales: string;
         orders: number;
         report_date: string;
+        coverage_days: number;
       }>>`
         WITH anchor AS (${anchorCte}),
         daily_counts AS (
@@ -316,7 +318,8 @@ export async function GET(request: Request) {
           p.spend::numeric AS spend,
           p.sales::numeric AS sales,
           p.orders::integer AS orders,
-          p.report_date::text AS report_date
+          p.report_date::text AS report_date,
+          GREATEST(1, p.report_end_date - p.report_start_date + 1)::integer AS coverage_days
         FROM ppc_search_terms p
         JOIN ppc_stores s ON s.id = p.store_id
         CROSS JOIN anchor a
@@ -351,7 +354,7 @@ export async function GET(request: Request) {
         LIMIT ${pageSize} OFFSET ${offset}
       `;
 
-      const items = rows.map((r) => {
+      const baseItems = rows.map((r) => {
         const spend = Number(r.spend || 0);
         const sales = Number(r.sales || 0);
         const clicks = Number(r.clicks || 0);
@@ -387,7 +390,14 @@ export async function GET(request: Request) {
           acos,
           roas,
           reportDate: r.report_date,
+          coverageDays: r.coverage_days,
         };
+      });
+
+      const items = await attachSearchVolumes(sql, baseItems, {
+        keywordOf: (item) => item.customerSearchTerm,
+        coverageDaysOf: (item) => item.coverageDays,
+        shareApplies: () => true,
       });
 
       const totalSpend = Math.round(Number(rawSummary.total_spend || 0) * 100) / 100;

@@ -2,6 +2,7 @@ import ExcelJS from "exceljs";
 import { authorize, routeErrorResponse } from "@/lib/api-guard";
 import { getStoreById } from "@/lib/accounting/accounting-db";
 import { listSkuWin } from "@/lib/accounting/sku-win-db";
+import { listFbmSkuFixed } from "@/lib/accounting/fbm-financials-db";
 
 export async function GET(request: Request) {
   try {
@@ -26,7 +27,10 @@ export async function GET(request: Request) {
     const sortField = searchParams.get("sort_field") || "profit";
     const sortDirection = (searchParams.get("sort_dir") as "asc" | "desc") || "desc";
 
-    const result = await listSkuWin(storeId, {
+    // channel=fbm: LỌC SKU CỐ ĐỊNH của file FBM (mọi SKU trong BẢNG MÃ FBM)
+    const fbm = searchParams.get("channel") === "fbm";
+    const sheetTitle = fbm ? "LỌC SKU CỐ ĐỊNH FBM" : "LỌC SKU WIN";
+    const result = await (fbm ? listFbmSkuFixed : listSkuWin)(storeId, {
       startDate,
       endDate,
       compareStartDate,
@@ -45,7 +49,7 @@ export async function GET(request: Request) {
     workbook.creator = "Amazon Listing Management";
     workbook.created = new Date();
 
-    const ws = workbook.addWorksheet("LỌC SKU WIN", {
+    const ws = workbook.addWorksheet(sheetTitle, {
       views: [{ state: "frozen", xSplit: 4, ySplit: 3 }],
     });
 
@@ -196,7 +200,7 @@ export async function GET(request: Request) {
         item.revenue_ads,
         item.all_time_quantity,
         item.return_rate,
-        item.shipped_qty,
+        fbm ? "" : item.shipped_qty,
         item.brand || "",
         item.status || "",
         item.compare_revenue ?? "",
@@ -294,7 +298,7 @@ export async function GET(request: Request) {
     ];
 
     const buffer = await workbook.xlsx.writeBuffer();
-    const filename = `LOC_SKU_WIN_${storeName.replace(/\s+/g, "_")}_${new Date().toISOString().split("T")[0]}.xlsx`;
+    const filename = `${fbm ? "LOC_SKU_CO_DINH_FBM" : "LOC_SKU_WIN"}_${storeName.replace(/\s+/g, "_")}_${new Date().toISOString().split("T")[0]}.xlsx`;
 
     return new Response(buffer, {
       headers: {

@@ -69,7 +69,7 @@ const STORE_SERVICE_RATES: Record<string, number> = {
   "fe847fdf-3c03-42db-aece-4af255c096a8": 0.7292, // LIMIMA
 };
 
-function getExcelWeekNum(dateStr: string): number {
+export function getExcelWeekNum(dateStr: string): number {
   try {
     const d = new Date(dateStr + "T00:00:00Z");
     const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));

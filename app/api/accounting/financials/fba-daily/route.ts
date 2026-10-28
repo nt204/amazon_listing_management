@@ -1,5 +1,6 @@
 import { authorize, routeErrorResponse } from "@/lib/api-guard";
 import { listFbaDaily } from "@/lib/accounting/fba-daily-db";
+import { listFbmDaily } from "@/lib/accounting/fbm-financials-db";
 
 export async function GET(request: Request) {
   try {
@@ -18,7 +19,9 @@ export async function GET(request: Request) {
     const page = parseInt(searchParams.get("page") || "1", 10);
     const limit = parseInt(searchParams.get("limit") || "100", 10);
 
-    const result = await listFbaDaily(storeId, {
+    // channel=fbm: tab FBM theo ngày (sheet "FBM" của file kế toán FBM)
+    const list = searchParams.get("channel") === "fbm" ? listFbmDaily : listFbaDaily;
+    const result = await list(storeId, {
       startDate,
       endDate,
       search,
