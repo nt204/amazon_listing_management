@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 
 // Bảng tổng phía trên tab Target / Search Term khi tìm theo SKU: mỗi keyword 1 dòng tổng (gộp mọi campaign / match type).
-// Cùng 11 cột với bảng tổng: Ảnh | SKU | Keyword | Hiển thị | Clicks | CTR | Spend | Sales | Orders | CVR | ACOS.
+// Cùng 12 cột với bảng tổng: Ảnh | SKU | Keyword | Hiển thị | Clicks | CTR | Spend | Sales | Orders | CVR | CPC | ACOS.
 
 export type KeywordGroupRow = {
   targetKeyword?: string;
@@ -38,6 +38,9 @@ export function PpcKeywordGroupRows({ groups, total }: { groups: KeywordGroupRow
             <td className="px-3 py-2 text-right font-mono text-sm text-slate-600">
               {group.clicks > 0 ? ((group.orders / group.clicks) * 100).toFixed(1) : "0.0"}%
             </td>
+            <td className="px-3 py-2 text-right font-mono text-sm text-slate-600">
+              {group.clicks > 0 ? `$${(group.spend / group.clicks).toFixed(2)}` : "-"}
+            </td>
             <td className="px-3 py-2 text-right">
               <span
                 className={`inline-flex min-w-[64px] justify-center rounded-md px-2 py-0.5 font-mono text-xs font-black ${
@@ -58,7 +61,7 @@ export function PpcKeywordGroupRows({ groups, total }: { groups: KeywordGroupRow
       })}
       {total > groups.length && (
         <tr>
-          <td colSpan={11} className="px-3 py-2 text-center text-[11px] text-slate-400">
+          <td colSpan={12} className="px-3 py-2 text-center text-[11px] text-slate-400">
             Hiển thị {groups.length.toLocaleString("vi-VN")}/{total.toLocaleString("vi-VN")} keyword có spend cao nhất
           </td>
         </tr>
@@ -69,7 +72,7 @@ export function PpcKeywordGroupRows({ groups, total }: { groups: KeywordGroupRow
 
 // ---- Sắp xếp bảng tổng (bấm vào tên cột). Sắp xếp phía client trên dữ liệu đã tải; SKU luôn nằm trên keyword.
 
-export type SummarySortField = "sku" | "keyword" | "impressions" | "clicks" | "ctr" | "spend" | "sales" | "orders" | "cvr" | "acos";
+export type SummarySortField = "sku" | "keyword" | "impressions" | "clicks" | "ctr" | "spend" | "sales" | "orders" | "cvr" | "cpc" | "acos";
 
 type SummaryMetrics = { impressions: number; clicks: number; spend: number; sales: number; orders: number };
 
@@ -82,6 +85,8 @@ function metricValue(m: SummaryMetrics, field: SummarySortField): number {
       return impressions > 0 ? clicks / impressions : 0;
     case "cvr":
       return clicks > 0 ? Number(m.orders || 0) / clicks : 0;
+    case "cpc":
+      return clicks > 0 ? Number(m.spend || 0) / clicks : 0;
     // Không có sales → ACOS vô cực (luôn xếp sau khi tăng dần)
     case "acos":
       return sales > 0 ? Number(m.spend || 0) / sales : Number.POSITIVE_INFINITY;
@@ -151,6 +156,7 @@ const SUMMARY_COLUMNS: { field: SummarySortField; label: string; className: stri
   { field: "sales", label: "Sales", className: "px-3 py-3 text-right" },
   { field: "orders", label: "Orders", className: "px-3 py-3 text-right" },
   { field: "cvr", label: "CVR", className: "px-3 py-3 text-right" },
+  { field: "cpc", label: "CPC", className: "px-3 py-3 text-right" },
   { field: "acos", label: "ACOS", className: "px-3 py-3 text-right" },
 ];
 

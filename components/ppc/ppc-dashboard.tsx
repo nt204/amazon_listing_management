@@ -611,7 +611,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
   const [termMaxOrders, setTermMaxOrders] = useState("");
   const [termMinAcos, setTermMinAcos] = useState("");
   const [termMaxAcos, setTermMaxAcos] = useState("");
-  const [termSortField, setTermSortField] = useState<SortField>("spend");
+  const [termSortField, setTermSortField] = useState<SortField | "cpc">("spend");
   const [termSortDir, setTermSortDir] = useState<SortDirection>("desc");
   const [termPage, setTermPage] = useState(1);
   const [termPageSize, setTermPageSize] = useState(25);
@@ -4031,6 +4031,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                       <td className="px-3 py-3 text-right font-mono text-sm font-black text-emerald-600">${Number(group.totalSales || 0).toFixed(2)}</td>
                       <td className="px-3 py-3 text-right font-mono text-sm font-black text-slate-900">{Number(group.totalOrders || 0).toLocaleString("vi-VN")}</td>
                       <td className="px-3 py-3 text-right font-mono text-sm text-slate-700">{group.totalClicks > 0 ? ((group.totalOrders / group.totalClicks) * 100).toFixed(1) : "0.0"}%</td>
+                      <td className="px-3 py-3 text-right font-mono text-sm text-slate-700">{group.totalClicks > 0 ? `$${(group.totalSpend / group.totalClicks).toFixed(2)}` : "-"}</td>
                       <td className="px-3 py-3 text-right">
                         <span
                           className={`inline-flex min-w-[68px] justify-center rounded-md px-2 py-1 font-mono text-sm font-black ${
@@ -4949,6 +4950,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                       <td className="px-3 py-3 text-right font-mono text-sm font-black text-emerald-600">${Number(group.totalSales || 0).toFixed(2)}</td>
                       <td className="px-3 py-3 text-right font-mono text-sm font-black text-slate-900">{Number(group.totalOrders || 0).toLocaleString("vi-VN")}</td>
                       <td className="px-3 py-3 text-right font-mono text-sm text-slate-700">{group.totalClicks > 0 ? ((group.totalOrders / group.totalClicks) * 100).toFixed(1) : "0.0"}%</td>
+                      <td className="px-3 py-3 text-right font-mono text-sm text-slate-700">{group.totalClicks > 0 ? `$${(group.totalSpend / group.totalClicks).toFixed(2)}` : "-"}</td>
                       <td className="px-3 py-3 text-right">
                         <span
                           className={`inline-flex min-w-[68px] justify-center rounded-md px-2 py-1 font-mono text-sm font-black ${
@@ -5056,6 +5058,15 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                     CVR (%) {termSortField === "cvr" && (termSortDir === "asc" ? "↑" : "↓")}
                   </th>
                   <th
+                    className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600 whitespace-nowrap"
+                    onClick={() =>
+                      handleSort("cpc", termSortField, termSortDir, setTermSortField, setTermSortDir)
+                    }
+                    title="CPC trung bình = Spend / Clicks"
+                  >
+                    CPC ($) {termSortField === "cpc" && (termSortDir === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th
                     className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
                     onClick={() =>
                       handleSort("acos", termSortField, termSortDir, setTermSortField, setTermSortDir)
@@ -5068,7 +5079,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
               <tbody className="divide-y divide-slate-100 font-mono text-[11px] font-normal">
                 {(loadingSearchTermsServer || (!serverSearchTerms && (!searchTermsReady || loadingSection === "search_terms" || loading || isStoreSwitching))) ? (
                   <tr>
-                    <td colSpan={14} className="p-12 text-center text-xs text-slate-500">
+                    <td colSpan={15} className="p-12 text-center text-xs text-slate-500">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <CircleNotch size={24} className="animate-spin text-indigo-600" />
                         <span className="font-bold text-slate-700">Đang tải dữ liệu Search Terms từ máy chủ...</span>
@@ -5077,7 +5088,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   </tr>
                 ) : (serverSearchTerms || paginatedSearchTerms).length === 0 ? (
                   <tr>
-                    <td colSpan={14} className="p-8 text-center text-slate-400 font-sans font-medium">
+                    <td colSpan={15} className="p-8 text-center text-slate-400 font-sans font-medium">
                       Không tìm thấy từ khóa nào phù hợp bộ lọc.
                     </td>
                   </tr>
@@ -5143,6 +5154,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                         <td className="py-2.5 px-3 text-right font-normal text-slate-700">{t.orders}</td>
                         {/* CVR (%) - Viết thường */}
                         <td className="py-2.5 px-3 text-right font-normal text-slate-700">{Number.isFinite(t.cvr) ? `${(t.cvr * 100).toFixed(1)}%` : "-"}</td>
+                        {/* CPC trung bình = Spend / Clicks */}
+                        <td className="py-2.5 px-3 text-right font-normal text-slate-700">{t.clicks > 0 ? `$${(t.spend / t.clicks).toFixed(2)}` : "-"}</td>
                         {/* ACOS (%) - IN ĐẬM */}
                         <td className="py-2.5 px-3 text-right font-bold">
                           <span
