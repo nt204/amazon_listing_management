@@ -42,92 +42,7 @@ const MAX_HISTORICAL_ORDER_RETRIES = 3;
 const MAX_MISSING_FILE_CHECKS = 3;
 const ACCOUNTING_TASK_COUNT = 8;
 
-function base32Decode(base32: string): Buffer {
-  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-  const clean = base32.replace(/[\s=-]/g, "").toUpperCase();
-  let bits = "";
-  for (const char of clean) {
-    const value = alphabet.indexOf(char);
-    if (value >= 0) bits += value.toString(2).padStart(5, "0");
-  }
-  const bytes: number[] = [];
-  for (let index = 0; index + 8 <= bits.length; index += 8) {
-    bytes.push(Number.parseInt(bits.slice(index, index + 8), 2));
-  }
-  return Buffer.from(bytes);
-}
-
-function generateTotp(secret: string, timeStep = 30): string {
-  const counter = Math.floor(Date.now() / 1000 / timeStep);
-  const counterBuffer = Buffer.alloc(8);
-  counterBuffer.writeBigInt64BE(BigInt(counter));
-  const digest = crypto.createHmac("sha1", base32Decode(secret)).update(counterBuffer).digest();
-  const offset = digest[digest.length - 1] & 0x0f;
-  const binary =
-    ((digest[offset] & 0x7f) << 24) |
-    ((digest[offset + 1] & 0xff) << 16) |
-    ((digest[offset + 2] & 0xff) << 8) |
-    (digest[offset + 3] & 0xff);
-  return String(binary % 1_000_000).padStart(6, "0");
-}
-
-async function autoLoginBozspacerSellerCentral(page: Page): Promise<void> {
-  if (!isSignInUrl(page.url())) return;
-
-  const email = process.env.BOZSPACER_AMAZON_EMAIL || "jennie662quynhunce@gmail.com";
-  const password = process.env.BOZSPACER_AMAZON_PASSWORD || "";
-  const secret = process.env.BOZSPACER_AMAZON_2FA_SECRET || "";
-  if (!password) throw new Error("[BOZSPACER] Chưa cấu hình BOZSPACER_AMAZON_PASSWORD trong config.env.");
-
-  console.log(`  [BOZSPACER] 🔐 Seller Central yêu cầu đăng nhập; đang tự động khôi phục phiên...`);
-  const emailField = page.locator("#ap_email").first();
-  if (await emailField.isVisible().catch(() => false)) {
-    await emailField.fill(email);
-    const continueButton = page.locator("#continue").first();
-    if (await continueButton.isVisible().catch(() => false)) {
-      await Promise.all([
-        page.waitForNavigation({ timeout: 25_000 }).catch(() => null),
-        continueButton.click(),
-      ]);
-    }
-  }
-
-  const passwordField = page.locator("#ap_password").first();
-  await passwordField.waitFor({ state: "visible", timeout: 10_000 }).catch(() => {});
-  if (await passwordField.isVisible().catch(() => false)) {
-    await passwordField.fill(password);
-    await page.locator('input[name="rememberMe"]').first().check().catch(() => {});
-    const submitButton = page.locator("#signInSubmit").first();
-    if (await submitButton.isVisible().catch(() => false)) {
-      await Promise.all([
-        page.waitForNavigation({ timeout: 25_000 }).catch(() => null),
-        submitButton.click(),
-      ]);
-    }
-  }
-
-  await page.waitForTimeout(2_000);
-  const otpField = page.locator("#auth-mfa-otpcode").first();
-  if (await otpField.isVisible().catch(() => false)) {
-    if (!secret) throw new Error("[BOZSPACER] Seller Central yêu cầu OTP nhưng chưa cấu hình BOZSPACER_AMAZON_2FA_SECRET.");
-    console.log(`  [BOZSPACER] 🔑 Đang tự động xác thực TOTP...`);
-    await otpField.fill(generateTotp(secret));
-    await page.locator("#auth-mfa-remember-device").first().check().catch(() => {});
-    const otpSubmit = page.locator("#auth-signin-button").first();
-    if (await otpSubmit.isVisible().catch(() => false)) {
-      await Promise.all([
-        page.waitForNavigation({ timeout: 25_000 }).catch(() => null),
-        otpSubmit.click(),
-      ]);
-    }
-  }
-
-  await page.waitForTimeout(4_000);
-  if (isSignInUrl(page.url())) {
-    throw new Error(`[BOZSPACER] Auto-login Seller Central không thành công (URL: ${page.url()}).`);
-  }
-  console.log(`  [BOZSPACER] ✅ Đã khôi phục phiên Seller Central.`);
-}
+import { ensureAmazonSession } from "./amazon_auth";
 
 function getVietnamDateParts(now = new Date()): { year: number; month: number; day: number; hour: number } {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -1550,10 +1465,10 @@ export async function crawlAccountingForStore(
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           const sessionExpired = isSignInUrl(page.url()) || /chưa đăng nhập|sign-in|signin/i.test(message);
-          if (store.store_name.toUpperCase() !== "BOZSPACER" || !sessionExpired) throw error;
+          if (!sessionExpired) throw error;
 
-          await autoLoginBozspacerSellerCentral(page);
-          console.log(`  [${task.label}] Thử lại ngay sau khi auto-login thành công...`);
+          await ensureAmazonSession(page, store.store_name);
+          console.log(`  [${task.label}] Thử lại ngay sau khi khôi phục phiên thành công...`);
           return task.download();
         }
       };

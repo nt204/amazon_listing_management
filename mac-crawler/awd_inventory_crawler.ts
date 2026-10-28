@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { sendTelegramMessage } from "./telegram";
+import { ensureAmazonSession } from "./amazon_auth";
 
 // ============================================================================
 // CONFIGURATION & PATH RESOLUTION
@@ -316,12 +317,17 @@ export async function downloadAwdInventoryLedgerReport(
   page: Page,
   downloadDir: string,
   targetIsoDate: string,
-  targetUsDate: string
+  targetUsDate: string,
+  storeName?: string
 ): Promise<string | null> {
   const url = "https://sellercentral.amazon.com/reportcentral/AWD_INVENTORY_LEDGER_REPORT/1";
   console.log(`  [AWD Ledger] Đang truy cập ${url}...`);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
   await page.waitForTimeout(4000);
+
+  if (storeName) {
+    await ensureAmazonSession(page, storeName);
+  }
 
   if (isSignInUrl(page.url())) {
     throw new Error("Seller Central chưa đăng nhập.");
@@ -611,7 +617,8 @@ export async function runAwdInventoryLedgerCrawler(): Promise<void> {
           page,
           storeDownloadDir,
           targetSaturday.isoDate,
-          targetSaturday.usDate
+          targetSaturday.usDate,
+          store.store_name
         );
 
         if (!downloadedFilePath) {
