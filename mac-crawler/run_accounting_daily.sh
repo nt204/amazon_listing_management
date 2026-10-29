@@ -7,8 +7,12 @@ LOG_FILE="$LOG_DIR/mac-accounting.log"
 
 mkdir -p "$LOG_DIR"
 
-# Ghi nhận output ra đồng thời console và file log
-exec > >(tee -a "$LOG_FILE") 2>&1
+# Ghi nhận output ra file log (và ra terminal nếu chạy tương tác)
+if [ -t 1 ]; then
+  exec > >(tee -a "$LOG_FILE") 2>&1
+else
+  exec >> "$LOG_FILE" 2>&1
+fi
 
 echo ""
 echo "######################################################################"

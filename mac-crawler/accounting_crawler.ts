@@ -1320,34 +1320,29 @@ export async function crawlAccountingForStore(
           }
           if (historicalOrdersDone) return;
           historicalOrdersDone = true;
-          // Amazon có thể sửa status/discount/quantity sau ngày phát sinh. Làm mới
-          // liên tục 14 ngày gần nhất để không bỏ lọt các ngày nằm giữa.
-          for (const daysAgo of Array.from({ length: 14 }, (_, index) => index + 1)) {
-            const historicalDate = subtractIsoDays(targetDateStr, daysAgo);
-            const existingHistorical = findExistingValidReportFile(storeDownloadDir, "02_AllOrders_", historicalDate);
-            const historical = await downloadWithRetry(
-              `File 02 lịch sử (${historicalDate})`,
-              () => downloadFile02AllOrders(page, storeDownloadDir, historicalDate),
-              MAX_HISTORICAL_ORDER_RETRIES,
-            );
-            if (historical.path) {
-              try {
-                await parseAndIngestOrderFile(historical.path, store);
-              } catch (err: any) {
-                supplementalErrors.push(`File 02 lịch sử (${historicalDate}) ingest: ${err?.message}`);
-              }
-            } else if (existingHistorical) {
-              // Chỉ dùng file cũ làm phương án dự phòng; bình thường phải tải lại để
-              // nhận các sửa đổi muộn từ Amazon.
-              try {
-                await parseAndIngestOrderFile(existingHistorical, store);
-                console.warn(`  ⚠️ [File 02 lịch sử (${historicalDate})] Dùng file dự phòng trên máy.`);
-              } catch (err: any) {
-                supplementalErrors.push(`File 02 lịch sử (${historicalDate}) ingest fallback: ${err?.message}`);
-              }
-            } else {
-              supplementalErrors.push(`File 02 lịch sử (${historicalDate}): ${historical.error}`);
+          const historicalDate = subtractIsoDays(targetDateStr, 3);
+          // Kiểm tra xem file lịch sử đã có sẵn chưa
+          const existingHistorical = findExistingValidReportFile(storeDownloadDir, "02_AllOrders_", historicalDate);
+          if (existingHistorical && process.env.FORCE_DOWNLOAD !== "true") {
+            console.log(`  [File 02 lịch sử (${historicalDate})] ⚡ Đã có file hợp lệ trên máy: ${path.basename(existingHistorical)}.`);
+            try {
+              await parseAndIngestOrderFile(existingHistorical, store);
+            } catch {}
+            return;
+          }
+          const historical = await downloadWithRetry(
+            `File 02 lịch sử (${historicalDate})`,
+            () => downloadFile02AllOrders(page, storeDownloadDir, historicalDate),
+            MAX_HISTORICAL_ORDER_RETRIES,
+          );
+          if (historical.path) {
+            try {
+              await parseAndIngestOrderFile(historical.path, store);
+            } catch (err: any) {
+              console.warn(`  ⚠️ [File 02 lịch sử] Chưa nạp tự động vào Web App (${err?.message}).`);
             }
+          } else {
+            supplementalErrors.push(`File 02 lịch sử (${historicalDate}): ${historical.error}`);
           }
         },
       },
