@@ -447,7 +447,7 @@ async function runSearchVolumeSync(
       message,
     });
 
-  // 1. Cerebro theo ASIN (ưu tiên ASIN spend cao, bỏ qua ASIN đã tra trong TTL)
+  // 1. Cerebro theo ASIN: Lấy toàn bộ ASIN có Ads đang hoạt động (không bị paused/archived)
   const cerebroAllowance = Math.min(CEREBRO_PER_RUN, Math.max(0, CEREBRO_MONTHLY_BUDGET - usage.cerebro));
   if (missing.size > 0 && cerebroAllowance > 0) {
     const asinRows = await sql<Array<{ asin: string }>>`
@@ -458,10 +458,12 @@ async function runSearchVolumeSync(
       WHERE p.store_id IN ${sql(storeIds)}
         AND p.grain = 'PRODUCT'
         AND p.asin ~* '^[A-Z0-9]{10}$'
-        AND p.report_end_date >= CURRENT_DATE - ${LOOKBACK_DAYS}::integer
+        AND lower(COALESCE(p.state, 'enabled')) NOT IN ('paused', 'archived')
+        AND lower(COALESCE(p.campaign_state, 'enabled')) NOT IN ('paused', 'archived')
+        AND lower(COALESCE(p.ad_group_state, 'enabled')) NOT IN ('paused', 'archived')
         AND (q.queried_at IS NULL OR q.queried_at < NOW() - make_interval(days => ${SEARCH_VOLUME_TTL_DAYS}))
       GROUP BY upper(p.asin)
-      ORDER BY SUM(p.spend) DESC
+      ORDER BY SUM(p.spend) DESC, MAX(p.report_end_date) DESC
     `;
     const asins = asinRows.map((row) => row.asin);
 
