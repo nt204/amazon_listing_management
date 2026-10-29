@@ -5,7 +5,6 @@ import type { RequestActor } from "@/lib/auth";
 import { usePpcColumnVisibility } from "./use-ppc-column-visibility";
 import {
   Tag,
-  Funnel,
   CheckCircle,
   X,
   CaretRight,
@@ -33,6 +32,7 @@ import {
   PencilSimple,
   Target,
   Sparkle,
+  UserCircle,
 } from "@phosphor-icons/react";
 import {
   SKU_PREFIX_ERROR_PRODUCT_TYPE,
@@ -208,6 +208,7 @@ export function PpcSkuRecommendationGroupView({
   const recColumnPicker = usePpcColumnVisibility(recTable, "sku_recommendations", actor);
   const [selectedPhôi, setSelectedPhôi] = useState("ALL");
   const [selectedNiche, setSelectedNiche] = useState("ALL");
+  const [selectedPic, setSelectedPic] = useState("ALL");
   const [quickFilter, setQuickFilter] = useState<QuickFilterType>("ALL");
   const [selectedCampType, setSelectedCampType] = useState<"ALL" | "SP03" | "SB05" | "SB01">("ALL");
   const [sortField, setSortField] = useState<SortField>("totalRecommendations");
@@ -547,6 +548,17 @@ export function PpcSkuRecommendationGroupView({
       .map(([name, count]) => ({ name, count }));
   }, [groups]);
 
+  const picOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const g of groups) {
+      const pic = (g.picMkt || "").trim();
+      if (pic) counts.set(pic, (counts.get(pic) || 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([name, count]) => ({ name, count }));
+  }, [groups]);
+
   // Quick Filter Counts for badges
   const filterCounts = useMemo(() => {
     let increase = 0;
@@ -624,7 +636,8 @@ export function PpcSkuRecommendationGroupView({
         const matchAsin = g.asin.toLowerCase().includes(q);
         const matchNiche = (g.niche || "").toLowerCase().includes(q);
         const matchPhôi = (g.productType || "").toLowerCase().includes(q);
-        if (!matchSku && !matchAsin && !matchNiche && !matchPhôi) return false;
+        const matchPic = (g.picMkt || "").toLowerCase().includes(q);
+        if (!matchSku && !matchAsin && !matchNiche && !matchPhôi && !matchPic) return false;
       }
 
       // 2. Phôi filter
@@ -634,6 +647,11 @@ export function PpcSkuRecommendationGroupView({
 
       // 3. Niche filter
       if (selectedNiche !== "ALL" && (g.niche || "").trim() !== selectedNiche) {
+        return false;
+      }
+
+      // PIC MKT filter
+      if (selectedPic !== "ALL" && (g.picMkt || "").trim() !== selectedPic) {
         return false;
       }
 
@@ -697,7 +715,7 @@ export function PpcSkuRecommendationGroupView({
       const numB = typeof valB === "number" ? valB : 0;
       return sortOrder === "asc" ? numA - numB : numB - numA;
     });
-  }, [groups, searchTerm, selectedPhôi, selectedNiche, quickFilter, selectedCampType, sortField, sortOrder]);
+  }, [groups, searchTerm, selectedPhôi, selectedNiche, selectedPic, quickFilter, selectedCampType, sortField, sortOrder]);
 
   const totalPages = Math.max(1, Math.ceil(filteredGroups.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -708,7 +726,7 @@ export function PpcSkuRecommendationGroupView({
     // Filters and sorting describe a new result set; show it from the first page.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPage(1);
-  }, [searchTerm, selectedPhôi, selectedNiche, quickFilter, selectedCampType, sortField, sortOrder]);
+  }, [searchTerm, selectedPhôi, selectedNiche, selectedPic, quickFilter, selectedCampType, sortField, sortOrder]);
 
   const selectedVisibleSkuCount = filteredGroups.reduce(
     (count, group) => count + (selectedSkus.has(group.sku) ? 1 : 0),
@@ -1028,11 +1046,6 @@ export function PpcSkuRecommendationGroupView({
     }
   };
 
-  // Filtered recommendations count in filtered groups
-  const filteredRecommendationsCount = useMemo(() => {
-    return filteredGroups.reduce((acc, g) => acc + g.totalRecommendations, 0);
-  }, [filteredGroups]);
-
   // Aggregate stats for filtered groups
   const filteredAggregates = useMemo(() => {
     let spend = 0;
@@ -1051,7 +1064,7 @@ export function PpcSkuRecommendationGroupView({
     return (
       <th
         onClick={() => handleSort(field)}
-        className={`py-3 px-3 text-${align} select-none cursor-pointer hover:bg-slate-100/80 transition group`}
+        className={`py-3 px-3 text-${align} whitespace-nowrap select-none cursor-pointer hover:bg-slate-100/80 transition group`}
         title={`Click để sắp xếp theo ${label}`}
       >
         <div className={`inline-flex items-center gap-1 ${align === "right" ? "justify-end" : align === "center" ? "justify-center" : "justify-start"}`}>
@@ -1078,6 +1091,7 @@ export function PpcSkuRecommendationGroupView({
     searchTerm !== "" ||
     selectedPhôi !== "ALL" ||
     selectedNiche !== "ALL" ||
+    selectedPic !== "ALL" ||
     quickFilter !== "ALL" ||
     selectedCampType !== "ALL";
 
@@ -1097,11 +1111,11 @@ export function PpcSkuRecommendationGroupView({
       {/* Top Filter Area: Search, Phôi & Summary */}
       <div className="bg-white p-3 rounded-xl border border-slate-200/90 shadow-2xs space-y-2.5">
         {/* Row 1: Controls, Metrics & Auto Bid Button */}
-        <div className="flex flex-wrap items-center justify-between gap-2.5">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Left: Search, Phôi, Window Toggle */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="contents">
             {/* Search Box */}
-            <div className="relative">
+            <div className="relative w-full sm:w-44">
               <MagnifyingGlass
                 size={14}
                 className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"
@@ -1111,7 +1125,7 @@ export function PpcSkuRecommendationGroupView({
                 placeholder="Tìm SKU, ASIN, Niche..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-7.5 pr-6 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600/20 w-48 shadow-2xs"
+                className="pl-7.5 pr-6 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600/20 w-full shadow-2xs"
               />
               {searchTerm && (
                 <button
@@ -1130,7 +1144,7 @@ export function PpcSkuRecommendationGroupView({
               <select
                 value={selectedPhôi}
                 onChange={(e) => setSelectedPhôi(e.target.value)}
-                className="bg-transparent border-none text-xs text-slate-800 font-semibold focus:outline-none cursor-pointer pr-1"
+                className="bg-transparent border-none text-xs text-slate-800 font-semibold focus:outline-none cursor-pointer pr-1 max-w-[120px]"
               >
                 <option value="ALL">Tất cả Phôi ({groups.length})</option>
                 {phôiOptions.map((p) => (
@@ -1147,12 +1161,29 @@ export function PpcSkuRecommendationGroupView({
               <select
                 value={selectedNiche}
                 onChange={(e) => setSelectedNiche(e.target.value)}
-                className="bg-transparent border-none text-xs text-slate-800 font-semibold focus:outline-none cursor-pointer pr-1 max-w-[200px]"
+                className="bg-transparent border-none text-xs text-slate-800 font-semibold focus:outline-none cursor-pointer pr-1 max-w-[120px]"
               >
                 <option value="ALL">Tất cả Niche ({groups.length})</option>
                 {nicheOptions.map((n) => (
                   <option key={n.name} value={n.name}>
                     {n.name} ({n.count})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* PIC MKT Dropdown */}
+            <div className="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 shadow-2xs">
+              <UserCircle size={13} className="text-slate-400 shrink-0" />
+              <select
+                value={selectedPic}
+                onChange={(e) => setSelectedPic(e.target.value)}
+                className="bg-transparent border-none text-xs text-slate-800 font-semibold focus:outline-none cursor-pointer pr-1 max-w-[110px]"
+              >
+                <option value="ALL">Tất cả PIC ({groups.length})</option>
+                {picOptions.map((p) => (
+                  <option key={p.name} value={p.name}>
+                    {p.name} ({p.count})
                   </option>
                 ))}
               </select>
@@ -1183,6 +1214,7 @@ export function PpcSkuRecommendationGroupView({
                   setSearchTerm("");
                   setSelectedPhôi("ALL");
                   setSelectedNiche("ALL");
+                  setSelectedPic("ALL");
                   setQuickFilter("ALL");
                   setSelectedCampType("ALL");
                 }}
@@ -1203,16 +1235,8 @@ export function PpcSkuRecommendationGroupView({
           </div>
 
           {/* Right: Aggregates & Action Button */}
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-2 text-xs text-slate-600 font-medium bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200/90 shadow-2xs">
-              <span>
-                <strong className="text-slate-900 font-semibold">{filteredGroups.length}</strong>/{groups.length} SKU
-              </span>
-              <span className="text-slate-300">•</span>
-              <span>
-                <strong className="text-indigo-700 font-semibold">{filteredRecommendationsCount}</strong> đề xuất
-              </span>
-              <span className="text-slate-300">•</span>
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+            <div className="flex items-center gap-2 whitespace-nowrap text-xs text-slate-600 font-medium bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200/90 shadow-2xs">
               <span>
                 Spend: <strong className="text-slate-900 font-mono font-semibold">${filteredAggregates.spend.toFixed(0)}</strong>
               </span>
@@ -1239,10 +1263,6 @@ export function PpcSkuRecommendationGroupView({
 
         {/* Row 2: Quick Filter Chips (Gọn gàng trên 1 hàng, không bị rớt dòng lẻ loi) */}
         <div className="flex items-center gap-1 pt-2 border-t border-slate-100 overflow-x-auto no-scrollbar">
-          <span className="text-[11px] font-bold uppercase text-slate-400 tracking-wider flex items-center gap-1 mr-0.5 shrink-0">
-            <Funnel size={11} weight="bold" className="text-slate-500" />
-            <span>Lọc:</span>
-          </span>
 
           {/* Tất cả */}
           <button
@@ -1476,8 +1496,15 @@ export function PpcSkuRecommendationGroupView({
       {selectedSkus.size > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-3.5 py-2.5 shadow-2xs">
           <div className="flex items-center gap-2 text-xs font-bold text-indigo-900">
-            <CheckSquare size={17} weight="fill" className="text-indigo-600" />
-            <span>Đã chọn {selectedSkus.size} SKU</span>
+            <button
+              type="button"
+              onClick={() => setSelectedSkus(new Set())}
+              disabled={isBulkApproving}
+              className="flex items-center gap-2 cursor-pointer disabled:cursor-not-allowed"
+            >
+              <CheckSquare size={17} weight="fill" className="text-indigo-600" />
+              <span>Đã chọn {selectedSkus.size} SKU</span>
+            </button>
             {selectedVisibleSkuCount !== selectedSkus.size && (
               <span className="font-medium text-indigo-600">
                 ({selectedVisibleSkuCount} trong bộ lọc hiện tại)
@@ -1539,7 +1566,7 @@ export function PpcSkuRecommendationGroupView({
               {renderSortHeader("Tăng Bid", "increaseCount", "center")}
               {renderSortHeader("Giảm Bid", "decreaseCount", "center")}
               {renderSortHeader("Pause", "pauseCount", "center")}
-              <th className="py-3 px-3 text-center">Chi tiết</th>
+              <th className="py-3 px-3 text-center whitespace-nowrap">Chi tiết</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -1713,7 +1740,7 @@ export function PpcSkuRecommendationGroupView({
                       ) : "—"}
                     </td>
                     <td className="py-3 px-3 text-center">
-                      <button className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold text-indigo-700 bg-indigo-50/70 hover:bg-indigo-100/90 border border-indigo-200/70 shadow-2xs transition cursor-pointer">
+                      <button className="inline-flex items-center gap-1 whitespace-nowrap px-2.5 py-1 rounded-lg text-xs font-bold text-indigo-700 bg-indigo-50/70 hover:bg-indigo-100/90 border border-indigo-200/70 shadow-2xs transition cursor-pointer">
                         <span>Chi tiết</span>
                         <CaretRight size={12} weight="bold" />
                       </button>

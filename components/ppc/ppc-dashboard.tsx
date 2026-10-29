@@ -13,6 +13,7 @@ import {
   MagnifyingGlass,
   Storefront,
   Tag,
+  UserCircle,
   UploadSimple,
   X,
   FolderSimple,
@@ -688,6 +689,7 @@ export function PpcDashboard({
   // SKU category & niche filter
   const [skuCategoryFilter, setSkuCategoryFilter] = useState<"ALL" | "HERO" | "BLEEDING" | "POTENTIAL" | "ZERO_CLICKS" | "ZERO_SPEND">("ALL");
   const [skuNicheFilter, setSkuNicheFilter] = useState<string>("ALL");
+  const [skuPicFilter, setSkuPicFilter] = useState<string>("ALL");
   const [hidePausedSkus, setHidePausedSkus] = useState(false);
 
 
@@ -880,6 +882,7 @@ export function PpcDashboard({
     setSelectedStore(storeName);
     setSelectedSku("ALL");
     setSkuNicheFilter("ALL");
+    setSkuPicFilter("ALL");
     setIsStoreHighlight(false);
     setShowStoreNotice(false);
     if (storeName === "ALL") {
@@ -2498,6 +2501,17 @@ export function PpcDashboard({
       .map(([name, count]) => ({ name, count }));
   }, [activeSkuPerformance]);
 
+  const skuPicOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const s of activeSkuPerformance) {
+      const pic = (s.picMkt || "").trim();
+      if (pic) counts.set(pic, (counts.get(pic) || 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([name, count]) => ({ name, count }));
+  }, [activeSkuPerformance]);
+
   const filteredSortedSkus = useMemo(() => {
     let list = [...activeSkuPerformance];
     if (skuCategoryFilter !== "ALL") {
@@ -2512,10 +2526,13 @@ export function PpcDashboard({
     if (skuNicheFilter !== "ALL") {
       list = list.filter((s) => (s.niche || "").trim() === skuNicheFilter);
     }
+    if (skuPicFilter !== "ALL") {
+      list = list.filter((s) => (s.picMkt || "").trim() === skuPicFilter);
+    }
     if (skuQuery.trim()) {
       const tokens = skuQuery.toLowerCase().split(/\s+/).filter(Boolean);
       list = list.filter((s) => {
-        const text = `${s.sku} ${s.storeName} ${s.asin || ""} ${s.productType || ""} ${s.niche || ""}`.toLowerCase();
+        const text = `${s.sku} ${s.storeName} ${s.asin || ""} ${s.productType || ""} ${s.niche || ""} ${s.picMkt || ""}`.toLowerCase();
         return tokens.every((tok) => text.includes(tok));
       });
     }
@@ -2525,7 +2542,7 @@ export function PpcDashboard({
       return skuSortDir === "asc" ? valA - valB : valB - valA;
     });
     return list;
-  }, [activeSkuPerformance, skuCategoryFilter, skuNicheFilter, skuQuery, skuSortField, skuSortDir]);
+  }, [activeSkuPerformance, skuCategoryFilter, skuNicheFilter, skuPicFilter, skuQuery, skuSortField, skuSortDir]);
 
   // Paginated SKUs
   const totalSkuPages = Math.max(1, Math.ceil(filteredSortedSkus.length / skuPageSize));
@@ -4681,6 +4698,27 @@ export function PpcDashboard({
                   {skuNicheOptions.map((n) => (
                     <option key={n.name} value={n.name}>
                       {n.name} ({n.count})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Dropdown PIC MKT */}
+              <div className="flex items-center gap-1.5 text-xs text-slate-600 font-semibold bg-slate-50 hover:bg-slate-100 px-2.5 py-1.5 rounded-lg border border-slate-200 transition">
+                <UserCircle size={13} className="text-slate-400 shrink-0" />
+                <span>PIC MKT:</span>
+                <select
+                  value={skuPicFilter}
+                  onChange={(e) => {
+                    setSkuPicFilter(e.target.value);
+                    setSkuPage(1);
+                  }}
+                  className="bg-transparent border-none text-xs text-slate-800 font-semibold focus:outline-none cursor-pointer pr-1"
+                >
+                  <option value="ALL">Tất cả PIC ({activeSkuPerformance.length})</option>
+                  {skuPicOptions.map((p) => (
+                    <option key={p.name} value={p.name}>
+                      {p.name} ({p.count})
                     </option>
                   ))}
                 </select>
