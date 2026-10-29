@@ -147,7 +147,7 @@ export async function listFbmDaily(
   const limit = options.limit && options.limit > 0 ? options.limit : 100;
 
   // Sheet FBM bỏ trống ngày >= TODAY(); ADS lọc Loại (XLOOKUP từ chữ cuối Portfolio vào BẢNG MÃ FBM) = "FBM".
-  const [adsTaxRate, rows, orderSkus, masterSkus] = await Promise.all([
+  const [adsTaxRate, orderRows, adsRows, orderSkus, masterSkus] = await Promise.all([
     fbmAdsTaxRate(sql, storeId),sql<Record<string, unknown>[]>`
     WITH ${fbmBaseCtes(sql, storeId)},
     daily_orders AS (
@@ -165,19 +165,6 @@ export async function listFbmDaily(
       WHERE date < CURRENT_DATE ${dateRangeCondition(sql, "date", startDate, endDate)}
       GROUP BY date
     ),
-    daily_ads AS (
-      SELECT ad.date,
-        SUM(COALESCE(ad.spend, 0)) AS spend,
-        SUM(COALESCE(ad.sales, 0)) AS sales,
-        SUM(COALESCE(ad.orders, 0)) AS orders,
-        SUM(COALESCE(ad.clicks, 0)) AS clicks
-      FROM accounting_ads ad
-      JOIN fbm_master_sku m ON m.sku_key = UPPER(substring(COALESCE(ad.portfolio, '') from '([^ ]*)$'))
-      WHERE ad.store_id = ${storeId}
-        AND m.loai = 'FBM'
-        AND ad.date < CURRENT_DATE ${dateRangeCondition(sql, "ad.date", startDate, endDate)}
-      GROUP BY ad.date
-    ),
     daily_returns AS (
       SELECT date, SUM(total) AS total
       FROM fbm_returns
@@ -185,7 +172,7 @@ export async function listFbmDaily(
       GROUP BY date
     ),
     all_dates AS (
-      SELECT date FROM daily_orders UNION SELECT date FROM daily_ads UNION SELECT date FROM daily_returns
+      SELECT date FROM daily_orders UNION SELECT date FROM daily_returns
     )
     SELECT
       to_char(d.date, 'YYYY-MM-DD') AS date_str,
@@ -195,16 +182,25 @@ export async function listFbmDaily(
       COALESCE(o.amazon_fee, 0)::float AS amazon_fee,
       COALESCE(o.promotion, 0)::float AS promotion,
       COALESCE(o.orders, 0)::float AS orders,
-      COALESCE(a.spend, 0)::float AS ads_fee,
-      COALESCE(a.sales, 0)::float AS revenue_ads,
-      COALESCE(a.orders, 0)::float AS quantity_ads,
-      COALESCE(a.clicks, 0)::float AS clicks,
       (-COALESCE(r.total, 0))::float AS return_cost
     FROM all_dates d
     LEFT JOIN daily_orders o ON o.date = d.date
-    LEFT JOIN daily_ads a ON a.date = d.date
     LEFT JOIN daily_returns r ON r.date = d.date
   `,
+    // ADS gộp theo ngày + SKU (chữ cuối Portfolio) rồi lọc Loại FBM bằng Set ở JS: join thẳng với bảng mã trong SQL
+    // bị planner ước lượng 1 dòng thành nested loop, tách chuỗi Portfolio hàng triệu lần (store nhỏ mất >10s).
+    sql<{ date_str: string; sku_key: string; spend: number; sales: number; orders: number; clicks: number }[]>`
+      SELECT to_char(date, 'YYYY-MM-DD') AS date_str,
+        UPPER(substring(COALESCE(portfolio, '') from '([^ ]*)$')) AS sku_key,
+        SUM(COALESCE(spend, 0))::float AS spend,
+        SUM(COALESCE(sales, 0))::float AS sales,
+        SUM(COALESCE(orders, 0))::float AS orders,
+        SUM(COALESCE(clicks, 0))::float AS clicks
+      FROM accounting_ads
+      WHERE store_id = ${storeId}
+        AND date < CURRENT_DATE ${dateRangeCondition(sql, "date", startDate, endDate)}
+      GROUP BY 1, 2
+    `,
     // SKU có doanh thu FBM nhưng không có trong BẢNG MÃ FBM (workbook ra #N/A): AMZ Fee / Basecost dự phòng = 0.
     // So khớp bằng Set ở JS để không phụ thuộc ước lượng của planner (anti-join theo UPPER(TRIM) dễ thành nested loop).
     sql<{ sku_key: string; sku: string }[]>`
@@ -217,12 +213,38 @@ export async function listFbmDaily(
         AND date < CURRENT_DATE ${dateRangeCondition(sql, "date", startDate, endDate)}
       GROUP BY 1
     `,
-    sql<{ sku_key: string }[]>`
-      SELECT DISTINCT UPPER(TRIM(sku)) AS sku_key
+    // Loại của mỗi SKU = dòng đại diện (dòng đầu theo thứ tự sheet), như fbm_master_sku
+    sql<{ sku_key: string; loai: string }[]>`
+      SELECT DISTINCT ON (UPPER(TRIM(sku))) UPPER(TRIM(sku)) AS sku_key, UPPER(TRIM(COALESCE(loai, ''))) AS loai
       FROM accounting_sku_master_fbm
-      WHERE store_id = ${storeId} AND deleted_at IS NULL
+      WHERE store_id = ${storeId} AND deleted_at IS NULL AND COALESCE(TRIM(sku), '') <> ''
+      ORDER BY UPPER(TRIM(sku)), row_order NULLS LAST, created_at
     `,
   ]);
+
+  const fbmAdsSkus = new Set(masterSkus.filter((m) => m.loai === "FBM").map((m) => m.sku_key));
+  const adsByDate = new Map<string, { spend: number; sales: number; orders: number; clicks: number }>();
+  for (const a of adsRows) {
+    if (!fbmAdsSkus.has(a.sku_key)) continue;
+    const day = adsByDate.get(a.date_str) ?? { spend: 0, sales: 0, orders: 0, clicks: 0 };
+    day.spend += a.spend;
+    day.sales += a.sales;
+    day.orders += a.orders;
+    day.clicks += a.clicks;
+    adsByDate.set(a.date_str, day);
+  }
+  const rows: Record<string, unknown>[] = orderRows.map((r) => {
+    const ads = adsByDate.get(String(r.date_str));
+    adsByDate.delete(String(r.date_str));
+    return { ...r, ads_fee: ads?.spend ?? 0, revenue_ads: ads?.sales ?? 0, quantity_ads: ads?.orders ?? 0, clicks: ads?.clicks ?? 0 };
+  });
+  // Ngày chỉ có ADS (không đơn / return)
+  for (const [date, ads] of adsByDate) {
+    rows.push({
+      date_str: date, revenue: 0, quantity: 0, basecost: 0, amazon_fee: 0, promotion: 0, orders: 0, return_cost: 0,
+      ads_fee: ads.spend, revenue_ads: ads.sales, quantity_ads: ads.orders, clicks: ads.clicks,
+    });
+  }
 
   const items: FbmDailyItem[] = rows.map((r) => {
     const date = String(r.date_str);
