@@ -537,11 +537,11 @@ export async function listSkuMaster(
       asm.brand_logo_asset_id,
       asm.landing_page_url,
       asm.custom_fields,
-      asm.kich_thuoc,
       asm.phan_loai_kich_thuoc,
       ${params.channel === "fbm"
+        // BẢNG MÃ FBM không có cột kich_thuoc / file_design (chỉ bảng FBA có)
         ? sql`asm.sup, asm.size, asm.basecost::float, asm.shipping_fee::float, asm.add_shipping_fee::float, asm.total_cost::float, asm.ngay_len_camp`
-        : sql`asm.file_design, asm.ton_kho::float, asm.in_transit_between_warehouses::float, asm.ending_warehouse_balance::float, asm.ton_kho_updated_at::text`},
+        : sql`asm.kich_thuoc, asm.file_design, asm.ton_kho::float, asm.in_transit_between_warehouses::float, asm.ending_warehouse_balance::float, asm.ton_kho_updated_at::text`},
       COALESCE(
         CASE WHEN ib.inbound_qty > 0 THEN ROUND((ib.inbound_cost / ib.inbound_qty)::numeric, 4)::float END,
         CASE WHEN asm.basecost_tb IS NOT NULL AND asm.basecost_tb > 0 THEN asm.basecost_tb::float END,
