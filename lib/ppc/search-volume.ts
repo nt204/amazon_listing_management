@@ -301,10 +301,12 @@ async function upsertRankings(
     source: string;
   }> = [];
 
+  const rowMap = new Map<string, typeof rows[0]>();
   for (const item of items) {
     const keyword_norm = normalizeKeyword(item.keyword);
     if (!keyword_norm) continue;
-    rows.push({
+    const key = `${marketplace}:${primaryAsin}:${keyword_norm}`;
+    rowMap.set(key, {
       marketplace,
       asin: primaryAsin,
       keyword_norm,
@@ -317,10 +319,11 @@ async function upsertRankings(
       source: "helium10_cerebro",
     });
   }
+  const deduplicatedRows = Array.from(rowMap.values());
 
-  for (let i = 0; i < rows.length; i += 500) {
+  for (let i = 0; i < deduplicatedRows.length; i += 500) {
     await sql`
-      INSERT INTO ppc_asin_keyword_rankings ${sql(rows.slice(i, i + 500))}
+      INSERT INTO ppc_asin_keyword_rankings ${sql(deduplicatedRows.slice(i, i + 500))}
       ON CONFLICT (marketplace, asin, keyword_norm) DO UPDATE SET
         keyword = EXCLUDED.keyword,
         organic_rank = EXCLUDED.organic_rank,
