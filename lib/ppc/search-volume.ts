@@ -78,7 +78,7 @@ export async function getKeywordVolumes(
  * estImpressionShare = impressions / (volume tháng × số ngày phủ / 30), chỉ có nghĩa khi keyword = đúng truy vấn
  * (search term, hoặc target Exact) nên các trường hợp khác để null.
  */
-export async function attachSearchVolumes<T extends { impressions: number }>(
+export async function attachSearchVolumes<T extends { impressions: number; asin?: string | null }>(
   sql: Sql,
   items: T[],
   options: {
@@ -87,21 +87,68 @@ export async function attachSearchVolumes<T extends { impressions: number }>(
     shareApplies: (item: T) => boolean;
     marketplace?: string;
   },
-): Promise<Array<T & { searchVolume: number | null; searchVolumeTrend: number | null; estImpressionShare: number | null }>> {
-  const volumes = await getKeywordVolumes(sql, items.map(options.keywordOf), options.marketplace);
+): Promise<Array<T & {
+  searchVolume: number | null;
+  searchVolumeTrend: number | null;
+  estImpressionShare: number | null;
+  organicRank: number | null;
+  sponsoredRank: number | null;
+}>> {
+  const mp = options.marketplace || "US";
+  const volumes = await getKeywordVolumes(sql, items.map(options.keywordOf), mp);
+
+  // Retrieve rankings from ppc_asin_keyword_rankings
+  const norms = Array.from(new Set(items.map((i) => normalizeKeyword(options.keywordOf(i))).filter(Boolean)));
+  const rankMap = new Map<string, { organicRank: number | null; sponsoredRank: number | null }>();
+
+  if (norms.length > 0) {
+    try {
+      const rankRows = await sql<Array<{
+        asin: string;
+        keyword_norm: string;
+        organic_rank: number | null;
+        sponsored_rank: number | null;
+      }>>`
+        SELECT asin, keyword_norm, organic_rank, sponsored_rank
+        FROM ppc_asin_keyword_rankings
+        WHERE marketplace = ${mp} AND keyword_norm IN ${sql(norms)}
+      `;
+      for (const row of rankRows) {
+        rankMap.set(`${row.asin}:${row.keyword_norm}`, {
+          organicRank: row.organic_rank,
+          sponsoredRank: row.sponsored_rank,
+        });
+        // Also fallback key by keyword_norm alone (choosing best rank)
+        const kwOnly = rankMap.get(row.keyword_norm);
+        if (!kwOnly) {
+          rankMap.set(row.keyword_norm, {
+            organicRank: row.organic_rank,
+            sponsoredRank: row.sponsored_rank,
+          });
+        }
+      }
+    } catch {}
+  }
+
   return items.map((item) => {
-    const volume = volumes.get(normalizeKeyword(options.keywordOf(item)));
+    const kwNorm = normalizeKeyword(options.keywordOf(item));
+    const volume = volumes.get(kwNorm);
     const searchVolume = volume?.searchVolume ?? null;
     const coverageDays = Math.max(1, options.coverageDaysOf(item));
     const expectedSearches = searchVolume ? (searchVolume * coverageDays) / 30 : 0;
     const estImpressionShare = expectedSearches > 0 && options.shareApplies(item)
       ? Math.round((item.impressions / expectedSearches) * 1000) / 10
       : null;
+
+    const rankInfo = (item.asin ? rankMap.get(`${item.asin}:${kwNorm}`) : null) || rankMap.get(kwNorm);
+
     return {
       ...item,
       searchVolume,
       searchVolumeTrend: volume?.searchVolumeTrend ?? null,
       estImpressionShare,
+      organicRank: rankInfo?.organicRank ?? null,
+      sponsoredRank: rankInfo?.sponsoredRank ?? null,
     };
   });
 }
@@ -143,13 +190,18 @@ async function monthlyUsage(sql: Sql) {
   return { cerebro: row?.cerebro || 0, magnet: row?.magnet || 0 };
 }
 
+const STORE_ALIASES: Record<string, string> = {
+  warmstorey: "hsostore",
+};
+
 async function resolveStores(sql: Sql, teamId: string, storeName: string) {
+  const normalizedName = STORE_ALIASES[storeName.toLowerCase()] || storeName;
   const stores = await sql<Array<{ id: string; name: string; marketplace: string }>>`
     SELECT id, name, marketplace FROM ppc_stores
     WHERE team_id = ${teamId}
-      ${storeName !== "ALL" ? sql`AND lower(name) = lower(${storeName})` : sql``}
+      ${normalizedName !== "ALL" ? sql`AND lower(name) = lower(${normalizedName})` : sql``}
   `;
-  if (stores.length === 0) throw new ApiError("Không tìm thấy store PPC.", 404);
+  if (stores.length === 0) throw new ApiError(`Không tìm thấy store PPC "${storeName}".`, 404);
   return stores;
 }
 
@@ -225,6 +277,60 @@ async function upsertVolumes(sql: Sql, marketplace: string, source: string, item
     `;
   }
   return Array.from(byKeyword.keys());
+}
+
+async function upsertRankings(
+  sql: Sql,
+  marketplace: string,
+  asins: string[],
+  items: Helium10KeywordItem[],
+) {
+  if (asins.length === 0 || items.length === 0) return;
+  const primaryAsin = asins[0]; // Primary ASIN the rank is anchored to
+  const rows: Array<{
+    marketplace: string;
+    asin: string;
+    keyword_norm: string;
+    keyword: string;
+    organic_rank: number | null;
+    sponsored_rank: number | null;
+    search_volume: number | null;
+    cpc: number | null;
+    cpr: number | null;
+    source: string;
+  }> = [];
+
+  for (const item of items) {
+    const keyword_norm = normalizeKeyword(item.keyword);
+    if (!keyword_norm) continue;
+    rows.push({
+      marketplace,
+      asin: primaryAsin,
+      keyword_norm,
+      keyword: item.keyword,
+      organic_rank: item.organic_rank ?? null,
+      sponsored_rank: item.sponsored_rank ?? null,
+      search_volume: typeof item.search_volume === "number" ? Math.round(item.search_volume) : null,
+      cpc: item.cpc ?? null,
+      cpr: item.cpr ?? null,
+      source: "helium10_cerebro",
+    });
+  }
+
+  for (let i = 0; i < rows.length; i += 500) {
+    await sql`
+      INSERT INTO ppc_asin_keyword_rankings ${sql(rows.slice(i, i + 500))}
+      ON CONFLICT (marketplace, asin, keyword_norm) DO UPDATE SET
+        keyword = EXCLUDED.keyword,
+        organic_rank = EXCLUDED.organic_rank,
+        sponsored_rank = EXCLUDED.sponsored_rank,
+        search_volume = EXCLUDED.search_volume,
+        cpc = EXCLUDED.cpc,
+        cpr = EXCLUDED.cpr,
+        source = EXCLUDED.source,
+        fetched_at = NOW()
+    `;
+  }
 }
 
 async function updateRun(sql: Sql, runId: string, patch: Partial<Omit<SearchVolumeSyncRun, "id" | "team_id" | "store_id" | "store_name" | "started_at">>) {
@@ -334,6 +440,7 @@ async function runSearchVolumeSync(
       try {
         const result = await mineHelium10Keywords({ asins: batch, marketplace, limit: CEREBRO_ROWS_PER_CALL });
         const saved = await upsertVolumes(sql, marketplace, "helium10_cerebro", result.keywords);
+        await upsertRankings(sql, marketplace, batch, result.keywords);
         keywordsUpserted += saved.length;
         for (const keyword of saved) missing.delete(keyword);
         await sql`

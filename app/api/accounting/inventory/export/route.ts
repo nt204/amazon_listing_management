@@ -56,10 +56,42 @@ export async function GET(request: Request) {
           ${isFbm
             ? sql`, sup, size, basecost::float, shipping_fee::float, add_shipping_fee::float,
               total_cost::float, ngay_len_camp, phan_loai_kich_thuoc`
-            : sql``}
-        FROM ${sql(skuMasterTable(isFbm ? "fbm" : "fba"))}
-        WHERE store_id = ${storeId} AND deleted_at IS NULL
-        ORDER BY thang_listing DESC NULLS LAST, created_at DESC, sku ASC
+            : sql`, asm.kich_thuoc, asm.phan_loai_kich_thuoc, asm.file_design, asm.ton_kho::float,
+                CASE
+                  WHEN asm.ton_kho IS NOT NULL AND asm.ton_kho > 0 THEN
+                    ROUND((asm.ton_kho * COALESCE(
+                      CASE WHEN ib.inbound_qty > 0 THEN (ib.inbound_cost / ib.inbound_qty) END,
+                      CASE WHEN asm.basecost_tb IS NOT NULL AND asm.basecost_tb > 0 THEN asm.basecost_tb::float END,
+                      pt.avg_cost
+                    ))::numeric, 2)::float
+                  WHEN asm.ton_kho IS NOT NULL AND asm.ton_kho = 0 THEN 0
+                  ELSE NULL
+                END AS gia_tri_ton`}
+        FROM ${sql(skuMasterTable(isFbm ? "fbm" : "fba"))} asm
+        LEFT JOIN LATERAL (
+          SELECT
+            COALESCE(SUM(quantity), 0)::float AS inbound_qty,
+            COALESCE(SUM(COALESCE(total_basecost, final_basecost * quantity, base_cost_per_unit * quantity, 0)), 0)::float AS inbound_cost
+          FROM accounting_inbound_shipments s
+          WHERE s.store_id = asm.store_id
+            AND (
+              REPLACE(UPPER(TRIM(s.sku)), ' ', '') = REPLACE(UPPER(TRIM(asm.sku)), ' ', '')
+              OR (asm.asin IS NOT NULL AND s.sku = asm.asin)
+            )
+            AND s.deleted_at IS NULL
+        ) ib ON true
+        LEFT JOIN LATERAL (
+          SELECT
+            CASE WHEN SUM(quantity) > 0 THEN
+              ROUND((SUM(COALESCE(total_basecost, final_basecost * quantity, base_cost_per_unit * quantity, 0)) / SUM(quantity))::numeric, 4)::float
+            END AS avg_cost
+          FROM accounting_inbound_shipments s2
+          WHERE s2.store_id = asm.store_id
+            AND LOWER(TRIM(COALESCE(s2.product_type, ''))) = LOWER(TRIM(COALESCE(asm.product_type, '')))
+            AND s2.deleted_at IS NULL
+        ) pt ON true
+        WHERE asm.store_id = ${storeId} AND asm.deleted_at IS NULL
+        ORDER BY asm.thang_listing DESC NULLS LAST, asm.created_at DESC, asm.sku ASC
       `;
     }
 

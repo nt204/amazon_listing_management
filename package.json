@@ -24,6 +24,8 @@
     "h10:login": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/open-h10-interactive-login-window.ts",
     "ppc:ingest-worker": "node --max-old-space-size=6144 --expose-gc --conditions=react-server --env-file-if-exists=.env --import tsx scripts/ppc-ingestion-worker.ts",
     "accounting:import-worker": "node --max-old-space-size=4096 --conditions=react-server --env-file-if-exists=.env --import tsx scripts/accounting-import-worker.ts",
+    "ppc:sync-search-volume": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/sync-store-search-volume.ts",
+    "ppc:sync-search-volume:limima": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/sync-limima-search-volume.ts",
     "ppc:outcome-worker": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/ppc-action-outcome-worker.ts",
     "ppc:outcome-worker:watch": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/ppc-action-outcome-worker.ts --watch",
     "ppc:memory-readiness": "node --conditions=react-server --env-file-if-exists=.env --import tsx scripts/ppc-action-memory-readiness.ts",

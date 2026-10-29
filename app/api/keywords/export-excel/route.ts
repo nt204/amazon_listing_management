@@ -47,6 +47,7 @@ export async function POST(request: Request) {
       { header: "Relevance (%)", key: "relevance", width: 15 },
       { header: "Search Volume", key: "volume", width: 16 },
       { header: "Rank Organic", key: "rank", width: 14 },
+      { header: "Sponsored Rank", key: "sponsored_rank", width: 16 },
       { header: "CPC ($)", key: "cpc", width: 12 },
       { header: "Negative?", key: "negative", width: 14 },
     ];
@@ -72,6 +73,7 @@ export async function POST(request: Request) {
           relevance: k.relevance,
           volume: k.search_volume || 0,
           rank: k.organic_rank ? `#${k.organic_rank}` : "—",
+          sponsored_rank: (k as any).sponsored_rank ? `#${(k as any).sponsored_rank}` : "—",
           cpc: k.cpc ? `$${k.cpc.toFixed(2)}` : "—",
           negative: "Hợp Lệ",
         });

@@ -452,11 +452,17 @@ async function writeSkuRecords(
     "creative_headline", "brand_logo_asset_id", "landing_page_url", ...skuExtraFields(channel),
   ]);
 
-  // Lớp 1: trùng SKU ngay trong sheet → giữ dòng sau cùng, báo lại số dòng.
+  // BẢNG MÃ FBM: cùng SKU khác ASIN là 2 sản phẩm → khóa SKU + ASIN; FBA vẫn khóa theo SKU.
+  const keyOf = (sku: unknown, asin: unknown) => {
+    const skuKey = String(sku).trim().toLowerCase();
+    return channel === "fbm" ? `${skuKey}|${String(asin ?? "").trim().toLowerCase()}` : skuKey;
+  };
+
+  // Lớp 1: trùng khóa ngay trong sheet → giữ dòng sau cùng, báo lại số dòng.
   const bySku = new Map<string, Row>();
   const dupRows = new Map<string, number[]>();
   for (const record of records) {
-    const key = String(record.sku).toLowerCase();
+    const key = keyOf(record.sku, record.asin);
     const previous = bySku.get(key);
     if (previous) dupRows.set(key, [...(dupRows.get(key) ?? [Number(previous._row)]), Number(record._row)]);
     bySku.set(key, record);
@@ -465,13 +471,13 @@ async function writeSkuRecords(
     result.duplicatesInSheet.push(`${bySku.get(key)!.sku} (dòng ${rowsOfKey.join(", ")})`);
   }
 
-  // Lớp 2: khớp SKU đang có (kể cả đã xóa mềm) không phân biệt hoa/thường.
+  // Lớp 2: khớp khóa đang có (kể cả đã xóa mềm) không phân biệt hoa/thường.
   const existing = await tx<Record<string, unknown>[]>`
     SELECT * FROM ${tx(table)} WHERE store_id = ${storeId}
   `;
   const existingByKey = new Map<string, Record<string, unknown>>();
   for (const row of existing) {
-    const key = String(row.sku).trim().toLowerCase();
+    const key = keyOf(row.sku, row.asin);
     const prev = existingByKey.get(key);
     if (!prev || (prev.deleted_at && !row.deleted_at)) existingByKey.set(key, row);
   }
@@ -484,10 +490,10 @@ async function writeSkuRecords(
     if (!current) {
       const values: Row = { store_id: storeId, sku: record.sku, ...fields };
       for (const field of Object.keys(values)) values[field] = roundTo(values[field], scales.get(field));
-      // Lớp 3: UNIQUE(store_id, sku) — trùng thì không ghi đè dòng khác.
+      // Lớp 3: UNIQUE(store_id, sku) / FBM UNIQUE(store_id, sku, asin) — trùng thì không ghi đè dòng khác.
       await tx`
         INSERT INTO ${tx(table)} ${tx({ ...values, last_changed_by: actor } as Record<string, unknown>)}
-        ON CONFLICT (store_id, sku) DO NOTHING
+        ON CONFLICT DO NOTHING
       `;
       result.inserted++;
       continue;
@@ -519,7 +525,7 @@ async function writeSkuRecords(
   }
 
   result.missingOnSheet = existing.filter(
-    (row) => row.deleted_at == null && !bySku.has(String(row.sku).trim().toLowerCase()),
+    (row) => row.deleted_at == null && !bySku.has(keyOf(row.sku, row.asin)),
   ).length;
 }
 

@@ -1,4 +1,2 @@
 @AGENTS.md
-base cost: garden flag: 1.4, poster: 2, makeup bag: 1.5, poncho: ko làm nữa, oodie: 11.5, hoodie: 10. 
-amazon fee: 
-giá bán: 
+Đối với những chức năng chưa quen thuộc, đừng viết từ con số 0, hãy tìm kiếm các dự án mã nguồn mở trên Github để so sánh ý tưởng trước khi bắt tay vào làm.

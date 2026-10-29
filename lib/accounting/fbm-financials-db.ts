@@ -12,8 +12,10 @@ type Sql = Awaited<ReturnType<typeof getDatabaseClient>>;
 
 /**
  * CTE dùng chung:
- *   fbm_master  — BẢNG MÃ FBM theo SKU (XLOOKUP/SUMIFS của Sheets không phân biệt hoa thường → khóa UPPER).
- *   fbm_lines   — từng dòng 'Basecost-Fee FBM':
+ *   fbm_master     — BẢNG MÃ FBM theo SKU + ASIN (cùng SKU khác ASIN là 2 sản phẩm; khóa UPPER như XLOOKUP).
+ *   fbm_master_sku — dòng đại diện của mỗi SKU (dòng đầu theo thứ tự sheet): cho ADS / RETURN chỉ biết SKU,
+ *                    và cho đơn có ASIN không khớp dòng nào của SKU.
+ *   fbm_lines   — từng dòng 'Basecost-Fee FBM', khớp bảng mã theo SKU + ASIN của đơn, không khớp thì theo SKU:
  *     Revenue  I = (item-price + shipping-price) quy đổi USD (CAD 0.738, MXN 0.051, tiền khác = 0)
  *     Basecost K = dòng đầu tiên của Order ID: tổng NetPrice PW của đơn, nếu = 0 thì quantity × Total bảng mã;
  *                  các dòng sau của cùng đơn = 0 (COUNTIFS(B, U)=1)
@@ -23,14 +25,22 @@ type Sql = Awaited<ReturnType<typeof getDatabaseClient>>;
 function fbmBaseCtes(sql: Sql, storeId: string) {
   return sql`
     fbm_master AS (
-      SELECT DISTINCT ON (UPPER(TRIM(sku)))
+      SELECT DISTINCT ON (UPPER(TRIM(sku)), UPPER(TRIM(COALESCE(asin, ''))))
         UPPER(TRIM(sku)) AS sku_key,
+        UPPER(TRIM(COALESCE(asin, ''))) AS asin_key,
         COALESCE(referral_fee_pct, 0) AS referral_fee_pct,
-        SUM(COALESCE(total_cost, 0)) OVER (PARTITION BY UPPER(TRIM(sku))) AS total_cost,
-        UPPER(TRIM(COALESCE(loai, ''))) AS loai
+        COALESCE(total_cost, 0) AS total_cost,
+        UPPER(TRIM(COALESCE(loai, ''))) AS loai,
+        row_order,
+        created_at
       FROM accounting_sku_master_fbm
       WHERE store_id = ${storeId} AND deleted_at IS NULL AND COALESCE(TRIM(sku), '') <> ''
-      ORDER BY UPPER(TRIM(sku)), row_order NULLS LAST, created_at
+      ORDER BY UPPER(TRIM(sku)), UPPER(TRIM(COALESCE(asin, ''))), row_order NULLS LAST, created_at
+    ),
+    fbm_master_sku AS (
+      SELECT DISTINCT ON (sku_key) *
+      FROM fbm_master
+      ORDER BY sku_key, row_order NULLS LAST, created_at
     ),
     fbm_pw AS (
       SELECT order_id, SUM(COALESCE(net_price, 0)) AS pw_cost
@@ -52,21 +62,25 @@ function fbmBaseCtes(sql: Sql, storeId: string) {
           WHEN ROW_NUMBER() OVER (
             PARTITION BY COALESCE(o.amazon_order_id, o.id::text) ORDER BY o.line_no NULLS LAST, o.ctid
           ) > 1 THEN 0
-          WHEN COALESCE(pw.pw_cost, 0) = 0 THEN COALESCE(o.quantity, 0) * COALESCE(m.total_cost, 0)
+          WHEN COALESCE(pw.pw_cost, 0) = 0 THEN COALESCE(o.quantity, 0) * COALESCE(me.total_cost, ms.total_cost, 0)
           ELSE pw.pw_cost
         END AS basecost,
-        COALESCE(m.referral_fee_pct, 0) AS referral_fee_pct
+        COALESCE(me.referral_fee_pct, ms.referral_fee_pct, 0) AS referral_fee_pct,
+        COALESCE(me.asin_key, ms.asin_key) AS asin_key
       FROM accounting_orders o
-      LEFT JOIN fbm_master m ON m.sku_key = UPPER(TRIM(COALESCE(o.sku, '')))
+      LEFT JOIN fbm_master me
+        ON me.sku_key = UPPER(TRIM(COALESCE(o.sku, ''))) AND me.asin_key = UPPER(TRIM(COALESCE(o.asin, '')))
+      LEFT JOIN fbm_master_sku ms ON ms.sku_key = UPPER(TRIM(COALESCE(o.sku, '')))
       LEFT JOIN fbm_pw pw ON pw.order_id = o.amazon_order_id
       WHERE o.store_id = ${storeId}
         AND o.fulfillment_channel = 'Merchant'
     ),
     fbm_returns AS (
-      SELECT r.date, fl.sku_key, m.loai, COALESCE(r.total, 0) AS total
+      SELECT r.date, fl.sku_key, COALESCE(me.asin_key, ms.asin_key) AS asin_key,
+        COALESCE(me.loai, ms.loai) AS loai, COALESCE(r.total, 0) AS total
       FROM accounting_returns r
       LEFT JOIN LATERAL (
-        SELECT UPPER(TRIM(COALESCE(o.sku, ''))) AS sku_key
+        SELECT UPPER(TRIM(COALESCE(o.sku, ''))) AS sku_key, UPPER(TRIM(COALESCE(o.asin, ''))) AS asin_key
         FROM accounting_orders o
         WHERE o.store_id = r.store_id
           AND o.amazon_order_id = r.order_id
@@ -74,7 +88,8 @@ function fbmBaseCtes(sql: Sql, storeId: string) {
         ORDER BY o.line_no NULLS LAST, o.ctid
         LIMIT 1
       ) fl ON true
-      LEFT JOIN fbm_master m ON m.sku_key = fl.sku_key
+      LEFT JOIN fbm_master me ON me.sku_key = fl.sku_key AND me.asin_key = fl.asin_key
+      LEFT JOIN fbm_master_sku ms ON ms.sku_key = fl.sku_key
       WHERE r.store_id = ${storeId}
     )
   `;
@@ -151,7 +166,7 @@ export async function listFbmDaily(
         SUM(COALESCE(ad.orders, 0)) AS orders,
         SUM(COALESCE(ad.clicks, 0)) AS clicks
       FROM accounting_ads ad
-      JOIN fbm_master m ON m.sku_key = UPPER(substring(COALESCE(ad.portfolio, '') from '([^ ]*)$'))
+      JOIN fbm_master_sku m ON m.sku_key = UPPER(substring(COALESCE(ad.portfolio, '') from '([^ ]*)$'))
       WHERE ad.store_id = ${storeId}
         AND m.loai = 'FBM'
         AND ad.date < CURRENT_DATE ${dateRangeCondition(sql, "ad.date", startDate, endDate)}
@@ -314,16 +329,22 @@ interface FbmSkuAggregate {
   return_count: number;
 }
 
+/** Khóa dòng BẢNG MÃ FBM: SKU + ASIN (UPPER/TRIM như fbm_master). */
+function fbmRowKey(sku: unknown, asin: unknown) {
+  return `${String(sku ?? "").trim().toUpperCase()}|${String(asin ?? "").trim().toUpperCase()}`;
+}
+
 /**
- * Tổng theo SKU trong khoảng ngày (sheet không chặn TODAY()):
- *   Ads Fee / Revenue ads = SUMIFS(ADS, Portfolio chứa SKU) — không lọc Loại
+ * Tổng theo dòng bảng mã (SKU + ASIN) trong khoảng ngày (sheet không chặn TODAY()):
+ *   Đơn / Return = theo SKU + ASIN của đơn (ASIN không khớp → dòng đại diện của SKU)
+ *   Ads Fee / Revenue ads = SUMIFS(ADS, Portfolio chứa SKU) — không lọc Loại, gán vào dòng đại diện của SKU
  *   Return = SUMIFS(RETURN!O, RETURN!A = SKU) — không lọc Loại
  */
 async function aggregateFbmSkus(sql: Sql, storeId: string, startDate: string, endDate: string) {
-  const rows = await sql<({ sku_key: string } & FbmSkuAggregate)[]>`
+  const rows = await sql<({ sku_key: string; asin_key: string } & FbmSkuAggregate)[]>`
     WITH ${fbmBaseCtes(sql, storeId)},
     sku_orders AS (
-      SELECT sku_key,
+      SELECT sku_key, COALESCE(asin_key, '') AS asin_key,
         SUM(revenue) AS revenue,
         SUM(qty) AS quantity,
         SUM(basecost) AS basecost,
@@ -331,7 +352,7 @@ async function aggregateFbmSkus(sql: Sql, storeId: string, startDate: string, en
         SUM(promotion) AS promotion
       FROM fbm_lines
       WHERE TRUE ${dateRangeCondition(sql, "date", startDate, endDate)}
-      GROUP BY sku_key
+      GROUP BY 1, 2
     ),
     -- Gộp theo Portfolio trước rồi mới so khớp "chứa SKU" để tránh nhân chéo SKU × từng dòng ADS
     portfolio_ads AS (
@@ -343,21 +364,23 @@ async function aggregateFbmSkus(sql: Sql, storeId: string, startDate: string, en
       GROUP BY 1
     ),
     sku_ads AS (
-      SELECT m.sku_key, SUM(pa.spend) AS spend, SUM(pa.sales) AS sales
-      FROM fbm_master m
+      SELECT m.sku_key, m.asin_key, SUM(pa.spend) AS spend, SUM(pa.sales) AS sales
+      FROM fbm_master_sku m
       JOIN portfolio_ads pa ON strpos(pa.portfolio, m.sku_key) > 0
-      GROUP BY m.sku_key
+      GROUP BY 1, 2
     ),
     sku_returns AS (
-      SELECT sku_key, SUM(total) AS total, COUNT(*) AS cnt
+      SELECT sku_key, COALESCE(asin_key, '') AS asin_key, SUM(total) AS total, COUNT(*) AS cnt
       FROM fbm_returns
       WHERE sku_key IS NOT NULL ${dateRangeCondition(sql, "date", startDate, endDate)}
-      GROUP BY sku_key
+      GROUP BY 1, 2
     ),
     keys AS (
-      SELECT sku_key FROM sku_orders UNION SELECT sku_key FROM sku_ads UNION SELECT sku_key FROM sku_returns
+      SELECT sku_key, asin_key FROM sku_orders
+      UNION SELECT sku_key, asin_key FROM sku_ads
+      UNION SELECT sku_key, asin_key FROM sku_returns
     )
-    SELECT k.sku_key,
+    SELECT k.sku_key, k.asin_key,
       COALESCE(o.revenue, 0)::float AS revenue,
       COALESCE(o.quantity, 0)::float AS quantity,
       COALESCE(o.basecost, 0)::float AS basecost,
@@ -368,11 +391,11 @@ async function aggregateFbmSkus(sql: Sql, storeId: string, startDate: string, en
       COALESCE(r.total, 0)::float AS return_total,
       COALESCE(r.cnt, 0)::int AS return_count
     FROM keys k
-    LEFT JOIN sku_orders o ON o.sku_key = k.sku_key
-    LEFT JOIN sku_ads a ON a.sku_key = k.sku_key
-    LEFT JOIN sku_returns r ON r.sku_key = k.sku_key
+    LEFT JOIN sku_orders o ON o.sku_key = k.sku_key AND o.asin_key = k.asin_key
+    LEFT JOIN sku_ads a ON a.sku_key = k.sku_key AND a.asin_key = k.asin_key
+    LEFT JOIN sku_returns r ON r.sku_key = k.sku_key AND r.asin_key = k.asin_key
   `;
-  return new Map(rows.map((r) => [r.sku_key, r]));
+  return new Map(rows.map((r) => [fbmRowKey(r.sku_key, r.asin_key), r]));
 }
 
 const EMPTY_AGGREGATE: FbmSkuAggregate = {
@@ -423,15 +446,15 @@ export async function listFbmSkuFixed(
     `,
     aggregateFbmSkus(sql, storeId, startDate, endDate),
     hasCompare ? aggregateFbmSkus(sql, storeId, compareStartDate, compareEndDate) : Promise.resolve(null),
-    // Lượng bán tổng = SUMIFS('Orders -FBM'!P, M = SKU): mọi dòng FBM, không lọc ngày / trạng thái
-    sql<{ sku_key: string; qty: number }[]>`
-      SELECT UPPER(TRIM(sku)) AS sku_key, SUM(COALESCE(quantity, 0))::float AS qty
-      FROM accounting_orders
-      WHERE store_id = ${storeId} AND fulfillment_channel = 'Merchant'
-      GROUP BY 1
+    // Lượng bán tổng = SUMIFS('Orders -FBM'!P, M = SKU): mọi dòng FBM, không lọc ngày / trạng thái (theo SKU + ASIN)
+    sql<{ sku_key: string; asin_key: string; qty: number }[]>`
+      WITH ${fbmBaseCtes(sql, storeId)}
+      SELECT sku_key, COALESCE(asin_key, '') AS asin_key, SUM(qty)::float AS qty
+      FROM fbm_lines
+      GROUP BY 1, 2
     `,
   ]);
-  const allTimeQty = new Map(allTimeRows.map((r) => [r.sku_key, r.qty]));
+  const allTimeQty = new Map(allTimeRows.map((r) => [fbmRowKey(r.sku_key, r.asin_key), r.qty]));
 
   const productTypes = [...new Set(masterRows.map((r) => r.product_type).filter(Boolean))] as string[];
   const statuses = [...new Set(masterRows.map((r) => r.status).filter(Boolean))] as string[];
@@ -443,8 +466,8 @@ export async function listFbmSkuFixed(
 
   let items: SkuWinItem[] = masterRows
     .filter((r) => {
-      const key = String(r.sku).trim().toUpperCase();
-      if (seen.has(key)) return false; // trùng SKU khác hoa/thường: workbook XLOOKUP lấy dòng đầu
+      const key = fbmRowKey(r.sku, r.asin);
+      if (seen.has(key)) return false; // trùng SKU + ASIN khác hoa/thường: lấy dòng đầu
       seen.add(key);
       if (status && status.toLowerCase() !== "all" && String(r.status ?? "").toLowerCase() !== status.toLowerCase()) return false;
       if (productType && r.product_type !== productType) return false;
@@ -454,7 +477,7 @@ export async function listFbmSkuFixed(
       return true;
     })
     .map((r) => {
-      const key = String(r.sku).trim().toUpperCase();
+      const key = fbmRowKey(r.sku, r.asin);
       const a = aggregates.get(key) ?? EMPTY_AGGREGATE;
       const { thue, returnCost, profit } = skuProfit(a, adsTaxRate);
       let compare: Partial<SkuWinItem> = {};

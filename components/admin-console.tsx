@@ -20,10 +20,13 @@ import {
   WarningCircleIcon,
   XCircleIcon,
   XIcon,
+  GearIcon,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AccountMenu } from "@/components/account-menu";
 import { PpcStoreAccessPanel } from "@/components/admin/ppc-store-access-panel";
+import { AdminHelium10SyncPanel } from "@/components/admin/admin-helium10-sync-panel";
+import { Helium10SettingsModal } from "@/components/helium10-settings-modal";
 import type { RequestActor } from "@/lib/auth";
 import type { AppUserStatus, AppUserSummary, ImageStorageStats, SystemGuideSummary } from "@/lib/db";
 
@@ -85,6 +88,9 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
   const [actionKey, setActionKey] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+
+  // Modal Helium 10
+  const [showH10Modal, setShowH10Modal] = useState(false);
 
   // Modal Thêm Email
   const [showAddUserModal, setShowAddUserModal] = useState(false);
@@ -847,6 +853,10 @@ export function AdminConsole({ actor }: { actor: RequestActor }) {
             )}
           </div>
         </section>
+
+        {/* QUẢN LÝ CRAWL HELIUM 10 (PPC & RANKING) */}
+        <AdminHelium10SyncPanel />
+
       </div>
     </main>
   );

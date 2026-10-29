@@ -12,6 +12,7 @@ export interface UnifiedReverseKeywordItem {
   cpc: number | null;
   aba_rank: number | null;
   organic_rank: number | null;
+  sponsored_rank: number | null;
   relevance_score: number | null;
   competing_products: number | null;
   asin_count: number;
@@ -59,6 +60,7 @@ export async function POST(request: Request) {
         cpc: k.cpc,
         aba_rank: null,
         organic_rank: k.organic_rank,
+        sponsored_rank: k.sponsored_rank,
         relevance_score: k.iq_score,
         competing_products: k.competing_products,
         asin_count: asins.length,
@@ -76,7 +78,11 @@ export async function POST(request: Request) {
     }
 
     // Authentic SellerSprite Reverse API
-    const { keywords, total } = await reverseSellerSpriteKeywords(asins, marketplace, limit);
+    const { keywords: ssKeywords, total } = await reverseSellerSpriteKeywords(asins, marketplace, limit);
+    const keywords: UnifiedReverseKeywordItem[] = ssKeywords.map((k) => ({
+      ...k,
+      sponsored_rank: null,
+    }));
 
     return NextResponse.json({
       asins,

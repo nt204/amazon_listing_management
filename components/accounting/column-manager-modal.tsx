@@ -70,6 +70,7 @@ export const DEFAULT_SKU_COLUMNS: ColumnConfig[] = [
   { id: "landing_page_url", label: "Landing Page URL", defaultLabel: "Landing Page URL", visible: true, width: 160 },
   // Tồn kho Amazon từ Inventory Ledger (tự cập nhật mỗi tuần, không sửa tay)
   { id: "ton_kho", label: "Tồn", defaultLabel: "Tồn", visible: true, type: "number", align: "right", width: 100 },
+  { id: "gia_tri_ton", label: "Giá trị tồn", defaultLabel: "Giá trị tồn", visible: true, type: "number", align: "right", width: 120 },
 ];
 
 /** BẢNG MÃ FBM: theo mẫu sheet "FBM_<Store>" (khác thứ tự & cột với BẢNG MÃ FBA). */

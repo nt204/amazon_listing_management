@@ -54,6 +54,8 @@ const FIELD_LABELS: Record<string, string> = {
   creative_headline: "Creative Headline",
   brand_logo_asset_id: "Logo Asset ID",
   landing_page_url: "Landing Page URL",
+  ton_kho: "Tồn kho",
+  gia_tri_ton: "Giá trị tồn",
   // Inbound fields
   ten_lo_hang: "Tên lô hàng",
   shipment_id: "Shipment ID",

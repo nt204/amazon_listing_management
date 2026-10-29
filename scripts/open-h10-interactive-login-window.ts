@@ -180,6 +180,17 @@ export async function openH10InteractiveLoginWindow(credentials = {
     }
 
     console.log("🔥 ĐÃ LƯU COOKIE HELIUM 10 THÀNH CÔNG VÀO DATABASE VÀ FILE .env!");
+    
+    // Tự động đẩy file cookie mới lên Server Ubuntu
+    try {
+      const { execSync } = await import("node:child_process");
+      console.log("🚀 Đang tự động đồng bộ Cookie mới lên Server (167.233.26.87)...");
+      execSync("scp config/helium10-cookies.json root@167.233.26.87:/var/www/amazon-listing/config/");
+      console.log("✅ Đã cập nhật Cookie mới lên Server thành công!");
+    } catch (pushErr) {
+      console.warn("⚠️ Không thể tự động đẩy lên server:", pushErr);
+    }
+
     console.log("✨ Giờ đây toàn bộ tính năng đào từ khóa Helium 10 đã sẵn sàng sử dụng mượt mà.");
   } else {
     console.log("⚠️ Không tìm thấy cookie nào.");

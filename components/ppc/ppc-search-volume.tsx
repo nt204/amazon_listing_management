@@ -10,19 +10,25 @@ function formatVolume(value: number) {
   return value.toLocaleString("en-US");
 }
 
-/** Ô Search Volume (Helium 10): volume tháng + trend, dòng phụ là impression share ước tính. */
+/** Ô Search Volume (Helium 10): volume tháng + trend, dòng phụ là impression share ước tính kèm Organic/Sponsored Rank. */
 export function PpcSearchVolumeCell({
   searchVolume,
   searchVolumeTrend,
   estImpressionShare,
+  organicRank,
+  sponsoredRank,
   className = "px-3 py-2.5",
 }: {
   searchVolume?: number | null;
   searchVolumeTrend?: number | null;
   estImpressionShare?: number | null;
+  organicRank?: number | null;
+  sponsoredRank?: number | null;
   className?: string;
 }) {
-  if (!searchVolume) {
+  const hasRank = organicRank !== null && organicRank !== undefined || sponsoredRank !== null && sponsoredRank !== undefined;
+
+  if (!searchVolume && !hasRank) {
     return (
       <td className={`${className} text-right font-mono text-slate-300 whitespace-nowrap`} title="Chưa có Search Volume từ Helium 10">
         —
@@ -35,19 +41,37 @@ export function PpcSearchVolumeCell({
   return (
     <td
       className={`${className} text-right font-mono whitespace-nowrap`}
-      title={`Search Volume tháng (Helium 10): ${searchVolume.toLocaleString("en-US")}${
+      title={`Search Volume tháng (Helium 10): ${searchVolume ? searchVolume.toLocaleString("en-US") : "—"}${
         trend !== null ? ` · Trend 30 ngày: ${trend > 0 ? "+" : ""}${trend}%` : ""
-      }${share !== null ? ` · Impression share ước tính: ${share}% (impressions ÷ volume theo số ngày của kỳ)` : ""}`}
+      }${share !== null ? ` · Impression share ước tính: ${share}% (impressions ÷ volume theo số ngày của kỳ)` : ""}${
+        organicRank ? ` · Organic Rank: #${organicRank}` : ""
+      }${sponsoredRank ? ` · Sponsored Rank: #${sponsoredRank}` : ""}`}
     >
       <div className="inline-flex items-center gap-1 text-slate-800">
-        {formatVolume(searchVolume)}
+        {searchVolume ? formatVolume(searchVolume) : "—"}
         {trend !== null && trend !== 0 && (
           trend > 0
             ? <TrendUp size={11} weight="bold" className="text-emerald-600" />
             : <TrendDown size={11} weight="bold" className="text-rose-500" />
         )}
       </div>
-      {share !== null && (
+
+      {hasRank && (
+        <div className="flex items-center justify-end gap-1 mt-0.5 text-[9.5px]">
+          {organicRank && (
+            <span className="px-1 py-0.2 rounded bg-emerald-50 text-emerald-700 font-bold border border-emerald-200" title={`Organic Rank #${organicRank}`}>
+              Org #{organicRank}
+            </span>
+          )}
+          {sponsoredRank && (
+            <span className="px-1 py-0.2 rounded bg-amber-50 text-amber-700 font-bold border border-amber-200" title={`Sponsored Rank #${sponsoredRank}`}>
+              Sp #{sponsoredRank}
+            </span>
+          )}
+        </div>
+      )}
+
+      {share !== null && !hasRank && (
         <div className="text-[10px] text-slate-400">IS ~{share > 100 ? ">100" : share}%</div>
       )}
     </td>

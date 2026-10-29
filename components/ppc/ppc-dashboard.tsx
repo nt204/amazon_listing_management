@@ -4449,6 +4449,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                                               className="py-2 px-2.5"
                                               searchVolume={term.searchVolume}
                                               searchVolumeTrend={term.searchVolumeTrend}
+                                              organicRank={(term as any).organicRank}
+                                              sponsoredRank={(term as any).sponsoredRank}
                                             />
                                             <td className="py-2 px-2.5 text-right font-mono text-slate-600">{(term.impressions || 0).toLocaleString()}</td>
                                             <td className="py-2 px-2.5 text-right font-mono text-slate-600">{term.clicks}</td>
@@ -5201,6 +5203,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                           searchVolume={t.searchVolume}
                           searchVolumeTrend={t.searchVolumeTrend}
                           estImpressionShare={t.estImpressionShare}
+                          organicRank={(t as any).organicRank}
+                          sponsoredRank={(t as any).sponsoredRank}
                         />
                         {/* Clicks - Viết thường */}
                         <td className="py-2.5 px-3 text-right font-normal text-slate-700">{t.clicks}</td>

@@ -614,7 +614,16 @@ function resolveChromiumExecutablePath(): string | undefined {
     "/usr/bin/chromium",
     "/usr/bin/chromium-browser",
     "/snap/bin/chromium",
+    // Playwright installed binaries on Linux VPS
+    "/root/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome",
+    "/root/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome",
   ];
+
+  // Also check dynamic home cache for Playwright
+  try {
+    const { globSync } = require("node:fs");
+    // fallback check if glob exists
+  } catch {}
 
   for (const p of candidatePaths) {
     if (existsSync(p)) return p;

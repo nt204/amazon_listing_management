@@ -45,6 +45,12 @@ export interface SkuMasterItem {
   file_design?: string | null;
   /** Tồn kho Amazon = In Transit Between Warehouses + Ending Warehouse Balance (từ Inventory Ledger mới nhất). */
   ton_kho?: number | null;
+  /** Giá trung bình năm = (Giá trị hàng nhập trong năm / Số lượng nhập trong năm) */
+  gia_trung_binh_nam?: number | null;
+  inbound_qty?: number | null;
+  inbound_cost?: number | null;
+  /** Giá trị tồn kho = Giá TB năm * Tồn kho */
+  gia_tri_ton?: number | null;
   in_transit_between_warehouses?: number | null;
   ending_warehouse_balance?: number | null;
   ton_kho_updated_at?: string | null;
@@ -498,59 +504,102 @@ export async function listSkuMaster(
 
   const items = await sql<SkuMasterItem[]>`
     SELECT
-      id,
-      store_id,
-      brand,
-      product_type,
-      mockup,
-      sku,
-      asin,
-      fnsku,
-      amazon_fee::float,
-      referral_fee_pct::float,
-      pic_mkt,
-      loai,
-      niche,
-      pic_idea,
-      status,
-      event,
-      tinh_trang,
-      design_pic,
-      mockup_url,
-      thang_listing,
-      thang_danh_gia,
-      event_250th,
-      ngay_danh_gia_sku_event,
-      amazon_fba_fee_thay_doi::float,
-      basecost_tb::float,
-      brand_entity_id,
-      creative_asins_video,
-      creative_asins_collection,
-      video_media_ids,
-      creative_headline,
-      brand_logo_asset_id,
-      landing_page_url,
-      custom_fields
-      ${skuChannelSelect(sql, params.channel ?? "fba")},
-      created_at::text,
-      updated_at::text
-    FROM ${sql(table)}
-    WHERE store_id = ${storeId}
-      AND deleted_at IS NULL
+      asm.id,
+      asm.store_id,
+      asm.brand,
+      asm.product_type,
+      asm.mockup,
+      asm.sku,
+      asm.asin,
+      asm.fnsku,
+      asm.amazon_fee::float,
+      asm.referral_fee_pct::float,
+      asm.pic_mkt,
+      asm.loai,
+      asm.niche,
+      asm.pic_idea,
+      asm.status,
+      asm.event,
+      asm.tinh_trang,
+      asm.design_pic,
+      asm.mockup_url,
+      asm.thang_listing,
+      asm.thang_danh_gia,
+      asm.event_250th,
+      asm.ngay_danh_gia_sku_event,
+      asm.amazon_fba_fee_thay_doi::float,
+      asm.basecost_tb::float,
+      asm.brand_entity_id,
+      asm.creative_asins_video,
+      asm.creative_asins_collection,
+      asm.video_media_ids,
+      asm.creative_headline,
+      asm.brand_logo_asset_id,
+      asm.landing_page_url,
+      asm.custom_fields,
+      asm.kich_thuoc,
+      asm.phan_loai_kich_thuoc,
+      ${params.channel === "fbm"
+        ? sql`asm.sup, asm.size, asm.basecost::float, asm.shipping_fee::float, asm.add_shipping_fee::float, asm.total_cost::float, asm.ngay_len_camp`
+        : sql`asm.file_design, asm.ton_kho::float, asm.in_transit_between_warehouses::float, asm.ending_warehouse_balance::float, asm.ton_kho_updated_at::text`},
+      COALESCE(
+        CASE WHEN ib.inbound_qty > 0 THEN ROUND((ib.inbound_cost / ib.inbound_qty)::numeric, 4)::float END,
+        CASE WHEN asm.basecost_tb IS NOT NULL AND asm.basecost_tb > 0 THEN asm.basecost_tb::float END,
+        pt.avg_cost
+      ) AS gia_trung_binh_nam,
+      ib.inbound_qty::float AS inbound_qty,
+      ib.inbound_cost::float AS inbound_cost,
+      CASE
+        WHEN asm.ton_kho IS NOT NULL AND asm.ton_kho > 0 THEN
+          ROUND((asm.ton_kho * COALESCE(
+            CASE WHEN ib.inbound_qty > 0 THEN (ib.inbound_cost / ib.inbound_qty) END,
+            CASE WHEN asm.basecost_tb IS NOT NULL AND asm.basecost_tb > 0 THEN asm.basecost_tb::float END,
+            pt.avg_cost
+          ))::numeric, 2)::float
+        WHEN asm.ton_kho IS NOT NULL AND asm.ton_kho = 0 THEN 0
+        ELSE NULL
+      END AS gia_tri_ton,
+      asm.created_at::text,
+      asm.updated_at::text
+    FROM ${sql(table)} asm
+    LEFT JOIN LATERAL (
+      SELECT
+        COALESCE(SUM(quantity), 0)::float AS inbound_qty,
+        COALESCE(SUM(COALESCE(total_basecost, final_basecost * quantity, base_cost_per_unit * quantity, 0)), 0)::float AS inbound_cost
+      FROM accounting_inbound_shipments s
+      WHERE s.store_id = asm.store_id
+        AND (
+          REPLACE(UPPER(TRIM(s.sku)), ' ', '') = REPLACE(UPPER(TRIM(asm.sku)), ' ', '')
+          OR (asm.asin IS NOT NULL AND s.sku = asm.asin)
+        )
+        AND s.deleted_at IS NULL
+    ) ib ON true
+    LEFT JOIN LATERAL (
+      SELECT
+        CASE WHEN SUM(quantity) > 0 THEN
+          ROUND((SUM(COALESCE(total_basecost, final_basecost * quantity, base_cost_per_unit * quantity, 0)) / SUM(quantity))::numeric, 4)::float
+        END AS avg_cost
+      FROM accounting_inbound_shipments s2
+      WHERE s2.store_id = asm.store_id
+        AND LOWER(TRIM(COALESCE(s2.product_type, ''))) = LOWER(TRIM(COALESCE(asm.product_type, '')))
+        AND s2.deleted_at IS NULL
+    ) pt ON true
+    WHERE asm.store_id = ${storeId}
+      AND asm.deleted_at IS NULL
       AND (${searchPattern}::text IS NULL OR (
-        LOWER(sku) LIKE ${searchPattern}
-        OR LOWER(COALESCE(asin, '')) LIKE ${searchPattern}
-        OR LOWER(COALESCE(product_type, '')) LIKE ${searchPattern}
-        OR LOWER(COALESCE(niche, '')) LIKE ${searchPattern}
-        OR LOWER(COALESCE(pic_mkt, '')) LIKE ${searchPattern}
+        LOWER(asm.sku) LIKE ${searchPattern}
+        OR LOWER(COALESCE(asm.asin, '')) LIKE ${searchPattern}
+        OR LOWER(COALESCE(asm.product_type, '')) LIKE ${searchPattern}
+        OR LOWER(COALESCE(asm.niche, '')) LIKE ${searchPattern}
+        OR LOWER(COALESCE(asm.pic_mkt, '')) LIKE ${searchPattern}
       ))
-      AND (${params.status || null}::text IS NULL OR status = ${params.status || null})
-      AND (${params.productType || null}::text IS NULL OR product_type = ${params.productType || null})
+      AND (${params.status || null}::text IS NULL OR asm.status = ${params.status || null})
+      AND (${params.productType || null}::text IS NULL OR asm.product_type = ${params.productType || null})
       AND (${cursorCreatedAt}::timestamptz IS NULL OR (
-        created_at < ${cursorCreatedAt}::timestamptz
-        OR (created_at = ${cursorCreatedAt}::timestamptz AND id < ${cursorId}::uuid)
+        asm.created_at < ${cursorCreatedAt}::timestamptz
+        OR (asm.created_at = ${cursorCreatedAt}::timestamptz AND asm.id < ${cursorId}::uuid)
       ))
-    ORDER BY created_at DESC, id DESC
+    ORDER BY asm.created_at DESC, asm.id DESC
     LIMIT ${limit} OFFSET ${offset}
   `;
 
@@ -615,7 +664,7 @@ export async function upsertSkuMasterItem(
       ${data.product_type ?? null},
       ${data.mockup ?? null},
       ${data.sku.trim()},
-      ${data.asin ?? null},
+      ${data.asin?.trim() || null},
       ${data.fnsku ?? null},
       ${data.amazon_fee ?? null},
       ${data.referral_fee_pct ?? null},
@@ -648,7 +697,10 @@ export async function upsertSkuMasterItem(
       ${changedBy},
       NOW()
     )
-    ON CONFLICT (store_id, sku) DO UPDATE SET
+    ${fbm
+      // BẢNG MÃ FBM: cùng SKU khác ASIN là 2 sản phẩm (migration 121)
+      ? sql`ON CONFLICT (store_id, sku, (COALESCE(asin, '')))`
+      : sql`ON CONFLICT (store_id, sku)`} DO UPDATE SET
       brand = EXCLUDED.brand,
       product_type = EXCLUDED.product_type,
       mockup = CASE 
@@ -1885,6 +1937,8 @@ export function createDefaultSkuSheet(ws: ExcelJS.Worksheet, skus: any[] = []): 
     { key: "creative_headline", header: "Creative Headline", width: 24, align: "left" },
     { key: "brand_logo_asset_id", header: "Brand Logo Asset ID", width: 18, align: "center" },
     { key: "landing_page_url", header: "Landing Page URL", width: 28, align: "left" },
+    { key: "ton_kho", header: "Tồn", width: 14, align: "right", numFmt: "#,##0" },
+    { key: "gia_tri_ton", header: "Giá trị tồn", width: 18, align: "right", numFmt: "$#,##0.00" },
   ];
 
   // Header row
@@ -1916,6 +1970,15 @@ export function createDefaultSkuSheet(ws: ExcelJS.Worksheet, skus: any[] = []): 
       }
       if (col.key === "amazon_fee" || col.key === "amazon_fba_fee_thay_doi" || col.key === "basecost_tb") {
         return val != null && val !== "" ? Number(val) : null;
+      }
+      if (col.key === "ton_kho") {
+        return val != null && val !== "" ? Number(val) : null;
+      }
+      if (col.key === "gia_tri_ton") {
+        if (row.ton_kho == null || row.basecost_tb == null) return null;
+        const base = Number(row.basecost_tb) || 0;
+        const ton = Number(row.ton_kho) || 0;
+        return Math.max(0, ton) * base;
       }
       if (col.key === "referral_fee_pct") {
         if (val == null || val === "") return null;

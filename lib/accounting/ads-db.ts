@@ -835,10 +835,11 @@ export async function batchUpsertAds(
   if (items.length === 0 && !options.coverage) return { count: 0, createdCount: 0, updatedCount: 0 };
   const sql = await getDatabaseClient();
 
-  // Deduplicate items on (store_id, date, portfolio)
+  // Deduplicate items on (store_id, date, portfolio) — phân biệt hoa thường như unique key của bảng:
+  // Amazon cho phép 2 portfolio chỉ khác hoa/thường (vd "…Dog All…" và "…Dog all…"), gộp lại sẽ mất spend.
   const dedupedMap = new Map<string, Omit<AdsItem, "id" | "created_at" | "updated_at">>();
   for (const item of items) {
-    const key = `${item.date}::${item.portfolio.trim().toUpperCase()}`;
+    const key = `${item.date}::${item.portfolio.trim()}`;
     dedupedMap.set(key, item);
   }
   const deduped = Array.from(dedupedMap.values());

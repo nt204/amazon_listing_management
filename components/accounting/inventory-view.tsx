@@ -1757,6 +1757,14 @@ function InventoryViewInner() {
         // Bổ sung các cột mặc định còn thiếu (nếu có update)
         for (const def of defaultCols) {
           if (!seenIds.has(def.id)) {
+            if (def.id === "gia_tri_ton") {
+              const tonIdx = ordered.findIndex((c) => c.id === "ton_kho");
+              if (tonIdx >= 0) {
+                ordered.splice(tonIdx + 1, 0, def);
+                seenIds.add(def.id);
+                continue;
+              }
+            }
             ordered.push(def);
             seenIds.add(def.id);
           }
@@ -2571,6 +2579,25 @@ function InventoryViewInner() {
       return (a.row_order ?? 999999) - (b.row_order ?? 999999);
     });
   }, [allSkus, dateSort.sku, columnFilters.sku]);
+
+  // Thống kê tổng tồn và tổng giá trị tồn kho của các SKU hiển thị
+  const skuInventorySummary = useMemo(() => {
+    let totalTon = 0;
+    let totalGiaTri = 0;
+    for (const item of sortedSkus) {
+      const ton = item.ton_kho != null ? Number(item.ton_kho) : 0;
+      if (ton > 0) {
+        totalTon += ton;
+        const val = item.gia_tri_ton != null
+          ? Number(item.gia_tri_ton)
+          : (item.gia_trung_binh_nam != null && Number(item.gia_trung_binh_nam) > 0
+              ? ton * Number(item.gia_trung_binh_nam)
+              : (item.basecost_tb != null && Number(item.basecost_tb) > 0 ? ton * Number(item.basecost_tb) : 0));
+        totalGiaTri += val;
+      }
+    }
+    return { totalTon, totalGiaTri };
+  }, [sortedSkus]);
 
   // Mặc định sắp xếp CHI TIẾT ĐI HÀNG theo ngày tạo mới nhất (dòng mới luôn ở trên đầu)
   const sortedShipments = useMemo(() => {
@@ -3967,7 +3994,7 @@ function InventoryViewInner() {
     const isCustom = col.isCustom;
     const isFee = col.id === "amazon_fee";
     const isPercent = col.id === "referral_fee_pct";
-    const isRight = ["amazon_fba_fee_thay_doi", "basecost_tb", "basecost", "shipping_fee", "add_shipping_fee", "total_cost", "ton_kho"].includes(col.id);
+    const isRight = ["amazon_fba_fee_thay_doi", "basecost_tb", "basecost", "shipping_fee", "add_shipping_fee", "total_cost", "ton_kho", "gia_tri_ton"].includes(col.id);
     const isCenter = isFee || isPercent;
 
     let alignClass = "";
@@ -4023,7 +4050,7 @@ function InventoryViewInner() {
           setHeaderDragId(null);
           setHeaderDragOverId(null);
         }}
-        className={`py-2 px-3 text-xs ${col.id === "ton_kho" ? "bg-[#ffff00]" : "bg-[#ff9900]"} text-slate-900 font-bold border-r border-amber-600/60 leading-tight ${alignClass} ${f.className}`}
+        className={`py-2 px-3 text-xs ${col.id === "ton_kho" ? "bg-[#ffff00]" : col.id === "gia_tri_ton" ? "bg-[#dcfce7] text-emerald-950" : "bg-[#ff9900]"} text-slate-900 font-bold border-r border-amber-600/60 leading-tight ${alignClass} ${f.className}`}
         onResize={(id, width) => resizeColumn("sku", id, width)}
         onAutoFit={(id) => handleAutoFitColumn("sku", id)}
         onColumnClick={(id, event) => setColumnContextMenu({ table: "sku", field: id, x: event.clientX, y: event.clientY })}
@@ -4138,6 +4165,37 @@ function InventoryViewInner() {
           }
         >
           {item.ton_kho != null ? item.ton_kho.toLocaleString("en-US") : "—"}
+        </td>
+      );
+    }
+
+    if (cid === "gia_tri_ton") {
+      // Giá trị tồn = Giá trung bình năm * Số lượng tồn (lấy từ Chi Tiết Đi Hàng: giá trị hàng nhập / số lượng * tồn)
+      const giaTbNam = item.gia_trung_binh_nam != null && Number(item.gia_trung_binh_nam) > 0
+        ? Number(item.gia_trung_binh_nam)
+        : (item.basecost_tb != null && Number(item.basecost_tb) > 0 ? Number(item.basecost_tb) : null);
+      const tonKho = item.ton_kho != null ? Number(item.ton_kho) : null;
+      const effectiveTon = tonKho != null ? Math.max(0, tonKho) : 0;
+      const giaTriTon = item.gia_tri_ton != null
+        ? Number(item.gia_tri_ton)
+        : (giaTbNam != null && tonKho != null ? effectiveTon * giaTbNam : null);
+
+      return (
+        <td
+          key={col.id}
+          style={f.style}
+          className={`py-1.5 px-2.5 text-[13px] text-right font-bold tabular-nums text-emerald-800 ${f.className || "border-r border-slate-200 bg-[#f0fdf4]"}`}
+          title={
+            giaTriTon != null && giaTbNam != null
+              ? `Giá trị tồn = Giá TB năm ($${giaTbNam.toFixed(2)}) × Tồn (${tonKho != null ? tonKho.toLocaleString("en-US") : 0})${
+                  item.inbound_qty ? ` · Nhập trong năm: ${item.inbound_qty.toLocaleString("en-US")} pcs ($${(item.inbound_cost ?? 0).toFixed(2)})` : ""
+                } = $${giaTriTon.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              : "Chưa có dữ liệu giá hàng nhập trong năm hoặc Basecost TB"
+          }
+        >
+          {giaTriTon != null
+            ? `$${giaTriTon.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+            : "—"}
         </td>
       );
     }
@@ -5331,6 +5389,16 @@ function InventoryViewInner() {
         {/* Filter Controls inline + Table Zoom Controls */}
         {activeTab === "sku" ? (
           <div className="flex items-center gap-2 flex-wrap ml-auto justify-end min-w-0">
+            {skuInventorySummary.totalTon > 0 && (
+              <div
+                className="hidden xl:inline-flex items-center gap-2 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 font-medium shadow-2xs select-none"
+                title="Tổng số lượng và giá trị tồn kho của các SKU hiển thị"
+              >
+                <span>Tồn: <strong className="font-bold text-emerald-950">{skuInventorySummary.totalTon.toLocaleString("en-US")}</strong> pcs</span>
+                <span>•</span>
+                <span>Giá trị tồn: <strong className="font-bold text-emerald-950 font-mono">${skuInventorySummary.totalGiaTri.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>
+              </div>
+            )}
             <div className="relative w-40 sm:w-52 focus-within:!w-64 transition-all duration-200">
               <MagnifyingGlassIcon
                 size={14}
