@@ -10,6 +10,7 @@ import {
   buildLaunchPlan,
   countLaunchTargets,
   type LaunchOptions,
+  type LaunchSkuOverride,
   type LaunchTerm,
 } from "@/lib/ppc/campaign-launch";
 import { exportCampaignLaunchBulksheet } from "@/lib/ppc/campaign-launch-bulksheet";
@@ -45,20 +46,43 @@ function parseTerms(raw: unknown): LaunchTerm[] {
   })).filter((t) => t.term);
 }
 
-function parseOptions(raw: Record<string, unknown> | undefined): LaunchOptions {
+function parseMatchTypes(raw: unknown): LaunchOptions["matchTypes"] {
   const validMatch = new Set(LAUNCH_MATCH_TYPES.map((m) => m.key));
-  const matchTypes = (Array.isArray(raw?.matchTypes) ? raw.matchTypes : [])
+  return (Array.isArray(raw) ? raw : [])
     .map((m) => String(m).toLowerCase())
     .filter((m): m is LaunchOptions["matchTypes"][number] => validMatch.has(m as LaunchOptions["matchTypes"][number]));
+}
+
+function parseSkuOverrides(raw: unknown): Record<string, LaunchSkuOverride> {
+  const overrides: Record<string, LaunchSkuOverride> = {};
+  if (!raw || typeof raw !== "object") return overrides;
+  for (const [key, value] of Object.entries(raw as Record<string, Record<string, unknown>>)) {
+    const sku = key.trim().toUpperCase();
+    if (!sku || !value || typeof value !== "object") continue;
+    const o: LaunchSkuOverride = {};
+    if (Array.isArray(value.matchTypes)) o.matchTypes = parseMatchTypes(value.matchTypes);
+    if (Number(value.dailyBudget) > 0) o.dailyBudget = Number(value.dailyBudget);
+    const strategy = LAUNCH_BIDDING_STRATEGIES.find((s) => s.value === value.biddingStrategy)?.value;
+    if (strategy) o.biddingStrategy = strategy;
+    if (typeof value.suffix === "string") o.suffix = value.suffix.trim();
+    if (Number(value.commonBid) > 0) o.commonBid = Math.max(0.1, Number(value.commonBid));
+    overrides[sku] = o;
+  }
+  return overrides;
+}
+
+function parseOptions(raw: Record<string, unknown> | undefined): LaunchOptions {
   const strategy = LAUNCH_BIDDING_STRATEGIES.find((s) => s.value === raw?.biddingStrategy)?.value || LAUNCH_BIDDING_STRATEGIES[0].value;
   return {
     runType: LAUNCH_RUN_TYPES.find((t) => t.value === raw?.runType)?.value || LAUNCH_RUN_TYPES[0].value,
-    matchTypes,
+    matchTypes: parseMatchTypes(raw?.matchTypes),
     dailyBudget: Number(raw?.dailyBudget) || 5,
     biddingStrategy: strategy,
     userName: String(raw?.userName || "").trim(),
     dateStr: String(raw?.dateStr || "").trim() || formatYYYYMMDD(),
     suffix: String(raw?.suffix || "").trim(),
+    fulfillment: raw?.fulfillment === "FBM" ? "FBM" : "FBA",
+    skuOverrides: parseSkuOverrides(raw?.skuOverrides),
     commonBid: Number(raw?.commonBid) > 0 ? Math.max(0.1, Number(raw?.commonBid)) : undefined,
   };
 }

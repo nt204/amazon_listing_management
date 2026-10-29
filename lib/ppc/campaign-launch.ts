@@ -40,6 +40,11 @@ export interface LaunchTerm {
   spend?: number;
 }
 
+export type LaunchFulfillment = "FBA" | "FBM";
+
+/** Tùy chỉnh riêng cho 1 SKU; trường nào không có thì dùng cài đặt chung. */
+export type LaunchSkuOverride = Partial<Pick<LaunchOptions, "matchTypes" | "dailyBudget" | "biddingStrategy" | "suffix" | "commonBid">>;
+
 export interface LaunchOptions {
   runType: LaunchRunType;
   matchTypes: LaunchMatchType[];
@@ -48,6 +53,8 @@ export interface LaunchOptions {
   userName: string;
   dateStr: string;
   suffix: string;
+  fulfillment?: LaunchFulfillment;
+  skuOverrides?: Record<string, LaunchSkuOverride>;
   /** Bid chung: có thì dùng làm Ad Group Default Bid (bid từng target do client gửi) */
   commonBid?: number;
 }
@@ -105,7 +112,7 @@ export function productTargetExpression(term: string): string {
   return `asin="${t.toUpperCase().replace(/["']/g, "")}"`;
 }
 
-/** "{SKU} {dạng chạy} [{Match}] FBA {user} {YYYYMMDD} [{đuôi}]" */
+/** "{SKU} {dạng chạy} [{Match}] {FBA|FBM} {user} {YYYYMMDD} [{đuôi}]" */
 export function buildLaunchCampaignName(params: {
   sku: string;
   runType: LaunchRunType;
@@ -113,11 +120,12 @@ export function buildLaunchCampaignName(params: {
   userName: string;
   dateStr: string;
   suffix?: string;
+  fulfillment?: LaunchFulfillment;
 }): string {
   const sku = (extractSkuFromText(params.sku) || params.sku || "SKU").trim().toUpperCase();
   const parts = [sku, launchRunType(params.runType).nameLabel];
   if (params.matchType) parts.push(MATCH_LABEL[params.matchType]);
-  parts.push("FBA", sanitizeSaleKwUserName(params.userName), normalizeSaleKwDate(params.dateStr));
+  parts.push(params.fulfillment === "FBM" ? "FBM" : "FBA", sanitizeSaleKwUserName(params.userName), normalizeSaleKwDate(params.dateStr));
   const suffix = (params.suffix || "").trim();
   if (suffix) parts.push(suffix);
   return parts.join(" ");
@@ -149,22 +157,22 @@ export function buildLaunchPlan(terms: LaunchTerm[], options: LaunchOptions): La
     bySku.get(sku)!.push({ ...t, term, sku });
   }
 
-  const nameBase = { runType: runType.value, userName: options.userName, dateStr: options.dateStr, suffix: options.suffix };
-  const makeCampaign = (sku: string, name: string, adGroup: Omit<LaunchAdGroup, "name" | "skus">): LaunchCampaign => ({
-    name,
-    sku,
-    adProduct: runType.adProduct,
-    targetingType: runType.target === "none" ? "AUTO" : "MANUAL",
-    dailyBudget: options.dailyBudget > 0 ? options.dailyBudget : 5,
-    biddingStrategy: options.biddingStrategy,
-    adGroups: [{ name, skus: [sku], ...adGroup }],
-  });
-
   const campaigns: LaunchCampaign[] = [];
   for (const [sku, skuTerms] of bySku) {
-    const defaultBid = options.commonBid && options.commonBid > 0 ? options.commonBid : adGroupDefaultBid(skuTerms);
+    const opts = { ...options, ...options.skuOverrides?.[sku] };
+    const nameBase = { runType: runType.value, userName: opts.userName, dateStr: opts.dateStr, suffix: opts.suffix, fulfillment: opts.fulfillment };
+    const makeCampaign = (sku: string, name: string, adGroup: Omit<LaunchAdGroup, "name" | "skus">): LaunchCampaign => ({
+      name,
+      sku,
+      adProduct: runType.adProduct,
+      targetingType: runType.target === "none" ? "AUTO" : "MANUAL",
+      dailyBudget: opts.dailyBudget > 0 ? opts.dailyBudget : 5,
+      biddingStrategy: opts.biddingStrategy,
+      adGroups: [{ name, skus: [sku], ...adGroup }],
+    });
+    const defaultBid = opts.commonBid && opts.commonBid > 0 ? opts.commonBid : adGroupDefaultBid(skuTerms);
     if (runType.target === "keyword") {
-      for (const m of options.matchTypes) {
+      for (const m of opts.matchTypes) {
         campaigns.push(makeCampaign(sku, buildLaunchCampaignName({ sku, matchType: m, ...nameBase }), {
           defaultBid,
           keywords: skuTerms.map((t) => ({ text: t.term, matchType: m, bid: t.bid })),

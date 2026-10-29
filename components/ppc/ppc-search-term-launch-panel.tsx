@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { X, CircleNotch } from "@phosphor-icons/react";
+import { X, CircleNotch, CaretDown, Download } from "@phosphor-icons/react";
 import type { RequestActor } from "@/lib/auth";
 import {
   LAUNCH_BIDDING_STRATEGIES,
@@ -11,8 +11,10 @@ import {
   isTermUsableForRunType,
   launchRunType,
   type LaunchBiddingStrategy,
+  type LaunchFulfillment,
   type LaunchMatchType,
   type LaunchRunType,
+  type LaunchSkuOverride,
 } from "@/lib/ppc/campaign-launch";
 import {
   isAsinProductTarget,
@@ -33,6 +35,7 @@ interface LaunchSettings {
   bidRule: BidRule;
   bidValue: number;
   suffix: string;
+  fulfillment: LaunchFulfillment;
 }
 
 const DEFAULT_SETTINGS: LaunchSettings = {
@@ -43,6 +46,7 @@ const DEFAULT_SETTINGS: LaunchSettings = {
   bidRule: "cpc",
   bidValue: 10,
   suffix: "",
+  fulfillment: "FBA",
 };
 
 interface LaunchItem {
@@ -102,6 +106,36 @@ function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
+function readSavedSettings(settingsKey: string): LaunchSettings | null {
+  try {
+    const saved = localStorage.getItem(settingsKey);
+    if (!saved) return null;
+    const parsedSettings = { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+    if (parsedSettings.bidRule !== "cpc_pct") parsedSettings.bidRule = "cpc";
+    if (parsedSettings.fulfillment !== "FBM") parsedSettings.fulfillment = "FBA";
+    return parsedSettings;
+  } catch {
+    return null;
+  }
+}
+
+// "+10", "-5", "10" → số %; nhập dở ("-", "+") coi là 0
+function parsePct(value: string): number {
+  const num = Number(value.replace(/^\+/, ""));
+  return Number.isFinite(num) ? num : 0;
+}
+
+function formatPct(value: number): string {
+  return value > 0 ? `+${value}` : String(value);
+}
+
+function computeBid(item: LaunchItem, settings: LaunchSettings): number {
+  if (item.bidOverride && item.bidOverride > 0) return item.bidOverride;
+  if (item.cpc <= 0) return 1;
+  if (settings.bidRule === "cpc_pct") return Math.max(0.1, round2(item.cpc * (1 + (settings.bidValue || 0) / 100)));
+  return Math.max(0.1, item.cpc);
+}
+
 // Gộp các dòng đã chọn theo (SKU, term)
 function buildItems(rows: LaunchSourceRow[], selectedSku: string): LaunchItem[] {
   const map = new Map<string, LaunchItem>();
@@ -154,11 +188,15 @@ export function PpcSearchTermLaunchPanel({
   const userNameKey = `ppc_sale_kw_username_${storageId}`;
 
   const [open, setOpen] = useState(false);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [exportBidPct, setExportBidPct] = useState("0");
   const [settings, setSettings] = useState<LaunchSettings>(DEFAULT_SETTINGS);
   const [userName, setUserName] = useState(() => defaultUserName(actor));
   const [dateStr, setDateStr] = useState(() => formatYYYYMMDD());
   const [items, setItems] = useState<LaunchItem[]>([]);
   const [commonBid, setCommonBid] = useState("");
+  const [skuOverrides, setSkuOverrides] = useState<Record<string, LaunchSkuOverride>>({});
+  const [expandedSkus, setExpandedSkus] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<"export" | "upload" | null>(null);
   const [uploadStatus, setUploadStatus] = useState<{ jobId: string; status: string; progress?: number; error?: string } | null>(null);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -185,18 +223,16 @@ export function PpcSearchTermLaunchPanel({
   };
 
   const openPanel = () => {
+    const savedSettings = readSavedSettings(settingsKey);
+    if (savedSettings) setSettings(savedSettings);
     try {
-      const saved = localStorage.getItem(settingsKey);
-      if (saved) {
-        const parsedSettings = { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
-        if (parsedSettings.bidRule !== "cpc_pct") parsedSettings.bidRule = "cpc";
-        setSettings(parsedSettings);
-      }
       const savedName = localStorage.getItem(userNameKey);
       if (savedName?.trim()) setUserName(savedName.trim());
     } catch { }
     setItems(buildItems(selectedRows, selectedSku));
     setCommonBid("");
+    setSkuOverrides({});
+    setExpandedSkus(new Set());
     setUploadStatus(null);
     const reportDate = selectedRows.map((r) => r.reportEndDate || r.reportDate).find(Boolean);
     const parsed = reportDate ? extractFileDateDDMMYY(reportDate) : null;
@@ -204,11 +240,57 @@ export function PpcSearchTermLaunchPanel({
     setOpen(true);
   };
 
-  const bidFor = (item: LaunchItem): number => {
-    if (item.bidOverride && item.bidOverride > 0) return item.bidOverride;
-    if (item.cpc <= 0) return 1;
-    if (settings.bidRule === "cpc_pct") return Math.max(0.1, round2(item.cpc * (1 + (settings.bidValue || 0) / 100)));
-    return Math.max(0.1, item.cpc);
+  const bidFor = (item: LaunchItem): number => computeBid(item, settings);
+
+  const openExportMenu = () => {
+    if (!exportMenuOpen) setExportBidPct("0");
+    setExportMenuOpen((value) => !value);
+  };
+
+  // Xuất KW đang chọn ra Excel (Keyword, Bid); bid theo quy tắc Bid giống lúc lên camp
+  const handleExportKeywords = async () => {
+    if (selectedRows.length === 0) return;
+    setBusy("export");
+    try {
+      // Cùng 1 keyword ở nhiều SKU → gộp lại, CPC = tổng spend / tổng click
+      const byTerm = new Map<string, LaunchItem>();
+      for (const it of buildItems(selectedRows, selectedSku)) {
+        const key = it.term.toLowerCase();
+        const existing = byTerm.get(key);
+        if (existing) {
+          existing.clicks += it.clicks;
+          existing.spend += it.spend;
+        } else {
+          byTerm.set(key, { ...it });
+        }
+      }
+      const rows = Array.from(byTerm.values());
+      for (const it of rows) it.cpc = it.clicks > 0 ? round2(it.spend / it.clicks) : 0;
+      const ExcelJS = (await import("exceljs")).default;
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet("Keywords");
+      sheet.columns = [
+        { header: "Keyword", key: "term", width: 40 },
+        { header: "Bid", key: "bid", width: 10, style: { numFmt: "0.00" } },
+      ];
+      sheet.getRow(1).font = { bold: true };
+      const bidSettings: LaunchSettings = { ...DEFAULT_SETTINGS, bidRule: "cpc_pct", bidValue: parsePct(exportBidPct) };
+      for (const it of rows) sheet.addRow({ term: it.term, bid: computeBid(it, bidSettings) });
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Keywords_${storeName.replace(/[^A-Za-z0-9._-]+/g, "_")}_${formatYYYYMMDD()}_${rows.length}KW.xlsx`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      notify(`Đã xuất ${rows.length} keyword.`, "success");
+      setExportMenuOpen(false);
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Lỗi khi xuất file.", "error");
+    } finally {
+      setBusy(null);
+    }
   };
 
   const runType = launchRunType(settings.runType);
@@ -241,6 +323,8 @@ export function PpcSearchTermLaunchPanel({
     userName: userName.trim() || "Loan",
     dateStr: dateStr.trim() || formatYYYYMMDD(),
     suffix: settings.suffix,
+    fulfillment: settings.fulfillment,
+    skuOverrides,
     commonBid: Number(commonBid) > 0 ? Number(commonBid) : undefined,
   };
   const plan = buildLaunchPlan(launchTerms, launchOptions);
@@ -262,6 +346,52 @@ export function PpcSearchTermLaunchPanel({
   const renameSku = (fromSku: string, toSku: string) => {
     const next = toSku.trim().toUpperCase();
     setItems((prev) => prev.map((it) => (it.sku === fromSku ? { ...it, sku: next } : it)));
+    setSkuOverrides((prev) => {
+      if (!prev[fromSku]) return prev;
+      const { [fromSku]: moved, ...rest } = prev;
+      return { ...rest, [next]: { ...rest[next], ...moved } };
+    });
+    setExpandedSkus((prev) => (prev.has(fromSku) ? new Set([...prev, next]) : prev));
+  };
+
+  const updateSkuOverride = (sku: string, patch: LaunchSkuOverride) => {
+    setSkuOverrides((prev) => {
+      const merged: LaunchSkuOverride = { ...prev[sku], ...patch };
+      for (const key of Object.keys(merged) as (keyof LaunchSkuOverride)[]) {
+        if (merged[key] === undefined) delete merged[key];
+      }
+      const next = { ...prev };
+      if (Object.keys(merged).length > 0) next[sku] = merged;
+      else delete next[sku];
+      return next;
+    });
+  };
+
+  // Bid chung riêng SKU: áp cho mọi term của SKU này; xóa trống thì quay về bid chung ở trên (hoặc theo CPC)
+  const applySkuCommonBid = (sku: string, value: string) => {
+    const num = Number(value);
+    const bid = value === "" || !Number.isFinite(num) || num <= 0 ? null : num;
+    updateSkuOverride(sku, { commonBid: bid ?? undefined });
+    const fallback = Number(commonBid) > 0 ? Number(commonBid) : null;
+    setItems((prev) => prev.map((it) => (it.sku === sku ? { ...it, bidOverride: bid ?? fallback } : it)));
+  };
+
+  const resetSkuOverride = (sku: string) => {
+    if (skuOverrides[sku]?.commonBid) applySkuCommonBid(sku, "");
+    setSkuOverrides((prev) => {
+      const next = { ...prev };
+      delete next[sku];
+      return next;
+    });
+  };
+
+  const toggleSkuExpanded = (sku: string) => {
+    setExpandedSkus((prev) => {
+      const next = new Set(prev);
+      if (next.has(sku)) next.delete(sku);
+      else next.add(sku);
+      return next;
+    });
   };
 
   const setItemSku = (id: string, sku: string) => {
@@ -277,7 +407,7 @@ export function PpcSearchTermLaunchPanel({
     setCommonBid(value);
     const num = Number(value);
     const bid = value === "" || !Number.isFinite(num) || num <= 0 ? null : num;
-    setItems((prev) => prev.map((it) => ({ ...it, bidOverride: bid })));
+    setItems((prev) => prev.map((it) => (skuOverrides[it.sku]?.commonBid ? it : { ...it, bidOverride: bid })));
   };
 
   const removeItem = (id: string) => {
@@ -383,6 +513,59 @@ export function PpcSearchTermLaunchPanel({
     <>
       <div className="flex items-center gap-1.5">
         {selectedRows.length > 0 && (
+          <div className="relative">
+            <button
+              type="button"
+              onClick={openExportMenu}
+              className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+            >
+              <Download size={13} weight="bold" /> Export KW
+            </button>
+            {exportMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setExportMenuOpen(false)} />
+                <div className="absolute right-0 top-full z-50 mt-1.5 w-60 space-y-2.5 rounded-xl border border-slate-200 bg-white p-3 shadow-2xl">
+                  <div>
+                    <span className="mb-1 block text-xs font-medium text-slate-500">Bid = CPC + %</span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setExportBidPct((v) => formatPct(parsePct(v) - 5))}
+                        className="h-8 w-8 rounded-lg border border-slate-200 text-sm font-bold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                      >
+                        −
+                      </button>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={exportBidPct}
+                        onChange={(e) => setExportBidPct(e.target.value.replace(/[^0-9.+-]/g, ""))}
+                        className="h-8 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 text-center text-sm font-semibold text-slate-800 outline-none focus:border-indigo-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setExportBidPct((v) => formatPct(parsePct(v) + 5))}
+                        className="h-8 w-8 rounded-lg border border-slate-200 text-sm font-bold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleExportKeywords()}
+                    disabled={busy !== null}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700 cursor-pointer disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {busy === "export" ? <CircleNotch size={13} className="animate-spin" /> : <Download size={13} weight="bold" />}
+                    Xuất Excel
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+        {selectedRows.length > 0 && (
           <button
             type="button"
             onClick={onClear}
@@ -435,6 +618,20 @@ export function PpcSearchTermLaunchPanel({
                     {LAUNCH_RUN_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
                     <option disabled>SB01 / SB05 Video (chưa hỗ trợ)</option>
                   </select>
+                  <div className="flex rounded-lg border border-slate-200 p-0.5">
+                    {(["FBA", "FBM"] as const).map((f) => (
+                      <button
+                        key={f}
+                        type="button"
+                        onClick={() => updateSettings({ fulfillment: f })}
+                        className={`rounded-md px-3 py-1 text-sm font-semibold cursor-pointer ${
+                          settings.fulfillment === f ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-slate-600"
+                        }`}
+                      >
+                        {f}
+                      </button>
+                    ))}
+                  </div>
                   {runType.target === "keyword" && (
                     <div className="flex gap-1.5">
                       {LAUNCH_MATCH_TYPES.map((m) => (
@@ -549,6 +746,9 @@ export function PpcSearchTermLaunchPanel({
                   {groups.map(([sku, skuItems]) => {
                     const unknown = sku === UNKNOWN_SKU || !sku.trim();
                     const campNames = campaignsBySku.get(sku) || [];
+                    const override = skuOverrides[sku];
+                    const expanded = expandedSkus.has(sku);
+                    const skuMatchTypes = override?.matchTypes ?? enabledMatchTypes.map((m) => m.key);
                     return (
                       <div key={sku || "empty"} className={`overflow-hidden rounded-xl border ${unknown ? "border-amber-300" : "border-slate-200"}`}>
                         <div className={`border-b px-3.5 py-2 ${unknown ? "border-amber-200 bg-amber-50" : "border-slate-100 bg-slate-50"}`}>
@@ -570,7 +770,97 @@ export function PpcSearchTermLaunchPanel({
                             ) : (
                               <span className="ml-auto shrink-0 text-xs font-medium text-amber-700">Không lên camp {runType.nameLabel}</span>
                             )}
+                            {!unknown && (
+                              <button
+                                type="button"
+                                onClick={() => toggleSkuExpanded(sku)}
+                                className={`shrink-0 rounded-md p-1 cursor-pointer hover:bg-slate-200 ${
+                                  override ? "text-indigo-600" : "text-slate-400 hover:text-slate-700"
+                                }`}
+                              >
+                                <CaretDown size={14} weight="bold" className={`transition-transform ${expanded ? "rotate-180" : ""}`} />
+                              </button>
+                            )}
                           </div>
+                          {expanded && !unknown && (
+                            <div className="mt-2 flex flex-wrap items-end gap-2 rounded-lg border border-slate-200 bg-white p-2.5">
+                              {runType.target === "keyword" && (
+                                <div className="flex gap-1">
+                                  {LAUNCH_MATCH_TYPES.map((m) => {
+                                    const on = skuMatchTypes.includes(m.key);
+                                    return (
+                                      <button
+                                        key={m.key}
+                                        type="button"
+                                        onClick={() =>
+                                          updateSkuOverride(sku, {
+                                            matchTypes: on ? skuMatchTypes.filter((k) => k !== m.key) : [...skuMatchTypes, m.key],
+                                          })
+                                        }
+                                        className={`rounded-md border px-2 py-1 text-xs font-semibold cursor-pointer ${
+                                          on ? "border-indigo-600 bg-indigo-50 text-indigo-700" : "border-slate-200 text-slate-400 hover:text-slate-600"
+                                        }`}
+                                      >
+                                        {m.label}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                              <label>
+                                <span className="mb-0.5 block text-[11px] text-slate-500">Budget ($)</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  step="1"
+                                  value={override?.dailyBudget ?? settings.dailyBudget}
+                                  onChange={(e) => updateSkuOverride(sku, { dailyBudget: Number(e.target.value) })}
+                                  className={`${inputCls} w-16 py-1 text-xs`}
+                                />
+                              </label>
+                              {runType.adProduct === "SP" && (
+                                <label>
+                                  <span className="mb-0.5 block text-[11px] text-slate-500">Bidding strategy</span>
+                                  <select
+                                    value={override?.biddingStrategy ?? settings.biddingStrategy}
+                                    onChange={(e) => updateSkuOverride(sku, { biddingStrategy: e.target.value as LaunchBiddingStrategy })}
+                                    className={`${inputCls} py-1 text-xs cursor-pointer`}
+                                  >
+                                    {LAUNCH_BIDDING_STRATEGIES.map((st) => <option key={st.value} value={st.value}>{st.label}</option>)}
+                                  </select>
+                                </label>
+                              )}
+                              <label>
+                                <span className="mb-0.5 block text-[11px] text-slate-500">Bid chung ($)</span>
+                                <input
+                                  type="number"
+                                  step="0.05"
+                                  min="0.1"
+                                  value={override?.commonBid ?? ""}
+                                  placeholder={commonBid || "Để trống"}
+                                  onChange={(e) => applySkuCommonBid(sku, e.target.value)}
+                                  className={`${inputCls} w-20 py-1 text-xs`}
+                                />
+                              </label>
+                              <label className="min-w-[100px] flex-1">
+                                <span className="mb-0.5 block text-[11px] text-slate-500">Đuôi tên</span>
+                                <input
+                                  value={override?.suffix ?? settings.suffix}
+                                  onChange={(e) => updateSkuOverride(sku, { suffix: e.target.value })}
+                                  className={`${inputCls} w-full py-1 text-xs`}
+                                />
+                              </label>
+                              {override && (
+                                <button
+                                  type="button"
+                                  onClick={() => resetSkuOverride(sku)}
+                                  className="rounded-md px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-800 cursor-pointer"
+                                >
+                                  Đặt lại
+                                </button>
+                              )}
+                            </div>
+                          )}
                           {campNames.length > 0 && (
                             <div className="mt-1 space-y-0.5 font-mono text-[11px] leading-snug text-slate-500">
                               {campNames.map((name) => <div key={name} className="break-all">{name}</div>)}
