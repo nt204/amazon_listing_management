@@ -1,15 +1,26 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PackageIcon } from "@phosphor-icons/react";
-import type { TopProductItem } from "@/lib/accounting/dashboard-db";
+import type { DashboardTopProducts, TopProductItem } from "@/lib/accounting/dashboard-db";
 
 interface TopSellingProductsProps {
-  products?: TopProductItem[];
-  scopeLabel?: string;
-  onNavigateFinancials?: () => void;
+  startDate: string;
+  endDate: string;
+  storeIds: string[];
+  team: string | null;
+  /** Tăng khi bấm Refresh / nạp dữ liệu mới để tải lại. */
+  reloadKey?: number;
   delay?: number;
 }
+
+type TopTab = "profit" | "revenue" | "loss";
+
+const TABS: { key: TopTab; label: string; title: string }[] = [
+  { key: "profit", label: "Top Profit", title: "Profit" },
+  { key: "revenue", label: "Top Revenue", title: "Revenue" },
+  { key: "loss", label: "Top Loss", title: "Loss" },
+];
 
 function formatCurrency(val: number): string {
   const rounded = Math.round(val);
@@ -17,8 +28,15 @@ function formatCurrency(val: number): string {
   return rounded < 0 ? `-$${formatted}` : `$${formatted}`;
 }
 
-function formatMargin(val: number): string {
-  return `${val.toFixed(1)}%`;
+function formatPercent(val: number): string {
+  return `${(val * 100).toFixed(1)}%`;
+}
+
+/** Màu ACOS theo ngưỡng như PPC: < 30% xanh, 30–50% vàng, > 50% đỏ. */
+function acosColor(acos: number): string {
+  if (acos < 0.3) return "#16a34a";
+  if (acos <= 0.5) return "#d97706";
+  return "#e11d48";
 }
 
 function RankBadge({ rank }: { rank: number }) {
@@ -214,99 +232,199 @@ function ProductThumbnail({ src, alt }: { src: string | null; alt: string }) {
 }
 
 export function TopSellingProducts({
-  products = [],
+  startDate,
+  endDate,
+  storeIds,
+  team,
+  reloadKey = 0,
   delay = 160,
 }: TopSellingProductsProps) {
+  const [tab, setTab] = useState<TopTab>("profit");
+  // Cache phản hồi theo bộ lọc như Dashboard: quay lại lựa chọn cũ hiển thị ngay.
+  const [responses, setResponses] = useState<Record<string, DashboardTopProducts>>({});
+  const [settled, setSettled] = useState<{ key: string; error: string | null } | null>(null);
+
+  const queryKey = `${startDate}|${endDate}|${storeIds.join(",")}|${team || ""}`;
+  const requestKey = `${queryKey}|${reloadKey}`;
+  const data = responses[queryKey];
+  const loading = settled?.key !== requestKey;
+  const error = loading ? null : settled.error;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const params = new URLSearchParams();
+    if (startDate) params.set("start_date", startDate);
+    if (endDate) params.set("end_date", endDate);
+    if (storeIds.length) params.set("store_ids", storeIds.join(","));
+    if (team) params.set("team", team);
+    fetch(`/api/accounting/dashboard/top-products?${params.toString()}`, { cache: "no-store", signal: controller.signal })
+      .then(async (res) => {
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(payload.error || `Failed to load data (${res.status})`);
+        setResponses((prev) => ({ ...prev, [queryKey]: payload as DashboardTopProducts }));
+        setSettled({ key: requestKey, error: null });
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        setSettled({ key: requestKey, error: err instanceof Error ? err.message : "Failed to load data" });
+      });
+    return () => controller.abort();
+    // startDate / endDate / storeIds / team đều nằm trong requestKey
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestKey]);
+
+  const products: TopProductItem[] = data?.[tab] ?? [];
+  const multiStore = storeIds.length !== 1;
+  const activeTab = TABS.find((t) => t.key === tab)!;
+
   return (
     <div
       style={{ animationDelay: `${delay}ms` }}
       className="acc-rise flex h-full flex-col rounded-2xl border border-slate-200/70 bg-white p-5 shadow-[0_1px_3px_rgba(15,23,42,0.04),0_8px_24px_-12px_rgba(15,23,42,0.08)]"
     >
       {/* Header */}
-      <div className="pb-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-3">
         <h2 className="text-lg font-bold tracking-tight text-slate-900">
-          Top Selling Products (by <span className="text-emerald-600 font-extrabold">Profit</span>)
+          Top Selling Products (by{" "}
+          <span className={`font-extrabold ${tab === "loss" ? "text-rose-600" : "text-emerald-600"}`}>{activeTab.title}</span>)
         </h2>
+        <div role="tablist" className="flex rounded-lg bg-slate-100 p-0.5 text-[12.5px] font-semibold">
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              aria-selected={tab === t.key}
+              onClick={() => setTab(t.key)}
+              className={`rounded-md px-3 py-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-blue-500 ${
+                tab === t.key ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Table content */}
-      {products.length === 0 ? (
+      {!data && loading ? (
+        <div className="flex flex-col gap-2 py-2" aria-busy="true">
+          {Array.from({ length: 5 }, (_, i) => (
+            <div key={i} className="h-12 animate-pulse rounded-lg bg-slate-100" />
+          ))}
+        </div>
+      ) : !data && error ? (
+        <div className="flex flex-1 flex-col items-center justify-center py-10 text-center">
+          <p className="text-sm font-semibold text-rose-600">Không tải được Top sản phẩm</p>
+          <p className="mt-1 text-xs text-slate-400">{error}</p>
+        </div>
+      ) : products.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center py-10 text-center">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
             <PackageIcon size={24} weight="duotone" />
           </div>
-          <p className="mt-3 text-sm font-semibold text-slate-700">Chưa có dữ liệu sản phẩm</p>
+          <p className="mt-3 text-sm font-semibold text-slate-700">
+            {tab === "loss" ? "Không có sản phẩm lỗ" : "Chưa có dữ liệu sản phẩm"}
+          </p>
           <p className="mt-1 text-xs text-slate-400">
-            Không tìm thấy đơn hàng nào trong khoảng thời gian hoặc bộ lọc đã chọn.
+            {tab === "loss"
+              ? "Không có SKU nào có profit âm trong khoảng thời gian hoặc bộ lọc đã chọn."
+              : "Không tìm thấy đơn hàng nào trong khoảng thời gian hoặc bộ lọc đã chọn."}
           </p>
         </div>
       ) : (
-        <div className="mt-1 overflow-x-auto">
+        <div className={`mt-1 overflow-x-auto transition-opacity ${loading ? "opacity-60" : ""}`}>
           <table className="w-full text-left">
             <thead>
               <tr className="bg-slate-50/90 text-[12px] font-semibold text-slate-500">
                 <th className="rounded-l-lg py-2.5 pl-3 pr-2 text-center w-12">#</th>
                 <th className="py-2.5 px-3">Product / SKU</th>
                 <th className="py-2.5 px-3 text-right">Units</th>
-                <th className="py-2.5 px-3 text-right">Revenue</th>
-                <th className="py-2.5 px-3 text-right text-emerald-600 font-bold">Profit</th>
-                <th className="rounded-r-lg py-2.5 pl-3 pr-4 text-right">Margin</th>
+                <th className={`py-2.5 px-3 text-right ${tab === "revenue" ? "font-bold text-slate-800" : ""}`}>Revenue</th>
+                <th
+                  className={`py-2.5 px-3 text-right ${
+                    tab === "revenue" ? "" : tab === "loss" ? "font-bold text-rose-600" : "font-bold text-emerald-600"
+                  }`}
+                >
+                  Profit
+                </th>
+                <th className="py-2.5 px-3 text-right">Margin</th>
+                <th className="py-2.5 px-3 text-right">ACOS</th>
+                <th className="rounded-r-lg py-2.5 pl-3 pr-4 text-right">TACOS</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-[13px]">
               {products.map((p, index) => {
                 const rank = index + 1;
-                const isPositive = p.netProfit >= 0;
-
                 return (
                   <tr
-                    key={`${p.storeId}-${p.sku}`}
+                    key={`${p.storeId}-${p.channel}-${p.sku}-${p.asin ?? ""}`}
                     className="group transition-colors hover:bg-slate-50/60"
                   >
-                    {/* Rank 1, 2, 3 with custom vector medal, 4 & 5 with clean circular pill */}
+                    {/* Huy chương cho top 3 Profit / Revenue; Top Loss chỉ đánh số */}
                     <td className="py-3 pl-3 pr-2 text-center align-middle">
-                      <RankBadge rank={rank} />
+                      {tab === "loss" ? (
+                        <div className="flex items-center justify-center">
+                          <span className="flex h-6 w-6 items-center justify-center rounded-full border border-rose-200 bg-rose-50 font-semibold text-xs text-rose-600">
+                            {rank}
+                          </span>
+                        </div>
+                      ) : (
+                        <RankBadge rank={rank} />
+                      )}
                     </td>
 
-                    {/* Product image, name, SKU */}
+                    {/* Product image, name, SKU, store, kênh */}
                     <td className="py-3 px-3 align-middle">
                       <div className="flex items-center gap-3">
                         <ProductThumbnail src={p.imageUrl} alt={p.productName} />
-                        <div className="min-w-0 max-w-[260px] sm:max-w-[340px]">
+                        <div className="min-w-0 max-w-[240px] sm:max-w-[320px]">
                           <p
                             title={p.productName}
                             className="truncate text-[13px] font-semibold text-slate-800 transition-colors group-hover:text-blue-600"
                           >
                             {p.productName}
                           </p>
-                          <p className="mt-0.5 font-mono text-[11.5px] font-medium text-slate-500">
-                            {p.sku}
+                          <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 font-mono text-[11.5px] font-medium text-slate-500">
+                            <span>{p.sku}</span>
+                            {multiStore && <span className="font-sans text-slate-400">· {p.storeName}</span>}
+                            <span
+                              className={`rounded px-1 font-sans text-[10px] font-bold ${
+                                p.channel === "FBM" ? "bg-violet-50 text-violet-600" : "bg-sky-50 text-sky-600"
+                              }`}
+                            >
+                              {p.channel}
+                            </span>
                           </p>
                         </div>
                       </div>
                     </td>
 
-                    {/* Units */}
-                    <td className="py-3 px-3 text-right font-medium text-slate-700 align-middle tabular-nums text-sm">
+                    {/* Chỉ Profit in đậm; các chỉ số khác chữ thường */}
+                    <td className="py-3 px-3 text-right font-normal text-slate-700 align-middle tabular-nums text-sm">
                       {p.units.toLocaleString("en-US")}
                     </td>
-
-                    {/* Revenue */}
-                    <td className="py-3 px-3 text-right font-semibold text-slate-800 align-middle tabular-nums text-sm">
+                    <td className="py-3 px-3 text-right font-normal text-slate-700 align-middle tabular-nums text-sm">
                       {formatCurrency(p.revenue)}
                     </td>
-
-                    {/* Profit: Vibrant Green */}
+                    {/* Profit: dương xanh, âm đỏ (inline như bản cũ để không bị style bảng đè) */}
                     <td
                       className="py-3 px-3 text-right font-bold align-middle tabular-nums text-sm"
-                      style={{ color: isPositive ? "#16a34a" : "#e11d48" }}
+                      style={{ color: p.profit >= 0 ? "#16a34a" : "#e11d48" }}
                     >
-                      {formatCurrency(p.netProfit)}
+                      {formatCurrency(p.profit)}
                     </td>
-
-                    {/* Margin: Black / Dark Neutral */}
-                    <td className="py-3 pl-3 pr-4 text-right font-semibold text-slate-800 align-middle tabular-nums text-sm">
-                      {formatMargin(p.margin)}
+                    <td className="py-3 px-3 text-right font-normal text-slate-700 align-middle tabular-nums text-sm">
+                      {formatPercent(p.margin)}
+                    </td>
+                    <td
+                      className="py-3 px-3 text-right font-normal text-slate-700 align-middle tabular-nums text-sm"
+                      style={p.acos > 0 ? { color: acosColor(p.acos) } : undefined}
+                    >
+                      {p.acos > 0 ? formatPercent(p.acos) : "—"}
+                    </td>
+                    <td className="py-3 pl-3 pr-4 text-right font-normal text-slate-700 align-middle tabular-nums text-sm">
+                      {p.tacos > 0 ? formatPercent(p.tacos) : "—"}
                     </td>
                   </tr>
                 );

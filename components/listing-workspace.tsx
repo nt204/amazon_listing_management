@@ -1294,7 +1294,7 @@ export function ListingWorkspace({
       <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
         {/* TOP NAVBAR HEADER */}
         {!(viewMode === "ppc" && !["phoi", "rules"].includes(ppcSection)) && (
-          <header className="flex h-13 shrink-0 items-center justify-between border-b border-slate-200/80 bg-white/95 backdrop-blur-md px-3 sm:px-5 shadow-2xs relative z-40">
+          <header className="flex h-13 shrink-0 items-center justify-between border-b border-slate-200/80 bg-white/95 backdrop-blur-md px-3 sm:px-5 shadow-2xs relative z-50">
             {/* Active View Title & Mobile Hamburger Button */}
             <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
               <button

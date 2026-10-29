@@ -51,6 +51,8 @@ function fbmBaseCtes(sql: Sql, storeId: string) {
     fbm_lines AS (
       SELECT
         o.date,
+        o.amazon_order_id,
+        o.order_status,
         UPPER(TRIM(COALESCE(o.sku, ''))) AS sku_key,
         COALESCE(o.quantity, 0) AS qty,
         CASE WHEN COALESCE(o.currency, '') <> '' THEN COALESCE(o.quantity, 0) ELSE 0 END AS qty_with_currency,
@@ -154,7 +156,11 @@ export async function listFbmDaily(
         SUM(qty_with_currency) AS quantity,
         SUM(basecost) AS basecost,
         SUM(revenue * referral_fee_pct) AS amazon_fee,
-        SUM(promotion) AS promotion
+        SUM(promotion) AS promotion,
+        -- Số đơn (Dashboard): Order ID duy nhất, không tính đơn hủy — như cột orders của listFbaDaily
+        COUNT(DISTINCT amazon_order_id) FILTER (
+          WHERE LOWER(COALESCE(order_status, '')) NOT IN ('cancelled', 'canceled')
+        ) AS orders
       FROM fbm_lines
       WHERE date < CURRENT_DATE ${dateRangeCondition(sql, "date", startDate, endDate)}
       GROUP BY date
@@ -188,6 +194,7 @@ export async function listFbmDaily(
       COALESCE(o.basecost, 0)::float AS basecost,
       COALESCE(o.amazon_fee, 0)::float AS amazon_fee,
       COALESCE(o.promotion, 0)::float AS promotion,
+      COALESCE(o.orders, 0)::float AS orders,
       COALESCE(a.spend, 0)::float AS ads_fee,
       COALESCE(a.sales, 0)::float AS revenue_ads,
       COALESCE(a.orders, 0)::float AS quantity_ads,
@@ -238,7 +245,7 @@ export async function listFbmDaily(
       month: `THÁNG ${Number(date.slice(5, 7))}`,
       revenue,
       quantity,
-      orders: 0,
+      orders: Number(r.orders),
       ads_fee: adsFee,
       basecost,
       amazon_fee: amazonFee,

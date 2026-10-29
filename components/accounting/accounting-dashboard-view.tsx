@@ -18,12 +18,20 @@ import {
   ArrowDownRightIcon,
   ArrowUpRightIcon,
   CaretDownIcon,
+  ChartPieSliceIcon,
+  CoinsIcon,
+  CurrencyDollarIcon,
   CaretRightIcon,
   CheckIcon,
+  MegaphoneIcon,
+  PercentIcon,
+  ShoppingBagIcon,
   StorefrontIcon,
+  TargetIcon,
   UsersThreeIcon,
   WarningCircleIcon,
   WarningIcon,
+  type Icon,
 } from "@phosphor-icons/react";
 import type { Store } from "@/lib/accounting/types";
 import type {
@@ -324,42 +332,65 @@ function MenuItem({
 interface KpiDef {
   id: string;
   label: string;
-  tone: string;
+  accent: KpiAccent;
+  icon: Icon;
   value: number;
   format: (v: number) => string;
   ratio: number | null;
   negativeRed?: boolean;
 }
 
-const TONES = {
-  green: "from-emerald-50/90",
-  violet: "from-violet-50/90",
-  rose: "from-rose-50/90",
-  blue: "from-sky-50/90",
-  orange: "from-orange-50/90",
-  cyan: "from-cyan-50/70",
-  indigo: "from-indigo-50/80",
+// Mỗi chỉ số 1 màu nhấn nhẹ: chỉ tô ô icon, thẻ giữ nền trắng cho dễ đọc số.
+const ACCENTS = {
+  emerald: "bg-emerald-50 text-emerald-600 ring-emerald-100",
+  indigo: "bg-indigo-50 text-indigo-600 ring-indigo-100",
+  rose: "bg-rose-50 text-rose-600 ring-rose-100",
+  sky: "bg-sky-50 text-sky-600 ring-sky-100",
+  amber: "bg-amber-50 text-amber-600 ring-amber-100",
+  cyan: "bg-cyan-50 text-cyan-600 ring-cyan-100",
 };
+type KpiAccent = keyof typeof ACCENTS;
 
-function KpiCard({ kpi, delay, showDelta }: { kpi: KpiDef; delay: number; showDelta: boolean }) {
+function KpiCard({
+  kpi,
+  delay,
+  showDelta,
+  compareLabel,
+}: {
+  kpi: KpiDef;
+  delay: number;
+  showDelta: boolean;
+  compareLabel: string;
+}) {
+  const KpiIcon = kpi.icon;
   return (
     <Card
       delay={delay}
-      className={`@container bg-gradient-to-br ${kpi.tone} to-white p-3.5 transition-shadow duration-300 hover:shadow-lg @min-[190px]:p-4`}
+      className="@container group p-3.5 transition-[box-shadow,border-color] duration-300 hover:border-slate-300/80 hover:shadow-md @min-[190px]:p-4"
     >
       {/* Thẻ hẹp (lưới 7 cột hoặc mobile nhỏ): số nhỏ lại để không bị cắt */}
       <div className="min-w-0">
-        <div className="text-[13px] font-medium text-slate-600">{kpi.label}</div>
+        <div className="flex items-center justify-between gap-2">
+          <span className="truncate text-[11.5px] font-semibold uppercase tracking-[0.06em] text-slate-500">
+            {kpi.label}
+          </span>
+          <span
+            className={`hidden h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset @min-[150px]:flex ${ACCENTS[kpi.accent]}`}
+          >
+            <KpiIcon size={15} weight="bold" />
+          </span>
+        </div>
         <div
-          className={`mt-0.5 truncate text-2xl font-bold leading-tight tracking-tight tabular-nums @min-[190px]:text-[26px] ${
+          className={`mt-2 truncate text-[22px] font-semibold leading-none tracking-tight tabular-nums @min-[190px]:text-[25px] ${
             kpi.negativeRed && kpi.value < 0 ? "text-rose-600" : "text-slate-900"
           }`}
         >
           <AnimatedNumber value={kpi.value} format={kpi.format} />
         </div>
         {showDelta && (
-          <div className="mt-1.5">
+          <div className="mt-2.5 flex min-w-0 items-center gap-1.5">
             <DeltaPill ratio={kpi.ratio} />
+            {compareLabel && <span className="truncate text-[11.5px] text-slate-400">vs {compareLabel.toLowerCase()}</span>}
           </div>
         )}
       </div>
@@ -1524,11 +1555,7 @@ function readSavedCompareBase(): CompareBase | null {
   }
 }
 
-export function AccountingDashboardView({
-  onNavigateFinancials,
-}: {
-  onNavigateFinancials?: () => void;
-} = {}) {
+export function AccountingDashboardView() {
   const maxDate = useMemo(() => getAmazonLatestAvailableDate(), []);
   const [stores, setStores] = useState<Store[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>(readSavedStoreIds);
@@ -1703,7 +1730,8 @@ export function AccountingDashboardView({
       {
         id: "revenue",
         label: "Revenue",
-        tone: TONES.green,
+        accent: "emerald",
+        icon: CurrencyDollarIcon,
         value: c.revenue,
         format: money,
         ratio: changeRatio(c.revenue, p?.revenue),
@@ -1711,7 +1739,8 @@ export function AccountingDashboardView({
       {
         id: "orders",
         label: "Orders",
-        tone: TONES.indigo,
+        accent: "indigo",
+        icon: ShoppingBagIcon,
         value: c.orders,
         format: (v) => int.format(Math.round(v)),
         ratio: changeRatio(c.orders, p?.orders),
@@ -1719,7 +1748,8 @@ export function AccountingDashboardView({
       {
         id: "profit",
         label: "Profit",
-        tone: TONES.green,
+        accent: "emerald",
+        icon: CoinsIcon,
         value: c.profit,
         format: money,
         ratio: changeRatio(c.profit, p?.profit),
@@ -1728,7 +1758,8 @@ export function AccountingDashboardView({
       {
         id: "margin",
         label: "Margin",
-        tone: TONES.rose,
+        accent: "rose",
+        icon: PercentIcon,
         value: c.margin,
         format: (v) => pct(v),
         ratio: ppDelta(c.margin, p?.margin, p?.revenue),
@@ -1737,7 +1768,8 @@ export function AccountingDashboardView({
       {
         id: "ads",
         label: "Ad Spend",
-        tone: TONES.blue,
+        accent: "sky",
+        icon: MegaphoneIcon,
         value: c.adsFee,
         format: money,
         ratio: changeRatio(c.adsFee, p?.adsFee),
@@ -1745,7 +1777,8 @@ export function AccountingDashboardView({
       {
         id: "tacos",
         label: "TACOS",
-        tone: TONES.orange,
+        accent: "amber",
+        icon: ChartPieSliceIcon,
         value: c.tacos,
         format: (v) => pct(v),
         ratio: ppDelta(c.tacos, p?.tacos, p?.revenue),
@@ -1753,7 +1786,8 @@ export function AccountingDashboardView({
       {
         id: "acos",
         label: "ACOS",
-        tone: TONES.cyan,
+        accent: "cyan",
+        icon: TargetIcon,
         value: c.acos,
         format: (v) => pct(v),
         ratio: ppDelta(c.acos, p?.acos, p?.revenueAds),
@@ -2158,7 +2192,13 @@ export function AccountingDashboardView({
           <div className={`space-y-4 transition-opacity duration-300 ${loading ? "opacity-70" : "opacity-100"}`}>
             <div className="grid grid-cols-2 gap-3 @min-[560px]:grid-cols-4 @min-[1100px]:grid-cols-7">
               {kpis.map((kpi, i) => (
-                <KpiCard key={kpi.id} kpi={kpi} delay={i * 30} showDelta={Boolean(data.previous) && !compareEmpty} />
+                <KpiCard
+                  key={kpi.id}
+                  kpi={kpi}
+                  delay={i * 30}
+                  showDelta={Boolean(data.previous) && !compareEmpty}
+                  compareLabel={compareBase ? COMPARE_PERIOD_LABELS[compareBase][granularity] : ""}
+                />
               ))}
             </div>
 
@@ -2197,9 +2237,11 @@ export function AccountingDashboardView({
             <div className="grid gap-4 @min-[900px]:grid-cols-3">
               <div className="min-w-0 @min-[900px]:col-span-2">
                 <TopSellingProducts
-                  products={data.topProducts || []}
-                  scopeLabel={storeLabel}
-                  onNavigateFinancials={onNavigateFinancials}
+                  startDate={dateRange.startDate}
+                  endDate={dateRange.endDate}
+                  storeIds={validSelectedIds}
+                  team={selectedTeam}
+                  reloadKey={reloadKey}
                   delay={160}
                 />
               </div>

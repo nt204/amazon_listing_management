@@ -35,7 +35,7 @@ export const SHEET_TYPE_LABELS: Record<SheetType, string> = {
   sku: "Bảng Mã",
   sku_fbm: "Bảng Mã FBM",
   inbound: "Chi Tiết Đi Hàng",
-  fbm_pw: "Basecost Tháng FBM (Đầu vào FBM PW)",
+  fbm_pw: "Basecost FBM (Đầu vào FBM PW)",
 };
 
 export interface SheetSyncResult {

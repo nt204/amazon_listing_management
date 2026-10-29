@@ -43,6 +43,7 @@ import type { PpcRecommendation } from "@/lib/ppc/types";
 import type { AiReviewerExecutionResult } from "@/lib/ppc/ai-reviewer";
 import { PpcPagination } from "./ppc-pagination";
 import { PpcAutoBidResultsModal } from "./ppc-auto-bid-results-modal";
+import { PpcSkuAiChatPanel } from "./ppc-sku-ai-chat-panel";
 import {
   PpcAiReviewerModal,
   type AiReviewApplicationSnapshot,
@@ -217,6 +218,9 @@ export function PpcSkuRecommendationGroupView({
   const [pageSize, setPageSize] = useState(50);
   const [selectedSkuGroup, setSelectedSkuGroup] = useState<SkuRecommendationGroup | null>(null);
   const [loadingSkuDetails, setLoadingSkuDetails] = useState(false);
+  // Lưu theo SKU: mở SKU khác thì panel chat tự đóng.
+  const [aiChatSku, setAiChatSku] = useState<string | null>(null);
+  const isAiChatOpen = Boolean(selectedSkuGroup && aiChatSku === selectedSkuGroup.sku);
   const [selectedSkus, setSelectedSkus] = useState<Set<string>>(new Set());
   const [isBulkApproving, setIsBulkApproving] = useState(false);
   const selectAllSkusRef = useRef<HTMLInputElement>(null);
@@ -1775,8 +1779,9 @@ export function PpcSkuRecommendationGroupView({
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 overflow-y-auto"
           onClick={() => setSelectedSkuGroup(null)}
         >
+          <div className={`flex flex-col lg:flex-row gap-3 w-full items-stretch justify-center ${isAiChatOpen ? "max-w-[1640px]" : "max-w-6xl"}`}>
           <div
-            className="w-full max-w-6xl max-h-[92vh] bg-white border border-slate-200 rounded-2xl flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+            className="w-full min-w-0 max-w-6xl max-h-[92vh] bg-white border border-slate-200 rounded-2xl flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
@@ -1793,7 +1798,18 @@ export function PpcSkuRecommendationGroupView({
                 <div>
                   <div className="flex items-center gap-3">
                     <h2 className="text-base font-black text-slate-900">
-                      ĐỀ XUẤT CHO SKU: <span className="text-indigo-600 font-mono">{selectedSkuGroup.sku}</span>
+                      ĐỀ XUẤT CHO SKU:{" "}
+                      <button
+                        type="button"
+                        onClick={() => setAiChatSku(isAiChatOpen ? null : selectedSkuGroup.sku)}
+                        title="Chat với AI về SKU này"
+                        className={`inline-flex items-center gap-1 font-mono rounded-md px-1 -mx-1 cursor-pointer transition-colors ${
+                          isAiChatOpen ? "bg-indigo-100 text-indigo-700" : "text-indigo-600 hover:bg-indigo-50 hover:underline"
+                        }`}
+                      >
+                        {selectedSkuGroup.sku}
+                        <Sparkle size={14} weight="fill" className="text-violet-500" />
+                      </button>
                     </h2>
                     <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
                       {selectedSkuGroup.productType}
@@ -2453,6 +2469,14 @@ export function PpcSkuRecommendationGroupView({
                 Đóng
               </button>
             </div>
+          </div>
+          {isAiChatOpen && (
+            <PpcSkuAiChatPanel
+              storeId={selectedSkuGroup.economics.storeId}
+              sku={selectedSkuGroup.sku}
+              onClose={() => setAiChatSku(null)}
+            />
+          )}
           </div>
         </div>
       )}

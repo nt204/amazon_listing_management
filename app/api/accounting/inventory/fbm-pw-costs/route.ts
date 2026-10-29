@@ -50,6 +50,6 @@ export async function GET(request: Request) {
     const limit = Math.min(500, Math.max(1, Number(searchParams.get("limit")) || 100));
     return Response.json(await listFbmPwCosts(storeId, { ...filter, page, limit }));
   } catch (error) {
-    return routeErrorResponse(error, "Không tải được Basecost Tháng FBM.", 500);
+    return routeErrorResponse(error, "Không tải được Basecost FBM.", 500);
   }
 }

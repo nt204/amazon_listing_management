@@ -42,6 +42,7 @@ import {
   XIcon,
 } from "@phosphor-icons/react";
 import type { SkuMasterItem, InboundShipmentItem, CheckShipmentItem, SkuChannel } from "@/lib/accounting/inventory-db";
+import { channelTabActiveClass, channelTabBadgeActiveClass } from "./channel-tab-colors";
 import { storeHasTeam } from "@/lib/accounting/store-teams";
 import type { Store } from "@/lib/accounting/types";
 
@@ -1492,6 +1493,7 @@ function InventoryViewInner() {
   const isFbmSheet = activeTab === "sku" && skuChannel === "fbm";
   const skuEntityType = skuChannel === "fbm" ? "sku_fbm" : "sku";
   const skuSheetLabel = skuChannel === "fbm" ? "Bảng Mã FBM" : "Bảng Mã";
+
   const monthlyBaseCostRef = useRef<MonthlyBaseCostViewRef>(null);
   // Store có team FBM có thêm tab BASECOST THÁNG FBM (dữ liệu ĐẦU VÀO FBM PW từ link Kế Toán Tổng Hợp FBM),
   // dùng chung tab Basecost Tháng như cặp Bảng Mã / Bảng Mã FBM.
@@ -4838,6 +4840,51 @@ function InventoryViewInner() {
         })()
       : [];
 
+  const renderSkuSheetTab = (sheet: { channel: SkuChannel; label: string; count: number }) => {
+    const isActive = activeTab === "sku" && skuChannel === sheet.channel;
+    return (
+      <button
+        key={`sku-${sheet.channel}`}
+        type="button"
+        onClick={() => handleSkuSheetChange(sheet.channel)}
+        className={`flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-2.5 2xl:px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
+          isActive
+            ? channelTabActiveClass(sheet.channel)
+            : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
+        }`}
+      >
+        <PackageIcon size={16} weight="bold" />
+        <span>{sheet.label}</span>
+        <span
+          className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+            isActive ? channelTabBadgeActiveClass(sheet.channel) : "bg-slate-300 text-slate-700"
+          }`}
+        >
+          {sheet.count}
+        </span>
+      </button>
+    );
+  };
+
+  const renderBaseCostTab = (sheet: { channel: SkuChannel; label: string }) => {
+    const isActive = activeTab === "monthly_base_cost" && baseCostChannel === sheet.channel;
+    return (
+      <button
+        key={`basecost-${sheet.channel}`}
+        type="button"
+        onClick={() => handleBaseCostChannelChange(sheet.channel)}
+        className={`flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-2.5 2xl:px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
+          isActive
+            ? channelTabActiveClass(sheet.channel)
+            : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
+        }`}
+      >
+        <CalculatorIcon size={16} weight="bold" />
+        <span>{sheet.label}</span>
+      </button>
+    );
+  };
+
   return (
     <div className="w-full space-y-2.5">
       {/* Toast Alert */}
@@ -5294,41 +5341,14 @@ function InventoryViewInner() {
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 bg-slate-200/70 p-1.5 rounded-xl border border-slate-300 min-h-[46px]">
         {/* Sheet Tabs like Excel */}
         <div className="flex items-center gap-1 min-w-0 max-w-full overflow-x-auto">
-          {(storeHasFbm
-            ? [{ channel: "fba", label: "Bảng Mã", count: fbaSkuCount }, { channel: "fbm", label: "Bảng Mã FBM", count: fbmSkuCount }] as const
-            : [{ channel: "fba", label: "Bảng Mã", count: fbaSkuCount }] as const
-          ).map((sheet) => {
-            const isActive = activeTab === "sku" && skuChannel === sheet.channel;
-            return (
-              <button
-                key={sheet.channel}
-                type="button"
-                onClick={() => handleSkuSheetChange(sheet.channel)}
-                className={`flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-2.5 2xl:px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
-                  isActive
-                    ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
-                    : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
-                }`}
-              >
-                <PackageIcon size={16} weight="bold" />
-                <span>{sheet.label}</span>
-                <span
-                  className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
-                    isActive ? "bg-emerald-700 text-white" : "bg-slate-300 text-slate-700"
-                  }`}
-                >
-                  {sheet.count}
-                </span>
-              </button>
-            );
-          })}
+          {renderSkuSheetTab({ channel: "fba", label: "Bảng Mã", count: fbaSkuCount })}
 
           <button
             type="button"
             onClick={() => handleTabChange("inbound")}
             className={`flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-2.5 2xl:px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
               activeTab === "inbound"
-                ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
+                ? channelTabActiveClass("fba")
                 : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
             }`}
           >
@@ -5336,7 +5356,7 @@ function InventoryViewInner() {
             <span>Chi Tiết Đi Hàng</span>
             <span
               className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
-                activeTab === "inbound" ? "bg-emerald-700 text-white" : "bg-slate-300 text-slate-700"
+                activeTab === "inbound" ? channelTabBadgeActiveClass("fba") : "bg-slate-300 text-slate-700"
               }`}
             >
               {shipmentTotal}
@@ -5348,7 +5368,7 @@ function InventoryViewInner() {
             onClick={() => handleTabChange("check_shipment")}
             className={`flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-2.5 2xl:px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
               activeTab === "check_shipment"
-                ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
+                ? channelTabActiveClass("fba")
                 : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
             }`}
           >
@@ -5356,34 +5376,23 @@ function InventoryViewInner() {
             <span>Check Shipment</span>
             <span
               className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
-                activeTab === "check_shipment" ? "bg-emerald-700 text-white" : "bg-slate-300 text-slate-700"
+                activeTab === "check_shipment" ? channelTabBadgeActiveClass("fba") : "bg-slate-300 text-slate-700"
               }`}
             >
               {checkShipmentTotal}
             </span>
           </button>
 
-          {(storeHasFbm
-            ? [{ channel: "fba", label: "Basecost Tháng" }, { channel: "fbm", label: "Basecost Tháng FBM" }] as const
-            : [{ channel: "fba", label: "Basecost Tháng" }] as const
-          ).map((sheet) => {
-            const isActive = activeTab === "monthly_base_cost" && baseCostChannel === sheet.channel;
-            return (
-              <button
-                key={sheet.channel}
-                type="button"
-                onClick={() => handleBaseCostChannelChange(sheet.channel)}
-                className={`flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-2.5 2xl:px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer select-none ${
-                  isActive
-                    ? "bg-emerald-600 text-white shadow-2xs border-emerald-700"
-                    : "border-transparent text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
-                }`}
-              >
-                <CalculatorIcon size={16} weight="bold" />
-                <span>{sheet.label}</span>
-              </button>
-            );
-          })}
+          {renderBaseCostTab({ channel: "fba", label: "Basecost Tháng" })}
+
+          {/* Vạch ngăn nhóm tab FBA với nhóm tab FBM cho đỡ lẫn */}
+          {storeHasFbm && (
+            <>
+              <span className="mx-1.5 h-6 w-px shrink-0 bg-slate-400" aria-hidden="true" />
+              {renderSkuSheetTab({ channel: "fbm", label: "Bảng Mã FBM", count: fbmSkuCount })}
+              {renderBaseCostTab({ channel: "fbm", label: "Basecost FBM" })}
+            </>
+          )}
         </div>
 
         {/* Filter Controls inline + Table Zoom Controls */}
@@ -7326,7 +7335,7 @@ function InventoryViewInner() {
                   <FileXlsIcon size={18} weight="bold" />
                 </span>
                 <h3 className="text-base font-extrabold text-slate-900">
-                  {isFbmBaseCost ? "Nhập Basecost Tháng FBM" : isFbmSheet ? "Nhập Bảng Mã FBM" : "Nhập File Quản Lý Kho (Inventory)"}
+                  {isFbmBaseCost ? "Nhập Basecost FBM" : isFbmSheet ? "Nhập Bảng Mã FBM" : "Nhập File Quản Lý Kho (Inventory)"}
                 </h3>
               </div>
               <button
@@ -7345,7 +7354,7 @@ function InventoryViewInner() {
                     Dán link Google Sheet KẾ TOÁN TỔNG HỢP FBM của Store {selectedStore?.name}.
                   </p>
                   <p className="mt-1 text-[11px] text-indigo-600">
-                    Hệ thống chép nguyên văn tab &quot;ĐẦU VÀO FBM PW&quot; (Order ID, PWOrderId, OrderName, NetPrice) vào Basecost Tháng FBM, không ghi gì vào các tab khác.
+                    Hệ thống chép nguyên văn tab &quot;ĐẦU VÀO FBM PW&quot; (Order ID, PWOrderId, OrderName, NetPrice) vào Basecost FBM, không ghi gì vào các tab khác.
                   </p>
                 </div>
               ) : isFbmSheet ? (

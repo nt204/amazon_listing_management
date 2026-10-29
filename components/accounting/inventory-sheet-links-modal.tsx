@@ -37,7 +37,7 @@ export const LINK_LABELS: Record<LinkType, { title: string; hint: string; parts:
   fbm: { title: "File Bảng Mã FBM", hint: "Link file \"BẢNG MÃ FBM\" — tab FBM_<Store>", parts: ["sku_fbm"] },
   fbm_accounting: {
     title: "File Kế Toán Tổng Hợp FBM",
-    hint: "Link file \"FBM - <STORE> - KẾ TOÁN TỔNG HỢP\" — tab ĐẦU VÀO FBM PW → Basecost Tháng FBM",
+    hint: "Link file \"FBM - <STORE> - KẾ TOÁN TỔNG HỢP\" — tab ĐẦU VÀO FBM PW → Basecost FBM",
     parts: ["fbm_pw"],
   },
 };
@@ -46,7 +46,7 @@ export const PART_LABELS: Record<SheetType, string> = {
   sku: "Bảng Mã FBA",
   inbound: "Chi Tiết Đi Hàng",
   sku_fbm: "Bảng Mã FBM",
-  fbm_pw: "Basecost Tháng FBM",
+  fbm_pw: "Basecost FBM",
 };
 
 export interface SheetLinksResponse {

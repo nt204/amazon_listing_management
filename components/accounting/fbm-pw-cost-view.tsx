@@ -66,7 +66,7 @@ export const FbmPwCostView = forwardRef<FbmPwCostViewRef, FbmPwCostViewProps>(fu
     queryFn: async () => {
       const res = await fetch(`/api/accounting/inventory/fbm-pw-costs?${params}&page=${page}&limit=${limit}`);
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Không tải được Basecost Tháng FBM.");
+      if (!res.ok) throw new Error(data.error || "Không tải được Basecost FBM.");
       return data as FbmPwResponse;
     },
     enabled: !!storeId,
@@ -153,7 +153,7 @@ export const FbmPwCostView = forwardRef<FbmPwCostViewRef, FbmPwCostViewProps>(fu
                 <tr>
                   <td colSpan={8} className="py-20 text-center text-slate-500 font-bold text-base">
                     <ArrowClockwiseIcon size={28} className="mx-auto mb-2 animate-spin text-indigo-600" />
-                    Đang tải Basecost Tháng FBM của Store {storeName}...
+                    Đang tải Basecost FBM của Store {storeName}...
                   </td>
                 </tr>
               ) : query.isError ? (

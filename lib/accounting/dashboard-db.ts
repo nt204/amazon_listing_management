@@ -4,7 +4,6 @@ import { getLatestAvailableAccountingDate, listStores } from "@/lib/accounting/a
 import { listFbaDaily, type FbaDailyItem } from "@/lib/accounting/fba-daily-db";
 import { getCachedOrFetch, invalidateCachePattern } from "@/lib/redis";
 import { getDatabaseClient } from "@/lib/db";
-import { monthlyBasecostJoin } from "@/lib/accounting/workbook-parity-sql";
 import {
   addDays,
   inclusiveDayCount,
@@ -13,7 +12,9 @@ import {
   shiftMonths,
   type DashboardCompareMode,
 } from "@/lib/accounting/dashboard-periods";
-import { storeHasTeam } from "@/lib/accounting/store-teams";
+import { listFbmDaily, listFbmSkuFixed } from "@/lib/accounting/fbm-financials-db";
+import { listSkuWin } from "@/lib/accounting/sku-win-db";
+import { storeHasFbaTeam, storeHasTeam } from "@/lib/accounting/store-teams";
 import { summarizeDays, type DashboardDay, type DashboardTotals } from "@/lib/accounting/dashboard-totals";
 
 export type { DashboardDay, DashboardTotals };
@@ -40,14 +41,25 @@ export interface DashboardStoreRow {
 export interface TopProductItem {
   storeId: string;
   storeName: string;
+  channel: "FBA" | "FBM";
   sku: string;
   asin: string | null;
   productName: string;
   imageUrl: string | null;
   units: number;
   revenue: number;
-  netProfit: number;
+  /** Profit như tab SKU WIN / LỌC SKU CỐ ĐỊNH FBM (chưa trừ phí dịch vụ cố định). */
+  profit: number;
   margin: number;
+  acos: number;
+  tacos: number;
+}
+
+export interface DashboardTopProducts {
+  period: { startDate: string; endDate: string };
+  profit: TopProductItem[];
+  revenue: TopProductItem[];
+  loss: TopProductItem[];
 }
 
 export interface AccountingDashboardData {
@@ -69,7 +81,6 @@ export interface AccountingDashboardData {
    * (+ tháng trước đó khi so sánh), để client tóm tắt theo ngày / tuần / tháng.
    */
   days: DashboardDay[];
-  topProducts: TopProductItem[];
 }
 
 function toDay(it: FbaDailyItem): DashboardDay {
@@ -161,27 +172,44 @@ export async function invalidateAccountingDashboardCache(): Promise<void> {
   await invalidateCachePattern(`${DASHBOARD_CACHE_PREFIX}*`);
 }
 
+type DashboardChannel = "Amazon" | "Merchant";
+
+/**
+ * Kênh tính cho 1 store theo cột Team của store:
+ *   chọn team → team FBM chỉ lấy FBM, team FBA chỉ lấy FBA;
+ *   không chọn team → cộng mọi kênh store đang chạy (team FBA… → FBA, team FBM → FBM).
+ */
+function storeChannels(storeTeam: string | null | undefined, selectedTeam?: string): DashboardChannel[] {
+  if (selectedTeam) return /^fbm$/i.test(selectedTeam.trim()) ? ["Merchant"] : ["Amazon"];
+  const channels: DashboardChannel[] = [];
+  if (storeHasFbaTeam(storeTeam)) channels.push("Amazon");
+  if (storeHasTeam(storeTeam, "FBM")) channels.push("Merchant");
+  return channels.length ? channels : ["Amazon"];
+}
+
 // Cache theo từng store + khoảng ngày + channel để đổi lựa chọn store không phải tính lại các store khác.
+// FBM dùng công thức tab FBM (listFbmDaily, khớp workbook "FBM - <STORE>"), FBA dùng listFbaDaily.
 function loadStoreDaily(
   cache: DashboardCacheScope,
   storeId: string,
   startDate: string,
   endDate: string,
-  channel?: "Amazon" | "Merchant" | "all",
+  channel: DashboardChannel,
 ): Promise<FbaDailyItem[]> {
-  const channelKey = channel || "Amazon";
   return getCachedOrFetch(
-    `${cache.prefix}${storeId}:${startDate || "all"}:${endDate || "all"}:${channelKey}`,
+    `${cache.prefix}${storeId}:${startDate || "all"}:${endDate || "all"}:${channel === "Merchant" ? "fbm" : "Amazon"}`,
     cache.ttl,
     async () => {
-      const res = await listFbaDaily(storeId, {
+      const options = {
         startDate: startDate || undefined,
         endDate: endDate || undefined,
         sortField: "date",
-        sortDirection: "asc",
+        sortDirection: "asc" as const,
         limit: 100_000,
-        channel,
-      });
+      };
+      const res = channel === "Merchant"
+        ? await listFbmDaily(storeId, options)
+        : await listFbaDaily(storeId, { ...options, channel });
       return res.items;
     },
   );
@@ -191,7 +219,8 @@ const inRange = (date: string, range: { startDate: string; endDate: string }) =>
   (!range.startDate || date >= range.startDate) && (!range.endDate || date <= range.endDate);
 
 /**
- * Tổng hợp P&L FBA cho Dashboard: dùng đúng công thức listFbaDaily (khớp tab FBA và báo cáo Lark),
+ * Tổng hợp P&L cho Dashboard: FBA dùng đúng công thức listFbaDaily (khớp tab FBA và báo cáo Lark),
+ * FBM dùng listFbmDaily (khớp tab FBM); kênh của từng store lấy theo cột Team (xem storeChannels),
  * mỗi store chỉ 1 truy vấn bao trọn kỳ hiện tại + kỳ trước + các tháng từ đầu năm rồi cắt trong bộ nhớ.
  */
 export async function getAccountingDashboard(options: {
@@ -215,10 +244,6 @@ export async function getAccountingDashboard(options: {
     (s) => (!requested.size || requested.has(s.id)) && (!options.team || storeHasTeam(s.team, options.team)),
   );
 
-  const channel: "Amazon" | "Merchant" | "all" = options.team?.toUpperCase().includes("FBM")
-    ? "Merchant"
-    : "Amazon";
-
   const periods = resolveDashboardPeriods(
     options.startDate ?? "",
     options.endDate ?? "",
@@ -235,21 +260,19 @@ export async function getAccountingDashboard(options: {
   const fetchEnd = periods.current.endDate;
 
   const hasRange = Boolean(fetchStart && fetchEnd);
-  const [perStore, topProducts] = await Promise.all([
-    Promise.all(
-      stores.map(async (store) => ({
-        store,
-        items: await loadStoreDaily(cache, store.id, hasRange ? fetchStart : "", hasRange ? fetchEnd : "", channel),
-      })),
-    ),
-    hasRange && stores.length > 0 && periods.current.startDate && periods.current.endDate
-      ? getCachedOrFetch(
-          `${cache.prefix}top:${stores.map((s) => s.id).sort().join(",")}:${periods.current.startDate}:${periods.current.endDate}`,
-          cache.ttl,
-          () => loadTopSellingProducts(stores.map((s) => s.id), periods.current.startDate, periods.current.endDate, 5),
+  const perStore = await Promise.all(
+    stores.map(async (store) => ({
+      store,
+      // Store chạy cả FBA và FBM: ghép dòng ngày của 2 kênh (các phép tổng hợp đều cộng theo dòng).
+      items: (
+        await Promise.all(
+          storeChannels(store.team, options.team).map((channel) =>
+            loadStoreDaily(cache, store.id, hasRange ? fetchStart : "", hasRange ? fetchEnd : "", channel),
+          ),
         )
-      : Promise.resolve([]),
-  ]);
+      ).flat(),
+    })),
+  );
 
   const allItems = perStore.flatMap((s) => s.items);
   const currentItems = allItems.filter((it) => inRange(it.date, periods.current));
@@ -294,130 +317,153 @@ export async function getAccountingDashboard(options: {
     })),
     trendStartDate: periods.trendStartDate,
     days: sumByDate(allItems),
-    topProducts,
   };
 }
 
-export async function loadTopSellingProducts(
-  storeIds: string[],
+// ----------------- TOP SẢN PHẨM -----------------
+
+const TOP_PRODUCTS_LIMIT = 5;
+
+/** Số liệu 1 SKU của 1 store trong kỳ (chỉ giữ các trường Top cần để cache gọn). */
+interface SkuPerformance {
+  sku: string;
+  asin: string | null;
+  imageUrl: string | null;
+  units: number;
+  revenue: number;
+  profit: number;
+  adsFee: number;
+  revenueAds: number;
+}
+
+// Dùng đúng công thức tab SKU WIN (FBA) / LỌC SKU CỐ ĐỊNH (FBM). Cache theo store + kênh + kỳ:
+// đổi cụm store / team chỉ phải tính các store chưa có trong cache rồi xếp hạng lại trong bộ nhớ.
+function loadStoreSkuPerformance(
+  cache: DashboardCacheScope,
+  storeId: string,
   startDate: string,
   endDate: string,
-  limit: number = 5,
-): Promise<TopProductItem[]> {
-  if (!storeIds.length || !startDate || !endDate) return [];
+  channel: DashboardChannel,
+): Promise<SkuPerformance[]> {
+  return getCachedOrFetch(
+    `${cache.prefix}sku2:${storeId}:${startDate}:${endDate}:${channel === "Merchant" ? "fbm" : "fba"}`,
+    cache.ttl,
+    async () => {
+      const options = { status: "all", startDate, endDate, limit: 100_000 };
+      const [res, nonFbaSkus] = await Promise.all([
+        channel === "Merchant" ? listFbmSkuFixed(storeId, options) : listSkuWin(storeId, options),
+        channel === "Merchant" ? Promise.resolve(new Set<string>()) : loadNonFbaSkus(storeId),
+      ]);
+      return res.items
+        .filter((i) => !nonFbaSkus.has(i.sku))
+        .filter((i) => i.quantity > 0 || i.revenue !== 0 || i.ads_fee > 0)
+        .map((i) => ({
+          sku: i.sku,
+          asin: i.asin,
+          imageUrl: i.mockup_url || i.mockup || null,
+          units: i.quantity,
+          revenue: i.revenue,
+          profit: i.profit,
+          adsFee: i.ads_fee,
+          revenueAds: i.revenue_ads,
+        }));
+    },
+  );
+}
+
+/**
+ * SKU trong bảng mã FBA nhưng Loại khác FBA (vd bảng mã cũ lẫn dòng FBM): SKU WIN vẫn gán Ads theo portfolio cho
+ * các SKU này nên chúng hiện thành "FBA" lỗ toàn tiền Ads — Top bỏ qua, FBM đã có ở kênh Merchant.
+ */
+async function loadNonFbaSkus(storeId: string): Promise<Set<string>> {
   const sql = await getDatabaseClient();
-
-  const rows = await sql<Record<string, unknown>[]>`
-    WITH asin_fees AS (
-      SELECT store_id, asin, MAX(amazon_fee) as amazon_fee, MAX(referral_fee_pct) as referral_fee_pct
-      FROM accounting_sku_master
-      WHERE store_id IN ${sql(storeIds)} AND asin IS NOT NULL AND asin != ''
-      GROUP BY store_id, asin
-    ),
-    orders_agg AS (
-      SELECT 
-        o.store_id,
-        o.sku,
-        MAX(o.asin) as asin,
-        MAX(o.product_name) as product_name,
-        SUM(COALESCE(o.quantity, 1)) as units,
-        SUM(COALESCE(o.item_price, 0) * (
-          CASE WHEN o.currency = 'CAD' THEN 0.738 WHEN o.currency = 'MXN' THEN 0.051 ELSE 1.0 END
-        )) as revenue,
-        SUM(COALESCE(o.item_promotion_discount, 0) + COALESCE(o.ship_promotion_discount, 0)) as promo,
-        SUM(
-          CASE 
-            WHEN o.amazon_order_id NOT LIKE 'S0%' THEN COALESCE(o.quantity, 1) * COALESCE(mbc.basecost_thang, sm.basecost_tb, 0)
-            ELSE 0
-          END
-        ) as basecost,
-        SUM(
-          CASE 
-            WHEN COALESCE(o.item_price, 0) = 0 THEN 0
-            ELSE (COALESCE(sm.amazon_fee, af.amazon_fee, 0) * COALESCE(o.quantity, 1)) + (COALESCE(sm.referral_fee_pct, af.referral_fee_pct, 0.15) * COALESCE(o.item_price, 0) * (
-              CASE WHEN o.currency = 'CAD' THEN 0.738 WHEN o.currency = 'MXN' THEN 0.051 ELSE 1.0 END
-            ))
-          END
-        ) as amz_fee
-      FROM accounting_orders o
-      LEFT JOIN asin_fees af ON af.store_id = o.store_id AND af.asin = o.asin
-      LEFT JOIN accounting_sku_master sm ON sm.store_id = o.store_id AND sm.sku = o.sku
-      ${monthlyBasecostJoin(sql)}
-      WHERE o.store_id IN ${sql(storeIds)}
-        AND o.fulfillment_channel = 'Amazon'
-        AND (o.currency IN ('USD', 'CAD', 'MXN') OR o.amazon_order_id LIKE 'S0%')
-        AND LOWER(COALESCE(o.order_status, '')) NOT IN ('cancelled', 'canceled')
-        AND o.date >= ${startDate}::date AND o.date <= ${endDate}::date
-      GROUP BY o.store_id, o.sku
-    ),
-    -- Gộp ads theo portfolio trước rồi mới so chuỗi với SKU (so trên bytea): cùng kết quả với
-    -- strpos(LOWER(portfolio), LOWER(sku)) trên từng dòng ads nhưng nhanh hơn ~50-80 lần.
-    portfolio_spend AS MATERIALIZED (
-      SELECT store_id, convert_to(LOWER(portfolio), 'UTF8') as portfolio_key, SUM(spend) as spend
-      FROM accounting_ads
-      WHERE store_id IN ${sql(storeIds)}
-        AND date >= ${startDate}::date AND date <= ${endDate}::date
-      GROUP BY store_id, LOWER(portfolio)
-    ),
-    sku_keys AS MATERIALIZED (
-      SELECT store_id, sku, convert_to(LOWER(sku), 'UTF8') as sku_key
-      FROM accounting_sku_master
-      WHERE store_id IN ${sql(storeIds)}
-    ),
-    ads_agg AS (
-      SELECT p.store_id, k.sku, SUM(p.spend) as ads_fee
-      FROM portfolio_spend p
-      JOIN sku_keys k ON k.store_id = p.store_id AND position(k.sku_key in p.portfolio_key) > 0
-      GROUP BY p.store_id, k.sku
-    ),
-    combined AS (
-      SELECT 
-        o.store_id,
-        o.sku,
-        COALESCE(sm.asin, o.asin) as asin,
-        COALESCE(sm.mockup_url, sm.mockup) as image_url,
-        COALESCE(o.product_name, sm.sku) as product_name,
-        o.units,
-        o.revenue,
-        o.basecost,
-        o.amz_fee,
-        o.promo,
-        COALESCE(a.ads_fee, 0) as ads_fee,
-        ((COALESCE(sm.referral_fee_pct, 0.15) * 0.10 + 0.01) * o.revenue) + (0.10 * COALESCE(a.ads_fee, 0)) as tax
-      FROM orders_agg o
-      LEFT JOIN accounting_sku_master sm ON sm.store_id = o.store_id AND sm.sku = o.sku
-      LEFT JOIN ads_agg a ON a.store_id = o.store_id AND a.sku = o.sku
-    )
-    SELECT 
-      c.store_id,
-      c.sku,
-      c.asin,
-      c.product_name,
-      c.image_url,
-      s.name as store_name,
-      c.units,
-      ROUND(c.revenue::numeric, 2) as revenue,
-      ROUND((c.revenue - c.basecost - c.amz_fee - c.promo - c.ads_fee - c.tax)::numeric, 2) as net_profit,
-      CASE WHEN c.revenue > 0 
-        THEN ROUND(((c.revenue - c.basecost - c.amz_fee - c.promo - c.ads_fee - c.tax) / c.revenue * 100)::numeric, 1)
-        ELSE 0 
-      END as margin
-    FROM combined c
-    JOIN stores s ON s.id = c.store_id
-    ORDER BY net_profit DESC
-    LIMIT ${limit};
+  const rows = await sql<{ sku: string }[]>`
+    SELECT DISTINCT sku FROM accounting_sku_master
+    WHERE store_id = ${storeId} AND deleted_at IS NULL
+      AND UPPER(TRIM(COALESCE(loai, 'FBA'))) NOT IN ('FBA', '')
   `;
+  return new Set(rows.map((r) => r.sku));
+}
 
-  return rows.map((r) => ({
-    storeId: String(r.store_id || ""),
-    storeName: String(r.store_name || ""),
-    sku: String(r.sku || ""),
-    asin: r.asin ? String(r.asin) : null,
-    productName: String(r.product_name || r.sku || "Unknown Product"),
-    imageUrl: r.image_url ? String(r.image_url) : null,
-    units: Number(r.units || 0),
-    revenue: Number(r.revenue || 0),
-    netProfit: Number(r.net_profit || 0),
-    margin: Number(r.margin || 0),
-  }));
+/** Tên sản phẩm (product-name của đơn gần nhất trong kỳ) cho các SKU lọt Top. */
+async function loadProductNames(items: TopProductItem[], startDate: string, endDate: string) {
+  if (!items.length) return new Map<string, string>();
+  const sql = await getDatabaseClient();
+  const rows = await sql<{ store_id: string; sku: string; product_name: string }[]>`
+    SELECT DISTINCT ON (store_id, sku) store_id::text, sku, product_name
+    FROM accounting_orders
+    WHERE store_id IN ${sql([...new Set(items.map((i) => i.storeId))])}
+      AND sku IN ${sql([...new Set(items.map((i) => i.sku))])}
+      AND date >= ${startDate}::date AND date <= ${endDate}::date
+      AND COALESCE(product_name, '') <> ''
+    ORDER BY store_id, sku, date DESC
+  `;
+  return new Map(rows.map((r) => [`${r.store_id}|${r.sku}`, r.product_name]));
+}
+
+/**
+ * Top sản phẩm của Dashboard (kỳ hiện tại): top Profit, top Revenue, top Loss (profit âm thấp nhất).
+ * Cùng bộ lọc store / team và cùng quy tắc kênh theo Team với getAccountingDashboard.
+ * Tách khỏi getAccountingDashboard để phần tổng quan hiện ngay, bảng Top tải sau.
+ */
+export async function getDashboardTopProducts(options: {
+  startDate?: string;
+  endDate?: string;
+  storeIds?: string[];
+  team?: string;
+}): Promise<DashboardTopProducts> {
+  const [allStores, latestDate, cache] = await Promise.all([
+    listStores(),
+    getLatestAvailableAccountingDate(),
+    getDashboardCacheScope(),
+  ]);
+  const requested = new Set((options.storeIds ?? []).filter(Boolean));
+  const stores = allStores.filter(
+    (s) => (!requested.size || requested.has(s.id)) && (!options.team || storeHasTeam(s.team, options.team)),
+  );
+  const period = resolveDashboardPeriods(options.startDate ?? "", options.endDate ?? "", latestDate, "none").current;
+  if (!period.startDate || !period.endDate || !stores.length) return { period, profit: [], revenue: [], loss: [] };
+
+  const rows = (
+    await Promise.all(
+      stores.flatMap((store) =>
+        storeChannels(store.team, options.team).map(async (channel) =>
+          (await loadStoreSkuPerformance(cache, store.id, period.startDate, period.endDate, channel)).map(
+            (r): TopProductItem => ({
+              storeId: store.id,
+              storeName: store.name,
+              channel: channel === "Merchant" ? "FBM" : "FBA",
+              sku: r.sku,
+              asin: r.asin,
+              productName: "",
+              imageUrl: r.imageUrl,
+              units: r.units,
+              revenue: r.revenue,
+              profit: r.profit,
+              margin: r.revenue > 0 ? r.profit / r.revenue : 0,
+              acos: r.revenueAds > 0 ? r.adsFee / r.revenueAds : 0,
+              tacos: r.revenue > 0 ? r.adsFee / r.revenue : 0,
+            }),
+          ),
+        ),
+      ),
+    )
+  ).flat();
+
+  const top = (filter: (i: TopProductItem) => boolean, compare: (a: TopProductItem, b: TopProductItem) => number) =>
+    rows.filter(filter).sort(compare).slice(0, TOP_PRODUCTS_LIMIT);
+  const lists = {
+    profit: top((i) => i.profit > 0, (a, b) => b.profit - a.profit),
+    revenue: top((i) => i.revenue > 0, (a, b) => b.revenue - a.revenue),
+    loss: top((i) => i.profit < 0, (a, b) => a.profit - b.profit),
+  };
+
+  const names = await loadProductNames([...lists.profit, ...lists.revenue, ...lists.loss], period.startDate, period.endDate);
+  const withName = (i: TopProductItem) => ({ ...i, productName: names.get(`${i.storeId}|${i.sku}`) || i.sku });
+  return {
+    period,
+    profit: lists.profit.map(withName),
+    revenue: lists.revenue.map(withName),
+    loss: lists.loss.map(withName),
+  };
 }

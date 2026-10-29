@@ -8,8 +8,10 @@ import {
   ListChecksIcon,
   PackageIcon,
   TruckIcon,
+  type Icon,
 } from "@phosphor-icons/react";
 import { storeHasTeam } from "@/lib/accounting/store-teams";
+import { channelTabActiveClass, channelTabBadgeActiveClass } from "./channel-tab-colors";
 
 function TabLoading() {
   return (
@@ -41,6 +43,21 @@ export type FinancialsSubTab = "sku_win" | "sku_test" | "fba" | "fbm" | "fbm_fix
 
 const SUB_TABS: FinancialsSubTab[] = ["sku_win", "sku_test", "fba", "fbm", "fbm_fixed"];
 const FBM_TABS: FinancialsSubTab[] = ["fbm", "fbm_fixed"];
+
+type TabItem = { key: FinancialsSubTab; label: string; badge?: string; icon: Icon };
+
+const FBA_TAB_ITEMS: TabItem[] = [
+  { key: "fba", label: "FBA", badge: "Theo Ngày", icon: CalendarBlankIcon },
+  { key: "sku_win", label: "Lọc SKU Win", icon: PackageIcon },
+  { key: "sku_test", label: "Lọc SKU Test", icon: FlaskIcon },
+];
+
+const FBM_TAB_ITEMS: TabItem[] = [
+  // FBM (Theo Ngày) — sheet "FBM"
+  { key: "fbm", label: "FBM", badge: "Theo Ngày", icon: TruckIcon },
+  // FBM cố định — sheet "LỌC SKU CỐ ĐỊNH": mọi SKU trong Bảng mã FBM
+  { key: "fbm_fixed", label: "FBM Cố định", icon: ListChecksIcon },
+];
 
 function isSubTab(value: string | null): value is FinancialsSubTab {
   return SUB_TABS.includes(value as FinancialsSubTab);
@@ -91,98 +108,52 @@ export function FinancialsWorkspace() {
     }
   }, []);
 
+  const renderTab = (tab: TabItem) => {
+    const isActive = visibleTab === tab.key;
+    const isFbm = FBM_TABS.includes(tab.key);
+    const Icon = tab.icon;
+    return (
+      <button
+        key={tab.key}
+        type="button"
+        onClick={() => handleTabChange(tab.key)}
+        className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide border transition-all cursor-pointer select-none whitespace-nowrap ${
+          isActive
+            ? channelTabActiveClass(isFbm ? "fbm" : "fba")
+            : "border-transparent text-slate-700 hover:bg-slate-300/70 hover:text-slate-900"
+        }`}
+      >
+        <Icon size={14} weight="bold" />
+        <span>{tab.label}</span>
+        {tab.badge && (
+          <span
+            className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+              isActive
+                ? channelTabBadgeActiveClass(isFbm ? "fbm" : "fba")
+                : "bg-slate-300/80 text-slate-700"
+            }`}
+          >
+            {tab.badge}
+          </span>
+        )}
+      </button>
+    );
+  };
+
   return (
     <div className="flex h-full w-full flex-col bg-slate-50 overflow-hidden font-accounting-system">
       {/* SUB-TABS BAR (Đồng bộ phong cách với tab Import) */}
       <div className="bg-slate-200/80 px-3 pt-2 pb-1.5 border-b border-slate-300 shrink-0">
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-          {/* Tab 1: FBA (Theo Ngày) */}
-          <button
-            type="button"
-            onClick={() => handleTabChange("fba")}
-            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide border transition-all cursor-pointer select-none whitespace-nowrap ${
-              visibleTab === "fba"
-                ? "bg-amber-600 text-white shadow-2xs border-amber-700"
-                : "border-transparent text-slate-700 hover:bg-slate-300/70 hover:text-slate-900"
-            }`}
-          >
-            <CalendarBlankIcon size={14} weight="bold" />
-            <span>FBA</span>
-            <span
-              className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
-                visibleTab === "fba" ? "bg-amber-700 text-white" : "bg-slate-300/80 text-slate-700"
-              }`}
-            >
-              Theo Ngày
-            </span>
-          </button>
+          {FBA_TAB_ITEMS.map(renderTab)}
 
+          {/* Vạch ngăn nhóm tab FBA với nhóm tab FBM cho đỡ lẫn */}
           {showFbmTabs && (
             <>
-              {/* FBM (Theo Ngày) — sheet "FBM" */}
-              <button
-                type="button"
-                onClick={() => handleTabChange("fbm")}
-                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide border transition-all cursor-pointer select-none whitespace-nowrap ${
-                  visibleTab === "fbm"
-                    ? "bg-amber-600 text-white shadow-2xs border-amber-700"
-                    : "border-transparent text-slate-700 hover:bg-slate-300/70 hover:text-slate-900"
-                }`}
-              >
-                <TruckIcon size={14} weight="bold" />
-                <span>FBM</span>
-                <span
-                  className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
-                    visibleTab === "fbm" ? "bg-amber-700 text-white" : "bg-slate-300/80 text-slate-700"
-                  }`}
-                >
-                  Theo Ngày
-                </span>
-              </button>
-
-              {/* FBM cố định — sheet "LỌC SKU CỐ ĐỊNH": mọi SKU trong Bảng mã FBM */}
-              <button
-                type="button"
-                onClick={() => handleTabChange("fbm_fixed")}
-                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide border transition-all cursor-pointer select-none whitespace-nowrap ${
-                  visibleTab === "fbm_fixed"
-                    ? "bg-amber-600 text-white shadow-2xs border-amber-700"
-                    : "border-transparent text-slate-700 hover:bg-slate-300/70 hover:text-slate-900"
-                }`}
-              >
-                <ListChecksIcon size={14} weight="bold" />
-                <span>FBM Cố định</span>
-              </button>
+              <span className="mx-1 h-6 w-px shrink-0 bg-slate-400" aria-hidden="true" />
+              {FBM_TAB_ITEMS.map(renderTab)}
             </>
           )}
-
-          {/* Tab 2: LỌC SKU WIN */}
-          <button
-            type="button"
-            onClick={() => handleTabChange("sku_win")}
-            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide border transition-all cursor-pointer select-none whitespace-nowrap ${
-              visibleTab === "sku_win"
-                ? "bg-amber-600 text-white shadow-2xs border-amber-700"
-                : "border-transparent text-slate-700 hover:bg-slate-300/70 hover:text-slate-900"
-            }`}
-          >
-            <PackageIcon size={14} weight="bold" />
-            <span>Lọc SKU Win</span>
-          </button>
-
-          {/* Tab 3: LỌC SKU TEST */}
-          <button
-            type="button"
-            onClick={() => handleTabChange("sku_test")}
-            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide border transition-all cursor-pointer select-none whitespace-nowrap ${
-              visibleTab === "sku_test"
-                ? "bg-amber-600 text-white shadow-2xs border-amber-700"
-                : "border-transparent text-slate-700 hover:bg-slate-300/70 hover:text-slate-900"
-            }`}
-          >
-            <FlaskIcon size={14} weight="bold" />
-            <span>Lọc SKU Test</span>
-          </button>
         </div>
       </div>
 
