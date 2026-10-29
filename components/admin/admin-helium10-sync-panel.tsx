@@ -8,6 +8,7 @@ import {
   Gear,
   Lightning,
   Play,
+  Stop,
   UploadSimple,
   WarningCircle,
 } from "@phosphor-icons/react";
@@ -121,16 +122,18 @@ export function AdminHelium10SyncPanel() {
     loadStores();
   }, [loadStores]);
 
+  const [stopping, setStopping] = useState(false);
+
   useEffect(() => {
     loadStatus(selectedStore);
   }, [selectedStore, loadStatus]);
 
-  // Polling if sync is running
+  // Polling nhịp nhàng 1.5s khi sync đang chạy để nhảy số và tiến trình mượt mà
   useEffect(() => {
     if (status?.latestRun?.status === "running") {
       const interval = setInterval(() => {
         loadStatus(selectedStore);
-      }, 3000);
+      }, 1500);
       return () => clearInterval(interval);
     }
   }, [status?.latestRun?.status, selectedStore, loadStatus]);
@@ -158,6 +161,30 @@ export function AdminHelium10SyncPanel() {
       setError(err instanceof Error ? err.message : "Lỗi khi khởi chạy crawl.");
     } finally {
       setTriggering(false);
+    }
+  };
+
+  const handleStopCrawl = async () => {
+    if (!window.confirm("Bạn có chắc chắn muốn dừng tiến trình quét Search Volume hiện tại? Dữ liệu đã cào được sẽ vẫn được bảo lưu.")) {
+      return;
+    }
+    setStopping(true);
+    setError(null);
+    try {
+      const runId = status?.latestRun?.id;
+      const res = await fetch(`/api/ppc/search-volume?runId=${encodeURIComponent(runId || "")}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Không thể dừng tiến trình.");
+      }
+      setNotice("Đã gửi lệnh dừng quét. Hệ thống sẽ kết thúc lượt hiện tại và ngắt an toàn.");
+      await loadStatus(selectedStore);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Lỗi khi dừng tiến trình.");
+    } finally {
+      setStopping(false);
     }
   };
 
@@ -235,9 +262,98 @@ export function AdminHelium10SyncPanel() {
           </div>
         )}
 
+        {/* Bảng Tiến Trình Đang Chạy Trực Tiếp (Realtime Live Progress & Stop) */}
+        {isRunning && (
+          <div className="overflow-hidden rounded-xl border border-sky-200 bg-sky-50/70 p-4 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+              <div className="flex items-center gap-2.5">
+                <span className="relative flex h-3 w-3">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400 opacity-75"></span>
+                  <span className="relative inline-flex h-3 w-3 rounded-full bg-sky-600"></span>
+                </span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-black uppercase tracking-wider text-sky-900">
+                      Đang Quét Dữ Liệu Thực Tế
+                    </span>
+                    <span className="rounded bg-sky-200 px-1.5 py-0.5 text-[10px] font-bold text-sky-800">
+                      Live
+                    </span>
+                  </div>
+                  <p className="text-xs font-medium text-sky-800 mt-0.5">
+                    {status?.latestRun?.message || "Đang xử lý kết nối Helium 10 Cerebro..."}
+                  </p>
+                </div>
+              </div>
+
+              {/* Nút Dừng màu đỏ nổi bật */}
+              <button
+                type="button"
+                onClick={handleStopCrawl}
+                disabled={stopping}
+                className="flex items-center gap-1.5 rounded-lg border border-rose-300 bg-rose-600 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-rose-700 shadow-xs transition cursor-pointer disabled:opacity-50"
+              >
+                {stopping ? (
+                  <CircleNotch size={14} className="animate-spin" />
+                ) : (
+                  <Stop size={14} weight="fill" />
+                )}
+                <span>{stopping ? "Đang dừng..." : "Dừng Quét"}</span>
+              </button>
+            </div>
+
+            {/* Thanh tiến trình % dựa trên cerebro_calls / 50 lượt (budget 1 lần chạy) */}
+            {(() => {
+              const calls = status?.latestRun?.cerebro_calls || 0;
+              const maxBatch = 50;
+              const percent = Math.min(100, Math.max(8, Math.round((calls / maxBatch) * 100)));
+              return (
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-[11px] font-semibold text-sky-900">
+                    <span>
+                      Tiến độ Cerebro: <span className="font-mono font-bold">{calls}</span> / {maxBatch} lượt batch
+                    </span>
+                    <span className="font-mono font-bold text-sky-700">{percent}%</span>
+                  </div>
+                  <div className="h-2.5 w-full overflow-hidden rounded-full bg-sky-200/80">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-sky-500 to-indigo-600 transition-all duration-500 ease-out"
+                      style={{ width: `${percent}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Thống kê trực tiếp theo thời gian thực */}
+            <div className="mt-3 grid grid-cols-3 gap-2 rounded-lg bg-white/80 p-2.5 border border-sky-100 text-xs text-slate-700">
+              <div className="text-center">
+                <span className="block text-[10px] text-slate-500 font-medium">ASIN Đã Quét</span>
+                <span className="font-mono text-sm font-extrabold text-slate-900">
+                  {status?.latestRun?.asins_queried?.toLocaleString() ?? 0}
+                </span>
+              </div>
+              <div className="text-center border-x border-slate-200">
+                <span className="block text-[10px] text-slate-500 font-medium">Từ Khóa Thu Được</span>
+                <span className="font-mono text-sm font-extrabold text-emerald-700">
+                  +{status?.latestRun?.keywords_upserted?.toLocaleString() ?? 0}
+                </span>
+              </div>
+              <div className="text-center">
+                <span className="block text-[10px] text-slate-500 font-medium">Thời Gian Chạy</span>
+                <span className="font-mono text-sm font-bold text-sky-800">
+                  {status?.latestRun?.started_at
+                    ? new Date(status.latestRun.started_at).toLocaleTimeString("vi-VN")
+                    : "—"}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* 3 Thẻ thiết lập chính: Chọn Store & Crawl | Lịch tự động | Số liệu */}
         <div className="grid gap-3 sm:grid-cols-3">
-          {/* Cột 1: Chọn Store & Nút Crawl */}
+          {/* Cột 1: Chọn Store & Nút Crawl / Dừng */}
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 flex flex-col justify-between">
             <div>
               <label className="block text-[11px] font-bold text-slate-700 mb-1.5">
@@ -259,24 +375,38 @@ export function AdminHelium10SyncPanel() {
             </div>
 
             <div className="pt-3 mt-3 border-t border-slate-200">
-              <button
-                type="button"
-                onClick={handleStartCrawl}
-                disabled={isRunning || triggering}
-                className="w-full flex items-center justify-center gap-1.5 rounded-lg bg-sky-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-sky-700 disabled:opacity-50 shadow-2xs transition cursor-pointer"
-              >
-                {isRunning ? (
-                  <>
-                    <CircleNotch size={14} className="animate-spin" />
+              {isRunning ? (
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled
+                    className="flex-1 flex items-center justify-center gap-1.5 rounded-lg bg-sky-100 px-3 py-2 text-xs font-bold text-sky-800 border border-sky-300 cursor-not-allowed"
+                  >
+                    <CircleNotch size={14} className="animate-spin text-sky-600" />
                     <span>Đang crawl...</span>
-                  </>
-                ) : (
-                  <>
-                    <Play size={13} weight="fill" />
-                    <span>Chạy Crawl Ngay</span>
-                  </>
-                )}
-              </button>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleStopCrawl}
+                    disabled={stopping}
+                    className="flex items-center justify-center gap-1 rounded-lg bg-rose-600 hover:bg-rose-700 px-3 py-2 text-xs font-bold text-white shadow-xs transition cursor-pointer disabled:opacity-50"
+                    title="Dừng tiến trình quét ngay lập tức"
+                  >
+                    {stopping ? <CircleNotch size={13} className="animate-spin" /> : <Stop size={13} weight="fill" />}
+                    <span>Dừng</span>
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleStartCrawl}
+                  disabled={triggering}
+                  className="w-full flex items-center justify-center gap-1.5 rounded-lg bg-sky-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-sky-700 disabled:opacity-50 shadow-2xs transition cursor-pointer"
+                >
+                  <Play size={13} weight="fill" />
+                  <span>Chạy Crawl Ngay</span>
+                </button>
+              )}
             </div>
           </div>
 

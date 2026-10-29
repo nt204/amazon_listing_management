@@ -385,6 +385,25 @@ export async function startSearchVolumeSync(input: { teamId: string; storeName: 
   return { runId: run.id, execute };
 }
 
+/** Hủy / Dừng tiến trình quét Search Volume đang chạy */
+export async function stopSearchVolumeSync(input: { teamId: string; runId?: string }) {
+  const sql = await getDatabaseClient();
+  const res = input.runId
+    ? await sql`
+        UPDATE ppc_search_volume_sync_runs
+        SET status = 'failed', finished_at = NOW(), message = 'Đã dừng theo yêu cầu của người dùng.'
+        WHERE id = ${input.runId} AND team_id = ${input.teamId} AND status = 'running'
+        RETURNING id
+      `
+    : await sql`
+        UPDATE ppc_search_volume_sync_runs
+        SET status = 'failed', finished_at = NOW(), message = 'Đã dừng theo yêu cầu của người dùng.'
+        WHERE team_id = ${input.teamId} AND status = 'running'
+        RETURNING id
+      `;
+  return { stoppedCount: res.length };
+}
+
 async function runSearchVolumeSync(
   sql: Sql,
   runId: string,
@@ -434,6 +453,13 @@ async function runSearchVolumeSync(
     const asins = asinRows.map((row) => row.asin);
 
     for (let i = 0; i < asins.length && cerebroCalls < cerebroAllowance && missing.size > 0; i += CEREBRO_ASINS_PER_CALL) {
+      // Kiểm tra nếu người dùng đã bấm dừng
+      const [chk] = await sql<Array<{ status: string }>>`SELECT status FROM ppc_search_volume_sync_runs WHERE id = ${runId}`;
+      if (!chk || chk.status !== "running") {
+        console.log(`[Search Volume] Run ${runId} stopped by user.`);
+        return;
+      }
+
       const batch = asins.slice(i, i + CEREBRO_ASINS_PER_CALL);
       await progress(`Cerebro lượt ${cerebroCalls + 1}/${cerebroAllowance} (${batch.length} ASIN)...`);
       cerebroCalls++;
@@ -474,6 +500,13 @@ async function runSearchVolumeSync(
     .sort((a, b) => (spendByKeyword.get(b) || 0) - (spendByKeyword.get(a) || 0))
     .slice(0, magnetAllowance);
   for (const keyword of gapKeywords) {
+    // Kiểm tra nếu người dùng đã bấm dừng
+    const [chk] = await sql<Array<{ status: string }>>`SELECT status FROM ppc_search_volume_sync_runs WHERE id = ${runId}`;
+    if (!chk || chk.status !== "running") {
+      console.log(`[Search Volume] Run ${runId} stopped by user.`);
+      return;
+    }
+
     if (errors.length > 0 && isAuthError(errors[errors.length - 1])) break;
     await progress(`Magnet lượt ${magnetCalls + 1}/${gapKeywords.length}: "${keyword}"...`);
     magnetCalls++;

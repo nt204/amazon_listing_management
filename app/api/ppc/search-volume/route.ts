@@ -1,7 +1,7 @@
 // app/api/ppc/search-volume/route.ts
 import { after } from "next/server";
 import { authorize, dataScope, routeErrorResponse } from "@/lib/api-guard";
-import { getSearchVolumeStatus, startSearchVolumeSync } from "@/lib/ppc/search-volume";
+import { getSearchVolumeStatus, startSearchVolumeSync, stopSearchVolumeSync } from "@/lib/ppc/search-volume";
 
 export const runtime = "nodejs";
 
@@ -37,5 +37,24 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     return routeErrorResponse(error, "Lỗi khi đồng bộ Search Volume.", 500);
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const scope = dataScope(await authorize(request, "write", "ppc"));
+    const url = new URL(request.url);
+    const runId = url.searchParams.get("runId") || undefined;
+    const result = await stopSearchVolumeSync({
+      teamId: scope.teamId,
+      runId,
+    });
+    return Response.json({
+      success: true,
+      message: "Đã yêu cầu dừng tiến trình đồng bộ Search Volume.",
+      data: result,
+    });
+  } catch (error) {
+    return routeErrorResponse(error, "Lỗi khi dừng đồng bộ Search Volume.", 500);
   }
 }
