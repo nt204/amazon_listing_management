@@ -8,8 +8,10 @@ import {
   Gear,
   Lightning,
   Play,
+  UploadSimple,
   WarningCircle,
 } from "@phosphor-icons/react";
+import { useRef } from "react";
 import { Helium10SettingsModal } from "@/components/helium10-settings-modal";
 
 interface StoreItem {
@@ -52,6 +54,38 @@ export function AdminHelium10SyncPanel() {
   const [showCookieModal, setShowCookieModal] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [uploadingExcel, setUploadingExcel] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingExcel(true);
+    setError(null);
+    setNotice(null);
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("marketplace", "US");
+
+    try {
+      const res = await fetch("/api/ppc/search-volume/import", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Không thể nạp file Excel Search Volume.");
+      }
+      setNotice(data.message || "Đã nạp file Search Volume thành công!");
+      await loadStatus(selectedStore);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Lỗi khi tải file Excel lên.");
+    } finally {
+      setUploadingExcel(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
 
   // Load stores list
   const loadStores = useCallback(async () => {
@@ -146,6 +180,27 @@ export function AdminHelium10SyncPanel() {
         </div>
 
         <div className="flex items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            className="hidden"
+            onChange={handleFileChange}
+          />
+          <button
+            type="button"
+            disabled={uploadingExcel}
+            onClick={() => fileInputRef.current?.click()}
+            className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-800 hover:bg-emerald-100 shadow-2xs transition cursor-pointer disabled:opacity-50"
+            title="Nạp trực tiếp file Excel xuất từ Helium 10 Cerebro/Magnet hoặc DataDive"
+          >
+            {uploadingExcel ? (
+              <CircleNotch size={14} className="animate-spin text-emerald-700" />
+            ) : (
+              <UploadSimple size={14} weight="bold" className="text-emerald-700" />
+            )}
+            <span>{uploadingExcel ? "Đang nạp..." : "Nạp Excel SV"}</span>
+          </button>
           <button
             type="button"
             onClick={() => setShowCookieModal(true)}

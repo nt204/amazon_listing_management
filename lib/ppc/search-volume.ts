@@ -19,12 +19,12 @@ const SEARCH_VOLUME_TTL_DAYS = envInt("PPC_SEARCH_VOLUME_TTL_DAYS", 30);
 const LOOKBACK_DAYS = envInt("PPC_SEARCH_VOLUME_LOOKBACK_DAYS", 60);
 const CEREBRO_ASINS_PER_CALL = Math.max(1, envInt("PPC_SEARCH_VOLUME_ASINS_PER_CALL", 10));
 const CEREBRO_ROWS_PER_CALL = 1000;
-// Diamond: 250 Cerebro / 150 Magnet mỗi tháng, dùng chung với team tra tay → job chỉ lấy một phần
-const CEREBRO_MONTHLY_BUDGET = envInt("PPC_SEARCH_VOLUME_CEREBRO_MONTHLY_BUDGET", 120);
-const MAGNET_MONTHLY_BUDGET = envInt("PPC_SEARCH_VOLUME_MAGNET_MONTHLY_BUDGET", 60);
-const CEREBRO_PER_RUN = envInt("PPC_SEARCH_VOLUME_CEREBRO_PER_RUN", 20);
-const MAGNET_PER_RUN = envInt("PPC_SEARCH_VOLUME_MAGNET_PER_RUN", 10);
-const CALL_DELAY_MS = envInt("PPC_SEARCH_VOLUME_CALL_DELAY_MS", 3000);
+// Diamond: 300 Cerebro / 150 Magnet mỗi tháng
+const CEREBRO_MONTHLY_BUDGET = envInt("PPC_SEARCH_VOLUME_CEREBRO_MONTHLY_BUDGET", 300);
+const MAGNET_MONTHLY_BUDGET = envInt("PPC_SEARCH_VOLUME_MAGNET_MONTHLY_BUDGET", 150);
+const CEREBRO_PER_RUN = envInt("PPC_SEARCH_VOLUME_CEREBRO_PER_RUN", 50);
+const MAGNET_PER_RUN = envInt("PPC_SEARCH_VOLUME_MAGNET_PER_RUN", 25);
+const CALL_DELAY_MS = envInt("PPC_SEARCH_VOLUME_CALL_DELAY_MS", 1500);
 const STALE_RUN_MINUTES = 120;
 
 const NON_KEYWORD_TARGETS = /^(close-match|loose-match|substitutes|complements)$|asin|category|^b0[a-z0-9]{8}$|=/;
@@ -546,5 +546,162 @@ export async function getSearchVolumeStatus(teamId: string, storeName: string): 
       magnetUsed: usage.magnet,
       magnetLimit: MAGNET_MONTHLY_BUDGET,
     },
+  };
+}
+
+/**
+ * Nạp trực tiếp Search Volume & Rank từ file Excel (.xlsx) xuất từ Helium 10 / DataDive / bảng tổng hợp.
+ * Giúp nạp hàng chục nghìn đến hàng trăm nghìn từ khóa cùng lúc mà không tốn quota API.
+ */
+export async function importSearchVolumeFromExcel(
+  buffer: Buffer,
+  options: { marketplace?: string; defaultAsin?: string } = {},
+): Promise<{
+  importedVolumes: number;
+  importedRankings: number;
+}> {
+  const sql = await getDatabaseClient();
+  const marketplace = (options.marketplace || "US").toUpperCase();
+  const ExcelJS = (await import("exceljs")).default;
+  const workbook = new ExcelJS.Workbook();
+  // @ts-expect-error - ExcelJS accepts Buffer directly
+  await workbook.xlsx.load(buffer);
+
+  const worksheet = workbook.worksheets[0];
+  if (!worksheet) {
+    throw new Error("File Excel không có dữ liệu bảng tính hợp lệ.");
+  }
+
+  // Tìm hàng tiêu đề
+  let headerRow = -1;
+  const colMap: Record<string, number> = {};
+
+  worksheet.eachRow((row, rowNumber) => {
+    if (headerRow !== -1) return;
+    const values = (row.values as any[]) || [];
+    const textJoined = values.map((v) => String(v || "").toLowerCase()).join(" ");
+    const norm = textJoined.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+    if (norm.includes("keyword") || norm.includes("phrase") || norm.includes("search term") || norm.includes("tu khoa")) {
+      headerRow = rowNumber;
+      values.forEach((v, idx) => {
+        if (!v) return;
+        const c = String(v).trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        if (c.includes("keyword") || c.includes("phrase") || c.includes("search term") || c.includes("tu khoa")) {
+          if (!colMap.keyword) colMap.keyword = idx;
+        } else if (c.includes("volume") || c.includes("sv") || c.includes("searches")) {
+          if (!colMap.searchVolume) colMap.searchVolume = idx;
+        } else if (c.includes("organic") || c.includes("org rank") || c.includes("org pos") || c.includes("tu nhien")) {
+          if (!colMap.organicRank) colMap.organicRank = idx;
+        } else if (c.includes("sponsored") || c.includes("sp rank") || c.includes("sp pos") || c.includes("quang cao")) {
+          if (!colMap.sponsoredRank) colMap.sponsoredRank = idx;
+        } else if (c === "asin" || c.includes("product asin")) {
+          if (!colMap.asin) colMap.asin = idx;
+        } else if (c.includes("cpc")) {
+          if (!colMap.cpc) colMap.cpc = idx;
+        }
+      });
+    }
+  });
+
+  if (headerRow === -1 || colMap.keyword === undefined) {
+    throw new Error("Không tìm thấy cột 'Keyword' hoặc 'Search Phrase' trong file Excel.");
+  }
+
+  const volumeMap = new Map<string, { keyword: string; searchVolume: number | null; cpc: number | null }>();
+  const rankingRows: Array<{
+    marketplace: string;
+    asin: string;
+    keyword_norm: string;
+    keyword: string;
+    organic_rank: number | null;
+    sponsored_rank: number | null;
+    search_volume: number | null;
+    cpc: number | null;
+    source: string;
+  }> = [];
+
+  const parseNum = (val: unknown): number | null => {
+    if (val === null || val === undefined || val === "") return null;
+    const clean = String(val).replace(/[^0-9.-]/g, "").trim();
+    const n = parseFloat(clean);
+    return isNaN(n) ? null : n;
+  };
+
+  for (let r = headerRow + 1; r <= worksheet.rowCount; r++) {
+    const row = worksheet.getRow(r);
+    const rawKw = colMap.keyword ? String(row.getCell(colMap.keyword).value || "").trim() : "";
+    if (!rawKw) continue;
+    const norm = normalizeKeyword(rawKw);
+    if (!norm) continue;
+
+    const sv = colMap.searchVolume ? parseNum(row.getCell(colMap.searchVolume).value) : null;
+    const cpc = colMap.cpc ? parseNum(row.getCell(colMap.cpc).value) : null;
+    const orgRank = colMap.organicRank ? parseNum(row.getCell(colMap.organicRank).value) : null;
+    const spRank = colMap.sponsoredRank ? parseNum(row.getCell(colMap.sponsoredRank).value) : null;
+    const asin = (colMap.asin ? String(row.getCell(colMap.asin).value || "").trim() : "") || options.defaultAsin || "";
+
+    if (sv !== null || !volumeMap.has(norm)) {
+      volumeMap.set(norm, {
+        keyword: rawKw,
+        searchVolume: sv !== null ? Math.round(sv) : null,
+        cpc,
+      });
+    }
+
+    if (asin && (orgRank !== null || spRank !== null)) {
+      rankingRows.push({
+        marketplace,
+        asin: asin.toUpperCase(),
+        keyword_norm: norm,
+        keyword: rawKw,
+        organic_rank: orgRank !== null ? Math.round(orgRank) : null,
+        sponsored_rank: spRank !== null ? Math.round(spRank) : null,
+        search_volume: sv !== null ? Math.round(sv) : null,
+        cpc,
+        source: "excel_import",
+      });
+    }
+  }
+
+  // Batch insert vào keyword_search_volumes
+  const volArray = Array.from(volumeMap.entries()).map(([kNorm, item]) => ({
+    marketplace,
+    keyword_norm: kNorm,
+    keyword: item.keyword,
+    search_volume: item.searchVolume,
+    cpc: item.cpc,
+    source: "excel_import",
+  }));
+
+  for (let i = 0; i < volArray.length; i += 500) {
+    const chunk = volArray.slice(i, i + 500);
+    await sql`
+      INSERT INTO keyword_search_volumes ${sql(chunk)}
+      ON CONFLICT (marketplace, keyword_norm) DO UPDATE SET
+        search_volume = COALESCE(EXCLUDED.search_volume, keyword_search_volumes.search_volume),
+        cpc = COALESCE(EXCLUDED.cpc, keyword_search_volumes.cpc),
+        source = EXCLUDED.source,
+        fetched_at = NOW()
+    `;
+  }
+
+  // Batch insert vào ppc_asin_keyword_rankings
+  for (let i = 0; i < rankingRows.length; i += 500) {
+    const chunk = rankingRows.slice(i, i + 500);
+    await sql`
+      INSERT INTO ppc_asin_keyword_rankings ${sql(chunk)}
+      ON CONFLICT (marketplace, asin, keyword_norm) DO UPDATE SET
+        organic_rank = COALESCE(EXCLUDED.organic_rank, ppc_asin_keyword_rankings.organic_rank),
+        sponsored_rank = COALESCE(EXCLUDED.sponsored_rank, ppc_asin_keyword_rankings.sponsored_rank),
+        search_volume = COALESCE(EXCLUDED.search_volume, ppc_asin_keyword_rankings.search_volume),
+        source = EXCLUDED.source,
+        fetched_at = NOW()
+    `;
+  }
+
+  return {
+    importedVolumes: volArray.length,
+    importedRankings: rankingRows.length,
   };
 }
