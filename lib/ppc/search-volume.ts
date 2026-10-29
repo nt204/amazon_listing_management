@@ -340,7 +340,16 @@ async function updateRun(sql: Sql, runId: string, patch: Partial<Omit<SearchVolu
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const isAuthError = (error: unknown) => /cookie|đăng nhập|token|401/i.test(String(error));
+const isAuthError = (error: unknown) => {
+  const msg = String(error).toLowerCase();
+  // Chỉ ngắt hẳn nếu thực sự bị 401 Unauthorized hoặc token bị hủy
+  return (
+    msg.includes("401") ||
+    msg.includes("unauthorized") ||
+    msg.includes("token expired") ||
+    msg.includes("invalid token")
+  );
+};
 
 /** Tạo run (chặn chạy song song vì dùng chung 1 phiên Helium 10). Trả về hàm thực thi để chạy nền. */
 export async function startSearchVolumeSync(input: { teamId: string; storeName: string; actorId?: string }) {
@@ -482,13 +491,11 @@ async function runSearchVolumeSync(
           cerebroCalls--;
           break;
         }
-        // Nếu ASIN không hợp lệ trên Amazon: đánh dấu đã tra để không quét lại ASIN này nữa
-        if (errMsg.includes("Invalid ASIN") || errMsg.includes("rta-2002")) {
-          await sql`
-            INSERT INTO keyword_search_volume_asin_queries ${sql(batch.map((asin) => ({ marketplace, asin, keyword_count: 0 })))}
-            ON CONFLICT (marketplace, asin) DO UPDATE SET queried_at = NOW(), keyword_count = 0
-          `.catch(() => {});
-        }
+        // Đánh dấu batch ASIN bị lỗi (Invalid ASIN, 502 Bad Gateway...) để bỏ qua, không làm kẹt tiến trình
+        await sql`
+          INSERT INTO keyword_search_volume_asin_queries ${sql(batch.map((asin) => ({ marketplace, asin, keyword_count: 0 })))}
+          ON CONFLICT (marketplace, asin) DO UPDATE SET queried_at = NOW(), keyword_count = 0
+        `.catch(() => {});
       }
       await sleep(CALL_DELAY_MS);
     }
