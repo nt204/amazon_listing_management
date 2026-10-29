@@ -51,7 +51,9 @@ export function AccountMenu({
     };
 
     const initialTimer = window.setTimeout(() => void loadPendingUsers(), 0);
-    const refreshTimer = window.setInterval(() => void loadPendingUsers(), 60_000);
+    const refreshTimer = window.setInterval(() => {
+      if (!document.hidden) void loadPendingUsers();
+    }, 60_000);
     const refreshOnFocus = () => void loadPendingUsers();
     window.addEventListener("focus", refreshOnFocus);
 

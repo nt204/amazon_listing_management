@@ -205,21 +205,28 @@ export async function listSkuWin(
       GROUP BY sku
     ),
     -- Workbook: SUMIFS(ADS!L, ADS!B, "*"&SKU&"*") — portfolio chứa SKU, không lọc Loại
+    -- Gộp ads theo portfolio trước rồi mới so chuỗi với SKU (so trên bytea): cùng kết quả với
+    -- strpos(LOWER(portfolio), LOWER(sku)) trên từng dòng ads nhưng không phải so từng dòng.
+    ads_sku_keys AS MATERIALIZED (
+      SELECT DISTINCT sku, convert_to(LOWER(sku), 'UTF8') as sku_key
+      FROM accounting_sku_master
+      WHERE store_id = ${storeId} AND deleted_at IS NULL
+    ),
+    ads_portfolio AS MATERIALIZED (
+      SELECT convert_to(LOWER(portfolio), 'UTF8') as portfolio_key, SUM(spend) as spend, SUM(sales) as sales
+      FROM accounting_ads ad
+      WHERE store_id = ${storeId}
+        ${hasDateFilter ? sql`AND ad.date >= ${startDate}::date AND ad.date <= ${endDate}::date` : sql``}
+      GROUP BY LOWER(portfolio)
+    ),
     ads_filtered AS (
       SELECT 
-        ads_sm.sku,
-        SUM(ad.spend) as total_spend,
-        SUM(ad.sales) as total_ad_sales
-      FROM (
-        SELECT DISTINCT sku FROM accounting_sku_master
-        WHERE store_id = ${storeId} AND deleted_at IS NULL
-      ) ads_sm
-      JOIN accounting_ads ad
-        ON ad.store_id = ${storeId}
-        AND strpos(LOWER(ad.portfolio), LOWER(ads_sm.sku)) > 0
-      WHERE TRUE
-        ${hasDateFilter ? sql`AND ad.date >= ${startDate}::date AND ad.date <= ${endDate}::date` : sql``}
-      GROUP BY ads_sm.sku
+        k.sku,
+        SUM(p.spend) as total_spend,
+        SUM(p.sales) as total_ad_sales
+      FROM ads_sku_keys k
+      JOIN ads_portfolio p ON position(k.sku_key in p.portfolio_key) > 0
+      GROUP BY k.sku
     ),
     ${returnsEffectiveCte(
       sql,
@@ -282,17 +289,18 @@ export async function listSkuWin(
         AND o.date <= ${compareEndDate}::date
       GROUP BY o.sku
     ),
+    ads_portfolio_compare AS MATERIALIZED (
+      SELECT convert_to(LOWER(portfolio), 'UTF8') as portfolio_key, SUM(spend) as spend
+      FROM accounting_ads
+      WHERE store_id = ${storeId}
+        AND date >= ${compareStartDate}::date AND date <= ${compareEndDate}::date
+      GROUP BY LOWER(portfolio)
+    ),
     ads_compare AS (
-      SELECT ads_sm.sku, SUM(ad.spend) as compare_spend
-      FROM (
-        SELECT DISTINCT sku FROM accounting_sku_master
-        WHERE store_id = ${storeId} AND deleted_at IS NULL
-      ) ads_sm
-      JOIN accounting_ads ad
-        ON ad.store_id = ${storeId}
-        AND strpos(LOWER(ad.portfolio), LOWER(ads_sm.sku)) > 0
-      WHERE ad.date >= ${compareStartDate}::date AND ad.date <= ${compareEndDate}::date
-      GROUP BY ads_sm.sku
+      SELECT k.sku, SUM(p.spend) as compare_spend
+      FROM ads_sku_keys k
+      JOIN ads_portfolio_compare p ON position(k.sku_key in p.portfolio_key) > 0
+      GROUP BY k.sku
     )
     ` : sql``}
     SELECT 

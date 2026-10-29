@@ -928,14 +928,11 @@ export function ListingWorkspace({
 
   const fetchKanbanCount = useCallback(async () => {
     try {
-      const res = await fetch("/api/kanban", { cache: "no-store" });
+      // Chỉ lấy số góp ý / báo lỗi chưa xong (chưa chuyển sang done), không tải cả bảng
+      const res = await fetch("/api/kanban?summary=pending", { cache: "no-store" });
       if (!res.ok) return;
-      const data = await res.json();
-      if (Array.isArray(data.cards)) {
-        // Đếm số lượng góp ý / báo lỗi chưa xử lý xong (chưa chuyển sang done)
-        const pending = data.cards.filter((c: { status?: string }) => c.status !== "done").length;
-        setKanbanPendingCount(pending);
-      }
+      const data = (await res.json()) as { pendingCount?: number };
+      if (typeof data.pendingCount === "number") setKanbanPendingCount(data.pendingCount);
     } catch {
       // Bỏ qua lỗi mạng nền
     }
@@ -944,8 +941,8 @@ export function ListingWorkspace({
   useEffect(() => {
     void fetchKanbanCount();
     const timer = setInterval(() => {
-      void fetchKanbanCount();
-    }, 30000); // Tự động làm mới mỗi 30s
+      if (!document.hidden) void fetchKanbanCount();
+    }, 30000); // Tự động làm mới mỗi 30s (bỏ qua khi tab đang ẩn)
     const handleUpdate = () => {
       void fetchKanbanCount();
     };

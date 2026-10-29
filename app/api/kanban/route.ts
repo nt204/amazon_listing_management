@@ -1,5 +1,5 @@
 import { ApiError, authorize, enforceRequestSize, routeErrorResponse } from "@/lib/api-guard";
-import { createKanbanCard, listKanbanCards, type KanbanStatus, type KanbanUrgency } from "@/lib/kanban-db";
+import { countPendingKanbanCards, createKanbanCard, listKanbanCards, type KanbanStatus, type KanbanUrgency } from "@/lib/kanban-db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -7,6 +7,10 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
+    if (url.searchParams.get("summary") === "pending") {
+      const pendingCount = await countPendingKanbanCards();
+      return Response.json({ pendingCount }, { headers: { "Cache-Control": "no-store" } });
+    }
     const status = (url.searchParams.get("status") || undefined) as KanbanStatus | undefined;
     const urgency = (url.searchParams.get("urgency") || undefined) as KanbanUrgency | undefined;
     const featureName = url.searchParams.get("featureName") || url.searchParams.get("feature") || undefined;

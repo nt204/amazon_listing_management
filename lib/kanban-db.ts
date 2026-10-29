@@ -148,6 +148,15 @@ export async function listKanbanCards(filters?: {
   return rows.map(rowToCard);
 }
 
+/** Badge sidebar chỉ cần số thẻ chưa xong; không tải ảnh base64 của cả bảng. */
+export async function countPendingKanbanCards(): Promise<number> {
+  const sql = await getDatabaseClient();
+  const rows = await sql<{ count: number }[]>`
+    SELECT COUNT(*)::int AS count FROM kanban_feedback_cards WHERE status <> 'done'
+  `;
+  return rows[0]?.count ?? 0;
+}
+
 export async function getKanbanCardById(id: string): Promise<KanbanCard | null> {
   const sql = await getDatabaseClient();
   const rows = await sql<KanbanCardRow[]>`

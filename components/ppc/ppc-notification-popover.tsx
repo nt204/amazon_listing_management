@@ -128,9 +128,15 @@ export function PpcNotificationPopover({ onRefreshParent }: PpcNotificationPopov
   useEffect(() => {
     fetchLogs(true);
     const interval = setInterval(() => {
-      fetchLogs(true);
-    }, 15000); // Polling mỗi 15s để bắt trạng thái download/ingest mới nhất
-    return () => clearInterval(interval);
+      if (!document.hidden) fetchLogs(true);
+    }, 15000); // Polling mỗi 15s để bắt trạng thái download/ingest mới nhất (bỏ qua khi tab đang ẩn)
+    // Quay lại tab thì cập nhật ngay
+    const onVisible = () => { if (!document.hidden) fetchLogs(true); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [fetchLogs]);
 
   // Đóng khi click ra ngoài
