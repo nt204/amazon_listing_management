@@ -11,6 +11,7 @@ import {
   SKU_HEADER_MAP,
   cleanDateOnly,
   cleanMonthOnly,
+  isOffSkuStatus,
   parseFbmSkuRows,
   sheetSerialToIsoDate,
   skuExtraFields,
@@ -459,12 +460,14 @@ async function writeSkuRecords(
   };
 
   // Lớp 1: trùng khóa ngay trong sheet → giữ dòng sau cùng, báo lại số dòng.
+  // BẢNG MÃ FBM: dòng OFF không thay dòng đang chạy (xem dedupeFbmSkuRows).
   const bySku = new Map<string, Row>();
   const dupRows = new Map<string, number[]>();
   for (const record of records) {
     const key = keyOf(record.sku, record.asin);
     const previous = bySku.get(key);
     if (previous) dupRows.set(key, [...(dupRows.get(key) ?? [Number(previous._row)]), Number(record._row)]);
+    if (previous && channel === "fbm" && isOffSkuStatus(record.status) && !isOffSkuStatus(previous.status)) continue;
     bySku.set(key, record);
   }
   for (const [key, rowsOfKey] of dupRows) {

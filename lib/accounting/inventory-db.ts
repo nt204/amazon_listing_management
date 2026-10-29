@@ -2782,6 +2782,26 @@ export function parseFbmSkuRows(rows: SheetRows): (Partial<SkuMasterItem> & { sk
   return items;
 }
 
+/** Trạng thái OFF (ngừng bán) của BẢNG MÃ. */
+export function isOffSkuStatus(status: unknown): boolean {
+  return String(status ?? "").trim().toUpperCase() === "OFF";
+}
+
+/**
+ * BẢNG MÃ FBM trùng SKU + ASIN (vd dòng OFF nhà cung cấp cũ nằm cạnh dòng đang chạy): dòng OFF không thay dòng
+ * đang chạy, còn lại dòng sau thắng như trước. Dòng OFF chỉ được giữ khi SKU + ASIN không còn dòng nào khác.
+ */
+export function dedupeFbmSkuRows<T extends { sku?: string | null; asin?: string | null; status?: string | null }>(items: T[]): T[] {
+  const byKey = new Map<string, T>();
+  for (const item of items) {
+    const key = `${String(item.sku ?? "").trim().toLowerCase()}|${String(item.asin ?? "").trim().toLowerCase()}`;
+    const previous = byKey.get(key);
+    if (previous && isOffSkuStatus(item.status) && !isOffSkuStatus(previous.status)) continue;
+    byKey.set(key, item);
+  }
+  return [...byKey.values()];
+}
+
 export async function importFbmSkuRows(
   storeId: string,
   rows: SheetRows,
@@ -2789,7 +2809,7 @@ export async function importFbmSkuRows(
 ): Promise<{ count: number; errors: string[] }> {
   const errors: string[] = [];
   let count = 0;
-  for (const item of parseFbmSkuRows(rows)) {
+  for (const item of dedupeFbmSkuRows(parseFbmSkuRows(rows))) {
     try {
       await upsertSkuMasterItem(storeId, item, changedBy, "fbm");
       count++;

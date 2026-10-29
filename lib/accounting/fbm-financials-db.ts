@@ -14,7 +14,8 @@ type Sql = Awaited<ReturnType<typeof getDatabaseClient>>;
  * CTE dùng chung:
  *   fbm_master     — BẢNG MÃ FBM theo SKU + ASIN (cùng SKU khác ASIN là 2 sản phẩm; khóa UPPER như XLOOKUP).
  *   fbm_master_sku — dòng đại diện của mỗi SKU (dòng đầu theo thứ tự sheet): cho ADS / RETURN chỉ biết SKU,
- *                    và cho đơn có ASIN không khớp dòng nào của SKU.
+ *                    và cho đơn có ASIN không khớp dòng nào của SKU. Dòng trạng thái OFF (ngừng bán, giá cũ)
+ *                    chỉ được chọn khi SKU không còn dòng nào khác.
  *   fbm_lines   — từng dòng 'Basecost-Fee FBM', khớp bảng mã theo SKU + ASIN của đơn, không khớp thì theo SKU:
  *     Revenue  I = (item-price + shipping-price) quy đổi USD (CAD 0.738, MXN 0.051, tiền khác = 0)
  *     Basecost K = dòng đầu tiên của Order ID: tổng NetPrice PW của đơn, nếu = 0 thì quantity × Total bảng mã;
@@ -31,16 +32,17 @@ function fbmBaseCtes(sql: Sql, storeId: string) {
         COALESCE(referral_fee_pct, 0) AS referral_fee_pct,
         COALESCE(total_cost, 0) AS total_cost,
         UPPER(TRIM(COALESCE(loai, ''))) AS loai,
+        UPPER(TRIM(COALESCE(status, ''))) = 'OFF' AS is_off,
         row_order,
         created_at
       FROM accounting_sku_master_fbm
       WHERE store_id = ${storeId} AND deleted_at IS NULL AND COALESCE(TRIM(sku), '') <> ''
-      ORDER BY UPPER(TRIM(sku)), UPPER(TRIM(COALESCE(asin, ''))), row_order NULLS LAST, created_at
+      ORDER BY UPPER(TRIM(sku)), UPPER(TRIM(COALESCE(asin, ''))), is_off, row_order NULLS LAST, created_at
     ),
     fbm_master_sku AS (
       SELECT DISTINCT ON (sku_key) *
       FROM fbm_master
-      ORDER BY sku_key, row_order NULLS LAST, created_at
+      ORDER BY sku_key, is_off, row_order NULLS LAST, created_at
     ),
     fbm_pw AS (
       SELECT order_id, SUM(COALESCE(net_price, 0)) AS pw_cost
@@ -213,12 +215,12 @@ export async function listFbmDaily(
         AND date < CURRENT_DATE ${dateRangeCondition(sql, "date", startDate, endDate)}
       GROUP BY 1
     `,
-    // Loại của mỗi SKU = dòng đại diện (dòng đầu theo thứ tự sheet), như fbm_master_sku
+    // Loại của mỗi SKU = dòng đại diện (dòng đầu theo thứ tự sheet, OFF xếp sau), như fbm_master_sku
     sql<{ sku_key: string; loai: string }[]>`
       SELECT DISTINCT ON (UPPER(TRIM(sku))) UPPER(TRIM(sku)) AS sku_key, UPPER(TRIM(COALESCE(loai, ''))) AS loai
       FROM accounting_sku_master_fbm
       WHERE store_id = ${storeId} AND deleted_at IS NULL AND COALESCE(TRIM(sku), '') <> ''
-      ORDER BY UPPER(TRIM(sku)), row_order NULLS LAST, created_at
+      ORDER BY UPPER(TRIM(sku)), UPPER(TRIM(COALESCE(status, ''))) = 'OFF', row_order NULLS LAST, created_at
     `,
   ]);
 
