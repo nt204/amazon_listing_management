@@ -36,8 +36,6 @@ import { PpcBidOutcomesView } from "./ppc-bid-outcomes-view";
 import { PpcStOptimizationView } from "./ppc-st-optimization-view";
 import { PpcSaleKwView } from "./ppc-sale-kw-view";
 import { PpcPagination } from "./ppc-pagination";
-import { PpcBulkSelectionBanner } from "./ppc-bulk-selection-banner";
-import { useBulkSelection } from "@/hooks/use-bulk-selection";
 import {
   extractSkuFromText,
   extractCampaignDate,
@@ -65,7 +63,7 @@ import type {
 import { PpcMultiStoreView } from "./ppc-multi-store-view";
 import { PpcCopyButton } from "./ppc-copy-button";
 import { PpcSearchVolumeCell } from "./ppc-search-volume";
-import { PpcKeywordGroupRows, PpcSummaryTableHead, usePpcSummarySort, type KeywordGroupRow } from "./ppc-keyword-group-rows";
+import { PpcKeywordGroupRows, PpcSummaryTableHead, usePpcSummarySort, useKeywordGroupSelection, type KeywordGroupRow } from "./ppc-keyword-group-rows";
 import { PpcSkuTrendModal } from "./ppc-sku-trend-modal";
 import { PpcSearchTermLaunchPanel } from "./ppc-search-term-launch-panel";
 import type {
@@ -924,6 +922,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
         setLastSyncedAt(data.lastSyncedAt || null);
         setDetailCounts(data.detailCounts || null);
         clearSelectedTerms();
+        clearSelectedTargets();
+        termGroupSelection.clear();
+        targetGroupSelection.clear();
         setTermPage(1);
         setCampaignPage(1);
         setAdGroupPage(1);
@@ -2204,23 +2205,42 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     ].join("\u0000");
   }, []);
 
-  const targetCurrentPageItems = useMemo(
-    () => serverTargets.map((t) => ({ id: targetRowKey(t) })),
-    [serverTargets, targetRowKey]
-  );
+  // Chọn target để lên camp: giữ cả dòng qua nhiều trang / bộ lọc, Shift + click chọn cả đoạn
+  const [selectedTargetRows, setSelectedTargetRows] = useState<Map<string, PpcTargetPerformance>>(new Map());
+  const lastTargetSelectIndexRef = useRef<number | null>(null);
+  const clearSelectedTargets = useCallback(() => {
+    setSelectedTargetRows(new Map());
+    lastTargetSelectIndexRef.current = null;
+  }, []);
 
-  const targetBulkSelection = useBulkSelection({
-    currentPageItems: targetCurrentPageItems,
-    totalFilteredCount: serverTargetTotal,
-    currentFilters: {
-      storeName: selectedStore,
-      sku: selectedSku,
-      days: selectedDays,
-      search: targetQuery,
-      campaignName: selectedCampaignForDrilldown,
-      adGroupName: selectedAdGroupForDrilldown,
-    },
-  });
+  const toggleTargetSelect = (target: PpcTargetPerformance, index: number, shiftKey = false) => {
+    const key = targetRowKey(target);
+    const shouldSelect = !selectedTargetRows.has(key);
+    const last = lastTargetSelectIndexRef.current;
+    const range = shiftKey && last !== null && last < serverTargets.length
+      ? serverTargets.slice(Math.min(last, index), Math.max(last, index) + 1)
+      : [target];
+    const next = new Map(selectedTargetRows);
+    for (const row of range) {
+      if (shouldSelect) next.set(targetRowKey(row), row);
+      else next.delete(targetRowKey(row));
+    }
+    lastTargetSelectIndexRef.current = index;
+    setSelectedTargetRows(next);
+  };
+
+  const isTargetPageAllSelected = serverTargets.length > 0 && serverTargets.every((t) => selectedTargetRows.has(targetRowKey(t)));
+  const toggleSelectAllTargets = () => {
+    const next = new Map(selectedTargetRows);
+    if (isTargetPageAllSelected) serverTargets.forEach((t) => next.delete(targetRowKey(t)));
+    else serverTargets.forEach((t) => next.set(targetRowKey(t), t));
+    setSelectedTargetRows(next);
+  };
+
+  const selectedTargetLaunchRows = useMemo(
+    () => Array.from(selectedTargetRows.values()).map((t) => ({ ...t, customerSearchTerm: t.targetKeyword })),
+    [selectedTargetRows],
+  );
 
   // Helper normalizers for high-speed term-target matching
   const normStr = (s: string) => (s || "").toLowerCase().replace(/\s+/g, " ").trim();
@@ -2585,6 +2605,33 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     }
     setSelectedTermRows(next);
   };
+
+  // Bảng tổng khi tìm theo SKU: chọn 1 / tất cả keyword để lên camp (gắn SKU nếu chỉ có 1 SKU)
+  const termGroupSelection = useKeywordGroupSelection();
+  const targetGroupSelection = useKeywordGroupSelection();
+  const withSummarySku = (groups: KeywordGroupRow[] | null | undefined, skuGroups: Array<{ sku: string }> | undefined) => {
+    const sku = skuGroups?.length === 1 ? skuGroups[0].sku : undefined;
+    return (groups || []).map((g) => ({ ...g, sku }));
+  };
+  const sortedTermKeywordGroups = withSummarySku(
+    serverSearchTermSummary?.keywordGroups ? searchTermSummarySort.sortKeywordGroups(serverSearchTermSummary.keywordGroups) : null,
+    serverSearchTermSummary?.skuGroups,
+  );
+  const sortedTargetKeywordGroups = withSummarySku(
+    serverTargetSummary?.keywordGroups ? targetSummarySort.sortKeywordGroups(serverTargetSummary.keywordGroups) : null,
+    serverTargetSummary?.skuGroups,
+  );
+  const groupLaunchRows = (selected: Map<string, KeywordGroupRow & { sku?: string }>) =>
+    Array.from(selected.values()).map((g) => ({
+      customerSearchTerm: g.targetKeyword ?? g.customerSearchTerm ?? "",
+      campaignName: g.campaignName || "",
+      sku: g.sku,
+      clicks: g.clicks,
+      spend: g.spend,
+      orders: g.orders,
+      reportDate: g.reportDate,
+      grouped: true,
+    }));
 
   const launchKnownSkus = useMemo(() => {
     const skus = new Set<string>();
@@ -3945,8 +3992,23 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                 </button>
               )}
 
+              <div className="ml-auto">
+                {selectedStore !== "ALL" && (
+                  <PpcSearchTermLaunchPanel
+                    selectedRows={[...groupLaunchRows(targetGroupSelection.selected), ...selectedTargetLaunchRows]}
+                    storeName={stores.find((s) => s.name.toLowerCase() === selectedStore.toLowerCase())?.name || selectedStore}
+                    storeId={stores.find((s) => s.name.toLowerCase() === selectedStore.toLowerCase())?.id}
+                    selectedSku={selectedSku}
+                    knownSkus={launchKnownSkus}
+                    actor={actor}
+                    notify={notify}
+                    onClear={() => { clearSelectedTargets(); targetGroupSelection.clear(); }}
+                    onLaunched={() => { clearSelectedTargets(); targetGroupSelection.clear(); }}
+                  />
+                )}
+              </div>
               {/* Results count indicator */}
-              <div className="ml-auto text-xs text-slate-500 font-medium">
+              <div className="text-xs text-slate-500 font-medium">
                 Khớp <span className="font-extrabold text-slate-900">{serverTargetTotal.toLocaleString("vi-VN")}</span>
                 {detailCounts?.targets && (targetQuery || selectedCampaignForDrilldown)
                   ? ` / ${detailCounts.targets.toLocaleString("vi-VN")}`
@@ -3956,60 +4018,15 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
             </div>
           </div>
 
-          {/* Bulk Selection Notification Banner (Gmail/Enterprise Standard) */}
-          <PpcBulkSelectionBanner
-            mode={targetBulkSelection.mode}
-            isPageAllSelected={targetBulkSelection.isPageAllSelected}
-            currentPageCount={serverTargets.length}
-            totalFilteredCount={serverTargetTotal}
-            totalSelectedCount={targetBulkSelection.totalSelectedCount}
-            onSelectAllFiltered={targetBulkSelection.selectAllFiltered}
-            onClearSelection={targetBulkSelection.clearSelection}
-            itemName="targets"
-          />
-
-          {/* Bulk Action Controls Bar when items are selected */}
-          {targetBulkSelection.totalSelectedCount > 0 && (
-            <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-indigo-50/90 rounded-xl border border-indigo-200 shadow-2xs animate-in fade-in slide-in-from-top-1">
-              <div className="flex items-center gap-2 text-xs font-bold text-indigo-950">
-                <span>Đã chọn:</span>
-                <span className="px-2 py-0.5 rounded bg-indigo-600 text-white font-mono font-black text-xs shadow-2xs">
-                  {targetBulkSelection.totalSelectedCount.toLocaleString("vi-VN")}
-                </span>
-                <span>targets</span>
-                {targetBulkSelection.mode === "ALL_FILTERED" && (
-                  <span className="text-[11px] font-semibold text-amber-700 bg-amber-100/80 px-2 py-0.5 rounded-md border border-amber-200">
-                    Toàn bộ kết quả lọc
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    notify(`Đã chọn ${targetBulkSelection.totalSelectedCount.toLocaleString("vi-VN")} targets`, "info");
-                  }}
-                  className="px-3 py-1.5 rounded-lg bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-100 font-bold text-xs flex items-center gap-1.5 shadow-2xs transition cursor-pointer"
-                >
-                  <Download size={13} weight="bold" />
-                  Xuất đã chọn
-                </button>
-                <button
-                  type="button"
-                  onClick={targetBulkSelection.clearSelection}
-                  className="px-2.5 py-1.5 text-slate-500 hover:text-slate-800 text-xs font-semibold underline cursor-pointer"
-                >
-                  Bỏ chọn tất cả
-                </button>
-              </div>
-            </div>
-          )}
-
           {/* Totals for the current Target query; detail rows stay separated by campaign. */}
           {targetQuery.trim() && serverTargetSummary && (
             <div className="overflow-auto max-h-[480px] rounded-xl border border-slate-200 bg-white shadow-2xs">
               <table className="w-full min-w-[1100px] text-left">
-                <PpcSummaryTableHead keywordLabel="Target / Keyword" sort={targetSummarySort} />
+                <PpcSummaryTableHead
+                  keywordLabel="Target / Keyword"
+                  sort={targetSummarySort}
+                  selection={serverTargetSummary.keywordGroups ? targetGroupSelection.selectionFor(sortedTargetKeywordGroups) : undefined}
+                />
                 <tbody className="divide-y divide-slate-100">
                   {targetSummarySort.sortSkuGroups((serverTargetSummary.skuGroups?.length
                     ? serverTargetSummary.skuGroups
@@ -4054,12 +4071,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                       <td className="px-3 py-3 text-sm font-bold text-slate-900">{querySummaryLabel(targetQuery, "Tất cả target")}</td>
                       <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{Number(group.totalImpressions || 0).toLocaleString("vi-VN")}</td>
                       <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{Number(group.totalClicks || 0).toLocaleString("vi-VN")}</td>
-                      <td className="px-3 py-3 text-right font-mono text-sm text-slate-700">{group.totalImpressions > 0 ? ((group.totalClicks / group.totalImpressions) * 100).toFixed(2) : "0.00"}%</td>
+                      <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{group.totalImpressions > 0 ? ((group.totalClicks / group.totalImpressions) * 100).toFixed(2) : "0.00"}%</td>
                       <td className="px-3 py-3 text-right font-mono text-sm font-black text-slate-900">${Number(group.totalSpend || 0).toFixed(2)}</td>
                       <td className="px-3 py-3 text-right font-mono text-sm font-black text-emerald-600">${Number(group.totalSales || 0).toFixed(2)}</td>
                       <td className="px-3 py-3 text-right font-mono text-sm font-black text-slate-900">{Number(group.totalOrders || 0).toLocaleString("vi-VN")}</td>
-                      <td className="px-3 py-3 text-right font-mono text-sm text-slate-700">{group.totalClicks > 0 ? ((group.totalOrders / group.totalClicks) * 100).toFixed(1) : "0.0"}%</td>
-                      <td className="px-3 py-3 text-right font-mono text-sm text-slate-700">{group.totalClicks > 0 ? `$${(group.totalSpend / group.totalClicks).toFixed(2)}` : "-"}</td>
+                      <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{group.totalClicks > 0 ? ((group.totalOrders / group.totalClicks) * 100).toFixed(1) : "0.0"}%</td>
+                      <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{group.totalClicks > 0 ? `$${(group.totalSpend / group.totalClicks).toFixed(2)}` : "-"}</td>
                       <td className="px-3 py-3 text-right">
                         <span
                           className={`inline-flex min-w-[68px] justify-center rounded-md px-2 py-1 font-mono text-sm font-black ${
@@ -4078,7 +4095,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                     </tr>
                   ))}
                   {serverTargetSummary.keywordGroups && (
-                    <PpcKeywordGroupRows groups={targetSummarySort.sortKeywordGroups(serverTargetSummary.keywordGroups)} total={serverTargetSummary.keywordGroupTotal || 0} />
+                    <PpcKeywordGroupRows
+                      groups={sortedTargetKeywordGroups}
+                      total={serverTargetSummary.keywordGroupTotal || 0}
+                      selection={targetGroupSelection.selectionFor(sortedTargetKeywordGroups)}
+                    />
                   )}
                 </tbody>
               </table>
@@ -4093,11 +4114,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                     <input
                       type="checkbox"
                       className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                      checked={targetBulkSelection.isPageAllSelected}
-                      ref={(el) => {
-                        if (el) el.indeterminate = targetBulkSelection.isPageIndeterminate;
-                      }}
-                      onChange={targetBulkSelection.toggleSelectPage}
+                      checked={isTargetPageAllSelected}
+                      onChange={toggleSelectAllTargets}
                       title="Chọn tất cả trên trang này"
                     />
                   </th>
@@ -4280,13 +4298,13 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                       </td>
                     </tr>
 
-                    {paginatedTargets.map((target) => {
+                    {paginatedTargets.map((target, targetIdx) => {
                       const badge = getTargetDisplayType(target);
                       const targetKey = targetRowKey(target);
                       const isExpanded = expandedTargetKey === targetKey;
                       const childData = expandedChildTerms[targetKey];
                       const childTerms = childData?.terms || [];
-                      const isSelected = targetBulkSelection.isSelected(targetKey);
+                      const isSelected = selectedTargetRows.has(targetKey);
 
                       return (
                         <Fragment key={targetKey}>
@@ -4296,7 +4314,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                                 type="checkbox"
                                 className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
                                 checked={isSelected}
-                                onChange={() => targetBulkSelection.toggleItem(targetKey)}
+                                onChange={(e) => toggleTargetSelect(target, targetIdx, (e.nativeEvent as MouseEvent).shiftKey)}
                               />
                             </td>
                             <td className="px-3 py-2.5 font-bold text-slate-900 min-w-[180px] col-primary">
@@ -4917,8 +4935,23 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                 </button>
               )}
 
+              <div className="ml-auto">
+                {selectedStore !== "ALL" && (
+                  <PpcSearchTermLaunchPanel
+                    selectedRows={[...groupLaunchRows(termGroupSelection.selected), ...Array.from(selectedTermRows.values())]}
+                    storeName={stores.find((s) => s.name.toLowerCase() === selectedStore.toLowerCase())?.name || selectedStore}
+                    storeId={stores.find((s) => s.name.toLowerCase() === selectedStore.toLowerCase())?.id}
+                    selectedSku={selectedSku}
+                    knownSkus={launchKnownSkus}
+                    actor={actor}
+                    notify={notify}
+                    onClear={() => { clearSelectedTerms(); termGroupSelection.clear(); }}
+                    onLaunched={() => { clearSelectedTerms(); termGroupSelection.clear(); }}
+                  />
+                )}
+              </div>
               {/* Results count indicator */}
-              <div className="ml-auto text-xs text-slate-500 font-medium">
+              <div className="text-xs text-slate-500 font-medium">
                 Khớp <span className="font-extrabold text-slate-900">{(serverSearchTermTotal ?? filteredSortedSearchTerms.length).toLocaleString("vi-VN")}</span> / {(serverSearchTermTotal ?? detailCounts?.searchTerms ?? aggregatedSearchTerms.length).toLocaleString("vi-VN")} từ khóa
               </div>
             </div>
@@ -4928,7 +4961,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
           {searchTermQuery.trim() && serverSearchTermSummary && (
             <div className="overflow-auto max-h-[480px] rounded-xl border border-slate-200 bg-white shadow-2xs">
               <table className="w-full min-w-[1100px] text-left">
-                <PpcSummaryTableHead keywordLabel="Search Term" sort={searchTermSummarySort} />
+                <PpcSummaryTableHead
+                  keywordLabel="Search Term"
+                  sort={searchTermSummarySort}
+                  selection={serverSearchTermSummary.keywordGroups ? termGroupSelection.selectionFor(sortedTermKeywordGroups) : undefined}
+                />
                 <tbody className="divide-y divide-slate-100">
                   {searchTermSummarySort.sortSkuGroups((serverSearchTermSummary.skuGroups?.length
                     ? serverSearchTermSummary.skuGroups
@@ -4964,12 +5001,12 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                       <td className="px-3 py-3 text-sm font-bold text-slate-900">{querySummaryLabel(searchTermQuery, "Tất cả search term")}</td>
                       <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{Number(group.totalImpressions || 0).toLocaleString("vi-VN")}</td>
                       <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{Number(group.totalClicks || 0).toLocaleString("vi-VN")}</td>
-                      <td className="px-3 py-3 text-right font-mono text-sm text-slate-700">{group.totalImpressions > 0 ? ((group.totalClicks / group.totalImpressions) * 100).toFixed(2) : "0.00"}%</td>
+                      <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{group.totalImpressions > 0 ? ((group.totalClicks / group.totalImpressions) * 100).toFixed(2) : "0.00"}%</td>
                       <td className="px-3 py-3 text-right font-mono text-sm font-black text-slate-900">${Number(group.totalSpend || 0).toFixed(2)}</td>
                       <td className="px-3 py-3 text-right font-mono text-sm font-black text-emerald-600">${Number(group.totalSales || 0).toFixed(2)}</td>
                       <td className="px-3 py-3 text-right font-mono text-sm font-black text-slate-900">{Number(group.totalOrders || 0).toLocaleString("vi-VN")}</td>
-                      <td className="px-3 py-3 text-right font-mono text-sm text-slate-700">{group.totalClicks > 0 ? ((group.totalOrders / group.totalClicks) * 100).toFixed(1) : "0.0"}%</td>
-                      <td className="px-3 py-3 text-right font-mono text-sm text-slate-700">{group.totalClicks > 0 ? `$${(group.totalSpend / group.totalClicks).toFixed(2)}` : "-"}</td>
+                      <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{group.totalClicks > 0 ? ((group.totalOrders / group.totalClicks) * 100).toFixed(1) : "0.0"}%</td>
+                      <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{group.totalClicks > 0 ? `$${(group.totalSpend / group.totalClicks).toFixed(2)}` : "-"}</td>
                       <td className="px-3 py-3 text-right">
                         <span
                           className={`inline-flex min-w-[68px] justify-center rounded-md px-2 py-1 font-mono text-sm font-black ${
@@ -4988,7 +5025,11 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                     </tr>
                   ))}
                   {serverSearchTermSummary.keywordGroups && (
-                    <PpcKeywordGroupRows groups={searchTermSummarySort.sortKeywordGroups(serverSearchTermSummary.keywordGroups)} total={serverSearchTermSummary.keywordGroupTotal || 0} />
+                    <PpcKeywordGroupRows
+                      groups={sortedTermKeywordGroups}
+                      total={serverSearchTermSummary.keywordGroupTotal || 0}
+                      selection={termGroupSelection.selectionFor(sortedTermKeywordGroups)}
+                    />
                   )}
                 </tbody>
               </table>
@@ -5515,20 +5556,6 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
           setSettingsSubTab("phoi");
         }}
       />
-
-      {activeTab === "search_terms" && selectedStore !== "ALL" && (
-        <PpcSearchTermLaunchPanel
-          selectedRows={Array.from(selectedTermRows.values())}
-          storeName={stores.find((s) => s.name.toLowerCase() === selectedStore.toLowerCase())?.name || selectedStore}
-          storeId={stores.find((s) => s.name.toLowerCase() === selectedStore.toLowerCase())?.id}
-          selectedSku={selectedSku}
-          knownSkus={launchKnownSkus}
-          actor={actor}
-          notify={notify}
-          onClear={clearSelectedTerms}
-          onLaunched={clearSelectedTerms}
-        />
-      )}
 
       {/* FLOATING ACTION QUEUE BUTTON (DRAGGABLE, GÓC DƯỚI) */}
       {selectedStore !== "ALL" && (

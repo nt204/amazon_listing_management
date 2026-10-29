@@ -2,68 +2,79 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { X, CircleNotch } from "@phosphor-icons/react";
-import type { PpcSearchTermRow } from "@/lib/ppc/types";
 import type { RequestActor } from "@/lib/auth";
-import type { SaleKwCampaignPayload } from "@/lib/ppc/service";
+import {
+  LAUNCH_BIDDING_STRATEGIES,
+  LAUNCH_MATCH_TYPES,
+  LAUNCH_RUN_TYPES,
+  buildLaunchPlan,
+  isTermUsableForRunType,
+  launchRunType,
+  type LaunchBiddingStrategy,
+  type LaunchMatchType,
+  type LaunchRunType,
+} from "@/lib/ppc/campaign-launch";
 import {
   isAsinProductTarget,
   formatYYYYMMDD,
   extractFileDateDDMMYY,
-  buildSaleKwCampaignName,
-  generateSaleKwCampaignTriad,
   normalizeSaleKwDate,
   resolveSkuForSearchTerm,
 } from "@/lib/ppc/sku-extractor";
 
-type MatchKey = "exact" | "phrase" | "broad";
-type BidRule = "cpc" | "cpc_pct" | "fixed";
-
-const MATCH_TYPES: Array<{ key: MatchKey; label: string }> = [
-  { key: "exact", label: "Exact" },
-  { key: "phrase", label: "Phrase" },
-  { key: "broad", label: "Broad" },
-];
+type BidRule = "cpc" | "cpc_pct";
 const UNKNOWN_SKU = "UNKNOWN_SKU";
 
 interface LaunchSettings {
-  matchTypes: Record<MatchKey, boolean>;
+  runType: LaunchRunType;
+  matchTypes: Record<LaunchMatchType, boolean>;
   dailyBudget: number;
+  biddingStrategy: LaunchBiddingStrategy;
   bidRule: BidRule;
   bidValue: number;
-  negateInSource: boolean;
-  adTypeCode: string;
   suffix: string;
 }
 
 const DEFAULT_SETTINGS: LaunchSettings = {
+  runType: "SP03",
   matchTypes: { exact: true, phrase: true, broad: true },
   dailyBudget: 5,
+  biddingStrategy: "Dynamic bids - down only",
   bidRule: "cpc",
-  bidValue: 1,
-  negateInSource: false,
-  adTypeCode: "SP03",
+  bidValue: 10,
   suffix: "",
 };
 
 interface LaunchItem {
   id: string;
   term: string;
+  isAsin: boolean;
   sku: string;
   clicks: number;
   spend: number;
-  sales: number;
   orders: number;
   cpc: number;
   bidOverride: number | null;
-  sourceCampaignName: string;
-  sourceCampaignId?: string;
-  sourceAdGroupId?: string;
-  sourceAdGroupName?: string;
-  launched: boolean;
+}
+
+// Dòng nguồn: search term hoặc target (term = targetKeyword)
+export interface LaunchSourceRow {
+  customerSearchTerm: string;
+  campaignName: string;
+  adGroupName?: string;
+  portfolioName?: string;
+  sku?: string;
+  clicks: number;
+  spend: number;
+  orders: number;
+  reportDate?: string;
+  reportEndDate?: string;
+  /** Dòng tổng ở bảng tóm tắt: đã cộng mọi campaign, ưu tiên hơn dòng chi tiết cùng term */
+  grouped?: boolean;
 }
 
 interface Props {
-  selectedRows: PpcSearchTermRow[];
+  selectedRows: LaunchSourceRow[];
   storeName: string;
   storeId?: string;
   selectedSku: string;
@@ -91,47 +102,40 @@ function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-// Gộp các dòng đã chọn theo (SKU, search term); ASIN không lên camp keyword nên bỏ ra
-function buildItems(rows: PpcSearchTermRow[], selectedSku: string): { items: LaunchItem[]; asinCount: number } {
+// Gộp các dòng đã chọn theo (SKU, term)
+function buildItems(rows: LaunchSourceRow[], selectedSku: string): LaunchItem[] {
   const map = new Map<string, LaunchItem>();
-  let asinCount = 0;
-  for (const row of rows) {
+  const groupedIds = new Set<string>();
+  const ordered = [...rows].sort((a, b) => Number(Boolean(b.grouped)) - Number(Boolean(a.grouped)));
+  for (const row of ordered) {
     const term = (row.customerSearchTerm || "").trim();
     if (!term) continue;
-    if (isAsinProductTarget(term)) {
-      asinCount++;
-      continue;
-    }
+    if (row.grouped) groupedIds.add(term.toLowerCase());
+    else if (groupedIds.has(term.toLowerCase())) continue;
     const sku = resolveSkuForSearchTerm(row, selectedSku);
     const id = `${sku.toLowerCase()}|||${term.toLowerCase()}`;
     const existing = map.get(id);
     if (existing) {
       existing.clicks += Number(row.clicks) || 0;
       existing.spend += Number(row.spend) || 0;
-      existing.sales += Number(row.sales) || 0;
       existing.orders += Number(row.orders) || 0;
       continue;
     }
     map.set(id, {
       id,
       term,
+      isAsin: isAsinProductTarget(term),
       sku,
       clicks: Number(row.clicks) || 0,
       spend: Number(row.spend) || 0,
-      sales: Number(row.sales) || 0,
       orders: Number(row.orders) || 0,
       cpc: 0,
       bidOverride: null,
-      sourceCampaignName: row.campaignName || sku,
-      sourceCampaignId: row.campaignId,
-      sourceAdGroupId: row.adGroupId,
-      sourceAdGroupName: row.adGroupName,
-      launched: false,
     });
   }
   const items = Array.from(map.values());
   for (const item of items) item.cpc = item.clicks > 0 ? round2(item.spend / item.clicks) : 0;
-  return { items, asinCount };
+  return items;
 }
 
 export function PpcSearchTermLaunchPanel({
@@ -146,7 +150,7 @@ export function PpcSearchTermLaunchPanel({
   onLaunched,
 }: Props) {
   const storageId = actorStorageId(actor);
-  const settingsKey = `ppc_st_launch_settings_${storageId}`;
+  const settingsKey = `ppc_campaign_launch_settings_${storageId}`;
   const userNameKey = `ppc_sale_kw_username_${storageId}`;
 
   const [open, setOpen] = useState(false);
@@ -154,8 +158,7 @@ export function PpcSearchTermLaunchPanel({
   const [userName, setUserName] = useState(() => defaultUserName(actor));
   const [dateStr, setDateStr] = useState(() => formatYYYYMMDD());
   const [items, setItems] = useState<LaunchItem[]>([]);
-  const [asinCount, setAsinCount] = useState(0);
-  const [checkingRegistry, setCheckingRegistry] = useState(false);
+  const [commonBid, setCommonBid] = useState("");
   const [busy, setBusy] = useState<"export" | "upload" | null>(null);
   const [uploadStatus, setUploadStatus] = useState<{ jobId: string; status: string; progress?: number; error?: string } | null>(null);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -181,60 +184,42 @@ export function PpcSearchTermLaunchPanel({
     } catch { }
   };
 
-  const openPanel = async () => {
+  const openPanel = () => {
     try {
       const saved = localStorage.getItem(settingsKey);
-      if (saved) setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(saved) });
+      if (saved) {
+        const parsedSettings = { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+        if (parsedSettings.bidRule !== "cpc_pct") parsedSettings.bidRule = "cpc";
+        setSettings(parsedSettings);
+      }
       const savedName = localStorage.getItem(userNameKey);
       if (savedName?.trim()) setUserName(savedName.trim());
     } catch { }
-    const built = buildItems(selectedRows, selectedSku);
-    setItems(built.items);
-    setAsinCount(built.asinCount);
+    setItems(buildItems(selectedRows, selectedSku));
+    setCommonBid("");
     setUploadStatus(null);
     const reportDate = selectedRows.map((r) => r.reportEndDate || r.reportDate).find(Boolean);
     const parsed = reportDate ? extractFileDateDDMMYY(reportDate) : null;
     setDateStr(parsed ? normalizeSaleKwDate(parsed) : formatYYYYMMDD());
     setOpen(true);
-
-    if (built.items.length === 0) return;
-    setCheckingRegistry(true);
-    try {
-      const res = await fetch("/api/ppc/sale-kw/registry", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        cache: "no-store",
-        body: JSON.stringify({
-          storeName,
-          candidates: built.items.map((it) => ({ sku: it.sku, keyword: it.term })),
-        }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (res.ok && json.success) {
-        const keys = new Set<string>(json.lookupKeys || []);
-        setItems((prev) => prev.map((it) => ({
-          ...it,
-          launched: keys.has(it.id) || keys.has(it.term.toLowerCase()),
-        })));
-      }
-    } catch { } finally {
-      setCheckingRegistry(false);
-    }
   };
 
   const bidFor = (item: LaunchItem): number => {
     if (item.bidOverride && item.bidOverride > 0) return item.bidOverride;
-    if (settings.bidRule === "fixed" || item.cpc <= 0) return Math.max(0.1, settings.bidValue || 1);
+    if (item.cpc <= 0) return 1;
     if (settings.bidRule === "cpc_pct") return Math.max(0.1, round2(item.cpc * (1 + (settings.bidValue || 0) / 100)));
     return Math.max(0.1, item.cpc);
   };
 
-  const activeItems = items;
-  const enabledMatchTypes = MATCH_TYPES.filter((m) => settings.matchTypes[m.key]);
+  const runType = launchRunType(settings.runType);
+  const enabledMatchTypes = LAUNCH_MATCH_TYPES.filter((m) => settings.matchTypes[m.key]);
+  const usable = (it: LaunchItem) => isTermUsableForRunType(it.term, runType.value);
+  const usableItems = items.filter(usable);
+  const missingSkuCount = usableItems.filter((it) => !it.sku.trim() || it.sku === UNKNOWN_SKU).length;
 
   const groups = useMemo(() => {
     const map = new Map<string, LaunchItem[]>();
-    for (const it of activeItems) {
+    for (const it of items) {
       if (!map.has(it.sku)) map.set(it.sku, []);
       map.get(it.sku)!.push(it);
     }
@@ -243,15 +228,32 @@ export function PpcSearchTermLaunchPanel({
       if (b === UNKNOWN_SKU) return 1;
       return a.localeCompare(b);
     });
-  }, [activeItems]);
+  }, [items]);
 
-  const missingSkuCount = activeItems.filter((it) => !it.sku.trim() || it.sku === UNKNOWN_SKU).length;
-  const skuCount = groups.filter(([sku]) => sku !== UNKNOWN_SKU).length;
-  const campaignCount = skuCount * enabledMatchTypes.length;
+  const launchTerms = usableItems
+    .filter((it) => it.sku.trim() && it.sku !== UNKNOWN_SKU)
+    .map((it) => ({ term: it.term, sku: it.sku, bid: bidFor(it), clicks: it.clicks, spend: it.spend }));
+  const launchOptions = {
+    runType: runType.value,
+    matchTypes: enabledMatchTypes.map((m) => m.key),
+    dailyBudget: settings.dailyBudget,
+    biddingStrategy: settings.biddingStrategy,
+    userName: userName.trim() || "Loan",
+    dateStr: dateStr.trim() || formatYYYYMMDD(),
+    suffix: settings.suffix,
+    commonBid: Number(commonBid) > 0 ? Number(commonBid) : undefined,
+  };
+  const plan = buildLaunchPlan(launchTerms, launchOptions);
+  const campaignsBySku = new Map<string, string[]>();
+  for (const camp of plan.campaigns) {
+    if (!campaignsBySku.has(camp.sku)) campaignsBySku.set(camp.sku, []);
+    campaignsBySku.get(camp.sku)!.push(camp.name);
+  }
+
   const blocker =
-    activeItems.length === 0
-      ? "Không còn term nào để lên camp."
-      : enabledMatchTypes.length === 0
+    usableItems.length === 0
+      ? `Không có term nào phù hợp ${runType.label}.`
+      : runType.target === "keyword" && enabledMatchTypes.length === 0
         ? "Chọn ít nhất 1 match type."
         : missingSkuCount > 0
           ? `Còn ${missingSkuCount} term chưa có SKU.`
@@ -271,74 +273,19 @@ export function PpcSearchTermLaunchPanel({
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, bidOverride: value === "" || !Number.isFinite(num) ? null : num } : it)));
   };
 
+  const applyCommonBid = (value: string) => {
+    setCommonBid(value);
+    const num = Number(value);
+    const bid = value === "" || !Number.isFinite(num) || num <= 0 ? null : num;
+    setItems((prev) => prev.map((it) => ({ ...it, bidOverride: bid })));
+  };
+
   const removeItem = (id: string) => {
     setItems((prev) => prev.filter((it) => it.id !== id));
   };
 
-  const buildPayload = () => {
-    const activeUser = userName.trim() || "Loan";
-    const activeDate = dateStr.trim() || formatYYYYMMDD();
-    const campaigns: SaleKwCampaignPayload[] = [];
-    for (const [sku, skuItems] of groups) {
-      const triad = generateSaleKwCampaignTriad({ sku, adTypeCode: settings.adTypeCode, userName: activeUser, dateStr: activeDate, suffix: settings.suffix });
-      const clicks = skuItems.reduce((s, it) => s + it.clicks, 0);
-      const spend = skuItems.reduce((s, it) => s + it.spend, 0);
-      const avgCpc = clicks > 0 ? round2(spend / clicks) : 0;
-      const first = skuItems[0];
-      for (const m of enabledMatchTypes) {
-        campaigns.push({
-          sourceCampaignName: first.sourceCampaignName,
-          sourceCampaignId: first.sourceCampaignId || "",
-          sourceAdGroupId: first.sourceAdGroupId || "",
-          sourceAdGroupName: first.sourceAdGroupName || first.sourceCampaignName,
-          targetCampaignName: triad[m.key],
-          adGroupName: triad[m.key],
-          sku,
-          dailyBudget: settings.dailyBudget || 5,
-          defaultBid: avgCpc > 0 ? avgCpc : settings.bidValue || 1,
-          biddingStrategy: "Dynamic bids - down only",
-          negateInSource: settings.negateInSource,
-          keywords: skuItems.map((it) => ({
-            customerSearchTerm: it.term,
-            keyword: it.term,
-            matchType: m.key,
-            bid: bidFor(it),
-            orders: it.orders,
-            sales: it.sales,
-            clicks: it.clicks,
-            spend: it.spend,
-          })),
-        });
-      }
-    }
-    return {
-      storeName,
-      storeId,
-      dailyBudget: settings.dailyBudget,
-      defaultBid: settings.bidValue,
-      negateInSource: settings.negateInSource,
-      userName: activeUser,
-      dateStr: activeDate,
-      adTypeCode: settings.adTypeCode,
-      campaigns,
-      items: activeItems.map((it) => ({
-        customerSearchTerm: it.term,
-        sku: it.sku,
-        campaignName: it.sourceCampaignName,
-        adGroupName: it.sourceAdGroupName || it.sourceCampaignName,
-        campaignId: it.sourceCampaignId,
-        adGroupId: it.sourceAdGroupId,
-        bid: bidFor(it),
-        clicks: it.clicks,
-        orders: it.orders,
-        sales: it.sales,
-        spend: it.spend,
-        cpc: it.cpc,
-        storeId,
-        storeName,
-      })),
-    };
-  };
+  const requestBody = (mode: "export" | "upload") =>
+    JSON.stringify({ mode, storeName, storeId, terms: launchTerms, options: launchOptions });
 
   const finish = () => {
     setOpen(false);
@@ -349,19 +296,18 @@ export function PpcSearchTermLaunchPanel({
     if (blocker) return;
     setBusy("export");
     try {
-      const res = await fetch("/api/ppc/sale-kw/export", {
+      const res = await fetch("/api/ppc/campaign-launch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildPayload()),
+        body: requestBody("export"),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || err.message || `Lỗi xuất file (HTTP ${res.status})`);
       }
       const blob = await res.blob();
-      const disposition = res.headers.get("Content-Disposition") || "";
-      const match = disposition.match(/filename\*=UTF-8''([^;\n]+)/i) || disposition.match(/filename="?([^";\n]+)"?/i);
-      const filename = match?.[1] ? decodeURIComponent(match[1]) : "Sale_KW_Campaigns.xlsx";
+      const match = (res.headers.get("Content-Disposition") || "").match(/filename="?([^";\n]+)"?/i);
+      const filename = match?.[1] || "Launch_Campaigns.xlsx";
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -407,13 +353,13 @@ export function PpcSearchTermLaunchPanel({
 
   const handleUpload = async () => {
     if (blocker) return;
-    if (!confirm(`Upload ${campaignCount} campaign (${activeItems.length} keyword) lên Amazon store ${storeName}?`)) return;
+    if (!confirm(`Upload ${plan.campaigns.length} campaign lên Amazon store ${storeName}?`)) return;
     setBusy("upload");
     try {
-      const res = await fetch("/api/ppc/sale-kw/auto-upload", {
+      const res = await fetch("/api/ppc/campaign-launch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildPayload()),
+        body: requestBody("upload"),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.success) throw new Error(json.error || json.message || `Lỗi upload (HTTP ${res.status})`);
@@ -428,47 +374,38 @@ export function PpcSearchTermLaunchPanel({
 
   const uploading = Boolean(uploadStatus && !["FAILED", "RESULT_TIMEOUT"].includes(uploadStatus.status));
   const uploadFailed = Boolean(uploadStatus && ["FAILED", "RESULT_TIMEOUT"].includes(uploadStatus.status));
-  const previewName = buildSaleKwCampaignName({
-    sku: groups.find(([sku]) => sku !== UNKNOWN_SKU)?.[0] || "SKU",
-    adTypeCode: settings.adTypeCode,
-    userName: userName.trim() || "Loan",
-    matchType: (enabledMatchTypes[0]?.label ?? "Exact") as "Exact" | "Phrase" | "Broad",
-    dateStr: dateStr.trim() || formatYYYYMMDD(),
-    suffix: settings.suffix,
-  });
   const inputCls = "rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-800 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100";
   const labelCls = "mb-1 block text-xs font-medium text-slate-500";
-  const sectionTitleCls = "mb-2.5 text-xs font-bold uppercase tracking-wide text-slate-400";
+  const sectionTitleCls = "text-xs font-bold uppercase tracking-wide text-slate-400";
   const datalistId = "ppc-st-launch-skus";
 
   return (
     <>
-      {selectedRows.length > 0 && !open && (
-        <div className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-2xl border border-slate-200 bg-white py-2.5 pl-5 pr-2.5 shadow-xl">
-          <span className="text-sm text-slate-600">
-            Đã chọn <span className="font-bold text-slate-900">{selectedRows.length}</span> term
-          </span>
+      <div className="flex items-center gap-1.5">
+        {selectedRows.length > 0 && (
           <button
             type="button"
             onClick={onClear}
-            className="rounded-lg px-3 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-100 cursor-pointer"
+            className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-500 hover:bg-slate-100 cursor-pointer"
           >
             Bỏ chọn
           </button>
-          <button
-            type="button"
-            onClick={openPanel}
-            className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-bold text-white hover:bg-indigo-700 cursor-pointer"
-          >
-            Lên camp
-          </button>
-        </div>
-      )}
+        )}
+        <button
+          type="button"
+          onClick={openPanel}
+          disabled={selectedRows.length === 0}
+          title={selectedRows.length === 0 ? "Tick chọn term / target để lên camp" : undefined}
+          className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-indigo-700 cursor-pointer disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
+        >
+          Lên camp{selectedRows.length > 0 ? ` (${selectedRows.length})` : ""}
+        </button>
+      </div>
 
       {open && (
         <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/25" onClick={() => !busy && !uploading && setOpen(false)}>
           <div
-            className="flex h-full w-full max-w-[680px] flex-col bg-white shadow-2xl"
+            className="flex h-full w-full max-w-[780px] flex-col bg-white shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
@@ -487,54 +424,20 @@ export function PpcSearchTermLaunchPanel({
             </div>
 
             <div className="flex-1 overflow-y-auto">
-              {/* 1. Tên campaign */}
+              {/* Dạng chạy + match type */}
               <section className="border-b border-slate-100 px-6 py-4">
-                <div className={sectionTitleCls}>Tên campaign</div>
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  <label>
-                    <span className={labelCls}>Người làm</span>
-                    <input value={userName} onChange={(e) => updateUserName(e.target.value)} className={`${inputCls} w-full`} />
-                  </label>
-                  <label>
-                    <span className={labelCls}>Ngày</span>
-                    <input value={dateStr} onChange={(e) => setDateStr(e.target.value)} className={`${inputCls} w-full font-mono`} />
-                  </label>
-                  <label>
-                    <span className={labelCls}>Loại</span>
-                    <select
-                      value={settings.adTypeCode}
-                      onChange={(e) => updateSettings({ adTypeCode: e.target.value })}
-                      className={`${inputCls} w-full cursor-pointer`}
-                    >
-                      <option value="SP03">SP03 KW</option>
-                      <option value="SP04">SP04 Auto</option>
-                      <option value="SB05">SB05 Video</option>
-                      <option value="SB01">SB01</option>
-                    </select>
-                  </label>
-                  <label>
-                    <span className={labelCls}>Đuôi tên</span>
-                    <input
-                      value={settings.suffix}
-                      onChange={(e) => updateSettings({ suffix: e.target.value })}
-                      placeholder="Không bắt buộc"
-                      className={`${inputCls} w-full`}
-                    />
-                  </label>
-                </div>
-                <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 font-mono text-xs text-slate-600 break-all">
-                  {previewName}
-                </div>
-              </section>
-
-              {/* 2. Cài đặt camp */}
-              <section className="border-b border-slate-100 px-6 py-4">
-                <div className={sectionTitleCls}>Cài đặt</div>
-                <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
-                  <div>
-                    <span className={labelCls}>Match type</span>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-3">
+                  <select
+                    value={settings.runType}
+                    onChange={(e) => updateSettings({ runType: e.target.value as LaunchRunType })}
+                    className={`${inputCls} min-w-[200px] cursor-pointer font-semibold`}
+                  >
+                    {LAUNCH_RUN_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                    <option disabled>SB01 / SB05 Video (chưa hỗ trợ)</option>
+                  </select>
+                  {runType.target === "keyword" && (
                     <div className="flex gap-1.5">
-                      {MATCH_TYPES.map((m) => (
+                      {LAUNCH_MATCH_TYPES.map((m) => (
                         <button
                           key={m.key}
                           type="button"
@@ -549,18 +452,36 @@ export function PpcSearchTermLaunchPanel({
                         </button>
                       ))}
                     </div>
-                  </div>
+                  )}
+                </div>
+              </section>
+
+              {/* Ngân sách, bid, tên campaign */}
+              <section className="border-b border-slate-100 px-6 py-4">
+                <div className="flex flex-wrap items-end gap-x-3 gap-y-3">
                   <label>
-                    <span className={labelCls}>Budget / ngày ($)</span>
+                    <span className={labelCls}>Budget ($)</span>
                     <input
                       type="number"
                       min="1"
                       step="1"
                       value={settings.dailyBudget}
                       onChange={(e) => updateSettings({ dailyBudget: Number(e.target.value) })}
-                      className={`${inputCls} w-24`}
+                      className={`${inputCls} w-16`}
                     />
                   </label>
+                  {runType.adProduct === "SP" && (
+                    <label>
+                      <span className={labelCls}>Bidding strategy</span>
+                      <select
+                        value={settings.biddingStrategy}
+                        onChange={(e) => updateSettings({ biddingStrategy: e.target.value as LaunchBiddingStrategy })}
+                        className={`${inputCls} cursor-pointer`}
+                      >
+                        {LAUNCH_BIDDING_STRATEGIES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                      </select>
+                    </label>
+                  )}
                   <div>
                     <span className={labelCls}>Bid</span>
                     <div className="flex gap-1.5">
@@ -571,38 +492,54 @@ export function PpcSearchTermLaunchPanel({
                       >
                         <option value="cpc">Bằng CPC</option>
                         <option value="cpc_pct">CPC ± %</option>
-                        <option value="fixed">Cố định $</option>
                       </select>
-                      {settings.bidRule !== "cpc" && (
+                      {settings.bidRule === "cpc_pct" && (
                         <input
                           type="number"
-                          step={settings.bidRule === "fixed" ? "0.05" : "5"}
+                          step="5"
                           value={settings.bidValue}
                           onChange={(e) => updateSettings({ bidValue: Number(e.target.value) })}
-                          className={`${inputCls} w-20`}
+                          className={`${inputCls} w-16`}
                         />
                       )}
                     </div>
                   </div>
-                  <label className="flex h-[38px] items-center gap-2 text-sm text-slate-700 cursor-pointer">
+                  {/* Bid chung: điền là áp cho mọi term, xóa trống thì quay về bid theo CPC */}
+                  <label>
+                    <span className={labelCls}>Bid chung ($)</span>
                     <input
-                      type="checkbox"
-                      checked={settings.negateInSource}
-                      onChange={(e) => updateSettings({ negateInSource: e.target.checked })}
-                      className="h-4 w-4 rounded border-slate-300 accent-indigo-600"
+                      type="number"
+                      step="0.05"
+                      min="0.1"
+                      value={commonBid}
+                      placeholder="Để trống"
+                      onChange={(e) => applyCommonBid(e.target.value)}
+                      className={`${inputCls} w-24`}
                     />
-                    Negative exact ở camp gốc
+                  </label>
+                  <label>
+                    <span className={labelCls}>Người làm</span>
+                    <input value={userName} onChange={(e) => updateUserName(e.target.value)} className={`${inputCls} w-20`} />
+                  </label>
+                  <label>
+                    <span className={labelCls}>Ngày</span>
+                    <input value={dateStr} onChange={(e) => setDateStr(e.target.value)} className={`${inputCls} w-[104px] font-mono`} />
+                  </label>
+                  <label className="min-w-[110px] flex-1">
+                    <span className={labelCls}>Đuôi tên</span>
+                    <input
+                      value={settings.suffix}
+                      onChange={(e) => updateSettings({ suffix: e.target.value })}
+                      placeholder="Không bắt buộc"
+                      className={`${inputCls} w-full`}
+                    />
                   </label>
                 </div>
               </section>
 
-              {/* 3. Keyword theo SKU */}
+              {/* 4. Search term theo SKU */}
               <section className="px-6 py-4">
-                <div className="mb-2.5 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                  <span className={sectionTitleCls.replace("mb-2.5 ", "")}>Keyword · {activeItems.length}</span>
-                  {checkingRegistry && <span className="text-xs text-slate-400">Đang kiểm tra term đã lên camp…</span>}
-                  {asinCount > 0 && <span className="text-xs text-slate-400">Đã bỏ {asinCount} ASIN</span>}
-                </div>
+                <div className={`${sectionTitleCls} mb-2.5`}>Search term · {usableItems.length}</div>
 
                 <datalist id={datalistId}>
                   {knownSkus.map((sku) => <option key={sku} value={sku} />)}
@@ -611,22 +548,34 @@ export function PpcSearchTermLaunchPanel({
                 <div className="space-y-3">
                   {groups.map(([sku, skuItems]) => {
                     const unknown = sku === UNKNOWN_SKU || !sku.trim();
+                    const campNames = campaignsBySku.get(sku) || [];
                     return (
                       <div key={sku || "empty"} className={`overflow-hidden rounded-xl border ${unknown ? "border-amber-300" : "border-slate-200"}`}>
-                        <div className={`flex items-center gap-2 border-b px-3.5 py-2 ${unknown ? "border-amber-200 bg-amber-50" : "border-slate-100 bg-slate-50"}`}>
-                          {unknown ? (
-                            <span className="text-sm font-semibold text-amber-800">Chưa có SKU, nhập cho từng term</span>
-                          ) : (
-                            <input
-                              key={sku}
-                              defaultValue={sku}
-                              list={datalistId}
-                              onBlur={(e) => e.target.value.trim() && e.target.value.trim().toUpperCase() !== sku && renameSku(sku, e.target.value)}
-                              onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-                              className="-mx-1 min-w-0 flex-1 rounded px-1 py-0.5 bg-transparent font-mono text-sm font-bold text-slate-900 outline-none focus:bg-white focus:ring-2 focus:ring-indigo-200"
-                            />
+                        <div className={`border-b px-3.5 py-2 ${unknown ? "border-amber-200 bg-amber-50" : "border-slate-100 bg-slate-50"}`}>
+                          <div className="flex items-center gap-2">
+                            {unknown ? (
+                              <span className="text-sm font-semibold text-amber-800">Chưa có SKU, nhập cho từng term</span>
+                            ) : (
+                              <input
+                                key={sku}
+                                defaultValue={sku}
+                                list={datalistId}
+                                onBlur={(e) => e.target.value.trim() && e.target.value.trim().toUpperCase() !== sku && renameSku(sku, e.target.value)}
+                                onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+                                className="-mx-1 min-w-0 flex-1 rounded px-1 py-0.5 bg-transparent font-mono text-sm font-bold text-slate-900 outline-none focus:bg-white focus:ring-2 focus:ring-indigo-200"
+                              />
+                            )}
+                            {campNames.length > 0 ? (
+                              <span className="ml-auto shrink-0 text-xs text-slate-400">{skuItems.length} term · {campNames.length} camp</span>
+                            ) : (
+                              <span className="ml-auto shrink-0 text-xs font-medium text-amber-700">Không lên camp {runType.nameLabel}</span>
+                            )}
+                          </div>
+                          {campNames.length > 0 && (
+                            <div className="mt-1 space-y-0.5 font-mono text-[11px] leading-snug text-slate-500">
+                              {campNames.map((name) => <div key={name} className="break-all">{name}</div>)}
+                            </div>
                           )}
-                          <span className="ml-auto shrink-0 text-xs text-slate-400">{skuItems.length} term · {enabledMatchTypes.length} camp</span>
                         </div>
                         <table className="w-full table-fixed text-sm">
                           <colgroup>
@@ -638,24 +587,27 @@ export function PpcSearchTermLaunchPanel({
                           </colgroup>
                           <thead>
                             <tr>
-                              <td className="py-1.5 pl-3.5 pr-2 text-left text-xs font-normal normal-case tracking-normal text-slate-400">Search term</td>
-                              <td className="px-2 py-1.5 text-right text-xs font-normal normal-case tracking-normal text-slate-400">Đơn</td>
-                              <td className="px-2 py-1.5 text-right text-xs font-normal normal-case tracking-normal text-slate-400">CPC</td>
-                              <td className="px-1 py-1.5 text-right text-xs font-normal normal-case tracking-normal text-slate-400">Bid</td>
+                              <td className="py-1.5 pl-3.5 pr-2 text-left text-xs text-slate-400">Search term</td>
+                              <td className="px-2 py-1.5 text-right text-xs font-semibold text-slate-600">Đơn</td>
+                              <td className="px-2 py-1.5 text-right text-xs font-semibold text-slate-600">CPC</td>
+                              <td className="px-1 py-1.5 text-right text-xs font-semibold text-slate-600">Bid</td>
                               <td />
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
                             {skuItems.map((it) => (
-                              <tr key={it.id}>
+                              <tr key={it.id} className={usable(it) ? "" : "opacity-40"}>
                                 <td className="py-2 pl-3.5 pr-2 text-slate-800">
                                   <div className="break-words">
                                     {it.term}
-                                    {it.launched && (
-                                      <span className="ml-2 whitespace-nowrap rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">đã lên camp</span>
+                                    {it.isAsin && (
+                                      <span className="ml-2 whitespace-nowrap rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">ASIN</span>
+                                    )}
+                                    {!usable(it) && (
+                                      <span className="ml-2 whitespace-nowrap rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">bỏ qua</span>
                                     )}
                                   </div>
-                                  {unknown && (
+                                  {unknown && usable(it) && (
                                     <input
                                       placeholder="Nhập SKU"
                                       list={datalistId}
@@ -703,9 +655,9 @@ export function PpcSearchTermLaunchPanel({
             <div className="space-y-3 border-t border-slate-200 px-6 py-4">
               <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
                 <span className="text-slate-600">
-                  <span className="font-bold text-slate-900">{activeItems.length}</span> keyword ·{" "}
-                  <span className="font-bold text-slate-900">{skuCount}</span> SKU ·{" "}
-                  <span className="font-bold text-slate-900">{campaignCount}</span> campaign
+                  <span className="font-bold text-slate-900">{usableItems.length}</span> term ·{" "}
+                  <span className="font-bold text-slate-900">{campaignsBySku.size}</span> SKU ·{" "}
+                  <span className="font-bold text-slate-900">{plan.campaigns.length}</span> campaign
                 </span>
                 {blocker && <span className="font-semibold text-amber-700">{blocker}</span>}
               </div>
@@ -720,7 +672,7 @@ export function PpcSearchTermLaunchPanel({
                 <button
                   type="button"
                   onClick={handleExport}
-                  disabled={Boolean(blocker) || Boolean(busy) || uploading || checkingRegistry}
+                  disabled={Boolean(blocker) || Boolean(busy) || uploading}
                   className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-indigo-600 py-3 text-sm font-bold text-white hover:bg-indigo-700 cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {busy === "export" && <CircleNotch size={15} className="animate-spin" />}
@@ -729,7 +681,7 @@ export function PpcSearchTermLaunchPanel({
                 <button
                   type="button"
                   onClick={handleUpload}
-                  disabled={Boolean(blocker) || Boolean(busy) || uploading || checkingRegistry}
+                  disabled={Boolean(blocker) || Boolean(busy) || uploading}
                   className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-slate-300 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {(busy === "upload" || uploading) && <CircleNotch size={15} className="animate-spin" />}

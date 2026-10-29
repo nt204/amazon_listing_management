@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 // Bảng tổng phía trên tab Target / Search Term khi tìm theo SKU: mỗi keyword 1 dòng tổng (gộp mọi campaign / match type).
 // Cùng 12 cột với bảng tổng: Ảnh | SKU | Keyword | Hiển thị | Clicks | CTR | Spend | Sales | Orders | CVR | CPC | ACOS.
@@ -14,17 +14,77 @@ export type KeywordGroupRow = {
   sales: number;
   orders: number;
   acos: number;
+  campaignName?: string;
+  reportDate?: string;
 };
 
-export function PpcKeywordGroupRows({ groups, total }: { groups: KeywordGroupRow[]; total: number }) {
+export function keywordGroupKey(group: KeywordGroupRow): string {
+  return (group.targetKeyword ?? group.customerSearchTerm ?? "").trim().toLowerCase();
+}
+
+export interface KeywordGroupSelection {
+  isSelected: (group: KeywordGroupRow) => boolean;
+  toggle: (group: KeywordGroupRow, index: number, shiftKey: boolean) => void;
+  allSelected: boolean;
+  toggleAll: () => void;
+}
+
+// Chọn dòng keyword ở bảng tổng để lên camp: giữ cả dòng, Shift + click chọn cả đoạn
+export function useKeywordGroupSelection() {
+  const [selected, setSelected] = useState<Map<string, KeywordGroupRow>>(new Map());
+  const lastIndexRef = useRef<number | null>(null);
+
+  const clear = useCallback(() => {
+    setSelected(new Map());
+    lastIndexRef.current = null;
+  }, []);
+
+  const selectionFor = (groups: KeywordGroupRow[]): KeywordGroupSelection => ({
+    isSelected: (group) => selected.has(keywordGroupKey(group)),
+    toggle: (group, index, shiftKey) => {
+      const shouldSelect = !selected.has(keywordGroupKey(group));
+      const last = lastIndexRef.current;
+      const range = shiftKey && last !== null && last < groups.length
+        ? groups.slice(Math.min(last, index), Math.max(last, index) + 1)
+        : [group];
+      const next = new Map(selected);
+      for (const row of range) {
+        if (shouldSelect) next.set(keywordGroupKey(row), row);
+        else next.delete(keywordGroupKey(row));
+      }
+      lastIndexRef.current = index;
+      setSelected(next);
+    },
+    allSelected: groups.length > 0 && groups.every((g) => selected.has(keywordGroupKey(g))),
+    toggleAll: () => {
+      const next = new Map(selected);
+      if (groups.length > 0 && groups.every((g) => next.has(keywordGroupKey(g)))) groups.forEach((g) => next.delete(keywordGroupKey(g)));
+      else groups.forEach((g) => next.set(keywordGroupKey(g), g));
+      setSelected(next);
+    },
+  });
+
+  return { selected, clear, selectionFor };
+}
+
+export function PpcKeywordGroupRows({ groups, total, selection }: { groups: KeywordGroupRow[]; total: number; selection?: KeywordGroupSelection }) {
   return (
     <>
-      {groups.map((group) => {
+      {groups.map((group, index) => {
         const keyword = group.targetKeyword ?? group.customerSearchTerm ?? "";
         const noSales = group.orders === 0 || group.sales === 0;
         return (
-          <tr key={keyword} className="hover:bg-slate-50/70">
-            <td className="px-3 py-2" />
+          <tr key={keyword} className={selection?.isSelected(group) ? "bg-indigo-50/60" : "hover:bg-slate-50/70"}>
+            <td className="px-3 py-2 text-center">
+              {selection && (
+                <input
+                  type="checkbox"
+                  checked={selection.isSelected(group)}
+                  onChange={(e) => selection.toggle(group, index, (e.nativeEvent as MouseEvent).shiftKey)}
+                  className="rounded border-slate-300 accent-indigo-600 cursor-pointer"
+                />
+              )}
+            </td>
             <td className="px-3 py-2" />
             <td className="px-3 py-2 text-sm font-semibold text-slate-800 break-words">{keyword}</td>
             <td className="px-3 py-2 text-right font-mono text-sm text-slate-700">{Number(group.impressions || 0).toLocaleString("vi-VN")}</td>
@@ -160,11 +220,21 @@ const SUMMARY_COLUMNS: { field: SummarySortField; label: string; className: stri
   { field: "acos", label: "ACOS", className: "px-3 py-3 text-right" },
 ];
 
-export function PpcSummaryTableHead({ keywordLabel, sort }: { keywordLabel: string; sort: ReturnType<typeof usePpcSummarySort> }) {
+export function PpcSummaryTableHead({ keywordLabel, sort, selection }: { keywordLabel: string; sort: ReturnType<typeof usePpcSummarySort>; selection?: KeywordGroupSelection }) {
   return (
     <thead className="sticky top-0 z-10 shadow-[0_1px_0_0_rgb(226,232,240)] border-b border-slate-200 bg-slate-50 text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
       <tr>
-        <th className="w-16 px-3 py-3 text-center">Ảnh</th>
+        <th className="w-16 px-3 py-3 text-center">
+          {selection ? (
+            <input
+              type="checkbox"
+              checked={selection.allSelected}
+              onChange={selection.toggleAll}
+              title="Chọn tất cả keyword"
+              className="rounded border-slate-300 accent-indigo-600 cursor-pointer"
+            />
+          ) : "Ảnh"}
+        </th>
         {SUMMARY_COLUMNS.map((col) => {
           const active = sort.field === col.field;
           return (
