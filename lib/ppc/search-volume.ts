@@ -176,6 +176,7 @@ export type SearchVolumeSyncRun = {
 
 export type SearchVolumeStatus = {
   latestRun: SearchVolumeSyncRun | null;
+  recentRuns: SearchVolumeSyncRun[];
   coverage: { keywords: number; withVolume: number; missing: number };
   budget: { cerebroUsed: number; cerebroLimit: number; magnetUsed: number; magnetLimit: number };
 };
@@ -559,16 +560,20 @@ export async function getSearchVolumeStatus(teamId: string, storeName: string): 
   const stores = await resolveStores(sql, teamId, storeName);
   const marketplace = (stores[0].marketplace || "US").toUpperCase();
 
-  const [latestRun] = await sql<SearchVolumeSyncRun[]>`
+  // 1. Luôn tìm xem có run nào đang running không (bất kể theo store hay ALL)
+  const runs = await sql<SearchVolumeSyncRun[]>`
     SELECT r.id, r.team_id, r.store_id, s.name AS store_name, r.status, r.cerebro_calls, r.magnet_calls,
       r.asins_queried, r.keywords_upserted, r.missing_before, r.missing_after, r.message,
       r.started_at::text, r.finished_at::text
     FROM ppc_search_volume_sync_runs r
     LEFT JOIN ppc_stores s ON s.id = r.store_id
     WHERE r.team_id = ${teamId}
-    ORDER BY r.started_at DESC
-    LIMIT 1
+    ORDER BY (r.status = 'running') DESC, r.started_at DESC
+    LIMIT 6
   `;
+
+  const latestRun = runs.length > 0 ? runs[0] : null;
+  const recentRuns = runs;
 
   let coverage = { keywords: 0, withVolume: 0, missing: 0 };
 
@@ -611,6 +616,7 @@ export async function getSearchVolumeStatus(teamId: string, storeName: string): 
   const usage = await monthlyUsage(sql);
   return {
     latestRun: latestRun || null,
+    recentRuns,
     coverage,
     budget: {
       cerebroUsed: usage.cerebro,
