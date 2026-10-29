@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useMemo, useEffect, useRef } from "react";
+import type { RequestActor } from "@/lib/auth";
+import { usePpcColumnVisibility } from "./use-ppc-column-visibility";
 import {
   Tag,
   Funnel,
@@ -71,6 +73,7 @@ interface PpcSkuRecommendationGroupProps {
   onIncludePausedCampaignsChange?: (include: boolean) => void;
   targetSkuToOpen?: string | null;
   onClearTargetSkuToOpen?: () => void;
+  actor?: RequestActor;
 }
 
 export type QuickFilterType =
@@ -198,8 +201,11 @@ export function PpcSkuRecommendationGroupView({
   onIncludePausedCampaignsChange,
   targetSkuToOpen,
   onClearTargetSkuToOpen,
+  actor,
 }: PpcSkuRecommendationGroupProps) {
   const [searchTerm, setSearchTerm] = useState("");
+  const [recTable, setRecTable] = useState<HTMLTableElement | null>(null);
+  const recColumnPicker = usePpcColumnVisibility(recTable, "sku_recommendations", actor);
   const [selectedPhôi, setSelectedPhôi] = useState("ALL");
   const [selectedNiche, setSelectedNiche] = useState("ALL");
   const [quickFilter, setQuickFilter] = useState<QuickFilterType>("ALL");
@@ -1216,6 +1222,8 @@ export function PpcSkuRecommendationGroupView({
               </span>
             </div>
 
+            {recColumnPicker}
+
             {/* Nút Kết Quả Auto Bid */}
             <button
               type="button"
@@ -1504,7 +1512,7 @@ export function PpcSkuRecommendationGroupView({
 
       {/* Level 1 Table: Grouped by SKU */}
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-2xs">
-        <table className="w-full text-left text-xs">
+        <table ref={setRecTable} className="w-full text-left text-xs">
           <thead className="bg-slate-50/90 text-slate-600 border-b border-slate-200 font-bold">
             <tr>
               <th className="w-10 py-3 pl-3 pr-1 text-center">

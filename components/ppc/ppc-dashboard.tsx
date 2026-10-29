@@ -30,7 +30,9 @@ import {
   Check,
   Info,
   Scales,
+  List as ListIcon,
 } from "@phosphor-icons/react";
+import { AccountMenu } from "@/components/account-menu";
 import { PpcStCampaignRollupView } from "./ppc-st-campaign-rollup-view";
 import { PpcBidOutcomesView } from "./ppc-bid-outcomes-view";
 import { PpcStOptimizationView } from "./ppc-st-optimization-view";
@@ -62,7 +64,7 @@ import type {
 } from "@/lib/ppc/sku-architecture-types";
 import { PpcMultiStoreView } from "./ppc-multi-store-view";
 import { PpcCopyButton } from "./ppc-copy-button";
-import { PpcSearchVolumeCell } from "./ppc-search-volume";
+import { PpcSearchVolumeCell, PpcOrganicRankCell, PpcSponsoredRankCell } from "./ppc-search-volume";
 import { PpcKeywordGroupRows, PpcSummaryTableHead, usePpcSummarySort, useKeywordGroupSelection, type KeywordGroupRow } from "./ppc-keyword-group-rows";
 import { PpcSkuTrendModal } from "./ppc-sku-trend-modal";
 import { PpcSearchTermLaunchPanel } from "./ppc-search-term-launch-panel";
@@ -100,6 +102,8 @@ interface PpcDashboardProps {
   standaloneTab?: "st_campaigns" | "st_optimization" | "sale_kw" | "recommendations" | "outcomes";
   activeTabProp?: "overview" | "campaigns" | "ad_groups" | "targets" | "skus" | "match_types" | "search_terms" | "st_campaigns" | "st_optimization" | "sale_kw" | "alerts" | "recommendations" | "outcomes" | "settings";
   onTabChange?: (tab: string) => void;
+  onOpenMobileNav?: () => void;
+  headerTitle?: string;
 }
 
 interface PpcDetailCounts {
@@ -325,7 +329,19 @@ function SkuTrendSparkline({
   );
 }
 
-export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, initialStore, actor, navNonce, standaloneTab, activeTabProp, onTabChange }: PpcDashboardProps) {
+export function PpcDashboard({
+  isEmbedded = false,
+  initialTab,
+  initialSubTab,
+  initialStore,
+  actor,
+  navNonce,
+  standaloneTab,
+  activeTabProp,
+  onTabChange,
+  onOpenMobileNav,
+  headerTitle,
+}: PpcDashboardProps) {
   const mounted = useSyncExternalStore(subscribeToHydration, getClientSnapshot, getServerSnapshot);
 
   const [stores, setStores] = useState<PpcStore[]>([]);
@@ -411,6 +427,25 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     setActiveTabState(tab);
     onTabChange?.(tab);
   }, [onTabChange]);
+
+  const tabTitle = useMemo(() => {
+    if (headerTitle) return headerTitle;
+    const map: Record<string, string> = {
+      overview: "Amazon PPC Dashboard & Analytics",
+      campaigns: "Amazon PPC - Quản Lý Campaign",
+      targets: "Amazon PPC - Quản Lý Target & Keyword",
+      search_terms: "Amazon PPC - Báo Cáo Search Terms",
+      skus: "Amazon PPC - Hiệu Suất Theo SKU",
+      st_campaigns: "Amazon PPC - Đối Soát Search Term",
+      st_optimization: "Amazon PPC - Negative Keyword (ST Optimization)",
+      sale_kw: "Amazon PPC - Lên Campaign Sale KW",
+      recommendations: "Amazon PPC - Đề Xuất & Auto Bid",
+      outcomes: "Amazon PPC - Đánh Giá Bid",
+      alerts: "Amazon PPC - Cảnh Báo",
+      settings: "Amazon PPC - Cài Đặt",
+    };
+    return map[activeTab] || "Amazon PPC - Quản Lý Target & Keyword";
+  }, [headerTitle, activeTab]);
 
   useEffect(() => {
     if (activeTabProp) {
@@ -2662,12 +2697,15 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
     let filename = "";
 
     if (type === "search_terms") {
-      header = "Customer Search Term,Match Type,SKU / Portfolio,Campaign,Clicks,Spend ($),Sales ($),Orders,CTR (%),CVR (%),ACOS (%)\n";
+      header = "Customer Search Term,Match Type,SKU / Portfolio,Campaign,SV,Org Rank,Spon Rank,Clicks,Spend ($),Sales ($),Orders,CTR (%),CVR (%),ACOS (%)\n";
       rows = filteredSortedSearchTerms.map((t) => {
         const termSafe = `"${t.customerSearchTerm.replace(/"/g, '""')}"`;
         const portSafe = `"${(t.portfolioName || "").replace(/"/g, '""')}"`;
         const campSafe = `"${t.campaignName.replace(/"/g, '""')}"`;
-        return `${termSafe},"${t.matchType}",${portSafe},${campSafe},${t.clicks},${t.spend.toFixed(2)},${t.sales.toFixed(2)},${t.orders},${(t.ctr * 100).toFixed(2)},${(t.cvr * 100).toFixed(1)},${t.acos.toFixed(1)}`;
+        const sv = t.searchVolume ?? "";
+        const org = (t as any).organicRank ? `#${(t as any).organicRank}` : "";
+        const spon = (t as any).sponsoredRank ? `#${(t as any).sponsoredRank}` : "";
+        return `${termSafe},"${t.matchType}",${portSafe},${campSafe},${sv},"${org}","${spon}",${t.clicks},${t.spend.toFixed(2)},${t.sales.toFixed(2)},${t.orders},${(t.ctr * 100).toFixed(2)},${(t.cvr * 100).toFixed(1)},${t.acos.toFixed(1)}`;
       });
       const cleanStore = (selectedStore && selectedStore !== "ALL" ? selectedStore : "ALL").replace(/[/\\?%*:|"<>]/g, "_").trim().replace(/\s+/g, "_");
       filename = `ppc-search-terms-${cleanStore}-${Date.now()}.csv`;
@@ -2723,7 +2761,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
   };
 
   return (
-    <div className={`font-accounting-system w-full space-y-4 text-slate-800 ${!isEmbedded ? "max-w-7xl mx-auto p-6" : ""}`}>
+    <div className={`font-accounting-system w-full space-y-3.5 text-slate-800 ${!isEmbedded ? "max-w-7xl mx-auto p-6" : ""}`}>
       {/* Toast Notification */}
       {toast && (
         <div className={`fixed bottom-20 right-6 z-50 text-white px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2.5 text-xs font-bold border animate-in fade-in ${toast.type === "error"
@@ -2750,17 +2788,42 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
         </div>
       )}
 
-      {/* MASTER TOP CONTROL BAR */}
-      <div className="rounded-xl border border-slate-200/90 bg-white p-2.5 shadow-2xs space-y-2">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          {/* Cụm Trái: Chọn Store nổi bật màu xanh lá, to rõ ràng */}
-          <div className="flex items-center gap-2">
-            <div ref={storeDropdownContainerRef} className="relative">
+      {/* MASTER TOP CONTROL BAR - UNIFIED 1-ROW HEADER */}
+      <div className={`border border-slate-200/90 bg-white/95 backdrop-blur-md shadow-2xs ${
+        isEmbedded
+          ? "sticky -top-3 sm:-top-4 md:-top-6 z-40 -mt-3 sm:-mt-4 md:-mt-6 -mx-3 sm:-mx-4 md:-mx-6 mb-3 sm:mb-4 px-3 sm:px-5 py-2 border-x-0 border-t-0"
+          : "rounded-xl p-2.5 mb-4"
+      }`}>
+        <div className="flex items-center justify-between gap-2 sm:gap-3 flex-wrap lg:flex-nowrap">
+          {/* Cụm Trái: Title + Phân cách + Chọn Store */}
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            {onOpenMobileNav && (
+              <button
+                type="button"
+                onClick={onOpenMobileNav}
+                className="flex lg:hidden h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 transition cursor-pointer shrink-0"
+                title="Mở menu điều hướng"
+                aria-label="Mở menu điều hướng"
+              >
+                <ListIcon size={18} weight="bold" />
+              </button>
+            )}
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="hidden sm:flex h-2.5 w-2.5 rounded-full bg-indigo-600 ring-4 ring-indigo-100 shrink-0" />
+              <h2 className="text-xs font-black uppercase tracking-wider text-slate-800 truncate max-w-[140px] xs:max-w-[200px] md:max-w-none">
+                {tabTitle}
+              </h2>
+            </div>
+
+            <div className="hidden sm:block h-4 w-px bg-slate-200 shrink-0" />
+
+            {/* Store dropdown */}
+            <div ref={storeDropdownContainerRef} className="relative shrink-0">
               <button
                 ref={storeSelectRef}
                 type="button"
                 onClick={() => setIsStoreDropdownOpen((prev) => !prev)}
-                className={`flex items-center gap-2 rounded-xl px-3.5 py-1.5 transition-all duration-200 cursor-pointer select-none ${isStoreHighlight
+                className={`flex items-center gap-1.5 sm:gap-2 rounded-xl px-2.5 sm:px-3 py-1.5 transition-all duration-200 cursor-pointer select-none ${isStoreHighlight
                     ? "ring-2 ring-emerald-500 border-emerald-500 bg-emerald-50 text-emerald-950 shadow-md scale-105"
                     : isStoreDropdownOpen
                       ? "bg-emerald-100 border border-emerald-400 text-emerald-950 shadow-xs"
@@ -2768,16 +2831,16 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   }`}
               >
                 <Storefront
-                  size={19}
+                  size={17}
                   className={isStoreHighlight ? "text-emerald-600 animate-bounce shrink-0" : "text-emerald-600 shrink-0"}
                   weight="fill"
                 />
-                <span className="text-[11px] font-extrabold text-emerald-700 uppercase tracking-wider">Store:</span>
-                <span className="font-black text-emerald-900 text-sm sm:text-base tracking-tight truncate max-w-[130px] sm:max-w-[200px]">
+                <span className="text-[10px] sm:text-[11px] font-extrabold text-emerald-700 uppercase tracking-wider hidden xs:inline">Store:</span>
+                <span className="font-black text-emerald-900 text-xs sm:text-sm tracking-tight truncate max-w-[100px] sm:max-w-[180px]">
                   {selectedStore === "ALL" ? `All Stores (${stores.length})` : selectedStore}
                 </span>
                 <CaretDown
-                  size={13}
+                  size={12}
                   weight="bold"
                   className={`text-emerald-700 transition-transform duration-200 shrink-0 ${isStoreDropdownOpen ? "rotate-180" : ""}`}
                 />
@@ -2841,10 +2904,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
             </div>
           </div>
 
-          {/* Cụm Phải: Chọn Kỳ thời gian (Pills) + Sync time + Thao tác */}
-          <div className="flex flex-wrap items-center gap-2 justify-end">
-
-            {/* Chọn Kỳ Thời Gian: Segmented Pill y hệt ảnh */}
+          {/* Cụm Phải: Chọn Kỳ thời gian (Pills) + Sync time + Thao tác + Bell + AccountMenu */}
+          <div className="flex items-center gap-1.5 sm:gap-2 justify-end shrink-0 ml-auto lg:ml-0">
+            {/* Chọn Kỳ Thời Gian: Segmented Pill */}
             <div className="flex items-center bg-slate-100 rounded-lg p-0.5 text-xs font-semibold">
               {[7, 14, 30, 60].map((d) => (
                 <button
@@ -2854,7 +2916,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                     setIsCustomDate(false);
                     setSelectedDays(d);
                   }}
-                  className={`px-2.5 py-1 rounded-md transition cursor-pointer ${!isCustomDate && selectedDays === d
+                  className={`px-2 sm:px-2.5 py-1 rounded-md transition cursor-pointer text-xs ${!isCustomDate && selectedDays === d
                       ? "bg-white text-indigo-700 shadow-2xs font-bold"
                       : "text-slate-600 hover:text-slate-900"
                     }`}
@@ -2866,7 +2928,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
 
             {/* Sync Time */}
             {lastSyncedAt && (
-              <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-600" title="Thời gian đồng bộ dữ liệu gần nhất">
+              <div className="hidden xl:flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-600" title="Thời gian đồng bộ dữ liệu gần nhất">
                 <Clock size={12} className="text-slate-400 shrink-0" weight="bold" />
                 <span className="font-mono font-bold text-[11px] text-slate-700">
                   {formatSyncTime(lastSyncedAt)}
@@ -2967,6 +3029,28 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
             </div>
 
             <PpcNotificationPopover onRefreshParent={() => void refreshData()} />
+
+            {/* Phân cách + User Account Menu */}
+            {isEmbedded && (
+              <>
+                <div className="hidden sm:block h-4 w-px bg-slate-200 shrink-0 ml-0.5" />
+                <div className="shrink-0">
+                  {actor ? (
+                    <AccountMenu actor={actor} />
+                  ) : (
+                    <AccountMenu
+                      actor={{
+                        teamId: "default",
+                        userId: "guest",
+                        displayName: "User",
+                        role: "admin",
+                        ruleProfile: "",
+                      }}
+                    />
+                  )}
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -3575,45 +3659,48 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                 )}
             </div>
 
-            <button
-              type="button"
-              onClick={() => handleExportCsv("campaigns")}
-              className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 transition flex items-center gap-1.5 cursor-pointer shrink-0"
-            >
-              <Download size={14} /> Xuất CSV
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              {campaignFrozen.columnPicker}
+              <button
+                type="button"
+                onClick={() => handleExportCsv("campaigns")}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 transition flex items-center gap-1.5 cursor-pointer shrink-0"
+              >
+                <Download size={14} /> Xuất CSV
+              </button>
+            </div>
           </div>
 
           {/* Live Metrics Strip for Filtered Campaigns (Tone Xanh - Trắng) */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 p-2.5 rounded-xl bg-gradient-to-r from-blue-50/80 via-indigo-50/50 to-sky-50/60 border border-blue-100 shadow-2xs text-xs">
             <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
-              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Số Campaign</div>
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Campaigns</div>
               <div className="text-base font-black text-slate-900 mt-0.5">{filteredCampaignTotals.count.toLocaleString()}</div>
               <div className="text-[10px] text-slate-500 font-medium">
-                {campaignStatusFilter === "ACTIVE" ? "Active" : campaignStatusFilter === "PAUSED" ? "Paused" : "Tất cả"}
+                {campaignStatusFilter === "ACTIVE" ? "Active" : campaignStatusFilter === "PAUSED" ? "Paused" : "All"}
               </div>
             </div>
             <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
-              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Lượt Hiển Thị (Impr)</div>
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Impressions</div>
               <div className="text-base font-black text-slate-900 mt-0.5">{filteredCampaignTotals.impressions.toLocaleString()}</div>
               <div className="text-[10px] text-slate-500 font-medium">
                 CTR {filteredCampaignTotals.ctr.toFixed(2)}% · {filteredCampaignTotals.clicks.toLocaleString()} clicks
               </div>
             </div>
             <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
-              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Tổng Chi Tiêu</div>
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Spend</div>
               <div className="text-base font-black text-rose-600 mt-0.5">${filteredCampaignTotals.spend.toFixed(2)}</div>
               <div className="text-[10px] text-slate-500 font-medium">
                 CPC ${filteredCampaignTotals.clicks > 0 ? (filteredCampaignTotals.spend / filteredCampaignTotals.clicks).toFixed(2) : "0.00"}
               </div>
             </div>
             <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
-              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Doanh Số</div>
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Sales</div>
               <div className="text-base font-black text-emerald-600 mt-0.5">${filteredCampaignTotals.sales.toFixed(2)}</div>
-              <div className="text-[10px] text-slate-500 font-medium">{filteredCampaignTotals.orders} đơn hàng</div>
+              <div className="text-[10px] text-slate-500 font-medium">{filteredCampaignTotals.orders} orders</div>
             </div>
             <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
-              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Đơn Hàng</div>
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Orders</div>
               <div className="text-base font-black text-indigo-700 mt-0.5">{filteredCampaignTotals.orders}</div>
               <div className="text-[10px] text-slate-500 font-medium">
                 {filteredCampaignTotals.clicks > 0
@@ -3622,7 +3709,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
               </div>
             </div>
             <div className="p-2.5 rounded-lg bg-white border border-blue-100/80 shadow-2xs">
-              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">ACOS Trung Bình</div>
+              <div className="text-[10px] uppercase font-bold text-blue-700/80 tracking-wide">Avg ACOS</div>
               <div
                 className={`text-base font-black mt-0.5 ${filteredCampaignTotals.acos <= targetAcos
                   ? "text-emerald-600"
@@ -3633,7 +3720,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
               >
                 {filteredCampaignTotals.sales > 0 ? `${filteredCampaignTotals.acos.toFixed(1)}%` : "N/A"}
               </div>
-              <div className="text-[10px] text-slate-500 font-medium">Mục tiêu ≤ {targetAcos}%</div>
+              <div className="text-[10px] text-slate-500 font-medium">Target ≤ {targetAcos}%</div>
             </div>
           </div>
 
@@ -3992,7 +4079,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                 </button>
               )}
 
-              <div className="ml-auto">
+              <div className="ml-auto flex items-center gap-2">
+                {targetFrozen.columnPicker}
                 {selectedStore !== "ALL" && (
                   <PpcSearchTermLaunchPanel
                     selectedRows={[...groupLaunchRows(targetGroupSelection.selected), ...selectedTargetLaunchRows]}
@@ -4133,10 +4221,22 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                     Impression {targetSortField === "impressions" && (targetSortDir === "asc" ? "↑" : "↓")}
                   </th>
                   <th
-                    className="px-3 py-3 text-right whitespace-nowrap"
-                    title="Search Volume tháng từ Helium 10. Dòng IS ~% = impression share ước tính (chỉ target Exact)"
+                    className="px-2.5 py-3 text-right whitespace-nowrap"
+                    title="Search Volume tháng từ Helium 10"
                   >
-                    Search Vol
+                    SV
+                  </th>
+                  <th
+                    className="px-2 py-3 text-center whitespace-nowrap"
+                    title="Thứ hạng tự nhiên (Organic Rank) của sản phẩm"
+                  >
+                    Org Rank
+                  </th>
+                  <th
+                    className="px-2 py-3 text-center whitespace-nowrap"
+                    title="Thứ hạng quảng cáo (Sponsored Rank) của sản phẩm"
+                  >
+                    Spon Rank
                   </th>
                   <th
                     className="px-3 py-3 text-right cursor-pointer hover:text-indigo-600"
@@ -4255,6 +4355,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                         {serverTargetSummary.impressions.toLocaleString()}
                       </td>
                       <td className="px-3 py-2.5 text-right font-mono font-bold text-slate-400 whitespace-nowrap">—</td>
+                      <td className="px-2 py-2.5 text-center font-mono font-bold text-slate-400 whitespace-nowrap">—</td>
+                      <td className="px-2 py-2.5 text-center font-mono font-bold text-slate-400 whitespace-nowrap">—</td>
                       <td className="px-3 py-2.5 text-right font-mono font-black text-slate-900 whitespace-nowrap">
                         {serverTargetSummary.clicks.toLocaleString()}
                       </td>
@@ -4330,9 +4432,18 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                             <td className="px-3 py-2.5 text-right font-mono text-slate-800 whitespace-nowrap">{target.currentBid ? `$${target.currentBid.toFixed(2)}` : "—"}</td>
                             <td className="px-3 py-2.5 text-right font-mono text-slate-700 whitespace-nowrap">{(target.impressions || 0).toLocaleString()}</td>
                             <PpcSearchVolumeCell
+                              className="px-2.5 py-2.5"
                               searchVolume={target.searchVolume}
                               searchVolumeTrend={target.searchVolumeTrend}
                               estImpressionShare={target.estImpressionShare}
+                            />
+                            <PpcOrganicRankCell
+                              className="px-2 py-2.5"
+                              organicRank={(target as any).organicRank}
+                            />
+                            <PpcSponsoredRankCell
+                              className="px-2 py-2.5"
+                              sponsoredRank={(target as any).sponsoredRank}
                             />
                             <td className="px-3 py-2.5 text-right font-mono text-slate-600 whitespace-nowrap">{(target.clicks || 0).toLocaleString()}</td>
                             <td className="px-3 py-2.5 text-right font-mono text-slate-700 whitespace-nowrap">{target.ctr ? `${target.ctr.toFixed(2)}%` : "0.00%"}</td>
@@ -4417,7 +4528,9 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                                       <thead className="bg-slate-50 text-[10px] uppercase font-bold text-slate-500 border-b border-slate-200">
                                         <tr>
                                           <th className="py-2 px-3.5">Search Term</th>
-                                          <th className="py-2 px-2.5 text-right">Search Vol</th>
+                                          <th className="py-2 px-2 text-right">SV</th>
+                                          <th className="py-2 px-2 text-center">Org Rank</th>
+                                          <th className="py-2 px-2 text-center">Spon Rank</th>
                                           <th className="py-2 px-2.5 text-right">Impression</th>
                                           <th className="py-2 px-2.5 text-right">Clicks</th>
                                           <th className="py-2 px-2.5 text-right">Spend ($)</th>
@@ -4446,10 +4559,16 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                                               </div>
                                             </td>
                                             <PpcSearchVolumeCell
-                                              className="py-2 px-2.5"
+                                              className="py-2 px-2"
                                               searchVolume={term.searchVolume}
                                               searchVolumeTrend={term.searchVolumeTrend}
+                                            />
+                                            <PpcOrganicRankCell
+                                              className="py-2 px-2"
                                               organicRank={(term as any).organicRank}
+                                            />
+                                            <PpcSponsoredRankCell
+                                              className="py-2 px-2"
                                               sponsoredRank={(term as any).sponsoredRank}
                                             />
                                             <td className="py-2 px-2.5 text-right font-mono text-slate-600">{(term.impressions || 0).toLocaleString()}</td>
@@ -4577,6 +4696,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                 <span>Ẩn SKU tạm dừng (0 Imp)</span>
               </label>
 
+              {skuFrozen.columnPicker}
               <button
                 type="button"
                 onClick={() => handleExportCsv("skus")}
@@ -4937,7 +5057,8 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                 </button>
               )}
 
-              <div className="ml-auto">
+              <div className="ml-auto flex items-center gap-2">
+                {searchTermFrozen.columnPicker}
                 {selectedStore !== "ALL" && (
                   <PpcSearchTermLaunchPanel
                     selectedRows={[...groupLaunchRows(termGroupSelection.selected), ...Array.from(selectedTermRows.values())]}
@@ -5065,10 +5186,22 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                     Hiển Thị {termSortField === "impressions" && (termSortDir === "asc" ? "↑" : "↓")}
                   </th>
                   <th
-                    className="py-3 px-3 text-right whitespace-nowrap"
-                    title="Search Volume tháng từ Helium 10. Dòng IS ~% = impression share ước tính theo số ngày của dòng"
+                    className="py-3 px-2.5 text-right whitespace-nowrap"
+                    title="Search Volume tháng từ Helium 10"
                   >
-                    Search Vol
+                    SV
+                  </th>
+                  <th
+                    className="py-3 px-2 text-center whitespace-nowrap"
+                    title="Thứ hạng tự nhiên (Organic Rank) của sản phẩm"
+                  >
+                    Org Rank
+                  </th>
+                  <th
+                    className="py-3 px-2 text-center whitespace-nowrap"
+                    title="Thứ hạng quảng cáo (Sponsored Rank) của sản phẩm"
+                  >
+                    Spon Rank
                   </th>
                   <th
                     className="py-3 px-3 text-right cursor-pointer hover:text-indigo-600"
@@ -5141,7 +5274,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
               <tbody className="divide-y divide-slate-100 font-mono text-[11px] font-normal">
                 {(loadingSearchTermsServer || (!serverSearchTerms && (!searchTermsReady || loadingSection === "search_terms" || loading || isStoreSwitching))) ? (
                   <tr>
-                    <td colSpan={15} className="p-12 text-center text-xs text-slate-500">
+                    <td colSpan={17} className="p-12 text-center text-xs text-slate-500">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <CircleNotch size={24} className="animate-spin text-indigo-600" />
                         <span className="font-bold text-slate-700">Đang tải dữ liệu Search Terms từ máy chủ...</span>
@@ -5150,7 +5283,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                   </tr>
                 ) : (serverSearchTerms || paginatedSearchTerms).length === 0 ? (
                   <tr>
-                    <td colSpan={15} className="p-8 text-center text-slate-400 font-sans font-medium">
+                    <td colSpan={17} className="p-8 text-center text-slate-400 font-sans font-medium">
                       Không tìm thấy từ khóa nào phù hợp bộ lọc.
                     </td>
                   </tr>
@@ -5199,11 +5332,17 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
                         {/* Hiển thị - Viết thường */}
                         <td className="py-2.5 px-3 text-right font-normal text-slate-700">{(t.impressions || 0).toLocaleString()}</td>
                         <PpcSearchVolumeCell
-                          className="py-2.5 px-3"
+                          className="py-2.5 px-2.5"
                           searchVolume={t.searchVolume}
                           searchVolumeTrend={t.searchVolumeTrend}
                           estImpressionShare={t.estImpressionShare}
+                        />
+                        <PpcOrganicRankCell
+                          className="py-2.5 px-2"
                           organicRank={(t as any).organicRank}
+                        />
+                        <PpcSponsoredRankCell
+                          className="py-2.5 px-2"
                           sponsoredRank={(t as any).sponsoredRank}
                         />
                         {/* Clicks - Viết thường */}
@@ -5376,6 +5515,7 @@ export function PpcDashboard({ isEmbedded = false, initialTab, initialSubTab, in
           ) : (
             <PpcSkuRecommendationGroupView
               isActive={activeTab === "recommendations"}
+              actor={actor}
               groups={skuRecGroups}
               allRecommendations={skuRecAllRecs}
               isLoading={loadingRecs}

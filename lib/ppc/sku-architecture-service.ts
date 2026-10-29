@@ -676,12 +676,39 @@ export async function importCostMasterFromExcel(
   items: Array<{ productType: string; baseCost: number; breakEvenAcos: number }>;
 }> {
   const storeId = await resolveStoreId(storeIdOrName);
+  const sql = await getDatabaseClient();
+  let targetStoreName = "";
+  if (storeIdOrName && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(storeIdOrName)) {
+    targetStoreName = storeIdOrName.trim();
+  } else {
+    const storeRows = await sql<{ name: string }[]>`SELECT name FROM ppc_stores WHERE id = ${storeId} LIMIT 1`;
+    if (storeRows.length > 0) {
+      targetStoreName = storeRows[0].name.trim();
+    }
+  }
+
   const ExcelJS = (await import("exceljs")).default;
   const workbook = new ExcelJS.Workbook();
   // @ts-expect-error - ExcelJS accepts Buffer directly in load
   await workbook.xlsx.load(buffer);
 
-  const worksheet = workbook.worksheets[0];
+  let worksheet = workbook.worksheets[0];
+  if (targetStoreName) {
+    const matchedWs = workbook.worksheets.find(
+      (ws) =>
+        ws.name.trim().toLowerCase() === targetStoreName.toLowerCase() ||
+        ws.name.trim().toLowerCase().includes(targetStoreName.toLowerCase()) ||
+        targetStoreName.toLowerCase().includes(ws.name.trim().toLowerCase())
+    );
+    if (matchedWs) {
+      worksheet = matchedWs;
+    }
+  }
+  if (worksheet && worksheet.name.toLowerCase().includes("huong dan")) {
+    const dataWs = workbook.worksheets.find((ws) => !ws.name.toLowerCase().includes("huong dan"));
+    if (dataWs) worksheet = dataWs;
+  }
+
   if (!worksheet) {
     throw new Error("File Excel không có dữ liệu bảng tính hợp lệ.");
   }
@@ -737,9 +764,12 @@ export async function importCostMasterFromExcel(
 
     // Parse Base Cost, Default Amazon Fee, Default Price
     const baseCost = colMap.baseCost ? parseExcelNumericValue(row.getCell(colMap.baseCost).value) : 0;
-    const defaultAmazonFee = colMap.defaultAmazonFee ? parseExcelNumericValue(row.getCell(colMap.defaultAmazonFee).value) : 0;
+    const rawAmazonFee = colMap.defaultAmazonFee ? parseExcelNumericValue(row.getCell(colMap.defaultAmazonFee).value) : 0;
     const defaultPrice = colMap.defaultPrice ? parseExcelNumericValue(row.getCell(colMap.defaultPrice).value) : 0;
     const taxRate = colMap.taxRate ? parseExcelTaxRate(row.getCell(colMap.taxRate).value) : 0.03;
+
+    // Cột [BẮT BUỘC] Default Amazon Fee ($) cộng thêm 15% price (Amazon Referral Fee)
+    const defaultAmazonFee = Math.round((rawAmazonFee + 0.15 * defaultPrice) * 100) / 100;
 
     // Parse Break Even ACoS or auto calculate if left blank
     let breakEvenAcos = 0;

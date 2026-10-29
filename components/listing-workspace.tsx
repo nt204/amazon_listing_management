@@ -1296,99 +1296,101 @@ export function ListingWorkspace({
       {/* MAIN WORKSPACE AREA */}
       <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
         {/* TOP NAVBAR HEADER */}
-        <header className="flex h-13 shrink-0 items-center justify-between border-b border-slate-200/80 bg-white/95 backdrop-blur-md px-3 sm:px-5 shadow-2xs relative z-40">
-          {/* Active View Title & Mobile Hamburger Button */}
-          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
-            <button
-              type="button"
-              onClick={() => setMobileNavOpen(true)}
-              className="flex lg:hidden h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 transition cursor-pointer shrink-0"
-              title="Mở menu điều hướng"
-              aria-label="Mở menu điều hướng"
-            >
-              <ListIcon size={18} weight="bold" />
-            </button>
-            <span className="hidden sm:flex h-2.5 w-2.5 rounded-full bg-indigo-600 ring-4 ring-indigo-100 shrink-0" />
-            <h2 className="text-xs font-black uppercase tracking-wider text-slate-800 truncate max-w-[150px] xs:max-w-[220px] sm:max-w-md md:max-w-none">
-              {viewMode === "sellersprite"
-                ? "Đào Keyword"
-                : viewMode === "ppc"
-                  ? ppcSection === "phoi"
-                    ? "Amazon PPC - Quản Lý Phôi (Cost Master)"
-                    : ppcSection === "rules"
-                      ? "Amazon PPC - Quản Lý Rule PPC"
-                      : ppcSection === "negative_keyword"
-                        ? "Amazon PPC - Negative Keyword (ST Optimization)"
-                        : ppcSection === "sale_kw"
-                          ? "Amazon PPC - Lên Campaign Sale KW"
-                          : ppcSection === "auto_bid"
-                            ? "Amazon PPC - Đề Xuất & Auto Bid"
-                            : ppcDashboardTab === "campaigns"
-                              ? "Amazon PPC - Quản Lý Campaign"
-                              : ppcDashboardTab === "targets"
-                                ? "Amazon PPC - Quản Lý Target & Keyword"
-                                : ppcDashboardTab === "search_terms"
-                                  ? "Amazon PPC - Báo Cáo Search Terms"
-                                  : ppcDashboardTab === "skus"
-                                    ? "Amazon PPC - Hiệu Suất Theo SKU"
-                                    : ppcDashboardTab === "st_campaigns"
-                                      ? "Amazon PPC - Đối Soát Search Term"
-                                      : "Amazon PPC Dashboard & Analytics"
-                  : viewMode === "accounting"
-                    ? accountingSection === "stores"
-                      ? "Accounting - Quản Lý Store"
-                      : accountingSection === "overview" || accountingSection === "dashboard"
-                        ? "Accounting - Overview & Dashboard"
-                        : accountingSection === "inventory"
-                          ? "Accounting - Quản Lý Inventory"
-                          : accountingSection === "orders" || accountingSection === "import"
-                            ? "Accounting - Quản Lý Import Dữ Liệu"
-                            : accountingSection === "financials" ||
-                              accountingSection === "revenue" ||
-                              accountingSection === "costs" ||
-                              accountingSection === "amazon_fees" ||
-                              accountingSection === "ads"
-                              ? "Accounting - Financials (Tài Chính)"
-                              : accountingSection === "reports" ||
-                                accountingSection === "pnl" ||
-                                accountingSection === "settlements"
-                                ? "Accounting - Báo Cáo & Đối Soát"
-                                : "Accounting - System Admin"
-                    : sidebarTab === "mockups"
-                      ? "Auto Mockup Generator"
-                      : "Bảng Trello Kanban & Listing"}
-            </h2>
-          </div>
-
-          {/* Right Header Items: Trello Config & User Avatar */}
-          <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
-            {hasTrelloAccess && viewMode !== "ppc" && viewMode !== "accounting" ? (
+        {!(viewMode === "ppc" && !["phoi", "rules"].includes(ppcSection)) && (
+          <header className="flex h-13 shrink-0 items-center justify-between border-b border-slate-200/80 bg-white/95 backdrop-blur-md px-3 sm:px-5 shadow-2xs relative z-40">
+            {/* Active View Title & Mobile Hamburger Button */}
+            <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
               <button
                 type="button"
-                onClick={() => setShowTrelloConfigModal(true)}
-                className="flex items-center gap-1.5 rounded-xl border border-slate-200/90 bg-white px-2.5 sm:px-3 py-1.5 text-xs font-extrabold text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-slate-300 transition duration-150 cursor-pointer"
-                title="Cấu hình Board và các cột Trello"
+                onClick={() => setMobileNavOpen(true)}
+                className="flex lg:hidden h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 transition cursor-pointer shrink-0"
+                title="Mở menu điều hướng"
+                aria-label="Mở menu điều hướng"
               >
-                <GearIcon size={16} className="text-slate-500" weight="bold" />
-                <span className="hidden sm:inline">Cấu hình Trello</span>
+                <ListIcon size={18} weight="bold" />
               </button>
-            ) : null}
+              <span className="hidden sm:flex h-2.5 w-2.5 rounded-full bg-indigo-600 ring-4 ring-indigo-100 shrink-0" />
+              <h2 className="text-xs font-black uppercase tracking-wider text-slate-800 truncate max-w-[150px] xs:max-w-[220px] sm:max-w-md md:max-w-none">
+                {viewMode === "sellersprite"
+                  ? "Đào Keyword"
+                  : viewMode === "ppc"
+                    ? ppcSection === "phoi"
+                      ? "Amazon PPC - Quản Lý Phôi (Cost Master)"
+                      : ppcSection === "rules"
+                        ? "Amazon PPC - Quản Lý Rule PPC"
+                        : ppcSection === "negative_keyword"
+                          ? "Amazon PPC - Negative Keyword (ST Optimization)"
+                          : ppcSection === "sale_kw"
+                            ? "Amazon PPC - Lên Campaign Sale KW"
+                            : ppcSection === "auto_bid"
+                              ? "Amazon PPC - Đề Xuất & Auto Bid"
+                              : ppcDashboardTab === "campaigns"
+                                ? "Amazon PPC - Quản Lý Campaign"
+                                : ppcDashboardTab === "targets"
+                                  ? "Amazon PPC - Quản Lý Target & Keyword"
+                                  : ppcDashboardTab === "search_terms"
+                                    ? "Amazon PPC - Báo Cáo Search Terms"
+                                    : ppcDashboardTab === "skus"
+                                      ? "Amazon PPC - Hiệu Suất Theo SKU"
+                                      : ppcDashboardTab === "st_campaigns"
+                                        ? "Amazon PPC - Đối Soát Search Term"
+                                        : "Amazon PPC Dashboard & Analytics"
+                    : viewMode === "accounting"
+                      ? accountingSection === "stores"
+                        ? "Accounting - Quản Lý Store"
+                        : accountingSection === "overview" || accountingSection === "dashboard"
+                          ? "Accounting - Overview & Dashboard"
+                          : accountingSection === "inventory"
+                            ? "Accounting - Quản Lý Inventory"
+                            : accountingSection === "orders" || accountingSection === "import"
+                              ? "Accounting - Quản Lý Import Dữ Liệu"
+                              : accountingSection === "financials" ||
+                                accountingSection === "revenue" ||
+                                accountingSection === "costs" ||
+                                accountingSection === "amazon_fees" ||
+                                accountingSection === "ads"
+                                ? "Accounting - Financials (Tài Chính)"
+                                : accountingSection === "reports" ||
+                                  accountingSection === "pnl" ||
+                                  accountingSection === "settlements"
+                                  ? "Accounting - Báo Cáo & Đối Soát"
+                                  : "Accounting - System Admin"
+                      : sidebarTab === "mockups"
+                        ? "Auto Mockup Generator"
+                        : "Bảng Trello Kanban & Listing"}
+              </h2>
+            </div>
 
-            {actor ? (
-              <AccountMenu actor={actor} />
-            ) : (
-              <AccountMenu
-                actor={{
-                  teamId: "default",
-                  userId: "guest",
-                  displayName: "User",
-                  role: "admin",
-                  ruleProfile: "",
-                }}
-              />
-            )}
-          </div>
-        </header>
+            {/* Right Header Items: Trello Config & User Avatar */}
+            <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+              {hasTrelloAccess && viewMode !== "ppc" && viewMode !== "accounting" ? (
+                <button
+                  type="button"
+                  onClick={() => setShowTrelloConfigModal(true)}
+                  className="flex items-center gap-1.5 rounded-xl border border-slate-200/90 bg-white px-2.5 sm:px-3 py-1.5 text-xs font-extrabold text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-slate-300 transition duration-150 cursor-pointer"
+                  title="Cấu hình Board và các cột Trello"
+                >
+                  <GearIcon size={16} className="text-slate-500" weight="bold" />
+                  <span className="hidden sm:inline">Cấu hình Trello</span>
+                </button>
+              ) : null}
+
+              {actor ? (
+                <AccountMenu actor={actor} />
+              ) : (
+                <AccountMenu
+                  actor={{
+                    teamId: "default",
+                    userId: "guest",
+                    displayName: "User",
+                    role: "admin",
+                    ruleProfile: "",
+                  }}
+                />
+              )}
+            </div>
+          </header>
+        )}
 
         {/* ALERTS AND TOASTS */}
         {error ? (
@@ -1447,6 +1449,7 @@ export function ListingWorkspace({
                   isEmbedded={true}
                   actor={actor}
                   navNonce={ppcNavNonce}
+                  onOpenMobileNav={() => setMobileNavOpen(true)}
                   standaloneTab={
                     ppcSection === "negative_keyword"
                       ? "st_optimization"

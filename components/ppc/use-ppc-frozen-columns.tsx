@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { LockIcon, LockOpenIcon, ArrowCounterClockwiseIcon } from "@phosphor-icons/react";
 import type { RequestActor } from "@/lib/auth";
+import { usePpcColumnVisibility } from "./use-ppc-column-visibility";
 
 const FROZEN_CELL_CLASS = "ppc-frozen-cell";
 const FROZEN_BOUNDARY_CLASS = "ppc-frozen-boundary";
@@ -132,6 +133,7 @@ export function usePpcFrozenColumns(tableKey: string, actor: RequestActor | unde
   const [table, setTable] = useState<HTMLTableElement | null>(null);
   const [menu, setMenu] = useState<MenuState>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const columnPicker = usePpcColumnVisibility(table, tableKey, actor);
 
   const saveFrozenCount = useCallback(
     (count: number) => {
@@ -310,5 +312,5 @@ export function usePpcFrozenColumns(tableKey: string, actor: RequestActor | unde
     );
   }
 
-  return { tableRef: setTable, frozenCount, menu: menuNode };
+  return { tableRef: setTable, frozenCount, menu: menuNode, columnPicker };
 }
