@@ -271,7 +271,7 @@ export async function listOrders(
   `;
   const total = parseInt(countRes[0]?.count || "0", 10);
 
-  // Overall store stats
+  // Stats theo đúng bộ lọc đang áp dụng (ngày, tìm kiếm, lọc cột) như bảng
   const statsRes = await sql<{
     total_orders: string;
     total_units: string;
@@ -288,7 +288,7 @@ export async function listOrders(
       COUNT(*) FILTER (WHERE LOWER(order_status) = 'shipped')::text as shipped_count,
       COUNT(*) FILTER (WHERE LOWER(order_status) = 'canceled' OR LOWER(order_status) = 'cancelled')::text as canceled_count
     FROM accounting_orders
-    WHERE store_id = ${storeId}
+    WHERE ${whereClause}
   `;
 
   const stats: OrderStats = {
