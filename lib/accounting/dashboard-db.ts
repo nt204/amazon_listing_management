@@ -385,7 +385,7 @@ function loadStoreSkuPerformance(
   channel: DashboardChannel,
 ): Promise<SkuPerformance[]> {
   return getCachedOrFetch(
-    `${cache.prefix}sku3:${storeId}:${startDate}:${endDate}:${channel === "Merchant" ? "fbm" : "fba"}`,
+    `${cache.prefix}sku3:${storeId}:${startDate || "all"}:${endDate || "all"}:${channel === "Merchant" ? "fbm" : "fba"}`,
     cache.ttl,
     async () => {
       const options = { status: "all", startDate, endDate, limit: 100_000, includeAllTime: false };
@@ -434,7 +434,7 @@ async function loadProductNames(items: TopProductItem[], startDate: string, endD
     FROM accounting_orders
     WHERE store_id IN ${sql([...new Set(items.map((i) => i.storeId))])}
       AND sku IN ${sql([...new Set(items.map((i) => i.sku))])}
-      AND date >= ${startDate}::date AND date <= ${endDate}::date
+      ${startDate && endDate ? sql`AND date >= ${startDate}::date AND date <= ${endDate}::date` : sql``}
       AND COALESCE(product_name, '') <> ''
     ORDER BY store_id, sku, date DESC
   `;
@@ -467,7 +467,8 @@ export async function getDashboardTopProducts(options: {
   );
   const period = resolveDashboardPeriods(options.startDate ?? "", options.endDate ?? "", latestDate, "none").current;
   const empty = (): TopProductLists => ({ profit: [], revenue: [], loss: [] });
-  if (!period.startDate || !period.endDate || !stores.length) return { period, channels: [], FBA: empty(), FBM: empty() };
+  // Kỳ rỗng = "Toàn thời gian": SKU WIN / LỌC SKU CỐ ĐỊNH tính trên toàn bộ dữ liệu như phần tổng quan Dashboard.
+  if (!stores.length) return { period, channels: [], FBA: empty(), FBM: empty() };
 
   const rows = (
     await Promise.all(

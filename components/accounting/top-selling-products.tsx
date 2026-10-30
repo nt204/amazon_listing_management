@@ -36,13 +36,6 @@ function formatPercent(val: number): string {
   return `${(val * 100).toFixed(1)}%`;
 }
 
-/** Màu ACOS theo ngưỡng như PPC: < 30% xanh, 30–50% vàng, > 50% đỏ. */
-function acosColor(acos: number): string {
-  if (acos < 0.3) return "#16a34a";
-  if (acos <= 0.5) return "#d97706";
-  return "#e11d48";
-}
-
 function RankBadge({ rank }: { rank: number }) {
   if (rank === 1) {
     return (
@@ -433,7 +426,7 @@ function ChannelTopCard({
                 >
                   Profit
                 </th>
-                <th className="py-2.5 px-2 @max-[560px]:px-1.5 text-right">ACOS</th>
+                <th className="py-2.5 px-2 @max-[560px]:px-1.5 text-right" title="Margin = Profit / Revenue">Margin</th>
                 <th className="py-2.5 pl-2 pr-3 text-right">TACOS</th>
               </tr>
             </thead>
@@ -489,11 +482,12 @@ function ChannelTopCard({
                     >
                       {formatCurrency(p.profit)}
                     </td>
+                    {/* Margin = Profit / Revenue; âm thì đỏ */}
                     <td
                       className="py-3 px-2 @max-[560px]:px-1.5 text-right font-normal text-slate-700 align-middle tabular-nums text-sm"
-                      style={p.acos > 0 ? { color: acosColor(p.acos) } : undefined}
+                      style={p.margin < 0 ? { color: "#e11d48" } : undefined}
                     >
-                      {p.acos > 0 ? formatPercent(p.acos) : "—"}
+                      {p.revenue > 0 ? formatPercent(p.margin) : "—"}
                     </td>
                     <td className="py-3 pl-2 pr-3 text-right font-normal text-slate-700 align-middle tabular-nums text-sm">
                       {p.tacos > 0 ? formatPercent(p.tacos) : "—"}
