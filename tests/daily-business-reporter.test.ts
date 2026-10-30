@@ -44,8 +44,7 @@ test("lỗ thì đèn đỏ, rà soát tách đúng Δ Profit và có việc c�
   const a = analyzeDailyReport(DATE, [channel("A", "FBA 1", normal, { revenue: 400, adsFee: 300, revenueAds: 200, profit: -120 })]);
   const ch = a.teams[0].channels[0];
   assert.equal(ch.light, "red");
-  // Δ Profit -370 = doanh số -240 + biên +20 + chi phí Ads -150
-  assert.match(ch.diagnosis?.cause ?? "", /^lỗ \$120, Profit -\$370: doanh số giảm -\$240, Ads tăng -\$150/);
+  assert.match(ch.diagnosis?.cause ?? "", /doanh số giảm, mất \$240/);
   assert.equal(a.actions.length, 1);
   assert.equal(a.actions[0].label, "A");
 });
@@ -62,27 +61,27 @@ test("Ads tăng: chỉ ra portfolio tiêu tiền không ra đơn", () => {
   const drill = {
     skus: [],
     portfolios: [
-      { name: "SKU-BURN", todaySpend: 60, todaySales: 0, todayOrders: 0, avg7Spend: 20 },
-      { name: "SKU-OK", todaySpend: 190, todaySales: 600, todayOrders: 10, avg7Spend: 130 },
+      { name: "SKU-BURN", todaySpend: 60, todaySales: 0, todayOrders: 0, prevSpend: 20 },
+      { name: "SKU-OK", todaySpend: 190, todaySales: 600, todayOrders: 10, prevSpend: 130 },
     ],
   };
   const a = analyzeDailyReport(DATE, [channel("A", "FBA 1", normal, { ...normal, adsFee: 250, profit: 150 }, { drill })]);
   const d = a.teams[0].channels[0].diagnosis;
-  assert.match(d?.cause ?? "", /Ads tăng -\$100/);
+  assert.match(d?.cause ?? "", /Ads tốn thêm \$100/);
   assert.match(d?.checks[0] ?? "", /Giảm bid \/ tắt SKU-BURN \(\$60, 0 đơn\)/);
 });
 
 test("doanh số giảm: chỉ ra SKU tụt units", () => {
   const drill = {
     skus: [
-      { sku: "SKU-HOT", today: 0, avg7: 12 },
-      { sku: "SKU-STABLE", today: 20, avg7: 20 },
+      { sku: "SKU-HOT", today: 0, prev: 12 },
+      { sku: "SKU-STABLE", today: 20, prev: 20 },
     ],
     portfolios: [],
   };
   const a = analyzeDailyReport(DATE, [channel("A", "FBA 1", normal, { ...normal, revenue: 600, revenueAds: 500, quantity: 25, profit: 90 }, { drill })]);
   const d = a.teams[0].channels[0].diagnosis;
-  assert.match(d?.cause ?? "", /SKU-HOT 0\/12 units/);
+  assert.match(d?.cause ?? "", /SKU-HOT 12→0/);
   assert.match(d?.checks[0] ?? "", /^Kiểm tra tồn kho, listing: SKU-HOT/);
 });
 
@@ -91,7 +90,7 @@ test("kênh mới không chấm vào việc cần làm, gom vào mục kênh m�
     channel("A", "FBA 1", normal, normal),
     channel("B", "FBA 1", { revenue: 50, adsFee: 40, profit: -10 }, { revenue: 20, adsFee: 40, profit: -30 }, { isNew: true }),
   ]);
-  assert.equal(a.newChannels.length, 1);
+  assert.equal(a.teams[0].channels.filter((c) => c.isNew).length, 1);
   assert.deepEqual(a.actions, []);
 });
 

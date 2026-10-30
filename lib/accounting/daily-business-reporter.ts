@@ -161,13 +161,14 @@ async function loadChannelDrills(storeIds: string[], date: string): Promise<Map<
     if (!drill) drills.set(key, (drill = { skus: [], portfolios: [] }));
     return drill;
   };
-  for (const r of skuRows) drillOf(r.store_id, r.channel).skus.push({ sku: r.sku, today: Number(r.today), avg7: Number(r.avg7) });
+  for (const r of skuRows) drillOf(r.store_id, r.channel).skus.push({ sku: r.sku, today: Number(r.today), prev: Number(r.avg7), avg7: Number(r.avg7) });
   for (const r of adsRows) {
     drillOf(r.store_id, r.channel).portfolios.push({
       name: r.name,
       todaySpend: Number(r.today_spend),
       todaySales: Number(r.today_sales),
       todayOrders: Number(r.today_orders),
+      prevSpend: Number(r.avg7_spend),
       avg7Spend: Number(r.avg7_spend),
     });
   }
