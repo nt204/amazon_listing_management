@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { Fragment, useCallback, useRef, useState } from "react";
+import { PpcOrganicRankCell, PpcSearchVolumeCell, PpcSponsoredRankCell } from "./ppc-search-volume";
 
 // Bảng tổng phía trên tab Target / Search Term khi tìm theo SKU: mỗi keyword 1 dòng tổng (gộp mọi campaign / match type).
 // Cùng 12 cột với bảng tổng: Ảnh | SKU | Keyword | Hiển thị | Clicks | CTR | Spend | Sales | Orders | CVR | CPC | ACOS.
+// showSearchVolume: thêm 3 cột SV | Org Rank | Spon Rank ngay sau cột Keyword (dòng SKU tổng để trống) → 15 cột.
 
 export type KeywordGroupRow = {
   targetKeyword?: string;
@@ -16,7 +18,23 @@ export type KeywordGroupRow = {
   acos: number;
   campaignName?: string;
   reportDate?: string;
+  searchVolume?: number | null;
+  searchVolumeTrend?: number | null;
+  estImpressionShare?: number | null;
+  organicRank?: number | null;
+  sponsoredRank?: number | null;
 };
+
+/** 3 ô trống SV | Org Rank | Spon Rank cho dòng SKU tổng của bảng tổng. */
+export function PpcSummarySearchVolumeBlankCells() {
+  return (
+    <>
+      <td className="px-2 py-3" />
+      <td className="px-2 py-3" />
+      <td className="px-2 py-3" />
+    </>
+  );
+}
 
 export function keywordGroupKey(group: KeywordGroupRow): string {
   return (group.targetKeyword ?? group.customerSearchTerm ?? "").trim().toLowerCase();
@@ -67,7 +85,7 @@ export function useKeywordGroupSelection() {
   return { selected, clear, selectionFor };
 }
 
-export function PpcKeywordGroupRows({ groups, total, selection }: { groups: KeywordGroupRow[]; total: number; selection?: KeywordGroupSelection }) {
+export function PpcKeywordGroupRows({ groups, total, selection, showSearchVolume = false }: { groups: KeywordGroupRow[]; total: number; selection?: KeywordGroupSelection; showSearchVolume?: boolean }) {
   return (
     <>
       {groups.map((group, index) => {
@@ -87,6 +105,18 @@ export function PpcKeywordGroupRows({ groups, total, selection }: { groups: Keyw
             </td>
             <td className="px-3 py-2" />
             <td className="px-3 py-2 text-sm font-semibold text-slate-800 break-words">{keyword}</td>
+            {showSearchVolume && (
+              <>
+                <PpcSearchVolumeCell
+                  className="px-2 py-2"
+                  searchVolume={group.searchVolume}
+                  searchVolumeTrend={group.searchVolumeTrend}
+                  estImpressionShare={group.estImpressionShare}
+                />
+                <PpcOrganicRankCell className="px-2 py-2" organicRank={group.organicRank} />
+                <PpcSponsoredRankCell className="px-2 py-2" sponsoredRank={group.sponsoredRank} />
+              </>
+            )}
             <td className="px-3 py-2 text-right font-mono text-sm text-slate-700">{Number(group.impressions || 0).toLocaleString("vi-VN")}</td>
             <td className="px-3 py-2 text-right font-mono text-sm text-slate-700">{Number(group.clicks || 0).toLocaleString("vi-VN")}</td>
             <td className="px-3 py-2 text-right font-mono text-sm text-slate-600">
@@ -121,7 +151,7 @@ export function PpcKeywordGroupRows({ groups, total, selection }: { groups: Keyw
       })}
       {total > groups.length && (
         <tr>
-          <td colSpan={12} className="px-3 py-2 text-center text-[11px] text-slate-400">
+          <td colSpan={showSearchVolume ? 15 : 12} className="px-3 py-2 text-center text-[11px] text-slate-400">
             Hiển thị {groups.length.toLocaleString("vi-VN")}/{total.toLocaleString("vi-VN")} keyword có spend cao nhất
           </td>
         </tr>
@@ -220,11 +250,12 @@ const SUMMARY_COLUMNS: { field: SummarySortField; label: string; className: stri
   { field: "acos", label: "ACOS", className: "px-3 py-3 text-right" },
 ];
 
-export function PpcSummaryTableHead({ keywordLabel, sort, selection }: { keywordLabel: string; sort: ReturnType<typeof usePpcSummarySort>; selection?: KeywordGroupSelection }) {
+export function PpcSummaryTableHead({ keywordLabel, sort, selection, showSearchVolume = false }: { keywordLabel: string; sort: ReturnType<typeof usePpcSummarySort>; selection?: KeywordGroupSelection; showSearchVolume?: boolean }) {
   return (
     <thead className="sticky top-0 z-10 shadow-[0_1px_0_0_rgb(226,232,240)] border-b border-slate-200 bg-slate-50 text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
       <tr>
-        <th className="w-16 px-3 py-3 text-center">
+        {/* min-w: bảng thêm cột SV / rank thì cột Ảnh không bị co làm méo ảnh SKU */}
+        <th className="w-16 min-w-[72px] px-3 py-3 text-center">
           {selection ? (
             <input
               type="checkbox"
@@ -238,14 +269,22 @@ export function PpcSummaryTableHead({ keywordLabel, sort, selection }: { keyword
         {SUMMARY_COLUMNS.map((col) => {
           const active = sort.field === col.field;
           return (
+            <Fragment key={col.field}>
             <th
-              key={col.field}
               className={`${col.className} cursor-pointer select-none whitespace-nowrap hover:text-indigo-600 ${active ? "text-indigo-600" : ""}`}
               onClick={() => sort.toggle(col.field)}
               title="Nhấn để sắp xếp (bấm lần 3 để về mặc định)"
             >
               {col.label || keywordLabel} {active && (sort.dir === "asc" ? "↑" : "↓")}
             </th>
+            {showSearchVolume && col.field === "keyword" && (
+              <>
+                <th className="px-2 py-3 text-right whitespace-nowrap" title="Search Volume tháng từ Helium 10">SV</th>
+                <th className="px-2 py-3 text-center whitespace-nowrap" title="Thứ hạng tự nhiên (Organic Rank) của sản phẩm">Org Rank</th>
+                <th className="px-2 py-3 text-center whitespace-nowrap" title="Thứ hạng quảng cáo (Sponsored Rank) của sản phẩm">Spon Rank</th>
+              </>
+            )}
+            </Fragment>
           );
         })}
       </tr>

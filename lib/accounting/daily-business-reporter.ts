@@ -130,12 +130,13 @@ async function loadTeamLeads(teamId: string): Promise<Record<string, string>> {
   }
 }
 
-const AI_COMMENTARY_SYSTEM_PROMPT = `Bạn là chuyên viên phân tích kinh doanh Amazon, viết nhận xét ngắn cho từng team trong báo cáo ngày gửi qua Lark.
+const AI_COMMENTARY_SYSTEM_PROMPT = `Bạn là chuyên viên phân tích kinh doanh Amazon, viết 1 câu chẩn đoán cho từng team trong báo cáo ngày gửi qua Lark.
 Đầu vào là JSON số liệu đã tính sẵn (so với trung bình 7 ngày trước = "TB7").
 Quy tắc:
-- Mỗi team 1–2 câu, tối đa 45 chữ, tiếng Việt, giọng chuyên nghiệp, thẳng vào việc.
-- Câu đầu: kết quả của team và kênh nào gây ra (nêu số $ hoặc điểm %). Câu sau (nếu cần): một việc cụ thể nên làm.
-- Kết quả tốt thì chỉ ghi nhận bằng số, KHÔNG thêm "cần kiểm tra" và không động viên chung chung ("tiếp tục phát huy", "cả nhà chú ý"...).
+- Mỗi team ĐÚNG 1 câu, tối đa 20 chữ, tiếng Việt, văn phong báo cáo chuyên nghiệp.
+- Chỉ nêu NGUYÊN NHÂN chính: kênh có "profit_vs_tb7" thay đổi nhiều nhất (âm hoặc dương) và chỉ số giải thích nó (vd: "Limima mất doanh thu nhưng vẫn tiêu $383 Ads.", "Fastpeace-FBM tăng $286 Profit nhờ TACoS giảm 5.1đ.").
+- KHÔNG nêu việc cần làm (đã có mục riêng), KHÔNG nhắc lại Profit tổng của team (đã có ở tiêu đề).
+- Không động viên, không khen chung chung, không "cần chú ý".
 - Chỉ dùng con số có trong dữ liệu, không tự tính số mới, không dự báo.
 - Kênh "thieu_ads": true thì không nhận xét Profit/ACoS của kênh đó, chỉ nhắc nạp file Ads.
 - Kênh "tb7_thieu_ads": true thì 7 ngày trước thiếu số Ads: KHÔNG so Profit với TB7, nhắc nạp bù file Ads.
@@ -154,8 +155,12 @@ async function generateTeamComments(
   const model = (process.env.LARK_AGENT_MODEL || "gemini-3.5-flash-lite").trim();
 
   const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
-  const pts = (cur: number, base?: number) => (base == null ? null : `${((cur - base) * 100).toFixed(1)}đ`);
-  const change = (cur: number, base?: number) => (base == null || base <= 0 ? null : `${(((cur - base) / base) * 100).toFixed(1)}%`);
+  // Ghi rõ "tăng/giảm" bằng chữ: model hay đọc nhầm dấu của số âm
+  const word = (diff: number, text: string) => `${diff >= 0 ? "tăng" : "giảm"} ${text}`;
+  const pts = (cur: number, base?: number) =>
+    base == null ? null : word(cur - base, `${Math.abs((cur - base) * 100).toFixed(1)}đ`);
+  const change = (cur: number, base?: number) =>
+    base == null || base <= 0 ? null : word(cur - base, `${Math.abs(Math.round(((cur - base) / base) * 100))}%`);
   const data = analysis.teams.map((team) => ({
     team: team.team,
     ten_team: teamLabel(team.team, teamLeads),
@@ -174,14 +179,16 @@ async function generateTeamComments(
       revenue: formatUsd(c.today.revenue),
       revenue_vs_tb7: change(c.today.revenue, c.avg7?.revenue),
       profit: formatUsd(c.today.profit),
-      profit_chenh_tb7: c.avg7 && !c.adsMissing && !c.baselineAdsMissing ? formatUsd(c.today.profit - c.avg7.profit) : null,
+      profit_vs_tb7: c.avg7 && !c.adsMissing && !c.baselineAdsMissing
+        ? word(c.today.profit - c.avg7.profit, formatUsd(Math.abs(c.today.profit - c.avg7.profit)))
+        : null,
       margin: pct(c.today.margin),
       acos: c.today.revenueAds > 0 ? pct(c.today.acos) : null,
       acos_vs_tb7: c.today.revenueAds > 0 && !c.baselineAdsMissing ? pts(c.today.acos, c.avg7?.acos) : null,
       tacos: c.today.revenue > 0 ? pct(c.today.tacos) : null,
       tacos_vs_tb7: c.today.revenue > 0 && !c.baselineAdsMissing ? pts(c.today.tacos, c.avg7?.tacos) : null,
     })),
-    viec_can_lam: analysis.actions.filter((a) => a.team === team.team).map((a) => `${a.label}: ${a.text}`),
+    viec_can_lam: analysis.actions.filter((a) => a.team === team.team).map((a) => `${a.title} ${a.label}: ${a.reason}`),
   }));
 
   try {
@@ -207,7 +214,7 @@ async function generateTeamComments(
     const comments: Record<string, string> = {};
     for (const team of analysis.teams) {
       const value = parsed[team.team];
-      if (typeof value === "string" && value.trim()) comments[team.team] = value.trim().slice(0, 400);
+      if (typeof value === "string" && value.trim()) comments[team.team] = value.trim().slice(0, 200);
     }
     return Object.keys(comments).length ? comments : null;
   } catch (err) {

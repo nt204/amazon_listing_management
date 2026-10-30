@@ -56,7 +56,10 @@ export interface ProfitDriver {
 export interface ActionItem {
   team: string;
   label: string;
-  text: string;
+  /** Việc cần làm, bắt đầu bằng động từ ("Dừng Ads", "Giảm bid"...). */
+  title: string;
+  /** Lý do ngắn kèm con số. */
+  reason: string;
   /** Ước tính $ ảnh hưởng, dùng để xếp hạng. */
   impact: number;
 }
@@ -152,74 +155,57 @@ export function lightOf(cmp: PeriodComparison): Light {
 function buildActions(channels: ChannelAnalysis[]): ActionItem[] {
   const actions: ActionItem[] = [];
   const usd = (value: number) => `$${Math.round(Math.abs(value)).toLocaleString("en-US")}`;
-  const pct = (value: number) => `${(value * 100).toFixed(1)}%`;
+  const pct = (value: number) => `${Math.round(value * 100)}%`;
 
   for (const ch of channels) {
     if (ch.isNew) continue;
     const { today, avg7 } = ch;
-    const base = { team: ch.team, label: ch.label };
+    // Mỗi kênh chỉ giữ 1 việc quan trọng nhất; tổng $ ảnh hưởng dùng để xếp hạng giữa các kênh
+    const issues: Array<{ impact: number; title: string; reason: string }> = [];
 
-    // Thiếu số Ads làm sai mọi kết luận về profit nên chỉ nhắc nạp số, không phân tích thêm
     if (ch.adsMissing && avg7) {
-      actions.push({
-        ...base,
-        impact: avg7.adsFee,
-        text: `chưa có chi phí Ads (TB ${usd(avg7.adsFee)}/ngày) — kiểm tra file Ads, Profit đang cao hơn thực tế.`,
-      });
-      continue;
-    }
-
-    // Gom mọi vấn đề của 1 kênh thành 1 dòng: các hiện tượng + việc cần làm
-    const facts: string[] = [];
-    const hints = new Set<string>();
-    let impact = 0;
-
-    if (ch.baselineAdsMissing) {
-      facts.push(`7 ngày trước không có số Ads (hôm nay ${usd(today.adsFee)})`);
-      hints.add("nạp bù file Ads các ngày trước để so sánh đúng");
-      impact += today.adsFee;
-    }
-
-    if (today.profit < 0) {
-      impact += Math.abs(today.profit) + 50;
-      if (today.revenue <= 0) {
-        facts.push(`lỗ ${usd(today.profit)}: không có doanh thu nhưng vẫn tiêu Ads ${usd(today.adsFee)}`);
-        hints.add("tạm dừng campaign");
-      } else {
-        facts.push(`lỗ ${usd(today.profit)} (Ads ${usd(today.adsFee)}, TACoS ${pct(today.tacos)})`);
-        hints.add(today.tacos >= 0.3 ? "giảm bid / tắt campaign tiêu tiền không ra đơn" : "kiểm tra giá vốn, phí Amazon, refund");
+      issues.push({ impact: avg7.adsFee, title: "Nạp file Ads", reason: `Ads đang $0 (TB ${usd(avg7.adsFee)}/ngày), Profit bị cao ảo` });
+    } else {
+      if (ch.baselineAdsMissing) {
+        issues.push({ impact: today.adsFee, title: "Nạp bù file Ads", reason: "7 ngày trước thiếu Ads, chưa so được Profit" });
+      }
+      if (today.profit < 0) {
+        const impact = Math.abs(today.profit) + 50;
+        if (today.revenue <= 0) issues.push({ impact, title: "Dừng Ads", reason: `$0 doanh thu nhưng tiêu ${usd(today.adsFee)}` });
+        else if (today.tacos >= 0.3) issues.push({ impact, title: "Giảm bid", reason: `lỗ ${usd(today.profit)}, TACoS ${pct(today.tacos)}` });
+        else issues.push({ impact, title: "Soát giá vốn, phí", reason: `lỗ ${usd(today.profit)}` });
+      }
+      // Kênh lỗ đã có việc "Giảm bid"/"Dừng Ads" ở trên, không tính trùng
+      if (avg7 && !ch.baselineAdsMissing && today.profit >= 0 && today.revenue > 0 && today.adsFee >= 30 && avg7.adsFee >= 20 && avg7.tacos > 0) {
+        const excess = today.adsFee - today.revenue * avg7.tacos;
+        if (today.tacos - avg7.tacos >= LIGHT_RULES.yellowTacosRise && excess >= 20) {
+          issues.push({ impact: excess, title: "Rà bid", reason: `Ads vượt ~${usd(excess)}, TACoS ${pct(today.tacos)} (TB ${pct(avg7.tacos)})` });
+        }
+      }
+      if (avg7 && avg7.revenue >= 200 && today.revenue <= avg7.revenue * 0.7) {
+        const drop = avg7.revenue - today.revenue;
+        issues.push({
+          impact: drop * Math.max(avg7.margin, 0.1),
+          title: "Kiểm tra tồn kho, Buy Box",
+          reason: `Revenue -${Math.round((drop / avg7.revenue) * 100)}% (TB ${usd(avg7.revenue)})`,
+        });
+      }
+      if (avg7 && today.returnCost >= 50 && today.returnCost >= avg7.returnCost * 2) {
+        issues.push({ impact: today.returnCost - avg7.returnCost, title: "Xem lý do trả hàng", reason: `Refund ${usd(today.returnCost)} (TB ${usd(avg7.returnCost)})` });
       }
     }
 
-    if (avg7 && !ch.baselineAdsMissing && today.revenue > 0 && today.adsFee >= 30 && avg7.adsFee >= 20 && avg7.tacos > 0) {
-      const excess = today.adsFee - today.revenue * avg7.tacos;
-      if (today.tacos - avg7.tacos >= LIGHT_RULES.yellowTacosRise && excess >= 20) {
-        impact += excess;
-        facts.push(`TACoS ${pct(today.tacos)} (TB 7 ngày ${pct(avg7.tacos)}), Ads tốn thêm ~${usd(excess)}`);
-        hints.add("rà bid các campaign ACoS cao");
-      }
-    }
-
-    if (avg7 && avg7.revenue >= 200 && today.revenue <= avg7.revenue * 0.7) {
-      const drop = avg7.revenue - today.revenue;
-      impact += drop * Math.max(avg7.margin, 0.1);
-      facts.push(
-        today.revenue <= 0
-          ? `TB 7 ngày có ${usd(avg7.revenue)} doanh thu/ngày`
-          : `Revenue ${usd(today.revenue)}, giảm ${Math.round((drop / avg7.revenue) * 100)}% so với TB 7 ngày (${usd(avg7.revenue)})`,
-      );
-      hints.add("kiểm tra tồn kho, Buy Box, listing bị ẩn");
-    }
-
-    if (avg7 && today.returnCost >= 50 && today.returnCost >= avg7.returnCost * 2) {
-      impact += today.returnCost - avg7.returnCost;
-      facts.push(`Refund ${usd(today.returnCost)} (TB 7 ngày ${usd(avg7.returnCost)})`);
-      hints.add("xem lý do trả hàng của SKU bị trả nhiều");
-    }
-
-    if (facts.length) actions.push({ ...base, impact, text: `${facts.join("; ")} → ${[...hints].join("; ")}.` });
+    if (!issues.length) continue;
+    const top = issues.reduce((best, issue) => (issue.impact > best.impact ? issue : best));
+    actions.push({
+      team: ch.team,
+      label: ch.label,
+      title: top.title,
+      reason: top.reason,
+      impact: issues.reduce((sum, issue) => sum + issue.impact, 0),
+    });
   }
-  return actions.sort((a, b) => b.impact - a.impact).slice(0, 6);
+  return actions.sort((a, b) => b.impact - a.impact).slice(0, 4);
 }
 
 export function analyzeDailyReport(date: string, inputs: ChannelSeriesInput[]): DailyReportAnalysis {

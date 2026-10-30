@@ -43,7 +43,8 @@ test("kênh ổn định thì đèn xanh, không có việc cần làm", () => {
 test("lỗ thì đèn đỏ và có việc cần làm", () => {
   const a = analyzeDailyReport(DATE, [channel("A", "FBA 1", normal, { revenue: 400, adsFee: 300, revenueAds: 200, profit: -120 })]);
   assert.equal(a.teams[0].channels[0].light, "red");
-  assert.match(a.actions[0].text, /lỗ \$120/);
+  assert.equal(a.actions[0].title, "Giảm bid");
+  assert.match(a.actions[0].reason, /lỗ \$120/);
 });
 
 test("Ads = 0 bất thường: cảnh báo thiếu số Ads thay vì khen profit tăng", () => {
@@ -52,12 +53,12 @@ test("Ads = 0 bất thường: cảnh báo thiếu số Ads thay vì khen profit
   assert.equal(ch.adsMissing, true);
   assert.equal(ch.light, "yellow");
   assert.equal(a.actions.length, 1);
-  assert.match(a.actions[0].text, /chưa có chi phí Ads/);
+  assert.equal(a.actions[0].title, "Nạp file Ads");
 });
 
 test("TACoS tăng mạnh thì báo số tiền Ads tốn thêm", () => {
   const a = analyzeDailyReport(DATE, [channel("A", "FBA 1", normal, { ...normal, adsFee: 250, profit: 150 })]);
-  assert.ok(a.actions.some((x) => /Ads tốn thêm ~\$100/.test(x.text)));
+  assert.ok(a.actions.some((x) => x.title === "Rà bid" && /Ads vượt ~\$100/.test(x.reason)));
 });
 
 test("kênh mới không chấm vào việc cần làm, gom vào mục kênh mới", () => {
@@ -85,5 +86,5 @@ test("card và text dựng được, có tên trưởng team và nhận xét AI"
   const card = JSON.stringify(buildDailyReportCard(a, options));
   assert.match(card, /FBA 1 · Quỳnh/);
   assert.match(card, /Ổn định\./);
-  assert.match(buildDailyReportText(a, options), /Thứ 4, 28\/10\/2026/);
+  assert.match(buildDailyReportText(a, options), /T4 28\/10\/2026/);
 });

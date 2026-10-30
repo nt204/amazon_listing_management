@@ -1,24 +1,20 @@
 // Dựng card Lark (schema 2.0) + bản text dự phòng cho báo cáo kinh doanh ngày (thuần).
+// Nguyên tắc trình bày: số trước chữ, mỗi phần tối đa vài dòng, chi tiết nằm trong khung thu gọn.
 
-import type { DashboardTotals } from "./dashboard-totals";
-import {
-  LIGHT_RULES,
-  type ChannelAnalysis,
-  type DailyReportAnalysis,
-  type Light,
-  type TeamAnalysis,
-} from "./daily-report-analysis";
+import type { ChannelAnalysis, DailyReportAnalysis, Light, TeamAnalysis } from "./daily-report-analysis";
 
 export interface DailyReportCardOptions {
   /** Tên trưởng team theo mã team ("FBA 1" -> "Quỳnh"). */
   teamLeads?: Record<string, string>;
-  /** Nhận xét từng team (AI viết); team nào thiếu thì dùng bản do code soạn. */
+  /** Nhận xét 1 câu cho từng team (AI viết); team nào thiếu thì dùng bản do code soạn. */
   teamComments?: Record<string, string>;
 }
 
 const LIGHT_EMOJI: Record<Light, string> = { green: "🟢", yellow: "🟡", red: "🔴" };
 const LIGHT_TEMPLATE: Record<Light, string> = { green: "green", yellow: "orange", red: "red" };
-const WEEKDAYS = ["Chủ nhật", "Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7"];
+const WEEKDAYS = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
+/** Mẫu số tối thiểu ($) để tỉ lệ (margin, TACoS) và % thay đổi có ý nghĩa. */
+const MIN_RATIO_BASE = 50;
 
 export function formatUsd(value: number): string {
   const rounded = Math.round(value);
@@ -29,39 +25,33 @@ export function formatUsd(value: number): string {
 const pct = (value: number) => `${(value * 100).toFixed(1)}%`;
 
 function colored(text: string, good: boolean | null): string {
-  if (good === null) return `<font color='grey'>${text}</font>`;
-  return `<font color='${good ? "green" : "red"}'>${text}</font>`;
+  return `<font color='${good === null ? "grey" : good ? "green" : "red"}'>${text}</font>`;
 }
 
-/** % thay đổi; ẩn khi mốc so sánh quá nhỏ hoặc âm (tránh kiểu -417%). */
-function deltaPct(current: number, base: number | undefined, higherIsBetter = true, minBase = 1): string {
-  if (base == null || base < minBase) return "";
+/** % thay đổi; ẩn khi mốc quá nhỏ hoặc âm (tránh kiểu -417%). */
+function deltaPct(current: number, base: number | undefined, higherIsBetter = true): string {
+  if (base == null || base < MIN_RATIO_BASE) return "";
   const change = (current - base) / base;
-  const text = `${change >= 0 ? "+" : ""}${(change * 100).toFixed(1)}%`;
-  if (Math.abs(change) < 0.02) return colored(text, null);
-  return colored(text, change > 0 === higherIsBetter);
+  const text = `${change >= 0 ? "+" : ""}${Math.round(change * 100)}%`;
+  return colored(text, Math.abs(change) < 0.02 ? null : change > 0 === higherIsBetter);
 }
 
 function deltaUsd(current: number, base: number | undefined): string {
   if (base == null) return "";
   const diff = current - base;
   const text = `${diff >= 0 ? "+" : "-"}$${Math.abs(Math.round(diff)).toLocaleString("en-US")}`;
-  if (Math.abs(diff) < 5) return colored(text, null);
-  return colored(text, diff > 0);
+  return colored(text, Math.abs(diff) < 5 ? null : diff > 0);
 }
 
-/** Mẫu số tối thiểu ($) để tỉ lệ (margin, ACoS, TACoS) có ý nghĩa khi so sánh. */
-const MIN_RATIO_BASE = 50;
-
-/** Chênh lệch điểm % (margin, ACoS, TACoS); bỏ qua khi mẫu số hôm nay hoặc mốc quá nhỏ. */
-function deltaPts(current: number, base: number | undefined, higherIsBetter: boolean, denominators?: [number, number | undefined]): string {
-  if (base == null) return "";
-  if (denominators && (denominators[0] < MIN_RATIO_BASE || (denominators[1] ?? 0) < MIN_RATIO_BASE)) return "";
+/** Chênh lệch điểm %; bỏ qua khi mẫu số hôm nay hoặc mốc quá nhỏ. */
+function deltaPts(current: number, base: number | undefined, higherIsBetter: boolean, denominators: [number, number | undefined]): string {
+  if (base == null || denominators[0] < MIN_RATIO_BASE || (denominators[1] ?? 0) < MIN_RATIO_BASE) return "";
   const diff = (current - base) * 100;
   const text = `${diff >= 0 ? "+" : ""}${diff.toFixed(1)}đ`;
-  if (Math.abs(diff) < 0.5) return colored(text, null);
-  return colored(text, diff > 0 === higherIsBetter);
+  return colored(text, Math.abs(diff) < 0.5 ? null : diff > 0 === higherIsBetter);
 }
+
+const NA = colored("n/a", null);
 
 export function teamLabel(team: string, leads?: Record<string, string>): string {
   const lead = leads?.[team]?.trim();
@@ -70,196 +60,192 @@ export function teamLabel(team: string, leads?: Record<string, string>): string 
 
 export function displayDate(date: string): string {
   const [y, m, d] = date.split("-");
-  const weekday = WEEKDAYS[new Date(`${date}T00:00:00Z`).getUTCDay()];
-  return `${weekday}, ${d}/${m}/${y}`;
+  return `${WEEKDAYS[new Date(`${date}T00:00:00Z`).getUTCDay()]} ${d}/${m}/${y}`;
 }
 
-type MetricRow = {
-  name: string;
-  /** Chỉ số phụ thuộc chi phí Ads: không so khi có kênh thiếu số Ads. */
-  usesAds?: boolean;
-  value: (t: DashboardTotals) => string;
-  delta: (cur: DashboardTotals, base: DashboardTotals | null) => string;
-};
-
-const COMPANY_ROWS: MetricRow[] = [
-  { name: "Revenue", value: (t) => formatUsd(t.revenue), delta: (c, b) => deltaPct(c.revenue, b?.revenue) },
-  { name: "Profit", usesAds: true, value: (t) => formatUsd(t.profit), delta: (c, b) => (b ? `${deltaUsd(c.profit, b.profit)} ${deltaPct(c.profit, b.profit, true, 50)}`.trim() : "") },
-  { name: "Margin", usesAds: true, value: (t) => pct(t.margin), delta: (c, b) => deltaPts(c.margin, b?.margin, true, [c.revenue, b?.revenue]) },
-  { name: "Units", value: (t) => Math.round(t.quantity).toLocaleString("en-US"), delta: (c, b) => deltaPct(c.quantity, b?.quantity) },
-  { name: "TACoS", usesAds: true, value: (t) => pct(t.tacos), delta: (c, b) => deltaPts(c.tacos, b?.tacos, false, [c.revenue, b?.revenue]) },
-  { name: "ACoS", usesAds: true, value: (t) => pct(t.acos), delta: (c, b) => deltaPts(c.acos, b?.acos, false, [c.revenueAds, b?.revenueAds]) },
-];
-
-function companyDelta(a: DailyReportAnalysis, row: MetricRow, base: DashboardTotals | null): string {
-  if (row.usesAds && a.company.unreliable.length) return "<font color='grey'>n/a</font>";
-  return row.delta(a.company.today, base) || "—";
+/** Thẻ KPI tổng công ty: giá trị + Δ so với TB 7 ngày. */
+function kpis(a: DailyReportAnalysis): Array<{ name: string; value: string; delta: string }> {
+  const { today: t, avg7: b, unreliable } = a.company;
+  const adsOk = !unreliable.length;
+  return [
+    { name: "Revenue", value: formatUsd(t.revenue), delta: deltaPct(t.revenue, b?.revenue) },
+    { name: "Profit", value: formatUsd(t.profit), delta: adsOk ? deltaUsd(t.profit, b?.profit) : NA },
+    { name: "Margin", value: t.revenue > 0 ? pct(t.margin) : "—", delta: adsOk ? deltaPts(t.margin, b?.margin, true, [t.revenue, b?.revenue]) : NA },
+    { name: "TACoS", value: t.revenue > 0 ? pct(t.tacos) : "—", delta: adsOk ? deltaPts(t.tacos, b?.tacos, false, [t.revenue, b?.revenue]) : NA },
+  ];
 }
 
-function companyTable(a: DailyReportAnalysis): Record<string, unknown> {
-  const { today, lastWeek, avg7, monthAvg } = a.company;
+function kpiGrid(a: DailyReportAnalysis): Record<string, unknown> {
   return {
-    tag: "table",
-    page_size: COMPANY_ROWS.length,
-    row_height: "low",
-    freeze_first_column: true,
-    header_style: { text_align: "left", text_size: "normal", background_style: "grey", bold: true, lines: 1 },
-    columns: [
-      { name: "metric", display_name: "Chỉ số", data_type: "lark_md", horizontal_align: "left", width: "auto" },
-      { name: "today", display_name: "Hôm nay", data_type: "lark_md", horizontal_align: "right", width: "auto" },
-      { name: "avg7", display_name: "vs TB 7 ngày", data_type: "lark_md", horizontal_align: "right", width: "auto" },
-      { name: "lastWeek", display_name: "vs cùng thứ tuần trước", data_type: "lark_md", horizontal_align: "right", width: "auto" },
-      { name: "month", display_name: "TB tháng/ngày", data_type: "lark_md", horizontal_align: "right", width: "auto" },
-    ],
-    rows: COMPANY_ROWS.map((row) => ({
-      metric: `**${row.name}**`,
-      today: `**${row.value(today)}**`,
-      avg7: companyDelta(a, row, avg7),
-      lastWeek: companyDelta(a, row, lastWeek),
-      month: monthAvg ? row.value(monthAvg) : "—",
+    tag: "column_set",
+    flex_mode: "bisect",
+    horizontal_spacing: "8px",
+    columns: kpis(a).map((k) => ({
+      tag: "column",
+      width: "weighted",
+      weight: 1,
+      background_style: "grey",
+      padding: "8px 8px 8px 8px",
+      elements: [
+        {
+          tag: "markdown",
+          text_align: "center",
+          content: `<font color='grey'>${k.name}</font>\n**${k.value}** ${k.delta}`.trim(),
+        },
+      ],
     })),
   };
 }
 
-function channelBlock(ch: ChannelAnalysis): string {
-  const { today: t, avg7: b } = ch;
-  const badge = ch.adsMissing
-    ? " · <font color='orange'>thiếu số Ads</font>"
-    : ch.baselineAdsMissing
-      ? " · <font color='orange'>7 ngày trước thiếu số Ads</font>"
-      : "";
-  const head = `${ch.isNew ? "🌱" : LIGHT_EMOJI[ch.light]} **${ch.label}**${badge}`;
-  // Mốc so sánh thiếu Ads thì profit TB 7 ngày bị thổi phồng: không so profit
-  const profitBase = ch.baselineAdsMissing ? undefined : b?.profit;
-  const lines = [
-    `Revenue ${formatUsd(t.revenue)} ${deltaPct(t.revenue, b?.revenue)} · Units ${Math.round(t.quantity)} ${deltaPct(t.quantity, b?.quantity)}`,
-    `Profit **${formatUsd(t.profit)}** ${deltaUsd(t.profit, profitBase)} · Margin ${t.revenue > 0 ? pct(t.margin) : "—"} ${deltaPts(t.margin, ch.baselineAdsMissing ? undefined : b?.margin, true, [t.revenue, b?.revenue])}`,
-    `ACoS ${t.revenueAds > 0 ? pct(t.acos) : "—"} ${ch.baselineAdsMissing ? "" : deltaPts(t.acos, b?.acos, false, [t.revenueAds, b?.revenueAds])} · TACoS ${t.revenue > 0 ? pct(t.tacos) : "—"} ${ch.baselineAdsMissing ? "" : deltaPts(t.tacos, b?.tacos, false, [t.revenue, b?.revenue])}`,
-  ];
-  return [head, ...lines.map((line) => line.replace(/\s+/g, " ").trim())].join("\n");
+/** Kênh kéo Profit lên / xuống nhiều nhất so với TB 7 ngày. */
+function driversLine(a: DailyReportAnalysis): string {
+  const fmt = (list: { label: string; delta: number }[]) => list.map((d) => `${d.label} ${deltaUsd(d.delta, 0)}`).join(", ");
+  const parts: string[] = [];
+  if (a.drivers.up.length) parts.push(`▲ ${fmt(a.drivers.up)}`);
+  if (a.drivers.down.length) parts.push(`▼ ${fmt(a.drivers.down)}`);
+  const lines = parts.length ? [`**Biến động Profit:** ${parts.join("　")}`] : [];
+  if (a.company.unreliable.length) {
+    lines.push(`<font color='orange'>⚠️ Thiếu số Ads: ${a.company.unreliable.join(", ")} — chưa so được Profit tổng</font>`);
+  }
+  return lines.join("\n");
 }
 
-/** Nhận xét team do code soạn — dùng khi AI tắt hoặc lỗi. */
-export function defaultTeamComment(team: TeamAnalysis): string {
-  const { today, avg7, monthAvg } = team;
-  const parts = [`Profit ${formatUsd(today.profit)}`];
-  if (avg7 && !team.unreliable.length) parts.push(`${deltaUsd(today.profit, avg7.profit)} so với TB 7 ngày`);
-  if (monthAvg) parts.push(`TB tháng ${formatUsd(monthAvg.profit)}/ngày`);
-  const sentences = [`${parts[0]}${parts.length > 1 ? ` (${parts.slice(1).join("; ")})` : ""}.`];
+function actionsBlock(a: DailyReportAnalysis, options: DailyReportCardOptions): string {
+  if (!a.actions.length) return "**✅ Không có việc khẩn**";
+  return [
+    "**Cần làm hôm nay**",
+    ...a.actions.map((x, i) => {
+      const lead = options.teamLeads?.[x.team]?.trim();
+      return `${i + 1}. **${x.title}** ${x.label}${lead ? ` · ${lead}` : ""} <font color='grey'>— ${x.reason}</font>`;
+    }),
+  ].join("\n");
+}
 
+function channelName(ch: ChannelAnalysis): string {
+  const mark = ch.isNew ? "🌱" : LIGHT_EMOJI[ch.light];
+  return `${mark} ${ch.label}${ch.adsMissing || ch.baselineAdsMissing ? " ⚠️" : ""}`;
+}
+
+function channelRows(team: TeamAnalysis): Array<{ ch: string; rev: string; profit: string; tacos: string }> {
+  return team.channels.map((ch) => {
+    const { today: t, avg7: b } = ch;
+    const adsOk = !ch.adsMissing && !ch.baselineAdsMissing;
+    return {
+      ch: channelName(ch),
+      rev: `${formatUsd(t.revenue)} ${deltaPct(t.revenue, b?.revenue)}`.trim(),
+      profit: `**${formatUsd(t.profit)}** ${adsOk ? deltaUsd(t.profit, b?.profit) : ""}`.trim(),
+      tacos: t.revenue > 0
+        ? `${pct(t.tacos)} ${adsOk ? deltaPts(t.tacos, b?.tacos, false, [t.revenue, b?.revenue]) : ""}`.trim()
+        : "—",
+    };
+  });
+}
+
+/** 1 hàng của lưới kênh. Lark không cho đặt component table trong collapsible_panel nên dựng bằng column_set. */
+function gridRow(cells: [string, string, string, string], header = false): Record<string, unknown> {
+  const weights = [3, 2, 2, 2];
+  return {
+    tag: "column_set",
+    flex_mode: "none",
+    horizontal_spacing: "4px",
+    ...(header ? { background_style: "grey" } : {}),
+    columns: cells.map((content, i) => ({
+      tag: "column",
+      width: "weighted",
+      weight: weights[i],
+      vertical_align: "center",
+      elements: [{ tag: "markdown", content, text_align: i === 0 ? "left" : "right" }],
+    })),
+  };
+}
+
+function channelGrid(team: TeamAnalysis): Array<Record<string, unknown>> {
+  return [
+    gridRow(["**Kênh**", "**Revenue**", "**Profit**", "**TACoS**"], true),
+    ...channelRows(team).map((row) => gridRow([row.ch, row.rev, row.profit, row.tacos])),
+  ];
+}
+
+function teamHeadline(team: TeamAnalysis, options: DailyReportCardOptions): string {
+  const delta = team.avg7 && !team.unreliable.length ? ` ${deltaUsd(team.today.profit, team.avg7.profit)}` : "";
+  return `${LIGHT_EMOJI[team.light]} **${teamLabel(team.team, options.teamLeads)}**　Profit **${formatUsd(team.today.profit)}**${delta}`;
+}
+
+/** Chẩn đoán 1 câu do code soạn — dùng khi AI tắt hoặc lỗi. */
+export function defaultTeamComment(team: TeamAnalysis): string {
   const moves = team.channels
     .filter((c) => c.avg7 && !c.isNew && !c.adsMissing && !c.baselineAdsMissing)
     .map((c) => ({ label: c.label, delta: c.today.profit - (c.avg7?.profit ?? 0) }))
-    .filter((m) => Math.abs(m.delta) >= 30);
-  const down = moves.filter((m) => m.delta < 0).sort((x, y) => x.delta - y.delta);
-  const up = moves.filter((m) => m.delta > 0).sort((x, y) => y.delta - x.delta);
-  if (down.length) sentences.push(`Kéo giảm: ${down.map((m) => `${m.label} ${deltaUsd(m.delta, 0)}`).join(", ")}.`);
-  if (up.length) sentences.push(`Điểm sáng: ${up.map((m) => `${m.label} ${deltaUsd(m.delta, 0)}`).join(", ")}.`);
-  if (team.unreliable.length) sentences.push(`Thiếu số Ads ở ${team.unreliable.join(", ")} nên chưa so được Profit với TB 7 ngày.`);
-  return sentences.join(" ");
+    .filter((m) => Math.abs(m.delta) >= 30)
+    .sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta));
+  if (!moves.length) {
+    return team.unreliable.length ? `Thiếu số Ads (${team.unreliable.join(", ")}), chưa so được.` : "Ổn định so với TB 7 ngày.";
+  }
+  return `Biến động chính: ${moves.slice(0, 2).map((m) => `${m.label} ${deltaUsd(m.delta, 0)}`).join(", ")}.`;
 }
 
 function teamPanel(team: TeamAnalysis, options: DailyReportCardOptions): Record<string, unknown> {
-  const { today, avg7 } = team;
-  const title = `${LIGHT_EMOJI[team.light]} **${teamLabel(team.team, options.teamLeads)}** · Profit ${formatUsd(today.profit)} ${
-    avg7 && !team.unreliable.length ? `(${deltaUsd(today.profit, avg7.profit)} vs TB 7 ngày)` : ""
-  }`.trim();
   const comment = options.teamComments?.[team.team]?.trim() || defaultTeamComment(team);
   return {
     tag: "collapsible_panel",
-    expanded: team.light === "red",
+    expanded: false,
     header: {
-      title: { tag: "markdown", content: title },
+      title: { tag: "markdown", content: teamHeadline(team, options) },
       icon: { tag: "standard_icon", token: "down-small-ccm_outlined", size: "16px 16px" },
       icon_position: "right",
       icon_expanded_angle: -180,
     },
     border: { color: "grey", corner_radius: "6px" },
-    vertical_spacing: "8px",
-    padding: "8px 8px 8px 8px",
+    vertical_spacing: "6px",
+    padding: "6px 8px 6px 8px",
     elements: [
-      { tag: "markdown", content: `💬 ${comment}` },
-      ...team.channels.map((ch) => ({ tag: "markdown", content: channelBlock(ch) })),
+      { tag: "markdown", content: `<font color='grey'>${comment}</font>` },
+      ...channelGrid(team),
     ],
   };
 }
 
-function driversText(a: DailyReportAnalysis): string {
-  const { today, avg7, unreliable } = a.company;
-  if (!avg7) return "";
-  const fmt = (list: { label: string; delta: number }[]) =>
-    list.map((d) => `${d.label} ${deltaUsd(d.delta, 0)}`).join(", ");
-  const lines = unreliable.length
-    ? [
-        `**📈 Biến động Profit theo kênh** (so với TB 7 ngày)`,
-        `<font color='orange'>⚠️ Thiếu số Ads ở ${unreliable.join(", ")} — chưa so được Profit/Margin/ACoS tổng (n/a), các kênh này không tính bên dưới.</font>`,
-      ]
-    : [`**📈 Profit ${deltaUsd(today.profit, avg7.profit)} so với TB 7 ngày (${formatUsd(avg7.profit)}/ngày)**`];
-  if (a.drivers.up.length) lines.push(`Kéo lên: ${fmt(a.drivers.up)}`);
-  if (a.drivers.down.length) lines.push(`Kéo xuống: ${fmt(a.drivers.down)}`);
-  return lines.join("\n");
-}
-
-function actionsText(a: DailyReportAnalysis, options: DailyReportCardOptions): string {
-  if (!a.actions.length) return "**✅ Cần action hôm nay**\nKhông có việc khẩn — các kênh đều trong ngưỡng bình thường.";
-  return [
-    "**⚠️ Cần action hôm nay** (xếp theo $ ảnh hưởng)",
-    ...a.actions.map((x, i) => `${i + 1}. **${x.label}** (${teamLabel(x.team, options.teamLeads)}): ${x.text}`),
-  ].join("\n");
-}
-
-const RULES_NOTE =
-  `Δ so với TB 7 ngày trước. Xanh = tốt, đỏ = xấu (ACoS/TACoS giảm là tốt), đ = điểm %. ` +
-  `🌱 kênh mới (< 30 ngày) không chấm đèn. 🔴 lỗ hoặc Profit < ${LIGHT_RULES.redProfitRatio * 100}% TB 7 ngày · ` +
-  `🟡 Profit < ${LIGHT_RULES.yellowProfitRatio * 100}% TB 7 ngày, TACoS tăng ≥ ${LIGHT_RULES.yellowTacosRise * 100}đ hoặc thiếu số Ads · 🟢 còn lại. ` +
-  `Tỉ lệ (margin, ACoS, TACoS) chỉ so khi doanh số ≥ $${MIN_RATIO_BASE}.`;
+const FOOTNOTE = "Δ = so với TB 7 ngày trước · 🌱 kênh mới (không chấm đèn) · ⚠️ thiếu số Ads";
 
 export function buildDailyReportCard(a: DailyReportAnalysis, options: DailyReportCardOptions = {}): Record<string, unknown> {
-  const elements: Array<Record<string, unknown>> = [
-    { tag: "markdown", content: `**🏢 Tổng công ty** ${LIGHT_EMOJI[a.company.light]} · ${a.company.channelCount} kênh · ${a.teams.length} team` },
-    companyTable(a),
-  ];
-  const drivers = driversText(a);
+  const elements: Array<Record<string, unknown>> = [kpiGrid(a)];
+  const drivers = driversLine(a);
   if (drivers) elements.push({ tag: "markdown", content: drivers });
-  elements.push({ tag: "markdown", content: actionsText(a, options) });
+  elements.push({ tag: "markdown", content: actionsBlock(a, options) });
   elements.push({ tag: "hr" });
   for (const team of a.teams) elements.push(teamPanel(team, options));
-  elements.push({ tag: "markdown", content: `<font color='grey'>${RULES_NOTE}</font>`, text_size: "notation" });
+  elements.push({ tag: "markdown", content: `<font color='grey'>${FOOTNOTE}</font>`, text_size: "notation" });
 
   return {
     schema: "2.0",
     config: { width_mode: "fill" },
     header: {
       template: LIGHT_TEMPLATE[a.company.light],
-      title: { tag: "plain_text", content: `📊 Báo cáo kinh doanh — ${displayDate(a.date)}` },
+      title: { tag: "plain_text", content: `Báo cáo kinh doanh ${displayDate(a.date)}` },
+      subtitle: { tag: "plain_text", content: `${a.company.channelCount} kênh · ${a.teams.length} team` },
     },
     body: { elements },
   };
 }
 
-const stripTags = (text: string) => text.replace(/<\/?font[^>]*>/g, "").replace(/\*\*/g, "");
+const stripTags = (text: string) => text.replace(/<\/?font[^>]*>/g, "").replace(/\*\*/g, "").replace(/　/g, "  ");
 
 /** Bản text thuần (gửi khi card lỗi, và để xem trước trong terminal). */
 export function buildDailyReportText(a: DailyReportAnalysis, options: DailyReportCardOptions = {}): string {
-  const { today, avg7, lastWeek, monthAvg } = a.company;
   const lines = [
-    `📊 Báo cáo kinh doanh — ${displayDate(a.date)}`,
-    `🏢 Tổng công ty ${LIGHT_EMOJI[a.company.light]} · ${a.company.channelCount} kênh · ${a.teams.length} team`,
-    ...COMPANY_ROWS.map((row) => {
-      const vs7 = stripTags(companyDelta(a, row, avg7));
-      const vsWeek = stripTags(companyDelta(a, row, lastWeek));
-      return `  ${row.name}: ${row.value(today)} | vs TB7 ${vs7} | vs tuần trước ${vsWeek} | TB tháng ${monthAvg ? row.value(monthAvg) : "—"}`;
-    }),
-    "",
-    stripTags(driversText(a)),
-    "",
-    stripTags(actionsText(a, options)),
+    `📊 Báo cáo kinh doanh ${displayDate(a.date)} ${LIGHT_EMOJI[a.company.light]}`,
+    kpis(a).map((k) => `${k.name} ${k.value} ${stripTags(k.delta)}`.trim()).join(" | "),
   ];
+  const drivers = driversLine(a);
+  if (drivers) lines.push(stripTags(drivers));
+  lines.push("", stripTags(actionsBlock(a, options)));
   for (const team of a.teams) {
-    lines.push("", stripTags(`${LIGHT_EMOJI[team.light]} ${teamLabel(team.team, options.teamLeads)} · Profit ${formatUsd(team.today.profit)} ${team.avg7 && !team.unreliable.length ? `(${deltaUsd(team.today.profit, team.avg7.profit)} vs TB 7 ngày)` : ""}`).trimEnd());
-    lines.push(`  💬 ${stripTags(options.teamComments?.[team.team]?.trim() || defaultTeamComment(team))}`);
-    for (const ch of team.channels) lines.push(...stripTags(channelBlock(ch)).split("\n").map((l, i) => (i ? `     ${l}` : `  ${l}`)));
+    lines.push("", stripTags(teamHeadline(team, options)));
+    lines.push(`  ${stripTags(options.teamComments?.[team.team]?.trim() || defaultTeamComment(team))}`);
+    for (const row of channelRows(team)) {
+      lines.push(`  ${stripTags(row.ch)} | ${stripTags(row.rev)} | Profit ${stripTags(row.profit)} | TACoS ${stripTags(row.tacos)}`);
+    }
   }
-  lines.push("", RULES_NOTE);
+  lines.push("", FOOTNOTE);
   return lines.join("\n");
 }

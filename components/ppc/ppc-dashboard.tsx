@@ -66,7 +66,7 @@ import type {
 import { PpcMultiStoreView } from "./ppc-multi-store-view";
 import { PpcCopyButton } from "./ppc-copy-button";
 import { PpcSearchVolumeCell, PpcOrganicRankCell, PpcSponsoredRankCell } from "./ppc-search-volume";
-import { PpcKeywordGroupRows, PpcSummaryTableHead, usePpcSummarySort, useKeywordGroupSelection, type KeywordGroupRow } from "./ppc-keyword-group-rows";
+import { PpcKeywordGroupRows, PpcSummarySearchVolumeBlankCells, PpcSummaryTableHead, usePpcSummarySort, useKeywordGroupSelection, type KeywordGroupRow } from "./ppc-keyword-group-rows";
 import { PpcSkuTrendModal, SkuTrendSparkline } from "./ppc-sku-trend-modal";
 import { PpcSearchTermLaunchPanel } from "./ppc-search-term-launch-panel";
 import type {
@@ -4069,11 +4069,12 @@ export function PpcDashboard({
           {/* Totals for the current Target query; detail rows stay separated by campaign. */}
           {targetQuery.trim() && serverTargetSummary && (
             <div className="overflow-auto max-h-[480px] rounded-xl border border-slate-200 bg-white shadow-2xs">
-              <table className="w-full min-w-[1100px] text-left">
+              <table className={`w-full text-left ${serverTargetSummary.keywordGroups ? "min-w-[1320px]" : "min-w-[1100px]"}`}>
                 <PpcSummaryTableHead
                   keywordLabel="Target / Keyword"
                   sort={targetSummarySort}
                   selection={serverTargetSummary.keywordGroups ? targetGroupSelection.selectionFor(sortedTargetKeywordGroups) : undefined}
+                  showSearchVolume={Boolean(serverTargetSummary.keywordGroups)}
                 />
                 <tbody className="divide-y divide-slate-100">
                   {targetSummarySort.sortSkuGroups((serverTargetSummary.skuGroups?.length
@@ -4117,6 +4118,7 @@ export function PpcDashboard({
                       </td>
                       <td className="whitespace-nowrap px-3 py-3 font-mono text-sm font-black text-slate-900">{group.sku}</td>
                       <td className="px-3 py-3 text-sm font-bold text-slate-900">{querySummaryLabel(targetQuery, "Tất cả target")}</td>
+                      {serverTargetSummary.keywordGroups && <PpcSummarySearchVolumeBlankCells />}
                       <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{Number(group.totalImpressions || 0).toLocaleString("vi-VN")}</td>
                       <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{Number(group.totalClicks || 0).toLocaleString("vi-VN")}</td>
                       <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{group.totalImpressions > 0 ? ((group.totalClicks / group.totalImpressions) * 100).toFixed(2) : "0.00"}%</td>
@@ -4147,6 +4149,7 @@ export function PpcDashboard({
                       groups={sortedTargetKeywordGroups}
                       total={serverTargetSummary.keywordGroupTotal || 0}
                       selection={targetGroupSelection.selectionFor(sortedTargetKeywordGroups)}
+                      showSearchVolume
                     />
                   )}
                 </tbody>
@@ -5064,11 +5067,12 @@ export function PpcDashboard({
           {/* Totals for the current Search Term query; detail rows stay separated by campaign. */}
           {searchTermQuery.trim() && serverSearchTermSummary && (
             <div className="overflow-auto max-h-[480px] rounded-xl border border-slate-200 bg-white shadow-2xs">
-              <table className="w-full min-w-[1100px] text-left">
+              <table className={`w-full text-left ${serverSearchTermSummary.keywordGroups ? "min-w-[1320px]" : "min-w-[1100px]"}`}>
                 <PpcSummaryTableHead
                   keywordLabel="Search Term"
                   sort={searchTermSummarySort}
                   selection={serverSearchTermSummary.keywordGroups ? termGroupSelection.selectionFor(sortedTermKeywordGroups) : undefined}
+                  showSearchVolume={Boolean(serverSearchTermSummary.keywordGroups)}
                 />
                 <tbody className="divide-y divide-slate-100">
                   {searchTermSummarySort.sortSkuGroups((serverSearchTermSummary.skuGroups?.length
@@ -5103,6 +5107,7 @@ export function PpcDashboard({
                       </td>
                       <td className="whitespace-nowrap px-3 py-3 font-mono text-sm font-black text-slate-900">{group.sku}</td>
                       <td className="px-3 py-3 text-sm font-bold text-slate-900">{querySummaryLabel(searchTermQuery, "Tất cả search term")}</td>
+                      {serverSearchTermSummary.keywordGroups && <PpcSummarySearchVolumeBlankCells />}
                       <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{Number(group.totalImpressions || 0).toLocaleString("vi-VN")}</td>
                       <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{Number(group.totalClicks || 0).toLocaleString("vi-VN")}</td>
                       <td className="px-3 py-3 text-right font-mono text-sm font-bold text-slate-800">{group.totalImpressions > 0 ? ((group.totalClicks / group.totalImpressions) * 100).toFixed(2) : "0.00"}%</td>
@@ -5133,6 +5138,7 @@ export function PpcDashboard({
                       groups={sortedTermKeywordGroups}
                       total={serverSearchTermSummary.keywordGroupTotal || 0}
                       selection={termGroupSelection.selectionFor(sortedTermKeywordGroups)}
+                      showSearchVolume
                     />
                   )}
                 </tbody>
