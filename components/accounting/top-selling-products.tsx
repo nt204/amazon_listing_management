@@ -290,22 +290,34 @@ export function TopSellingProducts({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestKey]);
 
-  // Team / store chỉ có 1 kênh (hoặc 1 kênh không có sản phẩm nào trong kỳ) thì chỉ hiện 1 bảng.
-  // Có aside: FBA | FBM | aside chia 3 (1 kênh thì rộng 2 cột); không aside: FBA | FBM chia đôi, 1 kênh rộng hết hàng.
+  // Team / store chỉ có 1 kênh (hoặc 1 kênh không có sản phẩm nào trong kỳ) thì chỉ hiện kênh đó.
+  // Có aside: FBA | FBM | aside chia 3 (1 kênh thì rộng 2 cột).
+  // Không aside: FBA | FBM chia đôi; 1 kênh thì chia đôi thành Top Profit | Top Loss của kênh đó để hàng không trống.
   const shown = data ? visibleChannels(data) : [];
   const channels: Channel[] = shown.length ? shown : lastChannels;
   const multiStore = storeIds.length !== 1;
+  const cards: { channel: Channel; initialTab: TopTab }[] =
+    !aside && channels.length === 1
+      ? [
+          { channel: channels[0], initialTab: "profit" },
+          { channel: channels[0], initialTab: "loss" },
+        ]
+      : channels.map((channel) => ({ channel, initialTab: "profit" }));
 
   return (
     <div
       className={`grid gap-4 ${
-        aside ? "@min-[900px]:grid-cols-3" : channels.length > 1 ? "@min-[900px]:grid-cols-2" : ""
+        aside ? "@min-[900px]:grid-cols-3" : cards.length > 1 ? "@min-[900px]:grid-cols-2" : ""
       }`}
     >
-      {channels.map((channel, i) => (
-        <div key={channel} className={`min-w-0 ${aside && channels.length === 1 ? "@min-[900px]:col-span-2" : ""}`}>
+      {cards.map(({ channel, initialTab }, i) => (
+        <div
+          key={`${channel}-${initialTab}`}
+          className={`min-w-0 ${aside && channels.length === 1 ? "@min-[900px]:col-span-2" : ""}`}
+        >
           <ChannelTopCard
             channel={channel}
+            initialTab={initialTab}
             lists={data?.[channel]}
             loading={loading}
             error={error}
@@ -321,6 +333,7 @@ export function TopSellingProducts({
 
 function ChannelTopCard({
   channel,
+  initialTab = "profit",
   lists,
   loading,
   error,
@@ -328,13 +341,14 @@ function ChannelTopCard({
   delay,
 }: {
   channel: Channel;
+  initialTab?: TopTab;
   lists: TopProductLists | undefined;
   loading: boolean;
   error: string | null;
   multiStore: boolean;
   delay: number;
 }) {
-  const [tab, setTab] = useState<TopTab>("profit");
+  const [tab, setTab] = useState<TopTab>(initialTab);
   const products: TopProductItem[] = lists?.[tab] ?? [];
   const activeTab = TABS.find((t) => t.key === tab)!;
 
