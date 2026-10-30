@@ -341,17 +341,22 @@ export async function reportDailyBusinessData(
   // 2. Kiểm tra nhanh đã báo cáo ngày này (hoặc ngày mới hơn) chưa
   const settingKey = `lark_accounting_last_reported_date:${scope.teamId}`;
   if (isAutomatic) {
-    const settingRows = await sql<Array<{ value: string }>>`
+    const settingRows = await sql<Array<{ value: unknown }>>`
       SELECT value FROM app_settings
       WHERE key = ${settingKey}
       LIMIT 1
     `;
     const rawVal = settingRows[0]?.value;
     let lastReportedDate = "";
-    try {
-      lastReportedDate = rawVal ? JSON.parse(rawVal)?.date : "";
-    } catch {
-      lastReportedDate = rawVal || "";
+    if (typeof rawVal === "string") {
+      try {
+        const parsed = JSON.parse(rawVal);
+        lastReportedDate = typeof parsed === "object" && parsed ? (parsed as { date?: string }).date || "" : String(parsed || "");
+      } catch {
+        lastReportedDate = rawVal;
+      }
+    } else if (typeof rawVal === "object" && rawVal !== null) {
+      lastReportedDate = (rawVal as { date?: string }).date || "";
     }
     if (lastReportedDate && lastReportedDate >= latestDate) {
       return {
@@ -391,10 +396,16 @@ export async function reportDailyBusinessData(
   if (isAutomatic) {
     const claimed = await sql<Array<{ key: string }>>`
       INSERT INTO app_settings (key, value, updated_at)
-      VALUES (${settingKey}, ${JSON.stringify({ date: latestDate })}, NOW())
+      VALUES (${settingKey}, ${sql.json({ date: latestDate })}, NOW())
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
       WHERE COALESCE(
-        CASE WHEN app_settings.value ~ '^\\s*\\{' THEN app_settings.value::jsonb ->> 'date' ELSE app_settings.value END,
+        CASE
+          WHEN jsonb_typeof(app_settings.value) = 'object' THEN app_settings.value ->> 'date'
+          WHEN jsonb_typeof(app_settings.value) = 'string' AND (app_settings.value #>> '{}') ~ '^\\s*\\{'
+            THEN (app_settings.value #>> '{}')::jsonb ->> 'date'
+          WHEN jsonb_typeof(app_settings.value) = 'string' THEN app_settings.value #>> '{}'
+          ELSE ''
+        END,
         ''
       ) < ${latestDate}
       RETURNING key
@@ -419,7 +430,7 @@ export async function reportDailyBusinessData(
     // Gửi ép (force) không đi qua bước chiếm ngày ở trên nên ghi lại ngày đã báo cáo ở đây
     await sql`
       INSERT INTO app_settings (key, value, updated_at)
-      VALUES (${settingKey}, ${JSON.stringify({ date: latestDate })}, NOW())
+      VALUES (${settingKey}, ${sql.json({ date: latestDate })}, NOW())
       ON CONFLICT (key) DO UPDATE SET
         value = EXCLUDED.value, updated_at = NOW()
     `;
